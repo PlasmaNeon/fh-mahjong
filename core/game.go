@@ -1,0 +1,371 @@
+package core
+
+import (
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"time"
+
+	pb "github.com/plasma/fh-mahjong/proto"
+)
+
+// Game is the central state machine driver for a single Mahjong match.
+type Game struct {
+	State *pb.GameState
+	Rules RuleEngine
+
+	// Private game state not sent to clients
+	wall          []*pb.Tile
+	wallIndex     int // Points to next tile to draw from the front
+	deadWallIndex int // Tracks how many tiles have been drawn from the back
+
+	// Interruption queue for actions that happen asynchronously (like multiple players trying to Pong/Ron).
+	// We wait a few seconds before resolving priority.
+	interruptQueue map[uint32]*pb.PlayerAction
+	interruptTimer *time.Timer
+}
+
+// NewGame initializes a brand new game using the provided Ruleset plugin.
+func NewGame(matchID string, rules RuleEngine) *Game {
+	g := &Game{
+		Rules: rules,
+		State: &pb.GameState{
+			MatchId:       matchID,
+			Phase:         pb.GamePhase_PHASE_INIT,
+			ActivePlayer:  0,
+			WallCount:     0,
+			HandNum:       1, // East 1
+			Players:       make([]*pb.PlayerState, 4),
+			ActiveDiscard: nil,
+		},
+		interruptQueue: make(map[uint32]*pb.PlayerAction),
+	}
+
+	for i := 0; i < 4; i++ {
+		g.State.Players[i] = &pb.PlayerState{
+			Seat:        uint32(i),
+			Score:       25000, // Standard starting score, could be parameterized by rules
+			ClosedHand:  make([]*pb.Tile, 0),
+			HandSize:    0,
+			OpenMelds:   make([]*pb.Meld, 0),
+			Discards:    make([]*pb.Tile, 0),
+			SeatWind:    uint32(i + 1), // 1=East, 2=South, 3=West, 4=North
+			FlowerMelds: make([]*pb.Tile, 0),
+		}
+	}
+
+	return g
+}
+
+// Start begins the match. It shuffles the wall and deals tiles to players.
+func (g *Game) Start() error {
+	if g.State.Phase != pb.GamePhase_PHASE_INIT {
+		return errors.New("cannot start game: already in progress")
+	}
+
+	g.dealTiles()
+	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+	g.State.ActivePlayer = 0 // East starts
+
+	// The round begins by having the dealer draw a tile.
+	return g.ExecuteSystemDraw(0)
+}
+
+// dealTiles uses the rule engine to get a full deck, shuffles it, and distributes 13 tiles to each player.
+func (g *Game) dealTiles() {
+	wall := g.Rules.GetInitialWall()
+
+	// Shuffle using Tenhou's MT19937 algorithm
+	// 1. Generate a random 624-uint32 seed
+	nano := time.Now().UnixNano()
+	var seed [MT19937SeedSize]uint32
+	seedBytes := make([]byte, MT19937SeedSize*4)
+	for i := 0; i < MT19937SeedSize; i++ {
+		// Just a simple mix for the initial seed state
+		seed[i] = uint32(nano ^ int64(i*192837465))
+		binary.LittleEndian.PutUint32(seedBytes[i*4:(i+1)*4], seed[i])
+	}
+
+	// Store the base64 seed for replay verification
+	g.State.WallSeed = base64.StdEncoding.EncodeToString(seedBytes)
+
+	mt := MTFromSeed(seed)
+
+	// 2. Generate an array of indices 0..135
+	indices := make([]byte, len(wall))
+	for i := 0; i < len(wall); i++ {
+		indices[i] = byte(i)
+	}
+
+	// 3. Shuffle indices
+	ShuffleWithMT(indices, mt)
+
+	// 4. Rearrange the actual tile slice based on shuffled indices
+	shuffledWall := make([]*pb.Tile, len(wall))
+	for i := 0; i < len(wall); i++ {
+		shuffledWall[i] = wall[indices[i]]
+	}
+	wall = shuffledWall
+
+	// Deal 13 tiles to each of the 4 players (4+4+4+1)
+	dealIndex := 0
+
+	// 3 rounds of 4 tiles
+	for round := 0; round < 3; round++ {
+		for seat := 0; seat < 4; seat++ {
+			g.State.Players[seat].ClosedHand = append(g.State.Players[seat].ClosedHand, wall[dealIndex:dealIndex+4]...)
+			g.State.Players[seat].HandSize += 4
+			dealIndex += 4
+		}
+	}
+
+	// 1 round of 1 tile
+	for seat := 0; seat < 4; seat++ {
+		g.State.Players[seat].ClosedHand = append(g.State.Players[seat].ClosedHand, wall[dealIndex])
+		g.State.Players[seat].HandSize += 1
+		dealIndex += 1
+	}
+
+	g.wall = wall
+	g.wallIndex = dealIndex
+	g.deadWallIndex = 0
+
+	g.State.WallCount = uint32(len(g.wall) - g.wallIndex)
+
+	// Fenghua Rules: Select the "Wild Tile" indicator.
+	// We draw it from the *head* of the wall (front) so that the tail
+	// remains perfectly paired for Kan/Flower dead-wall draws.
+	if len(g.wall) > g.wallIndex {
+		wildIndicator := g.wall[g.wallIndex]
+		g.wallIndex++
+		g.State.WallCount-- // Remove indicator from drawable wall
+		// Store the indicator tile type. Players match their hand tiles against this
+		// Suit+Value combo to identify wild tiles.
+		g.State.WildTiles = []*pb.Tile{wildIndicator}
+	}
+}
+
+// ExecuteSystemDraw handles drawing a tile from the wall at the start of a turn.
+func (g *Game) ExecuteSystemDraw(seat uint32) error {
+	if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
+		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		return nil // Exhaustive draw (Ryukyoku)
+	}
+
+	player := g.State.Players[seat]
+	drawnTile := g.wall[g.wallIndex]
+	g.wallIndex++
+
+	player.ClosedHand = append(player.ClosedHand, drawnTile)
+	player.HandSize++
+	g.State.WallCount--
+
+	return nil
+}
+
+// ExecuteDeadWallDraw handles drawing a supplementary tile from the back of the wall
+// (the "dead wall") after a Kong or Flower reveal.
+func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
+	if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
+		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		return nil // Exhaustive draw
+	}
+
+	player := g.State.Players[seat]
+
+	// The wall is physically built in 2-tile high stacks.
+	// When drawing from the end of the wall, we always draw from the top layer of the last stack first.
+	// A stack is (Top, Bottom). Their indices at the end of the array are `L-2` and `L-1`.
+	k := g.deadWallIndex
+	stackOffset := (k / 2) * 2
+	isBottom := k % 2
+
+	var drawIndex int
+	if isBottom == 1 {
+		drawIndex = len(g.wall) - 1 - stackOffset
+	} else {
+		drawIndex = len(g.wall) - 2 - stackOffset
+	}
+
+	drawnTile := g.wall[drawIndex]
+	g.deadWallIndex++
+
+	player.ClosedHand = append(player.ClosedHand, drawnTile)
+	player.HandSize++
+	g.State.WallCount--
+
+	return nil
+}
+
+// ProcessPlayerAction is the main entry point for the network. It validates the Protobuf action securely.
+func (g *Game) ProcessPlayerAction(seat uint32, action *pb.PlayerAction) error {
+	switch g.State.Phase {
+	case pb.GamePhase_PHASE_PLAYER_TURN:
+		if seat != g.State.ActivePlayer {
+			return fmt.Errorf("not player %d's turn", seat)
+		}
+		return g.handleActiveTurnAction(seat, action)
+
+	case pb.GamePhase_PHASE_WAIT_DISCARDS:
+		// Accept steals/interrupts asynchronously from other players
+		return g.handleInterruptAction(seat, action)
+
+	default:
+		return errors.New("actions not accepted in current phase")
+	}
+}
+
+// handleActiveTurnAction processes normal turn actions like Discard or Tsumo.
+func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) error {
+	if action.Type == pb.ActionType_ACTION_DISCARD {
+		player := g.State.Players[seat]
+
+		// Remove from hand, add to discards
+		found := false
+		for i, t := range player.ClosedHand {
+			if t.Id == action.Tile.Id {
+				player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return errors.New("discard tile not in hand")
+		}
+
+		player.Discards = append(player.Discards, action.Tile)
+		player.HandSize--
+		g.State.ActiveDiscard = action.Tile
+
+		// Transition to wait for interrupts
+		g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+		g.interruptQueue = make(map[uint32]*pb.PlayerAction) // clear queue
+
+		return nil
+	} else if action.Type == pb.ActionType_ACTION_KAN || action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+		player := g.State.Players[seat]
+
+		// Verify and remove the tiles from the closed hand
+		for _, requiredTile := range action.MeldTiles {
+			found := false
+			for i, handTile := range player.ClosedHand {
+				if handTile.Id == requiredTile.Id {
+					player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
+					player.HandSize--
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("tile %d for action %v not found in hand", requiredTile.Id, action.Type)
+			}
+		}
+
+		if action.Type == pb.ActionType_ACTION_KAN {
+			// Add to Open Melds
+			meld := &pb.Meld{
+				Type:            pb.ActionType_ACTION_KAN,
+				Tiles:           action.MeldTiles,
+				CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
+			}
+			player.OpenMelds = append(player.OpenMelds, meld)
+		} else if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+			// Add to Flower Melds
+			player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
+		}
+
+		// Player immediately gets a supplementary tile from the Dead Wall
+		g.ExecuteDeadWallDraw(seat)
+
+		// It remains their turn to either discard, declare another Kan/Flower, or Tsumo
+		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+
+		return nil
+	}
+
+	return fmt.Errorf("unsupported active action: %v", action.Type)
+}
+
+// handleInterruptAction processes out-of-turn actions like Pong or Ron during the waiting window.
+func (g *Game) handleInterruptAction(seat uint32, action *pb.PlayerAction) error {
+	if seat == g.State.ActivePlayer {
+		return errors.New("active player cannot interrupt their own discard")
+	}
+	// Add to queue
+	g.interruptQueue[seat] = action
+	return nil
+}
+
+// ResolveInterrupts is called by the server after the 3-second wait window expires.
+func (g *Game) ResolveInterrupts() {
+	if len(g.interruptQueue) == 0 {
+		// No one interrupted. Next player's turn!
+		g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
+		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+		g.State.ActiveDiscard = nil
+		g.ExecuteSystemDraw(g.State.ActivePlayer)
+		return
+	}
+
+	// Delegate to the ruleset plugin to decide who wins the priority
+	winnerSeat, winningAction := g.Rules.ResolveInterruptPriority(g.interruptQueue)
+
+	if winningAction == nil {
+		g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
+		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+		g.State.ActiveDiscard = nil
+		g.ExecuteSystemDraw(g.State.ActivePlayer)
+		return
+	}
+
+	// Apply the interrupt
+	if winningAction.Type == pb.ActionType_ACTION_PON || winningAction.Type == pb.ActionType_ACTION_CHII || winningAction.Type == pb.ActionType_ACTION_KAN {
+		discarder := g.State.ActivePlayer
+		direction := pb.MeldDirection((discarder - winnerSeat + 4) % 4)
+
+		meld := &pb.Meld{
+			Type:            winningAction.Type,
+			Tiles:           append(winningAction.MeldTiles, g.State.ActiveDiscard),
+			CalledDirection: direction,
+			CalledTileId:    g.State.ActiveDiscard.Id,
+		}
+
+		player := g.State.Players[winnerSeat]
+		player.OpenMelds = append(player.OpenMelds, meld)
+
+		// Remove MeldTiles from player's ClosedHand
+		for _, t := range winningAction.MeldTiles {
+			for i, handTile := range player.ClosedHand {
+				if handTile.Id == t.Id {
+					player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
+					break
+				}
+			}
+		}
+
+		// Remove the discard from the discarder's pile since it was claimed
+		discarderPlayer := g.State.Players[discarder]
+		if len(discarderPlayer.Discards) > 0 {
+			discarderPlayer.Discards = discarderPlayer.Discards[:len(discarderPlayer.Discards)-1]
+		}
+
+		g.State.ActivePlayer = winnerSeat
+		g.State.ActiveDiscard = nil
+
+		if winningAction.Type == pb.ActionType_ACTION_KAN {
+			// A Kong requires a supplementary tile from the dead wall before discarding
+			g.ExecuteDeadWallDraw(winnerSeat)
+			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+		} else {
+			// Chii or Pon just resume turn phase (player must discard now, no drawing)
+			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+		}
+	} else if winningAction.Type == pb.ActionType_ACTION_RON {
+		// Handle Ron (end of round)
+		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+	}
+
+	// clear queue
+	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+}
