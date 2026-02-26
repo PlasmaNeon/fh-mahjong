@@ -1,0 +1,163 @@
+syntax = "proto3";
+
+// Defines the custom Mahjong protocols.
+// Used across Go (Backend), TypeScript (Frontend), and Python (AI).
+
+package game;
+option go_package = "github.com/plasma/fh-mahjong/proto/game";
+
+// ---------------------------------------------------------
+// Basic Entities
+// ---------------------------------------------------------
+
+enum Suit {
+  SUIT_UNKNOWN = 0;
+  SUIT_SOU = 1;
+  SUIT_PIN = 2;
+  SUIT_MAN = 3;
+  SUIT_JIHAI = 4;
+}
+
+message Tile {
+  // Unique identifier for the tile (0-135).
+  uint32 id = 1;
+  Suit suit = 2;
+  // For suits 1-3, value is 1-9. Wait! In mahjong it's 1-9 for sou/pin/man,
+  // 1-7 for jihai (East, South, West, North, Haku, Hatsu, Chun).
+  uint32 value = 3;
+}
+
+// ---------------------------------------------------------
+// Actions & Events
+// ---------------------------------------------------------
+
+enum ActionType {
+  ACTION_UNKNOWN = 0;
+  // Base Actions
+  ACTION_DRAW = 1;
+  ACTION_DISCARD = 2;
+  // Melds
+  ACTION_CHII = 3; // sequence
+  ACTION_PON = 4; // triplet
+  ACTION_KAN = 5; // quad
+  // Wins
+  ACTION_TSUMO = 6; // self-draw win
+  ACTION_RON = 7;   // steal win
+  // Others
+  ACTION_PASS = 8;       // pass on an opportunity to steal
+  ACTION_FLOWER_REVEAL = 9; // Fenghua rule: drawing and exposing a flower tile
+}
+
+message PlayerAction {
+  ActionType type = 1;
+  
+  // The tile being acted upon (e.g. the tile being discarded or stolen).
+  Tile tile = 2;
+
+  // The subset of hand tiles revealed to complete the action (e.g. 2 tiles for a Chow/Pong).
+  repeated Tile meld_tiles = 3;
+
+  // Which player is targeted (0-3). 
+  // (e.g. Who did we Ron from? Who did we Pong from?)
+  uint32 target_player = 4;
+
+  // Context flags for win evaluations
+  bool is_robbing_kong = 5;
+  bool is_bottom_tile = 6;
+  bool is_blooming_kong = 7;
+}
+
+enum MeldDirection {
+  MELD_DIRECTION_UNKNOWN = 0;
+  MELD_DIRECTION_RIGHT = 1;
+  MELD_DIRECTION_ACROSS = 2;
+  MELD_DIRECTION_LEFT = 3;
+}
+
+message Meld {
+  ActionType type = 1;
+  repeated Tile tiles = 2;
+  // Relative direction of the player who discarded the called tile.
+  // 1: Right (shimocha), 2: Across (toimen), 3: Left (kamicha).
+  MeldDirection called_direction = 3;
+  // The ID of the specific tile that was called (useful for UI rendering to know which one to rotate sideways).
+  uint32 called_tile_id = 4;
+}
+
+// ---------------------------------------------------------
+// Game State
+// ---------------------------------------------------------
+
+message PlayerState {
+  uint32 seat = 1; // 0=East, 1=South, 2=West, 3=North
+  
+  // Number of points the player has
+  int32 score = 2;
+
+  // The tiles currently held in the closed hand.
+  // In a broadcast to other players, this might be empty for security.
+  repeated Tile closed_hand = 3;
+
+  // The number of tiles in the hand (always public).
+  uint32 hand_size = 4;
+
+  // Opened melds (Chows, Pongs, Kongs)
+  repeated Meld open_melds = 5;
+
+  // Discarded tiles pool 
+  repeated Tile discards = 6;
+
+  // Track the player's specific seat wind (1: East, 2: South, 3: West, 4: North)
+  uint32 seat_wind = 7;
+
+  // Track the specific flower tiles the player has melded (IDs 136-143)
+  repeated Tile flower_melds = 8;
+
+  // Kong bonus context flags (set by game loop before calling EvaluateHand)
+  bool has_budding_direct_kong = 9;
+  bool has_blooming_direct_kong = 10;
+  bool has_budding_closed_kong = 11;
+  bool has_blooming_closed_kong = 12;
+  bool has_budding_risky_kong = 13;
+  bool has_blooming_risky_kong = 14;
+  bool has_blooming_flower_kong = 15;
+}
+
+enum GamePhase {
+  PHASE_INIT = 0;
+  PHASE_DEAL = 1;
+  PHASE_PLAYER_TURN = 2; // Waiting for them to discard
+  PHASE_WAIT_DISCARDS = 3; // Someone discarded, waiting a few sec for steals
+  PHASE_ROUND_END = 4;
+}
+
+message GameState {
+  // UUID for the match
+  string match_id = 1;
+
+  GamePhase phase = 2;
+  
+  // Who's turn is it right now? (0-3)
+  uint32 active_player = 3;
+
+  // The 4 players.
+  repeated PlayerState players = 4;
+
+  // Number of tiles left in the wall
+  uint32 wall_count = 5;
+  
+  // Current hand number (e.g. East 1 = 1, East 2 = 2)
+  uint32 hand_num = 6;
+  
+  // The current active discard (if in PHASE_WAIT_DISCARDS)
+  Tile active_discard = 7;
+
+  // The current active wild tiles for this round
+  repeated Tile wild_tiles = 8;
+
+  // The prevailing (round) wind for Fenghua Mahjong (1=East, 2=South, 3=West, 4=North)
+  uint32 prevailing_wind = 11;
+
+  // The base64-encoded MT19937 seed used to shuffle the wall (for replay verification)
+  string wall_seed = 12;
+}
