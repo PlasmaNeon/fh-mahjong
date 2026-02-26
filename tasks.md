@@ -23,20 +23,20 @@
 
 ## Phase 2: Game Server & Networking (Backend)
 **Goal:** Build the Go server to manage lobbies and synchronize game states.
-- [ ] Set up PostgreSQL schemas (Users, Leaderboards, Match History) using an ORM like `gorm`.
+- [x] Set up PostgreSQL schemas (Users, Leaderboards, Match History) using an ORM like `gorm`.
 - [ ] Set up Redis for fast ephemeral queuing.
-- [ ] Implement the REST API (`/api/v1`) for JWT user registration and matching.
-- [ ] Implement WebSocket connection handling (`/ws/room/{uuid}`).
-- [ ] Create Game Lobbies/Rooms orchestration:
+- [x] Implement the REST API (`/api/v1`) for JWT user registration and matching.
+- [x] Implement WebSocket connection handling (`/ws/room/{uuid}`).
+- [x] Create Game Lobbies/Rooms orchestration:
   - Allocate a dedicated goroutine and Mutex per active match room.
   - Ability to select which Rule Plugin the lobby uses.
   - Flag empty seats as "AI Bot" slots.
-- [ ] Integrate the Go Core Event Loop into the WebSocket loop:
+- [x] Integrate the Go Core Event Loop into the WebSocket loop:
   - Listen for `Action` Protobufs.
   - Route through the room Mutex to the Core Engine.
   - Validate action against the State Machine and active Rule Plugin.
   - Emit `StateDelta` Protobufs to all connected players or AI proxies.
-- [ ] Implement Game Replay logging (appending binary Protobuf streams to a file per match).
+- [x] Implement Game Replay logging (appending binary Protobuf streams to a file per match).
 
 ## Phase 3: The Cross-Platform Web Client (Frontend)
 **Goal:** Build the playable UI that provides instant feedback using WebAssembly.
