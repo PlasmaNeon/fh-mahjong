@@ -1,0 +1,287 @@
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-height: 100vh;
+  background-color: #1a1a1a;
+  color: #fff;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+#root {
+  width: 100%;
+}
+
+/* 5x5 Mahjong Table Grid Layout */
+.mahjong-table {
+  display: grid;
+  grid-template-columns: 15vw 20vw 30vw 20vw 15vw;
+  grid-template-rows: 15vh 20vh 30vh 20vh 15vh;
+  grid-template-areas:
+    "hand-top hand-top hand-top   hand-top hand-right"
+    "hand-left    . discard-top   .     hand-right"
+    "hand-left discard-left center-info  discard-right hand-right"
+    "hand-left .     discard-bottom   .     hand-right"
+    "hand-left hand-bottom hand-bottom   hand-bottom hand-bottom";
+  width: 100vw;
+  height: 100vh;
+  background-color: #064E3B;
+  /* Dark green felt */
+  overflow: hidden;
+  position: relative;
+}
+
+/* Base Transform rules for seats */
+.pov-left,
+.pov-right {
+  width: 4vw;
+  height: 2.8vw;
+  min-width: 36px;
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pov-top,
+.pov-bottom {
+  width: 2.8vw;
+  height: 4vw;
+  min-width: 26px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pov-right>* {
+  transform: rotate(-90deg);
+}
+
+.pov-top>* {
+  transform: rotate(180deg);
+}
+
+.pov-left>* {
+  transform: rotate(90deg);
+}
+
+.pov-left.small,
+.pov-right.small {
+  width: 2.5vw;
+  height: 1.8vw;
+  min-width: 24px;
+  min-height: 18px;
+}
+
+.pov-top.small,
+.pov-bottom.small {
+  width: 1.8vw;
+  height: 2.5vw;
+  min-width: 18px;
+  min-height: 24px;
+}
+
+/* Discard Pool Grid Layouts */
+.discard-pool {
+  display: flex;
+  gap: 2px;
+  padding: 8px;
+  background: rgba(17, 24, 39, 0.3);
+  border-radius: 8px;
+}
+
+/* Bottom: tiles flow left-to-right, top-to-bottom (away from center) */
+.discard-pool-bottom {
+  grid-area: discard-bottom;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  max-width: calc((1.8vw * 6) + (2px * 5) + 16px);
+  /* 6 small tiles + 5 gaps + padding */
+  margin: 0 auto;
+  /* Center in its grid area */
+}
+
+/* Right: tiles flow bottom-to-top, left-to-right (away from center) */
+.discard-pool-right {
+  grid-area: discard-right;
+  flex-direction: column-reverse;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  max-height: calc((1.8vw * 6) + (2px * 5) + 16px);
+  margin: auto 0;
+}
+
+/* Top: tiles flow right-to-left, bottom-to-top (away from center toward top edge) */
+.discard-pool-top {
+  grid-area: discard-top;
+  flex-direction: row-reverse;
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+  max-width: calc((1.8vw * 6) + (2px * 5) + 16px);
+  margin: 0 auto;
+}
+
+/* Left: tiles flow top-to-bottom, right-to-left (away from center toward left edge) */
+.discard-pool-left {
+  grid-area: discard-left;
+  flex-direction: column;
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+  max-height: calc((1.8vw * 6) + (2px * 5) + 16px);
+  margin: auto 0;
+}
+
+/* Hand Layouts */
+.hand-container-bottom {
+  grid-area: hand-bottom;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 1vh;
+  pointer-events: none;
+}
+
+.hand-container-right {
+  grid-area: hand-right;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.hand-container-top {
+  grid-area: hand-top;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 1vh;
+}
+
+.hand-container-left {
+  grid-area: hand-left;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* Inner Wrappers to Anchor Layout (Stop Framer Motion from shifting unaffected tiles) */
+.hand-inner {
+  display: flex;
+  gap: 2px;
+}
+
+.hand-inner-bottom {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: flex-end;
+  width: calc(39.2vw + 26px + 1vw);
+}
+
+.hand-inner-top {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  align-items: flex-start;
+  width: calc(25.2vw + 26px + 1vw);
+}
+
+.hand-inner-right {
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  align-items: center;
+  height: calc(25.2vw + 26px + 1vw);
+}
+
+.hand-inner-left {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  height: calc(25.2vw + 26px + 1vw);
+}
+
+/* Center HUD */
+.center-info {
+  grid-area: center-info;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid #059669;
+  border-radius: 12px;
+  padding: 1vw;
+  margin: 1vw;
+}
+
+/* Mahjong Tiles */
+.mahjong-tile {
+  width: 2.8vw;
+  height: 4vw;
+  min-width: 26px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  user-select: none;
+  pointer-events: auto;
+  transition: transform 0.1s ease-in-out;
+}
+
+.mahjong-tile.small {
+  width: 1.8vw;
+  height: 2.5vw;
+  min-width: 18px;
+  min-height: 24px;
+}
+
+.mahjong-tile.wild-tile {
+  border-radius: 4px;
+}
+
+.mahjong-tile.interactive:hover {
+  transform: translateY(-8px);
+  cursor: pointer;
+  filter: brightness(1.1);
+}
+
+.mahjong-tile-back {
+  width: 2.8vw;
+  height: 4vw;
+  min-width: 26px;
+  min-height: 36px;
+  background-image: url('/Regular_shortnames/back.svg');
+  background-size: 100% 100%;
+  border-radius: 4px;
+  box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.mahjong-tile-back.small {
+  width: 1.8vw;
+  height: 2.5vw;
+  min-width: 18px;
+  min-height: 24px;
+}
+
+/* Drawn Tile Spacing Gap */
+.drawn-tile.pov-bottom {
+  margin-left: 1vw;
+}
+
+.drawn-tile.pov-top {
+  margin-right: 1vw;
+}
+
+.drawn-tile.pov-left {
+  margin-top: 1vw;
+  /* Because column flows downwards */
+}
+
+.drawn-tile.pov-right {
+  margin-bottom: 1vw;
+  /* Because column-reverse flows upwards */
+}

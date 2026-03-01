@@ -50,9 +50,10 @@ func main() {
 		Addr: getEnv("REDIS_ADDR", "localhost:6379"),
 	})
 
-	// Initialize Matchmaker
+	// 4. Start Matchmaking Service
 	matchmaker := api.NewMatchmaker(rdb, db, hub)
 	go matchmaker.StartQueueWatcher("hometown")
+	go matchmaker.StartPrivateTableWatcher()
 
 	// Initialize Server
 	server := api.NewServer(db, hub, matchmaker)

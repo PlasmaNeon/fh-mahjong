@@ -40,16 +40,16 @@
 
 ## Phase 3: The Cross-Platform Web Client (Frontend)
 **Goal:** Build the playable UI that provides instant feedback using WebAssembly.
-- [ ] Initialize the React / TypeScript project (e.g., using Vite).
-- [ ] Setup the WebSockets client to connect to the Go Server.
-- [ ] Build the Wasm optimization bridge (`mahjong.wasm`):
+- [x] Initialize the React / TypeScript project (e.g., using Vite).
+- [x] Setup the WebSockets client to connect to the Go Server.
+- [x] Build the Wasm optimization bridge (`mahjong.wasm`):
   - Expose Core logic functions (e.g. `wasm_IsValidAction`) directly to the TS Window context.
   - Implement predictive UI logic (if Wasm returns true, animate immediately; rollback ONLY if network validation fails).
-- [ ] Build the Game UI using HTML5 Canvas (PixiJS/2D Context):
+- [x] Build the Game UI using HTML5 Canvas (PixiJS/2D Context) or React DOM:
   - Setup the render loop (60FPS tile dragging and sprite rendering).
   - Render the Player's Hand, Wall, and Discard Pools.
   - Render dynamic action buttons (Pong, Chi, Win, Riichi) derived entirely from Wasm output.
-- [ ] Connect the UI strictly to deserialize and act upon incoming Protobuf `StateDelta` events from WebSockets.
+- [x] Connect the UI strictly to deserialize and act upon incoming Protobuf `StateDelta` events from WebSockets.
 
 ## Phase 4: AI & Reinforcement Learning Pipeline
 **Goal:** Expose the game to PyTorch for rapid self-play training.

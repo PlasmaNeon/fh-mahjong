@@ -7,6 +7,7 @@ import (
 
 	"github.com/plasma/fh-mahjong/core"
 	"github.com/plasma/fh-mahjong/models"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -111,6 +112,17 @@ func (r *Room) Start() {
 				// Keep appending the state into the giant binary blob
 				// (In real apps, use protobuf repeated `StateDelta` wrappers)
 				replayBytes = append(replayBytes, statePayload...)
+
+				// 4. If we are now waiting for interrupts, schedule auto-resolve after a brief delay
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+					go func() {
+						time.Sleep(1 * time.Second) // Wait window for Pong/Ron/Chii
+						r.Engine.ResolveInterrupts()
+						resolvePayload := r.BroadcastState()
+						replayBytes = append(replayBytes, resolvePayload...)
+						log.Printf("Auto-resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+					}()
+				}
 			}
 		}
 	}
@@ -135,4 +147,17 @@ func (r *Room) BroadcastState() []byte { // Modified function signature
 	}
 
 	return payload // Added return
+}
+
+// SendStateToClient sends the serialized GameState Protobuf strictly to one single connected player (used for reconnects)
+func (r *Room) SendStateToClient(client *Client) {
+	masterState := r.Engine.State
+
+	payload, err := proto.Marshal(masterState)
+	if err != nil {
+		log.Printf("Failed to marshal GameState for room %s: %v", r.ID, err)
+		return
+	}
+
+	client.Send <- payload
 }

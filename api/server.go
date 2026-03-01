@@ -41,6 +41,7 @@ func (s *Server) setupRoutes() {
 		// Public routes
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
+		v1.POST("/auth/guest", authHandler.GuestLogin)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, c) })
 
 		// Protected routes
@@ -49,6 +50,7 @@ func (s *Server) setupRoutes() {
 		{
 			protected.GET("/users/me", s.handleGetMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
+			protected.POST("/matchmaking/private", s.handleJoinPrivate)
 		}
 	}
 }
@@ -72,6 +74,28 @@ func (s *Server) handleJoinQueue(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "queued", "ruleset": req.Ruleset})
+}
+
+// handleJoinPrivate lets a user manually connect to a private link/table identifier
+func (s *Server) handleJoinPrivate(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	username, _ := c.Get("username")
+
+	var req struct {
+		TableID string `json:"tableId" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := s.Matchmaker.JoinPrivateTable(userID.(uint), username.(string), req.TableID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join private table"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "queued", "table": req.TableID})
 }
 
 // handleGetMe returns the authenticated user's profile

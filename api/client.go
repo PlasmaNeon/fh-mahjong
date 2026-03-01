@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"log"
 	"time"
 
@@ -77,7 +79,13 @@ func (c *Client) writePump() {
 				return
 			}
 
-			w, err := c.Conn.NextWriter(websocket.BinaryMessage)
+			var w io.WriteCloser
+			var err error
+			if len(message) > 0 && message[0] == '{' && json.Valid(message) {
+				w, err = c.Conn.NextWriter(websocket.TextMessage)
+			} else {
+				w, err = c.Conn.NextWriter(websocket.BinaryMessage)
+			}
 			if err != nil {
 				return
 			}

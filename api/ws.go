@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -24,6 +26,12 @@ type ClientAction struct {
 	Action *pb.PlayerAction
 }
 
+// RoomBind maps a group of users to a specific match Room
+type RoomBind struct {
+	UserIDs []uint
+	Room    *Room
+}
+
 // Hub maintains the set of active clients and broadcasts messages to the match rooms.
 type Hub struct {
 	// Registered clients.
@@ -38,17 +46,25 @@ type Hub struct {
 	// Unregister requests from clients.
 	Unregister chan *Client
 
+	// Room binding requests
+	BindRoom chan RoomBind
+
+	// Lobby announcements
+	LobbyBroadcast chan []byte
+
 	// Map user IDs to their current Room
 	UserRooms map[uint]*Room
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		ActionStream: make(chan ClientAction),
-		Register:     make(chan *Client),
-		Unregister:   make(chan *Client),
-		Clients:      make(map[*Client]bool),
-		UserRooms:    make(map[uint]*Room),
+		ActionStream:   make(chan ClientAction),
+		Register:       make(chan *Client),
+		Unregister:     make(chan *Client),
+		BindRoom:       make(chan RoomBind),
+		LobbyBroadcast: make(chan []byte),
+		Clients:        make(map[*Client]bool),
+		UserRooms:      make(map[uint]*Room),
 	}
 }
 
@@ -58,6 +74,28 @@ func (h *Hub) Run() {
 		case client := <-h.Register:
 			h.Clients[client] = true
 			log.Printf("User %d connected via WS", client.UserID)
+
+			// Reconnection logic: if they are already legally assigned to an active room
+			if room, exists := h.UserRooms[client.UserID]; exists {
+				log.Printf("User %d reconnected to active room %s", client.UserID, room.ID)
+
+				// Find their assigned seat and update the active socket pointer
+				var assignedSeat uint32
+				for seat, c := range room.Seats {
+					if c != nil && c.UserID == client.UserID {
+						assignedSeat = seat
+						break
+					}
+				}
+				room.Seats[assignedSeat] = client
+
+				// Send them their seat assignment immediately
+				msg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, assignedSeat))
+				client.Send <- msg
+
+				// Send them the current master state of the board
+				room.SendStateToClient(client)
+			}
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
@@ -71,6 +109,42 @@ func (h *Hub) Run() {
 			} else {
 				log.Printf("User %d submitted action but is not in a room", payload.Client.UserID)
 			}
+		case bind := <-h.BindRoom:
+			// Find clients for these UserIDs and attach them to the room
+			seat := uint32(0)
+			for _, uid := range bind.UserIDs {
+				h.UserRooms[uid] = bind.Room
+
+				// Search active connections for this user to wire to the engine
+				for client := range h.Clients {
+					if client.UserID == uid {
+						bind.Room.Seats[seat] = client
+						msg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, seat))
+						select {
+						case client.Send <- msg:
+						default:
+							close(client.Send)
+							delete(h.Clients, client)
+						}
+						break
+					}
+				}
+				seat++
+			}
+			// Engine and web sockets are wired, start the room loop
+			go bind.Room.Start()
+		case msg := <-h.LobbyBroadcast:
+			// Broadcast JSON text message to all clients not currently in a room
+			for client := range h.Clients {
+				if _, inRoom := h.UserRooms[client.UserID]; !inRoom {
+					select {
+					case client.Send <- msg:
+					default:
+						close(client.Send)
+						delete(h.Clients, client)
+					}
+				}
+			}
 		}
 	}
 }
@@ -82,13 +156,31 @@ func ServeWs(hub *Hub, c *gin.Context) {
 	// Normally we pass token as a query param `?token=XYZ`
 	token := c.Query("token")
 
-	// TODO: Actually validate the JWT token here
-	userID := uint(1) // stub
-	username := "stub_user"
-
 	if token == "" {
-		_ = token // ignore for now
+		log.Println("WebSocket connection failed: Missing token")
+		return // Return without upgrading
 	}
+
+	parsedToken, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return jwtSecret, nil
+	})
+
+	if err != nil || !parsedToken.Valid {
+		log.Println("WebSocket connection failed: Invalid or expired token")
+		return
+	}
+
+	claims, ok := parsedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		log.Println("WebSocket connection failed: Invalid token claims")
+		return
+	}
+
+	userID := uint(claims["sub"].(float64))
+	username := claims["username"].(string)
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -41,6 +42,39 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	return nil
 }
 
+// JoinPrivateTable adds a user to a specific private table queue
+func (m *Matchmaker) JoinPrivateTable(userID uint, username string, tableID string) error {
+	queueKey := "table:" + tableID
+
+	// Check if this user is already in the queue to prevent double-joins
+	existing, err := m.Redis.LRange(ctx, queueKey, 0, -1).Result()
+	if err == nil {
+		for _, id := range existing {
+			if id == fmt.Sprintf("%d", userID) {
+				return nil // User is already queued, silently succeed
+			}
+		}
+	}
+
+	// Add user to a Redis List
+	err = m.Redis.RPush(ctx, queueKey, userID).Err()
+	if err != nil {
+		return err
+	}
+
+	length, _ := m.Redis.LLen(ctx, queueKey).Result()
+
+	log.Printf("User %d (%s) joined private table queue '%s'", userID, username, tableID)
+
+	// Broadcast alert
+	msg := fmt.Sprintf(`{"type":"lobby_update", "table":"%s", "message":"Player %s is ready! (%d/4)"}`, tableID, username, length)
+	go func() {
+		m.Hub.LobbyBroadcast <- []byte(msg)
+	}()
+
+	return nil
+}
+
 // StartQueueWatcher starts a background goroutine to poll Redis for 4 players
 func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	queueKey := "queue:" + ruleset
@@ -71,6 +105,30 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	}
 }
 
+func (m *Matchmaker) StartPrivateTableWatcher() {
+	log.Printf("Matchmaker polling for any private tables...")
+
+	for {
+		// Find all keys starting with table:
+		keys, err := m.Redis.Keys(ctx, "table:*").Result()
+		if err == nil {
+			for _, key := range keys {
+				length, err := m.Redis.LLen(ctx, key).Result()
+				if err == nil && length >= 4 {
+					players, err := m.Redis.LPopCount(ctx, key, 4).Result()
+					if err == nil && len(players) == 4 {
+						log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
+						// For simplicity, default to hometown rules for private tables
+						go m.createMatch(players, "hometown")
+					}
+				}
+			}
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
 	matchID := uuid.New().String()
 
@@ -95,16 +153,18 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
 	// 3. Create the Room Goroutine explicitly
 	room := NewRoom(matchID, m.Hub, m.DB)
 
-	// 4. Map the users to their connections and the Room
-	for seat, idStr := range playerIDs {
-		// (Real conversion logic needed here: string -> uint)
-		// For now we just route the 4 active WS connections that belong to these IDs into the Room.
-		_ = seat
-		_ = idStr
-		// Usually we lock the Hub, find the Client by UserID, add to room.Seats[seat] = Client
-		// and set hub.UserRooms[userID] = room
+	// 4. Parse user IDs and dispatch to Hub for exact WS binding
+	var userIDs []uint
+	for _, idStr := range playerIDs {
+		var uid uint
+		// Simple conversion, assuming IDs are pure numeric strings or standard uints in redis
+		// If these were Postgres UUIDs, we'd handle it differently, but our IDs are uint representations
+		fmt.Sscanf(idStr, "%d", &uid)
+		userIDs = append(userIDs, uid)
 	}
 
-	// Boot the isolated game engine loop
-	go room.Start()
+	m.Hub.BindRoom <- RoomBind{
+		UserIDs: userIDs,
+		Room:    room,
+	}
 }

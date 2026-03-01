@@ -2,6 +2,7 @@ package api
 
 import (
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -117,5 +118,47 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, AuthResponse{
 		Token: tokenString,
 		User:  user,
+	})
+}
+
+type GuestRequest struct {
+	Username string `json:"username" binding:"required"`
+}
+
+func (h *AuthHandler) GuestLogin(c *gin.Context) {
+	var req GuestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Generate a random temporary User ID (high number to avoid collision with standard DB IDs)
+	rand.Seed(time.Now().UnixNano())
+	tempUserID := uint(9000000 + rand.Intn(1000000))
+
+	// Generate a standard JWT token for this guest
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":      tempUserID,
+		"username": req.Username,
+		"exp":      time.Now().Add(time.Hour * 24).Unix(),
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		log.Printf("Failed to sign guest token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	// We return a mock user object to satisfy the frontend's expectations
+	mockUser := models.User{
+		ID:       tempUserID,
+		Username: req.Username,
+		Rating:   1500,
+	}
+
+	c.JSON(http.StatusOK, AuthResponse{
+		Token: tokenString,
+		User:  mockUser,
 	})
 }
