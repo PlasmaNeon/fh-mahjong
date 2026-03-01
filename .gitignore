@@ -1,0 +1,31 @@
+# Build output and vendor
+bin/
+tmp/
+.DS_Store
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Node / React
+node_modules/
+dist/
+dist-ssr/
+build/
+.npm/
+
+# Local env files
+.env
+.env.*
+.env.local
+
+# Mac/OS
+.DS_Store
+
+# Ignore embedded external clients
+killer_mortal_gui/
