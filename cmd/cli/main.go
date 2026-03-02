@@ -128,7 +128,7 @@ func main() {
 				fmt.Printf("\n--- INTERRUPT OPPORTUNITY! Player %d discarded **%s** ---\n", state.ActivePlayer, tileName(state.ActiveDiscard))
 				fmt.Println("Available actions (type letter and press enter):")
 				for _, act := range validInterrupts {
-					switch act {
+					switch act.Type {
 					case pb.ActionType_ACTION_PON:
 						fmt.Println("  (p) Pong")
 					case pb.ActionType_ACTION_CHII:
@@ -204,9 +204,9 @@ func main() {
 				// Determine valid active actions (e.g. Tsumo, Kan)
 				validActions := game.Rules.GetValidActions(state, 0)
 				for _, act := range validActions {
-					if act == pb.ActionType_ACTION_TSUMO {
+					if act.Type == pb.ActionType_ACTION_TSUMO {
 						fmt.Println("\n>>> YOU CAN TSUMO! (Type 't' to win) <<<")
-					} else if act == pb.ActionType_ACTION_KAN {
+					} else if act.Type == pb.ActionType_ACTION_KAN {
 						fmt.Println("\n>>> YOU CAN KONG! (Type 'k' to kong) <<<")
 					}
 				}

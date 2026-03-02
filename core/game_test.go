@@ -54,6 +54,12 @@ func TestDiscardAction(t *testing.T) {
 	playerHand := g.State.Players[activePlayer].ClosedHand
 	discardTile := playerHand[0] // pick the first tile to discard
 
+	// Inject a matching pair into South's hand so the game recognizes a VALID PONG interrupt and enters PHASE_WAIT_DISCARDS
+	southSeat := (activePlayer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+
 	action := &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
 		Tile: discardTile,
@@ -131,17 +137,8 @@ func TestDeadWallKanDraw(t *testing.T) {
 	playerHand := g.State.Players[activePlayer].ClosedHand
 	discardTile := playerHand[0]
 
-	// Player 0 discards a tile
-	err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
-		Type: pb.ActionType_ACTION_DISCARD,
-		Tile: discardTile,
-	})
-	if err != nil {
-		t.Fatalf("Failed to discard: %v", err)
-	}
-
-	// South player prepares to call Kong
 	southSeat := (activePlayer + 1) % 4
+	// South MUST already hold 3 matching tiles to trigger the waiting window for a valid Kan.
 	clone1 := &pb.Tile{Id: discardTile.Id + 100, Suit: discardTile.Suit, Value: discardTile.Value}
 	clone2 := &pb.Tile{Id: discardTile.Id + 200, Suit: discardTile.Suit, Value: discardTile.Value}
 	clone3 := &pb.Tile{Id: discardTile.Id + 300, Suit: discardTile.Suit, Value: discardTile.Value}
@@ -150,6 +147,17 @@ func TestDeadWallKanDraw(t *testing.T) {
 	southPlayer.ClosedHand = append(southPlayer.ClosedHand, clone1, clone2, clone3)
 	initialHandSize := len(southPlayer.ClosedHand)
 	initialWallCount := g.State.WallCount
+
+	// Player 0 discards a tile
+	err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	})
+	if err != nil {
+		t.Fatalf("Failed to discard: %v", err)
+	}
+	// South has already had the triplet injected before the discard.
+	// Proceed directly to the Kan call.
 
 	// South calls Kan on the discard
 	err = g.ProcessPlayerAction(southSeat, &pb.PlayerAction{

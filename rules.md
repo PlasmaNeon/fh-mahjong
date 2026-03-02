@@ -50,7 +50,8 @@ The "Hometown" rules based on Fenghua (Zhejiang) Mahjong feature a rich and comp
 1. **Tiles**: Uses the full 136 standard tiles, plus 8 Flower tiles (Seasons/Flowers). Total 144.
 2. **Wild Tiles (搭)**: The game features "Wild Tiles" (often rolled via a dice or flipped tile at the start of the round). **Wild tiles are selected in each game randomly and are exactly one specific type of tile.** Since Mahjong uses 4 copies of each tile, and 1 is placed face-up as the indicator, there is a maximum of 3 wild tiles of that specific type circulating in play. The rules differentiate heavily based on whether a hand has 0, 1, 2, or 3 wild tiles, or if the wild tiles are "tamed" (used for their natural face value).
 3. **Winning Minimum**: A win by claiming a discard (Ron) requires a minimum of **4 points**. Winning by drawing (Tsumo) has no strict minimum, but awards 1 base point.
-4. **Multiplier Payout**: 
+4. **Highest-Scoring Pattern**: When a hand qualifies for multiple winning patterns simultaneously (e.g., a hand that is both a valid Seven Pairs and a valid Standard hand), the engine always scores it by the pattern that yields the **highest total points**. No points are lost by fitting more than one pattern.
+5. **Multiplier Payout**:
    - Draw (Tsumo): All 3 losers pay (Score x 2).
    - Steal (Ron): The discarder pays (Score x 2). The other two losers pay (Score x 1).
 

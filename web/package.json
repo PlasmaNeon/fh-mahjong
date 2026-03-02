@@ -25,6 +25,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.4",
     "protobufjs": "^8.0.0",
+    "protobufjs-cli": "^2.0.0",
     "tailwindcss": "^4.2.1",
     "ts-proto": "^2.11.4",
     "typescript": "^5.9.3",

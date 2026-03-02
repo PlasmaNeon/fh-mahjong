@@ -23,8 +23,10 @@ type Room struct {
 	Engine *core.Game
 	Seats  map[uint32]*Client // maps 0-3 to active WS connections
 
-	ActionQueue chan ClientAction
-	Shutdown    chan bool
+	ActionQueue   chan ClientAction
+	Shutdown      chan bool
+	InterruptChan chan bool
+	interruptTmr  *time.Timer
 }
 
 // NewRoom creates a new match
@@ -32,13 +34,14 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 	ruleset := &rules.HometownRuleset{}
 
 	room := &Room{
-		ID:          matchID,
-		Hub:         hub,
-		DB:          db,
-		Engine:      core.NewGame(matchID, ruleset),
-		Seats:       make(map[uint32]*Client),
-		ActionQueue: make(chan ClientAction),
-		Shutdown:    make(chan bool),
+		ID:            matchID,
+		Hub:           hub,
+		DB:            db,
+		Engine:        core.NewGame(matchID, ruleset),
+		Seats:         make(map[uint32]*Client),
+		ActionQueue:   make(chan ClientAction),
+		Shutdown:      make(chan bool),
+		InterruptChan: make(chan bool, 1),
 	}
 
 	return room
@@ -110,18 +113,46 @@ func (r *Room) Start() {
 				statePayload := r.BroadcastState()
 
 				// Keep appending the state into the giant binary blob
-				// (In real apps, use protobuf repeated `StateDelta` wrappers)
 				replayBytes = append(replayBytes, statePayload...)
 
-				// 4. If we are now waiting for interrupts, schedule auto-resolve after a brief delay
-				if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-					go func() {
-						time.Sleep(1 * time.Second) // Wait window for Pong/Ron/Chii
-						r.Engine.ResolveInterrupts()
-						resolvePayload := r.BroadcastState()
-						replayBytes = append(replayBytes, resolvePayload...)
-						log.Printf("Auto-resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
-					}()
+				// 4. Handle Phase Transitions
+				currentPhase := r.Engine.State.Phase
+
+				// Did we just resolve the wait phase early?
+				if clientAction.Action.Type != pb.ActionType_ACTION_DISCARD && currentPhase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+					select {
+					case r.InterruptChan <- true: // signal early cancel
+					default:
+					}
+				}
+
+				// If we just entered wait phase, start the timer
+				if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
+					if r.interruptTmr != nil {
+						r.interruptTmr.Stop()
+					}
+					// 5 seconds to decide if they want to Pong/Chi/Ron
+					r.interruptTmr = time.NewTimer(5 * time.Second)
+
+					go func(timer *time.Timer) {
+						select {
+						case <-timer.C:
+							// Time expired, auto-resolve
+						case <-r.InterruptChan:
+							// Someone claimed it early or everyone skipped!
+							if !timer.Stop() {
+								<-timer.C
+							}
+						}
+
+						// Double check we are still in wait phase before forcing a resolve
+						if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+							r.Engine.ResolveInterrupts()
+							resolvePayload := r.BroadcastState()
+							replayBytes = append(replayBytes, resolvePayload...)
+							log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+						}
+					}(r.interruptTmr)
 				}
 			}
 		}

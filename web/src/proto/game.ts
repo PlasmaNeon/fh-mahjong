@@ -341,6 +341,18 @@ export interface GameState {
   prevailingWind: number;
   /** The base64-encoded MT19937 seed used to shuffle the wall (for replay verification) */
   wallSeed: string;
+  /** Per-seat available interrupt actions during PHASE_WAIT_DISCARDS */
+  availableActions: { [key: number]: ActionList };
+}
+
+export interface GameState_AvailableActionsEntry {
+  key: number;
+  value: ActionList | undefined;
+}
+
+/** A list of action types, used as the value type for the available_actions map. */
+export interface ActionList {
+  actions: ActionType[];
 }
 
 function createBaseTile(): Tile {
@@ -1095,6 +1107,7 @@ function createBaseGameState(): GameState {
     wildTiles: [],
     prevailingWind: 0,
     wallSeed: "",
+    availableActions: {},
   };
 }
 
@@ -1130,6 +1143,9 @@ export const GameState: MessageFns<GameState> = {
     if (message.wallSeed !== "") {
       writer.uint32(98).string(message.wallSeed);
     }
+    globalThis.Object.entries(message.availableActions).forEach(([key, value]: [string, ActionList]) => {
+      GameState_AvailableActionsEntry.encode({ key: key as any, value }, writer.uint32(106).fork()).join();
+    });
     return writer;
   },
 
@@ -1220,6 +1236,17 @@ export const GameState: MessageFns<GameState> = {
           message.wallSeed = reader.string();
           continue;
         }
+        case 13: {
+          if (tag !== 106) {
+            break;
+          }
+
+          const entry13 = GameState_AvailableActionsEntry.decode(reader, reader.uint32());
+          if (entry13.value !== undefined) {
+            message.availableActions[entry13.key] = entry13.value;
+          }
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1273,6 +1300,23 @@ export const GameState: MessageFns<GameState> = {
         : isSet(object.wall_seed)
         ? globalThis.String(object.wall_seed)
         : "",
+      availableActions: isObject(object.availableActions)
+        ? (globalThis.Object.entries(object.availableActions) as [string, any][]).reduce(
+          (acc: { [key: number]: ActionList }, [key, value]: [string, any]) => {
+            acc[globalThis.Number(key)] = ActionList.fromJSON(value);
+            return acc;
+          },
+          {},
+        )
+        : isObject(object.available_actions)
+        ? (globalThis.Object.entries(object.available_actions) as [string, any][]).reduce(
+          (acc: { [key: number]: ActionList }, [key, value]: [string, any]) => {
+            acc[globalThis.Number(key)] = ActionList.fromJSON(value);
+            return acc;
+          },
+          {},
+        )
+        : {},
     };
   },
 
@@ -1308,6 +1352,15 @@ export const GameState: MessageFns<GameState> = {
     if (message.wallSeed !== "") {
       obj.wallSeed = message.wallSeed;
     }
+    if (message.availableActions) {
+      const entries = globalThis.Object.entries(message.availableActions) as [string, ActionList][];
+      if (entries.length > 0) {
+        obj.availableActions = {};
+        entries.forEach(([k, v]) => {
+          obj.availableActions[k] = ActionList.toJSON(v);
+        });
+      }
+    }
     return obj;
   },
 
@@ -1328,6 +1381,165 @@ export const GameState: MessageFns<GameState> = {
     message.wildTiles = object.wildTiles?.map((e) => Tile.fromPartial(e)) || [];
     message.prevailingWind = object.prevailingWind ?? 0;
     message.wallSeed = object.wallSeed ?? "";
+    message.availableActions = (globalThis.Object.entries(object.availableActions ?? {}) as [string, ActionList][])
+      .reduce((acc: { [key: number]: ActionList }, [key, value]: [string, ActionList]) => {
+        if (value !== undefined) {
+          acc[globalThis.Number(key)] = ActionList.fromPartial(value);
+        }
+        return acc;
+      }, {});
+    return message;
+  },
+};
+
+function createBaseGameState_AvailableActionsEntry(): GameState_AvailableActionsEntry {
+  return { key: 0, value: undefined };
+}
+
+export const GameState_AvailableActionsEntry: MessageFns<GameState_AvailableActionsEntry> = {
+  encode(message: GameState_AvailableActionsEntry, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.key !== 0) {
+      writer.uint32(8).uint32(message.key);
+    }
+    if (message.value !== undefined) {
+      ActionList.encode(message.value, writer.uint32(18).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GameState_AvailableActionsEntry {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGameState_AvailableActionsEntry();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.key = reader.uint32();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.value = ActionList.decode(reader, reader.uint32());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): GameState_AvailableActionsEntry {
+    return {
+      key: isSet(object.key) ? globalThis.Number(object.key) : 0,
+      value: isSet(object.value) ? ActionList.fromJSON(object.value) : undefined,
+    };
+  },
+
+  toJSON(message: GameState_AvailableActionsEntry): unknown {
+    const obj: any = {};
+    if (message.key !== 0) {
+      obj.key = Math.round(message.key);
+    }
+    if (message.value !== undefined) {
+      obj.value = ActionList.toJSON(message.value);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<GameState_AvailableActionsEntry>, I>>(base?: I): GameState_AvailableActionsEntry {
+    return GameState_AvailableActionsEntry.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<GameState_AvailableActionsEntry>, I>>(
+    object: I,
+  ): GameState_AvailableActionsEntry {
+    const message = createBaseGameState_AvailableActionsEntry();
+    message.key = object.key ?? 0;
+    message.value = (object.value !== undefined && object.value !== null)
+      ? ActionList.fromPartial(object.value)
+      : undefined;
+    return message;
+  },
+};
+
+function createBaseActionList(): ActionList {
+  return { actions: [] };
+}
+
+export const ActionList: MessageFns<ActionList> = {
+  encode(message: ActionList, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    writer.uint32(10).fork();
+    for (const v of message.actions) {
+      writer.int32(v);
+    }
+    writer.join();
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ActionList {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseActionList();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag === 8) {
+            message.actions.push(reader.int32() as any);
+
+            continue;
+          }
+
+          if (tag === 10) {
+            const end2 = reader.uint32() + reader.pos;
+            while (reader.pos < end2) {
+              message.actions.push(reader.int32() as any);
+            }
+
+            continue;
+          }
+
+          break;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): ActionList {
+    return {
+      actions: globalThis.Array.isArray(object?.actions) ? object.actions.map((e: any) => actionTypeFromJSON(e)) : [],
+    };
+  },
+
+  toJSON(message: ActionList): unknown {
+    const obj: any = {};
+    if (message.actions?.length) {
+      obj.actions = message.actions.map((e) => actionTypeToJSON(e));
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<ActionList>, I>>(base?: I): ActionList {
+    return ActionList.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ActionList>, I>>(object: I): ActionList {
+    const message = createBaseActionList();
+    message.actions = object.actions?.map((e) => e) || [];
     return message;
   },
 };
@@ -1343,6 +1555,10 @@ export type DeepPartial<T> = T extends Builtin ? T
 type KeysOfUnion<T> = T extends T ? keyof T : never;
 export type Exact<P, I extends P> = P extends Builtin ? P
   : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never };
+
+function isObject(value: any): boolean {
+  return typeof value === "object" && value !== null;
+}
 
 function isSet(value: any): boolean {
   return value !== null && value !== undefined;

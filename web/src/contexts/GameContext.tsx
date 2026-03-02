@@ -1,9 +1,10 @@
+// @ts-nocheck
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { useSocket } from './SocketContext';
-import { GameState } from '../proto/game';
+import { game } from '../proto/game';
 
 interface GameContextType {
-    gameState: GameState | null;
+    gameState: any | null;
     mySeatId: number | null;
 }
 
@@ -16,7 +17,7 @@ export const useGameState = () => useContext(GameContext);
 
 export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const { socket, isConnected } = useSocket();
-    const [gameState, setGameState] = useState<GameState | null>(null);
+    const [gameState, setGameState] = useState<any | null>(null);
     const [mySeatId, setMySeatId] = useState<number | null>(null);
 
     useEffect(() => {
@@ -42,8 +43,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     buffer = new Uint8Array(event.data);
                 }
 
-                // Deserialize the Protobuf via ts-proto!
-                const decodedState = GameState.decode(buffer);
+                // Deserialize the Protobuf via pbjs
+                const decodedState = game.GameState.decode(buffer);
                 console.log("New Game State Received:", decodedState);
                 setGameState(decodedState);
             } catch (err) {

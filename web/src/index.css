@@ -139,34 +139,44 @@ body {
 .hand-container-bottom {
   grid-area: hand-bottom;
   display: flex;
+  flex-direction: row;
   align-items: flex-end;
-  justify-content: center;
+  justify-content: flex-start;
   padding-bottom: 1vh;
+  padding-left: 10vw;
+  padding-right: 5vw;
   pointer-events: none;
+  gap: 20px;
 }
 
 .hand-container-right {
   grid-area: hand-right;
   display: flex;
+  flex-direction: column-reverse;
   align-items: center;
   justify-content: center;
   padding: 0;
+  gap: 20px;
 }
 
 .hand-container-top {
   grid-area: hand-top;
   display: flex;
+  flex-direction: row-reverse;
   align-items: flex-start;
   justify-content: center;
   padding-top: 1vh;
+  gap: 20px;
 }
 
 .hand-container-left {
   grid-area: hand-left;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 0;
+  gap: 20px;
 }
 
 /* Inner Wrappers to Anchor Layout (Stop Framer Motion from shifting unaffected tiles) */
@@ -284,4 +294,121 @@ body {
 .drawn-tile.pov-right {
   margin-bottom: 1vw;
   /* Because column-reverse flows upwards */
+}
+
+/* Open Melds layout */
+.melds-container-bottom {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: auto;
+  margin-left: auto;
+}
+
+.melds-container-top {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 10px;
+  align-items: flex-start;
+  pointer-events: auto;
+}
+
+.melds-container-right {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.melds-container-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.meld-group {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  border-radius: 6px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+}
+
+.meld-group-bottom {
+  flex-direction: row;
+  align-items: flex-end;
+}
+
+.meld-group-top {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+
+.meld-group-right {
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+.meld-group-left {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* Stolen Tile Overrides */
+/* Bottom / Top stolen tiles become wide (normal is tall) */
+.pov-bottom.stolen-tile,
+.pov-top.stolen-tile {
+  width: 4vw;
+  height: 2.8vw;
+  min-width: 36px;
+  min-height: 26px;
+}
+
+.pov-bottom.small.stolen-tile,
+.pov-top.small.stolen-tile {
+  width: 2.5vw;
+  height: 1.8vw;
+  min-width: 24px;
+  min-height: 18px;
+}
+
+.pov-bottom.stolen-tile>* {
+  transform: rotate(-90deg) scale(0.95);
+}
+
+.pov-top.stolen-tile>* {
+  transform: rotate(90deg) scale(0.95);
+}
+
+/* Left / Right stolen tiles become tall (normal is wide) */
+.pov-left.stolen-tile,
+.pov-right.stolen-tile {
+  width: 2.8vw;
+  height: 4vw;
+  min-width: 26px;
+  min-height: 36px;
+}
+
+.pov-left.small.stolen-tile,
+.pov-right.small.stolen-tile {
+  width: 1.8vw;
+  height: 2.5vw;
+  min-width: 18px;
+  min-height: 24px;
+}
+
+/* Right normal child is -90. Stolen means top faces DOWN, so -180 */
+.pov-right.stolen-tile>* {
+  transform: rotate(-180deg) scale(0.95);
+}
+
+/* Left normal child is +90. Stolen means top faces UP, so 0 */
+.pov-left.stolen-tile>* {
+  transform: rotate(0deg) scale(0.95);
 }

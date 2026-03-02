@@ -517,8 +517,13 @@ type PlayerState struct {
 	HasBuddingRiskyKong   bool `protobuf:"varint,13,opt,name=has_budding_risky_kong,json=hasBuddingRiskyKong,proto3" json:"has_budding_risky_kong,omitempty"`
 	HasBloomingRiskyKong  bool `protobuf:"varint,14,opt,name=has_blooming_risky_kong,json=hasBloomingRiskyKong,proto3" json:"has_blooming_risky_kong,omitempty"`
 	HasBloomingFlowerKong bool `protobuf:"varint,15,opt,name=has_blooming_flower_kong,json=hasBloomingFlowerKong,proto3" json:"has_blooming_flower_kong,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Actions the player is currently allowed to take
+	ValidActions []*PlayerAction `protobuf:"bytes,16,rep,name=valid_actions,json=validActions,proto3" json:"valid_actions,omitempty"`
+	// The specific ID of the tile that was just drawn (used to render the gap on frontend).
+	// optional prevents Javascript dropping the number 0 (since Tile ID 0 = 1m).
+	DrawnTileId   *int32 `protobuf:"varint,17,opt,name=drawn_tile_id,json=drawnTileId,proto3,oneof" json:"drawn_tile_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlayerState) Reset() {
@@ -654,6 +659,20 @@ func (x *PlayerState) GetHasBloomingFlowerKong() bool {
 		return x.HasBloomingFlowerKong
 	}
 	return false
+}
+
+func (x *PlayerState) GetValidActions() []*PlayerAction {
+	if x != nil {
+		return x.ValidActions
+	}
+	return nil
+}
+
+func (x *PlayerState) GetDrawnTileId() int32 {
+	if x != nil && x.DrawnTileId != nil {
+		return *x.DrawnTileId
+	}
+	return 0
 }
 
 type GameState struct {
@@ -807,7 +826,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x05tiles\x18\x02 \x03(\v2\n" +
 	".game.TileR\x05tiles\x12>\n" +
 	"\x10called_direction\x18\x03 \x01(\x0e2\x13.game.MeldDirectionR\x0fcalledDirection\x12$\n" +
-	"\x0ecalled_tile_id\x18\x04 \x01(\rR\fcalledTileId\"\xa5\x05\n" +
+	"\x0ecalled_tile_id\x18\x04 \x01(\rR\fcalledTileId\"\x99\x06\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x05R\x05score\x12+\n" +
@@ -830,7 +849,10 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x18has_blooming_closed_kong\x18\f \x01(\bR\x15hasBloomingClosedKong\x123\n" +
 	"\x16has_budding_risky_kong\x18\r \x01(\bR\x13hasBuddingRiskyKong\x125\n" +
 	"\x17has_blooming_risky_kong\x18\x0e \x01(\bR\x14hasBloomingRiskyKong\x127\n" +
-	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\"\xfd\x02\n" +
+	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\x127\n" +
+	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
+	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01B\x10\n" +
+	"\x0e_drawn_tile_id\"\xfd\x02\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -919,15 +941,16 @@ var file_proto_game_proto_depIdxs = []int32{
 	6,  // 8: game.PlayerState.open_melds:type_name -> game.Meld
 	4,  // 9: game.PlayerState.discards:type_name -> game.Tile
 	4,  // 10: game.PlayerState.flower_melds:type_name -> game.Tile
-	3,  // 11: game.GameState.phase:type_name -> game.GamePhase
-	7,  // 12: game.GameState.players:type_name -> game.PlayerState
-	4,  // 13: game.GameState.active_discard:type_name -> game.Tile
-	4,  // 14: game.GameState.wild_tiles:type_name -> game.Tile
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	5,  // 11: game.PlayerState.valid_actions:type_name -> game.PlayerAction
+	3,  // 12: game.GameState.phase:type_name -> game.GamePhase
+	7,  // 13: game.GameState.players:type_name -> game.PlayerState
+	4,  // 14: game.GameState.active_discard:type_name -> game.Tile
+	4,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -935,6 +958,7 @@ func file_proto_game_proto_init() {
 	if File_proto_game_proto != nil {
 		return
 	}
+	file_proto_game_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

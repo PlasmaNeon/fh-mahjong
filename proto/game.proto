@@ -121,6 +121,13 @@ message PlayerState {
   bool has_budding_risky_kong = 13;
   bool has_blooming_risky_kong = 14;
   bool has_blooming_flower_kong = 15;
+
+  // Actions the player is currently allowed to take
+  repeated PlayerAction valid_actions = 16;
+
+  // The specific ID of the tile that was just drawn (used to render the gap on frontend).
+  // optional prevents Javascript dropping the number 0 (since Tile ID 0 = 1m).
+  optional int32 drawn_tile_id = 17;
 }
 
 enum GamePhase {

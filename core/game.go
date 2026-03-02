@@ -48,6 +48,7 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 			Score:       25000, // Standard starting score, could be parameterized by rules
 			ClosedHand:  make([]*pb.Tile, 0),
 			HandSize:    0,
+			DrawnTileId: nil,
 			OpenMelds:   make([]*pb.Meld, 0),
 			Discards:    make([]*pb.Tile, 0),
 			SeatWind:    uint32(i + 1), // 1=East, 2=South, 3=West, 4=North
@@ -159,6 +160,8 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 
 	player.ClosedHand = append(player.ClosedHand, drawnTile)
 	player.HandSize++
+	drawnID := int32(drawnTile.Id)
+	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 
 	return nil
@@ -193,6 +196,8 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 
 	player.ClosedHand = append(player.ClosedHand, drawnTile)
 	player.HandSize++
+	drawnID := int32(drawnTile.Id)
+	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 
 	return nil
@@ -236,11 +241,36 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 
 		player.Discards = append(player.Discards, action.Tile)
 		player.HandSize--
+		player.DrawnTileId = nil
 		g.State.ActiveDiscard = action.Tile
 
-		// Transition to wait for interrupts
-		g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
-		g.interruptQueue = make(map[uint32]*pb.PlayerAction) // clear queue
+		// Calculate valid actions for all other players
+		anyoneCanInterrupt := false
+		for pSeat, p := range g.State.Players {
+			if uint32(pSeat) == seat {
+				p.ValidActions = nil // Active player has no interrupts
+				continue
+			}
+
+			interrupts := g.Rules.GetValidInterrupts(g.State, action.Tile, uint32(pSeat))
+			p.ValidActions = interrupts
+
+			if len(interrupts) > 0 {
+				anyoneCanInterrupt = true
+			}
+		}
+
+		if anyoneCanInterrupt {
+			// Transition to wait for interrupts
+			g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+			g.interruptQueue = make(map[uint32]*pb.PlayerAction) // clear queue
+		} else {
+			// No one can interrupt, immediately advance turn
+			g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
+			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+			g.State.ActiveDiscard = nil
+			g.ExecuteSystemDraw(g.State.ActivePlayer)
+		}
 
 		return nil
 	} else if action.Type == pb.ActionType_ACTION_KAN || action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
@@ -263,13 +293,26 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		}
 
 		if action.Type == pb.ActionType_ACTION_KAN {
-			// Add to Open Melds
-			meld := &pb.Meld{
-				Type:            pb.ActionType_ACTION_KAN,
-				Tiles:           action.MeldTiles,
-				CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
+			upgraded := false
+			// Check if we are upgrading an existing Pon
+			for _, m := range player.OpenMelds {
+				if m.Type == pb.ActionType_ACTION_PON && m.Tiles[0].Suit == action.MeldTiles[0].Suit && m.Tiles[0].Value == action.MeldTiles[0].Value {
+					m.Type = pb.ActionType_ACTION_KAN
+					m.Tiles = append(m.Tiles, action.MeldTiles...)
+					upgraded = true
+					break
+				}
 			}
-			player.OpenMelds = append(player.OpenMelds, meld)
+
+			if !upgraded {
+				// Add a new Closed Kan
+				meld := &pb.Meld{
+					Type:            pb.ActionType_ACTION_KAN,
+					Tiles:           action.MeldTiles,
+					CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
+				}
+				player.OpenMelds = append(player.OpenMelds, meld)
+			}
 		} else if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
 			// Add to Flower Melds
 			player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
@@ -294,6 +337,19 @@ func (g *Game) handleInterruptAction(seat uint32, action *pb.PlayerAction) error
 	}
 	// Add to queue
 	g.interruptQueue[seat] = action
+
+	// Check if all players who have valid actions have submitted a response
+	expectedResponses := 0
+	for _, p := range g.State.Players {
+		if len(p.ValidActions) > 0 {
+			expectedResponses++
+		}
+	}
+
+	if len(g.interruptQueue) >= expectedResponses {
+		g.ResolveInterrupts()
+	}
+
 	return nil
 }
 
@@ -352,6 +408,7 @@ func (g *Game) ResolveInterrupts() {
 
 		g.State.ActivePlayer = winnerSeat
 		g.State.ActiveDiscard = nil
+		player.DrawnTileId = nil // Clear drawn tile formatting for steals
 
 		if winningAction.Type == pb.ActionType_ACTION_KAN {
 			// A Kong requires a supplementary tile from the dead wall before discarding

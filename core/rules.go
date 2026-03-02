@@ -20,10 +20,10 @@ type RuleEngine interface {
 	EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (score int32, canWin bool)
 
 	// GetValidActions returns all legal actions an active player can take during their turn (e.g., Discard, Tsumo, Riichi, Kan).
-	GetValidActions(state *pb.GameState, playerSeat uint32) []pb.ActionType
+	GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction
 
 	// GetValidInterrupts returns all legal actions non-active players can take when a tile is discarded (e.g., Ron, Pong, Chi, Kan).
-	GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []pb.ActionType
+	GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []*pb.PlayerAction
 
 	// ResolveInterruptPriority determines which action succeeds when multiple players try to claim the same discarded tile.
 	// (e.g., Ron > Pong/Kong > Chi). Returns the seat number of the winner.

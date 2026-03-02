@@ -494,14 +494,144 @@ func (r *HometownRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds in
 	return true
 }
 
-func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32) []pb.ActionType {
-	// Active turn allowed actions
-	return []pb.ActionType{pb.ActionType_ACTION_DISCARD, pb.ActionType_ACTION_TSUMO}
+func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction {
+	var actions []*pb.PlayerAction
+
+	// The player can always discard
+	actions = append(actions, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+	})
+
+	player := state.Players[playerSeat]
+
+	// Check if the 14-tile hand is a winning hand (Tsumo)
+	_, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
+	if canWin {
+		actions = append(actions, &pb.PlayerAction{
+			Type: pb.ActionType_ACTION_TSUMO,
+		})
+	}
+
+	// Check for Closed/Upgraded Kongs (4 of a kind in hand)
+	counts := make(map[uint32][]*pb.Tile)
+	for _, t := range player.ClosedHand {
+		counts[t.Id] = append(counts[t.Id], t)
+	}
+
+	for _, tiles := range counts {
+		if len(tiles) == 4 {
+			actions = append(actions, &pb.PlayerAction{
+				Type:      pb.ActionType_ACTION_KAN,
+				MeldTiles: tiles,
+			})
+		}
+	}
+
+	return actions
 }
 
-func (r *HometownRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []pb.ActionType {
-	// Passive turn allowed steals
-	return []pb.ActionType{pb.ActionType_ACTION_PON, pb.ActionType_ACTION_CHII, pb.ActionType_ACTION_RON}
+func (r *HometownRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []*pb.PlayerAction {
+	var actions []*pb.PlayerAction
+	player := state.Players[playerSeat]
+	discarderSeat := state.ActivePlayer
+
+	// 1. Check Ron (can this discard complete my hand?)
+	// We simulate adding the discarded tile to the closed hand
+	simulatedHand := append([]*pb.Tile{}, player.ClosedHand...)
+	simulatedHand = append(simulatedHand, discardedTile)
+
+	_, canWin := r.EvaluateHand(simulatedHand, player.OpenMelds, discardedTile, state, playerSeat, false)
+
+	// Disabled 4-point minimum for UI testing
+	if canWin {
+		actions = append(actions, &pb.PlayerAction{
+			Type:         pb.ActionType_ACTION_RON,
+			Tile:         discardedTile,
+			TargetPlayer: discarderSeat,
+		})
+	}
+
+	// Group closed hand by Suit+Value to easily find matches
+	matchingTiles := []*pb.Tile{}
+	for _, t := range player.ClosedHand {
+		if t.Suit == discardedTile.Suit && t.Value == discardedTile.Value {
+			matchingTiles = append(matchingTiles, t)
+		}
+	}
+
+	// 2. Check Kang (Needs 3 matching tiles)
+	if len(matchingTiles) == 3 {
+		actions = append(actions, &pb.PlayerAction{
+			Type:         pb.ActionType_ACTION_KAN,
+			Tile:         discardedTile,
+			MeldTiles:    matchingTiles,
+			TargetPlayer: discarderSeat,
+		})
+	}
+
+	// 3. Check Pong (Needs 2+ matching tiles)
+	if len(matchingTiles) >= 2 {
+		actions = append(actions, &pb.PlayerAction{
+			Type:         pb.ActionType_ACTION_PON,
+			Tile:         discardedTile,
+			MeldTiles:    matchingTiles[:2],
+			TargetPlayer: discarderSeat,
+		})
+	}
+
+	// 4. Check Chii (Only allowed if discarded by the player immediately to the left)
+	isLeftSeatDiscard := (playerSeat+3)%4 == discarderSeat
+	if isLeftSeatDiscard && discardedTile.Suit != pb.Suit_SUIT_JIHAI && discardedTile.Suit != pb.Suit_SUIT_UNKNOWN {
+		val := discardedTile.Value
+
+		var minus2, minus1, plus1, plus2 *pb.Tile
+		for _, t := range player.ClosedHand {
+			if t.Suit == discardedTile.Suit {
+				if t.Value == val-2 {
+					minus2 = t
+				}
+				if t.Value == val-1 {
+					minus1 = t
+				}
+				if t.Value == val+1 {
+					plus1 = t
+				}
+				if t.Value == val+2 {
+					plus2 = t
+				}
+			}
+		}
+
+		// Sequence [n-2, n-1, DISCARD]
+		if minus2 != nil && minus1 != nil {
+			actions = append(actions, &pb.PlayerAction{
+				Type:         pb.ActionType_ACTION_CHII,
+				Tile:         discardedTile,
+				MeldTiles:    []*pb.Tile{minus2, minus1},
+				TargetPlayer: discarderSeat,
+			})
+		}
+		// Sequence [n-1, DISCARD, n+1]
+		if minus1 != nil && plus1 != nil {
+			actions = append(actions, &pb.PlayerAction{
+				Type:         pb.ActionType_ACTION_CHII,
+				Tile:         discardedTile,
+				MeldTiles:    []*pb.Tile{minus1, plus1},
+				TargetPlayer: discarderSeat,
+			})
+		}
+		// Sequence [DISCARD, n+1, n+2]
+		if plus1 != nil && plus2 != nil {
+			actions = append(actions, &pb.PlayerAction{
+				Type:         pb.ActionType_ACTION_CHII,
+				Tile:         discardedTile,
+				MeldTiles:    []*pb.Tile{plus1, plus2},
+				TargetPlayer: discarderSeat,
+			})
+		}
+	}
+
+	return actions
 }
 
 func (r *HometownRuleset) ResolveInterruptPriority(actions map[uint32]*pb.PlayerAction) (uint32, *pb.PlayerAction) {
@@ -512,8 +642,8 @@ func (r *HometownRuleset) ResolveInterruptPriority(actions map[uint32]*pb.Player
 
 	weights := map[pb.ActionType]int{
 		pb.ActionType_ACTION_CHII: 1,
-		pb.ActionType_ACTION_PON: 2,
-		pb.ActionType_ACTION_KAN: 3,
+		pb.ActionType_ACTION_PON:  2,
+		pb.ActionType_ACTION_KAN:  3,
 		pb.ActionType_ACTION_RON:  4,
 	}
 

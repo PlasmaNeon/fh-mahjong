@@ -58,7 +58,7 @@ func mahjongGetValidActions(this js.Value, args []js.Value) interface{} {
 	// 4. Return as JS Array
 	jsArr := js.Global().Get("Array").New(len(validActions))
 	for i, action := range validActions {
-		jsArr.SetIndex(i, int(action))
+		jsArr.SetIndex(i, int(action.Type))
 	}
 
 	return jsArr
