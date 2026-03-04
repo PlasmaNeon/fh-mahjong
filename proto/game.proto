@@ -46,6 +46,7 @@ enum ActionType {
   // Others
   ACTION_PASS = 8;       // pass on an opportunity to steal
   ACTION_FLOWER_REVEAL = 9; // Fenghua rule: drawing and exposing a flower tile
+  ACTION_READY = 10;        // Signal readiness for next round after round end
 }
 
 message PlayerAction {
@@ -167,4 +168,37 @@ message GameState {
 
   // The base64-encoded MT19937 seed used to shuffle the wall (for replay verification)
   string wall_seed = 12;
+
+  // Round result data (populated when phase = PHASE_ROUND_END)
+  RoundResult round_result = 13;
+
+  // Per-player ready state for next round (length 4, indexed by seat)
+  repeated bool player_ready = 14;
+}
+
+// ---------------------------------------------------------
+// Round Result (populated at PHASE_ROUND_END)
+// ---------------------------------------------------------
+
+message ScoreEntry {
+  string pattern_name = 1;  // e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
+  int32 points = 2;
+}
+
+message PlayerPayout {
+  uint32 seat = 1;
+  int32 amount = 2;  // negative = pays, positive = receives
+}
+
+message RoundResult {
+  uint32 winner_seat = 1;
+  ActionType win_type = 2;           // ACTION_TSUMO or ACTION_RON
+  uint32 discarder_seat = 3;         // Only meaningful for Ron
+  repeated Tile winning_hand = 4;    // Winner's closed hand tiles
+  repeated Meld winning_melds = 5;   // Winner's open melds
+  Tile win_tile = 6;                 // The completing tile
+  repeated ScoreEntry breakdown = 7; // Pattern-by-pattern scoring breakdown
+  int32 total_score = 8;
+  repeated PlayerPayout payouts = 9;
+  bool is_draw = 10;                 // Exhaustive draw (no winner)
 }

@@ -94,23 +94,25 @@ const (
 	ActionType_ACTION_TSUMO ActionType = 6 // self-draw win
 	ActionType_ACTION_RON   ActionType = 7 // steal win
 	// Others
-	ActionType_ACTION_PASS          ActionType = 8 // pass on an opportunity to steal
-	ActionType_ACTION_FLOWER_REVEAL ActionType = 9 // Fenghua rule: drawing and exposing a flower tile
+	ActionType_ACTION_PASS          ActionType = 8  // pass on an opportunity to steal
+	ActionType_ACTION_FLOWER_REVEAL ActionType = 9  // Fenghua rule: drawing and exposing a flower tile
+	ActionType_ACTION_READY         ActionType = 10 // Signal readiness for next round after round end
 )
 
 // Enum value maps for ActionType.
 var (
 	ActionType_name = map[int32]string{
-		0: "ACTION_UNKNOWN",
-		1: "ACTION_DRAW",
-		2: "ACTION_DISCARD",
-		3: "ACTION_CHII",
-		4: "ACTION_PON",
-		5: "ACTION_KAN",
-		6: "ACTION_TSUMO",
-		7: "ACTION_RON",
-		8: "ACTION_PASS",
-		9: "ACTION_FLOWER_REVEAL",
+		0:  "ACTION_UNKNOWN",
+		1:  "ACTION_DRAW",
+		2:  "ACTION_DISCARD",
+		3:  "ACTION_CHII",
+		4:  "ACTION_PON",
+		5:  "ACTION_KAN",
+		6:  "ACTION_TSUMO",
+		7:  "ACTION_RON",
+		8:  "ACTION_PASS",
+		9:  "ACTION_FLOWER_REVEAL",
+		10: "ACTION_READY",
 	}
 	ActionType_value = map[string]int32{
 		"ACTION_UNKNOWN":       0,
@@ -123,6 +125,7 @@ var (
 		"ACTION_RON":           7,
 		"ACTION_PASS":          8,
 		"ACTION_FLOWER_REVEAL": 9,
+		"ACTION_READY":         10,
 	}
 )
 
@@ -695,7 +698,11 @@ type GameState struct {
 	// The prevailing (round) wind for Fenghua Mahjong (1=East, 2=South, 3=West, 4=North)
 	PrevailingWind uint32 `protobuf:"varint,11,opt,name=prevailing_wind,json=prevailingWind,proto3" json:"prevailing_wind,omitempty"`
 	// The base64-encoded MT19937 seed used to shuffle the wall (for replay verification)
-	WallSeed      string `protobuf:"bytes,12,opt,name=wall_seed,json=wallSeed,proto3" json:"wall_seed,omitempty"`
+	WallSeed string `protobuf:"bytes,12,opt,name=wall_seed,json=wallSeed,proto3" json:"wall_seed,omitempty"`
+	// Round result data (populated when phase = PHASE_ROUND_END)
+	RoundResult *RoundResult `protobuf:"bytes,13,opt,name=round_result,json=roundResult,proto3" json:"round_result,omitempty"`
+	// Per-player ready state for next round (length 4, indexed by seat)
+	PlayerReady   []bool `protobuf:"varint,14,rep,packed,name=player_ready,json=playerReady,proto3" json:"player_ready,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -800,6 +807,240 @@ func (x *GameState) GetWallSeed() string {
 	return ""
 }
 
+func (x *GameState) GetRoundResult() *RoundResult {
+	if x != nil {
+		return x.RoundResult
+	}
+	return nil
+}
+
+func (x *GameState) GetPlayerReady() []bool {
+	if x != nil {
+		return x.PlayerReady
+	}
+	return nil
+}
+
+type ScoreEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PatternName   string                 `protobuf:"bytes,1,opt,name=pattern_name,json=patternName,proto3" json:"pattern_name,omitempty"` // e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
+	Points        int32                  `protobuf:"varint,2,opt,name=points,proto3" json:"points,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ScoreEntry) Reset() {
+	*x = ScoreEntry{}
+	mi := &file_proto_game_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ScoreEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ScoreEntry) ProtoMessage() {}
+
+func (x *ScoreEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ScoreEntry.ProtoReflect.Descriptor instead.
+func (*ScoreEntry) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ScoreEntry) GetPatternName() string {
+	if x != nil {
+		return x.PatternName
+	}
+	return ""
+}
+
+func (x *ScoreEntry) GetPoints() int32 {
+	if x != nil {
+		return x.Points
+	}
+	return 0
+}
+
+type PlayerPayout struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seat          uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
+	Amount        int32                  `protobuf:"varint,2,opt,name=amount,proto3" json:"amount,omitempty"` // negative = pays, positive = receives
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlayerPayout) Reset() {
+	*x = PlayerPayout{}
+	mi := &file_proto_game_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlayerPayout) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlayerPayout) ProtoMessage() {}
+
+func (x *PlayerPayout) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlayerPayout.ProtoReflect.Descriptor instead.
+func (*PlayerPayout) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *PlayerPayout) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+func (x *PlayerPayout) GetAmount() int32 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+type RoundResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WinnerSeat    uint32                 `protobuf:"varint,1,opt,name=winner_seat,json=winnerSeat,proto3" json:"winner_seat,omitempty"`
+	WinType       ActionType             `protobuf:"varint,2,opt,name=win_type,json=winType,proto3,enum=game.ActionType" json:"win_type,omitempty"` // ACTION_TSUMO or ACTION_RON
+	DiscarderSeat uint32                 `protobuf:"varint,3,opt,name=discarder_seat,json=discarderSeat,proto3" json:"discarder_seat,omitempty"`    // Only meaningful for Ron
+	WinningHand   []*Tile                `protobuf:"bytes,4,rep,name=winning_hand,json=winningHand,proto3" json:"winning_hand,omitempty"`           // Winner's closed hand tiles
+	WinningMelds  []*Meld                `protobuf:"bytes,5,rep,name=winning_melds,json=winningMelds,proto3" json:"winning_melds,omitempty"`        // Winner's open melds
+	WinTile       *Tile                  `protobuf:"bytes,6,opt,name=win_tile,json=winTile,proto3" json:"win_tile,omitempty"`                       // The completing tile
+	Breakdown     []*ScoreEntry          `protobuf:"bytes,7,rep,name=breakdown,proto3" json:"breakdown,omitempty"`                                  // Pattern-by-pattern scoring breakdown
+	TotalScore    int32                  `protobuf:"varint,8,opt,name=total_score,json=totalScore,proto3" json:"total_score,omitempty"`
+	Payouts       []*PlayerPayout        `protobuf:"bytes,9,rep,name=payouts,proto3" json:"payouts,omitempty"`
+	IsDraw        bool                   `protobuf:"varint,10,opt,name=is_draw,json=isDraw,proto3" json:"is_draw,omitempty"` // Exhaustive draw (no winner)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RoundResult) Reset() {
+	*x = RoundResult{}
+	mi := &file_proto_game_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RoundResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RoundResult) ProtoMessage() {}
+
+func (x *RoundResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RoundResult.ProtoReflect.Descriptor instead.
+func (*RoundResult) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RoundResult) GetWinnerSeat() uint32 {
+	if x != nil {
+		return x.WinnerSeat
+	}
+	return 0
+}
+
+func (x *RoundResult) GetWinType() ActionType {
+	if x != nil {
+		return x.WinType
+	}
+	return ActionType_ACTION_UNKNOWN
+}
+
+func (x *RoundResult) GetDiscarderSeat() uint32 {
+	if x != nil {
+		return x.DiscarderSeat
+	}
+	return 0
+}
+
+func (x *RoundResult) GetWinningHand() []*Tile {
+	if x != nil {
+		return x.WinningHand
+	}
+	return nil
+}
+
+func (x *RoundResult) GetWinningMelds() []*Meld {
+	if x != nil {
+		return x.WinningMelds
+	}
+	return nil
+}
+
+func (x *RoundResult) GetWinTile() *Tile {
+	if x != nil {
+		return x.WinTile
+	}
+	return nil
+}
+
+func (x *RoundResult) GetBreakdown() []*ScoreEntry {
+	if x != nil {
+		return x.Breakdown
+	}
+	return nil
+}
+
+func (x *RoundResult) GetTotalScore() int32 {
+	if x != nil {
+		return x.TotalScore
+	}
+	return 0
+}
+
+func (x *RoundResult) GetPayouts() []*PlayerPayout {
+	if x != nil {
+		return x.Payouts
+	}
+	return nil
+}
+
+func (x *RoundResult) GetIsDraw() bool {
+	if x != nil {
+		return x.IsDraw
+	}
+	return false
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -852,7 +1093,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\x127\n" +
 	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
 	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01B\x10\n" +
-	"\x0e_drawn_tile_id\"\xfd\x02\n" +
+	"\x0e_drawn_tile_id\"\xd6\x03\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -867,14 +1108,40 @@ const file_proto_game_proto_rawDesc = "" +
 	"wild_tiles\x18\b \x03(\v2\n" +
 	".game.TileR\twildTiles\x12'\n" +
 	"\x0fprevailing_wind\x18\v \x01(\rR\x0eprevailingWind\x12\x1b\n" +
-	"\twall_seed\x18\f \x01(\tR\bwallSeed*R\n" +
+	"\twall_seed\x18\f \x01(\tR\bwallSeed\x124\n" +
+	"\fround_result\x18\r \x01(\v2\x11.game.RoundResultR\vroundResult\x12!\n" +
+	"\fplayer_ready\x18\x0e \x03(\bR\vplayerReady\"G\n" +
+	"\n" +
+	"ScoreEntry\x12!\n" +
+	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +
+	"\x06points\x18\x02 \x01(\x05R\x06points\":\n" +
+	"\fPlayerPayout\x12\x12\n" +
+	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
+	"\x06amount\x18\x02 \x01(\x05R\x06amount\"\xa1\x03\n" +
+	"\vRoundResult\x12\x1f\n" +
+	"\vwinner_seat\x18\x01 \x01(\rR\n" +
+	"winnerSeat\x12+\n" +
+	"\bwin_type\x18\x02 \x01(\x0e2\x10.game.ActionTypeR\awinType\x12%\n" +
+	"\x0ediscarder_seat\x18\x03 \x01(\rR\rdiscarderSeat\x12-\n" +
+	"\fwinning_hand\x18\x04 \x03(\v2\n" +
+	".game.TileR\vwinningHand\x12/\n" +
+	"\rwinning_melds\x18\x05 \x03(\v2\n" +
+	".game.MeldR\fwinningMelds\x12%\n" +
+	"\bwin_tile\x18\x06 \x01(\v2\n" +
+	".game.TileR\awinTile\x12.\n" +
+	"\tbreakdown\x18\a \x03(\v2\x10.game.ScoreEntryR\tbreakdown\x12\x1f\n" +
+	"\vtotal_score\x18\b \x01(\x05R\n" +
+	"totalScore\x12,\n" +
+	"\apayouts\x18\t \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12\x17\n" +
+	"\ais_draw\x18\n" +
+	" \x01(\bR\x06isDraw*R\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
 	"\bSUIT_PIN\x10\x02\x12\f\n" +
 	"\bSUIT_MAN\x10\x03\x12\x0e\n" +
 	"\n" +
-	"SUIT_JIHAI\x10\x04*\xc3\x01\n" +
+	"SUIT_JIHAI\x10\x04*\xd5\x01\n" +
 	"\n" +
 	"ActionType\x12\x12\n" +
 	"\x0eACTION_UNKNOWN\x10\x00\x12\x0f\n" +
@@ -889,7 +1156,9 @@ const file_proto_game_proto_rawDesc = "" +
 	"\n" +
 	"ACTION_RON\x10\a\x12\x0f\n" +
 	"\vACTION_PASS\x10\b\x12\x18\n" +
-	"\x14ACTION_FLOWER_REVEAL\x10\t*y\n" +
+	"\x14ACTION_FLOWER_REVEAL\x10\t\x12\x10\n" +
+	"\fACTION_READY\x10\n" +
+	"*y\n" +
 	"\rMeldDirection\x12\x1a\n" +
 	"\x16MELD_DIRECTION_UNKNOWN\x10\x00\x12\x18\n" +
 	"\x14MELD_DIRECTION_RIGHT\x10\x01\x12\x19\n" +
@@ -917,7 +1186,7 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),            // 0: game.Suit
 	(ActionType)(0),      // 1: game.ActionType
@@ -928,6 +1197,9 @@ var file_proto_game_proto_goTypes = []any{
 	(*Meld)(nil),         // 6: game.Meld
 	(*PlayerState)(nil),  // 7: game.PlayerState
 	(*GameState)(nil),    // 8: game.GameState
+	(*ScoreEntry)(nil),   // 9: game.ScoreEntry
+	(*PlayerPayout)(nil), // 10: game.PlayerPayout
+	(*RoundResult)(nil),  // 11: game.RoundResult
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
@@ -946,11 +1218,18 @@ var file_proto_game_proto_depIdxs = []int32{
 	7,  // 13: game.GameState.players:type_name -> game.PlayerState
 	4,  // 14: game.GameState.active_discard:type_name -> game.Tile
 	4,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	11, // 16: game.GameState.round_result:type_name -> game.RoundResult
+	1,  // 17: game.RoundResult.win_type:type_name -> game.ActionType
+	4,  // 18: game.RoundResult.winning_hand:type_name -> game.Tile
+	6,  // 19: game.RoundResult.winning_melds:type_name -> game.Meld
+	4,  // 20: game.RoundResult.win_tile:type_name -> game.Tile
+	9,  // 21: game.RoundResult.breakdown:type_name -> game.ScoreEntry
+	10, // 22: game.RoundResult.payouts:type_name -> game.PlayerPayout
+	23, // [23:23] is the sub-list for method output_type
+	23, // [23:23] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -965,7 +1244,7 @@ func file_proto_game_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

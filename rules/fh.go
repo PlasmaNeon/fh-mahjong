@@ -47,16 +47,18 @@ func (r *HometownRuleset) GetInitialWall() []*pb.Tile {
 	return wall
 }
 
-func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, bool) {
+func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, []*pb.ScoreEntry, bool) {
 	// Build the full 14-tile hand for pattern evaluation.
-	// The winTile is always part of the complete hand.
 	fullHand := make([]*pb.Tile, 0, len(hand)+1)
 	fullHand = append(fullHand, hand...)
-	fullHand = append(fullHand, winTile)
+	if winTile != nil {
+		fullHand = append(fullHand, winTile)
+	}
+
+	// Breakdown entries accumulated throughout evaluation
+	entries := make([]*pb.ScoreEntry, 0)
 
 	// --- 1. Identify Wild Tiles & Tame State ---
-	// Fenghua uses specific dynamic wild tiles (e.g., from the round start).
-	// We count how many tiles in the hand match the ID of any tile in `state.WildTiles`.
 	wildsInHand := 0
 	isFlowerWild := false
 	wildHashes := make(map[uint32]bool)
@@ -65,7 +67,7 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 			hash := uint32(w.Suit)*100 + w.Value
 			wildHashes[hash] = true
 			if w.Suit == pb.Suit_SUIT_UNKNOWN || w.Suit > pb.Suit_SUIT_JIHAI {
-				isFlowerWild = true // A suit beyond Honors is usually Flower in standard numbering, or explicit Flower struct.
+				isFlowerWild = true
 			}
 		}
 	}
@@ -76,9 +78,10 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		}
 	}
 
-	totalPoints := int32(1) // Base point (坐台)
+	// Base point (坐台) — always awarded
+	entries = append(entries, &pb.ScoreEntry{PatternName: "Base Point (坐台)", Points: 1})
 	if isTsumo {
-		totalPoints += 1 // Win by own tile (自摸)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Tsumo (自摸)", Points: 1})
 	}
 
 	// --- 3. Evaluate High-Level Hand Structures (Mutually Exclusive Cores) ---
@@ -86,11 +89,9 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 
 	isIndependence := len(openMelds) == 0 && r.isIndependence(fullHand, wildHashes)
 	isSevenPairs := len(openMelds) == 0 && r.isSevenPairs(fullHand, wildHashes)
-	isStandard := r.canFormStandardHand(fullHand, wildHashes, true) // 4 melds + 1 pair
+	isStandard := r.canFormStandardHand(fullHand, wildHashes, true)
 
 	// --- 1.5. Calculate Tame Wild (还搭) ---
-	// Wild tiles are tame when used at their natural face value in a meld.
-	// This is true when the hand forms a valid structure even treating wild tiles as ordinary tiles.
 	isTame := false
 	if wildsInHand > 0 {
 		emptyWilds := make(map[uint32]bool)
@@ -101,124 +102,137 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		}
 	}
 
-	// --- 2. Wild Tile Point Bonuses (无搭/一搭/二搭/还搭/普通三百搭/三花三百搭) ---
+	// --- 2. Wild Tile Point Bonuses ---
 	if wildsInHand == 0 {
-		totalPoints += 1 // No wild tiles (无搭)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "No Wild Tiles (无搭)", Points: 1})
 	} else if wildsInHand == 1 {
-		totalPoints += 1 // One wild tile (一搭)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "One Wild Tile (一搭)", Points: 1})
 	} else if wildsInHand == 2 {
-		totalPoints += 2 // Two wild tiles (二搭)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Two Wild Tiles (二搭)", Points: 2})
 	} else if wildsInHand == 3 {
 		if isFlowerWild {
-			totalPoints += 300 // Three flower wild tiles (三花三百搭)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Three Flower Wild Tiles (三花三百搭)", Points: 300})
 		} else {
-			totalPoints += 150 // Three normal wild tiles (普通三百搭)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Three Normal Wild Tiles (普通三百搭)", Points: 150})
 		}
 	}
 	if isTame {
-		totalPoints += 1 // Tame wild tiles (还搭)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Tame Wild Tiles (还搭)", Points: 1})
 	}
 
-	maxStrScore := int32(0)
+	// --- Structural route evaluation (pick highest-scoring route) ---
+	type scoredRoute struct {
+		score   int32
+		entries []*pb.ScoreEntry
+	}
+	var bestRoute *scoredRoute
 
 	if isIndependence {
 		canWin = true
-		routeScore := int32(0)
-		// Variants: Open Seven Stars (100), Closed Seven Stars (150), Without Suit (150), Base (50)
+		re := make([]*pb.ScoreEntry, 0)
 		if r.hasAllSevenHonors(fullHand) {
 			if isTsumo {
-				routeScore += 150 // Closed seven stars
+				re = append(re, &pb.ScoreEntry{PatternName: "Closed Seven Stars (暗七星)", Points: 150})
 			} else {
-				routeScore += 100 // Open seven stars
+				re = append(re, &pb.ScoreEntry{PatternName: "Open Seven Stars (明七星)", Points: 100})
 			}
 		} else if r.isMissingASuit(fullHand) {
-			routeScore += 150 // Independence without a suit
+			re = append(re, &pb.ScoreEntry{PatternName: "Independence Without Suit (缺色)", Points: 150})
 		} else {
-			routeScore += 50 // Standard Independence (大大胡)
+			re = append(re, &pb.ScoreEntry{PatternName: "Independence (大大胡)", Points: 50})
 		}
-		if routeScore > maxStrScore {
-			maxStrScore = routeScore
+		routeTotal := int32(0)
+		for _, e := range re {
+			routeTotal += e.Points
+		}
+		if bestRoute == nil || routeTotal > bestRoute.score {
+			bestRoute = &scoredRoute{score: routeTotal, entries: re}
 		}
 	}
 
 	if isSevenPairs {
 		canWin = true
-		routeScore := int32(0)
-		// Variants: Straight (150) vs Wild (50)
+		re := make([]*pb.ScoreEntry, 0)
 		if wildsInHand == 0 {
-			routeScore += 150
+			re = append(re, &pb.ScoreEntry{PatternName: "Straight Seven Pairs (七对头无搭)", Points: 150})
 		} else {
-			routeScore += 50
+			re = append(re, &pb.ScoreEntry{PatternName: "Wild Seven Pairs (七对头有搭)", Points: 50})
 		}
-		// Simplified check for Bombs in 7 pairs (4 identical tiles).
 		if bombCount := r.countIdenticalFours(fullHand); bombCount > 0 {
 			if isTsumo {
-				routeScore += 100 // Closed bomb
+				re = append(re, &pb.ScoreEntry{PatternName: "Closed Bomb (暗炸)", Points: 100})
 			} else {
-				routeScore += 50 // Open bomb
+				re = append(re, &pb.ScoreEntry{PatternName: "Open Bomb (明炸)", Points: 50})
 			}
 		}
-		if routeScore > maxStrScore {
-			maxStrScore = routeScore
+		routeTotal := int32(0)
+		for _, e := range re {
+			routeTotal += e.Points
+		}
+		if bestRoute == nil || routeTotal > bestRoute.score {
+			bestRoute = &scoredRoute{score: routeTotal, entries: re}
 		}
 	}
 
 	if isStandard {
 		canWin = true
-		routeScore := int32(0)
+		re := make([]*pb.ScoreEntry, 0)
 
 		isAllPung := r.isAllPung(fullHand, openMelds, wildHashes)
 		isPureSuit := r.isPureOneSuit(fullHand, openMelds, wildHashes)
 		isMixedSuit := r.isMixedOneSuit(fullHand, openMelds, wildHashes)
 
 		if !isAllPung && !isPureSuit && !isMixedSuit {
-			routeScore += 1 // Common win (朋胡) — only when no higher structural pattern applies
+			re = append(re, &pb.ScoreEntry{PatternName: "Common Win (朋胡)", Points: 1})
 		}
 
-		// Check Loner (大吊车) — 4 open melds, 1 tile in hand + winTile = 2 closed tiles total
 		if len(openMelds) == 4 {
 			if wildsInHand == 0 {
-				routeScore += 100 // Straight loner (无搭)
+				re = append(re, &pb.ScoreEntry{PatternName: "Straight Loner (大吊车无搭)", Points: 100})
 			} else {
-				routeScore += 50 // Wild loner (有搭)
+				re = append(re, &pb.ScoreEntry{PatternName: "Wild Loner (大吊车有搭)", Points: 50})
 			}
 		}
 
-		// Check All Pon (大对对) — 4 pon/kan + 1 pair, no chii
 		if isAllPung {
 			if wildsInHand == 0 {
-				routeScore += 100 // Straight all pon (无搭)
+				re = append(re, &pb.ScoreEntry{PatternName: "Straight All Pung (大对对无搭)", Points: 100})
 			} else {
-				routeScore += 50 // Wild all pon (有搭)
+				re = append(re, &pb.ScoreEntry{PatternName: "Wild All Pung (大对对有搭)", Points: 50})
 			}
 		}
 
-		// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
 		if r.evalWaitPattern(hand, winTile, wildHashes) > 0 {
-			routeScore += 1 // Edge/gap/single/pair-call wait (边，嵌，单吊, 对倒)
+			re = append(re, &pb.ScoreEntry{PatternName: "Single/Pair Call (边嵌单吊对倒)", Points: 1})
 		}
 
-		if routeScore > maxStrScore {
-			maxStrScore = routeScore
+		routeTotal := int32(0)
+		for _, e := range re {
+			routeTotal += e.Points
+		}
+		if bestRoute == nil || routeTotal > bestRoute.score {
+			bestRoute = &scoredRoute{score: routeTotal, entries: re}
 		}
 	}
 
-	totalPoints += maxStrScore
+	// Merge best structural route into entries
+	if bestRoute != nil {
+		entries = append(entries, bestRoute.entries...)
+	}
 
-	// If it matches none of the standard structural shapes, check for absolute extremes.
+	// If no standard structural shapes matched, check for absolute extremes.
 	if !canWin {
 		if r.isUncompletedAllHonors(fullHand, openMelds, wildHashes) {
 			canWin = true
-			totalPoints += 400 // Uncompleted all jihai (乱老头)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Uncompleted All Honors (乱老头)", Points: 400})
 		}
 	} else {
-		// If it's a standard hand or seven pairs, it could ALSO qualify for suit patterns.
 		if r.isCompletedAllHonors(fullHand, openMelds, wildHashes) {
-			totalPoints += 800 // Completed all jihai (清老头)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Completed All Honors (清老头)", Points: 800})
 		} else if r.isPureOneSuit(fullHand, openMelds, wildHashes) {
-			totalPoints += 150 // Pure one suit (清一色)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Pure One Suit (清一色)", Points: 150})
 		} else if r.isMixedOneSuit(fullHand, openMelds, wildHashes) {
-			totalPoints += 70 // Mixed one suit (混一色)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Mixed One Suit (混一色)", Points: 70})
 		}
 	}
 
@@ -233,28 +247,33 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		}
 	}
 
-	// Uncompleted Eight Flowers (八花直胡) - instant win without regular sets
 	if len(myFlowers) == 8 {
 		if !canWin {
 			canWin = true
-			totalPoints = int32(0) // Override base and wild points, it's just 400 + own flower
-			totalPoints += 400
+			// Override: clear all previous entries, it's just 400 + own flower
+			entries = []*pb.ScoreEntry{}
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Uncompleted Eight Flowers (八花直胡)", Points: 400})
 		} else {
-			totalPoints += 800 // Completed eight flowers (八花搓胡)
+			entries = append(entries, &pb.ScoreEntry{PatternName: "Completed Eight Flowers (八花搓胡)", Points: 800})
 		}
 	} else if len(myFlowers) >= 4 {
-		totalPoints += 150 // Four flowers (四花)
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Four Flowers (四花)", Points: 150})
 	}
 
-	totalPoints += getFlowerBonuses(myFlowers, playerSeat, state)
+	flowerBonus := getFlowerBonuses(myFlowers, playerSeat, state)
+	if flowerBonus > 0 {
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Own Flower (花)", Points: flowerBonus})
+	}
 
 	if !canWin {
-		return 0, false
+		return 0, nil, false
 	}
 
 	// --- 4. Dragon Pon Bonuses (中发白碰出) ---
-	// 5z=Haku(白/White Dragon), 6z=Hatsu(発/Green Dragon), 7z=Chun(中/Red Dragon)
-	totalPoints += r.countDragonPungs(fullHand, openMelds, wildHashes)
+	dragonPoints := r.countDragonPungs(fullHand, openMelds, wildHashes)
+	if dragonPoints > 0 {
+		entries = append(entries, &pb.ScoreEntry{PatternName: "Dragon Pung (中发白碰出)", Points: dragonPoints})
+	}
 
 	// --- 5. Wind Pon Bonuses (位风/圈风/正风) ---
 	if state != nil {
@@ -266,55 +285,90 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		if seatWind > 0 {
 			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, seatWind) {
 				if seatWind == prevailingWind {
-					totalPoints += 2 // Right wind (正风)
+					entries = append(entries, &pb.ScoreEntry{PatternName: "Right Wind (正风)", Points: 2})
 				} else {
-					totalPoints += 1 // Seat wind (位风)
+					entries = append(entries, &pb.ScoreEntry{PatternName: "Seat Wind (位风)", Points: 1})
 				}
 			}
 		}
 		if prevailingWind > 0 && prevailingWind != seatWind {
 			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, prevailingWind) {
-				totalPoints += 1 // Prevailing wind (圈风)
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Prevailing Wind (圈风)", Points: 1})
 			}
 		}
 	}
 
 	// --- 6. Kong Bonuses (杠牌加分) ---
-	// These require contextual flags from the game loop.
 	if state != nil && int(playerSeat) < len(state.Players) {
 		ps := state.Players[playerSeat]
 		if ps != nil {
 			if ps.HasBuddingDirectKong {
-				totalPoints += 50
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Direct Kong (直杠不开花)", Points: 50})
 			}
 			if ps.HasBloomingDirectKong {
-				totalPoints += 100
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Direct Kong (直杠开花)", Points: 100})
 			}
 			if ps.HasBuddingClosedKong {
-				totalPoints += 100
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Closed Kong (暗杠不开花)", Points: 100})
 			}
 			if ps.HasBloomingClosedKong {
-				totalPoints += 150
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Closed Kong (暗杠开花)", Points: 150})
 			}
 			if ps.HasBuddingRiskyKong {
-				totalPoints += 100
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Risky Kong (风险杠不开花)", Points: 100})
 			}
 			if ps.HasBloomingRiskyKong {
-				totalPoints += 200
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Risky Kong (风险杠开花)", Points: 200})
 			}
 			if ps.HasBloomingFlowerKong {
-				totalPoints += 50
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Flower Kong (花杠杠开)", Points: 50})
 			}
 		}
+	}
+
+	// Sum total from all entries
+	totalPoints := int32(0)
+	for _, e := range entries {
+		totalPoints += e.Points
 	}
 
 	// Fenghua Minimum Win Points Enforcement ---
 	// Ron requires 4 total points minimum. Tsumo has no minimum.
 	if !isTsumo && totalPoints < 4 {
-		return totalPoints, false
+		return totalPoints, entries, false
 	}
 
-	return totalPoints, true
+	return totalPoints, entries, true
+}
+
+// CalculatePayouts computes per-player payment amounts based on Fenghua rules.
+// Tsumo: each of 3 losers pays S×2, winner receives S×6.
+// Ron: discarder pays S×2, other two pay S×1, winner receives S×4.
+func (r *HometownRuleset) CalculatePayouts(totalScore int32, winType pb.ActionType, winnerSeat uint32, discarderSeat uint32) []*pb.PlayerPayout {
+	payouts := make([]*pb.PlayerPayout, 4)
+	S := totalScore
+
+	if winType == pb.ActionType_ACTION_TSUMO {
+		for seat := uint32(0); seat < 4; seat++ {
+			if seat == winnerSeat {
+				payouts[seat] = &pb.PlayerPayout{Seat: seat, Amount: S * 6}
+			} else {
+				payouts[seat] = &pb.PlayerPayout{Seat: seat, Amount: -(S * 2)}
+			}
+		}
+	} else {
+		// Ron
+		for seat := uint32(0); seat < 4; seat++ {
+			if seat == winnerSeat {
+				payouts[seat] = &pb.PlayerPayout{Seat: seat, Amount: S * 4}
+			} else if seat == discarderSeat {
+				payouts[seat] = &pb.PlayerPayout{Seat: seat, Amount: -(S * 2)}
+			} else {
+				payouts[seat] = &pb.PlayerPayout{Seat: seat, Amount: -(S * 1)}
+			}
+		}
+	}
+	return payouts
 }
 
 // isIndependence checks for strictly 14 disconnected tiles (no pairs, no melds, no partial runs).
@@ -322,17 +376,30 @@ func (r *HometownRuleset) isIndependence(hand []*pb.Tile, wildHashes map[uint32]
 	if len(hand) != 14 {
 		return false
 	}
-	counts := make(map[uint32]int)
-	for _, t := range hand {
-		hash := uint32(t.Suit)*100 + t.Value
-		if wildHashes[hash] {
-			continue // Wild tiles can fill any missing unique slot
+	counts, _ := r.tilesToTehai34(hand, wildHashes)
+
+	for i := 0; i < 34; i++ {
+		if counts[i] > 1 {
+			return false // No pairs or triplets allowed
 		}
-		counts[hash]++
-		if counts[hash] > 1 {
-			return false // duplicate tile found
+		if counts[i] == 1 {
+			// Check for adjacent sequences. Jihai (27-33) can't sequence, so only check man/pin/sou
+			if i < 27 {
+				suitBlockStart := (i / 9) * 9
+				suitBlockEnd := suitBlockStart + 8
+
+				// Abutting sequence (e.g. 1m, 2m)
+				if i+1 <= suitBlockEnd && counts[i+1] > 0 {
+					return false
+				}
+				// Skipping sequence / gap (e.g. 1m, 3m)
+				if i+2 <= suitBlockEnd && counts[i+2] > 0 {
+					return false
+				}
+			}
 		}
 	}
+
 	return true
 }
 
@@ -505,7 +572,7 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 	player := state.Players[playerSeat]
 
 	// Check if the 14-tile hand is a winning hand (Tsumo)
-	_, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
+	_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
 	if canWin {
 		actions = append(actions, &pb.PlayerAction{
 			Type: pb.ActionType_ACTION_TSUMO,
@@ -527,6 +594,20 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		}
 	}
 
+	// Upgraded Kongs: Check if we have a tile in our ClosedHand that matches an existing open Pon
+	for _, t := range player.ClosedHand {
+		for _, m := range player.OpenMelds {
+			if m.Type == pb.ActionType_ACTION_PON && len(m.Tiles) > 0 {
+				if m.Tiles[0].Suit == t.Suit && m.Tiles[0].Value == t.Value {
+					actions = append(actions, &pb.PlayerAction{
+						Type:      pb.ActionType_ACTION_KAN,
+						MeldTiles: []*pb.Tile{t},
+					})
+				}
+			}
+		}
+	}
+
 	return actions
 }
 
@@ -536,11 +617,7 @@ func (r *HometownRuleset) GetValidInterrupts(state *pb.GameState, discardedTile 
 	discarderSeat := state.ActivePlayer
 
 	// 1. Check Ron (can this discard complete my hand?)
-	// We simulate adding the discarded tile to the closed hand
-	simulatedHand := append([]*pb.Tile{}, player.ClosedHand...)
-	simulatedHand = append(simulatedHand, discardedTile)
-
-	_, canWin := r.EvaluateHand(simulatedHand, player.OpenMelds, discardedTile, state, playerSeat, false)
+	_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, discardedTile, state, playerSeat, false)
 
 	// Disabled 4-point minimum for UI testing
 	if canWin {

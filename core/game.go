@@ -151,6 +151,11 @@ func (g *Game) dealTiles() {
 func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+		g.State.PlayerReady = []bool{false, false, false, false}
+		for _, p := range g.State.Players {
+			p.ValidActions = nil
+		}
 		return nil // Exhaustive draw (Ryukyoku)
 	}
 
@@ -164,6 +169,8 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 
+	player.ValidActions = g.Rules.GetValidActions(g.State, seat)
+
 	return nil
 }
 
@@ -172,6 +179,11 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+		g.State.PlayerReady = []bool{false, false, false, false}
+		for _, p := range g.State.Players {
+			p.ValidActions = nil
+		}
 		return nil // Exhaustive draw
 	}
 
@@ -200,6 +212,8 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 
+	player.ValidActions = g.Rules.GetValidActions(g.State, seat)
+
 	return nil
 }
 
@@ -215,6 +229,12 @@ func (g *Game) ProcessPlayerAction(seat uint32, action *pb.PlayerAction) error {
 	case pb.GamePhase_PHASE_WAIT_DISCARDS:
 		// Accept steals/interrupts asynchronously from other players
 		return g.handleInterruptAction(seat, action)
+
+	case pb.GamePhase_PHASE_ROUND_END:
+		if action.Type == pb.ActionType_ACTION_READY {
+			return g.handleReadyAction(seat)
+		}
+		return errors.New("only READY action accepted in ROUND_END phase")
 
 	default:
 		return errors.New("actions not accepted in current phase")
@@ -325,6 +345,39 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 
 		return nil
+	} else if action.Type == pb.ActionType_ACTION_TSUMO {
+		player := g.State.Players[seat]
+
+		score, breakdown, canWin := g.Rules.EvaluateHand(
+			player.ClosedHand, player.OpenMelds, nil, g.State, seat, true,
+		)
+		if !canWin {
+			return errors.New("hand is not a valid tsumo win")
+		}
+
+		payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_TSUMO, seat, 0)
+		for _, p := range payouts {
+			g.State.Players[p.Seat].Score += p.Amount
+		}
+
+		g.State.RoundResult = &pb.RoundResult{
+			WinnerSeat:   seat,
+			WinType:      pb.ActionType_ACTION_TSUMO,
+			WinningHand:  player.ClosedHand,
+			WinningMelds: player.OpenMelds,
+			Breakdown:    breakdown,
+			TotalScore:   score,
+			Payouts:      payouts,
+			IsDraw:       false,
+		}
+
+		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		g.State.PlayerReady = []bool{false, false, false, false}
+		for _, p := range g.State.Players {
+			p.ValidActions = nil
+		}
+
+		return nil
 	}
 
 	return fmt.Errorf("unsupported active action: %v", action.Type)
@@ -417,12 +470,116 @@ func (g *Game) ResolveInterrupts() {
 		} else {
 			// Chii or Pon just resume turn phase (player must discard now, no drawing)
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+			player.ValidActions = nil // Players cannot Tsumo/Kan gracefully immediately after a Pon without drawing.
 		}
 	} else if winningAction.Type == pb.ActionType_ACTION_RON {
 		// Handle Ron (end of round)
+		player := g.State.Players[winnerSeat]
+		discarderSeat := g.State.ActivePlayer
+		winTile := g.State.ActiveDiscard
+
+		score, breakdown, canWin := g.Rules.EvaluateHand(
+			player.ClosedHand, player.OpenMelds, winTile, g.State, winnerSeat, false,
+		)
+		if !canWin {
+			// Should not happen since GetValidInterrupts already checked, but guard
+			g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
+			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+			g.State.ActiveDiscard = nil
+			g.ExecuteSystemDraw(g.State.ActivePlayer)
+			return
+		}
+
+		payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_RON, winnerSeat, discarderSeat)
+		for _, p := range payouts {
+			g.State.Players[p.Seat].Score += p.Amount
+		}
+
+		// Remove discard from discarder's pile since it was claimed for the win
+		discarderPlayer := g.State.Players[discarderSeat]
+		if len(discarderPlayer.Discards) > 0 {
+			discarderPlayer.Discards = discarderPlayer.Discards[:len(discarderPlayer.Discards)-1]
+		}
+
+		g.State.RoundResult = &pb.RoundResult{
+			WinnerSeat:    winnerSeat,
+			WinType:       pb.ActionType_ACTION_RON,
+			DiscarderSeat: discarderSeat,
+			WinningHand:   player.ClosedHand,
+			WinningMelds:  player.OpenMelds,
+			WinTile:       winTile,
+			Breakdown:     breakdown,
+			TotalScore:    score,
+			Payouts:       payouts,
+			IsDraw:        false,
+		}
+
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+		g.State.PlayerReady = []bool{false, false, false, false}
+		for _, p := range g.State.Players {
+			p.ValidActions = nil
+		}
 	}
 
 	// clear queue
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+}
+
+// handleReadyAction marks a player as ready for the next round.
+func (g *Game) handleReadyAction(seat uint32) error {
+	if int(seat) >= len(g.State.PlayerReady) {
+		return fmt.Errorf("invalid seat %d for ready action", seat)
+	}
+	if g.State.PlayerReady[seat] {
+		return nil // Already ready, idempotent
+	}
+	g.State.PlayerReady[seat] = true
+
+	// Check if all 4 players are ready
+	allReady := true
+	for _, ready := range g.State.PlayerReady {
+		if !ready {
+			allReady = false
+			break
+		}
+	}
+
+	if allReady {
+		g.startNextRound()
+	}
+	return nil
+}
+
+// startNextRound resets the game state for a new round while preserving scores.
+func (g *Game) startNextRound() {
+	g.State.HandNum++
+	g.State.RoundResult = nil
+	g.State.PlayerReady = nil
+	g.State.ActiveDiscard = nil
+
+	// Reset player states (preserve score)
+	for i := 0; i < 4; i++ {
+		p := g.State.Players[i]
+		p.ClosedHand = make([]*pb.Tile, 0)
+		p.HandSize = 0
+		p.DrawnTileId = nil
+		p.OpenMelds = make([]*pb.Meld, 0)
+		p.Discards = make([]*pb.Tile, 0)
+		p.FlowerMelds = make([]*pb.Tile, 0)
+		p.ValidActions = nil
+		p.HasBuddingDirectKong = false
+		p.HasBloomingDirectKong = false
+		p.HasBuddingClosedKong = false
+		p.HasBloomingClosedKong = false
+		p.HasBuddingRiskyKong = false
+		p.HasBloomingRiskyKong = false
+		p.HasBloomingFlowerKong = false
+	}
+
+	// Re-deal
+	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+	g.dealTiles()
+	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+	g.State.ActivePlayer = 0 // East starts
+	g.ExecuteSystemDraw(0)
 }

@@ -29,3 +29,6 @@ build/
 
 # Ignore embedded external clients
 killer_mortal_gui/
+
+.gotmp/
+.claude/

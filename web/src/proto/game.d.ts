@@ -132,7 +132,8 @@ export namespace game {
         ACTION_TSUMO = 6,
         ACTION_RON = 7,
         ACTION_PASS = 8,
-        ACTION_FLOWER_REVEAL = 9
+        ACTION_FLOWER_REVEAL = 9,
+        ACTION_READY = 10
     }
 
     /** Properties of a PlayerAction. */
@@ -625,6 +626,12 @@ export namespace game {
 
         /** GameState wallSeed */
         wallSeed?: (string|undefined);
+
+        /** GameState roundResult */
+        roundResult?: (game.IRoundResult|undefined);
+
+        /** GameState playerReady */
+        playerReady?: (boolean[]|undefined);
     }
 
     /** Represents a GameState. */
@@ -665,6 +672,12 @@ export namespace game {
 
         /** GameState wallSeed. */
         public wallSeed: string;
+
+        /** GameState roundResult. */
+        public roundResult: game.RoundResult;
+
+        /** GameState playerReady. */
+        public playerReady: boolean[];
 
         /**
          * Creates a new GameState instance using the specified properties.
@@ -738,6 +751,363 @@ export namespace game {
 
         /**
          * Gets the default type url for GameState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a ScoreEntry. */
+    interface IScoreEntry {
+
+        /** ScoreEntry patternName */
+        patternName?: (string|undefined);
+
+        /** ScoreEntry points */
+        points?: (number|undefined);
+    }
+
+    /** Represents a ScoreEntry. */
+    class ScoreEntry implements IScoreEntry {
+
+        /**
+         * Constructs a new ScoreEntry.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IScoreEntry);
+
+        /** ScoreEntry patternName. */
+        public patternName: string;
+
+        /** ScoreEntry points. */
+        public points: number;
+
+        /**
+         * Creates a new ScoreEntry instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns ScoreEntry instance
+         */
+        public static create(properties?: game.IScoreEntry): game.ScoreEntry;
+
+        /**
+         * Encodes the specified ScoreEntry message. Does not implicitly {@link game.ScoreEntry.verify|verify} messages.
+         * @param message ScoreEntry message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IScoreEntry, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified ScoreEntry message, length delimited. Does not implicitly {@link game.ScoreEntry.verify|verify} messages.
+         * @param message ScoreEntry message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IScoreEntry, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a ScoreEntry message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns ScoreEntry
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ScoreEntry;
+
+        /**
+         * Decodes a ScoreEntry message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns ScoreEntry
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ScoreEntry;
+
+        /**
+         * Verifies a ScoreEntry message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a ScoreEntry message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns ScoreEntry
+         */
+        public static fromObject(object: { [k: string]: any }): game.ScoreEntry;
+
+        /**
+         * Creates a plain object from a ScoreEntry message. Also converts values to other types if specified.
+         * @param message ScoreEntry
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.ScoreEntry, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this ScoreEntry to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for ScoreEntry
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a PlayerPayout. */
+    interface IPlayerPayout {
+
+        /** PlayerPayout seat */
+        seat?: (number|undefined);
+
+        /** PlayerPayout amount */
+        amount?: (number|undefined);
+    }
+
+    /** Represents a PlayerPayout. */
+    class PlayerPayout implements IPlayerPayout {
+
+        /**
+         * Constructs a new PlayerPayout.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IPlayerPayout);
+
+        /** PlayerPayout seat. */
+        public seat: number;
+
+        /** PlayerPayout amount. */
+        public amount: number;
+
+        /**
+         * Creates a new PlayerPayout instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns PlayerPayout instance
+         */
+        public static create(properties?: game.IPlayerPayout): game.PlayerPayout;
+
+        /**
+         * Encodes the specified PlayerPayout message. Does not implicitly {@link game.PlayerPayout.verify|verify} messages.
+         * @param message PlayerPayout message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IPlayerPayout, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified PlayerPayout message, length delimited. Does not implicitly {@link game.PlayerPayout.verify|verify} messages.
+         * @param message PlayerPayout message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IPlayerPayout, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a PlayerPayout message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns PlayerPayout
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerPayout;
+
+        /**
+         * Decodes a PlayerPayout message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns PlayerPayout
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerPayout;
+
+        /**
+         * Verifies a PlayerPayout message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a PlayerPayout message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns PlayerPayout
+         */
+        public static fromObject(object: { [k: string]: any }): game.PlayerPayout;
+
+        /**
+         * Creates a plain object from a PlayerPayout message. Also converts values to other types if specified.
+         * @param message PlayerPayout
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.PlayerPayout, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this PlayerPayout to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for PlayerPayout
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a RoundResult. */
+    interface IRoundResult {
+
+        /** RoundResult winnerSeat */
+        winnerSeat?: (number|undefined);
+
+        /** RoundResult winType */
+        winType?: (game.ActionType|undefined);
+
+        /** RoundResult discarderSeat */
+        discarderSeat?: (number|undefined);
+
+        /** RoundResult winningHand */
+        winningHand?: (game.ITile[]|undefined);
+
+        /** RoundResult winningMelds */
+        winningMelds?: (game.IMeld[]|undefined);
+
+        /** RoundResult winTile */
+        winTile?: (game.ITile|undefined);
+
+        /** RoundResult breakdown */
+        breakdown?: (game.IScoreEntry[]|undefined);
+
+        /** RoundResult totalScore */
+        totalScore?: (number|undefined);
+
+        /** RoundResult payouts */
+        payouts?: (game.IPlayerPayout[]|undefined);
+
+        /** RoundResult isDraw */
+        isDraw?: (boolean|undefined);
+    }
+
+    /** Represents a RoundResult. */
+    class RoundResult implements IRoundResult {
+
+        /**
+         * Constructs a new RoundResult.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IRoundResult);
+
+        /** RoundResult winnerSeat. */
+        public winnerSeat: number;
+
+        /** RoundResult winType. */
+        public winType: game.ActionType;
+
+        /** RoundResult discarderSeat. */
+        public discarderSeat: number;
+
+        /** RoundResult winningHand. */
+        public winningHand: game.Tile[];
+
+        /** RoundResult winningMelds. */
+        public winningMelds: game.Meld[];
+
+        /** RoundResult winTile. */
+        public winTile: game.Tile;
+
+        /** RoundResult breakdown. */
+        public breakdown: game.ScoreEntry[];
+
+        /** RoundResult totalScore. */
+        public totalScore: number;
+
+        /** RoundResult payouts. */
+        public payouts: game.PlayerPayout[];
+
+        /** RoundResult isDraw. */
+        public isDraw: boolean;
+
+        /**
+         * Creates a new RoundResult instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns RoundResult instance
+         */
+        public static create(properties?: game.IRoundResult): game.RoundResult;
+
+        /**
+         * Encodes the specified RoundResult message. Does not implicitly {@link game.RoundResult.verify|verify} messages.
+         * @param message RoundResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IRoundResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified RoundResult message, length delimited. Does not implicitly {@link game.RoundResult.verify|verify} messages.
+         * @param message RoundResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IRoundResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a RoundResult message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns RoundResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundResult;
+
+        /**
+         * Decodes a RoundResult message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns RoundResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundResult;
+
+        /**
+         * Verifies a RoundResult message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a RoundResult message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns RoundResult
+         */
+        public static fromObject(object: { [k: string]: any }): game.RoundResult;
+
+        /**
+         * Creates a plain object from a RoundResult message. Also converts values to other types if specified.
+         * @param message RoundResult
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.RoundResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this RoundResult to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for RoundResult
          * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
          * @returns The default type url
          */

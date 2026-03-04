@@ -1,20 +1,22 @@
 /*eslint-disable block-scoped-var, id-length, no-control-regex, no-magic-numbers, no-prototype-builtins, no-redeclare, no-shadow, no-var, sort-vars*/
-import * as $protobuf from "protobufjs/minimal";
+"use strict";
+
+var $protobuf = require("protobufjs/minimal");
 
 // Common aliases
-const $Reader = $protobuf.Reader, $Writer = $protobuf.Writer, $util = $protobuf.util;
+var $Reader = $protobuf.Reader, $Writer = $protobuf.Writer, $util = $protobuf.util;
 
 // Exported root namespace
-const $root = $protobuf.roots["default"] || ($protobuf.roots["default"] = {});
+var $root = $protobuf.roots["default"] || ($protobuf.roots["default"] = {});
 
-export const game = $root.game = (() => {
+$root.game = (function() {
 
     /**
      * Namespace game.
      * @exports game
      * @namespace
      */
-    const game = {};
+    var game = {};
 
     /**
      * Suit enum.
@@ -27,7 +29,7 @@ export const game = $root.game = (() => {
      * @property {number} SUIT_JIHAI=4 SUIT_JIHAI value
      */
     game.Suit = (function() {
-        const valuesById = {}, values = Object.create(valuesById);
+        var valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "SUIT_UNKNOWN"] = 0;
         values[valuesById[1] = "SUIT_SOU"] = 1;
         values[valuesById[2] = "SUIT_PIN"] = 2;
@@ -57,7 +59,7 @@ export const game = $root.game = (() => {
          */
         function Tile(properties) {
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -146,9 +148,9 @@ export const game = $root.game = (() => {
         Tile.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.Tile();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.Tile();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -230,7 +232,7 @@ export const game = $root.game = (() => {
         Tile.fromObject = function fromObject(object) {
             if (object instanceof $root.game.Tile)
                 return object;
-            let message = new $root.game.Tile();
+            var message = new $root.game.Tile();
             if (object.id != null)
                 message.id = object.id >>> 0;
             switch (object.suit) {
@@ -278,7 +280,7 @@ export const game = $root.game = (() => {
         Tile.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.defaults) {
                 object.id = 0;
                 object.suit = options.enums === String ? "SUIT_UNKNOWN" : 0;
@@ -339,7 +341,7 @@ export const game = $root.game = (() => {
      * @property {number} ACTION_READY=10 ACTION_READY value
      */
     game.ActionType = (function() {
-        const valuesById = {}, values = Object.create(valuesById);
+        var valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "ACTION_UNKNOWN"] = 0;
         values[valuesById[1] = "ACTION_DRAW"] = 1;
         values[valuesById[2] = "ACTION_DISCARD"] = 2;
@@ -380,7 +382,7 @@ export const game = $root.game = (() => {
         function PlayerAction(properties) {
             this.meldTiles = [];
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -470,7 +472,7 @@ export const game = $root.game = (() => {
             if (message.tile != null && Object.hasOwnProperty.call(message, "tile"))
                 $root.game.Tile.encode(message.tile, writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
             if (message.meldTiles != null && message.meldTiles.length)
-                for (let i = 0; i < message.meldTiles.length; ++i)
+                for (var i = 0; i < message.meldTiles.length; ++i)
                     $root.game.Tile.encode(message.meldTiles[i], writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
             if (message.targetPlayer != null && Object.hasOwnProperty.call(message, "targetPlayer"))
                 writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.targetPlayer);
@@ -510,9 +512,9 @@ export const game = $root.game = (() => {
         PlayerAction.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerAction();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerAction();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -599,15 +601,15 @@ export const game = $root.game = (() => {
                     break;
                 }
             if (message.tile != null && message.hasOwnProperty("tile")) {
-                let error = $root.game.Tile.verify(message.tile);
+                var error = $root.game.Tile.verify(message.tile);
                 if (error)
                     return "tile." + error;
             }
             if (message.meldTiles != null && message.hasOwnProperty("meldTiles")) {
                 if (!Array.isArray(message.meldTiles))
                     return "meldTiles: array expected";
-                for (let i = 0; i < message.meldTiles.length; ++i) {
-                    let error = $root.game.Tile.verify(message.meldTiles[i]);
+                for (var i = 0; i < message.meldTiles.length; ++i) {
+                    var error = $root.game.Tile.verify(message.meldTiles[i]);
                     if (error)
                         return "meldTiles." + error;
                 }
@@ -638,7 +640,7 @@ export const game = $root.game = (() => {
         PlayerAction.fromObject = function fromObject(object) {
             if (object instanceof $root.game.PlayerAction)
                 return object;
-            let message = new $root.game.PlayerAction();
+            var message = new $root.game.PlayerAction();
             switch (object.type) {
             default:
                 if (typeof object.type === "number") {
@@ -700,7 +702,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.meldTiles))
                     throw TypeError(".game.PlayerAction.meldTiles: array expected");
                 message.meldTiles = [];
-                for (let i = 0; i < object.meldTiles.length; ++i) {
+                for (var i = 0; i < object.meldTiles.length; ++i) {
                     if (typeof object.meldTiles[i] !== "object")
                         throw TypeError(".game.PlayerAction.meldTiles: object expected");
                     message.meldTiles[i] = $root.game.Tile.fromObject(object.meldTiles[i]);
@@ -729,7 +731,7 @@ export const game = $root.game = (() => {
         PlayerAction.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.arrays || options.defaults)
                 object.meldTiles = [];
             if (options.defaults) {
@@ -746,7 +748,7 @@ export const game = $root.game = (() => {
                 object.tile = $root.game.Tile.toObject(message.tile, options);
             if (message.meldTiles && message.meldTiles.length) {
                 object.meldTiles = [];
-                for (let j = 0; j < message.meldTiles.length; ++j)
+                for (var j = 0; j < message.meldTiles.length; ++j)
                     object.meldTiles[j] = $root.game.Tile.toObject(message.meldTiles[j], options);
             }
             if (message.targetPlayer != null && message.hasOwnProperty("targetPlayer"))
@@ -799,7 +801,7 @@ export const game = $root.game = (() => {
      * @property {number} MELD_DIRECTION_LEFT=3 MELD_DIRECTION_LEFT value
      */
     game.MeldDirection = (function() {
-        const valuesById = {}, values = Object.create(valuesById);
+        var valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "MELD_DIRECTION_UNKNOWN"] = 0;
         values[valuesById[1] = "MELD_DIRECTION_RIGHT"] = 1;
         values[valuesById[2] = "MELD_DIRECTION_ACROSS"] = 2;
@@ -830,7 +832,7 @@ export const game = $root.game = (() => {
         function Meld(properties) {
             this.tiles = [];
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -894,7 +896,7 @@ export const game = $root.game = (() => {
             if (message.type != null && Object.hasOwnProperty.call(message, "type"))
                 writer.uint32(/* id 1, wireType 0 =*/8).int32(message.type);
             if (message.tiles != null && message.tiles.length)
-                for (let i = 0; i < message.tiles.length; ++i)
+                for (var i = 0; i < message.tiles.length; ++i)
                     $root.game.Tile.encode(message.tiles[i], writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
             if (message.calledDirection != null && Object.hasOwnProperty.call(message, "calledDirection"))
                 writer.uint32(/* id 3, wireType 0 =*/24).int32(message.calledDirection);
@@ -930,9 +932,9 @@ export const game = $root.game = (() => {
         Meld.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.Meld();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.Meld();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -1009,8 +1011,8 @@ export const game = $root.game = (() => {
             if (message.tiles != null && message.hasOwnProperty("tiles")) {
                 if (!Array.isArray(message.tiles))
                     return "tiles: array expected";
-                for (let i = 0; i < message.tiles.length; ++i) {
-                    let error = $root.game.Tile.verify(message.tiles[i]);
+                for (var i = 0; i < message.tiles.length; ++i) {
+                    var error = $root.game.Tile.verify(message.tiles[i]);
                     if (error)
                         return "tiles." + error;
                 }
@@ -1042,7 +1044,7 @@ export const game = $root.game = (() => {
         Meld.fromObject = function fromObject(object) {
             if (object instanceof $root.game.Meld)
                 return object;
-            let message = new $root.game.Meld();
+            var message = new $root.game.Meld();
             switch (object.type) {
             default:
                 if (typeof object.type === "number") {
@@ -1099,7 +1101,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.tiles))
                     throw TypeError(".game.Meld.tiles: array expected");
                 message.tiles = [];
-                for (let i = 0; i < object.tiles.length; ++i) {
+                for (var i = 0; i < object.tiles.length; ++i) {
                     if (typeof object.tiles[i] !== "object")
                         throw TypeError(".game.Meld.tiles: object expected");
                     message.tiles[i] = $root.game.Tile.fromObject(object.tiles[i]);
@@ -1146,7 +1148,7 @@ export const game = $root.game = (() => {
         Meld.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.arrays || options.defaults)
                 object.tiles = [];
             if (options.defaults) {
@@ -1158,7 +1160,7 @@ export const game = $root.game = (() => {
                 object.type = options.enums === String ? $root.game.ActionType[message.type] === undefined ? message.type : $root.game.ActionType[message.type] : message.type;
             if (message.tiles && message.tiles.length) {
                 object.tiles = [];
-                for (let j = 0; j < message.tiles.length; ++j)
+                for (var j = 0; j < message.tiles.length; ++j)
                     object.tiles[j] = $root.game.Tile.toObject(message.tiles[j], options);
             }
             if (message.calledDirection != null && message.hasOwnProperty("calledDirection"))
@@ -1237,7 +1239,7 @@ export const game = $root.game = (() => {
             this.flowerMelds = [];
             this.validActions = [];
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -1379,7 +1381,7 @@ export const game = $root.game = (() => {
         PlayerState.prototype.drawnTileId = null;
 
         // OneOf field names bound to virtual getters and setters
-        let $oneOfFields;
+        var $oneOfFields;
 
         // Virtual OneOf for proto3 optional field
         Object.defineProperty(PlayerState.prototype, "_drawnTileId", {
@@ -1416,20 +1418,20 @@ export const game = $root.game = (() => {
             if (message.score != null && Object.hasOwnProperty.call(message, "score"))
                 writer.uint32(/* id 2, wireType 0 =*/16).int32(message.score);
             if (message.closedHand != null && message.closedHand.length)
-                for (let i = 0; i < message.closedHand.length; ++i)
+                for (var i = 0; i < message.closedHand.length; ++i)
                     $root.game.Tile.encode(message.closedHand[i], writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
             if (message.handSize != null && Object.hasOwnProperty.call(message, "handSize"))
                 writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.handSize);
             if (message.openMelds != null && message.openMelds.length)
-                for (let i = 0; i < message.openMelds.length; ++i)
+                for (var i = 0; i < message.openMelds.length; ++i)
                     $root.game.Meld.encode(message.openMelds[i], writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             if (message.discards != null && message.discards.length)
-                for (let i = 0; i < message.discards.length; ++i)
+                for (var i = 0; i < message.discards.length; ++i)
                     $root.game.Tile.encode(message.discards[i], writer.uint32(/* id 6, wireType 2 =*/50).fork()).ldelim();
             if (message.seatWind != null && Object.hasOwnProperty.call(message, "seatWind"))
                 writer.uint32(/* id 7, wireType 0 =*/56).uint32(message.seatWind);
             if (message.flowerMelds != null && message.flowerMelds.length)
-                for (let i = 0; i < message.flowerMelds.length; ++i)
+                for (var i = 0; i < message.flowerMelds.length; ++i)
                     $root.game.Tile.encode(message.flowerMelds[i], writer.uint32(/* id 8, wireType 2 =*/66).fork()).ldelim();
             if (message.hasBuddingDirectKong != null && Object.hasOwnProperty.call(message, "hasBuddingDirectKong"))
                 writer.uint32(/* id 9, wireType 0 =*/72).bool(message.hasBuddingDirectKong);
@@ -1446,7 +1448,7 @@ export const game = $root.game = (() => {
             if (message.hasBloomingFlowerKong != null && Object.hasOwnProperty.call(message, "hasBloomingFlowerKong"))
                 writer.uint32(/* id 15, wireType 0 =*/120).bool(message.hasBloomingFlowerKong);
             if (message.validActions != null && message.validActions.length)
-                for (let i = 0; i < message.validActions.length; ++i)
+                for (var i = 0; i < message.validActions.length; ++i)
                     $root.game.PlayerAction.encode(message.validActions[i], writer.uint32(/* id 16, wireType 2 =*/130).fork()).ldelim();
             if (message.drawnTileId != null && Object.hasOwnProperty.call(message, "drawnTileId"))
                 writer.uint32(/* id 17, wireType 0 =*/136).int32(message.drawnTileId);
@@ -1480,9 +1482,9 @@ export const game = $root.game = (() => {
         PlayerState.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerState();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerState();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -1599,7 +1601,7 @@ export const game = $root.game = (() => {
         PlayerState.verify = function verify(message) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
-            let properties = {};
+            var properties = {};
             if (message.seat != null && message.hasOwnProperty("seat"))
                 if (!$util.isInteger(message.seat))
                     return "seat: integer expected";
@@ -1609,8 +1611,8 @@ export const game = $root.game = (() => {
             if (message.closedHand != null && message.hasOwnProperty("closedHand")) {
                 if (!Array.isArray(message.closedHand))
                     return "closedHand: array expected";
-                for (let i = 0; i < message.closedHand.length; ++i) {
-                    let error = $root.game.Tile.verify(message.closedHand[i]);
+                for (var i = 0; i < message.closedHand.length; ++i) {
+                    var error = $root.game.Tile.verify(message.closedHand[i]);
                     if (error)
                         return "closedHand." + error;
                 }
@@ -1621,8 +1623,8 @@ export const game = $root.game = (() => {
             if (message.openMelds != null && message.hasOwnProperty("openMelds")) {
                 if (!Array.isArray(message.openMelds))
                     return "openMelds: array expected";
-                for (let i = 0; i < message.openMelds.length; ++i) {
-                    let error = $root.game.Meld.verify(message.openMelds[i]);
+                for (var i = 0; i < message.openMelds.length; ++i) {
+                    var error = $root.game.Meld.verify(message.openMelds[i]);
                     if (error)
                         return "openMelds." + error;
                 }
@@ -1630,8 +1632,8 @@ export const game = $root.game = (() => {
             if (message.discards != null && message.hasOwnProperty("discards")) {
                 if (!Array.isArray(message.discards))
                     return "discards: array expected";
-                for (let i = 0; i < message.discards.length; ++i) {
-                    let error = $root.game.Tile.verify(message.discards[i]);
+                for (var i = 0; i < message.discards.length; ++i) {
+                    var error = $root.game.Tile.verify(message.discards[i]);
                     if (error)
                         return "discards." + error;
                 }
@@ -1642,8 +1644,8 @@ export const game = $root.game = (() => {
             if (message.flowerMelds != null && message.hasOwnProperty("flowerMelds")) {
                 if (!Array.isArray(message.flowerMelds))
                     return "flowerMelds: array expected";
-                for (let i = 0; i < message.flowerMelds.length; ++i) {
-                    let error = $root.game.Tile.verify(message.flowerMelds[i]);
+                for (var i = 0; i < message.flowerMelds.length; ++i) {
+                    var error = $root.game.Tile.verify(message.flowerMelds[i]);
                     if (error)
                         return "flowerMelds." + error;
                 }
@@ -1672,8 +1674,8 @@ export const game = $root.game = (() => {
             if (message.validActions != null && message.hasOwnProperty("validActions")) {
                 if (!Array.isArray(message.validActions))
                     return "validActions: array expected";
-                for (let i = 0; i < message.validActions.length; ++i) {
-                    let error = $root.game.PlayerAction.verify(message.validActions[i]);
+                for (var i = 0; i < message.validActions.length; ++i) {
+                    var error = $root.game.PlayerAction.verify(message.validActions[i]);
                     if (error)
                         return "validActions." + error;
                 }
@@ -1697,7 +1699,7 @@ export const game = $root.game = (() => {
         PlayerState.fromObject = function fromObject(object) {
             if (object instanceof $root.game.PlayerState)
                 return object;
-            let message = new $root.game.PlayerState();
+            var message = new $root.game.PlayerState();
             if (object.seat != null)
                 message.seat = object.seat >>> 0;
             if (object.score != null)
@@ -1706,7 +1708,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.closedHand))
                     throw TypeError(".game.PlayerState.closedHand: array expected");
                 message.closedHand = [];
-                for (let i = 0; i < object.closedHand.length; ++i) {
+                for (var i = 0; i < object.closedHand.length; ++i) {
                     if (typeof object.closedHand[i] !== "object")
                         throw TypeError(".game.PlayerState.closedHand: object expected");
                     message.closedHand[i] = $root.game.Tile.fromObject(object.closedHand[i]);
@@ -1718,7 +1720,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.openMelds))
                     throw TypeError(".game.PlayerState.openMelds: array expected");
                 message.openMelds = [];
-                for (let i = 0; i < object.openMelds.length; ++i) {
+                for (var i = 0; i < object.openMelds.length; ++i) {
                     if (typeof object.openMelds[i] !== "object")
                         throw TypeError(".game.PlayerState.openMelds: object expected");
                     message.openMelds[i] = $root.game.Meld.fromObject(object.openMelds[i]);
@@ -1728,7 +1730,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.discards))
                     throw TypeError(".game.PlayerState.discards: array expected");
                 message.discards = [];
-                for (let i = 0; i < object.discards.length; ++i) {
+                for (var i = 0; i < object.discards.length; ++i) {
                     if (typeof object.discards[i] !== "object")
                         throw TypeError(".game.PlayerState.discards: object expected");
                     message.discards[i] = $root.game.Tile.fromObject(object.discards[i]);
@@ -1740,7 +1742,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.flowerMelds))
                     throw TypeError(".game.PlayerState.flowerMelds: array expected");
                 message.flowerMelds = [];
-                for (let i = 0; i < object.flowerMelds.length; ++i) {
+                for (var i = 0; i < object.flowerMelds.length; ++i) {
                     if (typeof object.flowerMelds[i] !== "object")
                         throw TypeError(".game.PlayerState.flowerMelds: object expected");
                     message.flowerMelds[i] = $root.game.Tile.fromObject(object.flowerMelds[i]);
@@ -1764,7 +1766,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.validActions))
                     throw TypeError(".game.PlayerState.validActions: array expected");
                 message.validActions = [];
-                for (let i = 0; i < object.validActions.length; ++i) {
+                for (var i = 0; i < object.validActions.length; ++i) {
                     if (typeof object.validActions[i] !== "object")
                         throw TypeError(".game.PlayerState.validActions: object expected");
                     message.validActions[i] = $root.game.PlayerAction.fromObject(object.validActions[i]);
@@ -1787,7 +1789,7 @@ export const game = $root.game = (() => {
         PlayerState.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.arrays || options.defaults) {
                 object.closedHand = [];
                 object.openMelds = [];
@@ -1814,26 +1816,26 @@ export const game = $root.game = (() => {
                 object.score = message.score;
             if (message.closedHand && message.closedHand.length) {
                 object.closedHand = [];
-                for (let j = 0; j < message.closedHand.length; ++j)
+                for (var j = 0; j < message.closedHand.length; ++j)
                     object.closedHand[j] = $root.game.Tile.toObject(message.closedHand[j], options);
             }
             if (message.handSize != null && message.hasOwnProperty("handSize"))
                 object.handSize = message.handSize;
             if (message.openMelds && message.openMelds.length) {
                 object.openMelds = [];
-                for (let j = 0; j < message.openMelds.length; ++j)
+                for (var j = 0; j < message.openMelds.length; ++j)
                     object.openMelds[j] = $root.game.Meld.toObject(message.openMelds[j], options);
             }
             if (message.discards && message.discards.length) {
                 object.discards = [];
-                for (let j = 0; j < message.discards.length; ++j)
+                for (var j = 0; j < message.discards.length; ++j)
                     object.discards[j] = $root.game.Tile.toObject(message.discards[j], options);
             }
             if (message.seatWind != null && message.hasOwnProperty("seatWind"))
                 object.seatWind = message.seatWind;
             if (message.flowerMelds && message.flowerMelds.length) {
                 object.flowerMelds = [];
-                for (let j = 0; j < message.flowerMelds.length; ++j)
+                for (var j = 0; j < message.flowerMelds.length; ++j)
                     object.flowerMelds[j] = $root.game.Tile.toObject(message.flowerMelds[j], options);
             }
             if (message.hasBuddingDirectKong != null && message.hasOwnProperty("hasBuddingDirectKong"))
@@ -1852,7 +1854,7 @@ export const game = $root.game = (() => {
                 object.hasBloomingFlowerKong = message.hasBloomingFlowerKong;
             if (message.validActions && message.validActions.length) {
                 object.validActions = [];
-                for (let j = 0; j < message.validActions.length; ++j)
+                for (var j = 0; j < message.validActions.length; ++j)
                     object.validActions[j] = $root.game.PlayerAction.toObject(message.validActions[j], options);
             }
             if (message.drawnTileId != null && message.hasOwnProperty("drawnTileId")) {
@@ -1903,7 +1905,7 @@ export const game = $root.game = (() => {
      * @property {number} PHASE_ROUND_END=4 PHASE_ROUND_END value
      */
     game.GamePhase = (function() {
-        const valuesById = {}, values = Object.create(valuesById);
+        var valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "PHASE_INIT"] = 0;
         values[valuesById[1] = "PHASE_DEAL"] = 1;
         values[valuesById[2] = "PHASE_PLAYER_TURN"] = 2;
@@ -1945,7 +1947,7 @@ export const game = $root.game = (() => {
             this.wildTiles = [];
             this.playerReady = [];
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -2077,7 +2079,7 @@ export const game = $root.game = (() => {
             if (message.activePlayer != null && Object.hasOwnProperty.call(message, "activePlayer"))
                 writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.activePlayer);
             if (message.players != null && message.players.length)
-                for (let i = 0; i < message.players.length; ++i)
+                for (var i = 0; i < message.players.length; ++i)
                     $root.game.PlayerState.encode(message.players[i], writer.uint32(/* id 4, wireType 2 =*/34).fork()).ldelim();
             if (message.wallCount != null && Object.hasOwnProperty.call(message, "wallCount"))
                 writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.wallCount);
@@ -2086,7 +2088,7 @@ export const game = $root.game = (() => {
             if (message.activeDiscard != null && Object.hasOwnProperty.call(message, "activeDiscard"))
                 $root.game.Tile.encode(message.activeDiscard, writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
             if (message.wildTiles != null && message.wildTiles.length)
-                for (let i = 0; i < message.wildTiles.length; ++i)
+                for (var i = 0; i < message.wildTiles.length; ++i)
                     $root.game.Tile.encode(message.wildTiles[i], writer.uint32(/* id 8, wireType 2 =*/66).fork()).ldelim();
             if (message.prevailingWind != null && Object.hasOwnProperty.call(message, "prevailingWind"))
                 writer.uint32(/* id 11, wireType 0 =*/88).uint32(message.prevailingWind);
@@ -2096,7 +2098,7 @@ export const game = $root.game = (() => {
                 $root.game.RoundResult.encode(message.roundResult, writer.uint32(/* id 13, wireType 2 =*/106).fork()).ldelim();
             if (message.playerReady != null && message.playerReady.length) {
                 writer.uint32(/* id 14, wireType 2 =*/114).fork();
-                for (let i = 0; i < message.playerReady.length; ++i)
+                for (var i = 0; i < message.playerReady.length; ++i)
                     writer.bool(message.playerReady[i]);
                 writer.ldelim();
             }
@@ -2130,9 +2132,9 @@ export const game = $root.game = (() => {
         GameState.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.GameState();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.GameState();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -2188,7 +2190,7 @@ export const game = $root.game = (() => {
                         if (!(message.playerReady && message.playerReady.length))
                             message.playerReady = [];
                         if ((tag & 7) === 2) {
-                            let end2 = reader.uint32() + reader.pos;
+                            var end2 = reader.uint32() + reader.pos;
                             while (reader.pos < end2)
                                 message.playerReady.push(reader.bool());
                         } else
@@ -2250,8 +2252,8 @@ export const game = $root.game = (() => {
             if (message.players != null && message.hasOwnProperty("players")) {
                 if (!Array.isArray(message.players))
                     return "players: array expected";
-                for (let i = 0; i < message.players.length; ++i) {
-                    let error = $root.game.PlayerState.verify(message.players[i]);
+                for (var i = 0; i < message.players.length; ++i) {
+                    var error = $root.game.PlayerState.verify(message.players[i]);
                     if (error)
                         return "players." + error;
                 }
@@ -2263,15 +2265,15 @@ export const game = $root.game = (() => {
                 if (!$util.isInteger(message.handNum))
                     return "handNum: integer expected";
             if (message.activeDiscard != null && message.hasOwnProperty("activeDiscard")) {
-                let error = $root.game.Tile.verify(message.activeDiscard);
+                var error = $root.game.Tile.verify(message.activeDiscard);
                 if (error)
                     return "activeDiscard." + error;
             }
             if (message.wildTiles != null && message.hasOwnProperty("wildTiles")) {
                 if (!Array.isArray(message.wildTiles))
                     return "wildTiles: array expected";
-                for (let i = 0; i < message.wildTiles.length; ++i) {
-                    let error = $root.game.Tile.verify(message.wildTiles[i]);
+                for (var i = 0; i < message.wildTiles.length; ++i) {
+                    var error = $root.game.Tile.verify(message.wildTiles[i]);
                     if (error)
                         return "wildTiles." + error;
                 }
@@ -2283,14 +2285,14 @@ export const game = $root.game = (() => {
                 if (!$util.isString(message.wallSeed))
                     return "wallSeed: string expected";
             if (message.roundResult != null && message.hasOwnProperty("roundResult")) {
-                let error = $root.game.RoundResult.verify(message.roundResult);
+                var error = $root.game.RoundResult.verify(message.roundResult);
                 if (error)
                     return "roundResult." + error;
             }
             if (message.playerReady != null && message.hasOwnProperty("playerReady")) {
                 if (!Array.isArray(message.playerReady))
                     return "playerReady: array expected";
-                for (let i = 0; i < message.playerReady.length; ++i)
+                for (var i = 0; i < message.playerReady.length; ++i)
                     if (typeof message.playerReady[i] !== "boolean")
                         return "playerReady: boolean[] expected";
             }
@@ -2308,7 +2310,7 @@ export const game = $root.game = (() => {
         GameState.fromObject = function fromObject(object) {
             if (object instanceof $root.game.GameState)
                 return object;
-            let message = new $root.game.GameState();
+            var message = new $root.game.GameState();
             if (object.matchId != null)
                 message.matchId = String(object.matchId);
             switch (object.phase) {
@@ -2345,7 +2347,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.players))
                     throw TypeError(".game.GameState.players: array expected");
                 message.players = [];
-                for (let i = 0; i < object.players.length; ++i) {
+                for (var i = 0; i < object.players.length; ++i) {
                     if (typeof object.players[i] !== "object")
                         throw TypeError(".game.GameState.players: object expected");
                     message.players[i] = $root.game.PlayerState.fromObject(object.players[i]);
@@ -2364,7 +2366,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.wildTiles))
                     throw TypeError(".game.GameState.wildTiles: array expected");
                 message.wildTiles = [];
-                for (let i = 0; i < object.wildTiles.length; ++i) {
+                for (var i = 0; i < object.wildTiles.length; ++i) {
                     if (typeof object.wildTiles[i] !== "object")
                         throw TypeError(".game.GameState.wildTiles: object expected");
                     message.wildTiles[i] = $root.game.Tile.fromObject(object.wildTiles[i]);
@@ -2383,7 +2385,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.playerReady))
                     throw TypeError(".game.GameState.playerReady: array expected");
                 message.playerReady = [];
-                for (let i = 0; i < object.playerReady.length; ++i)
+                for (var i = 0; i < object.playerReady.length; ++i)
                     message.playerReady[i] = Boolean(object.playerReady[i]);
             }
             return message;
@@ -2401,7 +2403,7 @@ export const game = $root.game = (() => {
         GameState.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.arrays || options.defaults) {
                 object.players = [];
                 object.wildTiles = [];
@@ -2426,7 +2428,7 @@ export const game = $root.game = (() => {
                 object.activePlayer = message.activePlayer;
             if (message.players && message.players.length) {
                 object.players = [];
-                for (let j = 0; j < message.players.length; ++j)
+                for (var j = 0; j < message.players.length; ++j)
                     object.players[j] = $root.game.PlayerState.toObject(message.players[j], options);
             }
             if (message.wallCount != null && message.hasOwnProperty("wallCount"))
@@ -2437,7 +2439,7 @@ export const game = $root.game = (() => {
                 object.activeDiscard = $root.game.Tile.toObject(message.activeDiscard, options);
             if (message.wildTiles && message.wildTiles.length) {
                 object.wildTiles = [];
-                for (let j = 0; j < message.wildTiles.length; ++j)
+                for (var j = 0; j < message.wildTiles.length; ++j)
                     object.wildTiles[j] = $root.game.Tile.toObject(message.wildTiles[j], options);
             }
             if (message.prevailingWind != null && message.hasOwnProperty("prevailingWind"))
@@ -2448,7 +2450,7 @@ export const game = $root.game = (() => {
                 object.roundResult = $root.game.RoundResult.toObject(message.roundResult, options);
             if (message.playerReady && message.playerReady.length) {
                 object.playerReady = [];
-                for (let j = 0; j < message.playerReady.length; ++j)
+                for (var j = 0; j < message.playerReady.length; ++j)
                     object.playerReady[j] = message.playerReady[j];
             }
             return object;
@@ -2503,7 +2505,7 @@ export const game = $root.game = (() => {
          */
         function ScoreEntry(properties) {
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -2582,9 +2584,9 @@ export const game = $root.game = (() => {
         ScoreEntry.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.ScoreEntry();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.ScoreEntry();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -2651,7 +2653,7 @@ export const game = $root.game = (() => {
         ScoreEntry.fromObject = function fromObject(object) {
             if (object instanceof $root.game.ScoreEntry)
                 return object;
-            let message = new $root.game.ScoreEntry();
+            var message = new $root.game.ScoreEntry();
             if (object.patternName != null)
                 message.patternName = String(object.patternName);
             if (object.points != null)
@@ -2671,7 +2673,7 @@ export const game = $root.game = (() => {
         ScoreEntry.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.defaults) {
                 object.patternName = "";
                 object.points = 0;
@@ -2732,7 +2734,7 @@ export const game = $root.game = (() => {
          */
         function PlayerPayout(properties) {
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -2811,9 +2813,9 @@ export const game = $root.game = (() => {
         PlayerPayout.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerPayout();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerPayout();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -2880,7 +2882,7 @@ export const game = $root.game = (() => {
         PlayerPayout.fromObject = function fromObject(object) {
             if (object instanceof $root.game.PlayerPayout)
                 return object;
-            let message = new $root.game.PlayerPayout();
+            var message = new $root.game.PlayerPayout();
             if (object.seat != null)
                 message.seat = object.seat >>> 0;
             if (object.amount != null)
@@ -2900,7 +2902,7 @@ export const game = $root.game = (() => {
         PlayerPayout.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.defaults) {
                 object.seat = 0;
                 object.amount = 0;
@@ -2973,7 +2975,7 @@ export const game = $root.game = (() => {
             this.breakdown = [];
             this.payouts = [];
             if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
                         this[keys[i]] = properties[keys[i]];
         }
@@ -3089,20 +3091,20 @@ export const game = $root.game = (() => {
             if (message.discarderSeat != null && Object.hasOwnProperty.call(message, "discarderSeat"))
                 writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.discarderSeat);
             if (message.winningHand != null && message.winningHand.length)
-                for (let i = 0; i < message.winningHand.length; ++i)
+                for (var i = 0; i < message.winningHand.length; ++i)
                     $root.game.Tile.encode(message.winningHand[i], writer.uint32(/* id 4, wireType 2 =*/34).fork()).ldelim();
             if (message.winningMelds != null && message.winningMelds.length)
-                for (let i = 0; i < message.winningMelds.length; ++i)
+                for (var i = 0; i < message.winningMelds.length; ++i)
                     $root.game.Meld.encode(message.winningMelds[i], writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             if (message.winTile != null && Object.hasOwnProperty.call(message, "winTile"))
                 $root.game.Tile.encode(message.winTile, writer.uint32(/* id 6, wireType 2 =*/50).fork()).ldelim();
             if (message.breakdown != null && message.breakdown.length)
-                for (let i = 0; i < message.breakdown.length; ++i)
+                for (var i = 0; i < message.breakdown.length; ++i)
                     $root.game.ScoreEntry.encode(message.breakdown[i], writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
             if (message.totalScore != null && Object.hasOwnProperty.call(message, "totalScore"))
                 writer.uint32(/* id 8, wireType 0 =*/64).int32(message.totalScore);
             if (message.payouts != null && message.payouts.length)
-                for (let i = 0; i < message.payouts.length; ++i)
+                for (var i = 0; i < message.payouts.length; ++i)
                     $root.game.PlayerPayout.encode(message.payouts[i], writer.uint32(/* id 9, wireType 2 =*/74).fork()).ldelim();
             if (message.isDraw != null && Object.hasOwnProperty.call(message, "isDraw"))
                 writer.uint32(/* id 10, wireType 0 =*/80).bool(message.isDraw);
@@ -3136,9 +3138,9 @@ export const game = $root.game = (() => {
         RoundResult.decode = function decode(reader, length, error) {
             if (!(reader instanceof $Reader))
                 reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RoundResult();
+            var end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RoundResult();
             while (reader.pos < end) {
-                let tag = reader.uint32();
+                var tag = reader.uint32();
                 if (tag === error)
                     break;
                 switch (tag >>> 3) {
@@ -3251,8 +3253,8 @@ export const game = $root.game = (() => {
             if (message.winningHand != null && message.hasOwnProperty("winningHand")) {
                 if (!Array.isArray(message.winningHand))
                     return "winningHand: array expected";
-                for (let i = 0; i < message.winningHand.length; ++i) {
-                    let error = $root.game.Tile.verify(message.winningHand[i]);
+                for (var i = 0; i < message.winningHand.length; ++i) {
+                    var error = $root.game.Tile.verify(message.winningHand[i]);
                     if (error)
                         return "winningHand." + error;
                 }
@@ -3260,22 +3262,22 @@ export const game = $root.game = (() => {
             if (message.winningMelds != null && message.hasOwnProperty("winningMelds")) {
                 if (!Array.isArray(message.winningMelds))
                     return "winningMelds: array expected";
-                for (let i = 0; i < message.winningMelds.length; ++i) {
-                    let error = $root.game.Meld.verify(message.winningMelds[i]);
+                for (var i = 0; i < message.winningMelds.length; ++i) {
+                    var error = $root.game.Meld.verify(message.winningMelds[i]);
                     if (error)
                         return "winningMelds." + error;
                 }
             }
             if (message.winTile != null && message.hasOwnProperty("winTile")) {
-                let error = $root.game.Tile.verify(message.winTile);
+                var error = $root.game.Tile.verify(message.winTile);
                 if (error)
                     return "winTile." + error;
             }
             if (message.breakdown != null && message.hasOwnProperty("breakdown")) {
                 if (!Array.isArray(message.breakdown))
                     return "breakdown: array expected";
-                for (let i = 0; i < message.breakdown.length; ++i) {
-                    let error = $root.game.ScoreEntry.verify(message.breakdown[i]);
+                for (var i = 0; i < message.breakdown.length; ++i) {
+                    var error = $root.game.ScoreEntry.verify(message.breakdown[i]);
                     if (error)
                         return "breakdown." + error;
                 }
@@ -3286,8 +3288,8 @@ export const game = $root.game = (() => {
             if (message.payouts != null && message.hasOwnProperty("payouts")) {
                 if (!Array.isArray(message.payouts))
                     return "payouts: array expected";
-                for (let i = 0; i < message.payouts.length; ++i) {
-                    let error = $root.game.PlayerPayout.verify(message.payouts[i]);
+                for (var i = 0; i < message.payouts.length; ++i) {
+                    var error = $root.game.PlayerPayout.verify(message.payouts[i]);
                     if (error)
                         return "payouts." + error;
                 }
@@ -3309,7 +3311,7 @@ export const game = $root.game = (() => {
         RoundResult.fromObject = function fromObject(object) {
             if (object instanceof $root.game.RoundResult)
                 return object;
-            let message = new $root.game.RoundResult();
+            var message = new $root.game.RoundResult();
             if (object.winnerSeat != null)
                 message.winnerSeat = object.winnerSeat >>> 0;
             switch (object.winType) {
@@ -3370,7 +3372,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.winningHand))
                     throw TypeError(".game.RoundResult.winningHand: array expected");
                 message.winningHand = [];
-                for (let i = 0; i < object.winningHand.length; ++i) {
+                for (var i = 0; i < object.winningHand.length; ++i) {
                     if (typeof object.winningHand[i] !== "object")
                         throw TypeError(".game.RoundResult.winningHand: object expected");
                     message.winningHand[i] = $root.game.Tile.fromObject(object.winningHand[i]);
@@ -3380,7 +3382,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.winningMelds))
                     throw TypeError(".game.RoundResult.winningMelds: array expected");
                 message.winningMelds = [];
-                for (let i = 0; i < object.winningMelds.length; ++i) {
+                for (var i = 0; i < object.winningMelds.length; ++i) {
                     if (typeof object.winningMelds[i] !== "object")
                         throw TypeError(".game.RoundResult.winningMelds: object expected");
                     message.winningMelds[i] = $root.game.Meld.fromObject(object.winningMelds[i]);
@@ -3395,7 +3397,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.breakdown))
                     throw TypeError(".game.RoundResult.breakdown: array expected");
                 message.breakdown = [];
-                for (let i = 0; i < object.breakdown.length; ++i) {
+                for (var i = 0; i < object.breakdown.length; ++i) {
                     if (typeof object.breakdown[i] !== "object")
                         throw TypeError(".game.RoundResult.breakdown: object expected");
                     message.breakdown[i] = $root.game.ScoreEntry.fromObject(object.breakdown[i]);
@@ -3407,7 +3409,7 @@ export const game = $root.game = (() => {
                 if (!Array.isArray(object.payouts))
                     throw TypeError(".game.RoundResult.payouts: array expected");
                 message.payouts = [];
-                for (let i = 0; i < object.payouts.length; ++i) {
+                for (var i = 0; i < object.payouts.length; ++i) {
                     if (typeof object.payouts[i] !== "object")
                         throw TypeError(".game.RoundResult.payouts: object expected");
                     message.payouts[i] = $root.game.PlayerPayout.fromObject(object.payouts[i]);
@@ -3430,7 +3432,7 @@ export const game = $root.game = (() => {
         RoundResult.toObject = function toObject(message, options) {
             if (!options)
                 options = {};
-            let object = {};
+            var object = {};
             if (options.arrays || options.defaults) {
                 object.winningHand = [];
                 object.winningMelds = [];
@@ -3453,26 +3455,26 @@ export const game = $root.game = (() => {
                 object.discarderSeat = message.discarderSeat;
             if (message.winningHand && message.winningHand.length) {
                 object.winningHand = [];
-                for (let j = 0; j < message.winningHand.length; ++j)
+                for (var j = 0; j < message.winningHand.length; ++j)
                     object.winningHand[j] = $root.game.Tile.toObject(message.winningHand[j], options);
             }
             if (message.winningMelds && message.winningMelds.length) {
                 object.winningMelds = [];
-                for (let j = 0; j < message.winningMelds.length; ++j)
+                for (var j = 0; j < message.winningMelds.length; ++j)
                     object.winningMelds[j] = $root.game.Meld.toObject(message.winningMelds[j], options);
             }
             if (message.winTile != null && message.hasOwnProperty("winTile"))
                 object.winTile = $root.game.Tile.toObject(message.winTile, options);
             if (message.breakdown && message.breakdown.length) {
                 object.breakdown = [];
-                for (let j = 0; j < message.breakdown.length; ++j)
+                for (var j = 0; j < message.breakdown.length; ++j)
                     object.breakdown[j] = $root.game.ScoreEntry.toObject(message.breakdown[j], options);
             }
             if (message.totalScore != null && message.hasOwnProperty("totalScore"))
                 object.totalScore = message.totalScore;
             if (message.payouts && message.payouts.length) {
                 object.payouts = [];
-                for (let j = 0; j < message.payouts.length; ++j)
+                for (var j = 0; j < message.payouts.length; ++j)
                     object.payouts[j] = $root.game.PlayerPayout.toObject(message.payouts[j], options);
             }
             if (message.isDraw != null && message.hasOwnProperty("isDraw"))
@@ -3512,4 +3514,4 @@ export const game = $root.game = (() => {
     return game;
 })();
 
-export { $root as default };
+module.exports = $root;

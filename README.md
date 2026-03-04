@@ -39,6 +39,15 @@ fh-mahjong/
 
 ## Quick Start
 ```bash
+# 1. Start database and redis containers
+docker-compose up -d
+
+# 2. Start the Go WebSocket server
+go run ./cmd/server
+
+# 3. Start the React frontend (in a separate terminal)
+cd web && npm run dev
+
 # Run all tests
 go test ./...
 

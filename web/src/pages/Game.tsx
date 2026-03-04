@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
@@ -37,6 +37,7 @@ export default function Game() {
 
     // Track the last drawn tile so we can delay its sorting animation
     const lastDrawnTileId = useRef<number | null>(null);
+    const [isReady, setIsReady] = useState(false);
 
     useEffect(() => {
         if (!isConnected || !socket) {
@@ -49,6 +50,13 @@ export default function Game() {
             }
         }
     }, [isConnected, socket, navigate, connect]);
+
+    // Reset ready state when a new round starts
+    useEffect(() => {
+        if (gameState?.phase !== 4) {
+            setIsReady(false);
+        }
+    }, [gameState?.phase]);
 
     if (!gameState) {
         return (
@@ -125,13 +133,19 @@ export default function Game() {
                     padding: 0,
                     border: 'none',
                     backgroundColor: 'transparent',
-                    boxShadow: isWild ? '0 0 10px rgba(234, 179, 8, 0.8)' : '1px 1px 3px rgba(0,0,0,0.5)'
+                    boxShadow: isWild ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
+                    position: 'relative'
                 }}
             >
                 <img
+                    src={`/Regular_shortnames/Front.svg`}
+                    style={{ width: '100%', height: '100%', display: 'block', borderRadius: '4px', position: 'absolute', top: 0, left: 0, zIndex: 1 }}
+                    draggable="false"
+                />
+                <img
                     src={`/Regular_shortnames/${svgName}`}
                     alt={getTileName(tile)}
-                    style={{ width: '100%', height: '100%', display: 'block', borderRadius: '4px' }}
+                    style={{ width: '85%', height: '85%', display: 'block', position: 'absolute', top: '7.5%', left: '7.5%', zIndex: 2 }}
                     draggable="false"
                 />
             </div>
@@ -162,67 +176,7 @@ export default function Game() {
                     <div className="text-gray-400 text-sm mt-4">Waiting for Seat {gameState.activePlayer}...</div>
                 )}
 
-                {/* Interrupt Window Actions (Chii, Pong, Kang, Ron) */}
-                {gameState.phase === 3 && validActions.length > 0 && (
-                    <div className="flex gap-4 mt-6 pointer-events-auto justify-center">
-                        {validActions.map((action: any, i: number) => {
-                            let label = 'Unknown';
-                            let color = 'bg-gray-600 hover:bg-gray-500';
-                            let textCol = 'text-white';
-                            if (action.type === game.ActionType.ACTION_CHII) {
-                                label = 'CHOW';
-                                color = 'bg-blue-600 hover:bg-blue-500';
-                            } else if (action.type === game.ActionType.ACTION_PON) {
-                                label = 'PONG';
-                                color = 'bg-purple-600 hover:bg-purple-500';
-                            } else if (action.type === game.ActionType.ACTION_KAN) {
-                                label = 'KONG';
-                                color = 'bg-indigo-600 hover:bg-indigo-500';
-                            } else if (action.type === game.ActionType.ACTION_RON) {
-                                label = 'RON (Win)';
-                                color = 'bg-red-600 hover:bg-red-500';
-                            }
 
-                            return (
-                                <button key={i} onClick={() => handleAction(action.type, undefined, action.meldTiles || [])} className={`${color} ${textCol} font-bold py-3 px-6 rounded-lg shadow-xl outline outline-offset-2 outline-white text-lg tracking-widest transition-transform hover:scale-105 animate-bounce flex items-center gap-3`}>
-                                    <span>{label}</span>
-                                    {action.meldTiles && action.meldTiles.length > 0 && (
-                                        <div className="flex gap-1 bg-black bg-opacity-30 p-1 rounded">
-                                            {action.meldTiles.map((mt: any, mtIdx: number) => (
-                                                <TileComponent key={mtIdx} tile={mt} size="small" />
-                                            ))}
-                                        </div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                        <button onClick={() => handleAction(game.ActionType.ACTION_PASS)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-3 px-6 rounded-lg shadow-lg tracking-widest transition-transform hover:scale-105">
-                            SKIP
-                        </button>
-                    </div>
-                )}
-
-                {/* Active Turn Actions (Tsumo, Closed Kan) */}
-                {gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0 && (
-                    <div className="flex gap-4 mt-6 pointer-events-auto justify-center">
-                        {validActions.map((action: any, i: number) => {
-                            if (action.type === game.ActionType.ACTION_TSUMO) {
-                                return (
-                                    <button key={i} onClick={() => handleAction(game.ActionType.ACTION_TSUMO)} className="bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold py-3 px-6 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.8)] text-xl tracking-widest transition-transform hover:scale-110 animate-pulse">
-                                        TSUMO
-                                    </button>
-                                );
-                            } else if (action.type === game.ActionType.ACTION_KAN) {
-                                return (
-                                    <button key={i} onClick={() => handleAction(game.ActionType.ACTION_KAN, undefined, action.meldTiles || [])} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded shadow">
-                                        KONG
-                                    </button>
-                                );
-                            }
-                            return null;
-                        })}
-                    </div>
-                )}
             </div>
 
             {/* Loop through all 4 players to place their hands and discards */}
@@ -247,7 +201,75 @@ export default function Game() {
                         </div>
 
                         {/* Combined Hand and Melds Area */}
-                        <div className={`hand-container-${posStr}`}>
+                        <div className={`hand-container-${posStr}`} style={isMe ? { position: 'relative' } : {}}>
+
+                            {/* Action Buttons Overlay for Bottom Player */}
+                            {isMe && (
+                                <div className="absolute right-0 bottom-full mb-8 flex gap-4 pointer-events-auto items-end justify-end" style={{ zIndex: 100 }}>
+                                    {/* Interrupt Window Actions */}
+                                    {gameState.phase === 3 && validActions.length > 0 && (
+                                        <>
+                                            {validActions.map((action: any, i: number) => {
+                                                let label = 'Unknown';
+                                                let color = 'bg-gray-600 hover:bg-gray-500';
+                                                let textCol = 'text-white';
+                                                if (action.type === game.ActionType.ACTION_CHII) {
+                                                    label = 'CHOW';
+                                                    color = 'bg-blue-600 hover:bg-blue-500';
+                                                } else if (action.type === game.ActionType.ACTION_PON) {
+                                                    label = 'PONG';
+                                                    color = 'bg-purple-600 hover:bg-purple-500';
+                                                } else if (action.type === game.ActionType.ACTION_KAN) {
+                                                    label = 'KONG';
+                                                    color = 'bg-indigo-600 hover:bg-indigo-500';
+                                                } else if (action.type === game.ActionType.ACTION_RON) {
+                                                    label = 'RON (Win)';
+                                                    color = 'bg-red-600 hover:bg-red-500';
+                                                }
+
+                                                return (
+                                                    <button key={i} onClick={() => handleAction(action.type, undefined, action.meldTiles || [])} className={`${color} ${textCol} font-bold py-3 px-6 rounded-lg shadow-xl outline outline-offset-2 outline-white text-lg tracking-widest transition-transform hover:scale-105 flex items-center gap-3`}>
+                                                        <span>{label}</span>
+                                                        {action.meldTiles && action.meldTiles.length > 0 && (
+                                                            <div className="flex gap-1 bg-black bg-opacity-30 p-1 rounded">
+                                                                {action.meldTiles.map((mt: any, mtIdx: number) => (
+                                                                    <TileComponent key={mtIdx} tile={mt} size="small" />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                            <button onClick={() => handleAction(game.ActionType.ACTION_PASS)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-3 px-6 rounded-lg shadow-lg tracking-widest transition-transform hover:scale-105">
+                                                SKIP
+                                            </button>
+                                        </>
+                                    )}
+
+                                    {/* Active Turn Actions */}
+                                    {gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0 && (
+                                        <>
+                                            {validActions.map((action: any, i: number) => {
+                                                if (action.type === game.ActionType.ACTION_TSUMO) {
+                                                    return (
+                                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_TSUMO)} className="bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold py-3 px-6 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.8)] text-xl tracking-widest transition-transform hover:scale-110">
+                                                            TSUMO
+                                                        </button>
+                                                    );
+                                                } else if (action.type === game.ActionType.ACTION_KAN) {
+                                                    return (
+                                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_KAN, undefined, action.meldTiles || [])} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded shadow-lg text-lg tracking-widest transition-transform hover:scale-105">
+                                                            KONG
+                                                        </button>
+                                                    );
+                                                }
+                                                return null;
+                                            })}
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
                             <div className={`hand-inner hand-inner-${posStr}`}>
                                 {/* Render actual tiles for self, backs for others (unless server sent open hands for replay) */}
                                 {isMe || p.closedHand.length > 0 ? (
@@ -363,6 +385,126 @@ export default function Game() {
                     </div>
                 );
             })}
+
+            {/* Round Result Modal */}
+            {gameState.phase === 4 && gameState.roundResult && (
+                <div className="round-result-overlay">
+                    <div className="round-result-modal">
+                        {gameState.roundResult.isDraw ? (
+                            <div className="text-center">
+                                <h2 className="text-3xl font-bold text-gray-400 mb-4">Exhaustive Draw</h2>
+                                <p className="text-gray-500">No tiles remaining in the wall.</p>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Win Header */}
+                                <h2 className="text-3xl font-extrabold text-center mb-4" style={{
+                                    color: gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? '#EAB308' : '#EF4444'
+                                }}>
+                                    {gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'TSUMO!' : 'RON!'}
+                                </h2>
+                                <p className="text-center text-gray-400 text-sm mb-4">
+                                    Seat {gameState.roundResult.winnerSeat} wins
+                                    {gameState.roundResult.winType === game.ActionType.ACTION_RON &&
+                                        ` from Seat ${gameState.roundResult.discarderSeat}`}
+                                </p>
+
+                                {/* Winning Hand Display */}
+                                <div className="mb-4">
+                                    <div className="flex flex-wrap gap-1 justify-center items-end">
+                                        {/* Closed hand tiles */}
+                                        {[...(gameState.roundResult.winningHand || [])].sort((a, b) => {
+                                            const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit);
+                                            if (sa !== sb) return sa - sb;
+                                            return a.value - b.value;
+                                        }).map((t: any, i: number) => (
+                                            <div key={`h-${i}`}>
+                                                <TileComponent tile={t} size="small" />
+                                            </div>
+                                        ))}
+                                        {/* Open melds */}
+                                        {(gameState.roundResult.winningMelds || []).map((m: any, mIdx: number) => (
+                                            <div key={`m-${mIdx}`} className="flex gap-0.5 ml-2 pl-2 border-l border-gray-600">
+                                                {m.tiles.map((t: any, tIdx: number) => (
+                                                    <div key={tIdx}>
+                                                        <TileComponent tile={t} size="small" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                        {/* Win tile highlighted */}
+                                        {gameState.roundResult.winTile && (
+                                            <div className="ml-3 pl-3 border-l-2 border-yellow-500">
+                                                <TileComponent tile={gameState.roundResult.winTile} size="small" />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Score Breakdown Table */}
+                                <div className="bg-black/30 rounded-lg p-3 mb-4 max-h-48 overflow-y-auto">
+                                    <table className="w-full text-sm">
+                                        <tbody>
+                                            {(gameState.roundResult.breakdown || []).map((entry: any, i: number) => (
+                                                <tr key={i} className="border-b border-gray-700/50">
+                                                    <td className="py-1 text-gray-300">{entry.patternName}</td>
+                                                    <td className="py-1 text-right text-green-400 font-mono">+{entry.points}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Total Score */}
+                                <div className="text-center mb-4 py-2 bg-green-900/40 rounded-lg border border-green-600/50">
+                                    <span className="text-gray-400 text-sm">Total Score: </span>
+                                    <span className="text-2xl font-bold text-green-400">{gameState.roundResult.totalScore}</span>
+                                </div>
+
+                                {/* Payout Summary */}
+                                <div className="grid grid-cols-4 gap-2 mb-4 text-center text-sm">
+                                    {(gameState.roundResult.payouts || []).map((p: any, i: number) => (
+                                        <div key={i} className={`rounded-lg py-2 px-1 ${p.amount > 0 ? 'bg-green-900/40 border border-green-600/30' : 'bg-red-900/40 border border-red-600/30'}`}>
+                                            <div className="text-gray-400 text-xs">Seat {p.seat}</div>
+                                            <div className={`font-bold ${p.amount > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {p.amount > 0 ? '+' : ''}{p.amount}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {/* Ready Indicators */}
+                        {gameState.playerReady && gameState.playerReady.length > 0 && (
+                            <div className="flex justify-center gap-3 mb-4 text-xs">
+                                {gameState.playerReady.map((ready: boolean, i: number) => (
+                                    <span key={i} className={`px-2 py-1 rounded ${ready ? 'bg-green-800 text-green-300' : 'bg-gray-800 text-gray-500'}`}>
+                                        Seat {i} {ready ? 'Ready' : '...'}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-4 justify-center">
+                            <button
+                                onClick={() => { handleAction(game.ActionType.ACTION_READY); setIsReady(true); }}
+                                disabled={isReady}
+                                className={`font-bold py-3 px-8 rounded-lg text-lg transition-transform hover:scale-105 ${isReady ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                            >
+                                {isReady ? 'Waiting...' : 'Ready'}
+                            </button>
+                            <button
+                                onClick={() => { socket?.close(); navigate('/'); }}
+                                className="bg-red-800 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-transform hover:scale-105"
+                            >
+                                Exit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -132,7 +132,7 @@ func (r *Room) Start() {
 						r.interruptTmr.Stop()
 					}
 					// 5 seconds to decide if they want to Pong/Chi/Ron
-					r.interruptTmr = time.NewTimer(5 * time.Second)
+					r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
 
 					go func(timer *time.Timer) {
 						select {

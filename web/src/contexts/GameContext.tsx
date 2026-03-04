@@ -21,7 +21,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [mySeatId, setMySeatId] = useState<number | null>(null);
 
     useEffect(() => {
-        if (!socket || !isConnected) return;
+        if (!socket) return;
 
         const handleMessage = async (event: MessageEvent) => {
             try {
@@ -57,7 +57,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return () => {
             socket.removeEventListener('message', handleMessage);
         };
-    }, [socket, isConnected]);
+    }, [socket]);
 
     return (
         <GameContext.Provider value={{ gameState, mySeatId }}>

@@ -16,8 +16,11 @@ type RuleEngine interface {
 	GetInitialWall() []*pb.Tile
 
 	// EvaluateHand checks if a player's hand is a winning hand (Agari)
-	// and returns the score, yaku, and a boolean indicating success.
-	EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (score int32, canWin bool)
+	// and returns the score, a pattern-by-pattern breakdown, and a boolean indicating success.
+	EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (score int32, breakdown []*pb.ScoreEntry, canWin bool)
+
+	// CalculatePayouts computes per-player payment amounts based on win type and score.
+	CalculatePayouts(totalScore int32, winType pb.ActionType, winnerSeat uint32, discarderSeat uint32) []*pb.PlayerPayout
 
 	// GetValidActions returns all legal actions an active player can take during their turn (e.g., Discard, Tsumo, Riichi, Kan).
 	GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction

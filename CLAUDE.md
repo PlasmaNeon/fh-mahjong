@@ -73,10 +73,13 @@ NOT as: `C1C2C3 D4D5D6 B7B8B9 H1H1H1 H2` (old notation — do not use)
 ## Protobuf Schema (proto/game.proto)
 - `Suit`: BAMBOO=1, DOTS=2, CHARACTERS=3, HONORS=4 (proto constants — do not rename)
 - `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}`
-- `ActionType`: DRAW, DISCARD, CHOW, PONG, KONG, TSUMO, RON, PASS, FLOWER_REVEAL
+- `ActionType`: DRAW, DISCARD, CHOW, PONG, KONG, TSUMO, RON, PASS, FLOWER_REVEAL, READY
 - `GamePhase`: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END
-- `GameState`: match_id, phase, active_player, players[4], wall_count, wild_tiles, prevailing_wind
+- `GameState`: match_id, phase, active_player, players[4], wall_count, wild_tiles, prevailing_wind, round_result, player_ready
 - `PlayerState`: closed_hand, open_melds, discards, seat_wind, flower_melds, kong bonus flags
+- `ScoreEntry`: `{pattern_name string, points int32}` — one entry per scoring pattern
+- `PlayerPayout`: `{seat uint32, amount int32}` — negative=pays, positive=receives
+- `RoundResult`: winner_seat, win_type, discarder_seat, winning_hand, winning_melds, win_tile, breakdown[], total_score, payouts[], is_draw
 
 Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use chii/pon/kan only in comments and documentation.
 

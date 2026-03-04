@@ -53,15 +53,15 @@ func TestHometownRuleset_CommonWin(t *testing.T) {
 	// Win tile 3z is a single wait (单吊).
 	mkHand := func(wilds int) []*pb.Tile {
 		hand := []*pb.Tile{
-			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},  // 2s
-			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},  // 3s
-			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},  // 4s
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},    // 4s
 			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
 			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
 			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},    // 6p
-			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7}, // 7m
-			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8}, // 8m
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9}, // 9m
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},    // 7m
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},    // 8m
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},    // 9m
 			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z (South)
 			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z
 			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z
@@ -80,39 +80,39 @@ func TestHometownRuleset_CommonWin(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 3} // 3z
-	ws := wildState(pb.Suit_SUIT_SOU, 9)                           // wild = 9s
+	ws := wildState(pb.Suit_SUIT_SOU, 9)                            // wild = 9s
 
 	t.Run("0 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+SingleWait(1) = 5
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("0 Wilds / Ron fails minimum", func(t *testing.T) {
 		// Base(1)+NoWild(1)+Common(1)+SingleWait(1) = 4 → achieves 4-pt Ron minimum now!
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 4 {
 			t.Errorf("want 4, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+1Wild(1)+Common(1)+SingleWait(1) = 5
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+Common(1)+SingleWait(1) = 6
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+Common(1)+SingleWait(1) = 154
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 155 {
 			t.Errorf("want 155, got %d (canWin=%v)", s, ok)
 		}
@@ -131,16 +131,16 @@ func TestHometownRuleset_Independence(t *testing.T) {
 			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 4},    // 4s
 			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 7},    // 7s
-			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 2},      // 2p
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},      // 5p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 8},      // 8p
-			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 3}, // 3m
-			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 6}, // 6m
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9}, // 9m
-			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z (East)
-			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 2},   // 2z (South)
-			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 3},   // 3z (West)
-			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 4},   // 4z (North)
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 2},    // 2p
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 8},    // 8p
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 3},    // 3m
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 6},    // 6m
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},    // 9m
+			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z (East)
+			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z (South)
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 3}, // 3z (West)
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 4}, // 4z (North)
 		}
 		// Wild = 9p (not in hand). Wild tiles fill any missing unique slot.
 		if wilds >= 1 {
@@ -155,25 +155,26 @@ func TestHometownRuleset_Independence(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 5} // 5z (Haku/白)
-	ws := wildState(pb.Suit_SUIT_PIN, 9)                             // wild = 9p
+	ws := wildState(pb.Suit_SUIT_PIN, 9)                            // wild = 9p
 
 	t.Run("0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+Independence(50) = 52
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 52 {
 			t.Errorf("want 52, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+Independence(50) = 52
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
-		if !ok || s != 53 {
-			t.Errorf("want 53, got %d (canWin=%v)", s, ok)
+		// Note: Tame wild does NOT apply because 9p (wild face value) is adjacent to 8p in the hand
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		if !ok || s != 52 {
+			t.Errorf("want 52, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+2Wilds(2)+Independence(50) = 53
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, false)
 		if !ok || s != 53 {
 			t.Errorf("want 53, got %d (canWin=%v)", s, ok)
 		}
@@ -182,7 +183,7 @@ func TestHometownRuleset_Independence(t *testing.T) {
 		// 3 wilds in an Independence hand also form valid Seven Pairs (jokers pair the singles)
 		// Base(1)+Tsumo(1)+3Wilds(150)+StraightSevenPairs(150) = 302
 		// (SevenPairs > Independence, so the engine picks SevenPairs)
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 302 {
 			t.Errorf("want 302, got %d (canWin=%v)", s, ok)
 		}
@@ -202,15 +203,15 @@ func TestHometownRuleset_SevenPairs(t *testing.T) {
 			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
 			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 3},      // 3p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 3},      // 3p
-			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},      // 4p
-			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 4},      // 4p
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 5}, // 5m
-			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 5}, // 5m
-			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 6}, // 6m
-			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 6}, // 6m
-			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z (East) — single wait
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 3},    // 3p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 3},    // 3p
+			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 5},    // 5m
+			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 5},   // 5m
+			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 6},   // 6m
+			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 6},   // 6m
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z (East) — single wait
 		}
 		// Wild = 9s (not in hand, avoids dragon pon interference).
 		if wilds >= 1 {
@@ -225,32 +226,32 @@ func TestHometownRuleset_SevenPairs(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 1} // 1z (East)
-	ws := wildState(pb.Suit_SUIT_SOU, 9)                           // wild = 9s
+	ws := wildState(pb.Suit_SUIT_SOU, 9)                            // wild = 9s
 
 	t.Run("Straight / 0 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+StraightSevenPairs(150) = 153
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
 		if !ok || s != 153 {
 			t.Errorf("want 153, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+WildSevenPairs(50) = 52
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
 		if !ok || s != 52 {
 			t.Errorf("want 52, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 2 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+2Wilds(2)+WildSevenPairs(50) = 53
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, false)
 		if !ok || s != 53 {
 			t.Errorf("want 53, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+WildSevenPairs(50) = 202
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 202 {
 			t.Errorf("want 202, got %d (canWin=%v)", s, ok)
 		}
@@ -265,19 +266,19 @@ func TestHometownRuleset_ClosedBomb(t *testing.T) {
 	// 4x1s (bomb), 2p2p, 3p3p, 5p5p, 6p6p, 4p + win4p
 	mkHand := func(wilds int) []*pb.Tile {
 		hand := []*pb.Tile{
-			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s — bomb (×4)
-			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 2},   // 2p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 2},   // 2p
-			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 3},   // 3p
-			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 3},   // 3p
-			{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 5},   // 5p
-			{Id: 10, Suit: pb.Suit_SUIT_PIN, Value: 5},  // 5p
-			{Id: 11, Suit: pb.Suit_SUIT_PIN, Value: 6},  // 6p
-			{Id: 12, Suit: pb.Suit_SUIT_PIN, Value: 6},  // 6p
-			{Id: 13, Suit: pb.Suit_SUIT_PIN, Value: 4},  // 4p — single wait
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1},  // 1s — bomb (×4)
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1},  // 1s
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1},  // 1s
+			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 1},  // 1s
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 2},  // 2p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 2},  // 2p
+			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 3},  // 3p
+			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 3},  // 3p
+			{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 5},  // 5p
+			{Id: 10, Suit: pb.Suit_SUIT_PIN, Value: 5}, // 5p
+			{Id: 11, Suit: pb.Suit_SUIT_PIN, Value: 6}, // 6p
+			{Id: 12, Suit: pb.Suit_SUIT_PIN, Value: 6}, // 6p
+			{Id: 13, Suit: pb.Suit_SUIT_PIN, Value: 4}, // 4p — single wait
 		}
 		// Wild = 1m (not in hand).
 		if wilds >= 1 {
@@ -291,33 +292,33 @@ func TestHometownRuleset_ClosedBomb(t *testing.T) {
 		}
 		return hand
 	}
-	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_PIN, Value: 4}    // 4p
-	ws := wildState(pb.Suit_SUIT_MAN, 1)                        // wild = 1m
+	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_PIN, Value: 4} // 4p
+	ws := wildState(pb.Suit_SUIT_MAN, 1)                          // wild = 1m
 
 	t.Run("Straight / 0 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+StraightSevenPairs(150)+ClosedBomb(100) = 253
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
 		if !ok || s != 253 {
 			t.Errorf("want 253, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 1 Wild / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+1Wild(1)+WildSevenPairs(50)+ClosedBomb(100) = 153
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
 		if !ok || s != 153 {
 			t.Errorf("want 153, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+WildSevenPairs(50)+ClosedBomb(100) = 154
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 154 {
 			t.Errorf("want 154, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+WildSevenPairs(50)+ClosedBomb(100) = 302
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 302 {
 			t.Errorf("want 302, got %d (canWin=%v)", s, ok)
 		}
@@ -354,7 +355,7 @@ func TestHometownRuleset_Loner(t *testing.T) {
 
 	t.Run("Straight / 0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+Common(1)+StraightLoner(100) = 103
-		s, ok := r.EvaluateHand(mkHand(0), openMelds, mkWin(0), nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), openMelds, mkWin(0), nil, 0, false)
 		if !ok || s != 103 {
 			t.Errorf("want 103, got %d (canWin=%v)", s, ok)
 		}
@@ -362,7 +363,7 @@ func TestHometownRuleset_Loner(t *testing.T) {
 	t.Run("Wild / 1 Wild / Ron", func(t *testing.T) {
 		// With 1 wild (the closed tile is wild, winTile is also wild → 2 wilds in fullHand)
 		// Base(1)+2Wilds(2)+Common(1)+WildLoner(50) = 54
-		s, ok := r.EvaluateHand(mkHand(1), openMelds, mkWin(1), ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), openMelds, mkWin(1), ws, 0, false)
 		if !ok || s != 55 {
 			t.Errorf("want 55, got %d (canWin=%v)", s, ok)
 		}
@@ -381,16 +382,16 @@ func TestHometownRuleset_AllPung(t *testing.T) {
 			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
-			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 2},      // 2p
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 2},      // 2p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 2},      // 2p
-			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 3}, // 3m
-			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 3}, // 3m
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 3}, // 3m
-			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z (East)
-			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z
-			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z
-			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 2},   // 2z (South) — single wait
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 2},    // 2p
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 2},    // 2p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 2},    // 2p
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 3},    // 3m
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 3},    // 3m
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 3},    // 3m
+			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z (East)
+			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z (South) — single wait
 		}
 		// Wild = 9s
 		if wilds >= 1 {
@@ -405,32 +406,32 @@ func TestHometownRuleset_AllPung(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 2} // 2z (South)
-	ws := wildState(pb.Suit_SUIT_SOU, 9)                           // wild = 9s
+	ws := wildState(pb.Suit_SUIT_SOU, 9)                            // wild = 9s
 
 	t.Run("Straight / 0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+StraightAllPung(100)+SingleWait(1) = 103
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 103 {
 			t.Errorf("want 103, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+WildAllPung(50)+SingleWait(1) = 53
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
 		if !ok || s != 53 {
 			t.Errorf("want 53, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+WildAllPung(50) = 54
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 55 {
 			t.Errorf("want 55, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("Wild / 3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+WildAllPung(50) = 202
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 203 {
 			t.Errorf("want 203, got %d (canWin=%v)", s, ok)
 		}
@@ -446,18 +447,18 @@ func TestHometownRuleset_MixedOneSuit(t *testing.T) {
 	// pon(1s), pon(2s), pon(3s), chii(7s8s9s), pair(5z)
 	mkHand := func(wilds int) []*pb.Tile {
 		hand := []*pb.Tile{
-			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1}, // 1s
-			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 2}, // 2s
-			{Id: 5, Suit: pb.Suit_SUIT_SOU, Value: 2}, // 2s
-			{Id: 6, Suit: pb.Suit_SUIT_SOU, Value: 2}, // 2s
-			{Id: 7, Suit: pb.Suit_SUIT_SOU, Value: 3}, // 3s
-			{Id: 8, Suit: pb.Suit_SUIT_SOU, Value: 3}, // 3s
-			{Id: 9, Suit: pb.Suit_SUIT_SOU, Value: 3}, // 3s
-			{Id: 10, Suit: pb.Suit_SUIT_SOU, Value: 7}, // 7s
-			{Id: 11, Suit: pb.Suit_SUIT_SOU, Value: 8}, // 8s
-			{Id: 12, Suit: pb.Suit_SUIT_SOU, Value: 9}, // 9s
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
+			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
+			{Id: 5, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
+			{Id: 6, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
+			{Id: 7, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
+			{Id: 8, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
+			{Id: 9, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
+			{Id: 10, Suit: pb.Suit_SUIT_SOU, Value: 7},   // 7s
+			{Id: 11, Suit: pb.Suit_SUIT_SOU, Value: 8},   // 8s
+			{Id: 12, Suit: pb.Suit_SUIT_SOU, Value: 9},   // 9s
 			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 5}, // 5z (Haku/白) — single wait
 		}
 		// Wild = 9m (different suit; wild tile is transparent to mixed-suit check)
@@ -473,25 +474,25 @@ func TestHometownRuleset_MixedOneSuit(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 5} // 5z (Haku/白)
-	ws := wildState(pb.Suit_SUIT_MAN, 9)                       // wild = 9m
+	ws := wildState(pb.Suit_SUIT_MAN, 9)                            // wild = 9m
 
 	t.Run("0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+MixedOneSuit(70)+SingleWait(1) = 73
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 73 {
 			t.Errorf("want 73, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+MixedOneSuit(70)+SingleWait(1) = 73
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
 		if !ok || s != 73 {
 			t.Errorf("want 73, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+MixedOneSuit(70)+SingleWait(1) = 75
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 75 {
 			t.Errorf("want 75, got %d (canWin=%v)", s, ok)
 		}
@@ -499,7 +500,7 @@ func TestHometownRuleset_MixedOneSuit(t *testing.T) {
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Hand is all pongs with jokers completing pongs → also triggers WildAllPung(50)
 		// Base(1)+Tsumo(1)+3Wilds(150)+WildAllPung(50)+MixedOneSuit(70) = 272
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 273 {
 			t.Errorf("want 273, got %d (canWin=%v)", s, ok)
 		}
@@ -543,32 +544,32 @@ func TestHometownRuleset_PureOneSuit(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_SOU, Value: 5} // 5s (gap wait)
-	ws := wildState(pb.Suit_SUIT_PIN, 1)                             // wild = 1p
+	ws := wildState(pb.Suit_SUIT_PIN, 1)                          // wild = 1p
 
 	t.Run("0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+PureOneSuit(150)+GapWait(1) = 153
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 153 {
 			t.Errorf("want 153, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+PureOneSuit(150)+GapWait(1) = 153
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
 		if !ok || s != 153 {
 			t.Errorf("want 153, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+PureOneSuit(150)+GapWait(1) = 155
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 155 {
 			t.Errorf("want 155, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+PureOneSuit(150)+GapWait(1) = 303
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 303 {
 			t.Errorf("want 303, got %d (canWin=%v)", s, ok)
 		}
@@ -611,32 +612,32 @@ func TestHometownRuleset_CompletedAllHonors(t *testing.T) {
 		return hand
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 5} // 5z (Haku/白)
-	ws := wildState(pb.Suit_SUIT_SOU, 1)                           // wild = 1s
+	ws := wildState(pb.Suit_SUIT_SOU, 1)                            // wild = 1s
 
 	t.Run("0 Wilds / Ron", func(t *testing.T) {
 		// Base(1)+NoWild(1)+AllPung(100)+CompletedAllHonors(800)+SingleWait(1) = 903
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, false)
 		if !ok || s != 903 {
 			t.Errorf("want 903, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Ron", func(t *testing.T) {
 		// Base(1)+1Wild(1)+WildAllPung(50)+CompletedAllHonors(800)+SingleWait(1) = 853
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, false)
 		if !ok || s != 853 {
 			t.Errorf("want 853, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+WildAllPung(50)+CompletedAllHonors(800) = 854
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 855 {
 			t.Errorf("want 855, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+WildAllPung(50)+CompletedAllHonors(800) = 1002
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 1003 {
 			t.Errorf("want 1003, got %d (canWin=%v)", s, ok)
 		}
@@ -654,16 +655,16 @@ func TestHometownRuleset_FlowerBonus(t *testing.T) {
 			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
 			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
 			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},    // 4s
-			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},      // 4p
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},      // 5p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},      // 6p
-			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7}, // 7m
-			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8}, // 8m
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9}, // 9m
-			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z
-			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z
-			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z
-			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 4},   // 4z (single wait)
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},    // 6p
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},    // 7m
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},    // 8m
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},    // 9m
+			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z
+			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 4}, // 4z (single wait)
 		}
 		if wilds >= 1 {
 			hand[10] = &pb.Tile{Id: 11, Suit: pb.Suit_SUIT_SOU, Value: 9} // was 1z
@@ -690,28 +691,28 @@ func TestHometownRuleset_FlowerBonus(t *testing.T) {
 
 	t.Run("0 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+4Flowers(150)+SingleWait(1) = 155
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, flowerState(nil), 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, flowerState(nil), 0, true)
 		if !ok || s != 155 {
 			t.Errorf("want 155, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+1Wild(1)+Common(1)+4Flowers(150)+SingleWait(1) = 155
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, flowerState(ws), 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, flowerState(ws), 0, true)
 		if !ok || s != 155 {
 			t.Errorf("want 155, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+Common(1)+4Flowers(150)+SingleWait(1) = 156
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, flowerState(ws), 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, flowerState(ws), 0, true)
 		if !ok || s != 156 {
 			t.Errorf("want 156, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+Common(1)+4Flowers(150)+SingleWait(1) = 304
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, flowerState(ws), 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, flowerState(ws), 0, true)
 		if !ok || s != 305 {
 			t.Errorf("want 305, got %d (canWin=%v)", s, ok)
 		}
@@ -727,19 +728,19 @@ func TestHometownRuleset_DragonPung(t *testing.T) {
 	// Wild = 9s
 	mkHand := func(wilds int) []*pb.Tile {
 		hand := []*pb.Tile{
-			{Id: 1, Suit: pb.Suit_SUIT_JIHAI, Value: 5},    // 5z (Hatsu)
-			{Id: 2, Suit: pb.Suit_SUIT_JIHAI, Value: 5},    // 5z
-			{Id: 3, Suit: pb.Suit_SUIT_JIHAI, Value: 5},    // 5z
+			{Id: 1, Suit: pb.Suit_SUIT_JIHAI, Value: 5},  // 5z (Hatsu)
+			{Id: 2, Suit: pb.Suit_SUIT_JIHAI, Value: 5},  // 5z
+			{Id: 3, Suit: pb.Suit_SUIT_JIHAI, Value: 5},  // 5z
 			{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 			{Id: 5, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
 			{Id: 6, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
-			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},      // 4p
-			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 5},      // 5p
-			{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 6},      // 6p
-			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 7}, // 7m
-			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 8}, // 8m
-			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 9}, // 9m
-			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 1},   // 1z (single wait)
+			{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+			{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
+			{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 6},    // 6p
+			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 7},   // 7m
+			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 8},   // 8m
+			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 9},   // 9m
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // 1z (single wait)
 		}
 		// Wild = 9s. Replace non-chii-start tiles to keep DP solvable.
 		if wilds >= 1 {
@@ -758,28 +759,28 @@ func TestHometownRuleset_DragonPung(t *testing.T) {
 
 	t.Run("0 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+DragonPung(1)+SingleWait(1) = 6
-		s, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(0), nil, winTile, nil, 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("1 Wild / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+1Wild(1)+Common(1)+DragonPung(1)+SingleWait(1) = 6
-		s, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(1), nil, winTile, ws, 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("2 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+2Wilds(2)+Common(1)+DragonPung(1)+SingleWait(1) = 7
-		s, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(2), nil, winTile, ws, 0, true)
 		if !ok || s != 7 {
 			t.Errorf("want 7, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("3 Wilds / Tsumo", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+3Wilds(150)+Common(1)+DragonPung(1)+SingleWait(1) = 155
-		s, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
+		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 156 {
 			t.Errorf("want 156, got %d (canWin=%v)", s, ok)
 		}
@@ -793,19 +794,19 @@ func TestHometownRuleset_WindPung(t *testing.T) {
 	// Base hand: pon(East/1z), chii(1s2s3s), chii(4p5p6p), chii(7m8m9m), pair(2z)
 	// Wait: 2z (pair call)
 	hand := []*pb.Tile{
-		{Id: 1, Suit: pb.Suit_SUIT_JIHAI, Value: 1},    // 1z (East pon)
-		{Id: 2, Suit: pb.Suit_SUIT_JIHAI, Value: 1},    // 1z
-		{Id: 3, Suit: pb.Suit_SUIT_JIHAI, Value: 1},    // 1z
+		{Id: 1, Suit: pb.Suit_SUIT_JIHAI, Value: 1},  // 1z (East pon)
+		{Id: 2, Suit: pb.Suit_SUIT_JIHAI, Value: 1},  // 1z
+		{Id: 3, Suit: pb.Suit_SUIT_JIHAI, Value: 1},  // 1z
 		{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 1},    // 1s
 		{Id: 5, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
 		{Id: 6, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
-		{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},      // 4p
-		{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 5},      // 5p
-		{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 6},      // 6p
-		{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 7}, // 7m
-		{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 8}, // 8m
-		{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 9}, // 9m
-		{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 2},   // 2z (single wait)
+		{Id: 7, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+		{Id: 8, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
+		{Id: 9, Suit: pb.Suit_SUIT_PIN, Value: 6},    // 6p
+		{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 7},   // 7m
+		{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 8},   // 8m
+		{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 9},   // 9m
+		{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 2}, // 2z (single wait)
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 2} // 2z
 
@@ -816,7 +817,7 @@ func TestHometownRuleset_WindPung(t *testing.T) {
 			PrevailingWind: 2,
 			Players:        []*pb.PlayerState{{SeatWind: 1}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
@@ -828,7 +829,7 @@ func TestHometownRuleset_WindPung(t *testing.T) {
 			PrevailingWind: 1,
 			Players:        []*pb.PlayerState{{SeatWind: 2}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
@@ -840,7 +841,7 @@ func TestHometownRuleset_WindPung(t *testing.T) {
 			PrevailingWind: 1,
 			Players:        []*pb.PlayerState{{SeatWind: 1}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 7 {
 			t.Errorf("want 7, got %d (canWin=%v)", s, ok)
 		}
@@ -879,7 +880,7 @@ func TestHometownRuleset_OwnFlower(t *testing.T) {
 				FlowerMelds: []*pb.Tile{{Value: 1}},
 			}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 7 {
 			t.Errorf("want 7, got %d (canWin=%v)", s, ok)
 		}
@@ -893,7 +894,7 @@ func TestHometownRuleset_OwnFlower(t *testing.T) {
 				FlowerMelds: []*pb.Tile{{Value: 2}},
 			}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
@@ -928,7 +929,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBuddingDirectKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 55 {
 			t.Errorf("want 55, got %d (canWin=%v)", s, ok)
 		}
@@ -938,7 +939,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBloomingDirectKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 105 {
 			t.Errorf("want 105, got %d (canWin=%v)", s, ok)
 		}
@@ -948,7 +949,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBuddingClosedKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 105 {
 			t.Errorf("want 105, got %d (canWin=%v)", s, ok)
 		}
@@ -958,7 +959,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBloomingClosedKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 155 {
 			t.Errorf("want 155, got %d (canWin=%v)", s, ok)
 		}
@@ -968,7 +969,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBloomingRiskyKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 205 {
 			t.Errorf("want 205, got %d (canWin=%v)", s, ok)
 		}
@@ -978,7 +979,7 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		state := &pb.GameState{
 			Players: []*pb.PlayerState{{HasBloomingFlowerKong: true}},
 		}
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 55 {
 			t.Errorf("want 55, got %d (canWin=%v)", s, ok)
 		}
@@ -1010,7 +1011,7 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 		}
 		winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 2}
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+SingleWait(1) = 5
-		s, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
@@ -1036,7 +1037,7 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 		}
 		winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_SOU, Value: 5}
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+GapWait(1) = 5
-		s, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
@@ -1062,7 +1063,7 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 		}
 		winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_PIN, Value: 3}
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+EdgeWait(1) = 5
-		s, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
@@ -1088,7 +1089,7 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 		}
 		winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 2}
 		// Base(1)+Tsumo(1)+NoWild(1)+Common(1)+PairCall(1) = 5
-		s, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, true)
 		if !ok || s != 5 {
 			t.Errorf("want 5, got %d (canWin=%v)", s, ok)
 		}
@@ -1126,7 +1127,7 @@ func TestHometownRuleset_UncompletedEightFlowers(t *testing.T) {
 
 	t.Run("Junk Hand + 8 Flowers", func(t *testing.T) {
 		// Valid win despite junk hand. Output: 400 pts
-		s, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 400 {
 			t.Errorf("want 400, got %d (canWin=%v)", s, ok)
 		}

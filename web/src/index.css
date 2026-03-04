@@ -412,3 +412,149 @@ body {
 .pov-left.stolen-tile>* {
   transform: rotate(0deg) scale(0.95);
 }
+
+/* Round Result Modal */
+.round-result-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.round-result-modal {
+  background: #111827;
+  border: 2px solid #059669;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 520px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  color: #fff;
+}
+
+.round-result-modal h2 {
+  text-align: center;
+  font-size: 1.5rem;
+  margin: 0 0 16px;
+}
+
+.round-result-modal .winning-hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 8px;
+}
+
+.round-result-modal .winning-hand .meld-group {
+  margin: 0 4px;
+}
+
+.round-result-modal .win-tile-highlight {
+  box-shadow: 0 0 8px 2px #facc15;
+  border-radius: 4px;
+}
+
+.round-result-modal .breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+
+.round-result-modal .breakdown-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.round-result-modal .breakdown-table td:last-child {
+  text-align: right;
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.round-result-modal .total-score {
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #facc15;
+  margin: 8px 0 16px;
+}
+
+.round-result-modal .payouts-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.round-result-modal .payout-cell {
+  text-align: center;
+  padding: 8px 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+}
+
+.round-result-modal .payout-cell .payout-amount.positive {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+.round-result-modal .payout-cell .payout-amount.negative {
+  color: #f87171;
+  font-weight: 700;
+}
+
+.round-result-modal .ready-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+
+.round-result-modal .ready-indicators .ready {
+  color: #4ade80;
+}
+
+.round-result-modal .modal-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.round-result-modal .modal-buttons button {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.round-result-modal .modal-buttons button:hover {
+  opacity: 0.85;
+}
+
+.round-result-modal .modal-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.round-result-modal .btn-ready {
+  background: #059669;
+  color: #fff;
+}
+
+.round-result-modal .btn-exit {
+  background: #dc2626;
+  color: #fff;
+}

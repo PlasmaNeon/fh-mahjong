@@ -37,6 +37,8 @@
   - Validate action against the State Machine and active Rule Plugin.
   - Emit `StateDelta` Protobufs to all connected players or AI proxies.
 - [x] Implement Game Replay logging (appending binary Protobuf streams to a file per match).
+- [x] Implement round-end flow: Tsumo/Ron win detection → score breakdown → payout calculation → RoundResult broadcast.
+- [x] Implement `ACTION_READY` handling and `startNextRound` for multi-round play.
 
 ## Phase 3: The Cross-Platform Web Client (Frontend)
 **Goal:** Build the playable UI that provides instant feedback using WebAssembly.
@@ -50,6 +52,7 @@
   - Render the Player's Hand, Wall, and Discard Pools.
   - Render dynamic action buttons (Pong, Chi, Win, Riichi) derived entirely from Wasm output.
 - [x] Connect the UI strictly to deserialize and act upon incoming Protobuf `StateDelta` events from WebSockets.
+- [x] Build round result modal: winning hand display, score breakdown table, payout summary, ready/exit buttons.
 
 ## Phase 4: AI & Reinforcement Learning Pipeline
 **Goal:** Expose the game to PyTorch for rapid self-play training.
