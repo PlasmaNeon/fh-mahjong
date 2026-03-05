@@ -42,6 +42,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
 		v1.POST("/auth/guest", authHandler.GuestLogin)
+		v1.POST("/calc", s.handleCalc)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, c) })
 
 		// Protected routes

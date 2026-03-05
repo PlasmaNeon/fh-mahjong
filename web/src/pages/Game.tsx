@@ -6,29 +6,7 @@ import { useGameState } from '../contexts/GameContext';
 import { game } from '../proto/game';
 import { motion } from 'framer-motion';
 
-// Helper to stringify suit/honor tiles nicely
-function getTileName(tile: game.ITile) {
-    if (tile.suit === game.Suit.SUIT_JIHAI) {
-        const honors: Record<number, string> = {
-            1: 'East', 2: 'South', 3: 'West', 4: 'North',
-            5: 'White', 6: 'Green', 7: 'Red'
-        };
-        return honors[tile.value] || 'Unknown Honor';
-    }
-
-    if (tile.suit === game.Suit.SUIT_UNKNOWN) {
-        return `Flower ${tile.value}`;
-    }
-
-    const suitNames: Record<number, string> = {
-        [game.Suit.SUIT_SOU]: 'Bamboo',
-        [game.Suit.SUIT_MAN]: 'Characters',
-        [game.Suit.SUIT_PIN]: 'Dots',
-    };
-
-    return `${tile.value} ${suitNames[tile.suit]}`;
-}
-
+import { getTileSvgName, getSuitOrder, getTileName } from '../utils/tileUtils';
 export default function Game() {
     const { matchId } = useParams();
     const navigate = useNavigate();
@@ -96,29 +74,7 @@ export default function Game() {
         socket.send(buffer);
     };
 
-    // Helper to get SVG filename for a tile
-    const getTileSvgName = (tile: game.ITile) => {
-        let suitChar = '';
-        switch (tile.suit) {
-            case game.Suit.SUIT_MAN: suitChar = 'm'; break;
-            case game.Suit.SUIT_PIN: suitChar = 'p'; break;
-            case game.Suit.SUIT_SOU: suitChar = 's'; break;
-            case game.Suit.SUIT_JIHAI: suitChar = 'z'; break;
-            default: return 'Blank.svg';
-        }
-        return `${tile.value}${suitChar}.svg`;
-    };
-
-    // Helper for sorting tiles: Man -> Pin -> Sou -> Jihai
-    const getSuitOrder = (suit: game.Suit) => {
-        switch (suit) {
-            case game.Suit.SUIT_MAN: return 1;
-            case game.Suit.SUIT_PIN: return 2;
-            case game.Suit.SUIT_SOU: return 3;
-            case game.Suit.SUIT_JIHAI: return 4;
-            default: return 5;
-        }
-    };
+    // Removed duplicated helpers (now imported from tileUtils)
 
     // Render helper for tiles
     const TileComponent = ({ tile, isInteractive = false, size = 'normal' }: { tile: game.ITile, isInteractive?: boolean, size?: 'normal' | 'small' }) => {
@@ -318,15 +274,18 @@ export default function Game() {
                                                     return (
                                                         <motion.div
                                                             layoutId={t.id.toString()}
-                                                            initial={false}
                                                             key={t.id}
+                                                            initial={isCurrentlyDrawnSlot ? { opacity: 0, y: -30 } : false}
+                                                            animate={{ opacity: 1, y: 0 }}
                                                             style={{ zIndex: isRecentlyDrawn ? 0 : 10 }}
                                                             transition={{
                                                                 layout: {
                                                                     duration: isRecentlyDrawn ? 0.15 : 0.25,
                                                                     delay: isRecentlyDrawn ? 0.05 : 0,
                                                                     ease: "easeInOut"
-                                                                }
+                                                                },
+                                                                opacity: isCurrentlyDrawnSlot ? { duration: 0.3, ease: "easeOut" } : { duration: 0 },
+                                                                y: isCurrentlyDrawnSlot ? { duration: 0.3, ease: "easeOut" } : { duration: 0 },
                                                             }}
                                                             className={`pov-${posStr} ${!isMe ? 'small' : ''} ${isCurrentlyDrawnSlot ? 'drawn-tile' : ''}`}
                                                         >
@@ -411,31 +370,61 @@ export default function Game() {
 
                                 {/* Winning Hand Display */}
                                 <div className="mb-4">
-                                    <div className="flex flex-wrap gap-1 justify-center items-end">
-                                        {/* Closed hand tiles */}
-                                        {[...(gameState.roundResult.winningHand || [])].sort((a, b) => {
-                                            const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit);
-                                            if (sa !== sb) return sa - sb;
-                                            return a.value - b.value;
-                                        }).map((t: any, i: number) => (
-                                            <div key={`h-${i}`}>
-                                                <TileComponent tile={t} size="small" />
-                                            </div>
-                                        ))}
-                                        {/* Open melds */}
-                                        {(gameState.roundResult.winningMelds || []).map((m: any, mIdx: number) => (
-                                            <div key={`m-${mIdx}`} className="flex gap-0.5 ml-2 pl-2 border-l border-gray-600">
-                                                {m.tiles.map((t: any, tIdx: number) => (
-                                                    <div key={tIdx}>
-                                                        <TileComponent tile={t} size="small" />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ))}
-                                        {/* Win tile highlighted */}
-                                        {gameState.roundResult.winTile && (
-                                            <div className="ml-3 pl-3 border-l-2 border-yellow-500">
-                                                <TileComponent tile={gameState.roundResult.winTile} size="small" />
+                                    <div className="flex flex-row justify-center items-end" style={{ gap: '0' }}>
+                                        {/* Closed hand tiles (sorted, no gaps) + win tile at rightmost with gap */}
+                                        {(() => {
+                                            const closedTiles = [...(gameState.roundResult.winningHand || [])];
+                                            const winTile = gameState.roundResult.winTile;
+                                            // Remove the win tile from closed hand (shown separately)
+                                            if (winTile) {
+                                                const idx = closedTiles.findIndex((t: any) => t.id === winTile.id);
+                                                if (idx !== -1) closedTiles.splice(idx, 1);
+                                            }
+                                            closedTiles.sort((a: any, b: any) => {
+                                                const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit);
+                                                if (sa !== sb) return sa - sb;
+                                                return a.value - b.value;
+                                            });
+                                            return (
+                                                <div className="flex flex-row items-end" style={{ gap: '2px', paddingBottom: '4px' }}>
+                                                    {closedTiles.map((t: any, i: number) => (
+                                                        <div key={`h-${i}`} className="pov-bottom small">
+                                                            <TileComponent tile={t} size="small" />
+                                                        </div>
+                                                    ))}
+                                                    {winTile && (
+                                                        <div className="pov-bottom small" style={{ marginLeft: '10px' }}>
+                                                            <TileComponent tile={winTile} size="small" />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                        {/* Open melds — same as table: reversed order, meld-group classes, stolen tile directions */}
+                                        {(gameState.roundResult.winningMelds || []).length > 0 && (
+                                            <div className="flex flex-row items-end" style={{ gap: '10px', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid #4b5563' }}>
+                                                {[...(gameState.roundResult.winningMelds || [])].reverse().map((m: any, mIdx: number) => {
+                                                    let displayTiles = [...m.tiles];
+                                                    const stolenIdx = displayTiles.findIndex((t: any) => t.id === m.calledTileId);
+                                                    if (stolenIdx !== -1 && m.calledDirection > 0) {
+                                                        const stolen = displayTiles.splice(stolenIdx, 1)[0];
+                                                        if (m.calledDirection === 3) displayTiles.unshift(stolen);
+                                                        else if (m.calledDirection === 1) displayTiles.push(stolen);
+                                                        else if (m.calledDirection === 2) displayTiles.splice(1, 0, stolen);
+                                                    }
+                                                    return (
+                                                        <div key={`m-${mIdx}`} className="meld-group meld-group-bottom">
+                                                            {displayTiles.map((t: any, tIdx: number) => {
+                                                                const isStolen = t.id === m.calledTileId;
+                                                                return (
+                                                                    <div key={tIdx} className={`pov-bottom small ${isStolen ? 'stolen-tile' : ''}`}>
+                                                                        <TileComponent tile={t} size="small" />
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>

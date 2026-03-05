@@ -355,6 +355,17 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			return errors.New("hand is not a valid tsumo win")
 		}
 
+		// Find the drawn tile (the winning tile for tsumo)
+		var winTile *pb.Tile
+		if player.DrawnTileId != nil {
+			for _, t := range player.ClosedHand {
+				if int32(t.Id) == *player.DrawnTileId {
+					winTile = t
+					break
+				}
+			}
+		}
+
 		payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_TSUMO, seat, 0)
 		for _, p := range payouts {
 			g.State.Players[p.Seat].Score += p.Amount
@@ -365,6 +376,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			WinType:      pb.ActionType_ACTION_TSUMO,
 			WinningHand:  player.ClosedHand,
 			WinningMelds: player.OpenMelds,
+			WinTile:      winTile,
 			Breakdown:    breakdown,
 			TotalScore:   score,
 			Payouts:      payouts,

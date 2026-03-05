@@ -1029,7 +1029,7 @@ func getFlowerBonuses(myFlowers []*pb.Tile, playerSeat uint32, state *pb.GameSta
 //  3. Gap wait (嵌): Waiting for the middle tile of a chii (e.g. 1s3s waiting for 2s).
 //  4. Edge wait (边): Waiting for 3 to complete 1,2 or for 7 to complete 8,9 in any suited tile.
 func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wildHashes map[uint32]bool) int {
-	if len(hand) != 13 {
+	if winTile == nil {
 		return 0
 	}
 
@@ -1038,8 +1038,23 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 	winHash := uint32(winTile.Suit)*100 + winTile.Value
 	winIsWild := wildHashes[winHash]
 
+	// If the hand contains 14 tiles (Tsumo case where winTile was already appended to ClosedHand),
+	// we must remove the winTile from counts to evaluate the original 13-tile hand's wait pattern.
+	if len(hand) == 14 {
+		if winIsWild {
+			wilds--
+		} else if counts[winIdx] > 0 {
+			counts[winIdx]--
+		} else {
+			return 0 // Malformed hand
+		}
+	} else if len(hand) != 13 {
+		return 0
+	}
+
 	// isValidHand: checks if a 14-tile configuration (counts + wilds) forms a valid standard hand.
-	isValidHand := func(testCounts *[34]int, testWilds int) bool {
+	// Uses a local copy of counts so it doesn't mutate the caller's array.
+	isValidHand := func(testCounts [34]int, testWilds int) bool {
 		for i := 0; i < 34; i++ {
 			if testCounts[i] == 0 && testWilds < 2 {
 				continue
@@ -1049,13 +1064,11 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 				neededForPair = 0
 			}
 			if testWilds >= neededForPair {
-				tilesToRemove := 2 - neededForPair
-				testCounts[i] -= tilesToRemove
-				if r.checkMeldsFast(testCounts, 0, testWilds-neededForPair, true) {
-					testCounts[i] += tilesToRemove
+				testCounts[i] -= (2 - neededForPair)
+				if r.checkMeldsFast(&testCounts, 0, testWilds-neededForPair, true) {
 					return true
 				}
-				testCounts[i] += tilesToRemove
+				testCounts[i] += (2 - neededForPair)
 			}
 		}
 		return false
@@ -1071,10 +1084,10 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 	}
 	if !winIsWild && singleWaitCounts[winIdx] >= 2 {
 		singleWaitCounts[winIdx] -= 2
+		// If the remaining 12 tiles can form 4 melds, it's a valid single wait.
 		if r.checkMeldsFast(&singleWaitCounts, 0, singleWaitWilds, true) {
 			return 1
 		}
-		singleWaitCounts[winIdx] += 2
 	} else if winIsWild && singleWaitWilds >= 2 {
 		if r.checkMeldsFast(&singleWaitCounts, 0, singleWaitWilds-2, true) {
 			return 1
@@ -1084,7 +1097,6 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 		if r.checkMeldsFast(&singleWaitCounts, 0, singleWaitWilds-1, true) {
 			return 1
 		}
-		singleWaitCounts[winIdx] += 1
 	}
 
 	// 2. Pair call (对倒): winning tile forms a pon; the remaining tiles form a valid hand with a pair.
@@ -1108,7 +1120,7 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 	}
 	// Wild win tile is ambiguous for pair call — skip for now
 	if canFormPon {
-		if isValidHand(&pairCallCounts, pairCallWilds) {
+		if isValidHand(pairCallCounts, pairCallWilds) {
 			return 1
 		}
 	}
@@ -1142,7 +1154,9 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 
 		if testWilds >= neededWilds {
 			testWilds -= neededWilds
-			return isValidHand(&testCounts, testWilds)
+			// The original win tile is already implicitly consumed since we started from the 13-tile hand
+			// and conceptually combined valA, winTile, valB into a meld.
+			return isValidHand(testCounts, testWilds)
 		}
 		return false
 	}
