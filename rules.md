@@ -89,10 +89,11 @@ Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The sta
 - **Pair Call (对倒)**: +1 (Two pairs calling for one to become a pung).
 
 ### Independence Variants (14 unique disconnected tiles, no melds)
-- **Standard Independence (十三不搭/大大胡)**: 50.
-- **Closed Seven Stars (暗七星)**: 150 (All 7 honors in hand, winning tile is non-honor).
-- **Open Seven Stars (明七星)**: 100 (All 7 honors, one claimed for the win).
-- **Independence Without a Suit (缺色)**: 150 (Missing one of the three suits).
+All bonuses are additive on top of the base. Multiple bonuses can combine.
+- **Independence (大大胡)**: +50 (base — always awarded for any independence hand).
+- **Closed Seven Stars (暗七星)**: +100 (All 7 honors, winning by Tsumo). Stacks: 50+100=150.
+- **Open Seven Stars (明七星)**: +50 (All 7 honors, winning by Ron). Stacks: 50+50=100.
+- **Independence Without a Suit (缺色)**: +100 (Missing one of the three suits). Stacks with Seven Stars: e.g. 50+100(closed)+100=250.
 
 ### Seven Pairs Variants
 - **Straight Seven Pairs (无搭)**: 150 (No wild tiles).
@@ -172,7 +173,7 @@ The `EvaluateHand` function will transition from a basic loop to a highly optimi
 
 4. **Exhaustive Score Aggregation Pipeline**:
    *The DP algorithm must evaluate all Yaku below. Only the highest-valid subset should trigger, or they stack if compatible.*
-   - **Independence Variants**: Closed Seven Stars (150), Open Seven Stars (100), Independence Without a Suit (150), Standard Independence (50).
+   - **Independence Variants**: Base Independence (+50), then stack bonuses: Closed Seven Stars (+100), Open Seven Stars (+50), Independence Without a Suit (+100). All combinable.
    - **Seven Pairs Variants**: Straight Seven Pairs (150) vs Wild Seven Pairs (50), Closed Bomb (100) vs Open Bomb (50).
    - **Loner Variants**: Straight Loner (100) vs Wild Loner (50).
    - **All Pung Variants**: Straight All Pung (100) vs Wild All Pung (50).

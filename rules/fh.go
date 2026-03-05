@@ -71,8 +71,16 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 			}
 		}
 	}
-	for _, t := range fullHand {
+	// Count wild tiles (excluding Ron win tile — it acts as a normal tile)
+	for _, t := range hand {
 		hash := uint32(t.Suit)*100 + t.Value
+		if wildHashes[hash] {
+			wildsInHand++
+		}
+	}
+	// If Tsumo, the drawn winning tile is part of our concealed hand and counts as wild
+	if isTsumo && winTile != nil {
+		hash := uint32(winTile.Suit)*100 + winTile.Value
 		if wildHashes[hash] {
 			wildsInHand++
 		}
@@ -130,16 +138,19 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 	if isIndependence {
 		canWin = true
 		re := make([]*pb.ScoreEntry, 0)
+		// Base Independence is always +50
+		re = append(re, &pb.ScoreEntry{PatternName: "Independence (大大胡)", Points: 50})
+		// Seven Stars bonus stacks on top (closed +100, open +50)
 		if r.hasAllSevenHonors(fullHand) {
 			if isTsumo {
-				re = append(re, &pb.ScoreEntry{PatternName: "Closed Seven Stars (暗七星)", Points: 150})
+				re = append(re, &pb.ScoreEntry{PatternName: "Closed Seven Stars (暗七星)", Points: 100})
 			} else {
-				re = append(re, &pb.ScoreEntry{PatternName: "Open Seven Stars (明七星)", Points: 100})
+				re = append(re, &pb.ScoreEntry{PatternName: "Open Seven Stars (明七星)", Points: 50})
 			}
-		} else if r.isMissingASuit(fullHand) {
-			re = append(re, &pb.ScoreEntry{PatternName: "Independence Without Suit (缺色)", Points: 150})
-		} else {
-			re = append(re, &pb.ScoreEntry{PatternName: "Independence (大大胡)", Points: 50})
+		}
+		// Without-suit bonus stacks independently (+100), combinable with Seven Stars
+		if r.isMissingASuit(fullHand) {
+			re = append(re, &pb.ScoreEntry{PatternName: "Independence Without Suit (缺色)", Points: 100})
 		}
 		routeTotal := int32(0)
 		for _, e := range re {
@@ -179,13 +190,21 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		re := make([]*pb.ScoreEntry, 0)
 
 		isAllPung := r.isAllPung(fullHand, openMelds, wildHashes)
+		isAllChow := r.isAllChow(fullHand, openMelds, wildHashes)
 		isPureSuit := r.isPureOneSuit(fullHand, openMelds, wildHashes)
 		isMixedSuit := r.isMixedOneSuit(fullHand, openMelds, wildHashes)
 
-		if !isAllPung && !isPureSuit && !isMixedSuit {
+		// Common Win (朋胡): four runs (sequences) and a pair of eyes.
+		// Excluded when pure/mixed one-suit patterns apply (those are scored separately).
+		if isAllChow && !isPureSuit && !isMixedSuit {
 			re = append(re, &pb.ScoreEntry{PatternName: "Common Win (朋胡)", Points: 1})
 		}
 
+		// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
+		hasSingleCall := winTile != nil && r.evalWaitPattern(hand, winTile, wildHashes) > 0
+		if hasSingleCall {
+			re = append(re, &pb.ScoreEntry{PatternName: "Single/Pair Call (边嵌单吊对倒)", Points: 1})
+		}
 		if len(openMelds) == 4 {
 			if wildsInHand == 0 {
 				re = append(re, &pb.ScoreEntry{PatternName: "Straight Loner (大吊车无搭)", Points: 100})
@@ -200,10 +219,6 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 			} else {
 				re = append(re, &pb.ScoreEntry{PatternName: "Wild All Pung (大对对有搭)", Points: 50})
 			}
-		}
-
-		if r.evalWaitPattern(hand, winTile, wildHashes) > 0 {
-			re = append(re, &pb.ScoreEntry{PatternName: "Single/Pair Call (边嵌单吊对倒)", Points: 1})
 		}
 
 		routeTotal := int32(0)
@@ -781,6 +796,92 @@ func (r *HometownRuleset) isAllPung(hand []*pb.Tile, openMelds []*pb.Meld, wildH
 	}
 	// Evaluate with allowChow=false to force pon-only decomposition
 	return r.canFormStandardHand(hand, wildHashes, false)
+}
+
+// isAllChow checks for Common Win (朋胡): Four runs (sequences) and a pair of eyes.
+// All open melds must be CHII and closed hand must decompose into chow-only melds + a pair.
+func (r *HometownRuleset) isAllChow(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+	// Open melds must all be chii — any pon/kan disqualifies.
+	for _, m := range openMelds {
+		if m.Type != pb.ActionType_ACTION_CHII {
+			return false
+		}
+	}
+	// Decompose closed hand into chow-only melds + a pair
+	if len(hand)%3 != 2 {
+		return false
+	}
+	counts, wilds := r.tilesToTehai34(hand, wildHashes)
+	for i := 0; i < 34; i++ {
+		needed := 2 - counts[i]
+		if needed < 0 {
+			needed = 0
+		}
+		if wilds >= needed {
+			tilesToSubtract := 2 - needed
+			counts[i] -= tilesToSubtract
+			if r.checkChowOnlyMelds(&counts, 0, wilds-needed) {
+				return true
+			}
+			counts[i] += tilesToSubtract
+		}
+	}
+	return false
+}
+
+// checkChowOnlyMelds is a DFS helper that tries to consume all tiles using only chow (sequence) melds.
+func (r *HometownRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wilds int) bool {
+	if wilds < 0 {
+		return false
+	}
+	for i := startIdx; i < 34; i++ {
+		if counts[i] == 0 {
+			continue
+		}
+		// Jihai (indices >= 27) cannot form sequences, so fail.
+		if i >= 27 || i%9 > 6 {
+			return false
+		}
+		// Try chow (sequence)
+		needNext1 := 1
+		if counts[i+1] > 0 {
+			needNext1 = 0
+		}
+		needNext2 := 1
+		if counts[i+2] > 0 {
+			needNext2 = 0
+		}
+		totalNeeded := needNext1 + needNext2
+		if wilds >= totalNeeded {
+			counts[i]--
+			if needNext1 == 0 {
+				counts[i+1]--
+			}
+			if needNext2 == 0 {
+				counts[i+2]--
+			}
+			if r.checkChowOnlyMelds(counts, i, wilds-totalNeeded) {
+				counts[i]++
+				if needNext1 == 0 {
+					counts[i+1]++
+				}
+				if needNext2 == 0 {
+					counts[i+2]++
+				}
+				return true
+			}
+			counts[i]++
+			if needNext1 == 0 {
+				counts[i+1]++
+			}
+			if needNext2 == 0 {
+				counts[i+2]++
+			}
+		}
+		// Cannot form a chow with this tile — fail.
+		return false
+	}
+	return true
 }
 
 func (r *HometownRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
