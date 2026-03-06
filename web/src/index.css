@@ -556,23 +556,25 @@ body {
 
 .melds-container-right {
   position: absolute;
-  right: 0;
-  top: -10vw; /* Place it visually above the tehai column */
+  right: 50%;
+  transform: translateX(50%);
+  top: -6rem; /* Place above the tehai column */
   display: flex;
   flex-direction: column-reverse;
   gap: 8px;
-  align-items: flex-end;
+  align-items: center; /* Center horizontally with the hand */
   pointer-events: auto;
 }
 
 .melds-container-left {
   position: absolute;
-  left: 0;
-  top: -10vw; /* Place it visually above the tehai column */
+  left: 50%;
+  transform: translateX(-50%);
+  top: -6rem; /* Place above the tehai column */
   display: flex;
   flex-direction: column; /* Left player melds flow downwards from the top */
   gap: 8px;
-  align-items: flex-start;
+  align-items: center; /* Center horizontally with the hand */
   pointer-events: auto;
 }
 
