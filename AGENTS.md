@@ -151,9 +151,19 @@ web/node_modules/.bin/pbts -o web/src/proto/game.d.ts web/src/proto/game.js
 
 ```bash
 go test ./...                    # Run all Go tests
-cd web && npm run dev            # Start frontend dev server
-go run cmd/server/main.go        # Start backend server
+go run cmd/server/main.go        # Start backend server on :8080
+cd web && npm run dev            # Start frontend dev server on :3000
 ```
+
+Default local development split:
+- Frontend app: `http://localhost:3000`
+- Calculator page: `http://localhost:3000/calc`
+- Example table route: `http://localhost:3000/table/test-room`
+- Backend API: `http://localhost:8080/api/v1`
+
+Notes:
+- Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
+- `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
 
 ## Module
 

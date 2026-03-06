@@ -10,7 +10,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
-  - Protected: `/api/v1/calc`, `/api/v1/ws`
+  - Public tool routes: `/api/v1/calc`, `/api/v1/ws`
   - CORS configuration
 
 - **auth.go** — JWT authentication handlers:
@@ -40,7 +40,19 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **middleware.go** — JWT token validation middleware for protected routes
 
-- **calc.go** — Hand evaluation API endpoint (stateless scoring calculator)
+- **calc.go** — Hand evaluation API endpoint (stateless scoring calculator):
+  - Accepts structured calculator payloads: closed hand, win tile, single wild tile type, open melds, flower melds, winds, tsumo/ron, and kong bonus flags
+  - Open meld rows can carry per-kan kong flags; repeated flag selections across multiple kan melds are counted and stacked in the calculator response
+  - Validates meld shapes, hand size, tile copy limits, and wind ranges before scoring
+  - Translates request data into proto `GameState` / `PlayerState` / `Meld` values with unique tile IDs
+  - Returns `canWin`, total score, score breakdown, and a normalized debug summary for the frontend
+
+- **calc_test.go** — Calculator API coverage:
+  - Request validation failures
+  - Tsumo / Ron calculator responses
+  - Wild tile translation and scoring
+  - Open meld called-tile preservation
+  - Flower meld and kong-flag propagation into the evaluation state
 
 ## Architecture Notes
 
@@ -48,3 +60,4 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - The room processes actions sequentially via a single goroutine (no mutex needed for game state).
 - The interrupt timer runs in a separate goroutine and calls `ResolveInterrupts()` directly — potential race condition to be aware of.
 - State is broadcast as raw Protobuf bytes; no per-player filtering yet (all players see full state including opponent hands).
+- `/api/v1/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
