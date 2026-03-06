@@ -8,11 +8,11 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 ## Key Files
 
-- **Login.tsx** — Registration and login form. Calls `/api/v1/auth/register` and `/api/v1/auth/login`. Stores JWT in localStorage.
+- **Login.tsx** — Registration and login form. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage.
 
-- **Lobby.tsx** — Game lobby. Shows matchmaking queue, lets players create/join rooms.
+- **Lobby.tsx** — Game lobby. Shows matchmaking queue, lets players create/join rooms via runtime-configured API URLs.
 
-- **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Initiates WebSocket connection to the room.
+- **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
 
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
   - Renders 4 player positions (bottom=self, right, top, left)
@@ -36,7 +36,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Kan-only context controls are embedded inside each `KAN` meld row as a single dropdown selector, mirroring the meld-type control and keeping one context per kan
   - Multiple kan melds are supported; repeated kong bonus selections across different kan rows are preserved and stacked in the calculator payload/result
   - Full scoring context: tsumo/ron toggle, seat wind, prevailing wind, flower meld toggles
-  - Client-side validation for meld shape, hand size, and physical tile copy limits before calling `/api/v1/calc`
+  - Client-side validation for meld shape, hand size, and physical tile copy limits before calling the runtime-configured calculator endpoint
   - Result panel for total score / breakdown and a normalized backend debug summary
 
 - **calcHelpers.ts** — Calculator-only helpers:

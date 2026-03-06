@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
+import { getApiUrl } from '../config';
 
 export default function Lobby() {
     const [isQueuing, setIsQueuing] = useState(false);
@@ -28,7 +29,7 @@ export default function Lobby() {
 
         setIsQueuing(true);
         try {
-            const res = await fetch('/api/v1/matchmaking/join', {
+            const res = await fetch(getApiUrl('/api/v1/matchmaking/join'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

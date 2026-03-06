@@ -12,6 +12,9 @@ Contains all React components, context providers, custom hooks, and utility func
 - **App.tsx** — Router wrapper with context providers:
   - `SocketProvider` → `GameProvider` → `Routes`
   - Routes: `/login`, `/lobby`, `/calc`, `/table/:roomId`, `/game/:matchId`
+- **config.ts** — Frontend runtime URL helpers:
+  - `getApiUrl(path)` uses `VITE_API_BASE_URL` when present, otherwise falls back to same-origin relative paths for local dev
+  - `getWebSocketUrl(path)` uses `VITE_WS_BASE_URL` when present, otherwise falls back to browser-origin WebSocket URLs
 - **index.css** — Global styles (TailwindCSS + custom classes for tiles, melds, table layout)
 
 ## Subdirectories
@@ -27,3 +30,4 @@ Contains all React components, context providers, custom hooks, and utility func
 - State flow: WebSocket binary message → `GameContext` decodes Protobuf → `gameState` updates → components re-render.
 - The `Game.tsx` page is the largest component (~32KB), handling tile rendering, meld display, action buttons, discard pools, and the round-result modal.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
+- Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
+import { getApiUrl } from '../config';
 
 export default function Table() {
     const { tableId } = useParams();
@@ -58,7 +59,7 @@ export default function Table() {
         if (!username.trim() || !tableId) return;
         setIsQueuing(true);
         try {
-            const authRes = await fetch('/api/v1/auth/guest', {
+            const authRes = await fetch(getApiUrl('/api/v1/auth/guest'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username })
@@ -80,7 +81,7 @@ export default function Table() {
     const handleSetReady = async () => {
         setIsQueuing(true);
         try {
-            const res = await fetch('/api/v1/matchmaking/private', {
+            const res = await fetch(getApiUrl('/api/v1/matchmaking/private'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

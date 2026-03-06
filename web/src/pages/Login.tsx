@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
+import { getApiUrl } from '../config';
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -11,7 +12,7 @@ export default function Login() {
 
     const handleAuth = async (isLogin: boolean) => {
         try {
-            const endpoint = isLogin ? '/api/v1/auth/login' : '/api/v1/auth/register';
+            const endpoint = isLogin ? getApiUrl('/api/v1/auth/login') : getApiUrl('/api/v1/auth/register');
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

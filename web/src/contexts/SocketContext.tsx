@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { getWebSocketUrl } from '../config';
 
 interface SocketContextType {
     socket: WebSocket | null;
@@ -23,9 +24,7 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     const connect = (token: string) => {
         if (socket) return;
 
-        // We rely on Vite Proxy resolving /ws to our Go server on :8080
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/api/v1/ws?token=${token}`;
+        const wsUrl = `${getWebSocketUrl('/api/v1/ws')}?token=${token}`;
 
         const ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer'; // We receive our StateDelta Protobufs as binary arrays!

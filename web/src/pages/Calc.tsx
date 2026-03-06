@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { getApiUrl } from '../config'
 import { ActionType, MeldDirection } from '../proto/game.ts'
 import { getTileName, getTileSvgName } from '../utils/tileUtils'
 import {
@@ -674,7 +675,7 @@ export default function Calc() {
     setServerErrors([])
 
     try {
-      const response = await fetch('/api/v1/calc', {
+      const response = await fetch(getApiUrl('/api/v1/calc'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -12,6 +12,7 @@ Provides global state management via React Context API. Two providers wrap the e
   - `useSocket()` hook — Returns the active WebSocket instance
   - Manages connection lifecycle (connect, reconnect, cleanup)
   - Sends/receives binary Protobuf messages
+  - Resolves the socket URL via `getWebSocketUrl('/api/v1/ws')`, so local dev uses the current origin while deployments can point at a separate backend host
 
 - **GameContext.tsx** — Game state provider:
   - `useGameState()` hook — Returns the current decoded `GameState`
