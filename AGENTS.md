@@ -164,7 +164,7 @@ Default local development split:
 Notes:
 - Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
 - `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
-- Vercel frontend deploys can target either the repo root or `web/`: root `vercel.json` conditionally enters `web/` when present, and root `.vercelignore` excludes the Go backend `/api` package so Vercel does not mis-detect it as Go serverless functions.
+- Vercel frontend deploys can target either the repo root or `web/`: root `vercel.json` conditionally enters `web/` when present, root `.vercelignore` excludes the Go backend `/api` package so Vercel does not mis-detect it as Go serverless functions, and the Vercel install step uses `npm install --legacy-peer-deps` because `protobufjs-cli` still declares a `protobufjs@^7` peer while the app builds with `protobufjs@8`.
 
 ## Module
 
