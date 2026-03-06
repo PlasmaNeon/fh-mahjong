@@ -173,8 +173,14 @@ func (r *Room) BroadcastState() []byte { // Modified function signature
 		return nil // Modified return
 	}
 
-	for _, client := range r.Seats {
-		client.Send <- payload
+	for seatId, client := range r.Seats {
+		select {
+		case client.Send <- payload:
+			// successfully written to channel
+		default:
+			log.Printf("Failed to broadcast state to seat %d (offline or buffer full)", seatId)
+			// don't remove them from seats here, just gracefully ignore so they can reconnect later
+		}
 	}
 
 	return payload // Added return
@@ -190,5 +196,10 @@ func (r *Room) SendStateToClient(client *Client) {
 		return
 	}
 
-	client.Send <- payload
+	select {
+	case client.Send <- payload:
+		// success
+	default:
+		log.Printf("Failed to send state directly to client %d (offline or buffer full)", client.UserID)
+	}
 }
