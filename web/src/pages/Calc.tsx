@@ -216,11 +216,19 @@ function CalcTile({
 }: {
   tile: CalcTileValue
   onClick?: () => void
-  size?: 'normal' | 'small'
+  size?: 'normal' | 'small' | 'palette'
   selected?: boolean
   dimmed?: boolean
 }) {
   const svgName = getTileSvgName(tile)
+  const sizeStyle = size === 'palette'
+    ? {
+        width: 'clamp(2.9rem, 4.6vw, 3.6rem)',
+        height: 'clamp(4.2rem, 6.5vw, 5.2rem)',
+        minWidth: '46px',
+        minHeight: '66px',
+      }
+    : undefined
 
   return (
     <button
@@ -234,6 +242,7 @@ function CalcTile({
         boxShadow: selected ? '0 0 14px rgba(251,191,36,0.7)' : '1px 1px 3px rgba(0,0,0,0.45)',
         position: 'relative',
         cursor: onClick ? 'pointer' : 'default',
+        ...sizeStyle,
       }}
       title={getTileName(tile)}
     >
@@ -289,7 +298,7 @@ function PaletteGrid({
   dimSelected?: boolean
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-3 md:gap-4">
       {TILE_LIBRARY.map((tile) => {
         const isSelectedPaletteTile = sameTileValue(tile, selectedTile)
         return (
@@ -297,6 +306,7 @@ function PaletteGrid({
             key={formatTile(tile)}
             tile={tile}
             onClick={() => onTileClick(tile)}
+            size="palette"
             selected={isSelectedPaletteTile}
             dimmed={dimSelected && isSelectedPaletteTile}
           />

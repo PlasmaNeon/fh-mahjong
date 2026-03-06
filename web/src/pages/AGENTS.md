@@ -29,6 +29,7 @@ Contains the top-level page components rendered by React Router. Each page repre
 - **Calc.tsx** — Typed Fenghua rules debugger for `/calc`:
   - Header language toggle switches the calculator UI between English and Chinese
   - Hybrid editor: canonical notation fields plus local tile palettes embedded directly into the closed-hand, win-tile, and wild-tile sections
+  - Calculator palette tiles are intentionally larger and more widely spaced than normal hand tiles to reduce misclicks during hand composition
   - Successful `Apply` actions on closed hand / win tile / wild tile collapse that section’s input controls and hide its palette until the user reopens it with the section-level edit button
   - Open meld editing uses an inline per-row palette on the active meld instead of a shared top-of-page palette
   - Explicit open meld rows with type, called tile index, and called direction controls; `CHII` rows lock called direction to left
