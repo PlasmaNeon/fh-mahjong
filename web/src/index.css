@@ -363,6 +363,15 @@ body {
 /* Stolen Tile Overrides */
 /* Bottom / Top stolen tiles become wide (normal is tall) */
 .pov-bottom.stolen-tile,
+.pov-top.stolen-tile,
+.pov-left.stolen-tile,
+.pov-right.stolen-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pov-bottom.stolen-tile,
 .pov-top.stolen-tile {
   width: 4vw;
   height: 2.8vw;
