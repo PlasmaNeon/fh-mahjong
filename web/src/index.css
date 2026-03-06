@@ -119,14 +119,7 @@ body {
 .discard-pool {
   display: flex;
   gap: 2px;
-  padding: 10px;
-  background: rgba(7, 18, 20, 0.18);
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 18px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 14px 30px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(10px);
+  padding: 4px;
 }
 
 /* Bottom: tiles flow left-to-right, top-to-bottom (away from center) */
@@ -135,12 +128,9 @@ body {
   flex-direction: row;
   flex-wrap: wrap;
   align-content: flex-start;
-  max-width: calc((1.8vw * 6) + (2px * 5) + 16px);
-  min-width: 150px;
+  max-width: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
   min-height: 78px;
-  /* 6 small tiles + 5 gaps + padding */
   margin: 0 auto;
-  /* Center in its grid area */
 }
 
 /* Right: tiles flow bottom-to-top, left-to-right (away from center) */
@@ -149,9 +139,8 @@ body {
   flex-direction: column-reverse;
   flex-wrap: wrap;
   align-content: flex-start;
-  max-height: calc((1.8vw * 6) + (2px * 5) + 16px);
+  max-height: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
   min-width: 78px;
-  min-height: 150px;
   margin: auto 0;
 }
 
@@ -161,8 +150,7 @@ body {
   flex-direction: row-reverse;
   flex-wrap: wrap-reverse;
   align-content: flex-start;
-  max-width: calc((1.8vw * 6) + (2px * 5) + 16px);
-  min-width: 150px;
+  max-width: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
   min-height: 78px;
   margin: 0 auto;
 }
@@ -173,26 +161,19 @@ body {
   flex-direction: column;
   flex-wrap: wrap-reverse;
   align-content: flex-start;
-  max-height: calc((1.8vw * 6) + (2px * 5) + 16px);
+  max-height: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
   min-width: 78px;
-  min-height: 150px;
   margin: auto 0;
 }
 
 .discard-pool-empty {
   align-items: center;
   justify-content: center;
-  border-style: dashed;
-  border-color: rgba(148, 163, 184, 0.2);
-  background: rgba(7, 18, 20, 0.12);
 }
 
 .discard-pool-placeholder {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(226, 232, 240, 0.42) 0%, rgba(148, 163, 184, 0.16) 55%, transparent 72%);
-  box-shadow: 0 0 22px rgba(226, 232, 240, 0.12);
+  width: 0;
+  height: 0;
 }
 
 /* Hand Layouts */
@@ -228,13 +209,12 @@ body {
   align-items: center;
 }
 
-.hand-main-block-right {
-  justify-content: flex-end;
-  margin-right: var(--right-seat-lane);
-}
-
 .hand-main-block-left {
   margin-left: var(--left-seat-lane);
+}
+
+.hand-main-block-right {
+  margin-right: var(--right-seat-lane);
 }
 
 .hand-container-right {
@@ -242,10 +222,10 @@ body {
   grid-area: hand-right;
   position: relative;
   display: flex;
-  flex-direction: row;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: flex-end;
-  padding: 5.25rem 1rem 2rem 0;
+  padding: 2.5rem 1rem 2rem 0;
   gap: 0;
 }
 
@@ -292,10 +272,10 @@ body {
 }
 
 .hand-inner-right {
-  display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
   align-items: flex-end;
+  height: calc(25.2vw + 26px + 1vw);
 }
 
 .hand-inner-left {
@@ -316,8 +296,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 220px;
-  padding: 1rem 1.2rem;
+  width: 140px;
+  height: 140px;
+  padding: 0;
   background: linear-gradient(180deg, rgba(6, 23, 24, 0.82), rgba(8, 35, 37, 0.74));
   border: 1px solid rgba(16, 185, 129, 0.35);
   border-radius: 20px;
@@ -366,6 +347,44 @@ body {
 .center-info-status-active {
   color: #86efac;
   text-shadow: 0 0 18px rgba(134, 239, 172, 0.24);
+}
+
+/* Wind direction labels around center HUD */
+.center-wind {
+  position: absolute;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgba(148, 163, 184, 0.5);
+  transition: color 0.2s;
+}
+
+.center-wind-active {
+  color: #86efac;
+  text-shadow: 0 0 10px rgba(134, 239, 172, 0.3);
+}
+
+.center-wind-bottom {
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.center-wind-top {
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(180deg);
+}
+
+.center-wind-right {
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-90deg);
+}
+
+.center-wind-left {
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%) rotate(90deg);
 }
 
 .table-action-bar {
@@ -556,36 +575,31 @@ body {
 
 .melds-container-right {
   position: absolute;
-  right: 50%;
-  transform: translateX(50%);
-  top: -6rem; /* Place above the tehai column */
+  right: calc(1rem + var(--right-seat-lane) - 4px);
+  top: 0.9rem;
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 8px;
-  align-items: center; /* Center horizontally with the hand */
+  align-items: flex-end;
   pointer-events: auto;
 }
 
 .melds-container-left {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: -6rem; /* Place above the tehai column */
+  left: calc(1rem + var(--left-seat-lane) - 4px);
+  bottom: 0.9rem;
   display: flex;
-  flex-direction: column; /* Left player melds flow downwards from the top */
+  flex-direction: column-reverse;
   gap: 8px;
-  align-items: center; /* Center horizontally with the hand */
+  align-items: flex-start;
   pointer-events: auto;
+  margin-right: 0;
 }
 
 .meld-group {
   display: flex;
-  gap: 2px;
+  gap: 0px;
   align-items: center;
-  background: rgba(0, 0, 0, 0.4);
-  padding: 4px;
-  border-radius: 6px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
 }
 
 .meld-group-bottom {

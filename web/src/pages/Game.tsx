@@ -77,7 +77,7 @@ export default function Game() {
     // Removed duplicated helpers (now imported from tileUtils)
 
     // Render helper for tiles
-    const TileComponent = ({ tile, isInteractive = false, size = 'normal' }: { tile: game.ITile, isInteractive?: boolean, size?: 'normal' | 'small' }) => {
+    const TileComponent = ({ tile, isInteractive = false, size = 'normal', noGlow = false }: { tile: game.ITile, isInteractive?: boolean, size?: 'normal' | 'small', noGlow?: boolean }) => {
         const isWild = gameState.wildTiles.some((w: any) => w.suit === tile.suit && w.value === tile.value);
         const svgName = getTileSvgName(tile);
 
@@ -89,7 +89,7 @@ export default function Game() {
                     padding: 0,
                     border: 'none',
                     backgroundColor: 'transparent',
-                    boxShadow: isWild ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
+                    boxShadow: (isWild && !noGlow) ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
                     position: 'relative'
                 }}
             >
@@ -108,32 +108,116 @@ export default function Game() {
         );
     };
 
+    const getActionMeta = (action: any) => {
+        if (action.type === game.ActionType.ACTION_CHII) {
+            return { label: 'CHII', accent: 'table-action-btn-chii' };
+        }
+        if (action.type === game.ActionType.ACTION_PON) {
+            return { label: 'PON', accent: 'table-action-btn-pon' };
+        }
+        if (action.type === game.ActionType.ACTION_KAN) {
+            return { label: 'KAN', accent: 'table-action-btn-kan' };
+        }
+        if (action.type === game.ActionType.ACTION_RON) {
+            return { label: 'RON', accent: 'table-action-btn-ron' };
+        }
+        if (action.type === game.ActionType.ACTION_TSUMO) {
+            return { label: 'TSUMO', accent: 'table-action-btn-tsumo' };
+        }
+        return { label: 'ACTION', accent: 'table-action-btn-neutral' };
+    };
+
+    const showInterruptActions = gameState.phase === 3 && validActions.length > 0;
+    const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
+
     return (
         <div className="mahjong-table">
+            {gameState.wildTiles && gameState.wildTiles.length > 0 && (
+                <div className="wild-tile-corner">
+                    <div className="wild-tile-corner-label">Wild Tile</div>
+                    <div className="wild-tile-corner-face">
+                        <TileComponent tile={gameState.wildTiles[0]} noGlow />
+                    </div>
+                </div>
+            )}
 
             {/* Center Info HUD */}
             <div className="center-info text-white text-center">
-                <div className="text-2xl font-black text-green-400 mb-2 tracking-widest uppercase">Match {matchId?.substring(0, 5)}</div>
-                <div className="text-gray-300 mb-4 text-sm font-mono">
-                    Phase: {gameState.phase} | Wall Left: {gameState.wallCount}
+                {/* Wind labels on 4 sides */}
+                {(() => {
+                    const windNames = ['', 'East', 'South', 'West', 'North'];
+                    const windKanji = ['', '東', '南', '西', '北'];
+                    const positions = ['bottom', 'right', 'top', 'left'];
+                    return positions.map((pos, idx) => {
+                        const seat = gameState.players.find((p: any) => {
+                            const diff = (p.seat - mySeatId + 4) % 4;
+                            return diff === idx;
+                        });
+                        if (!seat) return null;
+                        const wind = seat.seatWind;
+                        const isActive = seat.seat === gameState.activePlayer;
+                        return (
+                            <div key={pos} className={`center-wind center-wind-${pos} ${isActive ? 'center-wind-active' : ''}`}>
+                                {windKanji[wind]}
+                            </div>
+                        );
+                    });
+                })()}
+                <div className="center-info-stats">
+                    <span className="center-info-chip">Wall {gameState.wallCount}</span>
                 </div>
-                {gameState.wildTiles && gameState.wildTiles.length > 0 && (
-                    <div className="bg-yellow-900 border border-yellow-500 text-yellow-200 px-3 py-1 rounded text-sm mb-4">
-                        WILD: {getTileName(gameState.wildTiles[0])}
-                        <br />
-                        DEBUG: ID={gameState.players.find((p: any) => p.seat === mySeatId)?.drawnTileId != null ? gameState.players.find((p: any) => p.seat === mySeatId)?.drawnTileId + ' (Len:' + gameState.players.find((p: any) => p.seat === mySeatId)?.closedHand.length + ')' : 'null (Len:' + gameState.players.find((p: any) => p.seat === mySeatId)?.closedHand.length + ')'}
-                    </div>
-                )}
-
-                {/* Action Buttons Overlay within HUD Context */}
-                {gameState.activePlayer === mySeatId ? (
-                    <div className="text-green-400 font-bold animate-pulse mt-4">YOUR TURN</div>
-                ) : (
-                    <div className="text-gray-400 text-sm mt-4">Waiting for Seat {gameState.activePlayer}...</div>
-                )}
-
-
             </div>
+
+            {(showInterruptActions || showTurnActions) && (
+                <div className="table-action-bar">
+                    {showInterruptActions && (
+                        <>
+                            {validActions.map((action: any, i: number) => {
+                                const meta = getActionMeta(action);
+
+                                return (
+                                    <button key={i} onClick={() => handleAction(action.type, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
+                                        <span className="table-action-btn-label">{meta.label}</span>
+                                        {action.meldTiles && action.meldTiles.length > 0 && (
+                                            <div className="table-action-preview">
+                                                {action.meldTiles.map((mt: any, mtIdx: number) => (
+                                                    <TileComponent key={mtIdx} tile={mt} size="small" />
+                                                ))}
+                                            </div>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                            <button onClick={() => handleAction(game.ActionType.ACTION_PASS)} className="table-action-btn table-action-btn-skip">
+                                SKIP
+                            </button>
+                        </>
+                    )}
+
+                    {showTurnActions && (
+                        <>
+                            {validActions.map((action: any, i: number) => {
+                                if (action.type === game.ActionType.ACTION_TSUMO) {
+                                    const meta = getActionMeta(action);
+                                    return (
+                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_TSUMO)} className={`table-action-btn ${meta.accent} table-action-btn-prominent`}>
+                                            {meta.label}
+                                        </button>
+                                    );
+                                } else if (action.type === game.ActionType.ACTION_KAN) {
+                                    const meta = getActionMeta(action);
+                                    return (
+                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_KAN, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
+                                            {meta.label}
+                                        </button>
+                                    );
+                                }
+                                return null;
+                            })}
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Loop through all 4 players to place their hands and discards */}
             {gameState.players.map((p: any) => {
@@ -148,85 +232,34 @@ export default function Game() {
                     <div key={p.seat} className="contents">
 
                         {/* Discard Pool Area */}
-                        <div className={`discard-pool discard-pool-${posStr}`}>
-                            {p.discards.map((t: any, i: number) => (
-                                <div key={i} className={`pov-${posStr} small`}>
-                                    <TileComponent tile={t} size="small" />
-                                </div>
-                            ))}
+                        <div className={`discard-pool discard-pool-${posStr} ${p.discards.length === 0 ? 'discard-pool-empty' : ''}`}>
+                            {p.discards.length === 0 ? (
+                                <div className="discard-pool-placeholder" aria-hidden="true" />
+                            ) : (
+                                p.discards.map((t: any, i: number) => {
+                                    const isLastDiscard = i === p.discards.length - 1 && gameState.phase === 3;
+                                    return isLastDiscard ? (
+                                        <motion.div
+                                            key={t.id}
+                                            layoutId={t.id.toString()}
+                                            className={`pov-${posStr} small`}
+                                            transition={{ layout: { duration: 0.35, ease: "easeOut" } }}
+                                        >
+                                            <TileComponent tile={t} size="small" />
+                                        </motion.div>
+                                    ) : (
+                                        <div key={i} className={`pov-${posStr} small`}>
+                                            <TileComponent tile={t} size="small" />
+                                        </div>
+                                    );
+                                })
+                            )}
                         </div>
 
                         {/* Combined Hand and Melds Area */}
-                        <div className={`hand-container-${posStr}`} style={isMe ? { position: 'relative' } : {}}>
-
-                            {/* Action Buttons Overlay for Bottom Player */}
-                            {isMe && (
-                                <div className="absolute right-0 bottom-full mb-8 flex gap-4 pointer-events-auto items-end justify-end" style={{ zIndex: 100 }}>
-                                    {/* Interrupt Window Actions */}
-                                    {gameState.phase === 3 && validActions.length > 0 && (
-                                        <>
-                                            {validActions.map((action: any, i: number) => {
-                                                let label = 'Unknown';
-                                                let color = 'bg-gray-600 hover:bg-gray-500';
-                                                let textCol = 'text-white';
-                                                if (action.type === game.ActionType.ACTION_CHII) {
-                                                    label = 'CHOW';
-                                                    color = 'bg-blue-600 hover:bg-blue-500';
-                                                } else if (action.type === game.ActionType.ACTION_PON) {
-                                                    label = 'PONG';
-                                                    color = 'bg-purple-600 hover:bg-purple-500';
-                                                } else if (action.type === game.ActionType.ACTION_KAN) {
-                                                    label = 'KONG';
-                                                    color = 'bg-indigo-600 hover:bg-indigo-500';
-                                                } else if (action.type === game.ActionType.ACTION_RON) {
-                                                    label = 'RON (Win)';
-                                                    color = 'bg-red-600 hover:bg-red-500';
-                                                }
-
-                                                return (
-                                                    <button key={i} onClick={() => handleAction(action.type, undefined, action.meldTiles || [])} className={`${color} ${textCol} font-bold py-3 px-6 rounded-lg shadow-xl outline outline-offset-2 outline-white text-lg tracking-widest transition-transform hover:scale-105 flex items-center gap-3`}>
-                                                        <span>{label}</span>
-                                                        {action.meldTiles && action.meldTiles.length > 0 && (
-                                                            <div className="flex gap-1 bg-black bg-opacity-30 p-1 rounded">
-                                                                {action.meldTiles.map((mt: any, mtIdx: number) => (
-                                                                    <TileComponent key={mtIdx} tile={mt} size="small" />
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </button>
-                                                );
-                                            })}
-                                            <button onClick={() => handleAction(game.ActionType.ACTION_PASS)} className="bg-gray-700 hover:bg-gray-600 text-gray-200 font-bold py-3 px-6 rounded-lg shadow-lg tracking-widest transition-transform hover:scale-105">
-                                                SKIP
-                                            </button>
-                                        </>
-                                    )}
-
-                                    {/* Active Turn Actions */}
-                                    {gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0 && (
-                                        <>
-                                            {validActions.map((action: any, i: number) => {
-                                                if (action.type === game.ActionType.ACTION_TSUMO) {
-                                                    return (
-                                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_TSUMO)} className="bg-yellow-500 hover:bg-yellow-400 text-black font-extrabold py-3 px-6 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.8)] text-xl tracking-widest transition-transform hover:scale-110">
-                                                            TSUMO
-                                                        </button>
-                                                    );
-                                                } else if (action.type === game.ActionType.ACTION_KAN) {
-                                                    return (
-                                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_KAN, undefined, action.meldTiles || [])} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded shadow-lg text-lg tracking-widest transition-transform hover:scale-105">
-                                                            KONG
-                                                        </button>
-                                                    );
-                                                }
-                                                return null;
-                                            })}
-                                        </>
-                                    )}
-                                </div>
-                            )}
-
-                            <div className={`hand-inner hand-inner-${posStr}`}>
+                        <div className={`hand-container-${posStr} ${isMe ? 'hand-container-self' : ''}`}>
+                            <div className={`hand-main-block hand-main-block-${posStr} ${isMe ? 'hand-main-block-self' : ''}`}>
+                                <div className={`hand-inner hand-inner-${posStr}`}>
                                 {/* Render actual tiles for self, backs for others (unless server sent open hands for replay) */}
                                 {isMe || p.closedHand.length > 0 ? (
                                     (() => {
@@ -307,6 +340,7 @@ export default function Game() {
                                         </div>
                                     ))
                                 )}
+                                </div>
                             </div>
 
                             {/* Open Melds Area */}

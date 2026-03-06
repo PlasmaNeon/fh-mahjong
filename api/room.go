@@ -128,31 +128,47 @@ func (r *Room) Start() {
 
 				// If we just entered wait phase, start the timer
 				if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
-					if r.interruptTmr != nil {
-						r.interruptTmr.Stop()
-					}
-					// 5 seconds to decide if they want to Pong/Chi/Ron
-					r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
-
-					go func(timer *time.Timer) {
-						select {
-						case <-timer.C:
-							// Time expired, auto-resolve
-						case <-r.InterruptChan:
-							// Someone claimed it early or everyone skipped!
-							if !timer.Stop() {
-								<-timer.C
+					// Auto-PASS for any seat that has valid actions but no connected client (bot/absent player)
+					for seat, p := range r.Engine.State.Players {
+						if len(p.ValidActions) > 0 {
+							if _, connected := r.Seats[uint32(seat)]; !connected {
+								r.Engine.ProcessPlayerAction(uint32(seat), &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
 							}
 						}
+					}
 
-						// Double check we are still in wait phase before forcing a resolve
-						if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-							r.Engine.ResolveInterrupts()
-							resolvePayload := r.BroadcastState()
-							replayBytes = append(replayBytes, resolvePayload...)
-							log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+					// If auto-pass resolved everything, no need for a timer
+					if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+						statePayload = r.BroadcastState()
+						replayBytes = append(replayBytes, statePayload...)
+						log.Printf("Auto-resolved interrupts (all bots) for room %s", r.ID)
+					} else {
+						if r.interruptTmr != nil {
+							r.interruptTmr.Stop()
 						}
-					}(r.interruptTmr)
+						// 5 seconds to decide if they want to Pong/Chi/Ron
+						r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
+
+						go func(timer *time.Timer) {
+							select {
+							case <-timer.C:
+								// Time expired, auto-resolve
+							case <-r.InterruptChan:
+								// Someone claimed it early or everyone skipped!
+								if !timer.Stop() {
+									<-timer.C
+								}
+							}
+
+							// Double check we are still in wait phase before forcing a resolve
+							if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+								r.Engine.ResolveInterrupts()
+								resolvePayload := r.BroadcastState()
+								replayBytes = append(replayBytes, resolvePayload...)
+								log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+							}
+						}(r.interruptTmr)
+					}
 				}
 			}
 		}

@@ -33,10 +33,11 @@ func TestGameStartAndDeal(t *testing.T) {
 		t.Errorf("Expected PHASE_PLAYER_TURN, got %v", g.State.Phase)
 	}
 
+	dealer := g.State.ActivePlayer
 	for i := 0; i < 4; i++ {
-		// East draws a tile on turn start, so East has 14
+		// Dealer (East) draws a tile on turn start, so dealer has 14
 		expectedSize := uint32(13)
-		if i == 0 {
+		if uint32(i) == dealer {
 			expectedSize = 14
 		}
 		if g.State.Players[i].HandSize != expectedSize {
@@ -88,6 +89,12 @@ func TestDirectedMelds(t *testing.T) {
 	playerHand := g.State.Players[activePlayer].ClosedHand
 	discardTile := playerHand[0]
 
+	// Inject a pair into next player's hand BEFORE discarding so GetValidInterrupts sees the Pon
+	southSeat := (activePlayer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+
 	err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
 		Tile: discardTile,
@@ -96,11 +103,9 @@ func TestDirectedMelds(t *testing.T) {
 		t.Fatalf("Failed to discard: %v", err)
 	}
 
-	// Inject a pair into South's hand manually so they can call Pon
-	southSeat := (activePlayer + 1) % 4
-	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
-	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
-	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+	if g.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		t.Fatalf("Expected PHASE_WAIT_DISCARDS after discard with valid interrupts, got %v", g.State.Phase)
+	}
 
 	err = g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
 		Type:      pb.ActionType_ACTION_PON,
@@ -110,7 +115,7 @@ func TestDirectedMelds(t *testing.T) {
 		t.Fatalf("Failed to interrupt: %v", err)
 	}
 
-	g.ResolveInterrupts()
+	// ResolveInterrupts called automatically when all expected responses are in
 
 	melds := g.State.Players[southSeat].OpenMelds
 	if len(melds) != 1 {
@@ -118,9 +123,10 @@ func TestDirectedMelds(t *testing.T) {
 	}
 
 	meld := melds[0]
-	// If active is 0, south is 1. (0 - 1 + 4) % 4 = 3 (LEFT)
-	if meld.CalledDirection != pb.MeldDirection_MELD_DIRECTION_LEFT {
-		t.Errorf("Expected MELD_DIRECTION_LEFT (3), got %v", meld.CalledDirection)
+	// Direction = (discarder - claimer + 4) % 4
+	expectedDir := pb.MeldDirection((activePlayer - southSeat + 4) % 4)
+	if meld.CalledDirection != expectedDir {
+		t.Errorf("Expected direction %v, got %v", expectedDir, meld.CalledDirection)
 	}
 
 	if meld.CalledTileId != discardTile.Id {
@@ -168,7 +174,8 @@ func TestDeadWallKanDraw(t *testing.T) {
 		t.Fatalf("Failed to interrupt Kan: %v", err)
 	}
 
-	g.ResolveInterrupts()
+	// ResolveInterrupts is called automatically inside handleInterruptAction
+	// when all expected responses are received (only south has valid actions).
 
 	// Verify Melds
 	if len(southPlayer.OpenMelds) != 1 {

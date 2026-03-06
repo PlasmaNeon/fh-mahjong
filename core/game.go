@@ -65,16 +65,17 @@ func (g *Game) Start() error {
 		return errors.New("cannot start game: already in progress")
 	}
 
-	g.dealTiles()
+	dealer := g.dealTiles()
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-	g.State.ActivePlayer = 0 // East starts
+	g.State.ActivePlayer = dealer // Dealer (East) starts
 
 	// The round begins by having the dealer draw a tile.
-	return g.ExecuteSystemDraw(0)
+	return g.ExecuteSystemDraw(dealer)
 }
 
 // dealTiles uses the rule engine to get a full deck, shuffles it, and distributes 13 tiles to each player.
-func (g *Game) dealTiles() {
+// Returns the dealer seat (East).
+func (g *Game) dealTiles() uint32 {
 	wall := g.Rules.GetInitialWall()
 
 	// Shuffle using Tenhou's MT19937 algorithm
@@ -92,6 +93,13 @@ func (g *Game) dealTiles() {
 	g.State.WallSeed = base64.StdEncoding.EncodeToString(seedBytes)
 
 	mt := MTFromSeed(seed)
+
+	// Pick a random dealer (0-3) and assign seat winds accordingly
+	dealer := mt.GenU32() % 4
+	for i := 0; i < 4; i++ {
+		// Wind offset: dealer=East(1), next=South(2), etc.
+		g.State.Players[i].SeatWind = uint32(((i - int(dealer) + 4) % 4) + 1)
+	}
 
 	// 2. Generate an array of indices 0..135
 	indices := make([]byte, len(wall))
@@ -145,6 +153,8 @@ func (g *Game) dealTiles() {
 		// Suit+Value combo to identify wild tiles.
 		g.State.WildTiles = []*pb.Tile{wildIndicator}
 	}
+
+	return dealer
 }
 
 // ExecuteSystemDraw handles drawing a tile from the wall at the start of a turn.
@@ -590,8 +600,8 @@ func (g *Game) startNextRound() {
 
 	// Re-deal
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
-	g.dealTiles()
+	dealer := g.dealTiles()
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-	g.State.ActivePlayer = 0 // East starts
-	g.ExecuteSystemDraw(0)
+	g.State.ActivePlayer = dealer // Dealer (East) starts
+	g.ExecuteSystemDraw(dealer)
 }
