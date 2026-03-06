@@ -128,7 +128,7 @@ body {
   flex-direction: row;
   flex-wrap: wrap;
   align-content: flex-start;
-  max-width: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
+  width: calc(max(1.8vw, 18px) * 6);
   min-height: 78px;
   margin: 0 auto;
 }
@@ -139,7 +139,7 @@ body {
   flex-direction: column-reverse;
   flex-wrap: wrap;
   align-content: flex-start;
-  max-height: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
+  height: calc(max(1.8vw, 18px) * 6);
   min-width: 78px;
   margin: auto 0;
 }
@@ -150,7 +150,7 @@ body {
   flex-direction: row-reverse;
   flex-wrap: wrap-reverse;
   align-content: flex-start;
-  max-width: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
+  width: calc(max(1.8vw, 18px) * 6);
   min-height: 78px;
   margin: 0 auto;
 }
@@ -161,7 +161,7 @@ body {
   flex-direction: column;
   flex-wrap: wrap-reverse;
   align-content: flex-start;
-  max-height: calc((max(1.8vw, 18px) * 6) + (2px * 5) + 8px);
+  height: calc(max(1.8vw, 18px) * 6);
   min-width: 78px;
   margin: auto 0;
 }
