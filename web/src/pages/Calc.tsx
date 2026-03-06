@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { getApiUrl } from '../config'
+import { getApiUrl, hasConfiguredApiBaseUrl } from '../config'
 import { ActionType, MeldDirection } from '../proto/game.ts'
 import { getTileName, getTileSvgName } from '../utils/tileUtils'
 import {
@@ -318,6 +318,25 @@ function PaletteGrid({
 
 function parseErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown calculator error.'
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type') ?? ''
+  const text = await response.text()
+
+  if (!text.trim()) {
+    return null
+  }
+
+  if (!contentType.includes('application/json')) {
+    throw new Error('Calculator endpoint returned a non-JSON response. Check the deployed API base URL.')
+  }
+
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new Error('Calculator endpoint returned invalid JSON. Check the deployed API base URL.')
+  }
 }
 
 function getMeldLabelForLang(type: ActionType, lang: Lang): string {
@@ -691,14 +710,23 @@ export default function Calc() {
         body: JSON.stringify(payload),
       })
 
+      if (!hasConfiguredApiBaseUrl() && window.location.hostname.endsWith('vercel.app')) {
+        const contentType = response.headers.get('content-type') ?? ''
+        if (contentType.includes('text/html')) {
+          throw new Error('Calculator backend is not configured for this Vercel deploy. Set VITE_API_BASE_URL to your public backend.')
+        }
+      }
+
+      const responsePayload = await readResponsePayload(response)
+
       if (!response.ok) {
-        const errorPayload = normalizeCalcErrorResponse(await response.json())
+        const errorPayload = normalizeCalcErrorResponse(responsePayload)
         setResult(null)
         setServerErrors(errorPayload.errors ?? ['Calculator request failed.'])
         return
       }
 
-      const successPayload = normalizeCalcSuccessResponse(await response.json())
+      const successPayload = normalizeCalcSuccessResponse(responsePayload)
       setResult(successPayload)
     } catch (error) {
       setResult(null)

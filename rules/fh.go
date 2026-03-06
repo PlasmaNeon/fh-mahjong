@@ -48,6 +48,11 @@ func (r *HometownRuleset) GetInitialWall() []*pb.Tile {
 }
 
 func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, []*pb.ScoreEntry, bool) {
+	effectiveWinTile := winTile
+	if isTsumo && effectiveWinTile == nil {
+		effectiveWinTile = resolveTsumoWinTile(hand, state, playerSeat)
+	}
+
 	// Build the full 14-tile hand for pattern evaluation.
 	fullHand := make([]*pb.Tile, 0, len(hand)+1)
 	fullHand = append(fullHand, hand...)
@@ -201,7 +206,7 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		}
 
 		// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
-		hasSingleCall := winTile != nil && r.evalWaitPattern(hand, winTile, wildHashes) > 0
+		hasSingleCall := effectiveWinTile != nil && r.evalWaitPattern(hand, effectiveWinTile, wildHashes) > 0
 		if hasSingleCall {
 			re = append(re, &pb.ScoreEntry{PatternName: "Single/Pair Call (边嵌单吊对倒)", Points: 1})
 		}
@@ -1180,4 +1185,23 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 	}
 
 	return 0
+}
+
+func resolveTsumoWinTile(hand []*pb.Tile, state *pb.GameState, playerSeat uint32) *pb.Tile {
+	if state == nil || int(playerSeat) >= len(state.Players) || state.Players[playerSeat] == nil {
+		return nil
+	}
+
+	drawnTileID := state.Players[playerSeat].DrawnTileId
+	if drawnTileID == nil {
+		return nil
+	}
+
+	for _, tile := range hand {
+		if int32(tile.Id) == *drawnTileID {
+			return tile
+		}
+	}
+
+	return nil
 }

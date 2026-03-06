@@ -14,6 +14,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
     1. **Independence** (大大胡): 14 disconnected tiles, base 50 + stackable bonuses
     2. **Seven Pairs** (七对): 7 pairs, straight (150) or wild (50) + bomb bonuses
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
+  - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
   - `GetValidActions()` — Discard, Kan, Flower Reveal, Tsumo for active player
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
@@ -32,5 +33,6 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
 - Implements `core.RuleEngine` — imported by `core/` via interface, never directly.
 - Scoring uses a route-based approach: Independence, Seven Pairs, and Standard are evaluated independently; the highest-scoring route wins.
 - Wild tiles (搭) are tracked via hash maps. The `tilesToTehai34` helper converts tile lists to a 34-element frequency array for DP evaluation.
+- The live game sometimes evaluates tsumo hands as 14-tile concealed hands with no explicit `winTile`; wait-pattern scoring therefore depends on `DrawnTileId` being carried in `PlayerState`.
 - Ron requires ≥4 points total; Tsumo has no minimum.
 - All pattern names include Chinese (e.g., "Common Win (朋胡)") for bilingual display.

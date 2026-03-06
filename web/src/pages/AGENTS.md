@@ -16,11 +16,16 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
   - Renders 4 player positions (bottom=self, right, top, left)
+  - Shows the round wild tile as a real face-up tile badge in the upper-left table corner instead of center-HUD text
+  - Uses an absolutely centered glass HUD for match/wall/turn info so the center panel stays visually centered regardless of seat/discard layout
+  - Empty discard trays render as intentional placeholder trays instead of collapsing into thin lines
+  - Bottom-player interrupt/turn actions use a compact glass action bar positioned in the elevated lower-right table gap beside the bottom discard zone, avoiding overlap with the self hand and open melds
+  - The left seat uses a dedicated lower-left meld anchor and shared inner-left lane so the concealed hand and open meld column align visually without pushing tiles under the wild-tile badge
   - Tile rendering with layered SVGs (`Front.svg` + face)
   - Sorted closed hand with drawn tile separation
   - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
   - Discard pools per player
-  - Action buttons: CHOW, PONG, KONG, RON, TSUMO, SKIP
+  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP
   - Round-result modal: winning hand display, score breakdown, payouts, ready button
   - Framer Motion `layoutId` animations for tile movement
   - `TileComponent` helper for consistent tile rendering
@@ -38,6 +43,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Multiple kan melds are supported; repeated kong bonus selections across different kan rows are preserved and stacked in the calculator payload/result
   - Full scoring context: tsumo/ron toggle, seat wind, prevailing wind, flower meld toggles
   - Client-side validation for meld shape, hand size, and physical tile copy limits before calling the runtime-configured calculator endpoint
+  - Calculator network handling validates response content type before parsing JSON and surfaces a clear backend-configuration error on Vercel when `VITE_API_BASE_URL` is missing
   - Result panel for total score / breakdown and a normalized backend debug summary
 
 - **calcHelpers.ts** — Calculator-only helpers:

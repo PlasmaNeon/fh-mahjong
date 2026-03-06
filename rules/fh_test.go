@@ -1046,6 +1046,50 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 		}
 	})
 
+	t.Run("Gap Wait With Wild Inferred From Tsumo Draw", func(t *testing.T) {
+		drawnTileID := int32(14)
+		hand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 1},
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 1},
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 1},
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 2},
+			{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 2},
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 1}, // wild tile acting as 3m
+			{Id: 13, Suit: pb.Suit_SUIT_MAN, Value: 5},
+			{Id: 14, Suit: pb.Suit_SUIT_MAN, Value: 4}, // drawn winning tile
+		}
+		state := &pb.GameState{
+			WildTiles: []*pb.Tile{
+				{Id: 100, Suit: pb.Suit_SUIT_JIHAI, Value: 1},
+			},
+			Players: []*pb.PlayerState{
+				{DrawnTileId: &drawnTileID},
+			},
+		}
+
+		s, entries, ok := r.EvaluateHand(hand, nil, nil, state, 0, true)
+		if !ok || s != 4 {
+			t.Fatalf("want 4, got %d (canWin=%v)", s, ok)
+		}
+
+		foundWait := false
+		for _, entry := range entries {
+			if entry.PatternName == "Single/Pair Call (边嵌单吊对倒)" {
+				foundWait = true
+				break
+			}
+		}
+		if !foundWait {
+			t.Fatalf("expected inferred tsumo hand to receive wait-pattern bonus")
+		}
+	})
+
 	t.Run("Edge Wait (边)", func(t *testing.T) {
 		// 13 tiles: pon(1s), pon(4p), pon(7m), pair(1z), 1p, 2p.
 		// Wait: 3p (edge wait: 1,2 waiting for 3, or 8,9 waiting for 7).
