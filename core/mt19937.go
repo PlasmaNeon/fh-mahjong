@@ -186,7 +186,7 @@ func RndFromMT(mt *MT19937) [RndLen]uint32 {
 // derived from MT19937+SHA512. The `wall` should contain values 0..135 sequentially.
 func ShuffleWithRnd(wall []byte, rnd *[RndLen]uint32) {
 	n := len(wall)
-	if n != 136 && n != 108 {
+	if n != 144 && n != 136 && n != 108 {
 		panic("invalid wall length")
 	}
 	for i := 0; i < n-1; i++ {

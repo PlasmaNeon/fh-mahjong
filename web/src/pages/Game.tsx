@@ -16,6 +16,7 @@ export default function Game() {
     // Track the last drawn tile so we can delay its sorting animation
     const lastDrawnTileId = useRef<number | null>(null);
     const [isReady, setIsReady] = useState(false);
+    const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
 
     useEffect(() => {
         if (!isConnected || !socket) {
@@ -33,6 +34,9 @@ export default function Game() {
     useEffect(() => {
         if (gameState?.phase !== 4) {
             setIsReady(false);
+        }
+        if (gameState?.phase !== 3) {
+            setHasSubmittedInterrupt(false);
         }
     }, [gameState?.phase]);
 
@@ -124,10 +128,13 @@ export default function Game() {
         if (action.type === game.ActionType.ACTION_TSUMO) {
             return { label: 'TSUMO', accent: 'table-action-btn-tsumo' };
         }
+        if (action.type === game.ActionType.ACTION_FLOWER_REVEAL) {
+            return { label: '补花', accent: 'table-action-btn-flower' };
+        }
         return { label: 'ACTION', accent: 'table-action-btn-neutral' };
     };
 
-    const showInterruptActions = gameState.phase === 3 && validActions.length > 0;
+    const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
     const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
 
     return (
@@ -176,7 +183,7 @@ export default function Game() {
                                 const meta = getActionMeta(action);
 
                                 return (
-                                    <button key={i} onClick={() => handleAction(action.type, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
+                                    <button key={i} onClick={() => { setHasSubmittedInterrupt(true); handleAction(action.type, undefined, action.meldTiles || []); }} className={`table-action-btn ${meta.accent}`}>
                                         <span className="table-action-btn-label">{meta.label}</span>
                                         {action.meldTiles && action.meldTiles.length > 0 && (
                                             <div className="table-action-preview">
@@ -188,7 +195,7 @@ export default function Game() {
                                     </button>
                                 );
                             })}
-                            <button onClick={() => handleAction(game.ActionType.ACTION_PASS)} className="table-action-btn table-action-btn-skip">
+                            <button onClick={() => { setHasSubmittedInterrupt(true); handleAction(game.ActionType.ACTION_PASS); }} className="table-action-btn table-action-btn-skip">
                                 SKIP
                             </button>
                         </>
@@ -211,6 +218,20 @@ export default function Game() {
                                             {meta.label}
                                         </button>
                                     );
+                                } else if (action.type === game.ActionType.ACTION_FLOWER_REVEAL) {
+                                    const meta = getActionMeta(action);
+                                    return (
+                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_FLOWER_REVEAL, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
+                                            <span className="table-action-btn-label">{meta.label}</span>
+                                            {action.meldTiles && action.meldTiles.length > 0 && (
+                                                <span className="table-action-btn-tiles">
+                                                    {action.meldTiles.map((t: any, ti: number) => (
+                                                        <TileComponent key={ti} tile={t} size="small" />
+                                                    ))}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
                                 }
                                 return null;
                             })}
@@ -226,7 +247,8 @@ export default function Game() {
                 const posStr = positions[diff];
 
                 const isMe = diff === 0;
-                const canDiscard = isMe && gameState.activePlayer === mySeatId && gameState.phase === 2;
+                const canDiscard = isMe && gameState.activePlayer === mySeatId && gameState.phase === 2
+                    && validActions.some((a: any) => a.type === game.ActionType.ACTION_DISCARD);
 
                 return (
                     <div key={p.seat} className="contents">
@@ -373,6 +395,16 @@ export default function Game() {
                                         </div>
                                     );
                                 })}
+                                {/* Flower Melds */}
+                                {p.flowerMelds && p.flowerMelds.length > 0 && (
+                                    <div className={`meld-group meld-group-${posStr}`}>
+                                        {p.flowerMelds.map((t: any, fi: number) => (
+                                            <div key={`f-${fi}`} className={`pov-${posStr} small`}>
+                                                <TileComponent tile={t} size="small" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -461,6 +493,21 @@ export default function Game() {
                                                 })}
                                             </div>
                                         )}
+                                        {/* Flower Melds */}
+                                        {(() => {
+                                            const winnerSeat = gameState.roundResult.winnerSeat;
+                                            const winnerFlowers = gameState.players.find((p: any) => p.seat === winnerSeat)?.flowerMelds || [];
+                                            if (winnerFlowers.length === 0) return null;
+                                            return (
+                                                <div className="flex flex-row items-end" style={{ gap: '2px', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid #4b5563' }}>
+                                                    {winnerFlowers.map((t: any, fi: number) => (
+                                                        <div key={`fl-${fi}`} className="pov-bottom small">
+                                                            <TileComponent tile={t} size="small" />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
 

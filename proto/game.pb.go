@@ -32,6 +32,7 @@ const (
 	Suit_SUIT_PIN     Suit = 2
 	Suit_SUIT_MAN     Suit = 3
 	Suit_SUIT_JIHAI   Suit = 4
+	Suit_SUIT_FLOWER  Suit = 5
 )
 
 // Enum value maps for Suit.
@@ -42,6 +43,7 @@ var (
 		2: "SUIT_PIN",
 		3: "SUIT_MAN",
 		4: "SUIT_JIHAI",
+		5: "SUIT_FLOWER",
 	}
 	Suit_value = map[string]int32{
 		"SUIT_UNKNOWN": 0,
@@ -49,6 +51,7 @@ var (
 		"SUIT_PIN":     2,
 		"SUIT_MAN":     3,
 		"SUIT_JIHAI":   4,
+		"SUIT_FLOWER":  5,
 	}
 )
 
@@ -265,7 +268,7 @@ func (GamePhase) EnumDescriptor() ([]byte, []int) {
 
 type Tile struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Unique identifier for the tile (0-135).
+	// Unique identifier for the tile (0-143). 0-135 standard, 136-143 flowers.
 	Id   uint32 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	Suit Suit   `protobuf:"varint,2,opt,name=suit,proto3,enum=game.Suit" json:"suit,omitempty"`
 	// For suits 1-3, value is 1-9. Wait! In mahjong it's 1-9 for sou/pin/man,
@@ -1134,14 +1137,15 @@ const file_proto_game_proto_rawDesc = "" +
 	"totalScore\x12,\n" +
 	"\apayouts\x18\t \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12\x17\n" +
 	"\ais_draw\x18\n" +
-	" \x01(\bR\x06isDraw*R\n" +
+	" \x01(\bR\x06isDraw*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
 	"\bSUIT_PIN\x10\x02\x12\f\n" +
 	"\bSUIT_MAN\x10\x03\x12\x0e\n" +
 	"\n" +
-	"SUIT_JIHAI\x10\x04*\xd5\x01\n" +
+	"SUIT_JIHAI\x10\x04\x12\x0f\n" +
+	"\vSUIT_FLOWER\x10\x05*\xd5\x01\n" +
 	"\n" +
 	"ActionType\x12\x12\n" +
 	"\x0eACTION_UNKNOWN\x10\x00\x12\x0f\n" +

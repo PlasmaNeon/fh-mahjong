@@ -9,7 +9,8 @@ export namespace game {
         SUIT_SOU = 1,
         SUIT_PIN = 2,
         SUIT_MAN = 3,
-        SUIT_JIHAI = 4
+        SUIT_JIHAI = 4,
+        SUIT_FLOWER = 5
     }
 
     /** Properties of a Tile. */

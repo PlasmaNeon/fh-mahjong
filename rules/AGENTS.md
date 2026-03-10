@@ -9,14 +9,14 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
 ## Key Files
 
 - **fh.go** — `HometownRuleset` struct implementing all `RuleEngine` methods:
-  - `GetInitialWall()` — 136 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z)
+  - `GetInitialWall()` — 144 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z) + 8 unique flower tiles (1=Spring, 2=Summer, 3=Autumn, 4=Winter, 5=Plum, 6=Orchid, 7=Chrysanthemum, 8=Bamboo)
   - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). Evaluates three mutually exclusive routes:
     1. **Independence** (大大胡): 14 disconnected tiles, base 50 + stackable bonuses
     2. **Seven Pairs** (七对): 7 pairs, straight (150) or wild (50) + bomb bonuses
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
   - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
-  - `GetValidActions()` — Discard, Kan, Flower Reveal, Tsumo for active player
+  - `GetValidActions()` — Discard, Kan, Flower Reveal, Tsumo for active player. Flower reveal is mandatory: if any flower tiles are in the closed hand, only `ACTION_FLOWER_REVEAL` actions are returned (player must reveal all flowers before other actions)
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
   - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1)
   - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.

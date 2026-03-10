@@ -472,6 +472,12 @@ body {
     0 16px 34px rgba(0, 0, 0, 0.34);
 }
 
+.table-action-btn-flower {
+  border-color: rgba(236, 72, 153, 0.34);
+  background: linear-gradient(180deg, rgba(131, 24, 67, 0.9), rgba(103, 18, 53, 0.82));
+  color: #fbcfe8;
+}
+
 .table-action-btn-skip {
   border-color: rgba(148, 163, 184, 0.26);
   background: linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.82));

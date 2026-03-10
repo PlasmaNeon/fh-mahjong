@@ -11,11 +11,13 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 - **game.go** — `Game` struct: central state machine
   - `NewGame(ruleset)` — Constructor, injects a RuleEngine
   - `ProcessPlayerAction(seat, action)` — Main entry point from network layer
-  - `handleActiveTurnAction()` — Discard, Kan, Flower, Tsumo
+  - `handleActiveTurnAction()` — Discard, Kan, Flower Reveal, Tsumo
   - `handleInterruptAction()` — Pon, Chii, Ron during WAIT_DISCARDS
-  - `ResolveInterrupts()` — Priority resolution after timer/all responses
-  - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — Wall draws
+  - `ResolveInterrupts()` — Priority resolution after timer/all responses. After Pon/Chii, calls `GetValidActions()` to populate valid actions for the claiming player
+  - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — Wall draws. `ExecuteSystemDraw` clears all kong/flower bonus flags at start to prevent stale flags
+  - `revealInitialFlowers(dealer)` — Auto-separates flower tiles from all players' hands after dealing. Loops through all 4 seats starting from dealer, moves flowers to `FlowerMelds`, draws replacements from dead wall. Called after `dealTiles()` and after dealer's 14th tile draw
   - `startNextRound()` — Reset for next round (keeps scores)
+  - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
   - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`
 
 - **rules.go** — `RuleEngine` interface:
@@ -26,7 +28,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `GetValidInterrupts()` — Legal steal actions for other players
   - `ResolveInterruptPriority()` — Pick winner among competing claims
 
-- **mt19937.go** — Mersenne Twister PRNG for deterministic, reproducible wall shuffles
+- **mt19937.go** — Mersenne Twister PRNG for deterministic, reproducible wall shuffles (supports 108, 136, and 144 tile walls)
 - **game_test.go** — Unit tests for game loop phases
 - **dump_test.go** — Debug helpers
 
