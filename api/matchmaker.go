@@ -140,9 +140,13 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
 		Ruleset:   ruleset,
 	}
 
-	if err := m.DB.Create(&match).Error; err != nil {
-		log.Printf("Failed to create match %s in DB: %v", matchID, err)
-		return
+	if m.DB != nil {
+		if err := m.DB.Create(&match).Error; err != nil {
+			log.Printf("Failed to create match %s in DB: %v", matchID, err)
+			return
+		}
+	} else {
+		log.Printf("Database disabled, skipping match persistence for %s", matchID)
 	}
 
 	// 2. Add players to the join table

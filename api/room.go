@@ -74,12 +74,16 @@ func (r *Room) Start() {
 			encodedReplay := base64.StdEncoding.EncodeToString(replayBytes)
 
 			now := time.Now()
-			r.DB.Model(&models.Match{}).Where("id = ?", r.ID).Updates(models.Match{
-				Status:    "completed",
-				EndTime:   &now,
-				ReplayURL: encodedReplay,
-				WallSeed:  r.Engine.State.WallSeed,
-			})
+			if r.DB != nil {
+				r.DB.Model(&models.Match{}).Where("id = ?", r.ID).Updates(models.Match{
+					Status:    "completed",
+					EndTime:   &now,
+					ReplayURL: encodedReplay,
+					WallSeed:  r.Engine.State.WallSeed,
+				})
+			} else {
+				log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
+			}
 			return
 
 		case clientAction := <-r.ActionQueue:

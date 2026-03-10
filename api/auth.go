@@ -51,6 +51,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
+		return
+	}
+
 	// Check if user exists
 	var existingUser models.User
 	if err := h.DB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
@@ -86,6 +91,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
 		return
 	}
 

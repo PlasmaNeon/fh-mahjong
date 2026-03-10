@@ -3,43 +3,40 @@ package main
 import (
 	"log"
 	"os"
-	"time"
 
 	"github.com/plasma/fh-mahjong/api"
-	"github.com/plasma/fh-mahjong/models"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func main() {
 	log.Println("Booting Mahjong Server...")
 
-	dsn := getEnv("DB_DSN", "host=localhost user=fh_admin password=fh_password dbname=fh_mahjong port=5432 sslmode=disable TimeZone=UTC")
-
 	// Open DB connection with retry
 	var db *gorm.DB
-	var err error
-	for i := 0; i < 5; i++ {
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
-		})
-		if err == nil {
-			break
+	/*
+		var err error
+		for i := 0; i < 5; i++ {
+			db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+				Logger: logger.Default.LogMode(logger.Info),
+			})
+			if err == nil {
+				break
+			}
+			log.Printf("Failed to connect to database. Retrying in 2 seconds... (%v)", err)
+			time.Sleep(2 * time.Second)
 		}
-		log.Printf("Failed to connect to database. Retrying in 2 seconds... (%v)", err)
-		time.Sleep(2 * time.Second)
-	}
 
-	if err != nil {
-		log.Fatalf("Could not connect to database after 5 attempts: %v", err)
-	}
+		if err != nil {
+			log.Fatalf("Could not connect to database after 5 attempts: %v", err)
+		}
 
-	log.Println("Successfully connected to Database. Running migrations...")
-	if err := models.AutoMigrate(db); err != nil {
-		log.Fatalf("Failed to run schema migrations: %v", err)
-	}
+		log.Println("Successfully connected to Database. Running migrations...")
+		if err := models.AutoMigrate(db); err != nil {
+			log.Fatalf("Failed to run schema migrations: %v", err)
+		}
+	*/
+	log.Println("Database connection is temporarily DISABLED. Running in guest-only mode.")
 
 	// Initialize WebSocket Hub
 	hub := api.NewHub()
