@@ -1,0 +1,4 @@
+{
+  "build_command": "go build -o server ./cmd/server",
+  "start_command": "./server"
+}
