@@ -18,6 +18,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Renders 4 player positions (bottom=self, right, top, left)
   - Shows the round wild tile as a real face-up tile badge in the upper-left table corner instead of center-HUD text
   - Uses an absolutely centered glass HUD for match/wall/turn info so the center panel stays visually centered regardless of seat/discard layout
+  - Center HUD now surfaces round debug chips for exact dice values and live wangpai tiles left
   - Empty discard trays render as intentional placeholder trays instead of collapsing into thin lines
   - Bottom-player interrupt/turn actions use a compact glass action bar positioned in the elevated lower-right table gap beside the bottom discard zone, avoiding overlap with the self hand and open melds
   - The left seat uses a dedicated lower-left meld anchor and shared inner-left lane so the concealed hand and open meld column align visually without pushing tiles under the wild-tile badge
@@ -25,10 +26,13 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Sorted closed hand with drawn tile separation
   - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
   - Discard pools per player
-  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP, FLOWER REVEAL (补花)
+  - Newly discarded tiles use a very fast move-in animation for all seats, including opponents whose concealed hands are face-down
+  - Callable discards get a distinct teal pulse ring so the current claim target is obvious without reusing the wild-tile gold glow
+  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP; stray `FLOWER_REVEAL` actions from the backend are auto-submitted immediately instead of surfacing a user-facing button
   - Interrupt UX: `hasSubmittedInterrupt` state hides interrupt buttons immediately after player clicks, before server resolves (prevents double-clicks and improves responsiveness)
   - Flower melds: rendered as small face-up tiles next to open melds for all 4 players
-  - Round-result modal: winning hand display, score breakdown, payouts, flower melds, ready button
+  - Seat flower strips are anchored separately from the open-meld flow so they sit on the table-facing side of the first meld for each player and do not overlap concealed hands on the side seats
+  - Round-result modal: glass-styled result dialog matching the table HUD, with a compact single-line TSUMO/RON + winner header, background-free winning-hand/payout sections, a two-column breakdown layout, each payout seat card also carrying ready state, tightened spacing to avoid the outer modal scrollbar on normal desktop screens, and a narrower short-landscape profile so left/right hands remain visible on phones
   - Framer Motion `layoutId` animations for tile movement
   - `TileComponent` helper for consistent tile rendering
   - `getSuitOrder()` / `getTileSvgName()` / `getTileName()` utilities

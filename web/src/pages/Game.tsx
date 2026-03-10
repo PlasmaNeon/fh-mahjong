@@ -15,6 +15,8 @@ export default function Game() {
 
     // Track the last drawn tile so we can delay its sorting animation
     const lastDrawnTileId = useRef<number | null>(null);
+    const previousDiscardIdsRef = useRef<Record<number, number[]>>({});
+    const autoFlowerRevealKeyRef = useRef<string>('');
     const [isReady, setIsReady] = useState(false);
     const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
 
@@ -59,7 +61,65 @@ export default function Game() {
     // Identify who we are playing as
     const myPlayer = gameState.players.find((p: any) => p.seat === mySeatId);
     // @ts-ignore: TS doesn't think validActions exists on player, but it does
-    const validActions: any[] = myPlayer?.validActions || [];
+    const rawValidActions: any[] = myPlayer?.validActions || [];
+    const pendingFlowerReveal = rawValidActions.find((action: any) => action.type === game.ActionType.ACTION_FLOWER_REVEAL) || null;
+    const validActions = rawValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_FLOWER_REVEAL);
+    const callableActionTypes = new Set([
+        game.ActionType.ACTION_CHII,
+        game.ActionType.ACTION_PON,
+        game.ActionType.ACTION_KAN,
+        game.ActionType.ACTION_RON,
+    ]);
+    const hasCallableInterrupt = gameState.phase === 3 && validActions.some((action: any) => callableActionTypes.has(action.type));
+    const newlyDiscardedTileIds = new Set<number>();
+
+    gameState.players.forEach((player: any) => {
+        const previousIds = previousDiscardIdsRef.current[player.seat] || [];
+        const currentIds = player.discards.map((tile: any) => tile.id);
+        if (currentIds.length === 0) {
+            return;
+        }
+
+        const lastId = currentIds[currentIds.length - 1];
+        const previousLastId = previousIds[previousIds.length - 1];
+        if (currentIds.length > previousIds.length || lastId !== previousLastId) {
+            newlyDiscardedTileIds.add(lastId);
+        }
+    });
+
+    useEffect(() => {
+        previousDiscardIdsRef.current = Object.fromEntries(
+            gameState.players.map((player: any) => [
+                player.seat,
+                player.discards.map((tile: any) => tile.id),
+            ])
+        );
+    }, [gameState.players]);
+
+    useEffect(() => {
+        const canAutoReveal =
+            pendingFlowerReveal &&
+            gameState.phase === 2 &&
+            gameState.activePlayer === mySeatId &&
+            socket &&
+            socket.readyState === WebSocket.OPEN;
+
+        if (!canAutoReveal) {
+            autoFlowerRevealKeyRef.current = '';
+            return;
+        }
+
+        const revealKey = (pendingFlowerReveal.meldTiles || [])
+            .map((tile: any) => tile.id)
+            .join(',');
+
+        if (!revealKey || autoFlowerRevealKeyRef.current === revealKey) {
+            return;
+        }
+
+        autoFlowerRevealKeyRef.current = revealKey;
+        handleAction(game.ActionType.ACTION_FLOWER_REVEAL, undefined, pendingFlowerReveal.meldTiles || []);
+    }, [pendingFlowerReveal, gameState.phase, gameState.activePlayer, mySeatId, socket]);
 
     const handleAction = (type: game.ActionType, tile?: game.ITile, meldTiles: game.ITile[] = []) => {
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -128,14 +188,23 @@ export default function Game() {
         if (action.type === game.ActionType.ACTION_TSUMO) {
             return { label: 'TSUMO', accent: 'table-action-btn-tsumo' };
         }
-        if (action.type === game.ActionType.ACTION_FLOWER_REVEAL) {
-            return { label: '补花', accent: 'table-action-btn-flower' };
+        if (action.type === game.ActionType.ACTION_ACCEPT_HAITEI) {
+            return { label: '海底 ✓', accent: 'table-action-btn-tsumo' };
+        }
+        if (action.type === game.ActionType.ACTION_REFUSE_HAITEI) {
+            return { label: '海底 ✗', accent: 'table-action-btn-skip' };
         }
         return { label: 'ACTION', accent: 'table-action-btn-neutral' };
     };
 
     const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
     const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
+    const getDiscardAnimationOffset = (position: string) => {
+        if (position === 'bottom') return { x: 0, y: 32 };
+        if (position === 'top') return { x: 0, y: -32 };
+        if (position === 'left') return { x: -32, y: 0 };
+        return { x: 32, y: 0 };
+    };
 
     return (
         <div className="mahjong-table">
@@ -172,6 +241,19 @@ export default function Game() {
                 })()}
                 <div className="center-info-stats">
                     <span className="center-info-chip">Wall {gameState.wallCount}</span>
+                    {(gameState.dice1 > 0 || gameState.dice2 > 0 || gameState.diceSum > 0) && (
+                        <span className="center-info-chip">
+                            🎲 {gameState.dice1 > 0 && gameState.dice2 > 0 ? `${gameState.dice1}+${gameState.dice2}` : gameState.diceSum}
+                        </span>
+                    )}
+                    {(gameState.wangpaiTilesLeft > 0 || gameState.wangpaiStacks > 0) && (
+                        <span className="center-info-chip">
+                            王牌 {gameState.wangpaiTilesLeft > 0 ? gameState.wangpaiTilesLeft : (gameState.wangpaiStacks * 2 - 1)}
+                        </span>
+                    )}
+                    {gameState.isHaitei && (
+                        <span className="center-info-chip" style={{color: '#ff6b6b'}}>海底</span>
+                    )}
                 </div>
             </div>
 
@@ -218,20 +300,6 @@ export default function Game() {
                                             {meta.label}
                                         </button>
                                     );
-                                } else if (action.type === game.ActionType.ACTION_FLOWER_REVEAL) {
-                                    const meta = getActionMeta(action);
-                                    return (
-                                        <button key={i} onClick={() => handleAction(game.ActionType.ACTION_FLOWER_REVEAL, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
-                                            <span className="table-action-btn-label">{meta.label}</span>
-                                            {action.meldTiles && action.meldTiles.length > 0 && (
-                                                <span className="table-action-btn-tiles">
-                                                    {action.meldTiles.map((t: any, ti: number) => (
-                                                        <TileComponent key={ti} tile={t} size="small" />
-                                                    ))}
-                                                </span>
-                                            )}
-                                        </button>
-                                    );
                                 }
                                 return null;
                             })}
@@ -259,20 +327,28 @@ export default function Game() {
                                 <div className="discard-pool-placeholder" aria-hidden="true" />
                             ) : (
                                 p.discards.map((t: any, i: number) => {
-                                    const isLastDiscard = i === p.discards.length - 1 && gameState.phase === 3;
-                                    return isLastDiscard ? (
+                                    const isLastDiscard = i === p.discards.length - 1;
+                                    const isNewDiscard = newlyDiscardedTileIds.has(t.id);
+                                    const isCallableDiscard = hasCallableInterrupt && isLastDiscard && p.seat === gameState.activePlayer;
+                                    const discardMotionOffset = getDiscardAnimationOffset(posStr);
+
+                                    return (
                                         <motion.div
                                             key={t.id}
                                             layoutId={t.id.toString()}
-                                            className={`pov-${posStr} small`}
-                                            transition={{ layout: { duration: 0.35, ease: "easeOut" } }}
+                                            initial={isNewDiscard ? { opacity: 0, scale: 0.82, ...discardMotionOffset } : false}
+                                            animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                                            transition={{
+                                                layout: { duration: 0.18, ease: "easeOut" },
+                                                opacity: { duration: 0.08, ease: "easeOut" },
+                                                scale: { duration: 0.1, ease: "easeOut" },
+                                                x: { duration: 0.11, ease: "easeOut" },
+                                                y: { duration: 0.11, ease: "easeOut" },
+                                            }}
+                                            className={`discard-pool-tile ${isCallableDiscard ? 'discard-pool-tile-callable' : ''} pov-${posStr} small`}
                                         >
-                                            <TileComponent tile={t} size="small" />
+                                            <TileComponent tile={t} size="small" noGlow={isCallableDiscard} />
                                         </motion.div>
-                                    ) : (
-                                        <div key={i} className={`pov-${posStr} small`}>
-                                            <TileComponent tile={t} size="small" />
-                                        </div>
                                     );
                                 })
                             )}
@@ -367,37 +443,38 @@ export default function Game() {
 
                             {/* Open Melds Area */}
                             <div className={`melds-container-${posStr}`}>
-                                {((posStr === 'bottom' || posStr === 'top') ? [...p.openMelds].reverse() : p.openMelds).map((m: any, mIdx: number) => {
-                                    // Rearrange tiles based on calledDirection (1=Right, 2=Across, 3=Left)
-                                    let displayTiles = [...m.tiles];
-                                    const stolenIdx = displayTiles.findIndex(t => t.id === m.calledTileId);
-                                    if (stolenIdx !== -1 && m.calledDirection > 0) {
-                                        const stolen = displayTiles.splice(stolenIdx, 1)[0];
-                                        if (m.calledDirection === 3) {
-                                            displayTiles.unshift(stolen); // Stolen from Left -> place on left
-                                        } else if (m.calledDirection === 1) {
-                                            displayTiles.push(stolen); // Stolen from Right -> place on right
-                                        } else if (m.calledDirection === 2) {
-                                            displayTiles.splice(1, 0, stolen); // Stolen from Across -> place in middle
+                                <div className={`melds-main melds-main-${posStr}`}>
+                                    {((posStr === 'bottom' || posStr === 'top') ? [...p.openMelds].reverse() : p.openMelds).map((m: any, mIdx: number) => {
+                                        // Rearrange tiles based on calledDirection (1=Right, 2=Across, 3=Left)
+                                        let displayTiles = [...m.tiles];
+                                        const stolenIdx = displayTiles.findIndex(t => t.id === m.calledTileId);
+                                        if (stolenIdx !== -1 && m.calledDirection > 0) {
+                                            const stolen = displayTiles.splice(stolenIdx, 1)[0];
+                                            if (m.calledDirection === 3) {
+                                                displayTiles.unshift(stolen); // Stolen from Left -> place on left
+                                            } else if (m.calledDirection === 1) {
+                                                displayTiles.push(stolen); // Stolen from Right -> place on right
+                                            } else if (m.calledDirection === 2) {
+                                                displayTiles.splice(1, 0, stolen); // Stolen from Across -> place in middle
+                                            }
                                         }
-                                    }
 
-                                    return (
-                                        <div key={mIdx} className={`meld-group meld-group-${posStr}`}>
-                                            {displayTiles.map((t: any, tIdx: number) => {
-                                                const isStolen = t.id === m.calledTileId;
-                                                return (
-                                                    <div key={tIdx} className={`pov-${posStr} small ${isStolen ? 'stolen-tile' : ''}`}>
-                                                        <TileComponent tile={t} size="small" />
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    );
-                                })}
-                                {/* Flower Melds */}
+                                        return (
+                                            <div key={mIdx} className={`meld-group meld-group-${posStr}`}>
+                                                {displayTiles.map((t: any, tIdx: number) => {
+                                                    const isStolen = t.id === m.calledTileId;
+                                                    return (
+                                                        <div key={tIdx} className={`pov-${posStr} small ${isStolen ? 'stolen-tile' : ''}`}>
+                                                            <TileComponent tile={t} size="small" />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                                 {p.flowerMelds && p.flowerMelds.length > 0 && (
-                                    <div className={`meld-group meld-group-${posStr}`}>
+                                    <div className={`flowers-container flowers-container-${posStr}`}>
                                         {p.flowerMelds.map((t: any, fi: number) => (
                                             <div key={`f-${fi}`} className={`pov-${posStr} small`}>
                                                 <TileComponent tile={t} size="small" />
@@ -416,27 +493,31 @@ export default function Game() {
                 <div className="round-result-overlay">
                     <div className="round-result-modal">
                         {gameState.roundResult.isDraw ? (
-                            <div className="text-center">
-                                <h2 className="text-3xl font-bold text-gray-400 mb-4">Exhaustive Draw</h2>
-                                <p className="text-gray-500">No tiles remaining in the wall.</p>
+                            <div className="round-result-draw">
+                                <div className="round-result-badge round-result-badge-draw">Draw</div>
+                                <h2 className="round-result-title round-result-title-draw">Exhaustive Draw</h2>
+                                <p className="round-result-subtitle">No tiles remaining in the wall.</p>
                             </div>
                         ) : (
                             <>
                                 {/* Win Header */}
-                                <h2 className="text-3xl font-extrabold text-center mb-4" style={{
-                                    color: gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? '#EAB308' : '#EF4444'
-                                }}>
-                                    {gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'TSUMO!' : 'RON!'}
-                                </h2>
-                                <p className="text-center text-gray-400 text-sm mb-4">
-                                    Seat {gameState.roundResult.winnerSeat} wins
-                                    {gameState.roundResult.winType === game.ActionType.ACTION_RON &&
-                                        ` from Seat ${gameState.roundResult.discarderSeat}`}
-                                </p>
+                                <div className="round-result-header-line">
+                                    <div className={`round-result-badge ${gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
+                                        {gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'TSUMO!' : 'RON!'}
+                                    </div>
+                                    <h2 className={`round-result-title ${gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
+                                        Seat {gameState.roundResult.winnerSeat} wins
+                                    </h2>
+                                </div>
+                                {gameState.roundResult.winType === game.ActionType.ACTION_RON && (
+                                    <p className="round-result-subtitle">
+                                        From Seat {gameState.roundResult.discarderSeat}
+                                    </p>
+                                )}
 
                                 {/* Winning Hand Display */}
-                                <div className="mb-4">
-                                    <div className="flex flex-row justify-center items-end" style={{ gap: '0' }}>
+                                <div className="round-result-panel round-result-panel-plain round-result-hand-panel">
+                                    <div className="round-result-hand-row">
                                         {/* Closed hand tiles (sorted, no gaps) + win tile at rightmost with gap */}
                                         {(() => {
                                             const closedTiles = [...(gameState.roundResult.winningHand || [])];
@@ -452,14 +533,14 @@ export default function Game() {
                                                 return a.value - b.value;
                                             });
                                             return (
-                                                <div className="flex flex-row items-end" style={{ gap: '2px', paddingBottom: '4px' }}>
+                                                <div className="round-result-closed-hand">
                                                     {closedTiles.map((t: any, i: number) => (
                                                         <div key={`h-${i}`} className="pov-bottom small">
                                                             <TileComponent tile={t} size="small" />
                                                         </div>
                                                     ))}
                                                     {winTile && (
-                                                        <div className="pov-bottom small" style={{ marginLeft: '10px' }}>
+                                                        <div className="pov-bottom small round-result-win-tile">
                                                             <TileComponent tile={winTile} size="small" />
                                                         </div>
                                                     )}
@@ -468,7 +549,7 @@ export default function Game() {
                                         })()}
                                         {/* Open melds — same as table: reversed order, meld-group classes, stolen tile directions */}
                                         {(gameState.roundResult.winningMelds || []).length > 0 && (
-                                            <div className="flex flex-row items-end" style={{ gap: '10px', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid #4b5563' }}>
+                                            <div className="round-result-melds-divider">
                                                 {[...(gameState.roundResult.winningMelds || [])].reverse().map((m: any, mIdx: number) => {
                                                     let displayTiles = [...m.tiles];
                                                     const stolenIdx = displayTiles.findIndex((t: any) => t.id === m.calledTileId);
@@ -499,7 +580,7 @@ export default function Game() {
                                             const winnerFlowers = gameState.players.find((p: any) => p.seat === winnerSeat)?.flowerMelds || [];
                                             if (winnerFlowers.length === 0) return null;
                                             return (
-                                                <div className="flex flex-row items-end" style={{ gap: '2px', marginLeft: '10px', paddingLeft: '10px', borderLeft: '2px solid #4b5563' }}>
+                                                <div className="round-result-melds-divider">
                                                     {winnerFlowers.map((t: any, fi: number) => (
                                                         <div key={`fl-${fi}`} className="pov-bottom small">
                                                             <TileComponent tile={t} size="small" />
@@ -512,62 +593,56 @@ export default function Game() {
                                 </div>
 
                                 {/* Score Breakdown Table */}
-                                <div className="bg-black/30 rounded-lg p-3 mb-4 max-h-48 overflow-y-auto">
-                                    <table className="w-full text-sm">
-                                        <tbody>
+                                <div className="round-result-panel">
+                                    <div className="round-result-breakdown-scroll">
+                                        <div className="round-result-breakdown-grid">
                                             {(gameState.roundResult.breakdown || []).map((entry: any, i: number) => (
-                                                <tr key={i} className="border-b border-gray-700/50">
-                                                    <td className="py-1 text-gray-300">{entry.patternName}</td>
-                                                    <td className="py-1 text-right text-green-400 font-mono">+{entry.points}</td>
-                                                </tr>
+                                                <div key={i} className="round-result-breakdown-item">
+                                                    <div className="round-result-breakdown-name">{entry.patternName}</div>
+                                                    <div className="round-result-breakdown-points">+{entry.points}</div>
+                                                </div>
                                             ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                {/* Total Score */}
-                                <div className="text-center mb-4 py-2 bg-green-900/40 rounded-lg border border-green-600/50">
-                                    <span className="text-gray-400 text-sm">Total Score: </span>
-                                    <span className="text-2xl font-bold text-green-400">{gameState.roundResult.totalScore}</span>
+                                            <div className="round-result-breakdown-total-row">
+                                                <div>Total</div>
+                                                <div>{gameState.roundResult.totalScore}</div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Payout Summary */}
-                                <div className="grid grid-cols-4 gap-2 mb-4 text-center text-sm">
+                                <div className="round-result-panel round-result-panel-plain">
+                                <div className="round-result-payout-grid">
                                     {(gameState.roundResult.payouts || []).map((p: any, i: number) => (
-                                        <div key={i} className={`rounded-lg py-2 px-1 ${p.amount > 0 ? 'bg-green-900/40 border border-green-600/30' : 'bg-red-900/40 border border-red-600/30'}`}>
-                                            <div className="text-gray-400 text-xs">Seat {p.seat}</div>
-                                            <div className={`font-bold ${p.amount > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        <div key={i} className={`round-result-payout-cell ${p.amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}>
+                                            <div className="round-result-payout-seat">Seat {p.seat}</div>
+                                            <div className="round-result-payout-amount">
                                                 {p.amount > 0 ? '+' : ''}{p.amount}
                                             </div>
+                                            {gameState.playerReady && gameState.playerReady.length > p.seat && (
+                                                <div className={`round-result-payout-ready ${gameState.playerReady[p.seat] ? 'round-result-payout-ready-on' : ''}`}>
+                                                    {gameState.playerReady[p.seat] ? 'Ready' : '...'}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
+                                </div>
                                 </div>
                             </>
                         )}
 
-                        {/* Ready Indicators */}
-                        {gameState.playerReady && gameState.playerReady.length > 0 && (
-                            <div className="flex justify-center gap-3 mb-4 text-xs">
-                                {gameState.playerReady.map((ready: boolean, i: number) => (
-                                    <span key={i} className={`px-2 py-1 rounded ${ready ? 'bg-green-800 text-green-300' : 'bg-gray-800 text-gray-500'}`}>
-                                        Seat {i} {ready ? 'Ready' : '...'}
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-
                         {/* Action Buttons */}
-                        <div className="flex gap-4 justify-center">
+                        <div className="round-result-actions">
                             <button
                                 onClick={() => { handleAction(game.ActionType.ACTION_READY); setIsReady(true); }}
                                 disabled={isReady}
-                                className={`font-bold py-3 px-8 rounded-lg text-lg transition-transform hover:scale-105 ${isReady ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 text-white shadow-lg'}`}
+                                className={`round-result-action-btn round-result-action-btn-ready ${isReady ? 'round-result-action-btn-disabled' : ''}`}
                             >
                                 {isReady ? 'Waiting...' : 'Ready'}
                             </button>
                             <button
                                 onClick={() => { socket?.close(); navigate('/'); }}
-                                className="bg-red-800 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg text-lg transition-transform hover:scale-105"
+                                className="round-result-action-btn round-result-action-btn-exit"
                             >
                                 Exit
                             </button>
