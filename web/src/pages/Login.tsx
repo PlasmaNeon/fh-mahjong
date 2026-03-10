@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { getApiUrl } from '../config';
 
@@ -65,6 +65,13 @@ export default function Login() {
                         className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 rounded transition-colors"
                         onClick={() => handleAuth(false)}>Register</button>
                 </div>
+
+                <Link
+                    to="/create-room"
+                    className="mt-4 block rounded border border-cyan-400/30 bg-cyan-950/40 px-4 py-2 text-center text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-900/55"
+                >
+                    Create Private Room Link
+                </Link>
             </div>
         </div>
     );

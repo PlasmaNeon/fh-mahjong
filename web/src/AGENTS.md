@@ -11,7 +11,7 @@ Contains all React components, context providers, custom hooks, and utility func
 - **main.tsx** — React bootstrap, renders `<App />` into DOM
 - **App.tsx** — Router wrapper with context providers:
   - `SocketProvider` → `GameProvider` → `Routes`
-  - Routes: `/login`, `/lobby`, `/calc`, `/table/:roomId`, `/game/:matchId`
+  - Routes: `/login`, `/lobby`, `/create-room`, `/calc`, `/table/:roomId`, `/game/:matchId`
 - **config.ts** — Frontend runtime URL helpers:
   - `getApiUrl(path)` uses `VITE_API_BASE_URL` when present, otherwise falls back to same-origin relative paths for local dev
   - `getWebSocketUrl(path)` uses `VITE_WS_BASE_URL` when present, otherwise falls back to browser-origin WebSocket URLs

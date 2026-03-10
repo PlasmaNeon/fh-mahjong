@@ -6,6 +6,7 @@ import Lobby from './pages/Lobby'
 import Table from './pages/Table'
 import Game from './pages/Game'
 import Calc from './pages/Calc'
+import CreateRoom from './pages/CreateRoom'
 
 function App() {
     return (
@@ -16,6 +17,7 @@ function App() {
                         <Routes>
                             <Route path="/" element={<Login />} />
                             <Route path="/lobby" element={<Lobby />} />
+                            <Route path="/create-room" element={<CreateRoom />} />
                             <Route path="/calc" element={<Calc />} />
                             <Route path="/table/:tableId" element={<Table />} />
                             <Route path="/game/:matchId" element={<Game />} />

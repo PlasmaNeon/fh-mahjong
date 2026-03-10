@@ -9,8 +9,14 @@ Contains the top-level page components rendered by React Router. Each page repre
 ## Key Files
 
 - **Login.tsx** — Registration and login form. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage.
+  - Includes a direct entry link to `/create-room` for private-table sharing without matchmaking.
 
 - **Lobby.tsx** — Game lobby. Shows matchmaking queue, lets players create/join rooms via runtime-configured API URLs.
+
+- **CreateRoom.tsx** — Public private-room generator page for `/create-room`:
+  - Generates a random `tableId` client-side and builds a shareable `/table/:tableId` URL
+  - Lets the user copy the link or open/join the generated table immediately
+  - Reuses the existing private-table queue flow instead of adding a separate backend room-creation API
 
 - **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
 
