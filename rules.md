@@ -48,7 +48,10 @@ The "Hometown" rules based on Fenghua (Zhejiang) Mahjong feature a rich and comp
 
 ## 2. Core Differences from Standard Rules
 1. **Tiles**: Uses the full 136 standard tiles, plus 8 Flower tiles (Seasons/Flowers). Total 144.
-2. **Wild Tiles (搭)**: The game features "Wild Tiles" (often rolled via a dice or flipped tile at the start of the round). **Wild tiles are selected in each game randomly and are exactly one specific type of tile.** Since Mahjong uses 4 copies of each tile, and 1 is placed face-up as the indicator, there is a maximum of 3 wild tiles of that specific type circulating in play. The rules differentiate heavily based on whether a hand has 0, 1, 2, or 3 wild tiles, or if the wild tiles are "tamed" (used for their natural face value).
+2. **Wild Tiles (搭)**: The game features "Wild Tiles" (often rolled via a dice or flipped tile at the start of the round). **Wild tiles are selected in each game randomly.** 
+   - If the indicator is a standard tile, the other **3 copies** of that exact tile type circulating in play act as wilds.
+   - If the indicator is a Flower tile, the other **3 flowers in its category** (Seasons 1-4 or Plants 5-8) act as wilds. These matching wild flowers bypass auto-reveal rules and are kept in the player's closed hand.
+   The rules differentiate heavily based on whether a hand has 0, 1, 2, or 3 wild tiles, or if the wild tiles are "tamed" (used for their natural face value).
 3. **Winning Minimum**: A win by claiming a discard (Ron) requires a minimum of **4 points**. Winning by drawing (Tsumo) has no strict minimum, but awards 1 base point.
 4. **Highest-Scoring Pattern**: When a hand qualifies for multiple winning patterns simultaneously (e.g., a hand that is both a valid Seven Pairs and a valid Standard hand), the engine always scores it by the pattern that yields the **highest total points**. No points are lost by fitting more than one pattern.
 5. **Multiplier Payout**:
@@ -58,10 +61,10 @@ The "Hometown" rules based on Fenghua (Zhejiang) Mahjong feature a rich and comp
 ## 3. Tile Array Structure and Drawing Mechanics
 Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The starting 144 tiles are arranged mathematically such that adjacent array indices form vertical 2-tile stacks:
 1. **Front Wall Draws:** Standard draws start from the front (index 0). Index 0 represents the top tile of the 1st stack, and Index 1 represents the bottom tile of the 1st stack.
-2. **Dead Wall (Back) Draws:** For a Kan or a Flower replacement, players draw from the tail of the wall (the dead wall). To accurately simulate the physical structure, back-draws always take the **Top layer tile** of the last available stack first, followed by the **Bottom layer tile** of that stack. 
-   - 1st Kan: Draws the top tile of the last stack (Array Index `L-2`).
-   - 2nd Kan: Draws the bottom tile of the last stack (Array Index `L-1`).
-   - 3rd Kan: Draws the top tile of the 2nd-to-last stack (Array Index `L-4`), etc.
+2. **Dice Roll & Wangpai (Dead Wall):** At the start of each round, two dice are rolled. The sum (2-12) determines how many stacks from the end of the wall form the **wangpai** (dead wall). Normal draws cannot enter this zone.
+3. **Wild Indicator:** The top tile of the **innermost wangpai stack** (closest to the live wall) is revealed face-up as the wild indicator. It is never drawn by anyone.
+4. **Dead Wall (Back) Draws:** For a Kong or Flower replacement, players draw from the tail of the wall going backward. Back-draws always take the **top tile** of the last available stack first, then the **bottom tile**, skipping the wild indicator. If many Kongs occur and all wangpai tiles are consumed, Kong draws can continue — all tiles in the wall may be used.
+5. **Haitei (Last Tile):** The tile physically under the wild indicator is the haitei tile. When normal draws are exhausted, the active player may choose to **accept or refuse** the haitei tile (before seeing it). If accepted: can only Tsumo or Discard; other players can only Ron (no Chii/Pon/Kan). If refused: ryuukyoku. If the haitei tile was already consumed by a Kong draw, the game is ryuukyoku when normal draws exhaust.
 
 ## 4. Complete Scoring Reference (from official_rules.md)
 

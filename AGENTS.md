@@ -87,8 +87,13 @@ Flower values: 1=Spring(春), 2=Summer(夏), 3=Autumn(秋), 4=Winter(冬), 5=Plu
 ### Other Key Terms
 - **Tsumo** (自摸): Win by own drawn tile from wall
 - **Ron** (放冲/点炮): Win by claiming another player's discard
-- **Wild Tile** (搭): Randomly selected tile type per round; up to 3 copies act as substitutes
+- **Wild Tile** (搭): Randomly selected tile indicator per round. 
+  - If a standard tile, the other 3 copies act as wilds. 
+  - If a flower tile, the other 3 flowers in its group (Seasons 1-4 or Plants 5-8) act as wilds and are kept safely in the hand.
 - **Tame wild** (还搭): Wild tile used at its natural face value
+- **Wangpai** (王牌): Dead wall. Determined by dice roll (2-12 stacks from the end). Normal draws stop before this zone; only Kong/Flower draws access it.
+- **Haitei** (海底): The last drawable tile (under the wild indicator). Player may accept or refuse before drawing. If accepted: Tsumo or Discard only; interrupts limited to Ron. If refused: ryuukyoku.
+- **Dice Roll**: Two dice rolled at round start. Sum determines number of wangpai stacks. Wild indicator = top tile of innermost wangpai stack.
 - **Seat Wind** (位风): Player's wind; East=1, South=2, West=3, North=4
 - **Prevailing Wind** (圈风): Round wind; coincides with Seat Wind → Right Wind (正风, +2)
 - **Independence** (大大胡/十三不搭): 14 fully disconnected tiles, no melds allowed
@@ -166,7 +171,6 @@ Default local development split:
 Notes:
 - Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
 - `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
-- Vercel frontend deploys can target either the repo root or `web/`: root `vercel.json` conditionally enters `web/` when present, root `.vercelignore` excludes the Go backend `/api` package so Vercel does not mis-detect it as Go serverless functions, and the Vercel install step uses `npm install --legacy-peer-deps` because `protobufjs-cli` still declares a `protobufjs@^7` peer while the app builds with `protobufjs@8`.
 
 ## Module
 

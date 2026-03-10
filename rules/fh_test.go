@@ -645,6 +645,60 @@ func TestHometownRuleset_CompletedAllHonors(t *testing.T) {
 	})
 }
 
+// --- Variant: Flower Wildcard Grouping Test ---
+func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
+	r := &rules.HometownRuleset{}
+
+	// If indicator is 8 (Bamboo/Plant), WildTiles are 5(Plum), 6(Orchid), 7(Chrysanthemum).
+	// We pass a state with these 3 wild tiles.
+	ws := &pb.GameState{
+		WildTiles: []*pb.Tile{
+			{Suit: pb.Suit_SUIT_FLOWER, Value: 5},
+			{Suit: pb.Suit_SUIT_FLOWER, Value: 6},
+			{Suit: pb.Suit_SUIT_FLOWER, Value: 7},
+		},
+		Players: []*pb.PlayerState{
+			{
+				ClosedHand: []*pb.Tile{
+					{Id: 100, Suit: pb.Suit_SUIT_FLOWER, Value: 5}, // Wild
+					{Id: 101, Suit: pb.Suit_SUIT_FLOWER, Value: 1}, // Non-wild flower
+					{Id: 102, Suit: pb.Suit_SUIT_SOU, Value: 1},    // Standard tile
+				},
+			},
+		},
+	}
+
+	actions := r.GetValidActions(ws, 0)
+	
+	// Expectation: The non-wild flower (Value: 1) MUST trigger a mandatory FLOWER_REVEAL.
+	// The wild flower (Value: 5) should NOT trigger a FLOWER_REVEAL.
+	
+	if len(actions) == 0 {
+		t.Fatalf("expected at least 1 action, got 0")
+	}
+
+	hasRevealForWild := false
+	hasRevealForNormal := false
+
+	for _, a := range actions {
+		if a.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+			if a.MeldTiles[0].Value == 5 {
+				hasRevealForWild = true
+			}
+			if a.MeldTiles[0].Value == 1 {
+				hasRevealForNormal = true
+			}
+		}
+	}
+
+	if hasRevealForWild {
+		t.Errorf("Wild flower (value 5) incorrectly triggered an auto-reveal")
+	}
+	if !hasRevealForNormal {
+		t.Errorf("Normal flower (value 1) failed to trigger an auto-reveal")
+	}
+}
+
 // --- Variant: Flower Bonus (4 Flowers = 150 pts) ---
 func TestHometownRuleset_FlowerBonus(t *testing.T) {
 	r := &rules.HometownRuleset{}
