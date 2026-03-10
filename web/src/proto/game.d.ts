@@ -592,7 +592,8 @@ export namespace game {
         PHASE_DEAL = 1,
         PHASE_PLAYER_TURN = 2,
         PHASE_WAIT_DISCARDS = 3,
-        PHASE_ROUND_END = 4
+        PHASE_ROUND_END = 4,
+        PHASE_HAITEI_CHOICE = 5
     }
 
     /** Properties of a GameState. */
@@ -606,6 +607,12 @@ export namespace game {
 
         /** GameState activePlayer */
         activePlayer?: (number|undefined);
+
+        /** GameState dice1 */
+        dice1?: (number|undefined);
+
+        /** GameState dice2 */
+        dice2?: (number|undefined);
 
         /** GameState players */
         players?: (game.IPlayerState[]|undefined);
@@ -652,6 +659,12 @@ export namespace game {
 
         /** GameState activePlayer. */
         public activePlayer: number;
+
+        /** GameState dice1. */
+        public dice1: number;
+
+        /** GameState dice2. */
+        public dice2: number;
 
         /** GameState players. */
         public players: game.PlayerState[];

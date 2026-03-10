@@ -100,6 +100,8 @@ const (
 	ActionType_ACTION_PASS          ActionType = 8  // pass on an opportunity to steal
 	ActionType_ACTION_FLOWER_REVEAL ActionType = 9  // Fenghua rule: drawing and exposing a flower tile
 	ActionType_ACTION_READY         ActionType = 10 // Signal readiness for next round after round end
+	ActionType_ACTION_ACCEPT_HAITEI ActionType = 11 // Accept drawing the last tile (haitei)
+	ActionType_ACTION_REFUSE_HAITEI ActionType = 12 // Refuse the last tile → ryuukyoku
 )
 
 // Enum value maps for ActionType.
@@ -116,6 +118,8 @@ var (
 		8:  "ACTION_PASS",
 		9:  "ACTION_FLOWER_REVEAL",
 		10: "ACTION_READY",
+		11: "ACTION_ACCEPT_HAITEI",
+		12: "ACTION_REFUSE_HAITEI",
 	}
 	ActionType_value = map[string]int32{
 		"ACTION_UNKNOWN":       0,
@@ -129,6 +133,8 @@ var (
 		"ACTION_PASS":          8,
 		"ACTION_FLOWER_REVEAL": 9,
 		"ACTION_READY":         10,
+		"ACTION_ACCEPT_HAITEI": 11,
+		"ACTION_REFUSE_HAITEI": 12,
 	}
 )
 
@@ -705,7 +711,13 @@ type GameState struct {
 	// Round result data (populated when phase = PHASE_ROUND_END)
 	RoundResult *RoundResult `protobuf:"bytes,13,opt,name=round_result,json=roundResult,proto3" json:"round_result,omitempty"`
 	// Per-player ready state for next round (length 4, indexed by seat)
-	PlayerReady   []bool `protobuf:"varint,14,rep,packed,name=player_ready,json=playerReady,proto3" json:"player_ready,omitempty"`
+	PlayerReady []bool `protobuf:"varint,14,rep,packed,name=player_ready,json=playerReady,proto3" json:"player_ready,omitempty"`
+	// Dice sum (2-12) rolled at the start of each round
+	DiceSum uint32 `protobuf:"varint,15,opt,name=dice_sum,json=diceSum,proto3" json:"dice_sum,omitempty"`
+	// Number of wangpai (dead wall) stacks reserved at the tail of the wall
+	WangpaiStacks uint32 `protobuf:"varint,16,opt,name=wangpai_stacks,json=wangpaiStacks,proto3" json:"wangpai_stacks,omitempty"`
+	// True when the active player is being offered the haitei (last drawable) tile
+	IsHaitei      bool `protobuf:"varint,17,opt,name=is_haitei,json=isHaitei,proto3" json:"is_haitei,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -822,6 +834,27 @@ func (x *GameState) GetPlayerReady() []bool {
 		return x.PlayerReady
 	}
 	return nil
+}
+
+func (x *GameState) GetDiceSum() uint32 {
+	if x != nil {
+		return x.DiceSum
+	}
+	return 0
+}
+
+func (x *GameState) GetWangpaiStacks() uint32 {
+	if x != nil {
+		return x.WangpaiStacks
+	}
+	return 0
+}
+
+func (x *GameState) GetIsHaitei() bool {
+	if x != nil {
+		return x.IsHaitei
+	}
+	return false
 }
 
 type ScoreEntry struct {
@@ -1096,7 +1129,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\x127\n" +
 	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
 	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01B\x10\n" +
-	"\x0e_drawn_tile_id\"\xd6\x03\n" +
+	"\x0e_drawn_tile_id\"\xb5\x04\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -1113,7 +1146,10 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0fprevailing_wind\x18\v \x01(\rR\x0eprevailingWind\x12\x1b\n" +
 	"\twall_seed\x18\f \x01(\tR\bwallSeed\x124\n" +
 	"\fround_result\x18\r \x01(\v2\x11.game.RoundResultR\vroundResult\x12!\n" +
-	"\fplayer_ready\x18\x0e \x03(\bR\vplayerReady\"G\n" +
+	"\fplayer_ready\x18\x0e \x03(\bR\vplayerReady\x12\x19\n" +
+	"\bdice_sum\x18\x0f \x01(\rR\adiceSum\x12%\n" +
+	"\x0ewangpai_stacks\x18\x10 \x01(\rR\rwangpaiStacks\x12\x1b\n" +
+	"\tis_haitei\x18\x11 \x01(\bR\bisHaitei\"G\n" +
 	"\n" +
 	"ScoreEntry\x12!\n" +
 	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +
@@ -1145,7 +1181,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\bSUIT_MAN\x10\x03\x12\x0e\n" +
 	"\n" +
 	"SUIT_JIHAI\x10\x04\x12\x0f\n" +
-	"\vSUIT_FLOWER\x10\x05*\xd5\x01\n" +
+	"\vSUIT_FLOWER\x10\x05*\x89\x02\n" +
 	"\n" +
 	"ActionType\x12\x12\n" +
 	"\x0eACTION_UNKNOWN\x10\x00\x12\x0f\n" +
@@ -1162,7 +1198,9 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vACTION_PASS\x10\b\x12\x18\n" +
 	"\x14ACTION_FLOWER_REVEAL\x10\t\x12\x10\n" +
 	"\fACTION_READY\x10\n" +
-	"*y\n" +
+	"\x12\x18\n" +
+	"\x14ACTION_ACCEPT_HAITEI\x10\v\x12\x18\n" +
+	"\x14ACTION_REFUSE_HAITEI\x10\f*y\n" +
 	"\rMeldDirection\x12\x1a\n" +
 	"\x16MELD_DIRECTION_UNKNOWN\x10\x00\x12\x18\n" +
 	"\x14MELD_DIRECTION_RIGHT\x10\x01\x12\x19\n" +

@@ -48,6 +48,8 @@ enum ActionType {
   ACTION_PASS = 8;       // pass on an opportunity to steal
   ACTION_FLOWER_REVEAL = 9; // Fenghua rule: drawing and exposing a flower tile
   ACTION_READY = 10;        // Signal readiness for next round after round end
+  ACTION_ACCEPT_HAITEI = 11; // Accept drawing the last tile (haitei)
+  ACTION_REFUSE_HAITEI = 12; // Refuse the last tile → ryuukyoku
 }
 
 message PlayerAction {
@@ -175,6 +177,15 @@ message GameState {
 
   // Per-player ready state for next round (length 4, indexed by seat)
   repeated bool player_ready = 14;
+
+  // Dice sum (2-12) rolled at the start of each round
+  uint32 dice_sum = 15;
+
+  // Number of wangpai (dead wall) stacks reserved at the tail of the wall
+  uint32 wangpai_stacks = 16;
+
+  // True when the active player is being offered the haitei (last drawable) tile
+  bool is_haitei = 17;
 }
 
 // ---------------------------------------------------------

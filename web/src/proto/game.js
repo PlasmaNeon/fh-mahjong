@@ -1908,6 +1908,7 @@ export const game = $root.game = (() => {
      * @property {number} PHASE_PLAYER_TURN=2 PHASE_PLAYER_TURN value
      * @property {number} PHASE_WAIT_DISCARDS=3 PHASE_WAIT_DISCARDS value
      * @property {number} PHASE_ROUND_END=4 PHASE_ROUND_END value
+     * @property {number} PHASE_HAITEI_CHOICE=5 PHASE_HAITEI_CHOICE value
      */
     game.GamePhase = (function() {
         const valuesById = {}, values = Object.create(valuesById);
@@ -1916,6 +1917,7 @@ export const game = $root.game = (() => {
         values[valuesById[2] = "PHASE_PLAYER_TURN"] = 2;
         values[valuesById[3] = "PHASE_WAIT_DISCARDS"] = 3;
         values[valuesById[4] = "PHASE_ROUND_END"] = 4;
+        values[valuesById[5] = "PHASE_HAITEI_CHOICE"] = 5;
         return values;
     })();
 
@@ -1928,6 +1930,8 @@ export const game = $root.game = (() => {
          * @property {string|undefined} [matchId] GameState matchId
          * @property {game.GamePhase|undefined} [phase] GameState phase
          * @property {number|undefined} [activePlayer] GameState activePlayer
+         * @property {number|undefined} [dice1] GameState dice1
+         * @property {number|undefined} [dice2] GameState dice2
          * @property {Array.<game.IPlayerState>|undefined} [players] GameState players
          * @property {number|undefined} [wallCount] GameState wallCount
          * @property {number|undefined} [handNum] GameState handNum
@@ -1980,6 +1984,22 @@ export const game = $root.game = (() => {
          * @instance
          */
         GameState.prototype.activePlayer = 0;
+
+        /**
+         * GameState dice1.
+         * @member {number} dice1
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.dice1 = 0;
+
+        /**
+         * GameState dice2.
+         * @member {number} dice2
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.dice2 = 0;
 
         /**
          * GameState players.
@@ -2107,6 +2127,10 @@ export const game = $root.game = (() => {
                     writer.bool(message.playerReady[i]);
                 writer.ldelim();
             }
+            if (message.dice1 != null && Object.hasOwnProperty.call(message, "dice1"))
+                writer.uint32(/* id 18, wireType 0 =*/144).uint32(message.dice1);
+            if (message.dice2 != null && Object.hasOwnProperty.call(message, "dice2"))
+                writer.uint32(/* id 19, wireType 0 =*/152).uint32(message.dice2);
             return writer;
         };
 
@@ -2153,6 +2177,14 @@ export const game = $root.game = (() => {
                     }
                 case 3: {
                         message.activePlayer = reader.uint32();
+                        break;
+                    }
+                case 18: {
+                        message.dice1 = reader.uint32();
+                        break;
+                    }
+                case 19: {
+                        message.dice2 = reader.uint32();
                         break;
                     }
                 case 4: {
@@ -2249,11 +2281,18 @@ export const game = $root.game = (() => {
                 case 2:
                 case 3:
                 case 4:
+                case 5:
                     break;
                 }
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
                 if (!$util.isInteger(message.activePlayer))
                     return "activePlayer: integer expected";
+            if (message.dice1 != null && message.hasOwnProperty("dice1"))
+                if (!$util.isInteger(message.dice1))
+                    return "dice1: integer expected";
+            if (message.dice2 != null && message.hasOwnProperty("dice2"))
+                if (!$util.isInteger(message.dice2))
+                    return "dice2: integer expected";
             if (message.players != null && message.hasOwnProperty("players")) {
                 if (!Array.isArray(message.players))
                     return "players: array expected";
@@ -2345,9 +2384,17 @@ export const game = $root.game = (() => {
             case 4:
                 message.phase = 4;
                 break;
+            case "PHASE_HAITEI_CHOICE":
+            case 5:
+                message.phase = 5;
+                break;
             }
             if (object.activePlayer != null)
                 message.activePlayer = object.activePlayer >>> 0;
+            if (object.dice1 != null)
+                message.dice1 = object.dice1 >>> 0;
+            if (object.dice2 != null)
+                message.dice2 = object.dice2 >>> 0;
             if (object.players) {
                 if (!Array.isArray(object.players))
                     throw TypeError(".game.GameState.players: array expected");
@@ -2424,6 +2471,8 @@ export const game = $root.game = (() => {
                 object.prevailingWind = 0;
                 object.wallSeed = "";
                 object.roundResult = null;
+                object.dice1 = 0;
+                object.dice2 = 0;
             }
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
@@ -2458,6 +2507,10 @@ export const game = $root.game = (() => {
                 for (let j = 0; j < message.playerReady.length; ++j)
                     object.playerReady[j] = message.playerReady[j];
             }
+            if (message.dice1 != null && message.hasOwnProperty("dice1"))
+                object.dice1 = message.dice1;
+            if (message.dice2 != null && message.hasOwnProperty("dice2"))
+                object.dice2 = message.dice2;
             return object;
         };
 

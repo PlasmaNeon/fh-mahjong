@@ -173,7 +173,9 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 		for _, e := range re {
 			routeTotal += e.Points
 		}
-		if bestRoute == nil || routeTotal > bestRoute.score {
+		if bestRoute == nil {
+			bestRoute = &scoredRoute{score: routeTotal, entries: re}
+		} else if routeTotal > bestRoute.score {
 			bestRoute = &scoredRoute{score: routeTotal, entries: re}
 		}
 	}
@@ -598,14 +600,45 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 
 	player := state.Players[playerSeat]
 
+	// --- Haitei restriction ---
+	// During haitei, the player can only Tsumo (if winning) or Discard the drawn tile.
+	// No Flower Reveal, no Kan, no other actions.
+	if state.IsHaitei {
+		// Check for Tsumo
+		_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
+		if canWin {
+			actions = append(actions, &pb.PlayerAction{
+				Type: pb.ActionType_ACTION_TSUMO,
+			})
+		}
+		// Always allow discard (of the drawn tile)
+		actions = append(actions, &pb.PlayerAction{
+			Type: pb.ActionType_ACTION_DISCARD,
+		})
+		return actions
+	}
+
 	// Flower reveal is mandatory — if flowers are in hand, player must reveal them first
+	// Exception: If a flower is a designated wild tile, it is kept in hand and NOT auto-revealed.
 	var flowerActions []*pb.PlayerAction
 	for _, t := range player.ClosedHand {
 		if t.Suit == pb.Suit_SUIT_FLOWER {
-			flowerActions = append(flowerActions, &pb.PlayerAction{
-				Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
-				MeldTiles: []*pb.Tile{t},
-			})
+			isWild := false
+			if state != nil && len(state.WildTiles) > 0 {
+				for _, w := range state.WildTiles {
+					if w.Suit == pb.Suit_SUIT_FLOWER && w.Value == t.Value {
+						isWild = true
+						break
+					}
+				}
+			}
+
+			if !isWild {
+				flowerActions = append(flowerActions, &pb.PlayerAction{
+					Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
+					MeldTiles: []*pb.Tile{t},
+				})
+			}
 		}
 	}
 	if len(flowerActions) > 0 {
