@@ -21,9 +21,9 @@ func wildState(suit pb.Suit, value uint32) *pb.GameState {
 func TestHometownRuleset_InitialWall(t *testing.T) {
 	r := &rules.HometownRuleset{}
 	wall := r.GetInitialWall()
-	// 3 suits * 9 values * 4 tiles = 108, 7 jihai * 4 tiles = 28 → Total = 136
-	if len(wall) != 136 {
-		t.Errorf("Expected wall size 136, got %d", len(wall))
+	// 3 suits * 9 values * 4 tiles = 108, 7 jihai * 4 tiles = 28, 8 flowers = 8 → Total = 144
+	if len(wall) != 144 {
+		t.Errorf("Expected wall size 144, got %d", len(wall))
 	}
 }
 

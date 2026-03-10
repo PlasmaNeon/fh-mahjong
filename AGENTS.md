@@ -74,8 +74,10 @@ fh-mahjong/
 | pin | 筒子 (Dots) | `p` | 1p–9p | `SUIT_DOTS` |
 | sou | 索子 (Bamboo) | `s` | 1s–9s | `SUIT_BAMBOO` |
 | jihai | 字牌 (Honors) | `z` | 1z–7z | `SUIT_HONORS` |
+| flower | 花牌 (Flowers) | — | 1–8 | `SUIT_FLOWER` |
 
 Jihai values: 1z=East, 2z=South, 3z=West, 4z=North, 5z=Haku(白), 6z=Hatsu(発), 7z=Chun(中)
+Flower values: 1=Spring(春), 2=Summer(夏), 3=Autumn(秋), 4=Winter(冬), 5=Plum(梅), 6=Orchid(兰), 7=Chrysanthemum(菊), 8=Bamboo(竹). Each flower is unique (1 copy, not 4).
 
 ### Meld Terms
 - **chii** (吃): Sequence meld — 3 consecutive tiles of the same suit
@@ -97,8 +99,8 @@ NOT as: `C1C2C3 D4D5D6 B7B8B9 H1H1H1 H2` (old notation — do not use)
 
 ## Protobuf Schema (proto/game.proto)
 
-- `Suit`: BAMBOO=1, DOTS=2, CHARACTERS=3, HONORS=4 (proto constants — do not rename)
-- `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}`
+- `Suit`: BAMBOO=1, DOTS=2, CHARACTERS=3, HONORS=4, FLOWER=5 (proto constants — do not rename)
+- `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}` — IDs 0-135 for standard tiles, 136-143 for flowers
 - `ActionType`: DRAW, DISCARD, CHOW, PONG, KONG, TSUMO, RON, PASS, FLOWER_REVEAL, READY
 - `GamePhase`: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END
 - `GameState`: match_id, phase, active_player, players[4], wall_count, wild_tiles, prevailing_wind, round_result, player_ready

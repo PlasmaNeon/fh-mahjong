@@ -44,6 +44,18 @@ func (r *HometownRuleset) GetInitialWall() []*pb.Tile {
 		}
 	}
 
+	// Flower tiles (1=Spring/春, 2=Summer/夏, 3=Autumn/秋, 4=Winter/冬,
+	//               5=Plum/梅, 6=Orchid/兰, 7=Chrysanthemum/菊, 8=Bamboo/竹)
+	// 8 unique tiles, one of each
+	for v := uint32(1); v <= 8; v++ {
+		wall = append(wall, &pb.Tile{
+			Id:    idCount,
+			Suit:  pb.Suit_SUIT_FLOWER,
+			Value: v,
+		})
+		idCount++
+	}
+
 	return wall
 }
 
@@ -584,12 +596,26 @@ func (r *HometownRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds in
 func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction {
 	var actions []*pb.PlayerAction
 
+	player := state.Players[playerSeat]
+
+	// Flower reveal is mandatory — if flowers are in hand, player must reveal them first
+	var flowerActions []*pb.PlayerAction
+	for _, t := range player.ClosedHand {
+		if t.Suit == pb.Suit_SUIT_FLOWER {
+			flowerActions = append(flowerActions, &pb.PlayerAction{
+				Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
+				MeldTiles: []*pb.Tile{t},
+			})
+		}
+	}
+	if len(flowerActions) > 0 {
+		return flowerActions
+	}
+
 	// The player can always discard
 	actions = append(actions, &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
 	})
-
-	player := state.Players[playerSeat]
 
 	// Check if the 14-tile hand is a winning hand (Tsumo)
 	_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)

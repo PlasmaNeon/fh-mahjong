@@ -66,11 +66,20 @@ func (g *Game) Start() error {
 	}
 
 	dealer := g.dealTiles()
+	g.revealInitialFlowers(dealer)
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 	g.State.ActivePlayer = dealer // Dealer (East) starts
 
 	// The round begins by having the dealer draw a tile.
-	return g.ExecuteSystemDraw(dealer)
+	err := g.ExecuteSystemDraw(dealer)
+	if err != nil {
+		return err
+	}
+	// Auto-reveal if the dealer's drawn tile is a flower
+	g.revealInitialFlowers(dealer)
+	// Recalculate valid actions after any flower reveals
+	g.State.Players[dealer].ValidActions = g.Rules.GetValidActions(g.State, dealer)
+	return nil
 }
 
 // dealTiles uses the rule engine to get a full deck, shuffles it, and distributes 13 tiles to each player.
@@ -157,8 +166,69 @@ func (g *Game) dealTiles() uint32 {
 	return dealer
 }
 
+// revealInitialFlowers auto-separates flower tiles from all players' hands after dealing.
+// For each seat (starting from dealer), any flower tiles are moved to FlowerMelds
+// and replacement tiles are drawn from the dead wall. If a replacement is also a flower,
+// it is immediately revealed as well.
+func (g *Game) revealInitialFlowers(dealer uint32) {
+	for i := 0; i < 4; i++ {
+		seat := (dealer + uint32(i)) % 4
+		player := g.State.Players[seat]
+
+		for {
+			// Find the first flower in hand
+			flowerIdx := -1
+			for j, t := range player.ClosedHand {
+				if t.Suit == pb.Suit_SUIT_FLOWER {
+					flowerIdx = j
+					break
+				}
+			}
+			if flowerIdx < 0 {
+				break // No more flowers
+			}
+
+			// Move flower to FlowerMelds
+			flower := player.ClosedHand[flowerIdx]
+			player.FlowerMelds = append(player.FlowerMelds, flower)
+			player.ClosedHand = append(player.ClosedHand[:flowerIdx], player.ClosedHand[flowerIdx+1:]...)
+			player.HandSize--
+
+			// Draw replacement from dead wall (don't set DrawnTileId — this is pre-game)
+			if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
+				break // Wall exhausted
+			}
+			k := g.deadWallIndex
+			stackOffset := (k / 2) * 2
+			isBottom := k % 2
+			var drawIndex int
+			if isBottom == 1 {
+				drawIndex = len(g.wall) - 1 - stackOffset
+			} else {
+				drawIndex = len(g.wall) - 2 - stackOffset
+			}
+			replacement := g.wall[drawIndex]
+			g.deadWallIndex++
+			player.ClosedHand = append(player.ClosedHand, replacement)
+			player.HandSize++
+			g.State.WallCount--
+			// Loop continues — if replacement is a flower, it will be caught next iteration
+		}
+	}
+}
+
 // ExecuteSystemDraw handles drawing a tile from the wall at the start of a turn.
 func (g *Game) ExecuteSystemDraw(seat uint32) error {
+	// Clear kong/flower bonus flags — a normal draw means any previous dead-wall context is stale
+	player := g.State.Players[seat]
+	player.HasBuddingDirectKong = false
+	player.HasBloomingDirectKong = false
+	player.HasBuddingClosedKong = false
+	player.HasBloomingClosedKong = false
+	player.HasBuddingRiskyKong = false
+	player.HasBloomingRiskyKong = false
+	player.HasBloomingFlowerKong = false
+
 	if g.wallIndex+g.deadWallIndex >= len(g.wall) || g.State.WallCount == 0 {
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
@@ -169,7 +239,6 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 		return nil // Exhaustive draw (Ryukyoku)
 	}
 
-	player := g.State.Players[seat]
 	drawnTile := g.wall[g.wallIndex]
 	g.wallIndex++
 
@@ -351,6 +420,11 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		// Player immediately gets a supplementary tile from the Dead Wall
 		g.ExecuteDeadWallDraw(seat)
 
+		// Set kong bonus flag: winning on the dead wall draw after a flower reveal
+		if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+			player.HasBloomingFlowerKong = true
+		}
+
 		// It remains their turn to either discard, declare another Kan/Flower, or Tsumo
 		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 
@@ -492,7 +566,7 @@ func (g *Game) ResolveInterrupts() {
 		} else {
 			// Chii or Pon just resume turn phase (player must discard now, no drawing)
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-			player.ValidActions = nil // Players cannot Tsumo/Kan gracefully immediately after a Pon without drawing.
+			player.ValidActions = g.Rules.GetValidActions(g.State, winnerSeat)
 		}
 	} else if winningAction.Type == pb.ActionType_ACTION_RON {
 		// Handle Ron (end of round)
@@ -601,7 +675,11 @@ func (g *Game) startNextRound() {
 	// Re-deal
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
 	dealer := g.dealTiles()
+	g.revealInitialFlowers(dealer)
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 	g.State.ActivePlayer = dealer // Dealer (East) starts
 	g.ExecuteSystemDraw(dealer)
+	// Auto-reveal if the dealer's drawn tile is a flower
+	g.revealInitialFlowers(dealer)
+	g.State.Players[dealer].ValidActions = g.Rules.GetValidActions(g.State, dealer)
 }

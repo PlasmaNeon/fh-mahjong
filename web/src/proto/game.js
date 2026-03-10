@@ -25,6 +25,7 @@ export const game = $root.game = (() => {
      * @property {number} SUIT_PIN=2 SUIT_PIN value
      * @property {number} SUIT_MAN=3 SUIT_MAN value
      * @property {number} SUIT_JIHAI=4 SUIT_JIHAI value
+     * @property {number} SUIT_FLOWER=5 SUIT_FLOWER value
      */
     game.Suit = (function() {
         const valuesById = {}, values = Object.create(valuesById);
@@ -33,6 +34,7 @@ export const game = $root.game = (() => {
         values[valuesById[2] = "SUIT_PIN"] = 2;
         values[valuesById[3] = "SUIT_MAN"] = 3;
         values[valuesById[4] = "SUIT_JIHAI"] = 4;
+        values[valuesById[5] = "SUIT_FLOWER"] = 5;
         return values;
     })();
 
@@ -211,6 +213,7 @@ export const game = $root.game = (() => {
                 case 2:
                 case 3:
                 case 4:
+                case 5:
                     break;
                 }
             if (message.value != null && message.hasOwnProperty("value"))
@@ -259,6 +262,10 @@ export const game = $root.game = (() => {
             case "SUIT_JIHAI":
             case 4:
                 message.suit = 4;
+                break;
+            case "SUIT_FLOWER":
+            case 5:
+                message.suit = 5;
                 break;
             }
             if (object.value != null)

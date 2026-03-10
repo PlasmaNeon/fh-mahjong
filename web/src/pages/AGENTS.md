@@ -25,8 +25,10 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Sorted closed hand with drawn tile separation
   - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
   - Discard pools per player
-  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP
-  - Round-result modal: winning hand display, score breakdown, payouts, ready button
+  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP, FLOWER REVEAL (补花)
+  - Interrupt UX: `hasSubmittedInterrupt` state hides interrupt buttons immediately after player clicks, before server resolves (prevents double-clicks and improves responsiveness)
+  - Flower melds: rendered as small face-up tiles next to open melds for all 4 players
+  - Round-result modal: winning hand display, score breakdown, payouts, flower melds, ready button
   - Framer Motion `layoutId` animations for tile movement
   - `TileComponent` helper for consistent tile rendering
   - `getSuitOrder()` / `getTileSvgName()` / `getTileName()` utilities

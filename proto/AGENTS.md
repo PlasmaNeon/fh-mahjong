@@ -9,7 +9,7 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
 ## Key Files
 
 - **game.proto** — Core schema defining all game types:
-  - `Suit` enum: SOU=1, PIN=2, MAN=3, JIHAI=4
+  - `Suit` enum: SOU=1, PIN=2, MAN=3, JIHAI=4, FLOWER=5
   - `Tile`: id, suit, value, is_red
   - `ActionType` enum: DRAW, DISCARD, CHII, PON, KAN, TSUMO, RON, PASS, FLOWER_REVEAL, READY
   - `GamePhase` enum: INIT, DEAL, PLAYER_TURN, WAIT_DISCARDS, ROUND_END
