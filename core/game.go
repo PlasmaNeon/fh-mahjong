@@ -21,6 +21,7 @@ type Game struct {
 	deadWallIndex      int // Tracks how many tiles have been drawn from the back (using stack-pair math)
 	wangpaiBoundary    int // Index where normal draws stop (exclusive). Tiles from here to end are wangpai.
 	wildIndicatorIndex int // Index of the wild indicator tile in the wall (face-up, never drawn)
+	haiteiDrawIndex    int // Index of the accepted haitei tile once drawn, -1 if unused
 
 	// Interruption queue for actions that happen asynchronously (like multiple players trying to Pong/Ron).
 	// We wait a few seconds before resolving priority.
@@ -43,6 +44,7 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 		},
 		interruptQueue: make(map[uint32]*pb.PlayerAction),
 	}
+	g.haiteiDrawIndex = -1
 
 	for i := 0; i < 4; i++ {
 		g.State.Players[i] = &pb.PlayerState{
@@ -150,6 +152,7 @@ func (g *Game) dealTiles() uint32 {
 	g.wall = wall
 	g.wallIndex = dealIndex
 	g.deadWallIndex = 0
+	g.haiteiDrawIndex = -1
 
 	// --- Fenghua Rules: Dice Roll & Wangpai (Dead Wall) ---
 	// Roll two dice to determine how many stacks from the end form the wangpai.
@@ -157,6 +160,8 @@ func (g *Game) dealTiles() uint32 {
 	d2 := (mt.GenU32() % 6) + 1
 	diceSum := d1 + d2
 	g.State.DiceSum = diceSum
+	g.State.Dice1 = d1
+	g.State.Dice2 = d2
 	g.State.WangpaiStacks = diceSum
 
 	// Wangpai = last diceSum stacks (2 tiles per stack) at the tail of the wall.
@@ -174,6 +179,7 @@ func (g *Game) dealTiles() uint32 {
 	// WallCount = total drawable tiles (excluding dealt tiles and wild indicator).
 	// This includes both normal-drawable and dead-wall-drawable tiles.
 	g.State.WallCount = uint32(len(g.wall) - g.wallIndex - 1) // -1 for wild indicator
+	g.updateWangpaiTilesLeft()
 
 	// Determine wild tiles from the indicator
 	if wildIndicator.Suit == pb.Suit_SUIT_FLOWER {
@@ -271,9 +277,69 @@ func (g *Game) revealInitialFlowers(dealer uint32) {
 			player.ClosedHand = append(player.ClosedHand, replacement)
 			player.HandSize++
 			g.State.WallCount--
+			g.updateWangpaiTilesLeft()
 			// Loop continues — if replacement is a flower, it will be caught next iteration
 		}
 	}
+}
+
+func (g *Game) isFlowerWild(tile *pb.Tile) bool {
+	if tile == nil || tile.Suit != pb.Suit_SUIT_FLOWER {
+		return false
+	}
+	for _, w := range g.State.WildTiles {
+		if w.Suit == pb.Suit_SUIT_FLOWER && w.Value == tile.Value {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Game) findRevealableFlowerTile(seat uint32) *pb.Tile {
+	player := g.State.Players[seat]
+	for _, t := range player.ClosedHand {
+		if t.Suit == pb.Suit_SUIT_FLOWER && !g.isFlowerWild(t) {
+			return t
+		}
+	}
+	return nil
+}
+
+func (g *Game) autoRevealFlowers(seat uint32) error {
+	for {
+		flower := g.findRevealableFlowerTile(seat)
+		if flower == nil {
+			g.State.Players[seat].ValidActions = g.Rules.GetValidActions(g.State, seat)
+			return nil
+		}
+		err := g.handleActiveTurnAction(seat, &pb.PlayerAction{
+			Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
+			MeldTiles: []*pb.Tile{flower},
+		})
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (g *Game) updateWangpaiTilesLeft() {
+	if len(g.wall) == 0 {
+		g.State.WangpaiTilesLeft = 0
+		return
+	}
+
+	remaining := 0
+	for idx := g.wangpaiBoundary; idx < len(g.wall); idx++ {
+		if idx == g.wildIndicatorIndex || idx == g.haiteiDrawIndex {
+			continue
+		}
+		if g.isTileConsumedByDeadWall(idx) {
+			continue
+		}
+		remaining++
+	}
+
+	g.State.WangpaiTilesLeft = uint32(remaining)
 }
 
 // ExecuteSystemDraw handles drawing a tile from the wall at the start of a turn.
@@ -324,15 +390,13 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	drawnID := int32(drawnTile.Id)
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
+	g.updateWangpaiTilesLeft()
+
+	if g.findRevealableFlowerTile(seat) != nil {
+		return g.autoRevealFlowers(seat)
+	}
 
 	player.ValidActions = g.Rules.GetValidActions(g.State, seat)
-
-	// Auto-reveal non-wild flowers:
-	// If the evaluator says the only valid action is FLOWER_REVEAL,
-	// resolve it automatically so the player doesn't have to click it.
-	if len(player.ValidActions) == 1 && player.ValidActions[0].Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-		return g.handleActiveTurnAction(seat, player.ValidActions[0])
-	}
 
 	return nil
 }
@@ -431,13 +495,13 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	drawnID := int32(drawnTile.Id)
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
+	g.updateWangpaiTilesLeft()
+
+	if g.findRevealableFlowerTile(seat) != nil {
+		return g.autoRevealFlowers(seat)
+	}
 
 	player.ValidActions = g.Rules.GetValidActions(g.State, seat)
-
-	// Auto-reveal non-wild flowers:
-	if len(player.ValidActions) == 1 && player.ValidActions[0].Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-		return g.handleActiveTurnAction(seat, player.ValidActions[0])
-	}
 
 	return nil
 }
@@ -483,19 +547,18 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		drawnID := int32(drawnTile.Id)
 		player.DrawnTileId = &drawnID
 		g.State.WallCount--
+		g.haiteiDrawIndex = haiteiIdx
+		g.updateWangpaiTilesLeft()
 
-		// Mark the haitei tile as consumed by bumping deadWallIndex if needed
-		// (so isTileConsumedByDeadWall would find it, but we just use WallCount tracking)
+		// If the accepted haitei tile is a revealable flower, the replacement comes
+		// from the dead wall and the haitei-only restriction no longer applies.
+		if g.findRevealableFlowerTile(seat) != nil {
+			g.State.IsHaitei = false
+			return g.autoRevealFlowers(seat)
+		}
 
 		// Get valid actions — during haitei, only Tsumo or Discard of the drawn tile
 		player.ValidActions = g.Rules.GetValidActions(g.State, seat)
-
-		// Auto-reveal non-wild flowers even during haitei
-		if len(player.ValidActions) == 1 && player.ValidActions[0].Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-			// After flower reveal, the replacement comes from the dead wall (not haitei-restricted)
-			g.State.IsHaitei = false
-			return g.handleActiveTurnAction(seat, player.ValidActions[0])
-		}
 
 		return nil
 	}
@@ -793,9 +856,17 @@ func (g *Game) ResolveInterrupts() {
 			g.ExecuteDeadWallDraw(winnerSeat)
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 		} else {
-			// Chii or Pon just resume turn phase (player must discard now, no drawing)
+			// Chii or Pon just resume turn phase (player must discard now, no drawing).
+			// If the claimer is already holding any non-wild flowers, reveal them
+			// immediately before valid actions are exposed to the client.
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-			player.ValidActions = g.Rules.GetValidActions(g.State, winnerSeat)
+			if g.findRevealableFlowerTile(winnerSeat) != nil {
+				if err := g.autoRevealFlowers(winnerSeat); err != nil {
+					player.ValidActions = g.Rules.GetValidActions(g.State, winnerSeat)
+				}
+			} else {
+				player.ValidActions = g.Rules.GetValidActions(g.State, winnerSeat)
+			}
 		}
 	} else if winningAction.Type == pb.ActionType_ACTION_RON {
 		// Handle Ron (end of round)

@@ -193,9 +193,10 @@ func TestDeadWallKanDraw(t *testing.T) {
 		t.Errorf("Expected hand size %d, got %d", expectedHandSize, len(southPlayer.ClosedHand))
 	}
 
-	// Wall count should have decreased by 1 due to the Dead Wall Draw
-	if g.State.WallCount != initialWallCount-1 {
-		t.Errorf("Expected wall count %d, got %d", initialWallCount-1, g.State.WallCount)
+	// Wall count drops by at least 1 for the dead-wall draw. It may drop by 2
+	// if the supplement tile is a non-wild flower and auto-reveals immediately.
+	if g.State.WallCount > initialWallCount-1 || g.State.WallCount < initialWallCount-2 {
+		t.Errorf("Expected wall count to drop by 1 or 2 from %d, got %d", initialWallCount, g.State.WallCount)
 	}
 
 	// It should now be South player's turn to discard

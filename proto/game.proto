@@ -186,6 +186,13 @@ message GameState {
 
   // True when the active player is being offered the haitei (last drawable) tile
   bool is_haitei = 17;
+
+  // Individual dice rolled at the start of each round
+  uint32 dice1 = 18;
+  uint32 dice2 = 19;
+
+  // Current number of drawable tiles left in the wangpai zone
+  uint32 wangpai_tiles_left = 20;
 }
 
 // ---------------------------------------------------------

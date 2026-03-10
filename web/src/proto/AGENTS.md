@@ -12,6 +12,7 @@ Contains the JS/TS code generated from `proto/game.proto` by `protobufjs`. These
 - **game.d.ts** — TypeScript type declarations for all Protobuf messages
 - **game.ts** — TypeScript enum definitions and helpers (if present)
 - **game_cjs.js** — CommonJS version of the bindings
+  - Current `GameState` bindings include round debug fields such as `dice_sum`, `wangpai_stacks`, plus per-die values and live `wangpai_tiles_left`
 
 ## Regeneration
 

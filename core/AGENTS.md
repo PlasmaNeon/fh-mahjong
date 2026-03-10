@@ -15,9 +15,12 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `handleInterruptAction()` — Pon, Chii, Ron during WAIT_DISCARDS
   - `ResolveInterrupts()` — Priority resolution after timer/all responses. After Pon/Chii, calls `GetValidActions()` to populate valid actions for the claiming player
   - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — Wall draws. `ExecuteSystemDraw` clears all kong/flower bonus flags at start to prevent stale flags
+  - Draw-time flower handling is enforced in the game loop: any non-wild flower drawn from the live wall, dead wall, or accepted haitei is auto-revealed immediately, even if multiple revealable flowers are present
+  - Claim-time flower handling matches draw-time behavior: after a Chii/Pon handoff, any non-wild flowers already in the claimer's concealed hand are auto-revealed before valid actions are sent
   - `revealInitialFlowers(dealer)` — Auto-separates flower tiles from all players' hands after dealing. Loops through all 4 seats starting from dealer, moves flowers to `FlowerMelds`, draws replacements from dead wall. Called after `dealTiles()` and after dealer's 14th tile draw
   - `startNextRound()` — Reset for next round (keeps scores)
   - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
+  - `GameState` now carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
   - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`
 
 - **rules.go** — `RuleEngine` interface:

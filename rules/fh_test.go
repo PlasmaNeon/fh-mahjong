@@ -670,8 +670,9 @@ func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
 
 	actions := r.GetValidActions(ws, 0)
 	
-	// Expectation: The non-wild flower (Value: 1) MUST trigger a mandatory FLOWER_REVEAL.
-	// The wild flower (Value: 5) should NOT trigger a FLOWER_REVEAL.
+	// Flower handling is now owned by the core state machine.
+	// GetValidActions should not expose FLOWER_REVEAL to the client, even when a
+	// non-wild flower is still present in this synthetic state.
 	
 	if len(actions) == 0 {
 		t.Fatalf("expected at least 1 action, got 0")
@@ -679,8 +680,12 @@ func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
 
 	hasRevealForWild := false
 	hasRevealForNormal := false
+	hasDiscard := false
 
 	for _, a := range actions {
+		if a.Type == pb.ActionType_ACTION_DISCARD {
+			hasDiscard = true
+		}
 		if a.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
 			if a.MeldTiles[0].Value == 5 {
 				hasRevealForWild = true
@@ -694,8 +699,11 @@ func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
 	if hasRevealForWild {
 		t.Errorf("Wild flower (value 5) incorrectly triggered an auto-reveal")
 	}
-	if !hasRevealForNormal {
-		t.Errorf("Normal flower (value 1) failed to trigger an auto-reveal")
+	if hasRevealForNormal {
+		t.Errorf("Normal flower (value 1) should be auto-revealed by core, not exposed as an action")
+	}
+	if !hasDiscard {
+		t.Errorf("expected discard to remain available after core-managed flower handling")
 	}
 }
 

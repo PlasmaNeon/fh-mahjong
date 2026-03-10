@@ -134,7 +134,9 @@ export namespace game {
         ACTION_RON = 7,
         ACTION_PASS = 8,
         ACTION_FLOWER_REVEAL = 9,
-        ACTION_READY = 10
+        ACTION_READY = 10,
+        ACTION_ACCEPT_HAITEI = 11,
+        ACTION_REFUSE_HAITEI = 12
     }
 
     /** Properties of a PlayerAction. */
@@ -592,8 +594,7 @@ export namespace game {
         PHASE_DEAL = 1,
         PHASE_PLAYER_TURN = 2,
         PHASE_WAIT_DISCARDS = 3,
-        PHASE_ROUND_END = 4,
-        PHASE_HAITEI_CHOICE = 5
+        PHASE_ROUND_END = 4
     }
 
     /** Properties of a GameState. */
@@ -607,12 +608,6 @@ export namespace game {
 
         /** GameState activePlayer */
         activePlayer?: (number|undefined);
-
-        /** GameState dice1 */
-        dice1?: (number|undefined);
-
-        /** GameState dice2 */
-        dice2?: (number|undefined);
 
         /** GameState players */
         players?: (game.IPlayerState[]|undefined);
@@ -640,6 +635,24 @@ export namespace game {
 
         /** GameState playerReady */
         playerReady?: (boolean[]|undefined);
+
+        /** GameState diceSum */
+        diceSum?: (number|undefined);
+
+        /** GameState wangpaiStacks */
+        wangpaiStacks?: (number|undefined);
+
+        /** GameState isHaitei */
+        isHaitei?: (boolean|undefined);
+
+        /** GameState dice1 */
+        dice1?: (number|undefined);
+
+        /** GameState dice2 */
+        dice2?: (number|undefined);
+
+        /** GameState wangpaiTilesLeft */
+        wangpaiTilesLeft?: (number|undefined);
     }
 
     /** Represents a GameState. */
@@ -659,12 +672,6 @@ export namespace game {
 
         /** GameState activePlayer. */
         public activePlayer: number;
-
-        /** GameState dice1. */
-        public dice1: number;
-
-        /** GameState dice2. */
-        public dice2: number;
 
         /** GameState players. */
         public players: game.PlayerState[];
@@ -692,6 +699,24 @@ export namespace game {
 
         /** GameState playerReady. */
         public playerReady: boolean[];
+
+        /** GameState diceSum. */
+        public diceSum: number;
+
+        /** GameState wangpaiStacks. */
+        public wangpaiStacks: number;
+
+        /** GameState isHaitei. */
+        public isHaitei: boolean;
+
+        /** GameState dice1. */
+        public dice1: number;
+
+        /** GameState dice2. */
+        public dice2: number;
+
+        /** GameState wangpaiTilesLeft. */
+        public wangpaiTilesLeft: number;
 
         /**
          * Creates a new GameState instance using the specified properties.

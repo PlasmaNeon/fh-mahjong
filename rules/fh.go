@@ -618,32 +618,8 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		return actions
 	}
 
-	// Flower reveal is mandatory — if flowers are in hand, player must reveal them first
-	// Exception: If a flower is a designated wild tile, it is kept in hand and NOT auto-revealed.
-	var flowerActions []*pb.PlayerAction
-	for _, t := range player.ClosedHand {
-		if t.Suit == pb.Suit_SUIT_FLOWER {
-			isWild := false
-			if state != nil && len(state.WildTiles) > 0 {
-				for _, w := range state.WildTiles {
-					if w.Suit == pb.Suit_SUIT_FLOWER && w.Value == t.Value {
-						isWild = true
-						break
-					}
-				}
-			}
-
-			if !isWild {
-				flowerActions = append(flowerActions, &pb.PlayerAction{
-					Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
-					MeldTiles: []*pb.Tile{t},
-				})
-			}
-		}
-	}
-	if len(flowerActions) > 0 {
-		return flowerActions
-	}
+	// Non-wild flowers are auto-revealed by the core state machine before valid
+	// actions reach the client. Wild flowers stay in the closed hand normally.
 
 	// The player can always discard
 	actions = append(actions, &pb.PlayerAction{

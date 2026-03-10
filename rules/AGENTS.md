@@ -16,7 +16,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
   - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
-  - `GetValidActions()` — Discard, Kan, Flower Reveal, Tsumo for active player. Flower reveal is mandatory: if any flower tiles are in the closed hand, only `ACTION_FLOWER_REVEAL` actions are returned (player must reveal all flowers before other actions)
+  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Non-wild flower handling is owned by `core.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
   - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1)
   - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.

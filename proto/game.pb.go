@@ -717,9 +717,14 @@ type GameState struct {
 	// Number of wangpai (dead wall) stacks reserved at the tail of the wall
 	WangpaiStacks uint32 `protobuf:"varint,16,opt,name=wangpai_stacks,json=wangpaiStacks,proto3" json:"wangpai_stacks,omitempty"`
 	// True when the active player is being offered the haitei (last drawable) tile
-	IsHaitei      bool `protobuf:"varint,17,opt,name=is_haitei,json=isHaitei,proto3" json:"is_haitei,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	IsHaitei bool `protobuf:"varint,17,opt,name=is_haitei,json=isHaitei,proto3" json:"is_haitei,omitempty"`
+	// Individual dice rolled at the start of each round
+	Dice1 uint32 `protobuf:"varint,18,opt,name=dice1,proto3" json:"dice1,omitempty"`
+	Dice2 uint32 `protobuf:"varint,19,opt,name=dice2,proto3" json:"dice2,omitempty"`
+	// Current number of drawable tiles left in the wangpai zone
+	WangpaiTilesLeft uint32 `protobuf:"varint,20,opt,name=wangpai_tiles_left,json=wangpaiTilesLeft,proto3" json:"wangpai_tiles_left,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GameState) Reset() {
@@ -855,6 +860,27 @@ func (x *GameState) GetIsHaitei() bool {
 		return x.IsHaitei
 	}
 	return false
+}
+
+func (x *GameState) GetDice1() uint32 {
+	if x != nil {
+		return x.Dice1
+	}
+	return 0
+}
+
+func (x *GameState) GetDice2() uint32 {
+	if x != nil {
+		return x.Dice2
+	}
+	return 0
+}
+
+func (x *GameState) GetWangpaiTilesLeft() uint32 {
+	if x != nil {
+		return x.WangpaiTilesLeft
+	}
+	return 0
 }
 
 type ScoreEntry struct {
@@ -1129,7 +1155,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\x127\n" +
 	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
 	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01B\x10\n" +
-	"\x0e_drawn_tile_id\"\xb5\x04\n" +
+	"\x0e_drawn_tile_id\"\x8f\x05\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -1149,7 +1175,10 @@ const file_proto_game_proto_rawDesc = "" +
 	"\fplayer_ready\x18\x0e \x03(\bR\vplayerReady\x12\x19\n" +
 	"\bdice_sum\x18\x0f \x01(\rR\adiceSum\x12%\n" +
 	"\x0ewangpai_stacks\x18\x10 \x01(\rR\rwangpaiStacks\x12\x1b\n" +
-	"\tis_haitei\x18\x11 \x01(\bR\bisHaitei\"G\n" +
+	"\tis_haitei\x18\x11 \x01(\bR\bisHaitei\x12\x14\n" +
+	"\x05dice1\x18\x12 \x01(\rR\x05dice1\x12\x14\n" +
+	"\x05dice2\x18\x13 \x01(\rR\x05dice2\x12,\n" +
+	"\x12wangpai_tiles_left\x18\x14 \x01(\rR\x10wangpaiTilesLeft\"G\n" +
 	"\n" +
 	"ScoreEntry\x12!\n" +
 	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +

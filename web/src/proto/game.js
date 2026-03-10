@@ -344,6 +344,8 @@ export const game = $root.game = (() => {
      * @property {number} ACTION_PASS=8 ACTION_PASS value
      * @property {number} ACTION_FLOWER_REVEAL=9 ACTION_FLOWER_REVEAL value
      * @property {number} ACTION_READY=10 ACTION_READY value
+     * @property {number} ACTION_ACCEPT_HAITEI=11 ACTION_ACCEPT_HAITEI value
+     * @property {number} ACTION_REFUSE_HAITEI=12 ACTION_REFUSE_HAITEI value
      */
     game.ActionType = (function() {
         const valuesById = {}, values = Object.create(valuesById);
@@ -358,6 +360,8 @@ export const game = $root.game = (() => {
         values[valuesById[8] = "ACTION_PASS"] = 8;
         values[valuesById[9] = "ACTION_FLOWER_REVEAL"] = 9;
         values[valuesById[10] = "ACTION_READY"] = 10;
+        values[valuesById[11] = "ACTION_ACCEPT_HAITEI"] = 11;
+        values[valuesById[12] = "ACTION_REFUSE_HAITEI"] = 12;
         return values;
     })();
 
@@ -603,6 +607,8 @@ export const game = $root.game = (() => {
                 case 8:
                 case 9:
                 case 10:
+                case 11:
+                case 12:
                     break;
                 }
             if (message.tile != null && message.hasOwnProperty("tile")) {
@@ -696,6 +702,14 @@ export const game = $root.game = (() => {
             case "ACTION_READY":
             case 10:
                 message.type = 10;
+                break;
+            case "ACTION_ACCEPT_HAITEI":
+            case 11:
+                message.type = 11;
+                break;
+            case "ACTION_REFUSE_HAITEI":
+            case 12:
+                message.type = 12;
                 break;
             }
             if (object.tile != null) {
@@ -1011,6 +1025,8 @@ export const game = $root.game = (() => {
                 case 8:
                 case 9:
                 case 10:
+                case 11:
+                case 12:
                     break;
                 }
             if (message.tiles != null && message.hasOwnProperty("tiles")) {
@@ -1100,6 +1116,14 @@ export const game = $root.game = (() => {
             case "ACTION_READY":
             case 10:
                 message.type = 10;
+                break;
+            case "ACTION_ACCEPT_HAITEI":
+            case 11:
+                message.type = 11;
+                break;
+            case "ACTION_REFUSE_HAITEI":
+            case 12:
+                message.type = 12;
                 break;
             }
             if (object.tiles) {
@@ -1908,7 +1932,6 @@ export const game = $root.game = (() => {
      * @property {number} PHASE_PLAYER_TURN=2 PHASE_PLAYER_TURN value
      * @property {number} PHASE_WAIT_DISCARDS=3 PHASE_WAIT_DISCARDS value
      * @property {number} PHASE_ROUND_END=4 PHASE_ROUND_END value
-     * @property {number} PHASE_HAITEI_CHOICE=5 PHASE_HAITEI_CHOICE value
      */
     game.GamePhase = (function() {
         const valuesById = {}, values = Object.create(valuesById);
@@ -1917,7 +1940,6 @@ export const game = $root.game = (() => {
         values[valuesById[2] = "PHASE_PLAYER_TURN"] = 2;
         values[valuesById[3] = "PHASE_WAIT_DISCARDS"] = 3;
         values[valuesById[4] = "PHASE_ROUND_END"] = 4;
-        values[valuesById[5] = "PHASE_HAITEI_CHOICE"] = 5;
         return values;
     })();
 
@@ -1930,8 +1952,6 @@ export const game = $root.game = (() => {
          * @property {string|undefined} [matchId] GameState matchId
          * @property {game.GamePhase|undefined} [phase] GameState phase
          * @property {number|undefined} [activePlayer] GameState activePlayer
-         * @property {number|undefined} [dice1] GameState dice1
-         * @property {number|undefined} [dice2] GameState dice2
          * @property {Array.<game.IPlayerState>|undefined} [players] GameState players
          * @property {number|undefined} [wallCount] GameState wallCount
          * @property {number|undefined} [handNum] GameState handNum
@@ -1941,6 +1961,12 @@ export const game = $root.game = (() => {
          * @property {string|undefined} [wallSeed] GameState wallSeed
          * @property {game.IRoundResult|undefined} [roundResult] GameState roundResult
          * @property {Array.<boolean>|undefined} [playerReady] GameState playerReady
+         * @property {number|undefined} [diceSum] GameState diceSum
+         * @property {number|undefined} [wangpaiStacks] GameState wangpaiStacks
+         * @property {boolean|undefined} [isHaitei] GameState isHaitei
+         * @property {number|undefined} [dice1] GameState dice1
+         * @property {number|undefined} [dice2] GameState dice2
+         * @property {number|undefined} [wangpaiTilesLeft] GameState wangpaiTilesLeft
          */
 
         /**
@@ -1984,22 +2010,6 @@ export const game = $root.game = (() => {
          * @instance
          */
         GameState.prototype.activePlayer = 0;
-
-        /**
-         * GameState dice1.
-         * @member {number} dice1
-         * @memberof game.GameState
-         * @instance
-         */
-        GameState.prototype.dice1 = 0;
-
-        /**
-         * GameState dice2.
-         * @member {number} dice2
-         * @memberof game.GameState
-         * @instance
-         */
-        GameState.prototype.dice2 = 0;
 
         /**
          * GameState players.
@@ -2074,6 +2084,54 @@ export const game = $root.game = (() => {
         GameState.prototype.playerReady = $util.emptyArray;
 
         /**
+         * GameState diceSum.
+         * @member {number} diceSum
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.diceSum = 0;
+
+        /**
+         * GameState wangpaiStacks.
+         * @member {number} wangpaiStacks
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.wangpaiStacks = 0;
+
+        /**
+         * GameState isHaitei.
+         * @member {boolean} isHaitei
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.isHaitei = false;
+
+        /**
+         * GameState dice1.
+         * @member {number} dice1
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.dice1 = 0;
+
+        /**
+         * GameState dice2.
+         * @member {number} dice2
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.dice2 = 0;
+
+        /**
+         * GameState wangpaiTilesLeft.
+         * @member {number} wangpaiTilesLeft
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.wangpaiTilesLeft = 0;
+
+        /**
          * Creates a new GameState instance using the specified properties.
          * @function create
          * @memberof game.GameState
@@ -2127,10 +2185,18 @@ export const game = $root.game = (() => {
                     writer.bool(message.playerReady[i]);
                 writer.ldelim();
             }
+            if (message.diceSum != null && Object.hasOwnProperty.call(message, "diceSum"))
+                writer.uint32(/* id 15, wireType 0 =*/120).uint32(message.diceSum);
+            if (message.wangpaiStacks != null && Object.hasOwnProperty.call(message, "wangpaiStacks"))
+                writer.uint32(/* id 16, wireType 0 =*/128).uint32(message.wangpaiStacks);
+            if (message.isHaitei != null && Object.hasOwnProperty.call(message, "isHaitei"))
+                writer.uint32(/* id 17, wireType 0 =*/136).bool(message.isHaitei);
             if (message.dice1 != null && Object.hasOwnProperty.call(message, "dice1"))
                 writer.uint32(/* id 18, wireType 0 =*/144).uint32(message.dice1);
             if (message.dice2 != null && Object.hasOwnProperty.call(message, "dice2"))
                 writer.uint32(/* id 19, wireType 0 =*/152).uint32(message.dice2);
+            if (message.wangpaiTilesLeft != null && Object.hasOwnProperty.call(message, "wangpaiTilesLeft"))
+                writer.uint32(/* id 20, wireType 0 =*/160).uint32(message.wangpaiTilesLeft);
             return writer;
         };
 
@@ -2177,14 +2243,6 @@ export const game = $root.game = (() => {
                     }
                 case 3: {
                         message.activePlayer = reader.uint32();
-                        break;
-                    }
-                case 18: {
-                        message.dice1 = reader.uint32();
-                        break;
-                    }
-                case 19: {
-                        message.dice2 = reader.uint32();
                         break;
                     }
                 case 4: {
@@ -2234,6 +2292,30 @@ export const game = $root.game = (() => {
                             message.playerReady.push(reader.bool());
                         break;
                     }
+                case 15: {
+                        message.diceSum = reader.uint32();
+                        break;
+                    }
+                case 16: {
+                        message.wangpaiStacks = reader.uint32();
+                        break;
+                    }
+                case 17: {
+                        message.isHaitei = reader.bool();
+                        break;
+                    }
+                case 18: {
+                        message.dice1 = reader.uint32();
+                        break;
+                    }
+                case 19: {
+                        message.dice2 = reader.uint32();
+                        break;
+                    }
+                case 20: {
+                        message.wangpaiTilesLeft = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -2281,18 +2363,11 @@ export const game = $root.game = (() => {
                 case 2:
                 case 3:
                 case 4:
-                case 5:
                     break;
                 }
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
                 if (!$util.isInteger(message.activePlayer))
                     return "activePlayer: integer expected";
-            if (message.dice1 != null && message.hasOwnProperty("dice1"))
-                if (!$util.isInteger(message.dice1))
-                    return "dice1: integer expected";
-            if (message.dice2 != null && message.hasOwnProperty("dice2"))
-                if (!$util.isInteger(message.dice2))
-                    return "dice2: integer expected";
             if (message.players != null && message.hasOwnProperty("players")) {
                 if (!Array.isArray(message.players))
                     return "players: array expected";
@@ -2340,6 +2415,24 @@ export const game = $root.game = (() => {
                     if (typeof message.playerReady[i] !== "boolean")
                         return "playerReady: boolean[] expected";
             }
+            if (message.diceSum != null && message.hasOwnProperty("diceSum"))
+                if (!$util.isInteger(message.diceSum))
+                    return "diceSum: integer expected";
+            if (message.wangpaiStacks != null && message.hasOwnProperty("wangpaiStacks"))
+                if (!$util.isInteger(message.wangpaiStacks))
+                    return "wangpaiStacks: integer expected";
+            if (message.isHaitei != null && message.hasOwnProperty("isHaitei"))
+                if (typeof message.isHaitei !== "boolean")
+                    return "isHaitei: boolean expected";
+            if (message.dice1 != null && message.hasOwnProperty("dice1"))
+                if (!$util.isInteger(message.dice1))
+                    return "dice1: integer expected";
+            if (message.dice2 != null && message.hasOwnProperty("dice2"))
+                if (!$util.isInteger(message.dice2))
+                    return "dice2: integer expected";
+            if (message.wangpaiTilesLeft != null && message.hasOwnProperty("wangpaiTilesLeft"))
+                if (!$util.isInteger(message.wangpaiTilesLeft))
+                    return "wangpaiTilesLeft: integer expected";
             return null;
         };
 
@@ -2384,17 +2477,9 @@ export const game = $root.game = (() => {
             case 4:
                 message.phase = 4;
                 break;
-            case "PHASE_HAITEI_CHOICE":
-            case 5:
-                message.phase = 5;
-                break;
             }
             if (object.activePlayer != null)
                 message.activePlayer = object.activePlayer >>> 0;
-            if (object.dice1 != null)
-                message.dice1 = object.dice1 >>> 0;
-            if (object.dice2 != null)
-                message.dice2 = object.dice2 >>> 0;
             if (object.players) {
                 if (!Array.isArray(object.players))
                     throw TypeError(".game.GameState.players: array expected");
@@ -2440,6 +2525,18 @@ export const game = $root.game = (() => {
                 for (let i = 0; i < object.playerReady.length; ++i)
                     message.playerReady[i] = Boolean(object.playerReady[i]);
             }
+            if (object.diceSum != null)
+                message.diceSum = object.diceSum >>> 0;
+            if (object.wangpaiStacks != null)
+                message.wangpaiStacks = object.wangpaiStacks >>> 0;
+            if (object.isHaitei != null)
+                message.isHaitei = Boolean(object.isHaitei);
+            if (object.dice1 != null)
+                message.dice1 = object.dice1 >>> 0;
+            if (object.dice2 != null)
+                message.dice2 = object.dice2 >>> 0;
+            if (object.wangpaiTilesLeft != null)
+                message.wangpaiTilesLeft = object.wangpaiTilesLeft >>> 0;
             return message;
         };
 
@@ -2471,8 +2568,12 @@ export const game = $root.game = (() => {
                 object.prevailingWind = 0;
                 object.wallSeed = "";
                 object.roundResult = null;
+                object.diceSum = 0;
+                object.wangpaiStacks = 0;
+                object.isHaitei = false;
                 object.dice1 = 0;
                 object.dice2 = 0;
+                object.wangpaiTilesLeft = 0;
             }
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
@@ -2507,10 +2608,18 @@ export const game = $root.game = (() => {
                 for (let j = 0; j < message.playerReady.length; ++j)
                     object.playerReady[j] = message.playerReady[j];
             }
+            if (message.diceSum != null && message.hasOwnProperty("diceSum"))
+                object.diceSum = message.diceSum;
+            if (message.wangpaiStacks != null && message.hasOwnProperty("wangpaiStacks"))
+                object.wangpaiStacks = message.wangpaiStacks;
+            if (message.isHaitei != null && message.hasOwnProperty("isHaitei"))
+                object.isHaitei = message.isHaitei;
             if (message.dice1 != null && message.hasOwnProperty("dice1"))
                 object.dice1 = message.dice1;
             if (message.dice2 != null && message.hasOwnProperty("dice2"))
                 object.dice2 = message.dice2;
+            if (message.wangpaiTilesLeft != null && message.hasOwnProperty("wangpaiTilesLeft"))
+                object.wangpaiTilesLeft = message.wangpaiTilesLeft;
             return object;
         };
 
@@ -3303,6 +3412,8 @@ export const game = $root.game = (() => {
                 case 8:
                 case 9:
                 case 10:
+                case 11:
+                case 12:
                     break;
                 }
             if (message.discarderSeat != null && message.hasOwnProperty("discarderSeat"))
@@ -3422,6 +3533,14 @@ export const game = $root.game = (() => {
             case "ACTION_READY":
             case 10:
                 message.winType = 10;
+                break;
+            case "ACTION_ACCEPT_HAITEI":
+            case 11:
+                message.winType = 11;
+                break;
+            case "ACTION_REFUSE_HAITEI":
+            case 12:
+                message.winType = 12;
                 break;
             }
             if (object.discarderSeat != null)
