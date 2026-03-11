@@ -23,6 +23,7 @@ COPY core/ core/
 COPY models/ models/
 COPY proto/ proto/
 COPY rules/ rules/
+COPY web/ web/
 
 # Build the Go binary
 RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server
