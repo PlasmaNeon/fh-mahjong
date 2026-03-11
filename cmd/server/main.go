@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/plasma/fh-mahjong/api"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -42,13 +41,11 @@ func main() {
 	hub := api.NewHub()
 	go hub.Run()
 
-	// Initialize Redis
-	rdb := redis.NewClient(&redis.Options{
-		Addr: getEnv("REDIS_ADDR", "localhost:6379"),
-	})
+	// Initialize In-Memory Queue for Matchmaking
+	inMemoryQueue := api.NewInMemoryQueue()
 
 	// 4. Start Matchmaking Service
-	matchmaker := api.NewMatchmaker(rdb, db, hub)
+	matchmaker := api.NewMatchmaker(inMemoryQueue, db, hub)
 	go matchmaker.StartQueueWatcher("hometown")
 	go matchmaker.StartPrivateTableWatcher()
 
