@@ -12,7 +12,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
   - Public tool routes: `/api/v1/calc`, `/api/v1/ws`
   - Optional SPA/static serving from `web/dist` for single-service production deploys
-  - Production SPA asset mounts use sub-filesystems for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
+  - Production SPA asset mounts use explicit `GET`/`HEAD` file handlers for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 
@@ -65,3 +65,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - State is broadcast as raw Protobuf bytes; no per-player filtering yet (all players see full state including opponent hands).
 - `/api/v1/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
 - When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/calc` and `/create-room` work behind the Go server.
+- Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
+
+- **server_test.go** — SPA/static serving regression coverage:
+  - Built JS asset requests return JavaScript, not `index.html`
+  - Missing asset requests return `404`, not the SPA shell

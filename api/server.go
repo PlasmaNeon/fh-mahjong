@@ -110,10 +110,10 @@ func (s *Server) setupFrontendRoutes() {
 	// These get correct MIME types and never fall through to NoRoute.
 	httpFS := http.FS(distFS)
 	if assetsFS, err := fs.Sub(distFS, "assets"); err == nil {
-		s.Router.StaticFS("/assets", http.FS(assetsFS))
+		s.serveStaticSubdir("/assets", http.FS(assetsFS))
 	}
 	if tileFacesFS, err := fs.Sub(distFS, "Regular_shortnames"); err == nil {
-		s.Router.StaticFS("/Regular_shortnames", http.FS(tileFacesFS))
+		s.serveStaticSubdir("/Regular_shortnames", http.FS(tileFacesFS))
 	}
 
 	// Serve individual root-level static files
@@ -133,12 +133,38 @@ func (s *Server) setupFrontendRoutes() {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 			return
 		}
+		if looksLikeStaticAssetRequest(c.Request.URL.Path) {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 			c.Status(http.StatusNotFound)
 			return
 		}
 
 		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+	})
+}
+
+func (s *Server) serveStaticSubdir(routePrefix string, fileSystem http.FileSystem) {
+	s.Router.GET(routePrefix+"/*filepath", func(c *gin.Context) {
+		relativePath := strings.TrimPrefix(c.Param("filepath"), "/")
+		if relativePath == "" {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		c.FileFromFS(relativePath, fileSystem)
+	})
+
+	s.Router.HEAD(routePrefix+"/*filepath", func(c *gin.Context) {
+		relativePath := strings.TrimPrefix(c.Param("filepath"), "/")
+		if relativePath == "" {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		c.FileFromFS(relativePath, fileSystem)
 	})
 }
 
@@ -196,6 +222,20 @@ func locateFrontendDist() (string, bool) {
 func hasIndexHTML(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "index.html"))
 	return err == nil && !info.IsDir()
+}
+
+func looksLikeStaticAssetRequest(path string) bool {
+	if strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/Regular_shortnames/") {
+		return true
+	}
+
+	extension := strings.ToLower(filepath.Ext(path))
+	switch extension {
+	case ".js", ".mjs", ".css", ".wasm", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".map", ".json":
+		return true
+	default:
+		return false
+	}
 }
 
 func isPathWithinBase(base, target string) bool {
