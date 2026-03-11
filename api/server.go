@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/web"
 	"gorm.io/gorm"
 )
 
@@ -27,8 +29,6 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	if err := router.SetTrustedProxies(loadTrustedProxies()); err != nil {
 		log.Fatalf("invalid TRUSTED_PROXIES configuration: %v", err)
 	}
-
-	// CORS middleware could be added here
 
 	server := &Server{
 		Router:     router,
@@ -66,13 +66,35 @@ func (s *Server) setupRoutes() {
 	s.setupFrontendRoutes()
 }
 
+// setupFrontendRoutes serves the React SPA.
+// Priority: disk (for local dev with Vite hot-reload) → embedded FS (for deploy).
 func (s *Server) setupFrontendRoutes() {
-	distDir, ok := locateFrontendDist()
-	if !ok {
-		log.Printf("frontend build not found; serving API routes only")
+	// 1. Try disk first (local development)
+	if diskDir, ok := locateFrontendDist(); ok {
+		log.Printf("serving frontend SPA from disk: %s", diskDir)
+		s.mountSPAFromDisk(diskDir)
 		return
 	}
 
+	// 2. Fall back to embedded FS (production deploy)
+	distFS, err := fs.Sub(web.DistFS, "dist")
+	if err != nil {
+		log.Printf("failed to open embedded dist: %v; serving API routes only", err)
+		return
+	}
+
+	// Verify the embedded FS actually has index.html
+	if _, err := fs.Stat(distFS, "index.html"); err != nil {
+		log.Printf("embedded dist has no index.html; serving API routes only")
+		return
+	}
+
+	log.Printf("serving frontend SPA from embedded FS")
+	s.mountSPAFromFS(distFS)
+}
+
+// mountSPAFromDisk serves the SPA from a directory on the local filesystem.
+func (s *Server) mountSPAFromDisk(distDir string) {
 	indexPath := filepath.Join(distDir, "index.html")
 
 	s.Router.NoRoute(func(c *gin.Context) {
@@ -80,7 +102,6 @@ func (s *Server) setupFrontendRoutes() {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
 			return
 		}
-
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 			c.Status(http.StatusNotFound)
 			return
@@ -101,6 +122,41 @@ func (s *Server) setupFrontendRoutes() {
 		}
 
 		c.File(indexPath)
+	})
+}
+
+// mountSPAFromFS serves the SPA from an embedded (or any) fs.FS.
+func (s *Server) mountSPAFromFS(distFS fs.FS) {
+	indexHTML, err := fs.ReadFile(distFS, "index.html")
+	if err != nil {
+		log.Printf("failed to read embedded index.html: %v", err)
+		return
+	}
+
+	fileServer := http.FileServer(http.FS(distFS))
+
+	s.Router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		requestPath := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
+
+		// Try serving the exact file (JS, CSS, images, etc.)
+		if requestPath != "" {
+			if _, err := fs.Stat(distFS, requestPath); err == nil {
+				fileServer.ServeHTTP(c.Writer, c.Request)
+				return
+			}
+		}
+
+		// Fall back to index.html for SPA client-side routing
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
 	})
 }
 
@@ -131,12 +187,11 @@ func locateFrontendDist() (string, bool) {
 		if hasIndexHTML(configured) {
 			return configured, true
 		}
-		return configured, false
+		return "", false
 	}
 
 	candidates := []string{
 		filepath.Join("web", "dist"),
-		filepath.Join(".", "web", "dist"),
 	}
 
 	if exePath, err := os.Executable(); err == nil {
@@ -153,7 +208,7 @@ func locateFrontendDist() (string, bool) {
 		}
 	}
 
-	return filepath.Join("web", "dist"), false
+	return "", false
 }
 
 func hasIndexHTML(dir string) bool {
