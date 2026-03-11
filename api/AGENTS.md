@@ -12,6 +12,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
   - Public tool routes: `/api/v1/calc`, `/api/v1/ws`
   - Optional SPA/static serving from `web/dist` for single-service production deploys
+  - Production SPA asset mounts use sub-filesystems for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 

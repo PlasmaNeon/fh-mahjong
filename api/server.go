@@ -3,9 +3,9 @@ package api
 import (
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -66,37 +66,68 @@ func (s *Server) setupRoutes() {
 	s.setupFrontendRoutes()
 }
 
+func init() {
+	// Ensure .js gets the right MIME type on all platforms
+	mime.AddExtensionType(".js", "application/javascript")
+	mime.AddExtensionType(".mjs", "application/javascript")
+	mime.AddExtensionType(".css", "text/css")
+	mime.AddExtensionType(".wasm", "application/wasm")
+	mime.AddExtensionType(".svg", "image/svg+xml")
+}
+
 // setupFrontendRoutes serves the React SPA.
-// Priority: disk (for local dev with Vite hot-reload) → embedded FS (for deploy).
+// Uses Gin's StaticFS for asset directories (correct MIME types via registered routes),
+// and NoRoute only for the SPA HTML fallback.
 func (s *Server) setupFrontendRoutes() {
-	// 1. Try disk first (local development)
+	// Resolve the frontend filesystem: disk first (local dev), then embedded FS (deploy)
+	var distFS fs.FS
+	var indexHTML []byte
+	source := "none"
+
 	if diskDir, ok := locateFrontendDist(); ok {
-		log.Printf("serving frontend SPA from disk: %s", diskDir)
-		s.mountSPAFromDisk(diskDir)
-		return
+		distFS = os.DirFS(diskDir)
+		source = "disk: " + diskDir
+	} else {
+		sub, err := fs.Sub(web.DistFS, "dist")
+		if err != nil {
+			log.Printf("failed to open embedded dist: %v; serving API routes only", err)
+			return
+		}
+		distFS = sub
+		source = "embedded FS"
 	}
 
-	// 2. Fall back to embedded FS (production deploy)
-	distFS, err := fs.Sub(web.DistFS, "dist")
+	// Verify index.html exists
+	var err error
+	indexHTML, err = fs.ReadFile(distFS, "index.html")
 	if err != nil {
-		log.Printf("failed to open embedded dist: %v; serving API routes only", err)
+		log.Printf("no index.html in %s; serving API routes only", source)
 		return
 	}
+	log.Printf("serving frontend SPA from %s", source)
 
-	// Verify the embedded FS actually has index.html
-	if _, err := fs.Stat(distFS, "index.html"); err != nil {
-		log.Printf("embedded dist has no index.html; serving API routes only")
-		return
+	// Register static asset directories as explicit Gin routes.
+	// These get correct MIME types and never fall through to NoRoute.
+	httpFS := http.FS(distFS)
+	if assetsFS, err := fs.Sub(distFS, "assets"); err == nil {
+		s.Router.StaticFS("/assets", http.FS(assetsFS))
+	}
+	if tileFacesFS, err := fs.Sub(distFS, "Regular_shortnames"); err == nil {
+		s.Router.StaticFS("/Regular_shortnames", http.FS(tileFacesFS))
 	}
 
-	log.Printf("serving frontend SPA from embedded FS")
-	s.mountSPAFromFS(distFS)
-}
+	// Serve individual root-level static files
+	rootFiles := []string{"vite.svg", "wasm_exec.js", "mahjong.wasm"}
+	for _, name := range rootFiles {
+		if _, err := fs.Stat(distFS, name); err == nil {
+			name := name // capture
+			s.Router.GET("/"+name, func(c *gin.Context) {
+				c.FileFromFS(name, httpFS)
+			})
+		}
+	}
 
-// mountSPAFromDisk serves the SPA from a directory on the local filesystem.
-func (s *Server) mountSPAFromDisk(distDir string) {
-	indexPath := filepath.Join(distDir, "index.html")
-
+	// NoRoute: serve index.html for all unmatched GET/HEAD requests (SPA routing)
 	s.Router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
@@ -107,55 +138,6 @@ func (s *Server) mountSPAFromDisk(distDir string) {
 			return
 		}
 
-		requestPath := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
-		if requestPath == "" {
-			c.File(indexPath)
-			return
-		}
-
-		candidate := filepath.Join(distDir, filepath.FromSlash(requestPath))
-		if isPathWithinBase(distDir, candidate) {
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				c.File(candidate)
-				return
-			}
-		}
-
-		c.File(indexPath)
-	})
-}
-
-// mountSPAFromFS serves the SPA from an embedded (or any) fs.FS.
-func (s *Server) mountSPAFromFS(distFS fs.FS) {
-	indexHTML, err := fs.ReadFile(distFS, "index.html")
-	if err != nil {
-		log.Printf("failed to read embedded index.html: %v", err)
-		return
-	}
-
-	fileServer := http.FileServer(http.FS(distFS))
-
-	s.Router.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
-			return
-		}
-		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-			c.Status(http.StatusNotFound)
-			return
-		}
-
-		requestPath := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
-
-		// Try serving the exact file (JS, CSS, images, etc.)
-		if requestPath != "" {
-			if _, err := fs.Stat(distFS, requestPath); err == nil {
-				fileServer.ServeHTTP(c.Writer, c.Request)
-				return
-			}
-		}
-
-		// Fall back to index.html for SPA client-side routing
 		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
 	})
 }
@@ -224,6 +206,8 @@ func isPathWithinBase(base, target string) bool {
 
 	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
+
+// --- unexported helpers above, route handlers below ---
 
 // handleJoinQueue lets an authenticated user queue up for a game
 func (s *Server) handleJoinQueue(c *gin.Context) {
