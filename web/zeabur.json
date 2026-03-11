@@ -1,9 +1,0 @@
-{
-  "builder": "vite",
-  "routes": [
-    {
-      "src": "^/.*$",
-      "dest": "/index.html"
-    }
-  ]
-}
