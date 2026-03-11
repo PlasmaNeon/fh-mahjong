@@ -4,25 +4,95 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/plasma/fh-mahjong/models"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 var ctx = context.Background()
 
+// InMemoryQueue simulates Redis lists
+type InMemoryQueue struct {
+	mu    sync.Mutex
+	lists map[string][]string
+}
+
+func NewInMemoryQueue() *InMemoryQueue {
+	return &InMemoryQueue{
+		lists: make(map[string][]string),
+	}
+}
+
+func (q *InMemoryQueue) RPush(key string, val string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.lists[key] = append(q.lists[key], val)
+}
+
+func (q *InMemoryQueue) LRange(key string) []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	
+	// Return a copy to avoid race conditions
+	if lst, ok := q.lists[key]; ok {
+		copied := make([]string, len(lst))
+		copy(copied, lst)
+		return copied
+	}
+	return nil
+}
+
+func (q *InMemoryQueue) LLen(key string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.lists[key])
+}
+
+func (q *InMemoryQueue) LPopCount(key string, count int) []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	lst, ok := q.lists[key]
+	if !ok || len(lst) < count {
+		return nil
+	}
+
+	popped := lst[:count]
+	q.lists[key] = lst[count:]
+	
+	return popped
+}
+
+func (q *InMemoryQueue) Keys(pattern string) []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var prefix string
+	if len(pattern) > 2 && pattern[len(pattern)-2:] == ":*" {
+		prefix = pattern[:len(pattern)-1]
+	}
+
+	var matched []string
+	for k := range q.lists {
+		if prefix == "" || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
+			matched = append(matched, k)
+		}
+	}
+	return matched
+}
+
 type Matchmaker struct {
-	Redis *redis.Client
+	Queue *InMemoryQueue
 	DB    *gorm.DB
 	Hub   *Hub
 }
 
-func NewMatchmaker(rdb *redis.Client, db *gorm.DB, hub *Hub) *Matchmaker {
+func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 	return &Matchmaker{
-		Redis: rdb,
+		Queue: queue,
 		DB:    db,
 		Hub:   hub,
 	}
@@ -32,11 +102,9 @@ func NewMatchmaker(rdb *redis.Client, db *gorm.DB, hub *Hub) *Matchmaker {
 func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	queueKey := "queue:" + ruleset
 
-	// Add user to a Redis List
-	err := m.Redis.RPush(ctx, queueKey, userID).Err()
-	if err != nil {
-		return err
-	}
+	// Add user to the in-memory queue
+	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
+
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
 	return nil
@@ -47,22 +115,17 @@ func (m *Matchmaker) JoinPrivateTable(userID uint, username string, tableID stri
 	queueKey := "table:" + tableID
 
 	// Check if this user is already in the queue to prevent double-joins
-	existing, err := m.Redis.LRange(ctx, queueKey, 0, -1).Result()
-	if err == nil {
-		for _, id := range existing {
-			if id == fmt.Sprintf("%d", userID) {
-				return nil // User is already queued, silently succeed
-			}
+	existing := m.Queue.LRange(queueKey)
+	for _, id := range existing {
+		if id == fmt.Sprintf("%d", userID) {
+			return nil // User is already queued, silently succeed
 		}
 	}
 
-	// Add user to a Redis List
-	err = m.Redis.RPush(ctx, queueKey, userID).Err()
-	if err != nil {
-		return err
-	}
+	// Add user to the in-memory queue
+	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
 
-	length, _ := m.Redis.LLen(ctx, queueKey).Result()
+	length := m.Queue.LLen(queueKey)
 
 	log.Printf("User %d (%s) joined private table queue '%s'", userID, username, tableID)
 
@@ -86,16 +149,11 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 		// Here we use LPop with count for simplicity)
 
 		// Check length first
-		length, err := m.Redis.LLen(ctx, queueKey).Result()
-		if err != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
+		length := m.Queue.LLen(queueKey)
 		if length >= 4 {
 			// Pop exactly 4 players
-			players, err := m.Redis.LPopCount(ctx, queueKey, 4).Result()
-			if err == nil && len(players) == 4 {
+			players := m.Queue.LPopCount(queueKey, 4)
+			if len(players) == 4 {
 				log.Printf("Matchmaker found 4 players: %v", players)
 				go m.createMatch(players, ruleset)
 			}
@@ -110,17 +168,15 @@ func (m *Matchmaker) StartPrivateTableWatcher() {
 
 	for {
 		// Find all keys starting with table:
-		keys, err := m.Redis.Keys(ctx, "table:*").Result()
-		if err == nil {
-			for _, key := range keys {
-				length, err := m.Redis.LLen(ctx, key).Result()
-				if err == nil && length >= 4 {
-					players, err := m.Redis.LPopCount(ctx, key, 4).Result()
-					if err == nil && len(players) == 4 {
-						log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
-						// For simplicity, default to hometown rules for private tables
-						go m.createMatch(players, "hometown")
-					}
+		keys := m.Queue.Keys("table:*")
+		for _, key := range keys {
+			length := m.Queue.LLen(key)
+			if length >= 4 {
+				players := m.Queue.LPopCount(key, 4)
+				if len(players) == 4 {
+					log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
+					// For simplicity, default to hometown rules for private tables
+					go m.createMatch(players, "hometown")
 				}
 			}
 		}
