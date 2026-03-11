@@ -40,3 +40,4 @@ Contains all React components, context providers, custom hooks, and utility func
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
+- The non-game route pages (`/`, `/lobby`, `/create-room`, `/table/:tableId`) now intentionally share the same emerald/glass tabletop visual language as the live game so the room-creation and waiting flow feels continuous.

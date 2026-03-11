@@ -11,6 +11,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
   - Public tool routes: `/api/v1/calc`, `/api/v1/ws`
+  - Optional SPA/static serving from `web/dist` for single-service production deploys
+  - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 
 - **auth.go** — JWT authentication handlers:
@@ -61,3 +63,4 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - The interrupt timer runs in a separate goroutine and calls `ResolveInterrupts()` directly — potential race condition to be aware of.
 - State is broadcast as raw Protobuf bytes; no per-player filtering yet (all players see full state including opponent hands).
 - `/api/v1/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
+- When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/calc` and `/create-room` work behind the Go server.

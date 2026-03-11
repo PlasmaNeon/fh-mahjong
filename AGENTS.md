@@ -171,6 +171,7 @@ Default local development split:
 Notes:
 - Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
 - `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
+- For single-service production deploys (for example root `zeabur.json`), build `web/dist` first; the Go server will serve that SPA for non-API routes when the bundle is present.
 
 ## Module
 

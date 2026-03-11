@@ -23,10 +23,12 @@ type Room struct {
 	Engine *core.Game
 	Seats  map[uint32]*Client // maps 0-3 to active WS connections
 
-	ActionQueue   chan ClientAction
-	Shutdown      chan bool
-	InterruptChan chan bool
-	interruptTmr  *time.Timer
+	ActionQueue      chan ClientAction
+	Shutdown         chan bool
+	InterruptChan    chan bool
+	TimerResolveChan chan bool // timer goroutine signals main loop to resolve interrupts
+	interruptTmr     *time.Timer
+	interruptEpoch   uint64 // incremented each interrupt cycle to prevent stale goroutines
 }
 
 // NewRoom creates a new match
@@ -39,9 +41,10 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		DB:            db,
 		Engine:        core.NewGame(matchID, ruleset),
 		Seats:         make(map[uint32]*Client),
-		ActionQueue:   make(chan ClientAction),
-		Shutdown:      make(chan bool),
-		InterruptChan: make(chan bool, 1),
+		ActionQueue:      make(chan ClientAction),
+		Shutdown:         make(chan bool),
+		InterruptChan:    make(chan bool, 1),
+		TimerResolveChan: make(chan bool, 1),
 	}
 
 	return room
@@ -85,6 +88,16 @@ func (r *Room) Start() {
 				log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
 			}
 			return
+
+		case <-r.TimerResolveChan:
+			// Timer goroutine signaled that we should resolve interrupts.
+			// All engine mutations happen here on the main goroutine, preventing races.
+			if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+				r.Engine.ResolveInterrupts()
+				resolvePayload := r.BroadcastState()
+				replayBytes = append(replayBytes, resolvePayload...)
+				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+			}
 
 		case clientAction := <-r.ActionQueue:
 			// 1. Identify which seat this client belongs to
@@ -150,28 +163,41 @@ func (r *Room) Start() {
 						if r.interruptTmr != nil {
 							r.interruptTmr.Stop()
 						}
+						// Drain any stale signal from previous cycle
+						select {
+						case <-r.InterruptChan:
+						default:
+						}
+
+						r.interruptEpoch++
+						epoch := r.interruptEpoch
+
 						// 5 seconds to decide if they want to Pong/Chi/Ron
 						r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
 
-						go func(timer *time.Timer) {
+						go func(timer *time.Timer, myEpoch uint64) {
 							select {
 							case <-timer.C:
 								// Time expired, auto-resolve
 							case <-r.InterruptChan:
 								// Someone claimed it early or everyone skipped!
 								if !timer.Stop() {
-									<-timer.C
+									select {
+									case <-timer.C:
+									default:
+									}
 								}
 							}
 
-							// Double check we are still in wait phase before forcing a resolve
-							if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-								r.Engine.ResolveInterrupts()
-								resolvePayload := r.BroadcastState()
-								replayBytes = append(replayBytes, resolvePayload...)
-								log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+							// Only signal the main loop if this goroutine's epoch is still current.
+							// Prevents stale goroutines from resolving a newer interrupt cycle.
+							if myEpoch == r.interruptEpoch {
+								select {
+								case r.TimerResolveChan <- true:
+								default:
+								}
 							}
-						}(r.interruptTmr)
+						}(r.interruptTmr, epoch)
 					}
 				}
 			}
