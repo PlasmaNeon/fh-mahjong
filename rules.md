@@ -133,7 +133,7 @@ All bonuses are additive on top of the base. Multiple bonuses can combine.
 - **Blooming Closed Kong (暗杠开花)**: 150 (Closed kong, winning by supplement tile).
 - **Budding Risky Kong (风险杠不开花)**: 100 (Filling open kong, not winning by supplement).
 - **Blooming Risky Kong (风险杠开花)**: 200 (Filling open kong, winning by supplement).
-- **Blooming Flower Kong (花杠杠开)**: 50 (Win by supplement tile of a melded flower).
+- **Blooming Flower Kong (花杠杠开)**: 50 (Reveal a flower tile, draw a replacement from the dead wall, and win (tsumo) on that replacement tile. Only applies to tsumo — cleared if the player discards instead).
 
 ### Special (No Extra Points)
 - **Heavenly Win (天胡)**: Banker wins on initial draw. Celebration only.

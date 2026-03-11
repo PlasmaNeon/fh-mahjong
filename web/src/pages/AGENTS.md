@@ -10,15 +10,21 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 - **Login.tsx** — Registration and login form. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage.
   - Includes a direct entry link to `/create-room` for private-table sharing without matchmaking.
+  - Uses the same emerald/deep-green glass styling language as the live game and pre-game table pages instead of the old plain auth card
 
 - **Lobby.tsx** — Game lobby. Shows matchmaking queue, lets players create/join rooms via runtime-configured API URLs.
+  - Restyled to match the live table theme and clearly split public matchmaking from private-room entry
 
 - **CreateRoom.tsx** — Public private-room generator page for `/create-room`:
   - Generates a random `tableId` client-side and builds a shareable `/table/:tableId` URL
   - Lets the user copy the link or open/join the generated table immediately
   - Reuses the existing private-table queue flow instead of adding a separate backend room-creation API
+  - Shares the same tabletop/glass visual language as the waiting room and game pages
 
 - **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
+  - Now renders as a pre-game table scene with seat cards, central status HUD, share-link panel, and ready-state side panel so `/table/:tableId` visually matches the live game more closely
+  - Persists the guest JWT in `sessionStorage` so a refreshed private-table page can reconnect before re-queueing
+  - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
 
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
   - Renders 4 player positions (bottom=self, right, top, left)

@@ -596,6 +596,16 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		player.DrawnTileId = nil
 		g.State.ActiveDiscard = action.Tile
 
+		// Choosing to discard means the player did not win on any dead-wall replacement tile,
+		// so all kong/flower bonus flags are now stale and must be cleared.
+		player.HasBuddingDirectKong = false
+		player.HasBloomingDirectKong = false
+		player.HasBuddingClosedKong = false
+		player.HasBloomingClosedKong = false
+		player.HasBuddingRiskyKong = false
+		player.HasBloomingRiskyKong = false
+		player.HasBloomingFlowerKong = false
+
 		// During haitei, only Ron is allowed as an interrupt (no Chii/Pon/Kan)
 		if g.State.IsHaitei {
 			anyoneCanRon := false

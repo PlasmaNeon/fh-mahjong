@@ -1,7 +1,12 @@
 package api
 
 import (
+	"log"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/models"
@@ -19,6 +24,9 @@ type Server struct {
 // NewServer initializes a new Server with all defined routes
 func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	router := gin.Default()
+	if err := router.SetTrustedProxies(loadTrustedProxies()); err != nil {
+		log.Fatalf("invalid TRUSTED_PROXIES configuration: %v", err)
+	}
 
 	// CORS middleware could be added here
 
@@ -54,6 +62,112 @@ func (s *Server) setupRoutes() {
 			protected.POST("/matchmaking/private", s.handleJoinPrivate)
 		}
 	}
+
+	s.setupFrontendRoutes()
+}
+
+func (s *Server) setupFrontendRoutes() {
+	distDir, ok := locateFrontendDist()
+	if !ok {
+		log.Printf("frontend build not found; serving API routes only")
+		return
+	}
+
+	indexPath := filepath.Join(distDir, "index.html")
+
+	s.Router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			return
+		}
+
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		requestPath := strings.TrimPrefix(path.Clean("/"+c.Request.URL.Path), "/")
+		if requestPath == "" {
+			c.File(indexPath)
+			return
+		}
+
+		candidate := filepath.Join(distDir, filepath.FromSlash(requestPath))
+		if isPathWithinBase(distDir, candidate) {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				c.File(candidate)
+				return
+			}
+		}
+
+		c.File(indexPath)
+	})
+}
+
+func loadTrustedProxies() []string {
+	raw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	proxies := make([]string, 0, len(parts))
+	for _, part := range parts {
+		proxy := strings.TrimSpace(part)
+		if proxy != "" {
+			proxies = append(proxies, proxy)
+		}
+	}
+
+	if len(proxies) == 0 {
+		return nil
+	}
+
+	return proxies
+}
+
+func locateFrontendDist() (string, bool) {
+	if configured := strings.TrimSpace(os.Getenv("WEB_DIST_DIR")); configured != "" {
+		if hasIndexHTML(configured) {
+			return configured, true
+		}
+		return configured, false
+	}
+
+	candidates := []string{
+		filepath.Join("web", "dist"),
+		filepath.Join(".", "web", "dist"),
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "web", "dist"),
+			filepath.Join(exeDir, "..", "web", "dist"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if hasIndexHTML(candidate) {
+			return candidate, true
+		}
+	}
+
+	return filepath.Join("web", "dist"), false
+}
+
+func hasIndexHTML(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "index.html"))
+	return err == nil && !info.IsDir()
+}
+
+func isPathWithinBase(base, target string) bool {
+	relative, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // handleJoinQueue lets an authenticated user queue up for a game
