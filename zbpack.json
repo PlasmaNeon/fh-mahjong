@@ -1,4 +1,0 @@
-{
-  "build_command": "npm ci --prefix web && npm run build --prefix web && go build -o server ./cmd/server",
-  "start_command": "./server"
-}
