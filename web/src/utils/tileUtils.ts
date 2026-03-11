@@ -7,7 +7,7 @@ const flowerNameMap = ['', 'Spring', 'Summer', 'Autumn', 'Winter', 'Plum', 'Orch
 // Helper to get SVG filename for a tile
 export const getTileSvgName = (tile: game.ITile | { suit: number, value: number }) => {
     if (tile.suit === game.Suit.SUIT_FLOWER) {
-        return flowerSvgMap[tile.value] || 'Blank.svg';
+        return flowerSvgMap[tile.value] || 'back.svg';
     }
     let suitChar = '';
     switch (tile.suit) {
@@ -15,7 +15,7 @@ export const getTileSvgName = (tile: game.ITile | { suit: number, value: number 
         case game.Suit.SUIT_PIN: suitChar = 'p'; break;
         case game.Suit.SUIT_SOU: suitChar = 's'; break;
         case game.Suit.SUIT_JIHAI: suitChar = 'z'; break;
-        default: return 'Blank.svg';
+        default: return 'back.svg';
     }
     return `${tile.value}${suitChar}.svg`;
 };
