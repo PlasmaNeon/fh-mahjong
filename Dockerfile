@@ -4,7 +4,7 @@ WORKDIR /app/web
 
 # Install dependencies and build
 COPY web/package.json ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 COPY web/ ./
 RUN npm run build
 
