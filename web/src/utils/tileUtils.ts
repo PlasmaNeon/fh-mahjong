@@ -2,6 +2,27 @@
 import { game } from '../proto/game';
 
 const flowerSvgMap = ['', 'chun.svg', 'xia.svg', 'qiu.svg', 'dong.svg', 'mei.svg', 'lan.svg', 'ju.svg', 'zhu.svg'];
+
+// Preload all tile SVGs into browser cache so they render instantly
+let _preloaded = false;
+export const preloadAllTileSvgs = () => {
+    if (_preloaded) return;
+    _preloaded = true;
+    const svgs: string[] = ['Front.svg', 'back.svg'];
+    // Man, Pin, Sou: 0-9
+    for (const suit of ['m', 'p', 's']) {
+        for (let v = 0; v <= 9; v++) svgs.push(`${v}${suit}.svg`);
+    }
+    // Jihai: 1z-7z
+    for (let v = 1; v <= 7; v++) svgs.push(`${v}z.svg`);
+    // Flowers
+    for (let i = 1; i < flowerSvgMap.length; i++) svgs.push(flowerSvgMap[i]);
+
+    for (const svg of svgs) {
+        const img = new Image();
+        img.src = `/Regular_shortnames/${svg}`;
+    }
+};
 const flowerNameMap = ['', 'Spring', 'Summer', 'Autumn', 'Winter', 'Plum', 'Orchid', 'Chrysanthemum', 'Bamboo'];
 
 // Helper to get SVG filename for a tile

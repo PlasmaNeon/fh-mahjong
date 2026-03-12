@@ -247,12 +247,6 @@ function CalcTile({
       title={getTileName(tile)}
     >
       <img
-        src="/Regular_shortnames/Front.svg"
-        alt=""
-        draggable="false"
-        style={{ width: '100%', height: '100%', display: 'block', borderRadius: '4px', position: 'absolute', top: 0, left: 0, zIndex: 1 }}
-      />
-      <img
         src={`/Regular_shortnames/${svgName}`}
         alt={getTileName(tile)}
         draggable="false"
