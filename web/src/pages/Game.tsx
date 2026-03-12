@@ -1,12 +1,41 @@
 // @ts-nocheck
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, memo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { game } from '../proto/game';
 import { motion } from 'framer-motion';
 
-import { getTileSvgName, getSuitOrder, getTileName } from '../utils/tileUtils';
+import { getTileSvgName, getSuitOrder, getTileName, preloadAllTileSvgs } from '../utils/tileUtils';
+
+// Memoized tile component — defined outside Game to avoid re-creation on every render
+const TileComponent = memo(({ tile, isInteractive = false, size = 'normal', noGlow = false, isWild = false, onDiscard }: {
+    tile: game.ITile, isInteractive?: boolean, size?: 'normal' | 'small', noGlow?: boolean, isWild?: boolean, onDiscard?: (tile: game.ITile) => void
+}) => {
+    const svgName = getTileSvgName(tile);
+
+    return (
+        <div
+            className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${isInteractive ? 'interactive' : ''} ${size === 'small' ? 'small' : ''}`}
+            onClick={() => isInteractive && onDiscard?.(tile)}
+            style={{
+                padding: 0,
+                border: 'none',
+                backgroundColor: 'transparent',
+                boxShadow: (isWild && !noGlow) ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
+                position: 'relative'
+            }}
+        >
+            <img
+                src={`/Regular_shortnames/${svgName}`}
+                alt={getTileName(tile)}
+                style={{ width: '85%', height: '85%', display: 'block', position: 'absolute', top: '7.5%', left: '7.5%', zIndex: 2 }}
+                draggable="false"
+            />
+        </div>
+    );
+});
+
 export default function Game() {
     const { matchId } = useParams();
     const navigate = useNavigate();
@@ -64,6 +93,20 @@ export default function Game() {
     const rawValidActions: any[] = myPlayer?.validActions || [];
     const pendingFlowerReveal = rawValidActions.find((action: any) => action.type === game.ActionType.ACTION_FLOWER_REVEAL) || null;
     const validActions = rawValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_FLOWER_REVEAL);
+
+    // Debug: log discard conditions each state update
+    console.log('[Discard Debug]', {
+        mySeatId,
+        activePlayer: gameState.activePlayer,
+        phase: gameState.phase,
+        rawActionTypes: rawValidActions.map((a: any) => a.type),
+        filteredActionTypes: validActions.map((a: any) => a.type),
+        ACTION_DISCARD_VALUE: game.ActionType.ACTION_DISCARD,
+        PHASE_PLAYER_TURN_VALUE: game.GamePhase.PHASE_PLAYER_TURN,
+        isMyTurn: gameState.activePlayer === mySeatId,
+        isCorrectPhase: gameState.phase === 2,
+        hasDiscardAction: validActions.some((a: any) => a.type === game.ActionType.ACTION_DISCARD),
+    });
     const callableActionTypes = new Set([
         game.ActionType.ACTION_CHII,
         game.ActionType.ACTION_PON,
@@ -138,39 +181,21 @@ export default function Game() {
         socket.send(buffer);
     };
 
-    // Removed duplicated helpers (now imported from tileUtils)
+    // Preload all tile SVGs on first mount so images are instant
+    useEffect(() => { preloadAllTileSvgs(); }, []);
 
-    // Render helper for tiles
-    const TileComponent = ({ tile, isInteractive = false, size = 'normal', noGlow = false }: { tile: game.ITile, isInteractive?: boolean, size?: 'normal' | 'small', noGlow?: boolean }) => {
-        const isWild = gameState.wildTiles.some((w: any) => w.suit === tile.suit && w.value === tile.value);
-        const svgName = getTileSvgName(tile);
+    // Stable callback for discarding (passed to memoized TileComponent)
+    const onDiscard = useCallback((tile: game.ITile) => {
+        console.log('[Discard] Clicked tile:', tile);
+        handleAction(game.ActionType.ACTION_DISCARD, tile);
+    }, [socket]);
 
-        return (
-            <div
-                className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${isInteractive ? 'interactive' : ''} ${size === 'small' ? 'small' : ''}`}
-                onClick={() => isInteractive && handleAction(game.ActionType.ACTION_DISCARD, tile)}
-                style={{
-                    padding: 0,
-                    border: 'none',
-                    backgroundColor: 'transparent',
-                    boxShadow: (isWild && !noGlow) ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
-                    position: 'relative'
-                }}
-            >
-                <img
-                    src={`/Regular_shortnames/Front.svg`}
-                    style={{ width: '100%', height: '100%', display: 'block', borderRadius: '4px', position: 'absolute', top: 0, left: 0, zIndex: 1 }}
-                    draggable="false"
-                />
-                <img
-                    src={`/Regular_shortnames/${svgName}`}
-                    alt={getTileName(tile)}
-                    style={{ width: '85%', height: '85%', display: 'block', position: 'absolute', top: '7.5%', left: '7.5%', zIndex: 2 }}
-                    draggable="false"
-                />
-            </div>
-        );
-    };
+    // Check if a tile is wild (memoized per gameState.wildTiles)
+    const wildTileSet = useRef(new Set<string>());
+    wildTileSet.current = new Set(
+        (gameState.wildTiles || []).map((w: any) => `${w.suit}-${w.value}`)
+    );
+    const isWildTile = (tile: game.ITile) => wildTileSet.current.has(`${tile.suit}-${tile.value}`);
 
     const getActionMeta = (action: any) => {
         if (action.type === game.ActionType.ACTION_CHII) {
@@ -270,7 +295,7 @@ export default function Game() {
                                         {action.meldTiles && action.meldTiles.length > 0 && (
                                             <div className="table-action-preview">
                                                 {action.meldTiles.map((mt: any, mtIdx: number) => (
-                                                    <TileComponent key={mtIdx} tile={mt} size="small" />
+                                                    <TileComponent key={mtIdx} tile={mt} size="small" isWild={isWildTile(mt)} />
                                                 ))}
                                             </div>
                                         )}
@@ -347,7 +372,7 @@ export default function Game() {
                                             }}
                                             className={`discard-pool-tile ${isCallableDiscard ? 'discard-pool-tile-callable' : ''} pov-${posStr} small`}
                                         >
-                                            <TileComponent tile={t} size="small" noGlow={isCallableDiscard} />
+                                            <TileComponent tile={t} size="small" isWild={isWildTile(t)} noGlow={isCallableDiscard} />
                                         </motion.div>
                                     );
                                 })
@@ -423,6 +448,8 @@ export default function Game() {
                                                             <TileComponent
                                                                 tile={t}
                                                                 isInteractive={canDiscard}
+                                                                isWild={isWildTile(t)}
+                                                                onDiscard={onDiscard}
                                                                 size={isMe ? 'normal' : 'small'}
                                                             />
                                                         </motion.div>
@@ -465,7 +492,7 @@ export default function Game() {
                                                     const isStolen = t.id === m.calledTileId;
                                                     return (
                                                         <div key={tIdx} className={`pov-${posStr} small ${isStolen ? 'stolen-tile' : ''}`}>
-                                                            <TileComponent tile={t} size="small" />
+                                                            <TileComponent tile={t} size="small" isWild={isWildTile(t)} />
                                                         </div>
                                                     );
                                                 })}
@@ -477,7 +504,7 @@ export default function Game() {
                                     <div className={`flowers-container flowers-container-${posStr}`}>
                                         {p.flowerMelds.map((t: any, fi: number) => (
                                             <div key={`f-${fi}`} className={`pov-${posStr} small`}>
-                                                <TileComponent tile={t} size="small" />
+                                                <TileComponent tile={t} size="small" isWild={isWildTile(t)} />
                                             </div>
                                         ))}
                                     </div>
@@ -536,12 +563,12 @@ export default function Game() {
                                                 <div className="round-result-closed-hand">
                                                     {closedTiles.map((t: any, i: number) => (
                                                         <div key={`h-${i}`} className="pov-bottom small">
-                                                            <TileComponent tile={t} size="small" />
+                                                            <TileComponent tile={t} size="small" isWild={isWildTile(t)} />
                                                         </div>
                                                     ))}
                                                     {winTile && (
                                                         <div className="pov-bottom small round-result-win-tile">
-                                                            <TileComponent tile={winTile} size="small" />
+                                                            <TileComponent tile={winTile} size="small" isWild={isWildTile(winTile)} />
                                                         </div>
                                                     )}
                                                 </div>
@@ -565,7 +592,7 @@ export default function Game() {
                                                                 const isStolen = t.id === m.calledTileId;
                                                                 return (
                                                                     <div key={tIdx} className={`pov-bottom small ${isStolen ? 'stolen-tile' : ''}`}>
-                                                                        <TileComponent tile={t} size="small" />
+                                                                        <TileComponent tile={t} size="small" isWild={isWildTile(t)} />
                                                                     </div>
                                                                 );
                                                             })}
@@ -583,7 +610,7 @@ export default function Game() {
                                                 <div className="round-result-melds-divider">
                                                     {winnerFlowers.map((t: any, fi: number) => (
                                                         <div key={`fl-${fi}`} className="pov-bottom small">
-                                                            <TileComponent tile={t} size="small" />
+                                                            <TileComponent tile={t} size="small" isWild={isWildTile(t)} />
                                                         </div>
                                                     ))}
                                                 </div>
