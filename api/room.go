@@ -256,6 +256,7 @@ func (r *Room) BroadcastState() []byte {
 						fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
 						p.DrawnTileId = &fakeID
 					}
+					p.Shanten = 0
 				}
 			}
 			payload, _ = proto.Marshal(redactedState)
@@ -277,6 +278,15 @@ func (r *Room) BroadcastState() []byte {
 func (r *Room) SendStateToClient(client *Client) {
 	masterState := r.Engine.State
 	isProd := os.Getenv("ZEABUR") != ""
+
+	// Compute shanten for each player
+	for _, p := range masterState.Players {
+		p.Shanten = int32(shanten.CalculateFromTiles(
+			p.ClosedHand,
+			len(p.OpenMelds),
+			masterState.WildTiles,
+		))
+	}
 
 	var payload []byte
 	var err error
@@ -309,6 +319,7 @@ func (r *Room) SendStateToClient(client *Client) {
 						fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
 						p.DrawnTileId = &fakeID
 					}
+					p.Shanten = 0
 				}
 			}
 		}

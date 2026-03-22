@@ -1,9 +1,15 @@
 package shanten
 
-import pb "github.com/plasma/fh-mahjong/proto"
+import (
+	"sync"
 
-func init() {
-	generateTables()
+	pb "github.com/plasma/fh-mahjong/proto"
+)
+
+var once sync.Once
+
+func ensureTables() {
+	once.Do(generateTables)
 }
 
 func min8(a, b uint8) uint8 {
@@ -56,6 +62,7 @@ func calcStandard(counts [34]int, m int) int {
 // numOpenMelds: number of open melds (0-4).
 // Returns -1 for complete hand, 0 for tenpai, 1+ for iishanten etc.
 func Calculate(counts [34]int, numWilds int, numOpenMelds int) int {
+	ensureTables()
 	m := maxMelds - numOpenMelds
 
 	// Standard shanten
@@ -232,6 +239,7 @@ func tileToIndex(t *pb.Tile) int {
 
 // CalculateFromTiles is the high-level API for game integration.
 func CalculateFromTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) int {
+	ensureTables()
 	wildSet := make(map[uint32]bool)
 	for _, w := range wildTiles {
 		wildSet[uint32(w.Suit)*100+w.Value] = true

@@ -24,6 +24,7 @@ func TestHash(t *testing.T) {
 }
 
 func TestTableGeneration(t *testing.T) {
+	ensureTables()
 	if len(suitTable) != 1953125 {
 		t.Fatalf("suitTable size = %d, want 1953125", len(suitTable))
 	}
