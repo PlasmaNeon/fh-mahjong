@@ -403,8 +403,10 @@ export function buildCalcRequestPayload(args: {
   seatWind: number
   prevailingWind: number
   isTsumo: boolean
+  hasBloomingFlowerKong?: boolean
 }): CalcRequestPayload {
   const kongFlags = aggregateKongFlags(args.openMelds)
+  kongFlags.hasBloomingFlowerKong = args.hasBloomingFlowerKong ?? false
 
   return {
     closedHand: args.closedHand.map(toTileValue),
@@ -500,6 +502,8 @@ export function getMeldLabel(type: ActionType): string {
 
 export function getDirectionLabel(direction: MeldDirection): string {
   switch (direction) {
+    case MeldDirection.MELD_DIRECTION_UNKNOWN:
+      return 'Self'
     case MeldDirection.MELD_DIRECTION_RIGHT:
       return 'Right'
     case MeldDirection.MELD_DIRECTION_ACROSS:

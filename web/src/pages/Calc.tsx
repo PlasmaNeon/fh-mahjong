@@ -90,6 +90,8 @@ const UI_TEXT = {
     winType: 'Win type',
     tsumo: 'Tsumo',
     ron: 'Ron',
+    flowerKong: 'Win by revealing a flower',
+    flowerKongHelp: 'Check if the winning tile was drawn as a replacement after revealing a flower tile.',
     seatWind: 'Seat wind',
     prevailingWind: 'Prevailing wind',
     flowerMelds: 'Flower Melds',
@@ -158,6 +160,8 @@ const UI_TEXT = {
     winType: '和牌方式',
     tsumo: '自摸',
     ron: '点炮',
+    flowerKong: '补花自摸（花杠杠开）',
+    flowerKongHelp: '勾选：因补花摸到的牌自摸和牌。',
     seatWind: '门风',
     prevailingWind: '圈风',
     flowerMelds: '花牌',
@@ -192,7 +196,6 @@ const KONG_FLAG_OPTIONS: Array<{ key: keyof CalcKongFlags; label: string }> = [
   { key: 'hasBloomingClosedKong', label: 'Blooming Closed Kong' },
   { key: 'hasBuddingRiskyKong', label: 'Budding Risky Kong' },
   { key: 'hasBloomingRiskyKong', label: 'Blooming Risky Kong' },
-  { key: 'hasBloomingFlowerKong', label: 'Blooming Flower Kong' },
 ]
 
 const MELD_TYPE_OPTIONS = [
@@ -202,6 +205,7 @@ const MELD_TYPE_OPTIONS = [
 ]
 
 const MELD_DIRECTION_OPTIONS = [
+  { value: MeldDirection.MELD_DIRECTION_UNKNOWN, label: 'Self' },
   { value: MeldDirection.MELD_DIRECTION_RIGHT, label: 'Right' },
   { value: MeldDirection.MELD_DIRECTION_ACROSS, label: 'Across' },
   { value: MeldDirection.MELD_DIRECTION_LEFT, label: 'Left' },
@@ -358,6 +362,8 @@ function getDirectionLabelForLang(direction: MeldDirection, lang: Lang): string 
   }
 
   switch (label) {
+    case 'Self':
+      return '自家'
     case 'Right':
       return '右家'
     case 'Across':
@@ -428,6 +434,7 @@ export default function Calc() {
   const [openMelds, setOpenMelds] = useState<CalcMeldDraft[]>([])
   const [flowerMelds, setFlowerMelds] = useState<number[]>([])
   const [isTsumo, setIsTsumo] = useState(true)
+  const [hasBloomingFlowerKong, setHasBloomingFlowerKong] = useState(false)
   const [seatWind, setSeatWind] = useState(1)
   const [prevailingWind, setPrevailingWind] = useState(1)
   const [activeMeldId, setActiveMeldId] = useState<string | null>(null)
@@ -645,9 +652,11 @@ export default function Calc() {
           return meld
         }
 
+        const isClosedKong = value === 'hasBuddingClosedKong' || value === 'hasBloomingClosedKong'
         return {
           ...meld,
           kongContext: value,
+          calledDirection: isClosedKong ? MeldDirection.MELD_DIRECTION_UNKNOWN : meld.calledDirection,
         }
       }),
     )
@@ -692,6 +701,7 @@ export default function Calc() {
       seatWind,
       prevailingWind,
       isTsumo,
+      hasBloomingFlowerKong,
     })
 
     setIsSubmitting(true)
@@ -990,8 +1000,8 @@ export default function Calc() {
                             <select
                               value={meld.calledDirection}
                               onChange={(event) => updateMeldDirection(meld.id, Number(event.target.value) as MeldDirection)}
-                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
-                              disabled={meld.type === ActionType.ACTION_CHII}
+                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400 disabled:opacity-40"
+                              disabled={meld.type === ActionType.ACTION_CHII || (meld.type === ActionType.ACTION_KAN && (meld.kongContext === 'hasBuddingClosedKong' || meld.kongContext === 'hasBloomingClosedKong'))}
                             >
                               {MELD_DIRECTION_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1114,6 +1124,19 @@ export default function Calc() {
                     </select>
                   </label>
                 </div>
+
+                <label className="flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-slate-200">
+                  <div>
+                    <span>{text.flowerKong}</span>
+                    <p className="text-xs text-slate-400 mt-1">{text.flowerKongHelp}</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={hasBloomingFlowerKong}
+                    onChange={(event) => { setHasBloomingFlowerKong(event.target.checked); clearServerState() }}
+                    className="h-5 w-5 rounded border-slate-600 bg-slate-900 text-emerald-400 accent-emerald-400"
+                  />
+                </label>
               </div>
             </div>
 
