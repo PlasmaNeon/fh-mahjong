@@ -55,10 +55,155 @@ func calcStandard(counts [34]int, m int) int {
 // Returns -1 for complete hand, 0 for tenpai, 1+ for iishanten etc.
 func Calculate(counts [34]int, numWilds int, numOpenMelds int) int {
 	m := maxMelds - numOpenMelds
+
+	// Standard shanten
 	tilesToAdd := calcStandard(counts, m)
-	sht := tilesToAdd - 1 - numWilds
+	best := tilesToAdd - 1 - numWilds
+	if best < -1 {
+		best = -1
+	}
+
+	// Seven pairs (only with no open melds)
+	if numOpenMelds == 0 {
+		sp := calcSevenPairsWithWilds(counts, numWilds)
+		if sp < best {
+			best = sp
+		}
+	}
+
+	// Independence (only with no open melds)
+	if numOpenMelds == 0 {
+		ind := calcIndependenceWithWilds(counts, numWilds)
+		if ind < best {
+			best = ind
+		}
+	}
+
+	return best
+}
+
+// --- Seven Pairs ---
+
+func calcSevenPairs(counts [34]int) int {
+	pair := 0
+	kind := 0
+	for i := 0; i < 34; i++ {
+		if counts[i] > 0 {
+			kind++
+			if counts[i] >= 2 {
+				pair++
+			}
+		}
+	}
+	sht := 7 - pair
+	if kind < 7 {
+		sht += 7 - kind
+	}
+	return sht - 1
+}
+
+func calcSevenPairsWithWilds(counts [34]int, numWilds int) int {
+	if numWilds == 0 {
+		return calcSevenPairs(counts)
+	}
+	best := 14
+	assignWilds(counts[:], numWilds, 0, func(c []int) {
+		var arr [34]int
+		copy(arr[:], c)
+		sht := calcSevenPairs(arr)
+		if sht < best {
+			best = sht
+		}
+	})
+	if best < -1 {
+		best = -1
+	}
+	return best
+}
+
+func assignWilds(counts []int, w int, startType int, fn func([]int)) {
+	if w == 0 {
+		fn(counts)
+		return
+	}
+	for t := startType; t < 34; t++ {
+		if counts[t] >= maxCopies {
+			continue
+		}
+		counts[t]++
+		assignWilds(counts, w-1, t, fn)
+		counts[t]--
+	}
+}
+
+// --- Independence (大大胡) ---
+
+func calcIndependence(counts [34]int) int {
+	totalOverlap := 0
+
+	for suit := 0; suit < 3; suit++ {
+		base := suit * 9
+		var has [9]int
+		for i := 0; i < 9; i++ {
+			if counts[base+i] > 0 {
+				has[i] = 1
+			}
+		}
+		totalOverlap += maxIndependentSetOverlapDist2(has[:])
+	}
+
+	for i := 27; i < 34; i++ {
+		if counts[i] > 0 {
+			totalOverlap++
+		}
+	}
+
+	sht := 14 - totalOverlap - 1
+	if totalOverlap > 14 {
+		sht = -1
+	}
 	if sht < -1 {
 		sht = -1
 	}
 	return sht
+}
+
+// maxIndependentSetOverlapDist2: max-weight independent set on 9-node path
+// with distance-2 adjacency (i+1 and i+2 both forbidden).
+func maxIndependentSetOverlapDist2(has []int) int {
+	n := len(has)
+	if n == 0 {
+		return 0
+	}
+	dp := make([]int, n)
+	dp[0] = has[0]
+	if n > 1 {
+		dp[1] = max(has[0], has[1])
+	}
+	if n > 2 {
+		dp[2] = max(dp[1], has[2])
+	}
+	for i := 3; i < n; i++ {
+		dp[i] = max(dp[i-1], has[i]+dp[i-3])
+	}
+	return dp[n-1]
+}
+
+func calcIndependenceWithWilds(counts [34]int, numWilds int) int {
+	if numWilds == 0 {
+		return calcIndependence(counts)
+	}
+	best := 14
+	assignWilds(counts[:], numWilds, 0, func(c []int) {
+		var arr [34]int
+		copy(arr[:], c)
+		sht := calcIndependence(arr)
+		if sht < best {
+			best = sht
+		}
+	})
+	if best < -1 {
+		best = -1
+	}
+	return best
 }
