@@ -253,3 +253,68 @@ func TestCalculateFromTiles(t *testing.T) {
 		t.Errorf("complete hand shanten = %d, want -1", got)
 	}
 }
+
+func TestEdgeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		counts [34]int
+		wilds  int
+		melds  int
+		want   int
+	}{
+		{
+			name:   "pair only with 4 open melds",
+			counts: func() [34]int { var c [34]int; c[0] = 2; return c }(),
+			melds:  4,
+			want:   -1,
+		},
+		{
+			name: "3 wilds + 11 normal tiles forming 3 melds + partial",
+			counts: func() [34]int {
+				var c [34]int
+				for i := 0; i < 9; i++ {
+					c[i] = 1
+				}
+				c[9] = 1; c[10] = 1
+				return c
+			}(),
+			wilds: 3,
+			want:  -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Calculate(tt.counts, tt.wilds, tt.melds)
+			if got != tt.want {
+				t.Errorf("Calculate() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func BenchmarkCalculate(b *testing.B) {
+	var counts [34]int
+	for i := 0; i < 9; i++ {
+		counts[i] = 1
+	}
+	counts[9] = 1; counts[10] = 1; counts[11] = 1; counts[13] = 2
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Calculate(counts, 0, 0)
+	}
+}
+
+func BenchmarkCalculateWithWilds(b *testing.B) {
+	var counts [34]int
+	for i := 0; i < 9; i++ {
+		counts[i] = 1
+	}
+	counts[9] = 1; counts[10] = 1
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Calculate(counts, 3, 0)
+	}
+}
