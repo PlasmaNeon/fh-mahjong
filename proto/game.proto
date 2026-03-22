@@ -132,6 +132,9 @@ message PlayerState {
   // The specific ID of the tile that was just drawn (used to render the gap on frontend).
   // optional prevents Javascript dropping the number 0 (since Tile ID 0 = 1m).
   optional int32 drawn_tile_id = 17;
+
+  // Shanten number for this player's closed hand (-1 = complete, 0 = tenpai, 1+ = further away)
+  int32 shanten = 18;
 }
 
 enum GamePhase {

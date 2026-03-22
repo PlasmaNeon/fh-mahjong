@@ -11,6 +11,7 @@ import (
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/rules/shanten"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
@@ -220,6 +221,15 @@ func (r *Room) Start() {
 func (r *Room) BroadcastState() []byte {
 	masterState := r.Engine.State
 	isProd := os.Getenv("ZEABUR") != ""
+
+	// Compute shanten for each player
+	for _, p := range masterState.Players {
+		p.Shanten = int32(shanten.CalculateFromTiles(
+			p.ClosedHand,
+			len(p.OpenMelds),
+			masterState.WildTiles,
+		))
+	}
 
 	rawPayload, err := proto.Marshal(masterState)
 	if err != nil {

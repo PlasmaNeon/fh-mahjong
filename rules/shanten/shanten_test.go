@@ -1,6 +1,10 @@
 package shanten
 
-import "testing"
+import (
+	"testing"
+
+	pb "github.com/plasma/fh-mahjong/proto"
+)
 
 func TestHash(t *testing.T) {
 	counts := []int{1, 0, 0, 0, 0, 0, 0, 0, 0}
@@ -228,5 +232,24 @@ func TestWildTileShanten(t *testing.T) {
 				t.Errorf("Calculate() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCalculateFromTiles(t *testing.T) {
+	// Complete hand: 123m 456m 789m 123p 55p
+	// Proto: SUIT_MAN=3, SUIT_PIN=2
+	hand := make([]*pb.Tile, 0, 14)
+	for v := uint32(1); v <= 9; v++ {
+		hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_MAN, Value: v, Id: v})
+	}
+	hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: 1, Id: 10})
+	hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: 2, Id: 11})
+	hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: 3, Id: 12})
+	hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: 5, Id: 13})
+	hand = append(hand, &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: 5, Id: 14})
+
+	got := CalculateFromTiles(hand, 0, nil)
+	if got != -1 {
+		t.Errorf("complete hand shanten = %d, want -1", got)
 	}
 }

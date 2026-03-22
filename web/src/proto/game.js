@@ -1251,6 +1251,7 @@ export const game = $root.game = (() => {
          * @property {boolean|undefined} [hasBloomingFlowerKong] PlayerState hasBloomingFlowerKong
          * @property {Array.<game.IPlayerAction>|undefined} [validActions] PlayerState validActions
          * @property {number|null|undefined} [drawnTileId] PlayerState drawnTileId
+         * @property {number|undefined} [shanten] PlayerState shanten
          */
 
         /**
@@ -1409,6 +1410,14 @@ export const game = $root.game = (() => {
          */
         PlayerState.prototype.drawnTileId = null;
 
+        /**
+         * PlayerState shanten.
+         * @member {number} shanten
+         * @memberof game.PlayerState
+         * @instance
+         */
+        PlayerState.prototype.shanten = 0;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
@@ -1481,6 +1490,8 @@ export const game = $root.game = (() => {
                     $root.game.PlayerAction.encode(message.validActions[i], writer.uint32(/* id 16, wireType 2 =*/130).fork()).ldelim();
             if (message.drawnTileId != null && Object.hasOwnProperty.call(message, "drawnTileId"))
                 writer.uint32(/* id 17, wireType 0 =*/136).int32(message.drawnTileId);
+            if (message.shanten != null && Object.hasOwnProperty.call(message, "shanten"))
+                writer.uint32(/* id 18, wireType 0 =*/144).int32(message.shanten);
             return writer;
         };
 
@@ -1593,6 +1604,10 @@ export const game = $root.game = (() => {
                     }
                 case 17: {
                         message.drawnTileId = reader.int32();
+                        break;
+                    }
+                case 18: {
+                        message.shanten = reader.int32();
                         break;
                     }
                 default:
@@ -1714,6 +1729,9 @@ export const game = $root.game = (() => {
                 if (!$util.isInteger(message.drawnTileId))
                     return "drawnTileId: integer expected";
             }
+            if (message.shanten != null && message.hasOwnProperty("shanten"))
+                if (!$util.isInteger(message.shanten))
+                    return "shanten: integer expected";
             return null;
         };
 
@@ -1803,6 +1821,8 @@ export const game = $root.game = (() => {
             }
             if (object.drawnTileId != null)
                 message.drawnTileId = object.drawnTileId | 0;
+            if (object.shanten != null)
+                message.shanten = object.shanten | 0;
             return message;
         };
 
@@ -1838,6 +1858,7 @@ export const game = $root.game = (() => {
                 object.hasBuddingRiskyKong = false;
                 object.hasBloomingRiskyKong = false;
                 object.hasBloomingFlowerKong = false;
+                object.shanten = 0;
             }
             if (message.seat != null && message.hasOwnProperty("seat"))
                 object.seat = message.seat;
@@ -1891,6 +1912,8 @@ export const game = $root.game = (() => {
                 if (options.oneofs)
                     object._drawnTileId = "drawnTileId";
             }
+            if (message.shanten != null && message.hasOwnProperty("shanten"))
+                object.shanten = message.shanten;
             return object;
         };
 
