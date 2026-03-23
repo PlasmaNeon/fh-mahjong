@@ -448,6 +448,9 @@ export namespace game {
 
         /** PlayerState drawnTileId */
         drawnTileId?: (number|null|undefined);
+
+        /** PlayerState shanten */
+        shanten?: (number|undefined);
     }
 
     /** Represents a PlayerState. */
@@ -509,6 +512,9 @@ export namespace game {
 
         /** PlayerState drawnTileId. */
         public drawnTileId: (number|null);
+
+        /** PlayerState shanten. */
+        public shanten: number;
 
         /**
          * Creates a new PlayerState instance using the specified properties.

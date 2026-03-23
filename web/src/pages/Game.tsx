@@ -466,6 +466,13 @@ export default function Game() {
                                     ))
                                 )}
                                 </div>
+                                {isMe && gameState.phase === 2 && (
+                                    <div className="shanten-indicator">
+                                        {p.shanten === -1 ? '和了' :
+                                         p.shanten === 0 ? '听牌' :
+                                         `向听: ${p.shanten}`}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Open Melds Area */}
