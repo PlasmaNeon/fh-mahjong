@@ -30,6 +30,7 @@ type Match struct {
 	Ruleset   string `gorm:"size:100;not null;default:'hometown'" json:"ruleset"`
 	WallSeed  string `gorm:"type:text" json:"wallSeed,omitempty"` // For verifying replays
 	ReplayURL string `gorm:"type:text" json:"replayUrl,omitempty"`
+	PaipuJSON string `gorm:"type:text" json:"paipuJson,omitempty"`
 
 	// Relationships
 	Players []MatchPlayer `gorm:"foreignKey:MatchID" json:"players"`
