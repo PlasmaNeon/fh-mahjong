@@ -26,4 +26,4 @@ web/node_modules/.bin/pbts -o web/src/proto/game.d.ts web/src/proto/game.js
 
 - `--null-semantics` flag is critical: ensures `optional` proto3 fields decode as `null` when unset (not default values). This matters for fields like `drawn_tile_id` where `0` is a valid tile ID.
 - Imported as `import { game } from '../proto/game.js'` throughout the frontend.
-- Message classes: `game.GameState`, `game.PlayerAction`, `game.Tile`, `game.Meld`, etc.
+- Message classes: `game.GameState`, `game.PlayerAction`, `game.Tile`, `game.Meld`, plus RL bridge messages such as `game.TrajectorySample` with separate `rewards` and `terminalRewards` payloads.

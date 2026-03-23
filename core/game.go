@@ -28,8 +28,9 @@ type Game struct {
 
 	// Interruption queue for actions that happen asynchronously (like multiple players trying to Pong/Ron).
 	// We wait a few seconds before resolving priority.
-	interruptQueue map[uint32]*pb.PlayerAction
-	interruptTimer *time.Timer
+	interruptQueue   map[uint32]*pb.PlayerAction
+	interruptTimer   *time.Timer
+	wallSeedOverride *[MT19937SeedSize]uint32
 }
 
 // NewGame initializes a brand new game using the provided Ruleset plugin.
@@ -66,6 +67,19 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 	return g
 }
 
+// SetWallSeed injects a deterministic MT19937 seed for the next deal/start.
+func (g *Game) SetWallSeed(seed [MT19937SeedSize]uint32) {
+	copySeed := seed
+	g.wallSeedOverride = &copySeed
+}
+
+// InterruptQueued reports whether the seat has already submitted an interrupt
+// response in the current WAIT_DISCARDS window.
+func (g *Game) InterruptQueued(seat uint32) bool {
+	_, ok := g.interruptQueue[seat]
+	return ok
+}
+
 // Start begins the match. It shuffles the wall and deals tiles to players.
 func (g *Game) Start() error {
 	if g.State.Phase != pb.GamePhase_PHASE_INIT {
@@ -95,17 +109,24 @@ func (g *Game) dealTiles() uint32 {
 	wall := g.Rules.GetInitialWall()
 
 	// Shuffle using Tenhou's MT19937 algorithm
-	// 1. Generate a random 624-uint32 seed
-	nano := time.Now().UnixNano()
+	// 1. Generate or inject a 624-uint32 seed
 	var seed [MT19937SeedSize]uint32
-	seedBytes := make([]byte, MT19937SeedSize*4)
-	for i := 0; i < MT19937SeedSize; i++ {
-		// Just a simple mix for the initial seed state
-		seed[i] = uint32(nano ^ int64(i*192837465))
-		binary.LittleEndian.PutUint32(seedBytes[i*4:(i+1)*4], seed[i])
+	if g.wallSeedOverride != nil {
+		seed = *g.wallSeedOverride
+		g.wallSeedOverride = nil
+	} else {
+		nano := time.Now().UnixNano()
+		for i := 0; i < MT19937SeedSize; i++ {
+			// Just a simple mix for the initial seed state
+			seed[i] = uint32(nano ^ int64(i*192837465))
+		}
 	}
 
 	// Store the base64 seed for replay verification
+	seedBytes := make([]byte, MT19937SeedSize*4)
+	for i := 0; i < MT19937SeedSize; i++ {
+		binary.LittleEndian.PutUint32(seedBytes[i*4:(i+1)*4], seed[i])
+	}
 	g.State.WallSeed = base64.StdEncoding.EncodeToString(seedBytes)
 
 	mt := MTFromSeed(seed)

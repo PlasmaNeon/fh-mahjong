@@ -1158,4 +1158,1051 @@ export namespace game {
          */
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
+
+    /** Properties of an EnvConfig. */
+    interface IEnvConfig {
+
+        /** EnvConfig learningSeats */
+        learningSeats?: (number[]|undefined);
+
+        /** EnvConfig autoPlayHeuristics */
+        autoPlayHeuristics?: (boolean|undefined);
+
+        /** EnvConfig maxDecisions */
+        maxDecisions?: (number|undefined);
+    }
+
+    /** Represents an EnvConfig. */
+    class EnvConfig implements IEnvConfig {
+
+        /**
+         * Constructs a new EnvConfig.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvConfig);
+
+        /** EnvConfig learningSeats. */
+        public learningSeats: number[];
+
+        /** EnvConfig autoPlayHeuristics. */
+        public autoPlayHeuristics: boolean;
+
+        /** EnvConfig maxDecisions. */
+        public maxDecisions: number;
+
+        /**
+         * Creates a new EnvConfig instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvConfig instance
+         */
+        public static create(properties?: game.IEnvConfig): game.EnvConfig;
+
+        /**
+         * Encodes the specified EnvConfig message. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
+         * @param message EnvConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvConfig message, length delimited. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
+         * @param message EnvConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvConfig message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvConfig;
+
+        /**
+         * Decodes an EnvConfig message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvConfig;
+
+        /**
+         * Verifies an EnvConfig message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvConfig message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvConfig
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvConfig;
+
+        /**
+         * Creates a plain object from an EnvConfig message. Also converts values to other types if specified.
+         * @param message EnvConfig
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvConfig to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a SeatObservation. */
+    interface ISeatObservation {
+
+        /** SeatObservation seat */
+        seat?: (number|undefined);
+
+        /** SeatObservation planes */
+        planes?: (number[]|undefined);
+
+        /** SeatObservation planeChannels */
+        planeChannels?: (number|undefined);
+
+        /** SeatObservation planeHeight */
+        planeHeight?: (number|undefined);
+
+        /** SeatObservation planeWidth */
+        planeWidth?: (number|undefined);
+
+        /** SeatObservation scalars */
+        scalars?: (number[]|undefined);
+
+        /** SeatObservation actionMask */
+        actionMask?: (Uint8Array|undefined);
+
+        /** SeatObservation actionSpaceSize */
+        actionSpaceSize?: (number|undefined);
+
+        /** SeatObservation decisionIndex */
+        decisionIndex?: (number|Long|undefined);
+
+        /** SeatObservation phase */
+        phase?: (game.GamePhase|undefined);
+
+        /** SeatObservation activePlayer */
+        activePlayer?: (number|undefined);
+    }
+
+    /** Represents a SeatObservation. */
+    class SeatObservation implements ISeatObservation {
+
+        /**
+         * Constructs a new SeatObservation.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ISeatObservation);
+
+        /** SeatObservation seat. */
+        public seat: number;
+
+        /** SeatObservation planes. */
+        public planes: number[];
+
+        /** SeatObservation planeChannels. */
+        public planeChannels: number;
+
+        /** SeatObservation planeHeight. */
+        public planeHeight: number;
+
+        /** SeatObservation planeWidth. */
+        public planeWidth: number;
+
+        /** SeatObservation scalars. */
+        public scalars: number[];
+
+        /** SeatObservation actionMask. */
+        public actionMask: Uint8Array;
+
+        /** SeatObservation actionSpaceSize. */
+        public actionSpaceSize: number;
+
+        /** SeatObservation decisionIndex. */
+        public decisionIndex: (number|Long);
+
+        /** SeatObservation phase. */
+        public phase: game.GamePhase;
+
+        /** SeatObservation activePlayer. */
+        public activePlayer: number;
+
+        /**
+         * Creates a new SeatObservation instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns SeatObservation instance
+         */
+        public static create(properties?: game.ISeatObservation): game.SeatObservation;
+
+        /**
+         * Encodes the specified SeatObservation message. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
+         * @param message SeatObservation message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ISeatObservation, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified SeatObservation message, length delimited. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
+         * @param message SeatObservation message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ISeatObservation, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a SeatObservation message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns SeatObservation
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatObservation;
+
+        /**
+         * Decodes a SeatObservation message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns SeatObservation
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatObservation;
+
+        /**
+         * Verifies a SeatObservation message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a SeatObservation message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns SeatObservation
+         */
+        public static fromObject(object: { [k: string]: any }): game.SeatObservation;
+
+        /**
+         * Creates a plain object from a SeatObservation message. Also converts values to other types if specified.
+         * @param message SeatObservation
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.SeatObservation, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this SeatObservation to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for SeatObservation
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvResetRequest. */
+    interface IEnvResetRequest {
+
+        /** EnvResetRequest seed */
+        seed?: (number|Long|undefined);
+
+        /** EnvResetRequest config */
+        config?: (game.IEnvConfig|undefined);
+    }
+
+    /** Represents an EnvResetRequest. */
+    class EnvResetRequest implements IEnvResetRequest {
+
+        /**
+         * Constructs a new EnvResetRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvResetRequest);
+
+        /** EnvResetRequest seed. */
+        public seed: (number|Long);
+
+        /** EnvResetRequest config. */
+        public config: game.EnvConfig;
+
+        /**
+         * Creates a new EnvResetRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvResetRequest instance
+         */
+        public static create(properties?: game.IEnvResetRequest): game.EnvResetRequest;
+
+        /**
+         * Encodes the specified EnvResetRequest message. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
+         * @param message EnvResetRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvResetRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvResetRequest message, length delimited. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
+         * @param message EnvResetRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvResetRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvResetRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvResetRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetRequest;
+
+        /**
+         * Decodes an EnvResetRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvResetRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetRequest;
+
+        /**
+         * Verifies an EnvResetRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvResetRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvResetRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvResetRequest;
+
+        /**
+         * Creates a plain object from an EnvResetRequest message. Also converts values to other types if specified.
+         * @param message EnvResetRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvResetRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvResetRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvResetRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvResetResponse. */
+    interface IEnvResetResponse {
+
+        /** EnvResetResponse observation */
+        observation?: (game.ISeatObservation|undefined);
+
+        /** EnvResetResponse rewards */
+        rewards?: (number[]|undefined);
+
+        /** EnvResetResponse terminated */
+        terminated?: (boolean|undefined);
+
+        /** EnvResetResponse truncated */
+        truncated?: (boolean|undefined);
+    }
+
+    /** Represents an EnvResetResponse. */
+    class EnvResetResponse implements IEnvResetResponse {
+
+        /**
+         * Constructs a new EnvResetResponse.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvResetResponse);
+
+        /** EnvResetResponse observation. */
+        public observation: game.SeatObservation;
+
+        /** EnvResetResponse rewards. */
+        public rewards: number[];
+
+        /** EnvResetResponse terminated. */
+        public terminated: boolean;
+
+        /** EnvResetResponse truncated. */
+        public truncated: boolean;
+
+        /**
+         * Creates a new EnvResetResponse instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvResetResponse instance
+         */
+        public static create(properties?: game.IEnvResetResponse): game.EnvResetResponse;
+
+        /**
+         * Encodes the specified EnvResetResponse message. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
+         * @param message EnvResetResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvResetResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvResetResponse message, length delimited. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
+         * @param message EnvResetResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvResetResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvResetResponse message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvResetResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetResponse;
+
+        /**
+         * Decodes an EnvResetResponse message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvResetResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetResponse;
+
+        /**
+         * Verifies an EnvResetResponse message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvResetResponse message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvResetResponse
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvResetResponse;
+
+        /**
+         * Creates a plain object from an EnvResetResponse message. Also converts values to other types if specified.
+         * @param message EnvResetResponse
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvResetResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvResetResponse to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvResetResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvStepRequest. */
+    interface IEnvStepRequest {
+
+        /** EnvStepRequest actionId */
+        actionId?: (number|undefined);
+    }
+
+    /** Represents an EnvStepRequest. */
+    class EnvStepRequest implements IEnvStepRequest {
+
+        /**
+         * Constructs a new EnvStepRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvStepRequest);
+
+        /** EnvStepRequest actionId. */
+        public actionId: number;
+
+        /**
+         * Creates a new EnvStepRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvStepRequest instance
+         */
+        public static create(properties?: game.IEnvStepRequest): game.EnvStepRequest;
+
+        /**
+         * Encodes the specified EnvStepRequest message. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
+         * @param message EnvStepRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvStepRequest message, length delimited. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
+         * @param message EnvStepRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvStepRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepRequest;
+
+        /**
+         * Decodes an EnvStepRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepRequest;
+
+        /**
+         * Verifies an EnvStepRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvStepRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvStepRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvStepRequest;
+
+        /**
+         * Creates a plain object from an EnvStepRequest message. Also converts values to other types if specified.
+         * @param message EnvStepRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvStepRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvStepRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvStepRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvStepResponse. */
+    interface IEnvStepResponse {
+
+        /** EnvStepResponse observation */
+        observation?: (game.ISeatObservation|undefined);
+
+        /** EnvStepResponse rewards */
+        rewards?: (number[]|undefined);
+
+        /** EnvStepResponse terminated */
+        terminated?: (boolean|undefined);
+
+        /** EnvStepResponse truncated */
+        truncated?: (boolean|undefined);
+    }
+
+    /** Represents an EnvStepResponse. */
+    class EnvStepResponse implements IEnvStepResponse {
+
+        /**
+         * Constructs a new EnvStepResponse.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvStepResponse);
+
+        /** EnvStepResponse observation. */
+        public observation: game.SeatObservation;
+
+        /** EnvStepResponse rewards. */
+        public rewards: number[];
+
+        /** EnvStepResponse terminated. */
+        public terminated: boolean;
+
+        /** EnvStepResponse truncated. */
+        public truncated: boolean;
+
+        /**
+         * Creates a new EnvStepResponse instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvStepResponse instance
+         */
+        public static create(properties?: game.IEnvStepResponse): game.EnvStepResponse;
+
+        /**
+         * Encodes the specified EnvStepResponse message. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
+         * @param message EnvStepResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvStepResponse message, length delimited. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
+         * @param message EnvStepResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvStepResponse message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepResponse;
+
+        /**
+         * Decodes an EnvStepResponse message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepResponse;
+
+        /**
+         * Verifies an EnvStepResponse message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvStepResponse message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvStepResponse
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvStepResponse;
+
+        /**
+         * Creates a plain object from an EnvStepResponse message. Also converts values to other types if specified.
+         * @param message EnvStepResponse
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvStepResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvStepResponse to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvStepResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a TrajectoryRequest. */
+    interface ITrajectoryRequest {
+
+        /** TrajectoryRequest episodes */
+        episodes?: (number|undefined);
+
+        /** TrajectoryRequest startSeed */
+        startSeed?: (number|Long|undefined);
+
+        /** TrajectoryRequest config */
+        config?: (game.IEnvConfig|undefined);
+    }
+
+    /** Represents a TrajectoryRequest. */
+    class TrajectoryRequest implements ITrajectoryRequest {
+
+        /**
+         * Constructs a new TrajectoryRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ITrajectoryRequest);
+
+        /** TrajectoryRequest episodes. */
+        public episodes: number;
+
+        /** TrajectoryRequest startSeed. */
+        public startSeed: (number|Long);
+
+        /** TrajectoryRequest config. */
+        public config: game.EnvConfig;
+
+        /**
+         * Creates a new TrajectoryRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns TrajectoryRequest instance
+         */
+        public static create(properties?: game.ITrajectoryRequest): game.TrajectoryRequest;
+
+        /**
+         * Encodes the specified TrajectoryRequest message. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
+         * @param message TrajectoryRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ITrajectoryRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified TrajectoryRequest message, length delimited. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
+         * @param message TrajectoryRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ITrajectoryRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a TrajectoryRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns TrajectoryRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryRequest;
+
+        /**
+         * Decodes a TrajectoryRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns TrajectoryRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryRequest;
+
+        /**
+         * Verifies a TrajectoryRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a TrajectoryRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns TrajectoryRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.TrajectoryRequest;
+
+        /**
+         * Creates a plain object from a TrajectoryRequest message. Also converts values to other types if specified.
+         * @param message TrajectoryRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.TrajectoryRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this TrajectoryRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for TrajectoryRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a TrajectorySample. */
+    interface ITrajectorySample {
+
+        /** TrajectorySample observation */
+        observation?: (game.ISeatObservation|undefined);
+
+        /** TrajectorySample actionId */
+        actionId?: (number|undefined);
+
+        /** TrajectorySample rewards */
+        rewards?: (number[]|undefined);
+
+        /** TrajectorySample nextObservation */
+        nextObservation?: (game.ISeatObservation|undefined);
+
+        /** TrajectorySample terminated */
+        terminated?: (boolean|undefined);
+
+        /** TrajectorySample truncated */
+        truncated?: (boolean|undefined);
+
+        /** TrajectorySample actingSeat */
+        actingSeat?: (number|undefined);
+
+        /** TrajectorySample episodeIndex */
+        episodeIndex?: (number|Long|undefined);
+
+        /** TrajectorySample terminalRewards */
+        terminalRewards?: (number[]|undefined);
+    }
+
+    /** Represents a TrajectorySample. */
+    class TrajectorySample implements ITrajectorySample {
+
+        /**
+         * Constructs a new TrajectorySample.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ITrajectorySample);
+
+        /** TrajectorySample observation. */
+        public observation: game.SeatObservation;
+
+        /** TrajectorySample actionId. */
+        public actionId: number;
+
+        /** TrajectorySample rewards. */
+        public rewards: number[];
+
+        /** TrajectorySample nextObservation. */
+        public nextObservation: game.SeatObservation;
+
+        /** TrajectorySample terminated. */
+        public terminated: boolean;
+
+        /** TrajectorySample truncated. */
+        public truncated: boolean;
+
+        /** TrajectorySample actingSeat. */
+        public actingSeat: number;
+
+        /** TrajectorySample episodeIndex. */
+        public episodeIndex: (number|Long);
+
+        /** TrajectorySample terminalRewards. */
+        public terminalRewards: number[];
+
+        /**
+         * Creates a new TrajectorySample instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns TrajectorySample instance
+         */
+        public static create(properties?: game.ITrajectorySample): game.TrajectorySample;
+
+        /**
+         * Encodes the specified TrajectorySample message. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
+         * @param message TrajectorySample message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ITrajectorySample, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified TrajectorySample message, length delimited. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
+         * @param message TrajectorySample message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ITrajectorySample, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a TrajectorySample message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns TrajectorySample
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectorySample;
+
+        /**
+         * Decodes a TrajectorySample message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns TrajectorySample
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectorySample;
+
+        /**
+         * Verifies a TrajectorySample message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a TrajectorySample message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns TrajectorySample
+         */
+        public static fromObject(object: { [k: string]: any }): game.TrajectorySample;
+
+        /**
+         * Creates a plain object from a TrajectorySample message. Also converts values to other types if specified.
+         * @param message TrajectorySample
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.TrajectorySample, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this TrajectorySample to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for TrajectorySample
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a TrajectoryDataset. */
+    interface ITrajectoryDataset {
+
+        /** TrajectoryDataset samples */
+        samples?: (game.ITrajectorySample[]|undefined);
+    }
+
+    /** Represents a TrajectoryDataset. */
+    class TrajectoryDataset implements ITrajectoryDataset {
+
+        /**
+         * Constructs a new TrajectoryDataset.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ITrajectoryDataset);
+
+        /** TrajectoryDataset samples. */
+        public samples: game.TrajectorySample[];
+
+        /**
+         * Creates a new TrajectoryDataset instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns TrajectoryDataset instance
+         */
+        public static create(properties?: game.ITrajectoryDataset): game.TrajectoryDataset;
+
+        /**
+         * Encodes the specified TrajectoryDataset message. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
+         * @param message TrajectoryDataset message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ITrajectoryDataset, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified TrajectoryDataset message, length delimited. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
+         * @param message TrajectoryDataset message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ITrajectoryDataset, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a TrajectoryDataset message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns TrajectoryDataset
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryDataset;
+
+        /**
+         * Decodes a TrajectoryDataset message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns TrajectoryDataset
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryDataset;
+
+        /**
+         * Verifies a TrajectoryDataset message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a TrajectoryDataset message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns TrajectoryDataset
+         */
+        public static fromObject(object: { [k: string]: any }): game.TrajectoryDataset;
+
+        /**
+         * Creates a plain object from a TrajectoryDataset message. Also converts values to other types if specified.
+         * @param message TrajectoryDataset
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.TrajectoryDataset, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this TrajectoryDataset to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for TrajectoryDataset
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
 }

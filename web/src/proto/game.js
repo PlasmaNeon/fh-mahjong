@@ -3711,6 +3711,2850 @@ export const game = $root.game = (() => {
         return RoundResult;
     })();
 
+    game.EnvConfig = (function() {
+
+        /**
+         * Properties of an EnvConfig.
+         * @memberof game
+         * @interface IEnvConfig
+         * @property {Array.<number>|undefined} [learningSeats] EnvConfig learningSeats
+         * @property {boolean|undefined} [autoPlayHeuristics] EnvConfig autoPlayHeuristics
+         * @property {number|undefined} [maxDecisions] EnvConfig maxDecisions
+         */
+
+        /**
+         * Constructs a new EnvConfig.
+         * @memberof game
+         * @classdesc Represents an EnvConfig.
+         * @implements IEnvConfig
+         * @constructor
+         * @param {game.IEnvConfig=} [properties] Properties to set
+         */
+        function EnvConfig(properties) {
+            this.learningSeats = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * EnvConfig learningSeats.
+         * @member {Array.<number>} learningSeats
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.learningSeats = $util.emptyArray;
+
+        /**
+         * EnvConfig autoPlayHeuristics.
+         * @member {boolean} autoPlayHeuristics
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.autoPlayHeuristics = false;
+
+        /**
+         * EnvConfig maxDecisions.
+         * @member {number} maxDecisions
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.maxDecisions = 0;
+
+        /**
+         * Creates a new EnvConfig instance using the specified properties.
+         * @function create
+         * @memberof game.EnvConfig
+         * @static
+         * @param {game.IEnvConfig=} [properties] Properties to set
+         * @returns {game.EnvConfig} EnvConfig instance
+         */
+        EnvConfig.create = function create(properties) {
+            return new EnvConfig(properties);
+        };
+
+        /**
+         * Encodes the specified EnvConfig message. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
+         * @function encode
+         * @memberof game.EnvConfig
+         * @static
+         * @param {game.IEnvConfig} message EnvConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvConfig.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.learningSeats != null && message.learningSeats.length) {
+                writer.uint32(/* id 1, wireType 2 =*/10).fork();
+                for (let i = 0; i < message.learningSeats.length; ++i)
+                    writer.uint32(message.learningSeats[i]);
+                writer.ldelim();
+            }
+            if (message.autoPlayHeuristics != null && Object.hasOwnProperty.call(message, "autoPlayHeuristics"))
+                writer.uint32(/* id 2, wireType 0 =*/16).bool(message.autoPlayHeuristics);
+            if (message.maxDecisions != null && Object.hasOwnProperty.call(message, "maxDecisions"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxDecisions);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified EnvConfig message, length delimited. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.EnvConfig
+         * @static
+         * @param {game.IEnvConfig} message EnvConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvConfig.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes an EnvConfig message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.EnvConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.EnvConfig} EnvConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvConfig.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.EnvConfig();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        if (!(message.learningSeats && message.learningSeats.length))
+                            message.learningSeats = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.learningSeats.push(reader.uint32());
+                        } else
+                            message.learningSeats.push(reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        message.autoPlayHeuristics = reader.bool();
+                        break;
+                    }
+                case 3: {
+                        message.maxDecisions = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes an EnvConfig message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.EnvConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.EnvConfig} EnvConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvConfig.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies an EnvConfig message.
+         * @function verify
+         * @memberof game.EnvConfig
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        EnvConfig.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.learningSeats != null && message.hasOwnProperty("learningSeats")) {
+                if (!Array.isArray(message.learningSeats))
+                    return "learningSeats: array expected";
+                for (let i = 0; i < message.learningSeats.length; ++i)
+                    if (!$util.isInteger(message.learningSeats[i]))
+                        return "learningSeats: integer[] expected";
+            }
+            if (message.autoPlayHeuristics != null && message.hasOwnProperty("autoPlayHeuristics"))
+                if (typeof message.autoPlayHeuristics !== "boolean")
+                    return "autoPlayHeuristics: boolean expected";
+            if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
+                if (!$util.isInteger(message.maxDecisions))
+                    return "maxDecisions: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates an EnvConfig message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.EnvConfig
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.EnvConfig} EnvConfig
+         */
+        EnvConfig.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.EnvConfig)
+                return object;
+            let message = new $root.game.EnvConfig();
+            if (object.learningSeats) {
+                if (!Array.isArray(object.learningSeats))
+                    throw TypeError(".game.EnvConfig.learningSeats: array expected");
+                message.learningSeats = [];
+                for (let i = 0; i < object.learningSeats.length; ++i)
+                    message.learningSeats[i] = object.learningSeats[i] >>> 0;
+            }
+            if (object.autoPlayHeuristics != null)
+                message.autoPlayHeuristics = Boolean(object.autoPlayHeuristics);
+            if (object.maxDecisions != null)
+                message.maxDecisions = object.maxDecisions >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from an EnvConfig message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.EnvConfig
+         * @static
+         * @param {game.EnvConfig} message EnvConfig
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        EnvConfig.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.learningSeats = [];
+            if (options.defaults) {
+                object.autoPlayHeuristics = false;
+                object.maxDecisions = 0;
+            }
+            if (message.learningSeats && message.learningSeats.length) {
+                object.learningSeats = [];
+                for (let j = 0; j < message.learningSeats.length; ++j)
+                    object.learningSeats[j] = message.learningSeats[j];
+            }
+            if (message.autoPlayHeuristics != null && message.hasOwnProperty("autoPlayHeuristics"))
+                object.autoPlayHeuristics = message.autoPlayHeuristics;
+            if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
+                object.maxDecisions = message.maxDecisions;
+            return object;
+        };
+
+        /**
+         * Converts this EnvConfig to JSON.
+         * @function toJSON
+         * @memberof game.EnvConfig
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        EnvConfig.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for EnvConfig
+         * @function getTypeUrl
+         * @memberof game.EnvConfig
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        EnvConfig.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.EnvConfig";
+        };
+
+        return EnvConfig;
+    })();
+
+    game.SeatObservation = (function() {
+
+        /**
+         * Properties of a SeatObservation.
+         * @memberof game
+         * @interface ISeatObservation
+         * @property {number|undefined} [seat] SeatObservation seat
+         * @property {Array.<number>|undefined} [planes] SeatObservation planes
+         * @property {number|undefined} [planeChannels] SeatObservation planeChannels
+         * @property {number|undefined} [planeHeight] SeatObservation planeHeight
+         * @property {number|undefined} [planeWidth] SeatObservation planeWidth
+         * @property {Array.<number>|undefined} [scalars] SeatObservation scalars
+         * @property {Uint8Array|undefined} [actionMask] SeatObservation actionMask
+         * @property {number|undefined} [actionSpaceSize] SeatObservation actionSpaceSize
+         * @property {number|Long|undefined} [decisionIndex] SeatObservation decisionIndex
+         * @property {game.GamePhase|undefined} [phase] SeatObservation phase
+         * @property {number|undefined} [activePlayer] SeatObservation activePlayer
+         */
+
+        /**
+         * Constructs a new SeatObservation.
+         * @memberof game
+         * @classdesc Represents a SeatObservation.
+         * @implements ISeatObservation
+         * @constructor
+         * @param {game.ISeatObservation=} [properties] Properties to set
+         */
+        function SeatObservation(properties) {
+            this.planes = [];
+            this.scalars = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * SeatObservation seat.
+         * @member {number} seat
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.seat = 0;
+
+        /**
+         * SeatObservation planes.
+         * @member {Array.<number>} planes
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.planes = $util.emptyArray;
+
+        /**
+         * SeatObservation planeChannels.
+         * @member {number} planeChannels
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.planeChannels = 0;
+
+        /**
+         * SeatObservation planeHeight.
+         * @member {number} planeHeight
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.planeHeight = 0;
+
+        /**
+         * SeatObservation planeWidth.
+         * @member {number} planeWidth
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.planeWidth = 0;
+
+        /**
+         * SeatObservation scalars.
+         * @member {Array.<number>} scalars
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.scalars = $util.emptyArray;
+
+        /**
+         * SeatObservation actionMask.
+         * @member {Uint8Array} actionMask
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.actionMask = $util.newBuffer([]);
+
+        /**
+         * SeatObservation actionSpaceSize.
+         * @member {number} actionSpaceSize
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.actionSpaceSize = 0;
+
+        /**
+         * SeatObservation decisionIndex.
+         * @member {number|Long} decisionIndex
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.decisionIndex = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * SeatObservation phase.
+         * @member {game.GamePhase} phase
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.phase = 0;
+
+        /**
+         * SeatObservation activePlayer.
+         * @member {number} activePlayer
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.activePlayer = 0;
+
+        /**
+         * Creates a new SeatObservation instance using the specified properties.
+         * @function create
+         * @memberof game.SeatObservation
+         * @static
+         * @param {game.ISeatObservation=} [properties] Properties to set
+         * @returns {game.SeatObservation} SeatObservation instance
+         */
+        SeatObservation.create = function create(properties) {
+            return new SeatObservation(properties);
+        };
+
+        /**
+         * Encodes the specified SeatObservation message. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
+         * @function encode
+         * @memberof game.SeatObservation
+         * @static
+         * @param {game.ISeatObservation} message SeatObservation message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SeatObservation.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.seat != null && Object.hasOwnProperty.call(message, "seat"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.seat);
+            if (message.planes != null && message.planes.length) {
+                writer.uint32(/* id 2, wireType 2 =*/18).fork();
+                for (let i = 0; i < message.planes.length; ++i)
+                    writer.float(message.planes[i]);
+                writer.ldelim();
+            }
+            if (message.planeChannels != null && Object.hasOwnProperty.call(message, "planeChannels"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.planeChannels);
+            if (message.planeHeight != null && Object.hasOwnProperty.call(message, "planeHeight"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.planeHeight);
+            if (message.planeWidth != null && Object.hasOwnProperty.call(message, "planeWidth"))
+                writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.planeWidth);
+            if (message.scalars != null && message.scalars.length) {
+                writer.uint32(/* id 6, wireType 2 =*/50).fork();
+                for (let i = 0; i < message.scalars.length; ++i)
+                    writer.float(message.scalars[i]);
+                writer.ldelim();
+            }
+            if (message.actionMask != null && Object.hasOwnProperty.call(message, "actionMask"))
+                writer.uint32(/* id 7, wireType 2 =*/58).bytes(message.actionMask);
+            if (message.actionSpaceSize != null && Object.hasOwnProperty.call(message, "actionSpaceSize"))
+                writer.uint32(/* id 8, wireType 0 =*/64).uint32(message.actionSpaceSize);
+            if (message.decisionIndex != null && Object.hasOwnProperty.call(message, "decisionIndex"))
+                writer.uint32(/* id 9, wireType 0 =*/72).uint64(message.decisionIndex);
+            if (message.phase != null && Object.hasOwnProperty.call(message, "phase"))
+                writer.uint32(/* id 10, wireType 0 =*/80).int32(message.phase);
+            if (message.activePlayer != null && Object.hasOwnProperty.call(message, "activePlayer"))
+                writer.uint32(/* id 11, wireType 0 =*/88).uint32(message.activePlayer);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified SeatObservation message, length delimited. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.SeatObservation
+         * @static
+         * @param {game.ISeatObservation} message SeatObservation message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SeatObservation.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a SeatObservation message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.SeatObservation
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.SeatObservation} SeatObservation
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SeatObservation.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.SeatObservation();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.seat = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        if (!(message.planes && message.planes.length))
+                            message.planes = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.planes.push(reader.float());
+                        } else
+                            message.planes.push(reader.float());
+                        break;
+                    }
+                case 3: {
+                        message.planeChannels = reader.uint32();
+                        break;
+                    }
+                case 4: {
+                        message.planeHeight = reader.uint32();
+                        break;
+                    }
+                case 5: {
+                        message.planeWidth = reader.uint32();
+                        break;
+                    }
+                case 6: {
+                        if (!(message.scalars && message.scalars.length))
+                            message.scalars = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.scalars.push(reader.float());
+                        } else
+                            message.scalars.push(reader.float());
+                        break;
+                    }
+                case 7: {
+                        message.actionMask = reader.bytes();
+                        break;
+                    }
+                case 8: {
+                        message.actionSpaceSize = reader.uint32();
+                        break;
+                    }
+                case 9: {
+                        message.decisionIndex = reader.uint64();
+                        break;
+                    }
+                case 10: {
+                        message.phase = reader.int32();
+                        break;
+                    }
+                case 11: {
+                        message.activePlayer = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a SeatObservation message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.SeatObservation
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.SeatObservation} SeatObservation
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SeatObservation.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a SeatObservation message.
+         * @function verify
+         * @memberof game.SeatObservation
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        SeatObservation.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                if (!$util.isInteger(message.seat))
+                    return "seat: integer expected";
+            if (message.planes != null && message.hasOwnProperty("planes")) {
+                if (!Array.isArray(message.planes))
+                    return "planes: array expected";
+                for (let i = 0; i < message.planes.length; ++i)
+                    if (typeof message.planes[i] !== "number")
+                        return "planes: number[] expected";
+            }
+            if (message.planeChannels != null && message.hasOwnProperty("planeChannels"))
+                if (!$util.isInteger(message.planeChannels))
+                    return "planeChannels: integer expected";
+            if (message.planeHeight != null && message.hasOwnProperty("planeHeight"))
+                if (!$util.isInteger(message.planeHeight))
+                    return "planeHeight: integer expected";
+            if (message.planeWidth != null && message.hasOwnProperty("planeWidth"))
+                if (!$util.isInteger(message.planeWidth))
+                    return "planeWidth: integer expected";
+            if (message.scalars != null && message.hasOwnProperty("scalars")) {
+                if (!Array.isArray(message.scalars))
+                    return "scalars: array expected";
+                for (let i = 0; i < message.scalars.length; ++i)
+                    if (typeof message.scalars[i] !== "number")
+                        return "scalars: number[] expected";
+            }
+            if (message.actionMask != null && message.hasOwnProperty("actionMask"))
+                if (!(message.actionMask && typeof message.actionMask.length === "number" || $util.isString(message.actionMask)))
+                    return "actionMask: buffer expected";
+            if (message.actionSpaceSize != null && message.hasOwnProperty("actionSpaceSize"))
+                if (!$util.isInteger(message.actionSpaceSize))
+                    return "actionSpaceSize: integer expected";
+            if (message.decisionIndex != null && message.hasOwnProperty("decisionIndex"))
+                if (!$util.isInteger(message.decisionIndex) && !(message.decisionIndex && $util.isInteger(message.decisionIndex.low) && $util.isInteger(message.decisionIndex.high)))
+                    return "decisionIndex: integer|Long expected";
+            if (message.phase != null && message.hasOwnProperty("phase"))
+                switch (message.phase) {
+                default:
+                    return "phase: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                    break;
+                }
+            if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
+                if (!$util.isInteger(message.activePlayer))
+                    return "activePlayer: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a SeatObservation message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.SeatObservation
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.SeatObservation} SeatObservation
+         */
+        SeatObservation.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.SeatObservation)
+                return object;
+            let message = new $root.game.SeatObservation();
+            if (object.seat != null)
+                message.seat = object.seat >>> 0;
+            if (object.planes) {
+                if (!Array.isArray(object.planes))
+                    throw TypeError(".game.SeatObservation.planes: array expected");
+                message.planes = [];
+                for (let i = 0; i < object.planes.length; ++i)
+                    message.planes[i] = Number(object.planes[i]);
+            }
+            if (object.planeChannels != null)
+                message.planeChannels = object.planeChannels >>> 0;
+            if (object.planeHeight != null)
+                message.planeHeight = object.planeHeight >>> 0;
+            if (object.planeWidth != null)
+                message.planeWidth = object.planeWidth >>> 0;
+            if (object.scalars) {
+                if (!Array.isArray(object.scalars))
+                    throw TypeError(".game.SeatObservation.scalars: array expected");
+                message.scalars = [];
+                for (let i = 0; i < object.scalars.length; ++i)
+                    message.scalars[i] = Number(object.scalars[i]);
+            }
+            if (object.actionMask != null)
+                if (typeof object.actionMask === "string")
+                    $util.base64.decode(object.actionMask, message.actionMask = $util.newBuffer($util.base64.length(object.actionMask)), 0);
+                else if (object.actionMask.length >= 0)
+                    message.actionMask = object.actionMask;
+            if (object.actionSpaceSize != null)
+                message.actionSpaceSize = object.actionSpaceSize >>> 0;
+            if (object.decisionIndex != null)
+                if ($util.Long)
+                    (message.decisionIndex = $util.Long.fromValue(object.decisionIndex)).unsigned = true;
+                else if (typeof object.decisionIndex === "string")
+                    message.decisionIndex = parseInt(object.decisionIndex, 10);
+                else if (typeof object.decisionIndex === "number")
+                    message.decisionIndex = object.decisionIndex;
+                else if (typeof object.decisionIndex === "object")
+                    message.decisionIndex = new $util.LongBits(object.decisionIndex.low >>> 0, object.decisionIndex.high >>> 0).toNumber(true);
+            switch (object.phase) {
+            default:
+                if (typeof object.phase === "number") {
+                    message.phase = object.phase;
+                    break;
+                }
+                break;
+            case "PHASE_INIT":
+            case 0:
+                message.phase = 0;
+                break;
+            case "PHASE_DEAL":
+            case 1:
+                message.phase = 1;
+                break;
+            case "PHASE_PLAYER_TURN":
+            case 2:
+                message.phase = 2;
+                break;
+            case "PHASE_WAIT_DISCARDS":
+            case 3:
+                message.phase = 3;
+                break;
+            case "PHASE_ROUND_END":
+            case 4:
+                message.phase = 4;
+                break;
+            }
+            if (object.activePlayer != null)
+                message.activePlayer = object.activePlayer >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a SeatObservation message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.SeatObservation
+         * @static
+         * @param {game.SeatObservation} message SeatObservation
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        SeatObservation.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults) {
+                object.planes = [];
+                object.scalars = [];
+            }
+            if (options.defaults) {
+                object.seat = 0;
+                object.planeChannels = 0;
+                object.planeHeight = 0;
+                object.planeWidth = 0;
+                if (options.bytes === String)
+                    object.actionMask = "";
+                else {
+                    object.actionMask = [];
+                    if (options.bytes !== Array)
+                        object.actionMask = $util.newBuffer(object.actionMask);
+                }
+                object.actionSpaceSize = 0;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.decisionIndex = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.decisionIndex = options.longs === String ? "0" : 0;
+                object.phase = options.enums === String ? "PHASE_INIT" : 0;
+                object.activePlayer = 0;
+            }
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                object.seat = message.seat;
+            if (message.planes && message.planes.length) {
+                object.planes = [];
+                for (let j = 0; j < message.planes.length; ++j)
+                    object.planes[j] = options.json && !isFinite(message.planes[j]) ? String(message.planes[j]) : message.planes[j];
+            }
+            if (message.planeChannels != null && message.hasOwnProperty("planeChannels"))
+                object.planeChannels = message.planeChannels;
+            if (message.planeHeight != null && message.hasOwnProperty("planeHeight"))
+                object.planeHeight = message.planeHeight;
+            if (message.planeWidth != null && message.hasOwnProperty("planeWidth"))
+                object.planeWidth = message.planeWidth;
+            if (message.scalars && message.scalars.length) {
+                object.scalars = [];
+                for (let j = 0; j < message.scalars.length; ++j)
+                    object.scalars[j] = options.json && !isFinite(message.scalars[j]) ? String(message.scalars[j]) : message.scalars[j];
+            }
+            if (message.actionMask != null && message.hasOwnProperty("actionMask"))
+                object.actionMask = options.bytes === String ? $util.base64.encode(message.actionMask, 0, message.actionMask.length) : options.bytes === Array ? Array.prototype.slice.call(message.actionMask) : message.actionMask;
+            if (message.actionSpaceSize != null && message.hasOwnProperty("actionSpaceSize"))
+                object.actionSpaceSize = message.actionSpaceSize;
+            if (message.decisionIndex != null && message.hasOwnProperty("decisionIndex"))
+                if (typeof message.decisionIndex === "number")
+                    object.decisionIndex = options.longs === String ? String(message.decisionIndex) : message.decisionIndex;
+                else
+                    object.decisionIndex = options.longs === String ? $util.Long.prototype.toString.call(message.decisionIndex) : options.longs === Number ? new $util.LongBits(message.decisionIndex.low >>> 0, message.decisionIndex.high >>> 0).toNumber(true) : message.decisionIndex;
+            if (message.phase != null && message.hasOwnProperty("phase"))
+                object.phase = options.enums === String ? $root.game.GamePhase[message.phase] === undefined ? message.phase : $root.game.GamePhase[message.phase] : message.phase;
+            if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
+                object.activePlayer = message.activePlayer;
+            return object;
+        };
+
+        /**
+         * Converts this SeatObservation to JSON.
+         * @function toJSON
+         * @memberof game.SeatObservation
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        SeatObservation.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for SeatObservation
+         * @function getTypeUrl
+         * @memberof game.SeatObservation
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        SeatObservation.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.SeatObservation";
+        };
+
+        return SeatObservation;
+    })();
+
+    game.EnvResetRequest = (function() {
+
+        /**
+         * Properties of an EnvResetRequest.
+         * @memberof game
+         * @interface IEnvResetRequest
+         * @property {number|Long|undefined} [seed] EnvResetRequest seed
+         * @property {game.IEnvConfig|undefined} [config] EnvResetRequest config
+         */
+
+        /**
+         * Constructs a new EnvResetRequest.
+         * @memberof game
+         * @classdesc Represents an EnvResetRequest.
+         * @implements IEnvResetRequest
+         * @constructor
+         * @param {game.IEnvResetRequest=} [properties] Properties to set
+         */
+        function EnvResetRequest(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * EnvResetRequest seed.
+         * @member {number|Long} seed
+         * @memberof game.EnvResetRequest
+         * @instance
+         */
+        EnvResetRequest.prototype.seed = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * EnvResetRequest config.
+         * @member {game.EnvConfig} config
+         * @memberof game.EnvResetRequest
+         * @instance
+         */
+        EnvResetRequest.prototype.config = null;
+
+        /**
+         * Creates a new EnvResetRequest instance using the specified properties.
+         * @function create
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {game.IEnvResetRequest=} [properties] Properties to set
+         * @returns {game.EnvResetRequest} EnvResetRequest instance
+         */
+        EnvResetRequest.create = function create(properties) {
+            return new EnvResetRequest(properties);
+        };
+
+        /**
+         * Encodes the specified EnvResetRequest message. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {game.IEnvResetRequest} message EnvResetRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvResetRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.seed != null && Object.hasOwnProperty.call(message, "seed"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint64(message.seed);
+            if (message.config != null && Object.hasOwnProperty.call(message, "config"))
+                $root.game.EnvConfig.encode(message.config, writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified EnvResetRequest message, length delimited. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {game.IEnvResetRequest} message EnvResetRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvResetRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes an EnvResetRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.EnvResetRequest} EnvResetRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvResetRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.EnvResetRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.seed = reader.uint64();
+                        break;
+                    }
+                case 2: {
+                        message.config = $root.game.EnvConfig.decode(reader, reader.uint32());
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes an EnvResetRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.EnvResetRequest} EnvResetRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvResetRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies an EnvResetRequest message.
+         * @function verify
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        EnvResetRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.seed != null && message.hasOwnProperty("seed"))
+                if (!$util.isInteger(message.seed) && !(message.seed && $util.isInteger(message.seed.low) && $util.isInteger(message.seed.high)))
+                    return "seed: integer|Long expected";
+            if (message.config != null && message.hasOwnProperty("config")) {
+                let error = $root.game.EnvConfig.verify(message.config);
+                if (error)
+                    return "config." + error;
+            }
+            return null;
+        };
+
+        /**
+         * Creates an EnvResetRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.EnvResetRequest} EnvResetRequest
+         */
+        EnvResetRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.EnvResetRequest)
+                return object;
+            let message = new $root.game.EnvResetRequest();
+            if (object.seed != null)
+                if ($util.Long)
+                    (message.seed = $util.Long.fromValue(object.seed)).unsigned = true;
+                else if (typeof object.seed === "string")
+                    message.seed = parseInt(object.seed, 10);
+                else if (typeof object.seed === "number")
+                    message.seed = object.seed;
+                else if (typeof object.seed === "object")
+                    message.seed = new $util.LongBits(object.seed.low >>> 0, object.seed.high >>> 0).toNumber(true);
+            if (object.config != null) {
+                if (typeof object.config !== "object")
+                    throw TypeError(".game.EnvResetRequest.config: object expected");
+                message.config = $root.game.EnvConfig.fromObject(object.config);
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from an EnvResetRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {game.EnvResetRequest} message EnvResetRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        EnvResetRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.seed = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.seed = options.longs === String ? "0" : 0;
+                object.config = null;
+            }
+            if (message.seed != null && message.hasOwnProperty("seed"))
+                if (typeof message.seed === "number")
+                    object.seed = options.longs === String ? String(message.seed) : message.seed;
+                else
+                    object.seed = options.longs === String ? $util.Long.prototype.toString.call(message.seed) : options.longs === Number ? new $util.LongBits(message.seed.low >>> 0, message.seed.high >>> 0).toNumber(true) : message.seed;
+            if (message.config != null && message.hasOwnProperty("config"))
+                object.config = $root.game.EnvConfig.toObject(message.config, options);
+            return object;
+        };
+
+        /**
+         * Converts this EnvResetRequest to JSON.
+         * @function toJSON
+         * @memberof game.EnvResetRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        EnvResetRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for EnvResetRequest
+         * @function getTypeUrl
+         * @memberof game.EnvResetRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        EnvResetRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.EnvResetRequest";
+        };
+
+        return EnvResetRequest;
+    })();
+
+    game.EnvResetResponse = (function() {
+
+        /**
+         * Properties of an EnvResetResponse.
+         * @memberof game
+         * @interface IEnvResetResponse
+         * @property {game.ISeatObservation|undefined} [observation] EnvResetResponse observation
+         * @property {Array.<number>|undefined} [rewards] EnvResetResponse rewards
+         * @property {boolean|undefined} [terminated] EnvResetResponse terminated
+         * @property {boolean|undefined} [truncated] EnvResetResponse truncated
+         */
+
+        /**
+         * Constructs a new EnvResetResponse.
+         * @memberof game
+         * @classdesc Represents an EnvResetResponse.
+         * @implements IEnvResetResponse
+         * @constructor
+         * @param {game.IEnvResetResponse=} [properties] Properties to set
+         */
+        function EnvResetResponse(properties) {
+            this.rewards = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * EnvResetResponse observation.
+         * @member {game.SeatObservation} observation
+         * @memberof game.EnvResetResponse
+         * @instance
+         */
+        EnvResetResponse.prototype.observation = null;
+
+        /**
+         * EnvResetResponse rewards.
+         * @member {Array.<number>} rewards
+         * @memberof game.EnvResetResponse
+         * @instance
+         */
+        EnvResetResponse.prototype.rewards = $util.emptyArray;
+
+        /**
+         * EnvResetResponse terminated.
+         * @member {boolean} terminated
+         * @memberof game.EnvResetResponse
+         * @instance
+         */
+        EnvResetResponse.prototype.terminated = false;
+
+        /**
+         * EnvResetResponse truncated.
+         * @member {boolean} truncated
+         * @memberof game.EnvResetResponse
+         * @instance
+         */
+        EnvResetResponse.prototype.truncated = false;
+
+        /**
+         * Creates a new EnvResetResponse instance using the specified properties.
+         * @function create
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {game.IEnvResetResponse=} [properties] Properties to set
+         * @returns {game.EnvResetResponse} EnvResetResponse instance
+         */
+        EnvResetResponse.create = function create(properties) {
+            return new EnvResetResponse(properties);
+        };
+
+        /**
+         * Encodes the specified EnvResetResponse message. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
+         * @function encode
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {game.IEnvResetResponse} message EnvResetResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvResetResponse.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.observation != null && Object.hasOwnProperty.call(message, "observation"))
+                $root.game.SeatObservation.encode(message.observation, writer.uint32(/* id 1, wireType 2 =*/10).fork()).ldelim();
+            if (message.rewards != null && message.rewards.length) {
+                writer.uint32(/* id 2, wireType 2 =*/18).fork();
+                for (let i = 0; i < message.rewards.length; ++i)
+                    writer.float(message.rewards[i]);
+                writer.ldelim();
+            }
+            if (message.terminated != null && Object.hasOwnProperty.call(message, "terminated"))
+                writer.uint32(/* id 3, wireType 0 =*/24).bool(message.terminated);
+            if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
+                writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified EnvResetResponse message, length delimited. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {game.IEnvResetResponse} message EnvResetResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvResetResponse.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes an EnvResetResponse message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.EnvResetResponse} EnvResetResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvResetResponse.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.EnvResetResponse();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.observation = $root.game.SeatObservation.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        if (!(message.rewards && message.rewards.length))
+                            message.rewards = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.rewards.push(reader.float());
+                        } else
+                            message.rewards.push(reader.float());
+                        break;
+                    }
+                case 3: {
+                        message.terminated = reader.bool();
+                        break;
+                    }
+                case 4: {
+                        message.truncated = reader.bool();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes an EnvResetResponse message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.EnvResetResponse} EnvResetResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvResetResponse.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies an EnvResetResponse message.
+         * @function verify
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        EnvResetResponse.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.observation != null && message.hasOwnProperty("observation")) {
+                let error = $root.game.SeatObservation.verify(message.observation);
+                if (error)
+                    return "observation." + error;
+            }
+            if (message.rewards != null && message.hasOwnProperty("rewards")) {
+                if (!Array.isArray(message.rewards))
+                    return "rewards: array expected";
+                for (let i = 0; i < message.rewards.length; ++i)
+                    if (typeof message.rewards[i] !== "number")
+                        return "rewards: number[] expected";
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                if (typeof message.terminated !== "boolean")
+                    return "terminated: boolean expected";
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                if (typeof message.truncated !== "boolean")
+                    return "truncated: boolean expected";
+            return null;
+        };
+
+        /**
+         * Creates an EnvResetResponse message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.EnvResetResponse} EnvResetResponse
+         */
+        EnvResetResponse.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.EnvResetResponse)
+                return object;
+            let message = new $root.game.EnvResetResponse();
+            if (object.observation != null) {
+                if (typeof object.observation !== "object")
+                    throw TypeError(".game.EnvResetResponse.observation: object expected");
+                message.observation = $root.game.SeatObservation.fromObject(object.observation);
+            }
+            if (object.rewards) {
+                if (!Array.isArray(object.rewards))
+                    throw TypeError(".game.EnvResetResponse.rewards: array expected");
+                message.rewards = [];
+                for (let i = 0; i < object.rewards.length; ++i)
+                    message.rewards[i] = Number(object.rewards[i]);
+            }
+            if (object.terminated != null)
+                message.terminated = Boolean(object.terminated);
+            if (object.truncated != null)
+                message.truncated = Boolean(object.truncated);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from an EnvResetResponse message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {game.EnvResetResponse} message EnvResetResponse
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        EnvResetResponse.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.rewards = [];
+            if (options.defaults) {
+                object.observation = null;
+                object.terminated = false;
+                object.truncated = false;
+            }
+            if (message.observation != null && message.hasOwnProperty("observation"))
+                object.observation = $root.game.SeatObservation.toObject(message.observation, options);
+            if (message.rewards && message.rewards.length) {
+                object.rewards = [];
+                for (let j = 0; j < message.rewards.length; ++j)
+                    object.rewards[j] = options.json && !isFinite(message.rewards[j]) ? String(message.rewards[j]) : message.rewards[j];
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                object.terminated = message.terminated;
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                object.truncated = message.truncated;
+            return object;
+        };
+
+        /**
+         * Converts this EnvResetResponse to JSON.
+         * @function toJSON
+         * @memberof game.EnvResetResponse
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        EnvResetResponse.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for EnvResetResponse
+         * @function getTypeUrl
+         * @memberof game.EnvResetResponse
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        EnvResetResponse.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.EnvResetResponse";
+        };
+
+        return EnvResetResponse;
+    })();
+
+    game.EnvStepRequest = (function() {
+
+        /**
+         * Properties of an EnvStepRequest.
+         * @memberof game
+         * @interface IEnvStepRequest
+         * @property {number|undefined} [actionId] EnvStepRequest actionId
+         */
+
+        /**
+         * Constructs a new EnvStepRequest.
+         * @memberof game
+         * @classdesc Represents an EnvStepRequest.
+         * @implements IEnvStepRequest
+         * @constructor
+         * @param {game.IEnvStepRequest=} [properties] Properties to set
+         */
+        function EnvStepRequest(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * EnvStepRequest actionId.
+         * @member {number} actionId
+         * @memberof game.EnvStepRequest
+         * @instance
+         */
+        EnvStepRequest.prototype.actionId = 0;
+
+        /**
+         * Creates a new EnvStepRequest instance using the specified properties.
+         * @function create
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {game.IEnvStepRequest=} [properties] Properties to set
+         * @returns {game.EnvStepRequest} EnvStepRequest instance
+         */
+        EnvStepRequest.create = function create(properties) {
+            return new EnvStepRequest(properties);
+        };
+
+        /**
+         * Encodes the specified EnvStepRequest message. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {game.IEnvStepRequest} message EnvStepRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvStepRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.actionId != null && Object.hasOwnProperty.call(message, "actionId"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.actionId);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified EnvStepRequest message, length delimited. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {game.IEnvStepRequest} message EnvStepRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvStepRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes an EnvStepRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.EnvStepRequest} EnvStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvStepRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.EnvStepRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.actionId = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes an EnvStepRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.EnvStepRequest} EnvStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvStepRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies an EnvStepRequest message.
+         * @function verify
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        EnvStepRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                if (!$util.isInteger(message.actionId))
+                    return "actionId: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates an EnvStepRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.EnvStepRequest} EnvStepRequest
+         */
+        EnvStepRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.EnvStepRequest)
+                return object;
+            let message = new $root.game.EnvStepRequest();
+            if (object.actionId != null)
+                message.actionId = object.actionId >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from an EnvStepRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {game.EnvStepRequest} message EnvStepRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        EnvStepRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults)
+                object.actionId = 0;
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                object.actionId = message.actionId;
+            return object;
+        };
+
+        /**
+         * Converts this EnvStepRequest to JSON.
+         * @function toJSON
+         * @memberof game.EnvStepRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        EnvStepRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for EnvStepRequest
+         * @function getTypeUrl
+         * @memberof game.EnvStepRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        EnvStepRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.EnvStepRequest";
+        };
+
+        return EnvStepRequest;
+    })();
+
+    game.EnvStepResponse = (function() {
+
+        /**
+         * Properties of an EnvStepResponse.
+         * @memberof game
+         * @interface IEnvStepResponse
+         * @property {game.ISeatObservation|undefined} [observation] EnvStepResponse observation
+         * @property {Array.<number>|undefined} [rewards] EnvStepResponse rewards
+         * @property {boolean|undefined} [terminated] EnvStepResponse terminated
+         * @property {boolean|undefined} [truncated] EnvStepResponse truncated
+         */
+
+        /**
+         * Constructs a new EnvStepResponse.
+         * @memberof game
+         * @classdesc Represents an EnvStepResponse.
+         * @implements IEnvStepResponse
+         * @constructor
+         * @param {game.IEnvStepResponse=} [properties] Properties to set
+         */
+        function EnvStepResponse(properties) {
+            this.rewards = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * EnvStepResponse observation.
+         * @member {game.SeatObservation} observation
+         * @memberof game.EnvStepResponse
+         * @instance
+         */
+        EnvStepResponse.prototype.observation = null;
+
+        /**
+         * EnvStepResponse rewards.
+         * @member {Array.<number>} rewards
+         * @memberof game.EnvStepResponse
+         * @instance
+         */
+        EnvStepResponse.prototype.rewards = $util.emptyArray;
+
+        /**
+         * EnvStepResponse terminated.
+         * @member {boolean} terminated
+         * @memberof game.EnvStepResponse
+         * @instance
+         */
+        EnvStepResponse.prototype.terminated = false;
+
+        /**
+         * EnvStepResponse truncated.
+         * @member {boolean} truncated
+         * @memberof game.EnvStepResponse
+         * @instance
+         */
+        EnvStepResponse.prototype.truncated = false;
+
+        /**
+         * Creates a new EnvStepResponse instance using the specified properties.
+         * @function create
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {game.IEnvStepResponse=} [properties] Properties to set
+         * @returns {game.EnvStepResponse} EnvStepResponse instance
+         */
+        EnvStepResponse.create = function create(properties) {
+            return new EnvStepResponse(properties);
+        };
+
+        /**
+         * Encodes the specified EnvStepResponse message. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
+         * @function encode
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {game.IEnvStepResponse} message EnvStepResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvStepResponse.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.observation != null && Object.hasOwnProperty.call(message, "observation"))
+                $root.game.SeatObservation.encode(message.observation, writer.uint32(/* id 1, wireType 2 =*/10).fork()).ldelim();
+            if (message.rewards != null && message.rewards.length) {
+                writer.uint32(/* id 2, wireType 2 =*/18).fork();
+                for (let i = 0; i < message.rewards.length; ++i)
+                    writer.float(message.rewards[i]);
+                writer.ldelim();
+            }
+            if (message.terminated != null && Object.hasOwnProperty.call(message, "terminated"))
+                writer.uint32(/* id 3, wireType 0 =*/24).bool(message.terminated);
+            if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
+                writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified EnvStepResponse message, length delimited. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {game.IEnvStepResponse} message EnvStepResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        EnvStepResponse.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes an EnvStepResponse message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.EnvStepResponse} EnvStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvStepResponse.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.EnvStepResponse();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.observation = $root.game.SeatObservation.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        if (!(message.rewards && message.rewards.length))
+                            message.rewards = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.rewards.push(reader.float());
+                        } else
+                            message.rewards.push(reader.float());
+                        break;
+                    }
+                case 3: {
+                        message.terminated = reader.bool();
+                        break;
+                    }
+                case 4: {
+                        message.truncated = reader.bool();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes an EnvStepResponse message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.EnvStepResponse} EnvStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        EnvStepResponse.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies an EnvStepResponse message.
+         * @function verify
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        EnvStepResponse.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.observation != null && message.hasOwnProperty("observation")) {
+                let error = $root.game.SeatObservation.verify(message.observation);
+                if (error)
+                    return "observation." + error;
+            }
+            if (message.rewards != null && message.hasOwnProperty("rewards")) {
+                if (!Array.isArray(message.rewards))
+                    return "rewards: array expected";
+                for (let i = 0; i < message.rewards.length; ++i)
+                    if (typeof message.rewards[i] !== "number")
+                        return "rewards: number[] expected";
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                if (typeof message.terminated !== "boolean")
+                    return "terminated: boolean expected";
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                if (typeof message.truncated !== "boolean")
+                    return "truncated: boolean expected";
+            return null;
+        };
+
+        /**
+         * Creates an EnvStepResponse message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.EnvStepResponse} EnvStepResponse
+         */
+        EnvStepResponse.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.EnvStepResponse)
+                return object;
+            let message = new $root.game.EnvStepResponse();
+            if (object.observation != null) {
+                if (typeof object.observation !== "object")
+                    throw TypeError(".game.EnvStepResponse.observation: object expected");
+                message.observation = $root.game.SeatObservation.fromObject(object.observation);
+            }
+            if (object.rewards) {
+                if (!Array.isArray(object.rewards))
+                    throw TypeError(".game.EnvStepResponse.rewards: array expected");
+                message.rewards = [];
+                for (let i = 0; i < object.rewards.length; ++i)
+                    message.rewards[i] = Number(object.rewards[i]);
+            }
+            if (object.terminated != null)
+                message.terminated = Boolean(object.terminated);
+            if (object.truncated != null)
+                message.truncated = Boolean(object.truncated);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from an EnvStepResponse message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {game.EnvStepResponse} message EnvStepResponse
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        EnvStepResponse.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.rewards = [];
+            if (options.defaults) {
+                object.observation = null;
+                object.terminated = false;
+                object.truncated = false;
+            }
+            if (message.observation != null && message.hasOwnProperty("observation"))
+                object.observation = $root.game.SeatObservation.toObject(message.observation, options);
+            if (message.rewards && message.rewards.length) {
+                object.rewards = [];
+                for (let j = 0; j < message.rewards.length; ++j)
+                    object.rewards[j] = options.json && !isFinite(message.rewards[j]) ? String(message.rewards[j]) : message.rewards[j];
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                object.terminated = message.terminated;
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                object.truncated = message.truncated;
+            return object;
+        };
+
+        /**
+         * Converts this EnvStepResponse to JSON.
+         * @function toJSON
+         * @memberof game.EnvStepResponse
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        EnvStepResponse.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for EnvStepResponse
+         * @function getTypeUrl
+         * @memberof game.EnvStepResponse
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        EnvStepResponse.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.EnvStepResponse";
+        };
+
+        return EnvStepResponse;
+    })();
+
+    game.TrajectoryRequest = (function() {
+
+        /**
+         * Properties of a TrajectoryRequest.
+         * @memberof game
+         * @interface ITrajectoryRequest
+         * @property {number|undefined} [episodes] TrajectoryRequest episodes
+         * @property {number|Long|undefined} [startSeed] TrajectoryRequest startSeed
+         * @property {game.IEnvConfig|undefined} [config] TrajectoryRequest config
+         */
+
+        /**
+         * Constructs a new TrajectoryRequest.
+         * @memberof game
+         * @classdesc Represents a TrajectoryRequest.
+         * @implements ITrajectoryRequest
+         * @constructor
+         * @param {game.ITrajectoryRequest=} [properties] Properties to set
+         */
+        function TrajectoryRequest(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * TrajectoryRequest episodes.
+         * @member {number} episodes
+         * @memberof game.TrajectoryRequest
+         * @instance
+         */
+        TrajectoryRequest.prototype.episodes = 0;
+
+        /**
+         * TrajectoryRequest startSeed.
+         * @member {number|Long} startSeed
+         * @memberof game.TrajectoryRequest
+         * @instance
+         */
+        TrajectoryRequest.prototype.startSeed = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * TrajectoryRequest config.
+         * @member {game.EnvConfig} config
+         * @memberof game.TrajectoryRequest
+         * @instance
+         */
+        TrajectoryRequest.prototype.config = null;
+
+        /**
+         * Creates a new TrajectoryRequest instance using the specified properties.
+         * @function create
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {game.ITrajectoryRequest=} [properties] Properties to set
+         * @returns {game.TrajectoryRequest} TrajectoryRequest instance
+         */
+        TrajectoryRequest.create = function create(properties) {
+            return new TrajectoryRequest(properties);
+        };
+
+        /**
+         * Encodes the specified TrajectoryRequest message. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {game.ITrajectoryRequest} message TrajectoryRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectoryRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.episodes != null && Object.hasOwnProperty.call(message, "episodes"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.episodes);
+            if (message.startSeed != null && Object.hasOwnProperty.call(message, "startSeed"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint64(message.startSeed);
+            if (message.config != null && Object.hasOwnProperty.call(message, "config"))
+                $root.game.EnvConfig.encode(message.config, writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified TrajectoryRequest message, length delimited. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {game.ITrajectoryRequest} message TrajectoryRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectoryRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a TrajectoryRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.TrajectoryRequest} TrajectoryRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectoryRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.TrajectoryRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.episodes = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.startSeed = reader.uint64();
+                        break;
+                    }
+                case 3: {
+                        message.config = $root.game.EnvConfig.decode(reader, reader.uint32());
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a TrajectoryRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.TrajectoryRequest} TrajectoryRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectoryRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a TrajectoryRequest message.
+         * @function verify
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        TrajectoryRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.episodes != null && message.hasOwnProperty("episodes"))
+                if (!$util.isInteger(message.episodes))
+                    return "episodes: integer expected";
+            if (message.startSeed != null && message.hasOwnProperty("startSeed"))
+                if (!$util.isInteger(message.startSeed) && !(message.startSeed && $util.isInteger(message.startSeed.low) && $util.isInteger(message.startSeed.high)))
+                    return "startSeed: integer|Long expected";
+            if (message.config != null && message.hasOwnProperty("config")) {
+                let error = $root.game.EnvConfig.verify(message.config);
+                if (error)
+                    return "config." + error;
+            }
+            return null;
+        };
+
+        /**
+         * Creates a TrajectoryRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.TrajectoryRequest} TrajectoryRequest
+         */
+        TrajectoryRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.TrajectoryRequest)
+                return object;
+            let message = new $root.game.TrajectoryRequest();
+            if (object.episodes != null)
+                message.episodes = object.episodes >>> 0;
+            if (object.startSeed != null)
+                if ($util.Long)
+                    (message.startSeed = $util.Long.fromValue(object.startSeed)).unsigned = true;
+                else if (typeof object.startSeed === "string")
+                    message.startSeed = parseInt(object.startSeed, 10);
+                else if (typeof object.startSeed === "number")
+                    message.startSeed = object.startSeed;
+                else if (typeof object.startSeed === "object")
+                    message.startSeed = new $util.LongBits(object.startSeed.low >>> 0, object.startSeed.high >>> 0).toNumber(true);
+            if (object.config != null) {
+                if (typeof object.config !== "object")
+                    throw TypeError(".game.TrajectoryRequest.config: object expected");
+                message.config = $root.game.EnvConfig.fromObject(object.config);
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a TrajectoryRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {game.TrajectoryRequest} message TrajectoryRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        TrajectoryRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.episodes = 0;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.startSeed = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.startSeed = options.longs === String ? "0" : 0;
+                object.config = null;
+            }
+            if (message.episodes != null && message.hasOwnProperty("episodes"))
+                object.episodes = message.episodes;
+            if (message.startSeed != null && message.hasOwnProperty("startSeed"))
+                if (typeof message.startSeed === "number")
+                    object.startSeed = options.longs === String ? String(message.startSeed) : message.startSeed;
+                else
+                    object.startSeed = options.longs === String ? $util.Long.prototype.toString.call(message.startSeed) : options.longs === Number ? new $util.LongBits(message.startSeed.low >>> 0, message.startSeed.high >>> 0).toNumber(true) : message.startSeed;
+            if (message.config != null && message.hasOwnProperty("config"))
+                object.config = $root.game.EnvConfig.toObject(message.config, options);
+            return object;
+        };
+
+        /**
+         * Converts this TrajectoryRequest to JSON.
+         * @function toJSON
+         * @memberof game.TrajectoryRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        TrajectoryRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for TrajectoryRequest
+         * @function getTypeUrl
+         * @memberof game.TrajectoryRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        TrajectoryRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.TrajectoryRequest";
+        };
+
+        return TrajectoryRequest;
+    })();
+
+    game.TrajectorySample = (function() {
+
+        /**
+         * Properties of a TrajectorySample.
+         * @memberof game
+         * @interface ITrajectorySample
+         * @property {game.ISeatObservation|undefined} [observation] TrajectorySample observation
+         * @property {number|undefined} [actionId] TrajectorySample actionId
+         * @property {Array.<number>|undefined} [rewards] TrajectorySample rewards
+         * @property {game.ISeatObservation|undefined} [nextObservation] TrajectorySample nextObservation
+         * @property {boolean|undefined} [terminated] TrajectorySample terminated
+         * @property {boolean|undefined} [truncated] TrajectorySample truncated
+         * @property {number|undefined} [actingSeat] TrajectorySample actingSeat
+         * @property {number|Long|undefined} [episodeIndex] TrajectorySample episodeIndex
+         * @property {Array.<number>|undefined} [terminalRewards] TrajectorySample terminalRewards
+         */
+
+        /**
+         * Constructs a new TrajectorySample.
+         * @memberof game
+         * @classdesc Represents a TrajectorySample.
+         * @implements ITrajectorySample
+         * @constructor
+         * @param {game.ITrajectorySample=} [properties] Properties to set
+         */
+        function TrajectorySample(properties) {
+            this.rewards = [];
+            this.terminalRewards = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * TrajectorySample observation.
+         * @member {game.SeatObservation} observation
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.observation = null;
+
+        /**
+         * TrajectorySample actionId.
+         * @member {number} actionId
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.actionId = 0;
+
+        /**
+         * TrajectorySample rewards.
+         * @member {Array.<number>} rewards
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.rewards = $util.emptyArray;
+
+        /**
+         * TrajectorySample nextObservation.
+         * @member {game.SeatObservation} nextObservation
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.nextObservation = null;
+
+        /**
+         * TrajectorySample terminated.
+         * @member {boolean} terminated
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.terminated = false;
+
+        /**
+         * TrajectorySample truncated.
+         * @member {boolean} truncated
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.truncated = false;
+
+        /**
+         * TrajectorySample actingSeat.
+         * @member {number} actingSeat
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.actingSeat = 0;
+
+        /**
+         * TrajectorySample episodeIndex.
+         * @member {number|Long} episodeIndex
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.episodeIndex = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * TrajectorySample terminalRewards.
+         * @member {Array.<number>} terminalRewards
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.terminalRewards = $util.emptyArray;
+
+        /**
+         * Creates a new TrajectorySample instance using the specified properties.
+         * @function create
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {game.ITrajectorySample=} [properties] Properties to set
+         * @returns {game.TrajectorySample} TrajectorySample instance
+         */
+        TrajectorySample.create = function create(properties) {
+            return new TrajectorySample(properties);
+        };
+
+        /**
+         * Encodes the specified TrajectorySample message. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
+         * @function encode
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {game.ITrajectorySample} message TrajectorySample message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectorySample.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.observation != null && Object.hasOwnProperty.call(message, "observation"))
+                $root.game.SeatObservation.encode(message.observation, writer.uint32(/* id 1, wireType 2 =*/10).fork()).ldelim();
+            if (message.actionId != null && Object.hasOwnProperty.call(message, "actionId"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.actionId);
+            if (message.rewards != null && message.rewards.length) {
+                writer.uint32(/* id 3, wireType 2 =*/26).fork();
+                for (let i = 0; i < message.rewards.length; ++i)
+                    writer.float(message.rewards[i]);
+                writer.ldelim();
+            }
+            if (message.nextObservation != null && Object.hasOwnProperty.call(message, "nextObservation"))
+                $root.game.SeatObservation.encode(message.nextObservation, writer.uint32(/* id 4, wireType 2 =*/34).fork()).ldelim();
+            if (message.terminated != null && Object.hasOwnProperty.call(message, "terminated"))
+                writer.uint32(/* id 5, wireType 0 =*/40).bool(message.terminated);
+            if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
+                writer.uint32(/* id 6, wireType 0 =*/48).bool(message.truncated);
+            if (message.actingSeat != null && Object.hasOwnProperty.call(message, "actingSeat"))
+                writer.uint32(/* id 7, wireType 0 =*/56).uint32(message.actingSeat);
+            if (message.episodeIndex != null && Object.hasOwnProperty.call(message, "episodeIndex"))
+                writer.uint32(/* id 8, wireType 0 =*/64).uint64(message.episodeIndex);
+            if (message.terminalRewards != null && message.terminalRewards.length) {
+                writer.uint32(/* id 9, wireType 2 =*/74).fork();
+                for (let i = 0; i < message.terminalRewards.length; ++i)
+                    writer.float(message.terminalRewards[i]);
+                writer.ldelim();
+            }
+            return writer;
+        };
+
+        /**
+         * Encodes the specified TrajectorySample message, length delimited. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {game.ITrajectorySample} message TrajectorySample message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectorySample.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a TrajectorySample message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.TrajectorySample} TrajectorySample
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectorySample.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.TrajectorySample();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.observation = $root.game.SeatObservation.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        message.actionId = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        if (!(message.rewards && message.rewards.length))
+                            message.rewards = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.rewards.push(reader.float());
+                        } else
+                            message.rewards.push(reader.float());
+                        break;
+                    }
+                case 4: {
+                        message.nextObservation = $root.game.SeatObservation.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 5: {
+                        message.terminated = reader.bool();
+                        break;
+                    }
+                case 6: {
+                        message.truncated = reader.bool();
+                        break;
+                    }
+                case 7: {
+                        message.actingSeat = reader.uint32();
+                        break;
+                    }
+                case 8: {
+                        message.episodeIndex = reader.uint64();
+                        break;
+                    }
+                case 9: {
+                        if (!(message.terminalRewards && message.terminalRewards.length))
+                            message.terminalRewards = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.terminalRewards.push(reader.float());
+                        } else
+                            message.terminalRewards.push(reader.float());
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a TrajectorySample message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.TrajectorySample} TrajectorySample
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectorySample.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a TrajectorySample message.
+         * @function verify
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        TrajectorySample.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.observation != null && message.hasOwnProperty("observation")) {
+                let error = $root.game.SeatObservation.verify(message.observation);
+                if (error)
+                    return "observation." + error;
+            }
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                if (!$util.isInteger(message.actionId))
+                    return "actionId: integer expected";
+            if (message.rewards != null && message.hasOwnProperty("rewards")) {
+                if (!Array.isArray(message.rewards))
+                    return "rewards: array expected";
+                for (let i = 0; i < message.rewards.length; ++i)
+                    if (typeof message.rewards[i] !== "number")
+                        return "rewards: number[] expected";
+            }
+            if (message.nextObservation != null && message.hasOwnProperty("nextObservation")) {
+                let error = $root.game.SeatObservation.verify(message.nextObservation);
+                if (error)
+                    return "nextObservation." + error;
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                if (typeof message.terminated !== "boolean")
+                    return "terminated: boolean expected";
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                if (typeof message.truncated !== "boolean")
+                    return "truncated: boolean expected";
+            if (message.actingSeat != null && message.hasOwnProperty("actingSeat"))
+                if (!$util.isInteger(message.actingSeat))
+                    return "actingSeat: integer expected";
+            if (message.episodeIndex != null && message.hasOwnProperty("episodeIndex"))
+                if (!$util.isInteger(message.episodeIndex) && !(message.episodeIndex && $util.isInteger(message.episodeIndex.low) && $util.isInteger(message.episodeIndex.high)))
+                    return "episodeIndex: integer|Long expected";
+            if (message.terminalRewards != null && message.hasOwnProperty("terminalRewards")) {
+                if (!Array.isArray(message.terminalRewards))
+                    return "terminalRewards: array expected";
+                for (let i = 0; i < message.terminalRewards.length; ++i)
+                    if (typeof message.terminalRewards[i] !== "number")
+                        return "terminalRewards: number[] expected";
+            }
+            return null;
+        };
+
+        /**
+         * Creates a TrajectorySample message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.TrajectorySample} TrajectorySample
+         */
+        TrajectorySample.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.TrajectorySample)
+                return object;
+            let message = new $root.game.TrajectorySample();
+            if (object.observation != null) {
+                if (typeof object.observation !== "object")
+                    throw TypeError(".game.TrajectorySample.observation: object expected");
+                message.observation = $root.game.SeatObservation.fromObject(object.observation);
+            }
+            if (object.actionId != null)
+                message.actionId = object.actionId >>> 0;
+            if (object.rewards) {
+                if (!Array.isArray(object.rewards))
+                    throw TypeError(".game.TrajectorySample.rewards: array expected");
+                message.rewards = [];
+                for (let i = 0; i < object.rewards.length; ++i)
+                    message.rewards[i] = Number(object.rewards[i]);
+            }
+            if (object.nextObservation != null) {
+                if (typeof object.nextObservation !== "object")
+                    throw TypeError(".game.TrajectorySample.nextObservation: object expected");
+                message.nextObservation = $root.game.SeatObservation.fromObject(object.nextObservation);
+            }
+            if (object.terminated != null)
+                message.terminated = Boolean(object.terminated);
+            if (object.truncated != null)
+                message.truncated = Boolean(object.truncated);
+            if (object.actingSeat != null)
+                message.actingSeat = object.actingSeat >>> 0;
+            if (object.episodeIndex != null)
+                if ($util.Long)
+                    (message.episodeIndex = $util.Long.fromValue(object.episodeIndex)).unsigned = true;
+                else if (typeof object.episodeIndex === "string")
+                    message.episodeIndex = parseInt(object.episodeIndex, 10);
+                else if (typeof object.episodeIndex === "number")
+                    message.episodeIndex = object.episodeIndex;
+                else if (typeof object.episodeIndex === "object")
+                    message.episodeIndex = new $util.LongBits(object.episodeIndex.low >>> 0, object.episodeIndex.high >>> 0).toNumber(true);
+            if (object.terminalRewards) {
+                if (!Array.isArray(object.terminalRewards))
+                    throw TypeError(".game.TrajectorySample.terminalRewards: array expected");
+                message.terminalRewards = [];
+                for (let i = 0; i < object.terminalRewards.length; ++i)
+                    message.terminalRewards[i] = Number(object.terminalRewards[i]);
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a TrajectorySample message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {game.TrajectorySample} message TrajectorySample
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        TrajectorySample.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults) {
+                object.rewards = [];
+                object.terminalRewards = [];
+            }
+            if (options.defaults) {
+                object.observation = null;
+                object.actionId = 0;
+                object.nextObservation = null;
+                object.terminated = false;
+                object.truncated = false;
+                object.actingSeat = 0;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.episodeIndex = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.episodeIndex = options.longs === String ? "0" : 0;
+            }
+            if (message.observation != null && message.hasOwnProperty("observation"))
+                object.observation = $root.game.SeatObservation.toObject(message.observation, options);
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                object.actionId = message.actionId;
+            if (message.rewards && message.rewards.length) {
+                object.rewards = [];
+                for (let j = 0; j < message.rewards.length; ++j)
+                    object.rewards[j] = options.json && !isFinite(message.rewards[j]) ? String(message.rewards[j]) : message.rewards[j];
+            }
+            if (message.nextObservation != null && message.hasOwnProperty("nextObservation"))
+                object.nextObservation = $root.game.SeatObservation.toObject(message.nextObservation, options);
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                object.terminated = message.terminated;
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                object.truncated = message.truncated;
+            if (message.actingSeat != null && message.hasOwnProperty("actingSeat"))
+                object.actingSeat = message.actingSeat;
+            if (message.episodeIndex != null && message.hasOwnProperty("episodeIndex"))
+                if (typeof message.episodeIndex === "number")
+                    object.episodeIndex = options.longs === String ? String(message.episodeIndex) : message.episodeIndex;
+                else
+                    object.episodeIndex = options.longs === String ? $util.Long.prototype.toString.call(message.episodeIndex) : options.longs === Number ? new $util.LongBits(message.episodeIndex.low >>> 0, message.episodeIndex.high >>> 0).toNumber(true) : message.episodeIndex;
+            if (message.terminalRewards && message.terminalRewards.length) {
+                object.terminalRewards = [];
+                for (let j = 0; j < message.terminalRewards.length; ++j)
+                    object.terminalRewards[j] = options.json && !isFinite(message.terminalRewards[j]) ? String(message.terminalRewards[j]) : message.terminalRewards[j];
+            }
+            return object;
+        };
+
+        /**
+         * Converts this TrajectorySample to JSON.
+         * @function toJSON
+         * @memberof game.TrajectorySample
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        TrajectorySample.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for TrajectorySample
+         * @function getTypeUrl
+         * @memberof game.TrajectorySample
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        TrajectorySample.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.TrajectorySample";
+        };
+
+        return TrajectorySample;
+    })();
+
+    game.TrajectoryDataset = (function() {
+
+        /**
+         * Properties of a TrajectoryDataset.
+         * @memberof game
+         * @interface ITrajectoryDataset
+         * @property {Array.<game.ITrajectorySample>|undefined} [samples] TrajectoryDataset samples
+         */
+
+        /**
+         * Constructs a new TrajectoryDataset.
+         * @memberof game
+         * @classdesc Represents a TrajectoryDataset.
+         * @implements ITrajectoryDataset
+         * @constructor
+         * @param {game.ITrajectoryDataset=} [properties] Properties to set
+         */
+        function TrajectoryDataset(properties) {
+            this.samples = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * TrajectoryDataset samples.
+         * @member {Array.<game.TrajectorySample>} samples
+         * @memberof game.TrajectoryDataset
+         * @instance
+         */
+        TrajectoryDataset.prototype.samples = $util.emptyArray;
+
+        /**
+         * Creates a new TrajectoryDataset instance using the specified properties.
+         * @function create
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {game.ITrajectoryDataset=} [properties] Properties to set
+         * @returns {game.TrajectoryDataset} TrajectoryDataset instance
+         */
+        TrajectoryDataset.create = function create(properties) {
+            return new TrajectoryDataset(properties);
+        };
+
+        /**
+         * Encodes the specified TrajectoryDataset message. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
+         * @function encode
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {game.ITrajectoryDataset} message TrajectoryDataset message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectoryDataset.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.samples != null && message.samples.length)
+                for (let i = 0; i < message.samples.length; ++i)
+                    $root.game.TrajectorySample.encode(message.samples[i], writer.uint32(/* id 1, wireType 2 =*/10).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified TrajectoryDataset message, length delimited. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {game.ITrajectoryDataset} message TrajectoryDataset message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        TrajectoryDataset.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a TrajectoryDataset message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.TrajectoryDataset} TrajectoryDataset
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectoryDataset.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.TrajectoryDataset();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        if (!(message.samples && message.samples.length))
+                            message.samples = [];
+                        message.samples.push($root.game.TrajectorySample.decode(reader, reader.uint32()));
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a TrajectoryDataset message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.TrajectoryDataset} TrajectoryDataset
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        TrajectoryDataset.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a TrajectoryDataset message.
+         * @function verify
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        TrajectoryDataset.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.samples != null && message.hasOwnProperty("samples")) {
+                if (!Array.isArray(message.samples))
+                    return "samples: array expected";
+                for (let i = 0; i < message.samples.length; ++i) {
+                    let error = $root.game.TrajectorySample.verify(message.samples[i]);
+                    if (error)
+                        return "samples." + error;
+                }
+            }
+            return null;
+        };
+
+        /**
+         * Creates a TrajectoryDataset message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.TrajectoryDataset} TrajectoryDataset
+         */
+        TrajectoryDataset.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.TrajectoryDataset)
+                return object;
+            let message = new $root.game.TrajectoryDataset();
+            if (object.samples) {
+                if (!Array.isArray(object.samples))
+                    throw TypeError(".game.TrajectoryDataset.samples: array expected");
+                message.samples = [];
+                for (let i = 0; i < object.samples.length; ++i) {
+                    if (typeof object.samples[i] !== "object")
+                        throw TypeError(".game.TrajectoryDataset.samples: object expected");
+                    message.samples[i] = $root.game.TrajectorySample.fromObject(object.samples[i]);
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a TrajectoryDataset message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {game.TrajectoryDataset} message TrajectoryDataset
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        TrajectoryDataset.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.samples = [];
+            if (message.samples && message.samples.length) {
+                object.samples = [];
+                for (let j = 0; j < message.samples.length; ++j)
+                    object.samples[j] = $root.game.TrajectorySample.toObject(message.samples[j], options);
+            }
+            return object;
+        };
+
+        /**
+         * Converts this TrajectoryDataset to JSON.
+         * @function toJSON
+         * @memberof game.TrajectoryDataset
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        TrajectoryDataset.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for TrajectoryDataset
+         * @function getTypeUrl
+         * @memberof game.TrajectoryDataset
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        TrajectoryDataset.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.TrajectoryDataset";
+        };
+
+        return TrajectoryDataset;
+    })();
+
     return game;
 })();
 

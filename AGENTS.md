@@ -29,13 +29,15 @@ fh-mahjong/
 ├── bot/            Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
 ├── proto/          Protobuf schemas (single source of truth)
 ├── core/           Game state machine + RuleEngine interface
+├── rlenv/          Deterministic RL environment wrapper, observation encoder, and action catalog
 ├── rules/          Fenghua ruleset plugin (scoring, hand eval)
 ├── models/         GORM database models (User, Match)
 ├── api/            REST API + WebSocket server
 ├── cmd/
 │   ├── server/     Production HTTP server entry point
 │   ├── cli/        CLI debugging tool
-│   └── wasm/       WebAssembly build target
+│   ├── wasm/       WebAssembly build target
+│   └── rlbridge/   c-shared bridge entry point for Python RL
 └── web/            React frontend application
     └── src/
         ├── contexts/   Socket + Game state providers
@@ -54,6 +56,9 @@ fh-mahjong/
 | `core/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
 | `rules/fh.go` | `HometownRuleset` — full Fenghua scoring and hand evaluation |
 | `bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
+| `rlenv/env.go` | Deterministic reset/step wrapper that advances the Go engine to the next RL decision point |
+| `rlenv/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |
+| `cmd/rlbridge/main.go` | c-shared bridge exposing protobuf-based `reset`, `step`, and heuristic trajectory export |
 | `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
 | `official_rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
 | `rules.md` | Synthesized rules + Go implementation design (bridge doc) |
@@ -117,6 +122,7 @@ NOT as: `C1C2C3 D4D5D6 B7B8B9 H1H1H1 H2` (old notation — do not use)
 - `ScoreEntry`: `{pattern_name string, points int32}` — one entry per scoring pattern
 - `PlayerPayout`: `{seat uint32, amount int32}` — negative=pays, positive=receives
 - `RoundResult`: winner_seat, win_type, discarder_seat, winning_hand, winning_melds, win_tile, breakdown[], total_score, payouts[], is_draw
+- RL bridge messages: `EnvConfig`, `SeatObservation`, `EnvResetRequest/Response`, `EnvStepRequest/Response`, `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
 
 Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use chii/pon/kan only in comments and documentation.
 
@@ -147,13 +153,19 @@ Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use 
 
 Go bindings:
 ```bash
-protoc --go_out=. --go_opt=paths=source_relative proto/game.proto
+protoc --plugin=protoc-gen-go=$(go env GOPATH)/bin/protoc-gen-go --go_out=. --go_opt=paths=source_relative proto/game.proto
 ```
 
 TypeScript/JS bindings (from project root):
 ```bash
 web/node_modules/.bin/pbjs -t static-module -w es6 --null-semantics -o web/src/proto/game.js proto/game.proto
 web/node_modules/.bin/pbts -o web/src/proto/game.d.ts web/src/proto/game.js
+```
+
+Python bindings:
+```bash
+mkdir -p ai/src/fh_mahjong_ai/generated
+protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 ```
 
 `--null-semantics` is required so `optional` proto3 fields decode as `null` when unset — important for `drawn_tile_id` (can be `0` = tile 1m).

@@ -17,13 +17,19 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - `GameState` round-debug fields include `dice_sum`, individual `dice1`/`dice2`, `wangpai_stacks`, and live `wangpai_tiles_left`
   - `Meld`, `PlayerAction`: action/meld data
   - `ScoreEntry`, `PlayerPayout`, `RoundResult`: scoring and payouts
+  - RL bridge messages:
+    - `EnvConfig`, `SeatObservation`
+    - `EnvResetRequest` / `EnvResetResponse`
+    - `EnvStepRequest` / `EnvStepResponse`
+    - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
+      - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` carries final round payouts for offline warm-start consumers
 - **game.pb.go** — Auto-generated Go bindings (do not edit manually)
 
 ## Regeneration Commands
 
 Go bindings:
 ```bash
-protoc --go_out=. --go_opt=paths=source_relative proto/game.proto
+protoc --plugin=protoc-gen-go=$(go env GOPATH)/bin/protoc-gen-go --go_out=. --go_opt=paths=source_relative proto/game.proto
 ```
 
 TypeScript/JS bindings (from project root):
@@ -32,8 +38,14 @@ web/node_modules/.bin/pbjs -t static-module -w es6 --null-semantics -o web/src/p
 web/node_modules/.bin/pbts -o web/src/proto/game.d.ts web/src/proto/game.js
 ```
 
+Python bindings:
+```bash
+mkdir -p ai/src/fh_mahjong_ai/generated
+protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
+```
+
 ## Architecture Notes
 
 - Proto enum names (CHII, PON, KAN) are kept as-is in generated code. Use chii/pon/kan only in comments and docs.
 - `--null-semantics` is required for JS bindings so `optional` proto3 fields decode as `null` when unset (important for `drawn_tile_id` which can be `0`).
-- Imported by: `core/`, `rules/`, `api/`, `cmd/`, `web/src/proto/`.
+- Imported by: `core/`, `rules/`, `api/`, `cmd/`, `rlenv/`, `web/src/proto/`, `ai/src/fh_mahjong_ai/generated/`.
