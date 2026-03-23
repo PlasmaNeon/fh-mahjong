@@ -18,10 +18,12 @@ import (
 
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
-	ID          string
-	Hub         *Hub
-	DB          *gorm.DB
-	MatchRecord *models.Match
+	ID             string
+	PrivateTableID string
+	Hub            *Hub
+	DB             *gorm.DB
+	MatchRecord    *models.Match
+	OnShutdown     func()
 
 	Engine *core.Game
 	Seats  map[uint32]*Client // maps 0-3 to active WS connections
@@ -82,6 +84,9 @@ func (r *Room) Start() {
 		select {
 		case <-r.Shutdown:
 			log.Printf("Room %s shutting down", r.ID)
+			if r.OnShutdown != nil {
+				r.OnShutdown()
+			}
 
 			// 2. Persist replay to database
 			// (For production, we might upload `replayBytes` to AWS S3 and save the URL.
