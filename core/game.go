@@ -15,6 +15,9 @@ type Game struct {
 	State *pb.GameState
 	Rules RuleEngine
 
+	// Paipu recorder (optional — nil means no recording)
+	Recorder *PaipuRecorder
+
 	// Private game state not sent to clients
 	wall               []*pb.Tile
 	wallIndex          int // Points to next tile to draw from the front
@@ -202,6 +205,31 @@ func (g *Game) dealTiles() uint32 {
 		g.State.WildTiles = []*pb.Tile{wildIndicator}
 	}
 
+	if g.Recorder != nil {
+		var deals [4][]uint32
+		for i := 0; i < 4; i++ {
+			deals[i] = make([]uint32, len(g.State.Players[i].ClosedHand))
+			for j, t := range g.State.Players[i].ClosedHand {
+				deals[i][j] = t.Id
+			}
+		}
+		var scores [4]int32
+		for i := 0; i < 4; i++ {
+			scores[i] = g.State.Players[i].Score
+		}
+		g.Recorder.StartRound(
+			g.State.HandNum,
+			g.State.PrevailingWind,
+			dealer,
+			[2]uint32{d1, d2},
+			g.State.WallSeed,
+			g.State.WildTiles,
+			diceSum,
+			scores,
+			deals,
+		)
+	}
+
 	return dealer
 }
 
@@ -274,6 +302,9 @@ func (g *Game) revealInitialFlowers(dealer uint32) {
 				break
 			}
 			replacement := g.wall[drawIndex]
+			if g.Recorder != nil {
+				g.Recorder.RecordInitialFlower(seat, flower.Id, replacement.Id)
+			}
 			player.ClosedHand = append(player.ClosedHand, replacement)
 			player.HandSize++
 			g.State.WallCount--
@@ -369,6 +400,7 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
+			g.recordRoundEnd()
 			return nil
 		}
 
@@ -391,6 +423,10 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 	g.updateWangpaiTilesLeft()
+
+	if g.Recorder != nil {
+		g.Recorder.RecordDraw(seat, drawnTile.Id)
+	}
 
 	if g.findRevealableFlowerTile(seat) != nil {
 		return g.autoRevealFlowers(seat)
@@ -448,6 +484,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
+		g.recordRoundEnd()
 		return nil // Exhaustive draw
 	}
 
@@ -476,6 +513,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
+			g.recordRoundEnd()
 			return nil
 		}
 
@@ -496,6 +534,10 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	player.DrawnTileId = &drawnID
 	g.State.WallCount--
 	g.updateWangpaiTilesLeft()
+
+	if g.Recorder != nil {
+		g.Recorder.RecordDraw(seat, drawnTile.Id)
+	}
 
 	if g.findRevealableFlowerTile(seat) != nil {
 		return g.autoRevealFlowers(seat)
@@ -550,6 +592,10 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		g.haiteiDrawIndex = haiteiIdx
 		g.updateWangpaiTilesLeft()
 
+		if g.Recorder != nil {
+			g.Recorder.RecordHaiteiAccept(seat, drawnTile.Id)
+		}
+
 		// If the accepted haitei tile is a revealable flower, the replacement comes
 		// from the dead wall and the haitei-only restriction no longer applies.
 		if g.findRevealableFlowerTile(seat) != nil {
@@ -566,12 +612,16 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 	if action.Type == pb.ActionType_ACTION_REFUSE_HAITEI {
 		// Player refuses the haitei tile → ryuukyoku
 		g.State.IsHaitei = false
+		if g.Recorder != nil {
+			g.Recorder.RecordHaiteiRefuse(seat)
+		}
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
 		g.State.PlayerReady = []bool{false, false, false, false}
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
+		g.recordRoundEnd()
 		return nil
 	}
 
@@ -595,6 +645,10 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		player.HandSize--
 		player.DrawnTileId = nil
 		g.State.ActiveDiscard = action.Tile
+
+		if g.Recorder != nil {
+			g.Recorder.RecordDiscard(seat, action.Tile.Id)
+		}
 
 		// Choosing to discard means the player did not win on any dead-wall replacement tile,
 		// so all kong/flower bonus flags are now stale and must be cleared.
@@ -640,6 +694,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 				for _, p := range g.State.Players {
 					p.ValidActions = nil
 				}
+				g.recordRoundEnd()
 			}
 			return nil
 		}
@@ -714,9 +769,25 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 				}
 				player.OpenMelds = append(player.OpenMelds, meld)
 			}
+
+			if g.Recorder != nil {
+				if upgraded {
+					g.Recorder.RecordUpgradeKan(seat, action.MeldTiles[0].Id)
+				} else {
+					ids := make([]uint32, len(action.MeldTiles))
+					for i, t := range action.MeldTiles {
+						ids[i] = t.Id
+					}
+					g.Recorder.RecordClosedKan(seat, ids)
+				}
+			}
 		} else if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
 			// Add to Flower Melds
 			player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
+
+			if g.Recorder != nil {
+				g.Recorder.RecordFlowerReveal(seat, action.MeldTiles[0].Id)
+			}
 		}
 
 		// Player immediately gets a supplementary tile from the Dead Wall
@@ -752,6 +823,14 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			}
 		}
 
+		if g.Recorder != nil {
+			tileID := uint32(0)
+			if winTile != nil {
+				tileID = winTile.Id
+			}
+			g.Recorder.RecordTsumo(seat, tileID)
+		}
+
 		payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_TSUMO, seat, 0)
 		for _, p := range payouts {
 			g.State.Players[p.Seat].Score += p.Amount
@@ -774,6 +853,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
+		g.recordRoundEnd()
 
 		return nil
 	}
@@ -851,6 +931,21 @@ func (g *Game) ResolveInterrupts() {
 			}
 		}
 
+		if g.Recorder != nil {
+			ids := make([]uint32, len(winningAction.MeldTiles))
+			for i, t := range winningAction.MeldTiles {
+				ids[i] = t.Id
+			}
+			switch winningAction.Type {
+			case pb.ActionType_ACTION_CHII:
+				g.Recorder.RecordChii(winnerSeat, ids, discarder)
+			case pb.ActionType_ACTION_PON:
+				g.Recorder.RecordPon(winnerSeat, ids, discarder)
+			case pb.ActionType_ACTION_KAN:
+				g.Recorder.RecordOpenKan(winnerSeat, ids, discarder)
+			}
+		}
+
 		// Remove the discard from the discarder's pile since it was claimed
 		discarderPlayer := g.State.Players[discarder]
 		if len(discarderPlayer.Discards) > 0 {
@@ -883,6 +978,10 @@ func (g *Game) ResolveInterrupts() {
 		player := g.State.Players[winnerSeat]
 		discarderSeat := g.State.ActivePlayer
 		winTile := g.State.ActiveDiscard
+
+		if g.Recorder != nil {
+			g.Recorder.RecordRon(winnerSeat, g.State.ActiveDiscard.Id, discarderSeat)
+		}
 
 		score, breakdown, canWin := g.Rules.EvaluateHand(
 			player.ClosedHand, player.OpenMelds, winTile, g.State, winnerSeat, false,
@@ -925,6 +1024,7 @@ func (g *Game) ResolveInterrupts() {
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
+		g.recordRoundEnd()
 	}
 
 	// clear queue
@@ -992,4 +1092,72 @@ func (g *Game) startNextRound() {
 	// Auto-reveal if the dealer's drawn tile is a flower
 	g.revealInitialFlowers(dealer)
 	g.State.Players[dealer].ValidActions = g.Rules.GetValidActions(g.State, dealer)
+}
+
+// recordRoundEnd captures the round result into the paipu recorder.
+func (g *Game) recordRoundEnd() {
+	if g.Recorder == nil || g.State.RoundResult == nil {
+		return
+	}
+	result := g.State.RoundResult
+
+	paipuResult := &PaipuRoundResult{
+		ScoreChanges: make([]int32, 4),
+	}
+
+	if result.IsDraw {
+		paipuResult.Type = "draw"
+	} else {
+		paipuResult.Type = "win"
+		paipuResult.Winner = IntPtr(int(result.WinnerSeat))
+		if result.WinType == pb.ActionType_ACTION_TSUMO {
+			paipuResult.WinType = "tsumo"
+		} else {
+			paipuResult.WinType = "ron"
+			paipuResult.Discarder = IntPtr(int(result.DiscarderSeat))
+		}
+		if result.WinTile != nil {
+			paipuResult.WinTile = IntPtr(int(result.WinTile.Id))
+		}
+		for _, t := range result.WinningHand {
+			paipuResult.Hand = append(paipuResult.Hand, t.Id)
+		}
+		for _, m := range result.WinningMelds {
+			pm := PaipuMeld{From: -1}
+			switch m.Type {
+			case pb.ActionType_ACTION_CHII:
+				pm.Type = "chii"
+			case pb.ActionType_ACTION_PON:
+				pm.Type = "pon"
+			case pb.ActionType_ACTION_KAN:
+				pm.Type = "kan"
+			}
+			for _, t := range m.Tiles {
+				pm.Tiles = append(pm.Tiles, t.Id)
+			}
+			if m.CalledDirection != pb.MeldDirection_MELD_DIRECTION_UNKNOWN {
+				pm.From = int(m.CalledDirection)
+			}
+			paipuResult.Melds = append(paipuResult.Melds, pm)
+		}
+		winner := g.State.Players[result.WinnerSeat]
+		for _, f := range winner.FlowerMelds {
+			paipuResult.Flowers = append(paipuResult.Flowers, f.Id)
+		}
+		for _, entry := range result.Breakdown {
+			paipuResult.Breakdown = append(paipuResult.Breakdown, PaipuBreakdown{
+				Name:   entry.PatternName,
+				Points: entry.Points,
+			})
+		}
+		paipuResult.TotalScore = result.TotalScore
+	}
+
+	for _, p := range result.Payouts {
+		if int(p.Seat) < 4 {
+			paipuResult.ScoreChanges[p.Seat] = p.Amount
+		}
+	}
+
+	g.Recorder.EndRound(paipuResult)
 }

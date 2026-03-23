@@ -235,3 +235,8 @@ func (r *PaipuRecorder) Finalize(finalScores [4]int32) *Paipu {
 	r.paipu.FinalScores = finalScores
 	return &r.paipu
 }
+
+// CurrentRound returns the in-progress round (for testing).
+func (r *PaipuRecorder) CurrentRound() *PaipuRound {
+	return r.currentRound
+}

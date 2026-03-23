@@ -89,3 +89,32 @@ func TestPaipuRecorderBasicFlow(t *testing.T) {
 		t.Errorf("first action = %q, want 'draw'", paipu.Rounds[0].Actions[0].Act)
 	}
 }
+
+func TestPaipuRecorderIntegration(t *testing.T) {
+	ruleset := &rules.HometownRuleset{}
+	g := core.NewGame("test-paipu", ruleset)
+	g.Recorder = core.NewPaipuRecorder("test-paipu", "hometown")
+
+	err := g.Start()
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+
+	// Verify recorder has a round started
+	if g.Recorder.CurrentRound() == nil {
+		t.Fatal("Expected currentRound to be started after Start()")
+	}
+	// Verify deals are recorded
+	for i := 0; i < 4; i++ {
+		if len(g.Recorder.CurrentRound().Deals[i]) != 13 {
+			t.Errorf("Seat %d deal has %d tiles, want 13", i, len(g.Recorder.CurrentRound().Deals[i]))
+		}
+	}
+	// Verify at least one action was recorded (the dealer's draw)
+	if len(g.Recorder.CurrentRound().Actions) < 1 {
+		t.Error("Expected at least 1 action (dealer draw) after Start()")
+	}
+	if g.Recorder.CurrentRound().Actions[0].Act != "draw" {
+		t.Errorf("First action = %q, want 'draw'", g.Recorder.CurrentRound().Actions[0].Act)
+	}
+}
