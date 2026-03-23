@@ -10,7 +10,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
-  - Public tool routes: `/api/v1/calc`, `/api/v1/ws`
+  - Public tool routes: `/api/v1/calc`, `/api/v1/shanten`, `/api/v1/ws`
   - Optional SPA/static serving from `web/dist` for single-service production deploys
   - Production SPA asset mounts use explicit `GET`/`HEAD` file handlers for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
@@ -28,8 +28,10 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **room.go** — Single match room orchestration:
   - `Room` struct — 4 `Client` seats + 1 `core.Game` engine
+  - `BotPolicy` — deterministic policy used for seats with no connected client entry
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
+  - `advanceAutomatedSeats()` — Plays through missing-seat turns and interrupt responses via the shared heuristic bot
   - `BroadcastState()` — Serializes `GameState` Protobuf to all connected players
   - Replay recording (appends state snapshots to binary blob)
 
@@ -40,6 +42,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **matchmaker.go** — Player queue and pairing:
   - `Matchmaker` struct — Queue of waiting clients
   - Groups 4 players into a `Room`
+  - Tracks active private tables by `tableId` so the same `/table/:tableId` link cannot accidentally start a second game while the first one is still running
+  - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
 
 - **middleware.go** — JWT token validation middleware for protected routes
 
@@ -61,8 +65,10 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - All game actions flow: Client → WebSocket → Room.ActionQueue → core.Game.ProcessPlayerAction() → BroadcastState()
 - The room processes actions sequentially via a single goroutine (no mutex needed for game state).
+- Seats with no connected `Room.Seats` entry are treated as automated seats and act through the same authoritative engine path instead of being hard-coded to `PASS`.
 - The interrupt timer runs in a separate goroutine and calls `ResolveInterrupts()` directly — potential race condition to be aware of.
 - State is broadcast as raw Protobuf bytes; no per-player filtering yet (all players see full state including opponent hands).
+- Private tables are now a two-stage concept: `tableId` is the shareable waiting-room key, and once 4 players are ready the server records an active `tableId -> matchId + participant set` mapping so reconnects can rejoin the live room while non-participants are rejected.
 - `/api/v1/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
 - When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/calc` and `/create-room` work behind the Go server.
 - Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
@@ -70,3 +76,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **server_test.go** — SPA/static serving regression coverage:
   - Built JS asset requests return JavaScript, not `index.html`
   - Missing asset requests return `404`, not the SPA shell
+
+- **private_table_test.go** — Private-room join regression coverage:
+  - Inactive private tables queue normally
+  - Returning participants get `"active"` with the existing `matchId`
+  - Fresh users cannot queue into an already-active private table

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules"
@@ -96,6 +97,7 @@ func getRealIndex(closed []*pb.Tile, uiIdx int) int {
 func main() {
 	fmt.Println("Starting Fenghua Mahjong CLI Demo...")
 	game := core.NewGame("demo-1", &rules.HometownRuleset{})
+	botPolicy := bot.NewHeuristicPolicy()
 	err := game.Start()
 	if err != nil {
 		fmt.Println("Error starting game:", err)
@@ -119,9 +121,16 @@ func main() {
 		if state.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
 			validInterrupts := game.Rules.GetValidInterrupts(state, state.ActiveDiscard, 0)
 
-			// Auto bot skip
+			// Let bot seats respond through the same heuristic policy used elsewhere.
 			for i := uint32(1); i < 4; i++ {
-				game.ProcessPlayerAction(i, &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
+				if len(state.Players[i].ValidActions) == 0 {
+					continue
+				}
+				action := botPolicy.ChooseAction(state, i)
+				if action == nil {
+					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
+				}
+				game.ProcessPlayerAction(i, action)
 			}
 
 			if len(validInterrupts) > 0 {
@@ -250,17 +259,20 @@ func main() {
 				}
 			} else {
 				// Bot turn
-				botHand := state.Players[activeSeat].ClosedHand
-				tileToDiscard := botHand[len(botHand)-1] // simply discard the drawn tile
+				action := botPolicy.ChooseAction(state, activeSeat)
+				if action == nil {
+					fmt.Printf("\n[Bot %d] No legal action found\n", activeSeat)
+					break
+				}
 
-				err := game.ProcessPlayerAction(activeSeat, &pb.PlayerAction{
-					Type: pb.ActionType_ACTION_DISCARD,
-					Tile: tileToDiscard,
-				})
+				err := game.ProcessPlayerAction(activeSeat, action)
 				if err != nil {
 					fmt.Println("Bot error:", err)
+				} else if action.Type == pb.ActionType_ACTION_DISCARD && action.Tile != nil {
+					fmt.Printf("\n[Bot %d] Discarded %s\n", activeSeat, tileName(action.Tile))
+				} else {
+					fmt.Printf("\n[Bot %d] Chose %s\n", activeSeat, action.Type.String())
 				}
-				fmt.Printf("\n[Bot %d] Discarded %s\n", activeSeat, tileName(tileToDiscard))
 			}
 		}
 	}

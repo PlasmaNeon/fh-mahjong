@@ -69,7 +69,10 @@ func TestStandardShanten(t *testing.T) {
 				for i := 0; i < 9; i++ {
 					c[i] = 1
 				}
-				c[9] = 1; c[10] = 1; c[11] = 1; c[13] = 2
+				c[9] = 1
+				c[10] = 1
+				c[11] = 1
+				c[13] = 2
 				return c
 			}(),
 			want: -1,
@@ -81,7 +84,10 @@ func TestStandardShanten(t *testing.T) {
 				for i := 0; i < 9; i++ {
 					c[i] = 1
 				}
-				c[9] = 1; c[10] = 1; c[11] = 1; c[13] = 1
+				c[9] = 1
+				c[10] = 1
+				c[11] = 1
+				c[13] = 1
 				return c
 			}(),
 			want: 0,
@@ -90,10 +96,17 @@ func TestStandardShanten(t *testing.T) {
 			name: "tenpai: 12m 456m 789m 123p 55p (waiting 3m)",
 			counts: func() [34]int {
 				var c [34]int
-				c[0] = 1; c[1] = 1
-				c[3] = 1; c[4] = 1; c[5] = 1
-				c[6] = 1; c[7] = 1; c[8] = 1
-				c[9] = 1; c[10] = 1; c[11] = 1
+				c[0] = 1
+				c[1] = 1
+				c[3] = 1
+				c[4] = 1
+				c[5] = 1
+				c[6] = 1
+				c[7] = 1
+				c[8] = 1
+				c[9] = 1
+				c[10] = 1
+				c[11] = 1
 				c[13] = 2
 				return c
 			}(),
@@ -122,8 +135,13 @@ func TestSevenPairsShanten(t *testing.T) {
 			name: "complete seven pairs",
 			counts: func() [34]int {
 				var c [34]int
-				c[0] = 2; c[1] = 2; c[2] = 2; c[3] = 2
-				c[9] = 2; c[10] = 2; c[11] = 2
+				c[0] = 2
+				c[1] = 2
+				c[2] = 2
+				c[3] = 2
+				c[9] = 2
+				c[10] = 2
+				c[11] = 2
 				return c
 			}(),
 			want: -1,
@@ -132,8 +150,14 @@ func TestSevenPairsShanten(t *testing.T) {
 			name: "six pairs + 2 singles = tenpai",
 			counts: func() [34]int {
 				var c [34]int
-				c[0] = 2; c[1] = 2; c[2] = 2; c[3] = 2
-				c[9] = 2; c[10] = 2; c[11] = 1; c[12] = 1
+				c[0] = 2
+				c[1] = 2
+				c[2] = 2
+				c[3] = 2
+				c[9] = 2
+				c[10] = 2
+				c[11] = 1
+				c[12] = 1
 				return c
 			}(),
 			want: 0,
@@ -162,9 +186,13 @@ func TestIndependenceShanten(t *testing.T) {
 			counts: func() [34]int {
 				var c [34]int
 				// Man: 1,4,7 (indices 0,3,6)
-				c[0] = 1; c[3] = 1; c[6] = 1
+				c[0] = 1
+				c[3] = 1
+				c[6] = 1
 				// Pin: 1,4,7 (indices 9,12,15)
-				c[9] = 1; c[12] = 1; c[15] = 1
+				c[9] = 1
+				c[12] = 1
+				c[15] = 1
 				// Sou: 1 (index 18)
 				c[18] = 1
 				// All 7 honors
@@ -203,7 +231,8 @@ func TestWildTileShanten(t *testing.T) {
 				for i := 0; i < 9; i++ {
 					c[i] = 1
 				}
-				c[9] = 1; c[10] = 1
+				c[9] = 1
+				c[10] = 1
 				c[13] = 2
 				return c
 			}(),
@@ -218,7 +247,9 @@ func TestWildTileShanten(t *testing.T) {
 				for i := 0; i < 9; i++ {
 					c[i] = 1
 				}
-				c[9] = 1; c[18] = 1; c[27] = 1
+				c[9] = 1
+				c[18] = 1
+				c[27] = 1
 				return c
 			}(),
 			wilds: 2,
@@ -255,6 +286,55 @@ func TestCalculateFromTiles(t *testing.T) {
 	}
 }
 
+func TestAnalyzeRoutes(t *testing.T) {
+	t.Run("standard route wins", func(t *testing.T) {
+		var counts [34]int
+		for i := 0; i < 9; i++ {
+			counts[i] = 1
+		}
+		counts[9] = 1
+		counts[10] = 1
+		counts[11] = 1
+		counts[13] = 2
+
+		got := Analyze(counts, 0, 0)
+		if got.Overall != -1 || got.Standard != -1 {
+			t.Fatalf("Analyze() = %+v, want overall/standard -1", got)
+		}
+		if got.SevenPairs <= got.Standard || got.Independence <= got.Standard {
+			t.Fatalf("expected non-standard routes to be worse than standard, got %+v", got)
+		}
+	})
+
+	t.Run("seven pairs route wins", func(t *testing.T) {
+		var counts [34]int
+		counts[0] = 2
+		counts[1] = 2
+		counts[2] = 2
+		counts[3] = 2
+		counts[9] = 2
+		counts[10] = 2
+		counts[11] = 2
+
+		got := Analyze(counts, 0, 0)
+		if got.Overall != -1 || got.SevenPairs != -1 {
+			t.Fatalf("Analyze() = %+v, want overall/sevenPairs -1", got)
+		}
+	})
+
+	t.Run("open hand disables closed-only routes", func(t *testing.T) {
+		var counts [34]int
+		counts[0] = 1
+		counts[1] = 1
+		counts[2] = 1
+
+		got := Analyze(counts, 0, 1)
+		if got.SevenPairs != RouteUnavailable || got.Independence != RouteUnavailable {
+			t.Fatalf("Analyze() = %+v, want closed-only routes unavailable", got)
+		}
+	})
+}
+
 func TestEdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -276,7 +356,8 @@ func TestEdgeCases(t *testing.T) {
 				for i := 0; i < 9; i++ {
 					c[i] = 1
 				}
-				c[9] = 1; c[10] = 1
+				c[9] = 1
+				c[10] = 1
 				return c
 			}(),
 			wilds: 3,
@@ -299,7 +380,10 @@ func BenchmarkCalculate(b *testing.B) {
 	for i := 0; i < 9; i++ {
 		counts[i] = 1
 	}
-	counts[9] = 1; counts[10] = 1; counts[11] = 1; counts[13] = 2
+	counts[9] = 1
+	counts[10] = 1
+	counts[11] = 1
+	counts[13] = 2
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -312,7 +396,8 @@ func BenchmarkCalculateWithWilds(b *testing.B) {
 	for i := 0; i < 9; i++ {
 		counts[i] = 1
 	}
-	counts[9] = 1; counts[10] = 1
+	counts[9] = 1
+	counts[10] = 1
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

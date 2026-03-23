@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/core"
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -19,12 +20,15 @@ import (
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
 	ID          string
+	PrivateTableID string
 	Hub         *Hub
 	DB          *gorm.DB
 	MatchRecord *models.Match
+	OnShutdown  func()
 
-	Engine *core.Game
-	Seats  map[uint32]*Client // maps 0-3 to active WS connections
+	Engine    *core.Game
+	BotPolicy bot.Policy
+	Seats     map[uint32]*Client // maps 0-3 to active WS connections
 
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
@@ -51,6 +55,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		Hub:                hub,
 		DB:                 db,
 		Engine:             core.NewGame(matchID, ruleset),
+		BotPolicy:          bot.NewHeuristicPolicy(),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,
 		ActionQueue:        make(chan ClientAction),
@@ -77,11 +82,15 @@ func (r *Room) Start() {
 
 	// 1. In-memory buffer to record the full serialized replay of the match
 	var replayBytes []byte
+	replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 
 	for {
 		select {
 		case <-r.Shutdown:
 			log.Printf("Room %s shutting down", r.ID)
+			if r.OnShutdown != nil {
+				r.OnShutdown()
+			}
 
 			// 2. Persist replay to database
 			// (For production, we might upload `replayBytes` to AWS S3 and save the URL.
@@ -108,6 +117,7 @@ func (r *Room) Start() {
 				r.Engine.ResolveInterrupts()
 				resolvePayload := r.BroadcastState()
 				replayBytes = append(replayBytes, resolvePayload...)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -143,6 +153,7 @@ func (r *Room) Start() {
 
 				// Keep appending the state into the giant binary blob
 				replayBytes = append(replayBytes, statePayload...)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
@@ -157,21 +168,7 @@ func (r *Room) Start() {
 
 				// If we just entered wait phase, start the timer
 				if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
-					// Auto-PASS for any seat that has valid actions but no connected client (bot/absent player)
-					for seat, p := range r.Engine.State.Players {
-						if len(p.ValidActions) > 0 {
-							if _, connected := r.Seats[uint32(seat)]; !connected {
-								r.Engine.ProcessPlayerAction(uint32(seat), &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
-							}
-						}
-					}
-
-					// If auto-pass resolved everything, no need for a timer
-					if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
-						statePayload = r.BroadcastState()
-						replayBytes = append(replayBytes, statePayload...)
-						log.Printf("Auto-resolved interrupts (all bots) for room %s", r.ID)
-					} else {
+					if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
 						if r.interruptTmr != nil {
 							r.interruptTmr.Stop()
 						}
@@ -210,11 +207,103 @@ func (r *Room) Start() {
 								}
 							}
 						}(r.interruptTmr, epoch)
+					} else {
+						log.Printf("Auto-resolved interrupts for room %s", r.ID)
 					}
 				}
 			}
 		}
 	}
+}
+
+func (r *Room) advanceAutomatedSeats() [][]byte {
+	var payloads [][]byte
+
+	for {
+		switch r.Engine.State.Phase {
+		case pb.GamePhase_PHASE_PLAYER_TURN:
+			seat := r.Engine.State.ActivePlayer
+			if !r.isAutomatedSeat(seat) {
+				return payloads
+			}
+
+			action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+			if action == nil {
+				log.Printf("bot policy produced no action for active seat %d in room %s", seat, r.ID)
+				return payloads
+			}
+
+			if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
+				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
+				return payloads
+			}
+
+			payloads = append(payloads, r.BroadcastState())
+
+		case pb.GamePhase_PHASE_WAIT_DISCARDS:
+			submitted := false
+
+			for seat, player := range r.Engine.State.Players {
+				seat := uint32(seat)
+				if len(player.ValidActions) == 0 || !r.isAutomatedSeat(seat) {
+					continue
+				}
+
+				action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+				if action == nil {
+					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
+				}
+
+				if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
+					log.Printf("bot interrupt failed for seat %d in room %s: %v", seat, r.ID, err)
+					if action.Type != pb.ActionType_ACTION_PASS {
+						_ = r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
+					}
+				}
+
+				submitted = true
+			}
+
+			if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+				payloads = append(payloads, r.BroadcastState())
+				continue
+			}
+
+			if !submitted || r.hasConnectedInterruptSeat() {
+				return payloads
+			}
+
+			r.Engine.ResolveInterrupts()
+			payloads = append(payloads, r.BroadcastState())
+
+		default:
+			return payloads
+		}
+	}
+}
+
+func (r *Room) isAutomatedSeat(seat uint32) bool {
+	_, connected := r.Seats[seat]
+	return !connected
+}
+
+func (r *Room) hasConnectedInterruptSeat() bool {
+	for seat, player := range r.Engine.State.Players {
+		if len(player.ValidActions) == 0 {
+			continue
+		}
+		if !r.isAutomatedSeat(uint32(seat)) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {
+	for _, payload := range payloads {
+		dst = append(dst, payload...)
+	}
+	return dst
 }
 
 // BroadcastState serializes the master GameState Protobuf and sends it to all connected players
@@ -293,7 +382,7 @@ func (r *Room) SendStateToClient(client *Client) {
 
 	if isProd {
 		redactedState := proto.Clone(masterState).(*pb.GameState)
-		
+
 		var clientSeat uint32
 		var found bool
 		for seat, c := range r.Seats {

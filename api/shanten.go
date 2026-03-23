@@ -3,7 +3,6 @@ package api
 import (
 	"math/rand"
 	"net/http"
-	"sort"
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -94,60 +93,55 @@ func (s *Server) handleShanten(c *gin.Context) {
 	}
 
 	// Discard analysis on the (now 14-tile) hand
-	currentShanten := shanten.Calculate(counts, numWilds, req.OpenMelds)
+	pbHand := make([]*pb.Tile, 0, len(req.ClosedHand))
+	for idx, tile := range req.ClosedHand {
+		pbHand = append(pbHand, &pb.Tile{
+			Id:    uint32(idx),
+			Suit:  tile.Suit,
+			Value: tile.Value,
+		})
+	}
+
+	wildTiles := make([]*pb.Tile, 0, len(wildSet))
+	if req.WildTile != nil {
+		wildTiles = append(wildTiles, &pb.Tile{
+			Suit:  req.WildTile.Suit,
+			Value: req.WildTile.Value,
+		})
+	}
+
+	analysis := shanten.AnalyzeHand(pbHand, req.OpenMelds, wildTiles)
+	currentShanten := analysis.Routes.Overall
 	if currentShanten < 0 {
 		currentShanten = 0
 	}
 
-	seen := make(map[uint32]bool)
-	var options []DiscardOption
-
-	for _, t := range req.ClosedHand {
-		key := uint32(t.Suit)*100 + t.Value
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		isWild := wildSet[key]
-		if isWild {
-			numWilds--
-		} else {
-			idx := tileToShantenIndex(t.Suit, t.Value)
-			if idx >= 0 {
-				counts[idx]--
-			}
+	options := make([]DiscardOption, 0, len(analysis.DiscardOptions))
+	for _, option := range analysis.DiscardOptions {
+		usefulTiles := make([]UsefulTile, 0, len(option.UsefulTiles))
+		for _, useful := range option.UsefulTiles {
+			usefulTiles = append(usefulTiles, UsefulTile{
+				Suit:      useful.Suit,
+				Value:     useful.Value,
+				Remaining: useful.Remaining,
+			})
 		}
 
-		afterShanten := shanten.Calculate(counts, numWilds, req.OpenMelds)
+		afterShanten := option.After.Overall
 		if afterShanten < 0 {
 			afterShanten = 0
 		}
-		usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, req.OpenMelds, afterShanten, wildSet)
 
 		options = append(options, DiscardOption{
-			Discard:     CalcTileInput{Suit: t.Suit, Value: t.Value},
+			Discard: CalcTileInput{
+				Suit:  option.Discard.Suit,
+				Value: option.Discard.Value,
+			},
 			Shanten:     afterShanten,
 			UsefulTiles: usefulTiles,
-			TotalUseful: totalUseful,
+			TotalUseful: option.TotalUseful,
 		})
-
-		if isWild {
-			numWilds++
-		} else {
-			idx := tileToShantenIndex(t.Suit, t.Value)
-			if idx >= 0 {
-				counts[idx]++
-			}
-		}
 	}
-
-	sort.Slice(options, func(i, j int) bool {
-		if options[i].Shanten != options[j].Shanten {
-			return options[i].Shanten < options[j].Shanten
-		}
-		return options[i].TotalUseful > options[j].TotalUseful
-	})
 
 	c.JSON(http.StatusOK, ShantenResponse{
 		Shanten:        currentShanten,
@@ -185,42 +179,6 @@ func drawRandomTile(counts [34]int, numWilds int, wildSet map[uint32]bool) *Calc
 	pick := pool[rand.Intn(len(pool))]
 	return &CalcTileInput{Suit: pick.suit, Value: pick.value}
 }
-
-func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten int, wildSet map[uint32]bool) ([]UsefulTile, int) {
-	var usefulTiles []UsefulTile
-	totalUseful := 0
-
-	for idx := 0; idx < 34; idx++ {
-		remaining := 4 - counts[idx]
-		suit, value := shantenIndexToTile(idx)
-		h := uint32(suit)*100 + value
-		if wildSet[h] {
-			remaining = 4 - numWilds
-		}
-		if remaining <= 0 {
-			continue
-		}
-
-		counts[idx]++
-		newShanten := shanten.Calculate(counts, numWilds, openMelds)
-		if newShanten < 0 {
-			newShanten = 0
-		}
-		counts[idx]--
-
-		if newShanten < currentShanten {
-			usefulTiles = append(usefulTiles, UsefulTile{
-				Suit:      suit,
-				Value:     value,
-				Remaining: remaining,
-			})
-			totalUseful += remaining
-		}
-	}
-
-	return usefulTiles, totalUseful
-}
-
 func tileToShantenIndex(suit pb.Suit, value uint32) int {
 	v := int(value) - 1
 	switch suit {
