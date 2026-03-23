@@ -6,6 +6,7 @@ import { useGameState } from '../contexts/GameContext';
 import { game } from '../proto/game';
 import { motion } from 'framer-motion';
 import { useGameStageLayout } from '../hooks/useGameStageLayout';
+import { getPrivateRoomToken } from './privateRoomSession';
 
 import { getTileSvgName, getSuitOrder, getTileName, preloadAllTileSvgs } from '../utils/tileUtils';
 
@@ -53,7 +54,7 @@ export default function Game() {
 
     useEffect(() => {
         if (!isConnected || !socket) {
-            const storedToken = sessionStorage.getItem('mahjong_token');
+            const storedToken = getPrivateRoomToken();
             if (storedToken) {
                 // Attempt to auto-reconnect instead of booting user
                 connect(storedToken);

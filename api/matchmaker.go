@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,6 +89,15 @@ type Matchmaker struct {
 	Queue *InMemoryQueue
 	DB    *gorm.DB
 	Hub   *Hub
+
+	privateTablesMu     sync.RWMutex
+	activePrivateTables map[string]ActivePrivateTable
+}
+
+type ActivePrivateTable struct {
+	TableID        string
+	MatchID        string
+	ParticipantIDs map[uint]bool
 }
 
 func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
@@ -95,6 +105,7 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		Queue: queue,
 		DB:    db,
 		Hub:   hub,
+		activePrivateTables: make(map[string]ActivePrivateTable),
 	}
 }
 
@@ -138,6 +149,58 @@ func (m *Matchmaker) JoinPrivateTable(userID uint, username string, tableID stri
 	return nil
 }
 
+func (m *Matchmaker) GetActivePrivateTable(tableID string) (ActivePrivateTable, bool) {
+	m.privateTablesMu.RLock()
+	defer m.privateTablesMu.RUnlock()
+
+	table, ok := m.activePrivateTables[tableID]
+	if !ok {
+		return ActivePrivateTable{}, false
+	}
+
+	copiedParticipants := make(map[uint]bool, len(table.ParticipantIDs))
+	for userID, present := range table.ParticipantIDs {
+		copiedParticipants[userID] = present
+	}
+	table.ParticipantIDs = copiedParticipants
+
+	return table, true
+}
+
+func (m *Matchmaker) IsPrivateTableParticipant(tableID string, userID uint) (ActivePrivateTable, bool, bool) {
+	table, ok := m.GetActivePrivateTable(tableID)
+	if !ok {
+		return ActivePrivateTable{}, false, false
+	}
+
+	return table, true, table.ParticipantIDs[userID]
+}
+
+func (m *Matchmaker) registerActivePrivateTable(tableID string, matchID string, userIDs []uint) {
+	participants := make(map[uint]bool, len(userIDs))
+	for _, userID := range userIDs {
+		participants[userID] = true
+	}
+
+	m.privateTablesMu.Lock()
+	defer m.privateTablesMu.Unlock()
+	m.activePrivateTables[tableID] = ActivePrivateTable{
+		TableID:        tableID,
+		MatchID:        matchID,
+		ParticipantIDs: participants,
+	}
+}
+
+func (m *Matchmaker) unregisterActivePrivateTable(tableID string) {
+	if tableID == "" {
+		return
+	}
+
+	m.privateTablesMu.Lock()
+	defer m.privateTablesMu.Unlock()
+	delete(m.activePrivateTables, tableID)
+}
+
 // StartQueueWatcher starts a background goroutine to poll Redis for 4 players
 func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	queueKey := "queue:" + ruleset
@@ -155,7 +218,7 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 			players := m.Queue.LPopCount(queueKey, 4)
 			if len(players) == 4 {
 				log.Printf("Matchmaker found 4 players: %v", players)
-				go m.createMatch(players, ruleset)
+				go m.createMatch(players, ruleset, "")
 			}
 		}
 
@@ -176,7 +239,7 @@ func (m *Matchmaker) StartPrivateTableWatcher() {
 				if len(players) == 4 {
 					log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
 					// For simplicity, default to hometown rules for private tables
-					go m.createMatch(players, "hometown")
+					go m.createMatch(players, "hometown", strings.TrimPrefix(key, "table:"))
 				}
 			}
 		}
@@ -185,7 +248,7 @@ func (m *Matchmaker) StartPrivateTableWatcher() {
 	}
 }
 
-func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
+func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
 	matchID := uuid.New().String()
 
 	// 1. Persist the match explicitly to Postgres
@@ -212,6 +275,10 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
 
 	// 3. Create the Room Goroutine explicitly
 	room := NewRoom(matchID, m.Hub, m.DB)
+	room.PrivateTableID = tableID
+	room.OnShutdown = func() {
+		m.unregisterActivePrivateTable(tableID)
+	}
 
 	// 4. Parse user IDs and dispatch to Hub for exact WS binding
 	var userIDs []uint
@@ -221,6 +288,10 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string) {
 		// If these were Postgres UUIDs, we'd handle it differently, but our IDs are uint representations
 		fmt.Sscanf(idStr, "%d", &uid)
 		userIDs = append(userIDs, uid)
+	}
+
+	if tableID != "" {
+		m.registerActivePrivateTable(tableID, matchID, userIDs)
 	}
 
 	m.Hub.BindRoom <- RoomBind{
