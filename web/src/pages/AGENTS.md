@@ -27,6 +27,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
 
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
+  - The live table now renders inside a fixed 1600x900 DOM stage that is uniformly scaled and centered by `useGameStageLayout()`, so seat lanes, hands, discard trays, melds, and HUD anchors keep stable relative positions during window resize and phone rotation
   - Renders 4 player positions (bottom=self, right, top, left)
   - Shows the round wild tile as a real face-up tile badge in the upper-left table corner instead of center-HUD text
   - Uses an absolutely centered glass HUD for match/wall/turn info so the center panel stays visually centered regardless of seat/discard layout
@@ -38,6 +39,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Sorted closed hand with drawn tile separation
   - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
   - Discard pools per player
+  - Round-result modal now sits above the stage shell instead of inside the scaled board transform, so it stays readable while still aligning to the same live-game viewport system
   - Newly discarded tiles use a very fast move-in animation for all seats, including opponents whose concealed hands are face-down
   - Callable discards get a distinct teal pulse ring so the current claim target is obvious without reusing the wild-tile gold glow
   - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP; stray `FLOWER_REVEAL` actions from the backend are auto-submitted immediately instead of surfacing a user-facing button
@@ -72,6 +74,7 @@ Contains the top-level page components rendered by React Router. Each page repre
 ## Architecture Notes
 
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.
+- The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - `Calc.tsx` is intentionally self-contained and does not share state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
 - Player perspective: the `mySeatId` determines which player is rendered at the bottom position; others are rotated around the table.
 - Action buttons appear contextually: interrupt actions during `PHASE_WAIT_DISCARDS` (phase 3), turn actions during `PHASE_PLAYER_TURN` (phase 2).
