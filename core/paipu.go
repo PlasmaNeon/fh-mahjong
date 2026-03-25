@@ -36,7 +36,7 @@ type PaipuFlowerReveal struct {
 type PaipuMeld struct {
 	Type  string   `json:"type"`           // "chii", "pon", "kan"
 	Tiles []uint32 `json:"tiles"`          // tile IDs in the meld
-	From  int      `json:"from,omitempty"` // discarder seat; -1 for closed kan
+	From  int      `json:"from"` // discarder seat; -1 for closed kan
 }
 
 type PaipuBreakdown struct {

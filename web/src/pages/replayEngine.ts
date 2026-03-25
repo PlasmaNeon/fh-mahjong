@@ -228,6 +228,12 @@ export class ReplayEngine {
       }
     }
 
+    // Also mark round end when all actions have been replayed and a result exists
+    // (handles exhaustive draws where no terminal action like tsumo/ron is recorded)
+    if (!isRoundEnd && this.actionIndex >= round.actions.length - 1 && round.result) {
+      isRoundEnd = true
+    }
+
     let result = null
     if (isRoundEnd && round.result) {
       result = round.result

@@ -1,11 +1,10 @@
-// @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '../config'
 import { getTileSvgName, getTileName, getSuitOrder, preloadAllTileSvgs } from '../utils/tileUtils'
 import type { Paipu } from './replayTypes'
 import { tileObjectFromId } from './replayTypes'
-import { ReplayEngine, ReplayTile, ReplayMeld, ReplayState } from './replayEngine'
+import { ReplayEngine, ReplayTile, ReplayState } from './replayEngine'
 
 function TileImg({ tile, size = 'normal', isWild = false }: { tile: ReplayTile, size?: 'normal' | 'small', isWild?: boolean }) {
   const svgName = getTileSvgName(tile)
@@ -47,7 +46,7 @@ export default function Replay() {
   const [paipu, setPaipu] = useState<Paipu | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [version, setVersion] = useState(0)
+  const [, setVersion] = useState(0)
   const [viewSeat, setViewSeat] = useState(0)
   const [showAllHands, setShowAllHands] = useState(true)
   const [playing, setPlaying] = useState(false)
@@ -282,14 +281,23 @@ export default function Replay() {
                       <div className="round-result-panel round-result-panel-plain round-result-hand-panel">
                         <div className="round-result-hand-row">
                           <div className="round-result-closed-hand">
-                            {state.result.hand.map(tileObjectFromId).sort((a, b) => {
-                              const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit)
-                              return sa !== sb ? sa - sb : a.value - b.value
-                            }).map((t, i) => (
-                              <div key={i} className="pov-bottom small">
-                                <TileImg tile={t} size="small" isWild={isWild(t)} />
-                              </div>
-                            ))}
+                            {(() => {
+                              let handTiles = state.result.hand!.map(tileObjectFromId)
+                              // For tsumo, the closed hand already includes the winning tile.
+                              // Remove it so it's only shown once (as the separated win tile).
+                              if (state.result.winType === 'tsumo' && state.result.winTile != null) {
+                                const winIdx = handTiles.findIndex(t => t.id === state.result.winTile)
+                                if (winIdx >= 0) handTiles.splice(winIdx, 1)
+                              }
+                              return handTiles.sort((a, b) => {
+                                const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit)
+                                return sa !== sb ? sa - sb : a.value - b.value
+                              }).map((t, i) => (
+                                <div key={i} className="pov-bottom small">
+                                  <TileImg tile={t} size="small" isWild={isWild(t)} />
+                                </div>
+                              ))
+                            })()}
                             {state.result.winTile != null && (
                               <div className="pov-bottom small round-result-win-tile">
                                 <TileImg tile={tileObjectFromId(state.result.winTile)} size="small" isWild={isWild(tileObjectFromId(state.result.winTile))} />
@@ -399,7 +407,7 @@ export default function Replay() {
             { label: '|◀', action: () => { engine.jumpToStart(); setVersion(v => v + 1); setPlaying(false) } },
             { label: '◀', action: () => { if (engine.stepBackward()) setVersion(v => v + 1) } },
             { label: playing ? '⏸' : '▶', action: () => setPlaying(p => !p) },
-            { label: '▶|', action: () => { if (engine.stepForward()) setVersion(v => v + 1) } },
+            { label: '▶', action: () => { if (engine.stepForward()) setVersion(v => v + 1) } },
             { label: '▶|', action: () => { engine.jumpToEnd(); setVersion(v => v + 1); setPlaying(false) } },
           ].map((btn, i) => (
             <button
