@@ -33,3 +33,4 @@ killer_mortal_gui/
 .gotmp/
 .claude/
 .vercel
+.worktrees/

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"log"
 	"math/rand"
 	"os"
@@ -61,12 +62,18 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		TimerResolveChan:   make(chan bool, 1),
 	}
 
+	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
+
 	return room
 }
 
 // Start begins the event loop for the room
 func (r *Room) Start() {
 	log.Printf("Match Room %s initialized", r.ID)
+
+	for seat, client := range r.Seats {
+		r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+	}
 
 	err := r.Engine.Start()
 	if err != nil {
@@ -93,6 +100,22 @@ func (r *Room) Start() {
 			// Since we're keeping it simple, we'll store the raw bytes directly in the DB as text via base64)
 			encodedReplay := base64.StdEncoding.EncodeToString(replayBytes)
 
+			// Finalize paipu recording
+			var paipuJSON string
+			if r.Engine.Recorder != nil {
+				var finalScores [4]int32
+				for i, p := range r.Engine.State.Players {
+					finalScores[i] = p.Score
+				}
+				paipu := r.Engine.Recorder.Finalize(finalScores)
+				paipuBytes, err := json.Marshal(paipu)
+				if err != nil {
+					log.Printf("Failed to marshal paipu: %v", err)
+				} else {
+					paipuJSON = string(paipuBytes)
+				}
+			}
+
 			now := time.Now()
 			if r.DB != nil {
 				r.DB.Model(&models.Match{}).Where("id = ?", r.ID).Updates(models.Match{
@@ -100,6 +123,7 @@ func (r *Room) Start() {
 					EndTime:   &now,
 					ReplayURL: encodedReplay,
 					WallSeed:  r.Engine.State.WallSeed,
+					PaipuJSON: paipuJSON,
 				})
 			} else {
 				log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)

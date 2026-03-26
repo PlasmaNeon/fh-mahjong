@@ -7,6 +7,7 @@ import Table from './pages/Table'
 import Game from './pages/Game'
 import Calc from './pages/Calc'
 import Shanten from './pages/Shanten'
+import Replay from './pages/Replay'
 import CreateRoom from './pages/CreateRoom'
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
                             <Route path="/shanten" element={<Shanten />} />
                             <Route path="/table/:tableId" element={<Table />} />
                             <Route path="/game/:matchId" element={<Game />} />
+                            <Route path="/replay/:matchId" element={<Replay />} />
                             <Route path="*" element={<Navigate to="/" />} />
                         </Routes>
                     </div>
