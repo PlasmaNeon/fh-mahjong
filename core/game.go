@@ -1136,7 +1136,8 @@ func (g *Game) recordRoundEnd() {
 				pm.Tiles = append(pm.Tiles, t.Id)
 			}
 			if m.CalledDirection != pb.MeldDirection_MELD_DIRECTION_UNKNOWN {
-				pm.From = int(m.CalledDirection)
+				discarderSeat := (result.WinnerSeat + uint32(m.CalledDirection)) % 4
+				pm.From = int(discarderSeat)
 			}
 			paipuResult.Melds = append(paipuResult.Melds, pm)
 		}

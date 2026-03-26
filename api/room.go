@@ -69,8 +69,10 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 func (r *Room) Start() {
 	log.Printf("Match Room %s initialized", r.ID)
 
-	for seat, client := range r.Seats {
-		r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+	for seat := uint32(0); seat < 4; seat++ {
+		if client, ok := r.Seats[seat]; ok {
+			r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+		}
 	}
 
 	err := r.Engine.Start()
@@ -167,6 +169,19 @@ func (r *Room) Start() {
 
 				// Keep appending the state into the giant binary blob
 				replayBytes = append(replayBytes, statePayload...)
+
+				// Persist paipu after each round end so it's always up-to-date
+				// (the Shutdown channel is never signaled on normal match completion)
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END && r.Engine.Recorder != nil && r.DB != nil {
+					var finalScores [4]int32
+					for i, p := range r.Engine.State.Players {
+						finalScores[i] = p.Score
+					}
+					paipu := r.Engine.Recorder.Finalize(finalScores)
+					if paipuBytes, err := json.Marshal(paipu); err == nil {
+						r.DB.Model(&models.Match{}).Where("id = ?", r.ID).Update("paipu_json", string(paipuBytes))
+					}
+				}
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
