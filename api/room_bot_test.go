@@ -26,3 +26,10 @@ func TestAdvanceAutomatedSeatsPlaysMissingSeat(t *testing.T) {
 		t.Fatalf("expected bots to advance the game, phase=%v", room.Engine.State.Phase)
 	}
 }
+
+func TestNewRoomInitializesPaipuRecorder(t *testing.T) {
+	room := NewRoom("paipu-room", nil, nil)
+	if room.Engine.Recorder == nil {
+		t.Fatal("expected room to initialize paipu recorder")
+	}
+}

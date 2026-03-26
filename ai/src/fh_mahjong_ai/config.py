@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-@dataclass(slots=True)
+@dataclass
 class EnvConfig:
     action_space_size: int = 128
     plane_shape: tuple[int, int, int] = (48, 34, 1)
@@ -14,7 +14,7 @@ class EnvConfig:
     seed: int = 1
 
 
-@dataclass(slots=True)
+@dataclass
 class ModelConfig:
     channels: int = 96
     scalar_hidden_dim: int = 128
@@ -22,7 +22,7 @@ class ModelConfig:
     value_hidden_dim: int = 128
 
 
-@dataclass(slots=True)
+@dataclass
 class TrainConfig:
     batch_size: int = 64
     learning_rate: float = 3e-4
@@ -31,7 +31,7 @@ class TrainConfig:
     device: str = "cpu"
 
 
-@dataclass(slots=True)
+@dataclass
 class SelfPlayConfig:
     episodes_per_iteration: int = 32
     checkpoint_dir: Path = Path("checkpoints")

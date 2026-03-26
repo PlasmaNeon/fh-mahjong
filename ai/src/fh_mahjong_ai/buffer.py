@@ -9,7 +9,7 @@ import numpy as np
 from .types import TrainBatch, Transition
 
 
-@dataclass(slots=True)
+@dataclass
 class ReplayBuffer:
     capacity: int
 

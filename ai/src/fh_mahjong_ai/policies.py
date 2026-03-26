@@ -10,7 +10,7 @@ from .model import PolicyValueNet
 from .types import Observation
 
 
-@dataclass(slots=True)
+@dataclass
 class ActionChoice:
     action_id: int
     value: Optional[float] = None

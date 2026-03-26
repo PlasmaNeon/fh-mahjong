@@ -9,7 +9,7 @@ FloatArray = np.ndarray
 IntArray = np.ndarray
 
 
-@dataclass(slots=True)
+@dataclass
 class Observation:
     seat: int
     planes: FloatArray
@@ -23,7 +23,7 @@ class Observation:
         return tuple(int(index) for index in indices.tolist())
 
 
-@dataclass(slots=True)
+@dataclass
 class StepResult:
     observation: Observation
     rewards: FloatArray
@@ -32,7 +32,7 @@ class StepResult:
     info: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class Transition:
     observation: Observation
     action_id: int
@@ -43,7 +43,7 @@ class Transition:
     info: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class TrainBatch:
     planes: FloatArray
     scalars: FloatArray

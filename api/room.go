@@ -18,14 +18,16 @@ import (
 	"gorm.io/gorm"
 )
 
+const maxAutomatedSeatIterations = 200
+
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
-	ID          string
+	ID             string
 	PrivateTableID string
-	Hub         *Hub
-	DB          *gorm.DB
-	MatchRecord *models.Match
-	OnShutdown  func()
+	Hub            *Hub
+	DB             *gorm.DB
+	MatchRecord    *models.Match
+	OnShutdown     func()
 
 	Engine    *core.Game
 	BotPolicy bot.Policy
@@ -243,7 +245,7 @@ func (r *Room) Start() {
 func (r *Room) advanceAutomatedSeats() [][]byte {
 	var payloads [][]byte
 
-	for {
+	for iteration := 0; iteration < maxAutomatedSeatIterations; iteration++ {
 		switch r.Engine.State.Phase {
 		case pb.GamePhase_PHASE_PLAYER_TURN:
 			seat := r.Engine.State.ActivePlayer
@@ -267,8 +269,8 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 		case pb.GamePhase_PHASE_WAIT_DISCARDS:
 			submitted := false
 
-			for seat, player := range r.Engine.State.Players {
-				seat := uint32(seat)
+			for seatIndex, player := range r.Engine.State.Players {
+				seat := uint32(seatIndex)
 				if len(player.ValidActions) == 0 || !r.isAutomatedSeat(seat) {
 					continue
 				}
@@ -304,6 +306,14 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 			return payloads
 		}
 	}
+
+	log.Printf(
+		"stopped automated advancement for room %s after %d iterations at phase %v",
+		r.ID,
+		maxAutomatedSeatIterations,
+		r.Engine.State.Phase,
+	)
+	return payloads
 }
 
 func (r *Room) isAutomatedSeat(seat uint32) bool {

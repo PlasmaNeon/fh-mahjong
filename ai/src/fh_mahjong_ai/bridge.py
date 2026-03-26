@@ -33,7 +33,7 @@ class MahjongBridge(ABC):
         raise NotImplementedError
 
 
-@dataclass(slots=True)
+@dataclass
 class MockState:
     step_index: int = 0
     current_seat: int = 0
@@ -46,17 +46,22 @@ class MockMahjongBridge(MahjongBridge):
         super().__init__(config)
         self._state = MockState()
         self._rng = np.random.default_rng(config.seed)
+        self._current_observation: Optional[Observation] = None
 
     def reset(self, seed: Optional[int] = None) -> Observation:
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self._state = MockState()
-        return self._observe()
+        self._current_observation = self._observe()
+        return self._current_observation
 
     def step(self, action_id: int) -> StepResult:
-        observation = self._observe()
-        if action_id not in observation.legal_actions:
-            raise BridgeError(f"illegal mock action {action_id}; legal={observation.legal_actions}")
+        if self._current_observation is None:
+            raise BridgeError("mock bridge must be reset before step()")
+        if action_id not in self._current_observation.legal_actions:
+            raise BridgeError(
+                f"illegal mock action {action_id}; legal={self._current_observation.legal_actions}"
+            )
 
         self._state.step_index += 1
         self._state.current_seat = (self._state.current_seat + 1) % 4
@@ -67,6 +72,7 @@ class MockMahjongBridge(MahjongBridge):
             rewards = self._rng.normal(loc=0.0, scale=1.0, size=4).astype(np.float32)
 
         next_observation = self._observe()
+        self._current_observation = next_observation
         return StepResult(
             observation=next_observation,
             rewards=rewards,

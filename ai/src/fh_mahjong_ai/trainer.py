@@ -18,7 +18,7 @@ class PolicyLike(Protocol):
     def choose(self, observation) -> ActionChoice: ...
 
 
-@dataclass(slots=True)
+@dataclass
 class TrainMetrics:
     loss: float
     policy_loss: float

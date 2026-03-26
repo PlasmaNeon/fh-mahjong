@@ -10,6 +10,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 
 - **game.go** — `Game` struct: central state machine
   - `NewGame(ruleset)` — Constructor, injects a RuleEngine
+  - Optional `Recorder` hook captures paipu events at authoritative game-engine action points
   - `ProcessPlayerAction(seat, action)` — Main entry point from network layer
   - `handleActiveTurnAction()` — Discard, Kan, Flower Reveal, Tsumo
   - `handleInterruptAction()` — Pon, Chii, Ron during WAIT_DISCARDS
@@ -22,6 +23,11 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
   - `GameState` now carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
   - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`
+
+- **paipu.go** — Structured paipu recording support:
+  - Paipu JSON DTOs for players, rounds, actions, melds, and results
+  - `TileFromId()` to map engine tile IDs back to suit/value pairs for replay export
+  - `PaipuRecorder` that tracks the canonical round flow directly from core engine events
 
 - **rules.go** — `RuleEngine` interface:
   - `GetInitialWall()` — Generate tile deck
@@ -43,4 +49,5 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 
 - **CRITICAL**: `core/` must NEVER import `rules/`. The dependency flows one way: `rules/` implements `core.RuleEngine`.
 - `Game.State` is a `*pb.GameState` (Protobuf). All state mutations happen here; the API layer just serializes and broadcasts.
+- Paipu recording lives in `core/` so replay exports observe the same authoritative transitions the live engine uses.
 - The interrupt system uses a map queue + timer. The room layer starts the timer; `ResolveInterrupts()` can be called either when all responses arrive or when the timer fires.
