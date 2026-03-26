@@ -9,12 +9,12 @@ A command-line utility for testing hand evaluation and scoring without running t
 ## Key Files
 
 - **main.go** — CLI entry point:
-  - Constructs tile hands programmatically
-  - Calls `rules.HometownRuleset.EvaluateHand()` directly
-  - Prints score breakdown to stdout
+  - Starts a full `core.Game` demo round
+  - Leaves seat 0 interactive and drives seats 1-3 through the shared heuristic bot policy
+  - Exercises both active-turn and interrupt decision paths without the server runtime
 
 ## Architecture Notes
 
 - Does not require PostgreSQL, Redis, or any network connectivity.
-- Directly imports `rules/` and `proto/` packages.
+- Directly imports `core/`, `rules/`, `proto/`, and the shared `bot/` package.
 - Run with `go run cmd/cli/main.go`.

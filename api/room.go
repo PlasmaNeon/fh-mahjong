@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"time"
 
+	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/core"
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -16,6 +18,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
+
+const maxAutomatedSeatIterations = 200
 
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
@@ -26,8 +30,9 @@ type Room struct {
 	MatchRecord    *models.Match
 	OnShutdown     func()
 
-	Engine *core.Game
-	Seats  map[uint32]*Client // maps 0-3 to active WS connections
+	Engine    *core.Game
+	BotPolicy bot.Policy
+	Seats     map[uint32]*Client // maps 0-3 to active WS connections
 
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
@@ -54,6 +59,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		Hub:                hub,
 		DB:                 db,
 		Engine:             core.NewGame(matchID, ruleset),
+		BotPolicy:          bot.NewHeuristicPolicy(),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,
 		ActionQueue:        make(chan ClientAction),
@@ -71,9 +77,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 func (r *Room) Start() {
 	log.Printf("Match Room %s initialized", r.ID)
 
-	for seat, client := range r.Seats {
-		r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
-	}
+	r.registerPaipuPlayers()
 
 	err := r.Engine.Start()
 	if err != nil {
@@ -86,6 +90,7 @@ func (r *Room) Start() {
 
 	// 1. In-memory buffer to record the full serialized replay of the match
 	var replayBytes []byte
+	replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 
 	for {
 		select {
@@ -137,6 +142,7 @@ func (r *Room) Start() {
 				r.Engine.ResolveInterrupts()
 				resolvePayload := r.BroadcastState()
 				replayBytes = append(replayBytes, resolvePayload...)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -172,6 +178,7 @@ func (r *Room) Start() {
 
 				// Keep appending the state into the giant binary blob
 				replayBytes = append(replayBytes, statePayload...)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
@@ -186,21 +193,7 @@ func (r *Room) Start() {
 
 				// If we just entered wait phase, start the timer
 				if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
-					// Auto-PASS for any seat that has valid actions but no connected client (bot/absent player)
-					for seat, p := range r.Engine.State.Players {
-						if len(p.ValidActions) > 0 {
-							if _, connected := r.Seats[uint32(seat)]; !connected {
-								r.Engine.ProcessPlayerAction(uint32(seat), &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
-							}
-						}
-					}
-
-					// If auto-pass resolved everything, no need for a timer
-					if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
-						statePayload = r.BroadcastState()
-						replayBytes = append(replayBytes, statePayload...)
-						log.Printf("Auto-resolved interrupts (all bots) for room %s", r.ID)
-					} else {
+					if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
 						if r.interruptTmr != nil {
 							r.interruptTmr.Stop()
 						}
@@ -239,11 +232,155 @@ func (r *Room) Start() {
 								}
 							}
 						}(r.interruptTmr, epoch)
+					} else {
+						log.Printf("Auto-resolved interrupts for room %s", r.ID)
 					}
 				}
 			}
 		}
 	}
+}
+
+func (r *Room) advanceAutomatedSeats() [][]byte {
+	var payloads [][]byte
+
+	for iteration := 0; iteration < maxAutomatedSeatIterations; iteration++ {
+		switch r.Engine.State.Phase {
+		case pb.GamePhase_PHASE_PLAYER_TURN:
+			seat := r.Engine.State.ActivePlayer
+			if !r.isAutomatedSeat(seat) {
+				return payloads
+			}
+
+			action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+			if action == nil {
+				log.Printf("bot policy produced no action for active seat %d in room %s", seat, r.ID)
+				return payloads
+			}
+
+			if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
+				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
+				return payloads
+			}
+
+			payloads = append(payloads, r.BroadcastState())
+
+		case pb.GamePhase_PHASE_WAIT_DISCARDS:
+			submitted := false
+
+			for seatIndex, player := range r.Engine.State.Players {
+				seat := uint32(seatIndex)
+				if len(player.ValidActions) == 0 || !r.isAutomatedSeat(seat) {
+					continue
+				}
+
+				action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+				if action == nil {
+					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
+				}
+
+				if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
+					log.Printf("bot interrupt failed for seat %d in room %s: %v", seat, r.ID, err)
+					if action.Type != pb.ActionType_ACTION_PASS {
+						_ = r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
+					}
+				}
+
+				submitted = true
+			}
+
+			if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+				payloads = append(payloads, r.BroadcastState())
+				continue
+			}
+
+			if !submitted || r.hasConnectedInterruptSeat() {
+				return payloads
+			}
+
+			r.Engine.ResolveInterrupts()
+			payloads = append(payloads, r.BroadcastState())
+
+		case pb.GamePhase_PHASE_ROUND_END:
+			submitted := false
+
+			for seatIndex := range r.Engine.State.Players {
+				seat := uint32(seatIndex)
+				if !r.isAutomatedSeat(seat) || r.isSeatReady(seatIndex) {
+					continue
+				}
+
+				if err := r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
+					log.Printf("bot ready failed for seat %d in room %s: %v", seat, r.ID, err)
+					return payloads
+				}
+				submitted = true
+			}
+
+			if !submitted {
+				return payloads
+			}
+
+			payloads = append(payloads, r.BroadcastState())
+			if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+				return payloads
+			}
+
+		default:
+			return payloads
+		}
+	}
+
+	log.Printf(
+		"stopped automated advancement for room %s after %d iterations at phase %v",
+		r.ID,
+		maxAutomatedSeatIterations,
+		r.Engine.State.Phase,
+	)
+	return payloads
+}
+
+func (r *Room) isAutomatedSeat(seat uint32) bool {
+	_, connected := r.Seats[seat]
+	return !connected
+}
+
+func (r *Room) hasConnectedInterruptSeat() bool {
+	for seat, player := range r.Engine.State.Players {
+		if len(player.ValidActions) == 0 {
+			continue
+		}
+		if !r.isAutomatedSeat(uint32(seat)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Room) isSeatReady(seatIndex int) bool {
+	return seatIndex >= 0 && seatIndex < len(r.Engine.State.PlayerReady) && r.Engine.State.PlayerReady[seatIndex]
+}
+
+func (r *Room) registerPaipuPlayers() {
+	if r.Engine == nil || r.Engine.Recorder == nil {
+		return
+	}
+
+	for seat := uint32(0); seat < 4; seat++ {
+		if client, ok := r.Seats[seat]; ok && client != nil {
+			r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+			continue
+		}
+
+		r.Engine.Recorder.AddPlayer(seat, fmt.Sprintf("Bot %d", seat+1), 0)
+	}
+}
+
+func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {
+	for _, payload := range payloads {
+		dst = append(dst, payload...)
+	}
+	return dst
 }
 
 // BroadcastState serializes the master GameState Protobuf and sends it to all connected players
@@ -322,7 +459,7 @@ func (r *Room) SendStateToClient(client *Client) {
 
 	if isProd {
 		redactedState := proto.Clone(masterState).(*pb.GameState)
-		
+
 		var clientSeat uint32
 		var found bool
 		for seat, c := range r.Seats {

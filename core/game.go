@@ -247,7 +247,7 @@ func (g *Game) revealInitialFlowers(dealer uint32) {
 			flowerIdx := -1
 			for j, t := range player.ClosedHand {
 				if t.Suit == pb.Suit_SUIT_FLOWER {
-					// Check if this flower is a wild tile 
+					// Check if this flower is a wild tile
 					isWild := false
 					for _, w := range g.State.WildTiles {
 						if w.Suit == pb.Suit_SUIT_FLOWER && w.Value == t.Value {
@@ -255,7 +255,7 @@ func (g *Game) revealInitialFlowers(dealer uint32) {
 							break
 						}
 					}
-					
+
 					if !isWild {
 						flowerIdx = j
 						break

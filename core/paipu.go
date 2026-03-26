@@ -45,14 +45,14 @@ type PaipuBreakdown struct {
 }
 
 type PaipuRoundResult struct {
-	Type         string           `json:"type"`                 // "win" or "draw"
-	Winner       *int             `json:"winner"`               // seat (pointer: seat 0 is valid); nil for draw
-	WinType      string           `json:"winType,omitempty"`    // "tsumo" or "ron"
-	Discarder    *int             `json:"discarder"`            // seat (pointer); nil for tsumo/draw
-	WinTile      *int             `json:"winTile,omitempty"`    // tile ID (pointer: tile 0 is valid)
-	Hand         []uint32         `json:"hand,omitempty"`       // winning hand tile IDs
-	Melds        []PaipuMeld      `json:"melds,omitempty"`      // open melds
-	Flowers      []uint32         `json:"flowers,omitempty"`    // flower tile IDs
+	Type         string           `json:"type"`              // "win" or "draw"
+	Winner       *int             `json:"winner"`            // seat (pointer: seat 0 is valid); nil for draw
+	WinType      string           `json:"winType,omitempty"` // "tsumo" or "ron"
+	Discarder    *int             `json:"discarder"`         // seat (pointer); nil for tsumo/draw
+	WinTile      *int             `json:"winTile,omitempty"` // tile ID (pointer: tile 0 is valid)
+	Hand         []uint32         `json:"hand,omitempty"`    // winning hand tile IDs
+	Melds        []PaipuMeld      `json:"melds,omitempty"`   // open melds
+	Flowers      []uint32         `json:"flowers,omitempty"` // flower tile IDs
 	Breakdown    []PaipuBreakdown `json:"breakdown,omitempty"`
 	TotalScore   int32            `json:"totalScore,omitempty"`
 	ScoreChanges []int32          `json:"scoreChanges"` // length 4, per-seat delta

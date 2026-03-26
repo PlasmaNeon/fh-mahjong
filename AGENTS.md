@@ -25,6 +25,8 @@ This project implements a full-stack Mahjong game with a plugin-based ruleset ar
 
 ```
 fh-mahjong/
+├── ai/             Python RL package (training loop, model code, replay buffers, bridge abstraction)
+├── bot/            Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
 ├── proto/          Protobuf schemas (single source of truth)
 ├── core/           Game state machine + RuleEngine interface
 ├── rules/          Fenghua ruleset plugin (scoring, hand eval)
@@ -51,6 +53,8 @@ fh-mahjong/
 | `core/game.go` | `Game` struct — state machine driver for a single match |
 | `core/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
 | `rules/fh.go` | `HometownRuleset` — full Fenghua scoring and hand evaluation |
+| `bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
+| `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
 | `official_rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
 | `rules.md` | Synthesized rules + Go implementation design (bridge doc) |
 | `technical_design.md` | Full 4-phase system architecture |

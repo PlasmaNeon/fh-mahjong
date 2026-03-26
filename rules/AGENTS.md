@@ -28,6 +28,10 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
   - FlowerBonus (4 flowers, 8 flowers)
   - InterruptPriority resolution
 
+- **shanten/** — Shared progress-analysis subpackage:
+  - Route-by-route shanten breakdown (`standard`, `seven pairs`, `independence`)
+  - Useful-tile / discard-option analysis reused by the shanten API and heuristic bot
+
 ## Architecture Notes
 
 - Implements `core.RuleEngine` — imported by `core/` via interface, never directly.
