@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -76,9 +77,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 func (r *Room) Start() {
 	log.Printf("Match Room %s initialized", r.ID)
 
-	for seat, client := range r.Seats {
-		r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
-	}
+	r.registerPaipuPlayers()
 
 	err := r.Engine.Start()
 	if err != nil {
@@ -302,6 +301,31 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 			r.Engine.ResolveInterrupts()
 			payloads = append(payloads, r.BroadcastState())
 
+		case pb.GamePhase_PHASE_ROUND_END:
+			submitted := false
+
+			for seatIndex := range r.Engine.State.Players {
+				seat := uint32(seatIndex)
+				if !r.isAutomatedSeat(seat) || r.isSeatReady(seatIndex) {
+					continue
+				}
+
+				if err := r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
+					log.Printf("bot ready failed for seat %d in room %s: %v", seat, r.ID, err)
+					return payloads
+				}
+				submitted = true
+			}
+
+			if !submitted {
+				return payloads
+			}
+
+			payloads = append(payloads, r.BroadcastState())
+			if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+				return payloads
+			}
+
 		default:
 			return payloads
 		}
@@ -331,6 +355,25 @@ func (r *Room) hasConnectedInterruptSeat() bool {
 		}
 	}
 	return false
+}
+
+func (r *Room) isSeatReady(seatIndex int) bool {
+	return seatIndex >= 0 && seatIndex < len(r.Engine.State.PlayerReady) && r.Engine.State.PlayerReady[seatIndex]
+}
+
+func (r *Room) registerPaipuPlayers() {
+	if r.Engine == nil || r.Engine.Recorder == nil {
+		return
+	}
+
+	for seat := uint32(0); seat < 4; seat++ {
+		if client, ok := r.Seats[seat]; ok && client != nil {
+			r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+			continue
+		}
+
+		r.Engine.Recorder.AddPlayer(seat, fmt.Sprintf("Bot %d", seat+1), 0)
+	}
 }
 
 func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {

@@ -14,6 +14,7 @@ This package hosts server-side and CLI bot logic. Policies consume a `GameState`
   - respects haitei turn restrictions by discarding only the accepted haitei tile when no tsumo is available
   - simulates `CHII` / `PON` follow-up discards before deciding to call
   - applies conservative `KAN` rules that avoid wild tiles and unstable hand shapes
+  - clones protobuf actions/tiles field-by-field to avoid copying generated message mutex state
 - **heuristic_test.go** — Coverage for discard ranking, route preservation, call choices, and legality.
 
 ## Architecture Notes

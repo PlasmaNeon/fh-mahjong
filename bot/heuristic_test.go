@@ -228,9 +228,12 @@ func interruptState(hand []*pb.Tile, validActions []*pb.PlayerAction) *pb.GameSt
 func tiles(specs ...*pb.Tile) []*pb.Tile {
 	hand := make([]*pb.Tile, len(specs))
 	for i, tile := range specs {
-		copyTile := *tile
+		copyTile := cloneTile(tile)
+		if copyTile == nil {
+			continue
+		}
 		copyTile.Id = uint32(i + 1)
-		hand[i] = &copyTile
+		hand[i] = copyTile
 	}
 	return hand
 }

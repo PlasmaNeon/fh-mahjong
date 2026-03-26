@@ -456,20 +456,26 @@ func cloneAction(action *pb.PlayerAction) *pb.PlayerAction {
 		IsBloomingKong: action.IsBloomingKong,
 	}
 	if action.Tile != nil {
-		tile := *action.Tile
-		cloned.Tile = &tile
+		cloned.Tile = cloneTile(action.Tile)
 	}
 	if len(action.MeldTiles) > 0 {
 		cloned.MeldTiles = make([]*pb.Tile, len(action.MeldTiles))
 		for i, tile := range action.MeldTiles {
-			if tile == nil {
-				continue
-			}
-			copyTile := *tile
-			cloned.MeldTiles[i] = &copyTile
+			cloned.MeldTiles[i] = cloneTile(tile)
 		}
 	}
 	return cloned
+}
+
+func cloneTile(tile *pb.Tile) *pb.Tile {
+	if tile == nil {
+		return nil
+	}
+	return &pb.Tile{
+		Id:    tile.Id,
+		Suit:  tile.Suit,
+		Value: tile.Value,
+	}
 }
 
 func compareKanAction(lhs, rhs *pb.PlayerAction) int {

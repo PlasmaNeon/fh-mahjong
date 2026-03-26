@@ -29,10 +29,10 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **room.go** — Single match room orchestration:
   - `Room` struct — 4 `Client` seats + 1 `core.Game` engine
   - `BotPolicy` — deterministic policy used for seats with no connected client entry
-  - Initializes `core.PaipuRecorder`, registers connected players at room start, and finalizes/persists paipu JSON on shutdown
+  - Initializes `core.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
-  - `advanceAutomatedSeats()` — Plays through missing-seat turns and interrupt responses via the shared heuristic bot, with a circuit-breaker to avoid runaway automation loops
+  - `advanceAutomatedSeats()` — Plays through missing-seat turns, interrupt responses, and round-end `READY` actions for automated seats, with a circuit-breaker to avoid runaway automation loops
   - `BroadcastState()` — Serializes `GameState` Protobuf to all connected players
   - Replay recording (appends state snapshots to binary blob)
 
@@ -68,6 +68,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **room_bot_test.go** — Automated-seat room coverage:
   - Missing seats advance through legal bot actions
   - `NewRoom()` initializes paipu recording for match replay export
+  - Round-end automation marks bot seats ready and can advance all-bot tables into the next round
+  - Paipu player registration includes placeholder bot seats alongside connected humans
 
 ## Architecture Notes
 
