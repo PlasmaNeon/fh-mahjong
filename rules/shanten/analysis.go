@@ -191,9 +191,9 @@ func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten
 	totalUseful := 0
 
 	for idx := 0; idx < 34; idx++ {
-		remaining := 4 - counts[idx]
 		suit, value := indexToTile(idx)
 		key := tileHash(suit, value)
+		remaining := 4 - counts[idx]
 		if wildSet[key] {
 			remaining = 4 - numWilds
 		}
@@ -201,12 +201,19 @@ func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten
 			continue
 		}
 
-		counts[idx]++
-		newShanten := Analyze(counts, numWilds, openMelds).Overall
+		newShanten := 0
+		if wildSet[key] {
+			numWilds++
+			newShanten = Analyze(counts, numWilds, openMelds).Overall
+			numWilds--
+		} else {
+			counts[idx]++
+			newShanten = Analyze(counts, numWilds, openMelds).Overall
+			counts[idx]--
+		}
 		if newShanten < 0 {
 			newShanten = 0
 		}
-		counts[idx]--
 
 		if newShanten < currentShanten {
 			usefulTiles = append(usefulTiles, UsefulTile{

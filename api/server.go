@@ -286,6 +286,30 @@ func (s *Server) handleJoinPrivate(c *gin.Context) {
 		return
 	}
 
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking is unavailable"})
+		return
+	}
+
+	if activeTable, isActive, isParticipant := s.Matchmaker.IsPrivateTableParticipant(req.TableID, userID.(uint)); isActive {
+		if isParticipant {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "active",
+				"table":   req.TableID,
+				"matchId": activeTable.MatchID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusConflict, gin.H{
+			"error":   "This private table is already in an active game",
+			"status":  "active",
+			"table":   req.TableID,
+			"matchId": activeTable.MatchID,
+		})
+		return
+	}
+
 	if err := s.Matchmaker.JoinPrivateTable(userID.(uint), username.(string), req.TableID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join private table"})
 		return

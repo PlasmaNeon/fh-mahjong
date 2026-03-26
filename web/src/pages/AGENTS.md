@@ -23,10 +23,17 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 - **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
   - Now renders as a pre-game table scene with seat cards, central status HUD, share-link panel, and ready-state side panel so `/table/:tableId` visually matches the live game more closely
-  - Persists the guest JWT in `sessionStorage` so a refreshed private-table page can reconnect before re-queueing
+  - Restores the private-room guest session from durable local storage for the same `tableId`, so reopening the shared link in the same browser can reconnect to the live room instead of silently creating a brand new guest identity
+  - If the server reports that the shared table is already active, original participants are redirected back to the current `matchId` while non-participants are blocked from spawning a second game off the same link
   - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
 
+- **privateRoomSession.ts** — Private-room browser session helpers:
+  - Persists the active private-room guest token, username, and `tableId` in local storage
+  - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them
+  - Shared by `Table.tsx` and `Game.tsx` so both waiting-room and live-game routes can recover the same private-room identity
+
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
+  - The live table now renders inside a fixed 1600x900 DOM stage that is uniformly scaled and centered by `useGameStageLayout()`, so seat lanes, hands, discard trays, melds, and HUD anchors keep stable relative positions during window resize and phone rotation
   - Renders 4 player positions (bottom=self, right, top, left)
   - Shows the round wild tile as a real face-up tile badge in the upper-left table corner instead of center-HUD text
   - Uses an absolutely centered glass HUD for match/wall/turn info so the center panel stays visually centered regardless of seat/discard layout
@@ -38,10 +45,12 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Sorted closed hand with drawn tile separation
   - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
   - Discard pools per player
+  - Round-result modal now sits above the stage shell instead of inside the scaled board transform, so it stays readable while still aligning to the same live-game viewport system
   - Newly discarded tiles use a very fast move-in animation for all seats, including opponents whose concealed hands are face-down
   - Callable discards get a distinct teal pulse ring so the current claim target is obvious without reusing the wild-tile gold glow
   - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP; stray `FLOWER_REVEAL` actions from the backend are auto-submitted immediately instead of surfacing a user-facing button
   - Interrupt UX: `hasSubmittedInterrupt` state hides interrupt buttons immediately after player clicks, before server resolves (prevents double-clicks and improves responsiveness)
+  - Private-room reconnect fallback now reads the durable private-room session helper instead of a per-tab session value, so a refreshed live game can recover the same guest identity
   - Flower melds: rendered as small face-up tiles next to open melds for all 4 players
   - Seat flower strips are anchored separately from the open-meld flow so they sit on the table-facing side of the first meld for each player and do not overlap concealed hands on the side seats
   - Round-result modal: glass-styled result dialog matching the table HUD, with a compact single-line TSUMO/RON + winner header, background-free winning-hand/payout sections, a two-column breakdown layout, each payout seat card also carrying ready state, tightened spacing to avoid the outer modal scrollbar on normal desktop screens, and a narrower short-landscape profile so left/right hands remain visible on phones
@@ -72,6 +81,7 @@ Contains the top-level page components rendered by React Router. Each page repre
 ## Architecture Notes
 
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.
+- The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - `Calc.tsx` is intentionally self-contained and does not share state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
 - Player perspective: the `mySeatId` determines which player is rendered at the bottom position; others are rotated around the table.
 - Action buttons appear contextually: interrupt actions during `PHASE_WAIT_DISCARDS` (phase 3), turn actions during `PHASE_PLAYER_TURN` (phase 2).

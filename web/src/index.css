@@ -1220,3 +1220,371 @@ body {
     font-size: 0.76rem;
   }
 }
+
+/* Fixed-stage live game layout */
+.game-stage-shell {
+  position: relative;
+  width: 100%;
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(16, 185, 129, 0.14), transparent 28%),
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.04), transparent 18%),
+    linear-gradient(145deg, #062d22 0%, #05251c 52%, #031812 100%);
+}
+
+.game-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.game-stage .mahjong-table {
+  --tile-width: 44px;
+  --tile-height: 62px;
+  --tile-small-width: 30px;
+  --tile-small-height: 42px;
+  --tile-gap: 4px;
+  --drawn-gap: 14px;
+  --discard-gap: 3px;
+  --discard-padding: 6px;
+  --discard-lane-size: calc((var(--tile-small-height) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
+  --center-hud-size: 184px;
+  --side-seat-lane: 88px;
+  --wild-tile-top: 24px;
+  --wild-tile-left: 26px;
+  --top-hand-top: 18px;
+  --top-hand-side-gap: 272px;
+  --bottom-hand-bottom: 28px;
+  --bottom-hand-left: 336px;
+  --bottom-hand-right: 274px;
+  --side-hand-top: 128px;
+  --side-hand-bottom: 108px;
+  --side-hand-edge: 34px;
+  --discard-top-top: 112px;
+  --discard-side-edge: 264px;
+  --discard-bottom-bottom: 250px;
+  --action-left: 1106px;
+  --action-bottom: 124px;
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(16, 185, 129, 0.16), transparent 28%),
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.05), transparent 18%),
+    linear-gradient(145deg, #0b5b43 0%, #074c38 48%, #053826 100%);
+}
+
+.game-stage .wild-tile-corner {
+  top: var(--wild-tile-top);
+  left: var(--wild-tile-left);
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 18px;
+}
+
+.game-stage .wild-tile-corner-label {
+  font-size: 12px;
+}
+
+.game-stage .pov-left,
+.game-stage .pov-right {
+  width: var(--tile-height);
+  height: var(--tile-width);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-top,
+.game-stage .pov-bottom {
+  width: var(--tile-width);
+  height: var(--tile-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-left.small,
+.game-stage .pov-right.small {
+  width: var(--tile-small-height);
+  height: var(--tile-small-width);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-top.small,
+.game-stage .pov-bottom.small {
+  width: var(--tile-small-width);
+  height: var(--tile-small-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .mahjong-tile {
+  width: var(--tile-width);
+  height: var(--tile-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .mahjong-tile.small {
+  width: var(--tile-small-width);
+  height: var(--tile-small-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .mahjong-tile-back {
+  width: var(--tile-width);
+  height: var(--tile-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .mahjong-tile-back.small {
+  width: var(--tile-small-width);
+  height: var(--tile-small-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .discard-pool {
+  position: absolute;
+  gap: var(--discard-gap);
+  padding: var(--discard-padding);
+}
+
+.game-stage .discard-pool-bottom {
+  left: 50%;
+  bottom: var(--discard-bottom-bottom);
+  transform: translateX(-50%);
+  width: var(--discard-lane-size);
+  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+}
+
+.game-stage .discard-pool-top {
+  left: 50%;
+  top: var(--discard-top-top);
+  transform: translateX(-50%);
+  width: var(--discard-lane-size);
+  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+}
+
+.game-stage .discard-pool-left {
+  left: var(--discard-side-edge);
+  top: 50%;
+  transform: translateY(-50%);
+  height: var(--discard-lane-size);
+  min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+}
+
+.game-stage .discard-pool-right {
+  right: var(--discard-side-edge);
+  top: 50%;
+  transform: translateY(-50%);
+  height: var(--discard-lane-size);
+  min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+}
+
+.game-stage .hand-container-bottom,
+.game-stage .hand-container-top,
+.game-stage .hand-container-left,
+.game-stage .hand-container-right {
+  position: absolute;
+  padding: 0;
+  pointer-events: none;
+}
+
+.game-stage .hand-container-bottom {
+  left: var(--bottom-hand-left);
+  right: var(--bottom-hand-right);
+  bottom: var(--bottom-hand-bottom);
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.game-stage .hand-container-top {
+  left: var(--top-hand-side-gap);
+  right: var(--top-hand-side-gap);
+  top: var(--top-hand-top);
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 18px;
+}
+
+.game-stage .hand-container-left {
+  left: var(--side-hand-edge);
+  top: var(--side-hand-top);
+  bottom: var(--side-hand-bottom);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.game-stage .hand-container-right {
+  right: var(--side-hand-edge);
+  top: var(--side-hand-top);
+  bottom: var(--side-hand-bottom);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+
+.game-stage .hand-main-block-left {
+  margin-left: var(--side-seat-lane);
+}
+
+.game-stage .hand-main-block-right {
+  margin-right: var(--side-seat-lane);
+}
+
+.game-stage .hand-inner {
+  gap: var(--tile-gap);
+}
+
+.game-stage .hand-inner-bottom,
+.game-stage .hand-inner-top,
+.game-stage .hand-inner-left,
+.game-stage .hand-inner-right {
+  width: auto;
+  height: auto;
+}
+
+.game-stage .center-info {
+  width: var(--center-hud-size);
+  height: var(--center-hud-size);
+}
+
+.game-stage .table-action-bar {
+  left: var(--action-left);
+  bottom: var(--action-bottom);
+  max-width: 360px;
+  gap: 10px;
+}
+
+.game-stage .drawn-tile.pov-bottom {
+  margin-left: var(--drawn-gap);
+}
+
+.game-stage .drawn-tile.pov-top {
+  margin-right: var(--drawn-gap);
+}
+
+.game-stage .drawn-tile.pov-left {
+  margin-top: var(--drawn-gap);
+}
+
+.game-stage .drawn-tile.pov-right {
+  margin-bottom: var(--drawn-gap);
+}
+
+.game-stage .melds-container-bottom {
+  margin-left: 12px;
+  gap: 12px;
+}
+
+.game-stage .melds-container-top {
+  gap: 12px;
+}
+
+.game-stage .melds-container-right {
+  right: calc(var(--side-seat-lane) - 4px);
+  top: auto;
+  bottom: 84px;
+}
+
+.game-stage .melds-container-left {
+  left: calc(var(--side-seat-lane) - 4px);
+  bottom: 84px;
+}
+
+.game-stage .melds-main-bottom,
+.game-stage .melds-main-top,
+.game-stage .melds-main-right,
+.game-stage .melds-main-left {
+  gap: 10px;
+}
+
+.game-stage .flowers-container-bottom {
+  bottom: calc(100% + 8px);
+}
+
+.game-stage .flowers-container-top {
+  top: calc(100% + 8px);
+}
+
+.game-stage .flowers-container-right {
+  right: calc(100% + 8px);
+}
+
+.game-stage .flowers-container-left {
+  left: calc(100% + 8px);
+}
+
+.game-stage .pov-bottom.stolen-tile,
+.game-stage .pov-top.stolen-tile {
+  width: var(--tile-height);
+  height: var(--tile-width);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-bottom.small.stolen-tile,
+.game-stage .pov-top.small.stolen-tile {
+  width: var(--tile-small-height);
+  height: var(--tile-small-width);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-left.stolen-tile,
+.game-stage .pov-right.stolen-tile {
+  width: var(--tile-width);
+  height: var(--tile-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .pov-left.small.stolen-tile,
+.game-stage .pov-right.small.stolen-tile {
+  width: var(--tile-small-width);
+  height: var(--tile-small-height);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .shanten-indicator {
+  top: -28px;
+  right: 12px;
+  font-size: 15px;
+}
+
+.game-stage-shell > .round-result-overlay {
+  position: absolute;
+  inset: 0;
+  padding-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+}
+
+.game-stage-shell > .round-result-overlay .round-result-modal {
+  width: min(760px, calc(var(--game-stage-scaled-width) - 1.5rem), calc(100vw - 1.5rem));
+  max-height: min(86vh, calc(var(--game-stage-scaled-height) - 1.5rem), 780px);
+}

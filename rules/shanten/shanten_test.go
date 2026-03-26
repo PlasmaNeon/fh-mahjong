@@ -267,6 +267,38 @@ func TestWildTileShanten(t *testing.T) {
 	}
 }
 
+func TestFindUsefulTilesTreatsWildCandidateAsWild(t *testing.T) {
+	hand := []*pb.Tile{
+		{Suit: pb.Suit_SUIT_MAN, Value: 1},
+		{Suit: pb.Suit_SUIT_MAN, Value: 1},
+		{Suit: pb.Suit_SUIT_MAN, Value: 2},
+		{Suit: pb.Suit_SUIT_MAN, Value: 2},
+		{Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Suit: pb.Suit_SUIT_PIN, Value: 4},
+		{Suit: pb.Suit_SUIT_PIN, Value: 4},
+		{Suit: pb.Suit_SUIT_PIN, Value: 5},
+		{Suit: pb.Suit_SUIT_PIN, Value: 5},
+		{Suit: pb.Suit_SUIT_SOU, Value: 7},
+		{Suit: pb.Suit_SUIT_SOU, Value: 8},
+		{Suit: pb.Suit_SUIT_JIHAI, Value: 1},
+	}
+	wildTiles := []*pb.Tile{{Suit: pb.Suit_SUIT_MAN, Value: 9}}
+
+	analysis := AnalyzeHand(hand, 0, wildTiles)
+	if analysis.Routes.Overall != 1 {
+		t.Fatalf("expected witness hand to be 1-shanten, got %+v", analysis.Routes)
+	}
+
+	for _, useful := range analysis.UsefulTiles {
+		if useful.Suit == pb.Suit_SUIT_MAN && useful.Value == 9 {
+			return
+		}
+	}
+
+	t.Fatalf("expected wild draw 9m to be counted as useful, got %+v", analysis.UsefulTiles)
+}
+
 func TestCalculateFromTiles(t *testing.T) {
 	// Complete hand: 123m 456m 789m 123p 55p
 	// Proto: SUIT_MAN=3, SUIT_PIN=2

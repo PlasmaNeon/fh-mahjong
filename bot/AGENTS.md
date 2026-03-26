@@ -11,6 +11,7 @@ This package hosts server-side and CLI bot logic. Policies consume a `GameState`
 - **heuristic.go** — Heuristic baseline policy:
   - prioritizes `TSUMO`, `RON`, and `ACCEPT_HAITEI`
   - ranks discards using shanten, useful tiles, route damage, and simple shape heuristics
+  - respects haitei turn restrictions by discarding only the accepted haitei tile when no tsumo is available
   - simulates `CHII` / `PON` follow-up discards before deciding to call
   - applies conservative `KAN` rules that avoid wild tiles and unstable hand shapes
 - **heuristic_test.go** — Coverage for discard ranking, route preservation, call choices, and legality.

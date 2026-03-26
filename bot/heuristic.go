@@ -45,7 +45,7 @@ func (p *HeuristicPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.Pla
 		if action := p.chooseTurnKan(player, currentAnalysis, state.WildTiles); action != nil {
 			return action
 		}
-		return p.chooseDiscard(player, currentAnalysis, state.WildTiles)
+		return p.chooseDiscard(state, player, currentAnalysis, state.WildTiles)
 	case pb.GamePhase_PHASE_WAIT_DISCARDS:
 		if action := p.chooseInterruptKan(state, player, currentAnalysis); action != nil {
 			return action
@@ -158,7 +158,16 @@ func (p *HeuristicPolicy) chooseBestCall(state *pb.GameState, seat uint32, curre
 	return bestCandidate.action
 }
 
-func (p *HeuristicPolicy) chooseDiscard(player *pb.PlayerState, current shanten.HandAnalysis, wildTiles []*pb.Tile) *pb.PlayerAction {
+func (p *HeuristicPolicy) chooseDiscard(state *pb.GameState, player *pb.PlayerState, current shanten.HandAnalysis, wildTiles []*pb.Tile) *pb.PlayerAction {
+	if state != nil && state.IsHaitei {
+		if drawnTile := findDrawnTile(player); drawnTile != nil {
+			return &pb.PlayerAction{
+				Type: pb.ActionType_ACTION_DISCARD,
+				Tile: drawnTile,
+			}
+		}
+	}
+
 	best := p.bestDiscardOption(player.ClosedHand, current, wildTiles)
 	if best == nil {
 		return nil
@@ -168,6 +177,21 @@ func (p *HeuristicPolicy) chooseDiscard(player *pb.PlayerState, current shanten.
 		Type: pb.ActionType_ACTION_DISCARD,
 		Tile: best.tile,
 	}
+}
+
+func findDrawnTile(player *pb.PlayerState) *pb.Tile {
+	if player == nil || player.DrawnTileId == nil {
+		return nil
+	}
+
+	drawnID := uint32(*player.DrawnTileId)
+	for _, tile := range player.ClosedHand {
+		if tile.Id == drawnID {
+			return tile
+		}
+	}
+
+	return nil
 }
 
 type discardChoice struct {

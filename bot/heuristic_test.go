@@ -166,6 +166,27 @@ func TestHeuristicBotIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestHeuristicBotDiscardsDrawnTileDuringHaitei(t *testing.T) {
+	policy := NewHeuristicPolicy()
+	hand := tiles(
+		tm(1), tm(1), tm(4), tm(7),
+		tp(1), tp(4), tp(7),
+		ts(1), ts(4),
+		tz(1), tz(2), tz(3), tz(4), tz(5),
+	)
+	drawnTile := hand[len(hand)-1]
+	drawnID := int32(drawnTile.Id)
+	state := discardState(hand, nil)
+	state.IsHaitei = true
+	state.Players[0].DrawnTileId = &drawnID
+
+	action := policy.ChooseAction(state, 0)
+	assertDiscard(t, action)
+	if action.Tile.Id != drawnTile.Id {
+		t.Fatalf("expected haitei discard to use drawn tile %d, got %+v", drawnTile.Id, action.Tile)
+	}
+}
+
 func discardState(hand []*pb.Tile, wildTiles []*pb.Tile) *pb.GameState {
 	return &pb.GameState{
 		Phase: pb.GamePhase_PHASE_PLAYER_TURN,

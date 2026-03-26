@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { getApiUrl } from '../config';
+import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 
 export default function Table() {
     const { tableId } = useParams();
-    const [username, setUsername] = useState('');
+    const [username, setUsername] = useState(() => loadPrivateRoomSession(tableId)?.username ?? '');
     const [isQueuing, setIsQueuing] = useState(false);
     const [error, setError] = useState('');
     const [isReady, setIsReady] = useState(false);
@@ -47,16 +48,18 @@ export default function Table() {
     const [guestToken, setGuestToken] = useState('');
 
     useEffect(() => {
-        const storedToken = sessionStorage.getItem('mahjong_token');
-        if (storedToken && !isConnected) {
-            setGuestToken(storedToken);
-            connect(storedToken);
+        const storedSession = loadPrivateRoomSession(tableId);
+        if (storedSession && !isConnected) {
+            setGuestToken(storedSession.token);
+            setUsername(storedSession.username);
+            connect(storedSession.token);
             setIsReady(true);
         }
-    }, [connect, isConnected]);
+    }, [connect, isConnected, tableId]);
 
     const handleGuestJoin = async () => {
         if (!username.trim() || !tableId) return;
+        setError('');
         setIsQueuing(true);
         try {
             const authRes = await fetch(getApiUrl('/api/v1/auth/guest'), {
@@ -68,7 +71,11 @@ export default function Table() {
             if (!authRes.ok) throw new Error(authData.error || 'Guest auth failed');
 
             setGuestToken(authData.token);
-            sessionStorage.setItem('mahjong_token', authData.token);
+            savePrivateRoomSession({
+                tableId,
+                token: authData.token,
+                username: authData.user?.username || username.trim(),
+            });
             connect(authData.token);
             setIsReady(true);
             setIsQueuing(false);
@@ -79,6 +86,8 @@ export default function Table() {
     };
 
     const handleSetReady = async () => {
+        if (!tableId) return;
+        setError('');
         setIsQueuing(true);
         try {
             const res = await fetch(getApiUrl('/api/v1/matchmaking/private'), {
@@ -90,7 +99,29 @@ export default function Table() {
                 body: JSON.stringify({ tableId })
             });
 
-            if (!res.ok) throw new Error("Failed to join private table");
+            const data = await res.json().catch(() => ({}));
+
+            if (res.status === 401) {
+                clearPrivateRoomSession(tableId);
+                setGuestToken('');
+                setIsReady(false);
+                setIsQueuing(false);
+                setError('Your private room session expired. Enter your name again.');
+                return;
+            }
+
+            if (res.status === 409) {
+                setIsQueuing(false);
+                setError(data.error || 'This private table is already in an active game.');
+                return;
+            }
+
+            if (!res.ok) throw new Error(data.error || "Failed to join private table");
+
+            if (data.status === 'active' && data.matchId) {
+                navigate(`/game/${data.matchId}`);
+                return;
+            }
         } catch (err: any) {
             setError(err.message);
             setIsQueuing(false);

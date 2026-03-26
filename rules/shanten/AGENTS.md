@@ -13,6 +13,7 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
   - `Analyze()` / `AnalyzeFromTiles()` — route-by-route shanten breakdown
   - `AnalyzeHand()` — current-hand useful-tile count plus discard-option analysis
   - `FindUsefulTilesFromTiles()` — effective draws for the current hand state
+  - Wild candidate draws are simulated as additional wilds, not as natural copies in the 34-count table
 - **tables.go** — Precomputed suit/honor DP tables.
 - **shanten_test.go** — Route, wild, edge-case, and benchmark coverage.
 
