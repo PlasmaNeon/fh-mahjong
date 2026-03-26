@@ -11,7 +11,7 @@ from fh_mahjong_ai.trainer import BehaviorCloningTrainer, collect_episode
 
 
 def main() -> None:
-    env_config = EnvConfig()
+    env_config = EnvConfig(bridge_kind="mock")
     env = MahjongEnv(env_config)
     policy = RandomMaskedPolicy(seed=env_config.seed)
 

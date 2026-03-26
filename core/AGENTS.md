@@ -11,6 +11,8 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 - **game.go** — `Game` struct: central state machine
   - `NewGame(ruleset)` — Constructor, injects a RuleEngine
   - Optional `Recorder` hook captures paipu events at authoritative game-engine action points
+  - `SetWallSeed(seed)` — One-shot deterministic wall seed injection used by replay verification and the RL environment
+  - `InterruptQueued(seat)` — Read-only helper for RL wrappers to see which WAIT_DISCARDS responses have already been submitted
   - `ProcessPlayerAction(seat, action)` — Main entry point from network layer
   - `handleActiveTurnAction()` — Discard, Kan, Flower Reveal, Tsumo
   - `handleInterruptAction()` — Pon, Chii, Ron during WAIT_DISCARDS
@@ -22,7 +24,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `startNextRound()` — Reset for next round (keeps scores)
   - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
   - `GameState` now carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
-  - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`
+  - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`, `wallSeedOverride`
 
 - **paipu.go** — Structured paipu recording support:
   - Paipu JSON DTOs for players, rounds, actions, melds, and results
@@ -38,6 +40,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `ResolveInterruptPriority()` — Pick winner among competing claims
 
 - **mt19937.go** — Mersenne Twister PRNG for deterministic, reproducible wall shuffles (supports 108, 136, and 144 tile walls)
+  - `SeedFromUint64()` expands a compact uint64 seed into the full MT19937 state for RL/test callers, consuming both 32-bit halves from each SplitMix64 output
 - **game_test.go** — Unit tests for game loop phases
 - **dump_test.go** — Debug helpers
 

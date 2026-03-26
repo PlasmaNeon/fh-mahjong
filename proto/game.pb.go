@@ -1112,6 +1112,634 @@ func (x *RoundResult) GetIsDraw() bool {
 	return false
 }
 
+type EnvConfig struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	LearningSeats      []uint32               `protobuf:"varint,1,rep,packed,name=learning_seats,json=learningSeats,proto3" json:"learning_seats,omitempty"`
+	AutoPlayHeuristics bool                   `protobuf:"varint,2,opt,name=auto_play_heuristics,json=autoPlayHeuristics,proto3" json:"auto_play_heuristics,omitempty"`
+	MaxDecisions       uint32                 `protobuf:"varint,3,opt,name=max_decisions,json=maxDecisions,proto3" json:"max_decisions,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *EnvConfig) Reset() {
+	*x = EnvConfig{}
+	mi := &file_proto_game_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvConfig) ProtoMessage() {}
+
+func (x *EnvConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvConfig.ProtoReflect.Descriptor instead.
+func (*EnvConfig) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *EnvConfig) GetLearningSeats() []uint32 {
+	if x != nil {
+		return x.LearningSeats
+	}
+	return nil
+}
+
+func (x *EnvConfig) GetAutoPlayHeuristics() bool {
+	if x != nil {
+		return x.AutoPlayHeuristics
+	}
+	return false
+}
+
+func (x *EnvConfig) GetMaxDecisions() uint32 {
+	if x != nil {
+		return x.MaxDecisions
+	}
+	return 0
+}
+
+type SeatObservation struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Seat            uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
+	Planes          []float32              `protobuf:"fixed32,2,rep,packed,name=planes,proto3" json:"planes,omitempty"`
+	PlaneChannels   uint32                 `protobuf:"varint,3,opt,name=plane_channels,json=planeChannels,proto3" json:"plane_channels,omitempty"`
+	PlaneHeight     uint32                 `protobuf:"varint,4,opt,name=plane_height,json=planeHeight,proto3" json:"plane_height,omitempty"`
+	PlaneWidth      uint32                 `protobuf:"varint,5,opt,name=plane_width,json=planeWidth,proto3" json:"plane_width,omitempty"`
+	Scalars         []float32              `protobuf:"fixed32,6,rep,packed,name=scalars,proto3" json:"scalars,omitempty"`
+	ActionMask      []byte                 `protobuf:"bytes,7,opt,name=action_mask,json=actionMask,proto3" json:"action_mask,omitempty"`
+	ActionSpaceSize uint32                 `protobuf:"varint,8,opt,name=action_space_size,json=actionSpaceSize,proto3" json:"action_space_size,omitempty"`
+	DecisionIndex   uint64                 `protobuf:"varint,9,opt,name=decision_index,json=decisionIndex,proto3" json:"decision_index,omitempty"`
+	Phase           GamePhase              `protobuf:"varint,10,opt,name=phase,proto3,enum=game.GamePhase" json:"phase,omitempty"`
+	ActivePlayer    uint32                 `protobuf:"varint,11,opt,name=active_player,json=activePlayer,proto3" json:"active_player,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SeatObservation) Reset() {
+	*x = SeatObservation{}
+	mi := &file_proto_game_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeatObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeatObservation) ProtoMessage() {}
+
+func (x *SeatObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeatObservation.ProtoReflect.Descriptor instead.
+func (*SeatObservation) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SeatObservation) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetPlanes() []float32 {
+	if x != nil {
+		return x.Planes
+	}
+	return nil
+}
+
+func (x *SeatObservation) GetPlaneChannels() uint32 {
+	if x != nil {
+		return x.PlaneChannels
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetPlaneHeight() uint32 {
+	if x != nil {
+		return x.PlaneHeight
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetPlaneWidth() uint32 {
+	if x != nil {
+		return x.PlaneWidth
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetScalars() []float32 {
+	if x != nil {
+		return x.Scalars
+	}
+	return nil
+}
+
+func (x *SeatObservation) GetActionMask() []byte {
+	if x != nil {
+		return x.ActionMask
+	}
+	return nil
+}
+
+func (x *SeatObservation) GetActionSpaceSize() uint32 {
+	if x != nil {
+		return x.ActionSpaceSize
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetDecisionIndex() uint64 {
+	if x != nil {
+		return x.DecisionIndex
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetPhase() GamePhase {
+	if x != nil {
+		return x.Phase
+	}
+	return GamePhase_PHASE_INIT
+}
+
+func (x *SeatObservation) GetActivePlayer() uint32 {
+	if x != nil {
+		return x.ActivePlayer
+	}
+	return 0
+}
+
+type EnvResetRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seed          uint64                 `protobuf:"varint,1,opt,name=seed,proto3" json:"seed,omitempty"`
+	Config        *EnvConfig             `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvResetRequest) Reset() {
+	*x = EnvResetRequest{}
+	mi := &file_proto_game_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvResetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvResetRequest) ProtoMessage() {}
+
+func (x *EnvResetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvResetRequest.ProtoReflect.Descriptor instead.
+func (*EnvResetRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *EnvResetRequest) GetSeed() uint64 {
+	if x != nil {
+		return x.Seed
+	}
+	return 0
+}
+
+func (x *EnvResetRequest) GetConfig() *EnvConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type EnvResetResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Observation   *SeatObservation       `protobuf:"bytes,1,opt,name=observation,proto3" json:"observation,omitempty"`
+	Rewards       []float32              `protobuf:"fixed32,2,rep,packed,name=rewards,proto3" json:"rewards,omitempty"`
+	Terminated    bool                   `protobuf:"varint,3,opt,name=terminated,proto3" json:"terminated,omitempty"`
+	Truncated     bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvResetResponse) Reset() {
+	*x = EnvResetResponse{}
+	mi := &file_proto_game_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvResetResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvResetResponse) ProtoMessage() {}
+
+func (x *EnvResetResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvResetResponse.ProtoReflect.Descriptor instead.
+func (*EnvResetResponse) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *EnvResetResponse) GetObservation() *SeatObservation {
+	if x != nil {
+		return x.Observation
+	}
+	return nil
+}
+
+func (x *EnvResetResponse) GetRewards() []float32 {
+	if x != nil {
+		return x.Rewards
+	}
+	return nil
+}
+
+func (x *EnvResetResponse) GetTerminated() bool {
+	if x != nil {
+		return x.Terminated
+	}
+	return false
+}
+
+func (x *EnvResetResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+type EnvStepRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ActionId      uint32                 `protobuf:"varint,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvStepRequest) Reset() {
+	*x = EnvStepRequest{}
+	mi := &file_proto_game_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvStepRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvStepRequest) ProtoMessage() {}
+
+func (x *EnvStepRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvStepRequest.ProtoReflect.Descriptor instead.
+func (*EnvStepRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *EnvStepRequest) GetActionId() uint32 {
+	if x != nil {
+		return x.ActionId
+	}
+	return 0
+}
+
+type EnvStepResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Observation   *SeatObservation       `protobuf:"bytes,1,opt,name=observation,proto3" json:"observation,omitempty"`
+	Rewards       []float32              `protobuf:"fixed32,2,rep,packed,name=rewards,proto3" json:"rewards,omitempty"`
+	Terminated    bool                   `protobuf:"varint,3,opt,name=terminated,proto3" json:"terminated,omitempty"`
+	Truncated     bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvStepResponse) Reset() {
+	*x = EnvStepResponse{}
+	mi := &file_proto_game_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvStepResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvStepResponse) ProtoMessage() {}
+
+func (x *EnvStepResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvStepResponse.ProtoReflect.Descriptor instead.
+func (*EnvStepResponse) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *EnvStepResponse) GetObservation() *SeatObservation {
+	if x != nil {
+		return x.Observation
+	}
+	return nil
+}
+
+func (x *EnvStepResponse) GetRewards() []float32 {
+	if x != nil {
+		return x.Rewards
+	}
+	return nil
+}
+
+func (x *EnvStepResponse) GetTerminated() bool {
+	if x != nil {
+		return x.Terminated
+	}
+	return false
+}
+
+func (x *EnvStepResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+type TrajectoryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Episodes      uint32                 `protobuf:"varint,1,opt,name=episodes,proto3" json:"episodes,omitempty"`
+	StartSeed     uint64                 `protobuf:"varint,2,opt,name=start_seed,json=startSeed,proto3" json:"start_seed,omitempty"`
+	Config        *EnvConfig             `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrajectoryRequest) Reset() {
+	*x = TrajectoryRequest{}
+	mi := &file_proto_game_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrajectoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrajectoryRequest) ProtoMessage() {}
+
+func (x *TrajectoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrajectoryRequest.ProtoReflect.Descriptor instead.
+func (*TrajectoryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TrajectoryRequest) GetEpisodes() uint32 {
+	if x != nil {
+		return x.Episodes
+	}
+	return 0
+}
+
+func (x *TrajectoryRequest) GetStartSeed() uint64 {
+	if x != nil {
+		return x.StartSeed
+	}
+	return 0
+}
+
+func (x *TrajectoryRequest) GetConfig() *EnvConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type TrajectorySample struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Observation     *SeatObservation       `protobuf:"bytes,1,opt,name=observation,proto3" json:"observation,omitempty"`
+	ActionId        uint32                 `protobuf:"varint,2,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
+	Rewards         []float32              `protobuf:"fixed32,3,rep,packed,name=rewards,proto3" json:"rewards,omitempty"`
+	NextObservation *SeatObservation       `protobuf:"bytes,4,opt,name=next_observation,json=nextObservation,proto3" json:"next_observation,omitempty"`
+	Terminated      bool                   `protobuf:"varint,5,opt,name=terminated,proto3" json:"terminated,omitempty"`
+	Truncated       bool                   `protobuf:"varint,6,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	ActingSeat      uint32                 `protobuf:"varint,7,opt,name=acting_seat,json=actingSeat,proto3" json:"acting_seat,omitempty"`
+	EpisodeIndex    uint64                 `protobuf:"varint,8,opt,name=episode_index,json=episodeIndex,proto3" json:"episode_index,omitempty"`
+	TerminalRewards []float32              `protobuf:"fixed32,9,rep,packed,name=terminal_rewards,json=terminalRewards,proto3" json:"terminal_rewards,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TrajectorySample) Reset() {
+	*x = TrajectorySample{}
+	mi := &file_proto_game_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrajectorySample) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrajectorySample) ProtoMessage() {}
+
+func (x *TrajectorySample) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrajectorySample.ProtoReflect.Descriptor instead.
+func (*TrajectorySample) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *TrajectorySample) GetObservation() *SeatObservation {
+	if x != nil {
+		return x.Observation
+	}
+	return nil
+}
+
+func (x *TrajectorySample) GetActionId() uint32 {
+	if x != nil {
+		return x.ActionId
+	}
+	return 0
+}
+
+func (x *TrajectorySample) GetRewards() []float32 {
+	if x != nil {
+		return x.Rewards
+	}
+	return nil
+}
+
+func (x *TrajectorySample) GetNextObservation() *SeatObservation {
+	if x != nil {
+		return x.NextObservation
+	}
+	return nil
+}
+
+func (x *TrajectorySample) GetTerminated() bool {
+	if x != nil {
+		return x.Terminated
+	}
+	return false
+}
+
+func (x *TrajectorySample) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *TrajectorySample) GetActingSeat() uint32 {
+	if x != nil {
+		return x.ActingSeat
+	}
+	return 0
+}
+
+func (x *TrajectorySample) GetEpisodeIndex() uint64 {
+	if x != nil {
+		return x.EpisodeIndex
+	}
+	return 0
+}
+
+func (x *TrajectorySample) GetTerminalRewards() []float32 {
+	if x != nil {
+		return x.TerminalRewards
+	}
+	return nil
+}
+
+type TrajectoryDataset struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Samples       []*TrajectorySample    `protobuf:"bytes,1,rep,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrajectoryDataset) Reset() {
+	*x = TrajectoryDataset{}
+	mi := &file_proto_game_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrajectoryDataset) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrajectoryDataset) ProtoMessage() {}
+
+func (x *TrajectoryDataset) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrajectoryDataset.ProtoReflect.Descriptor instead.
+func (*TrajectoryDataset) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *TrajectoryDataset) GetSamples() []*TrajectorySample {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -1212,7 +1840,65 @@ const file_proto_game_proto_rawDesc = "" +
 	"totalScore\x12,\n" +
 	"\apayouts\x18\t \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12\x17\n" +
 	"\ais_draw\x18\n" +
-	" \x01(\bR\x06isDraw*c\n" +
+	" \x01(\bR\x06isDraw\"\x89\x01\n" +
+	"\tEnvConfig\x12%\n" +
+	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
+	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
+	"\rmax_decisions\x18\x03 \x01(\rR\fmaxDecisions\"\x82\x03\n" +
+	"\x0fSeatObservation\x12\x12\n" +
+	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
+	"\x06planes\x18\x02 \x03(\x02R\x06planes\x12%\n" +
+	"\x0eplane_channels\x18\x03 \x01(\rR\rplaneChannels\x12!\n" +
+	"\fplane_height\x18\x04 \x01(\rR\vplaneHeight\x12\x1f\n" +
+	"\vplane_width\x18\x05 \x01(\rR\n" +
+	"planeWidth\x12\x18\n" +
+	"\ascalars\x18\x06 \x03(\x02R\ascalars\x12\x1f\n" +
+	"\vaction_mask\x18\a \x01(\fR\n" +
+	"actionMask\x12*\n" +
+	"\x11action_space_size\x18\b \x01(\rR\x0factionSpaceSize\x12%\n" +
+	"\x0edecision_index\x18\t \x01(\x04R\rdecisionIndex\x12%\n" +
+	"\x05phase\x18\n" +
+	" \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
+	"\ractive_player\x18\v \x01(\rR\factivePlayer\"N\n" +
+	"\x0fEnvResetRequest\x12\x12\n" +
+	"\x04seed\x18\x01 \x01(\x04R\x04seed\x12'\n" +
+	"\x06config\x18\x02 \x01(\v2\x0f.game.EnvConfigR\x06config\"\xa3\x01\n" +
+	"\x10EnvResetResponse\x127\n" +
+	"\vobservation\x18\x01 \x01(\v2\x15.game.SeatObservationR\vobservation\x12\x18\n" +
+	"\arewards\x18\x02 \x03(\x02R\arewards\x12\x1e\n" +
+	"\n" +
+	"terminated\x18\x03 \x01(\bR\n" +
+	"terminated\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\"-\n" +
+	"\x0eEnvStepRequest\x12\x1b\n" +
+	"\taction_id\x18\x01 \x01(\rR\bactionId\"\xa2\x01\n" +
+	"\x0fEnvStepResponse\x127\n" +
+	"\vobservation\x18\x01 \x01(\v2\x15.game.SeatObservationR\vobservation\x12\x18\n" +
+	"\arewards\x18\x02 \x03(\x02R\arewards\x12\x1e\n" +
+	"\n" +
+	"terminated\x18\x03 \x01(\bR\n" +
+	"terminated\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\"w\n" +
+	"\x11TrajectoryRequest\x12\x1a\n" +
+	"\bepisodes\x18\x01 \x01(\rR\bepisodes\x12\x1d\n" +
+	"\n" +
+	"start_seed\x18\x02 \x01(\x04R\tstartSeed\x12'\n" +
+	"\x06config\x18\x03 \x01(\v2\x0f.game.EnvConfigR\x06config\"\xf3\x02\n" +
+	"\x10TrajectorySample\x127\n" +
+	"\vobservation\x18\x01 \x01(\v2\x15.game.SeatObservationR\vobservation\x12\x1b\n" +
+	"\taction_id\x18\x02 \x01(\rR\bactionId\x12\x18\n" +
+	"\arewards\x18\x03 \x03(\x02R\arewards\x12@\n" +
+	"\x10next_observation\x18\x04 \x01(\v2\x15.game.SeatObservationR\x0fnextObservation\x12\x1e\n" +
+	"\n" +
+	"terminated\x18\x05 \x01(\bR\n" +
+	"terminated\x12\x1c\n" +
+	"\ttruncated\x18\x06 \x01(\bR\ttruncated\x12\x1f\n" +
+	"\vacting_seat\x18\a \x01(\rR\n" +
+	"actingSeat\x12#\n" +
+	"\repisode_index\x18\b \x01(\x04R\fepisodeIndex\x12)\n" +
+	"\x10terminal_rewards\x18\t \x03(\x02R\x0fterminalRewards\"E\n" +
+	"\x11TrajectoryDataset\x120\n" +
+	"\asamples\x18\x01 \x03(\v2\x16.game.TrajectorySampleR\asamples*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -1267,20 +1953,29 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_proto_game_proto_goTypes = []any{
-	(Suit)(0),            // 0: game.Suit
-	(ActionType)(0),      // 1: game.ActionType
-	(MeldDirection)(0),   // 2: game.MeldDirection
-	(GamePhase)(0),       // 3: game.GamePhase
-	(*Tile)(nil),         // 4: game.Tile
-	(*PlayerAction)(nil), // 5: game.PlayerAction
-	(*Meld)(nil),         // 6: game.Meld
-	(*PlayerState)(nil),  // 7: game.PlayerState
-	(*GameState)(nil),    // 8: game.GameState
-	(*ScoreEntry)(nil),   // 9: game.ScoreEntry
-	(*PlayerPayout)(nil), // 10: game.PlayerPayout
-	(*RoundResult)(nil),  // 11: game.RoundResult
+	(Suit)(0),                 // 0: game.Suit
+	(ActionType)(0),           // 1: game.ActionType
+	(MeldDirection)(0),        // 2: game.MeldDirection
+	(GamePhase)(0),            // 3: game.GamePhase
+	(*Tile)(nil),              // 4: game.Tile
+	(*PlayerAction)(nil),      // 5: game.PlayerAction
+	(*Meld)(nil),              // 6: game.Meld
+	(*PlayerState)(nil),       // 7: game.PlayerState
+	(*GameState)(nil),         // 8: game.GameState
+	(*ScoreEntry)(nil),        // 9: game.ScoreEntry
+	(*PlayerPayout)(nil),      // 10: game.PlayerPayout
+	(*RoundResult)(nil),       // 11: game.RoundResult
+	(*EnvConfig)(nil),         // 12: game.EnvConfig
+	(*SeatObservation)(nil),   // 13: game.SeatObservation
+	(*EnvResetRequest)(nil),   // 14: game.EnvResetRequest
+	(*EnvResetResponse)(nil),  // 15: game.EnvResetResponse
+	(*EnvStepRequest)(nil),    // 16: game.EnvStepRequest
+	(*EnvStepResponse)(nil),   // 17: game.EnvStepResponse
+	(*TrajectoryRequest)(nil), // 18: game.TrajectoryRequest
+	(*TrajectorySample)(nil),  // 19: game.TrajectorySample
+	(*TrajectoryDataset)(nil), // 20: game.TrajectoryDataset
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
@@ -1306,11 +2001,19 @@ var file_proto_game_proto_depIdxs = []int32{
 	4,  // 20: game.RoundResult.win_tile:type_name -> game.Tile
 	9,  // 21: game.RoundResult.breakdown:type_name -> game.ScoreEntry
 	10, // 22: game.RoundResult.payouts:type_name -> game.PlayerPayout
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	3,  // 23: game.SeatObservation.phase:type_name -> game.GamePhase
+	12, // 24: game.EnvResetRequest.config:type_name -> game.EnvConfig
+	13, // 25: game.EnvResetResponse.observation:type_name -> game.SeatObservation
+	13, // 26: game.EnvStepResponse.observation:type_name -> game.SeatObservation
+	12, // 27: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	13, // 28: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	13, // 29: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	19, // 30: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -1325,7 +2028,7 @@ func file_proto_game_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   8,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

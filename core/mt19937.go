@@ -145,6 +145,30 @@ func MTFromSeed(seed [MT19937SeedSize]uint32) *MT19937 {
 	return mt
 }
 
+// SeedFromUint64 expands a single uint64 into a full MT19937 seed array using
+// SplitMix64 so tests and RL environments can request deterministic walls
+// without having to manage the full 624-word seed payload themselves.
+func SeedFromUint64(value uint64) [MT19937SeedSize]uint32 {
+	var seed [MT19937SeedSize]uint32
+	state := value
+	for i := 0; i < MT19937SeedSize; i += 2 {
+		word := splitMix64(&state)
+		seed[i] = uint32(word)
+		if i+1 < MT19937SeedSize {
+			seed[i+1] = uint32(word >> 32)
+		}
+	}
+	return seed
+}
+
+func splitMix64(state *uint64) uint64 {
+	*state += 0x9e3779b97f4a7c15
+	z := *state
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	return z ^ (z >> 31)
+}
+
 func SrcFromMT(mt *MT19937) [SrcLen]uint32 {
 	var src [SrcLen]uint32
 	for i := 0; i < SrcLen; i++ {

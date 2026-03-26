@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass
 class EnvConfig:
-    action_space_size: int = 128
-    plane_shape: tuple[int, int, int] = (48, 34, 1)
-    scalar_features: int = 32
+    action_space_size: int = 204
+    plane_shape: tuple[int, int, int] = (39, 42, 1)
+    scalar_features: int = 29
     max_steps_per_episode: int = 256
-    bridge_kind: str = "mock"
+    bridge_kind: str = "go"
     seed: int = 1
+    learning_seats: tuple[int, ...] = (0,)
+    auto_play_heuristics: bool = True
+    bridge_library_path: Optional[Path] = None
 
 
 @dataclass
