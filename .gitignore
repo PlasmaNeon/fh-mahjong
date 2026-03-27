@@ -34,3 +34,9 @@ killer_mortal_gui/
 .claude/
 .vercel
 .worktrees/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
