@@ -24,6 +24,7 @@ fh-mj-selfplay-smoke = "fh_mahjong_ai.scripts.selfplay_smoke:main"
 fh-mj-generate-data = "fh_mahjong_ai.scripts.generate_data:main"
 fh-mj-train-bc = "fh_mahjong_ai.scripts.train_bc:main"
 fh-mj-evaluate = "fh_mahjong_ai.scripts.evaluate:main"
+fh-mj-pipeline = "fh_mahjong_ai.scripts.run_pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
