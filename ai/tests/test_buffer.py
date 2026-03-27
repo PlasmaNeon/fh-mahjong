@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+import numpy as np
+
+from fh_mahjong_ai.buffer import ReplayBuffer
+from fh_mahjong_ai.types import Observation, Transition
+
+
+def _obs(seat: int = 0) -> Observation:
+    return Observation(
+        seat=seat,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(29, dtype=np.float32),
+        action_mask=np.ones(204, dtype=np.int8),
+    )
+
+
+def test_sample_uses_terminal_rewards_when_available() -> None:
+    buf = ReplayBuffer(capacity=10)
+    t = Transition(
+        observation=_obs(seat=0),
+        action_id=5,
+        rewards=np.asarray([0, 0, 0, 0], dtype=np.float32),
+        next_observation=_obs(seat=0),
+        terminated=False,
+        info={"terminal_rewards": np.asarray([10, -5, -3, -2], dtype=np.float32)},
+    )
+    buf.append(t)
+    batch = buf.sample(1, seed=42)
+    assert batch.returns[0] == 10.0  # seat 0's terminal reward
+
+
+def test_sample_falls_back_to_step_rewards() -> None:
+    buf = ReplayBuffer(capacity=10)
+    t = Transition(
+        observation=_obs(seat=1),
+        action_id=5,
+        rewards=np.asarray([0, 7, 0, 0], dtype=np.float32),
+        next_observation=_obs(seat=1),
+        terminated=True,
+        info={},
+    )
+    buf.append(t)
+    batch = buf.sample(1, seed=42)
+    assert batch.returns[0] == 7.0  # seat 1's step reward
