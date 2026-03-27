@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 fh-mj-selfplay-smoke = "fh_mahjong_ai.scripts.selfplay_smoke:main"
+fh-mj-generate-data = "fh_mahjong_ai.scripts.generate_data:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

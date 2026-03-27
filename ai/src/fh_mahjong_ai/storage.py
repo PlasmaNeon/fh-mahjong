@@ -49,8 +49,16 @@ def _transition_to_dict(transition: Transition) -> dict[str, object]:
         "next_observation": _observation_to_dict(transition.next_observation),
         "terminated": transition.terminated,
         "truncated": transition.truncated,
-        "info": transition.info,
+        "info": _sanitize_info(transition.info),
     }
+
+
+def _sanitize_info(info: dict) -> dict:
+    """Convert any numpy arrays in an info dict to plain Python lists."""
+    result = {}
+    for key, value in info.items():
+        result[key] = value.tolist() if isinstance(value, np.ndarray) else value
+    return result
 
 
 def _transition_from_dict(payload: dict[str, object]) -> Transition:
