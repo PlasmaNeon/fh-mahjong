@@ -17,11 +17,23 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value network for masked-action Mahjong decisions.
 - **src/fh_mahjong_ai/policies.py** — Random and torch-backed policy adapters.
-- **src/fh_mahjong_ai/buffer.py** — Replay buffer and tensor conversion helpers.
-- **src/fh_mahjong_ai/storage.py** — Checkpoint and JSONL transition persistence helpers.
-- **src/fh_mahjong_ai/trainer.py** — Self-play collection and behavior-cloning/offline warm-start trainer utilities.
+- **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`) and terminal-reward backfill (`backfill_returns`) utilities for trajectory post-processing.
+- **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring and online live-play evaluation against the heuristic baseline.
+- **src/fh_mahjong_ai/buffer.py** — Replay buffer with terminal-reward-aware value targets.
+- **src/fh_mahjong_ai/storage.py** — Checkpoint and JSONL transition persistence helpers (handles numpy arrays in info dicts).
+- **src/fh_mahjong_ai/trainer.py** — Self-play collection and behavior-cloning trainer utilities.
 - **src/fh_mahjong_ai/scripts/selfplay_smoke.py** — Mock-bridge smoke runner that exercises the package end to end.
+- **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL via the Go bridge (or mock fallback).
+- **src/fh_mahjong_ai/scripts/train_bc.py** — CLI: behavior cloning training with logging, checkpointing, and resume support.
+- **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
+- **src/fh_mahjong_ai/scripts/run_pipeline.py** — CLI: orchestrate generate → train → evaluate in one command.
 - **tests/test_bridge.py** — `unittest` coverage for the mock bridge reset/step contract and action-mask validation behavior.
+- **tests/test_data.py** — Tests for episode grouping and terminal-reward backfill.
+- **tests/test_buffer.py** — Tests for terminal-reward-aware replay buffer sampling.
+- **tests/test_generate_data.py** — Tests for heuristic data generation (mock bridge path).
+- **tests/test_train_bc.py** — Tests for BC training loop and checkpoint resume.
+- **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
+- **tests/test_pipeline_e2e.py** — End-to-end pipeline integration test (mock bridge).
 - **src/fh_mahjong_ai/generated/proto/game_pb2.py** — Generated Python protobuf bindings shared with the Go RL bridge.
 
 ## Architecture Notes
