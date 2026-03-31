@@ -30,9 +30,10 @@ type Room struct {
 	MatchRecord    *models.Match
 	OnShutdown     func()
 
-	Engine    *core.Game
-	BotPolicy bot.Policy
-	Seats     map[uint32]*Client // maps 0-3 to active WS connections
+	Engine     *core.Game
+	BotPolicy  bot.Policy
+	Seats      map[uint32]*Client // maps 0-3 to active WS connections
+	PaipuStore func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
@@ -130,6 +131,9 @@ func (r *Room) Start() {
 					WallSeed:  r.Engine.State.WallSeed,
 					PaipuJSON: paipuJSON,
 				})
+			} else if paipuJSON != "" && r.PaipuStore != nil {
+				r.PaipuStore(r.ID, paipuJSON)
+				log.Printf("Stored paipu in-memory for room %s", r.ID)
 			} else {
 				log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
 			}
@@ -143,6 +147,9 @@ func (r *Room) Start() {
 				resolvePayload := r.BroadcastState()
 				replayBytes = append(replayBytes, resolvePayload...)
 				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+					r.storePaipuSnapshot()
+				}
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -179,6 +186,10 @@ func (r *Room) Start() {
 				// Keep appending the state into the giant binary blob
 				replayBytes = append(replayBytes, statePayload...)
 				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+					r.storePaipuSnapshot()
+				}
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
@@ -359,6 +370,43 @@ func (r *Room) hasConnectedInterruptSeat() bool {
 
 func (r *Room) isSeatReady(seatIndex int) bool {
 	return seatIndex >= 0 && seatIndex < len(r.Engine.State.PlayerReady) && r.Engine.State.PlayerReady[seatIndex]
+}
+
+func (r *Room) storePaipuSnapshot() {
+	if r.Engine.Recorder == nil || r.PaipuStore == nil {
+		return
+	}
+	// Get the cumulative paipu with current scores
+	var scores [4]int32
+	for i, p := range r.Engine.State.Players {
+		scores[i] = p.Score
+	}
+	cumulative := r.Engine.Recorder.Finalize(scores)
+	if len(cumulative.Rounds) == 0 {
+		return
+	}
+
+	// Extract only the latest round into a standalone paipu
+	latestRound := cumulative.Rounds[len(cumulative.Rounds)-1]
+	handNum := latestRound.Round
+	paipuID := fmt.Sprintf("%s-%d", r.ID, handNum)
+
+	single := core.Paipu{
+		Version:     cumulative.Version,
+		MatchID:     paipuID,
+		Ruleset:     cumulative.Ruleset,
+		Players:     cumulative.Players,
+		Rounds:      []core.PaipuRound{latestRound},
+		FinalScores: scores,
+	}
+
+	data, err := json.Marshal(single)
+	if err != nil {
+		log.Printf("Failed to marshal paipu for room %s hand %d: %v", r.ID, handNum, err)
+		return
+	}
+	r.PaipuStore(paipuID, string(data))
+	log.Printf("Saved paipu %s (hand %d)", paipuID, handNum)
 }
 
 func (r *Room) registerPaipuPlayers() {

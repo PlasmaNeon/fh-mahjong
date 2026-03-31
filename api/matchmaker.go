@@ -90,6 +90,8 @@ type Matchmaker struct {
 	DB    *gorm.DB
 	Hub   *Hub
 
+	PaipuStore func(matchID, paipuJSON string) // in-memory fallback when DB is nil
+
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
 }
@@ -275,6 +277,7 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 
 	// 3. Create the Room Goroutine explicitly
 	room := NewRoom(matchID, m.Hub, m.DB)
+	room.PaipuStore = m.PaipuStore
 	room.PrivateTableID = tableID
 	room.OnShutdown = func() {
 		m.unregisterActivePrivateTable(tableID)

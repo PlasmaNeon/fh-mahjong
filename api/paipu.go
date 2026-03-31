@@ -14,11 +14,27 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
-	var match models.Match
-	if s.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database not available"})
+	// Try in-memory store first (works with or without DB)
+	if data, ok := s.GetPaipu(matchID); ok {
+		c.Data(http.StatusOK, "application/json", []byte(data))
 		return
 	}
+
+	// Fall back to database
+	if s.DB == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+		return
+	}
+
+	// Check paipu_records table (per-round paipus)
+	var record models.PaipuRecord
+	if err := s.DB.Where("id = ?", matchID).First(&record).Error; err == nil {
+		c.Data(http.StatusOK, "application/json", []byte(record.Data))
+		return
+	}
+
+	// Fall back to legacy Match.PaipuJSON
+	var match models.Match
 	if err := s.DB.Where("id = ?", matchID).First(&match).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
 		return
@@ -29,6 +45,5 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
-	// Return raw JSON string directly
 	c.Data(http.StatusOK, "application/json", []byte(match.PaipuJSON))
 }
