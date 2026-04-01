@@ -33,7 +33,8 @@ type Room struct {
 	Engine     *core.Game
 	BotPolicy  bot.Policy
 	Seats      map[uint32]*Client // maps 0-3 to active WS connections
-	PaipuStore func(matchID, paipuJSON string) // in-memory fallback when DB is nil
+	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
+	lastStoredRound uint32
 
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
@@ -146,10 +147,10 @@ func (r *Room) Start() {
 				r.Engine.ResolveInterrupts()
 				resolvePayload := r.BroadcastState()
 				replayBytes = append(replayBytes, resolvePayload...)
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 					r.storePaipuSnapshot()
 				}
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -185,11 +186,10 @@ func (r *Room) Start() {
 
 				// Keep appending the state into the giant binary blob
 				replayBytes = append(replayBytes, statePayload...)
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
-
 				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 					r.storePaipuSnapshot()
 				}
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
@@ -389,6 +389,12 @@ func (r *Room) storePaipuSnapshot() {
 	// Extract only the latest round into a standalone paipu
 	latestRound := cumulative.Rounds[len(cumulative.Rounds)-1]
 	handNum := latestRound.Round
+
+	// Avoid redundant snapshots for the same round
+	if handNum <= r.lastStoredRound {
+		return
+	}
+
 	paipuID := fmt.Sprintf("%s-%d", r.ID, handNum)
 
 	single := core.Paipu{
@@ -406,6 +412,7 @@ func (r *Room) storePaipuSnapshot() {
 		return
 	}
 	r.PaipuStore(paipuID, string(data))
+	r.lastStoredRound = handNum
 	log.Printf("Saved paipu %s (hand %d)", paipuID, handNum)
 }
 
