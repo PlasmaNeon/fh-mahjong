@@ -63,6 +63,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/calc", s.handleCalc)
 		v1.POST("/shanten", s.handleShanten)
 		v1.GET("/paipu/:matchId", s.handleGetPaipu)
+		v1.POST("/paipu/:matchId", s.handleUploadPaipu)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, c) })
 
 		// Protected routes
