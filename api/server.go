@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/models"
@@ -21,6 +22,10 @@ type Server struct {
 	DB         *gorm.DB
 	Hub        *Hub
 	Matchmaker *Matchmaker
+
+	// In-memory paipu store for when DB is nil (local dev without Postgres)
+	paipu   map[string]string // matchID -> paipu JSON
+	paipuMu sync.RWMutex
 }
 
 // NewServer initializes a new Server with all defined routes
@@ -35,6 +40,11 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 		DB:         db,
 		Hub:        hub,
 		Matchmaker: matchmaker,
+		paipu:      make(map[string]string),
+	}
+
+	if matchmaker != nil {
+		matchmaker.PaipuStore = server.StorePaipu
 	}
 
 	server.setupRoutes()
@@ -66,6 +76,26 @@ func (s *Server) setupRoutes() {
 	}
 
 	s.setupFrontendRoutes()
+}
+
+// StorePaipu saves paipu JSON to the in-memory store and DB (if available).
+func (s *Server) StorePaipu(matchID, paipuJSON string) {
+	s.paipuMu.Lock()
+	s.paipu[matchID] = paipuJSON
+	s.paipuMu.Unlock()
+
+	if s.DB != nil {
+		record := models.PaipuRecord{ID: matchID, Data: paipuJSON}
+		s.DB.Save(&record)
+	}
+}
+
+// GetPaipu retrieves paipu JSON from the in-memory store.
+func (s *Server) GetPaipu(matchID string) (string, bool) {
+	s.paipuMu.RLock()
+	data, ok := s.paipu[matchID]
+	s.paipuMu.RUnlock()
+	return data, ok
 }
 
 func init() {

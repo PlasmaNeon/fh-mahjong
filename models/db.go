@@ -51,11 +51,19 @@ type MatchPlayer struct {
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
 
+// PaipuRecord stores a per-round paipu replay
+type PaipuRecord struct {
+	ID        string    `gorm:"primaryKey;size:255" json:"id"` // matchID-handNum
+	Data      string    `gorm:"type:text;not null" json:"data"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // AutoMigrate setups the DB schema
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&User{},
 		&Match{},
 		&MatchPlayer{},
+		&PaipuRecord{},
 	)
 }

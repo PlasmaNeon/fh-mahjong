@@ -1,0 +1,550 @@
+{
+    "version": 1,
+    "matchId": "8ebe2862-7c39-4ddd-ba4f-26fd559e5b61-1",
+    "ruleset": "hometown",
+    "players": [
+        {
+            "seat": 0,
+            "name": "1",
+            "userId": 9878975
+        },
+        {
+            "seat": 1,
+            "name": "2",
+            "userId": 9094155
+        },
+        {
+            "seat": 2,
+            "name": "3",
+            "userId": 9693993
+        },
+        {
+            "seat": 3,
+            "name": "4",
+            "userId": 9052037
+        }
+    ],
+    "rounds": [
+        {
+            "round": 1,
+            "prevailingWind": 0,
+            "dealer": 0,
+            "dice": [
+                4,
+                4
+            ],
+            "wallSeed": "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",
+            "wildTiles": [
+                {
+                    "id": 0,
+                    "suit": 5,
+                    "value": 1
+                },
+                {
+                    "id": 0,
+                    "suit": 5,
+                    "value": 2
+                },
+                {
+                    "id": 0,
+                    "suit": 5,
+                    "value": 3
+                }
+            ],
+            "wangpaiStacks": 8,
+            "startingScores": [
+                25000,
+                25000,
+                25000,
+                25000
+            ],
+            "deals": [
+                [
+                    53,
+                    91,
+                    114,
+                    93,
+                    98,
+                    0,
+                    107,
+                    79,
+                    18,
+                    7,
+                    20,
+                    117,
+                    111
+                ],
+                [
+                    69,
+                    48,
+                    110,
+                    77,
+                    10,
+                    35,
+                    106,
+                    68,
+                    51,
+                    100,
+                    72,
+                    63,
+                    86
+                ],
+                [
+                    44,
+                    135,
+                    28,
+                    57,
+                    9,
+                    95,
+                    30,
+                    82,
+                    84,
+                    49,
+                    59,
+                    109,
+                    52
+                ],
+                [
+                    66,
+                    121,
+                    4,
+                    92,
+                    24,
+                    14,
+                    22,
+                    11,
+                    113,
+                    129,
+                    34,
+                    43,
+                    33
+                ]
+            ],
+            "initialFlowers": null,
+            "actions": [
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 42
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 117
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 76
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 110
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 21
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 109
+                },
+                {
+                    "act": "draw",
+                    "seat": 3,
+                    "tile": 101
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 121
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 6
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 114
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 87
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 35
+                },
+                {
+                    "act": "pon",
+                    "seat": 3,
+                    "tiles": [
+                        34,
+                        33
+                    ],
+                    "from": 1
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 43
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 94
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 111
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 26
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 26
+                },
+                {
+                    "act": "chii",
+                    "seat": 2,
+                    "tiles": [
+                        21,
+                        30
+                    ],
+                    "from": 1
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 28
+                },
+                {
+                    "act": "chii",
+                    "seat": 3,
+                    "tiles": [
+                        22,
+                        24
+                    ],
+                    "from": 2
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 129
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 23
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 42
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 125
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 125
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 8
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 135
+                },
+                {
+                    "act": "draw",
+                    "seat": 3,
+                    "tile": 90
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 66
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 55
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 79
+                },
+                {
+                    "act": "pon",
+                    "seat": 1,
+                    "tiles": [
+                        77,
+                        76
+                    ],
+                    "from": 0
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 72
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 105
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 105
+                },
+                {
+                    "act": "draw",
+                    "seat": 3,
+                    "tile": 64
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 64
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 128
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 128
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 130
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 130
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 115
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 115
+                },
+                {
+                    "act": "draw",
+                    "seat": 3,
+                    "tile": 27
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 101
+                },
+                {
+                    "act": "chii",
+                    "seat": 0,
+                    "tiles": [
+                        98,
+                        107
+                    ],
+                    "from": 3
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 0
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 71
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 10
+                },
+                {
+                    "act": "pon",
+                    "seat": 2,
+                    "tiles": [
+                        9,
+                        8
+                    ],
+                    "from": 1
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 95
+                },
+                {
+                    "act": "pon",
+                    "seat": 0,
+                    "tiles": [
+                        93,
+                        94
+                    ],
+                    "from": 2
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 91
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 39
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 39
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 103
+                },
+                {
+                    "act": "discard",
+                    "seat": 2,
+                    "tile": 103
+                },
+                {
+                    "act": "draw",
+                    "seat": 3,
+                    "tile": 19
+                },
+                {
+                    "act": "discard",
+                    "seat": 3,
+                    "tile": 90
+                },
+                {
+                    "act": "draw",
+                    "seat": 0,
+                    "tile": 12
+                },
+                {
+                    "act": "discard",
+                    "seat": 0,
+                    "tile": 23
+                },
+                {
+                    "act": "draw",
+                    "seat": 1,
+                    "tile": 120
+                },
+                {
+                    "act": "discard",
+                    "seat": 1,
+                    "tile": 120
+                },
+                {
+                    "act": "draw",
+                    "seat": 2,
+                    "tile": 138
+                },
+                {
+                    "act": "tsumo",
+                    "seat": 2,
+                    "tile": 138
+                }
+            ],
+            "result": {
+                "type": "win",
+                "winner": 2,
+                "winType": "tsumo",
+                "discarder": null,
+                "winTile": 138,
+                "hand": [
+                    44,
+                    57,
+                    82,
+                    84,
+                    49,
+                    59,
+                    52,
+                    138
+                ],
+                "melds": [
+                    {
+                        "type": "chii",
+                        "tiles": [
+                            21,
+                            30,
+                            26
+                        ],
+                        "from": 3
+                    },
+                    {
+                        "type": "pon",
+                        "tiles": [
+                            9,
+                            8,
+                            10
+                        ],
+                        "from": 3
+                    }
+                ],
+                "breakdown": [
+                    {
+                        "name": "Base Point (\u5750\u53f0)",
+                        "points": 1
+                    },
+                    {
+                        "name": "Tsumo (\u81ea\u6478)",
+                        "points": 1
+                    },
+                    {
+                        "name": "One Wild Tile (\u4e00\u642d)",
+                        "points": 1
+                    }
+                ],
+                "totalScore": 3,
+                "scoreChanges": [
+                    -6,
+                    -6,
+                    18,
+                    -6
+                ]
+            }
+        }
+    ],
+    "finalScores": [
+        24994,
+        24994,
+        25018,
+        24994
+    ]
+}
