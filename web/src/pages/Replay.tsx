@@ -354,7 +354,8 @@ export default function Replay() {
                         {state.result.melds && state.result.melds.length > 0 && (
                           <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
                             {[...state.result.melds].reverse().map((m, mIdx) => {
-                              const calledDirection = getCalledDirection(state.result.winner ?? 0, m.from ?? -1)
+                              // m.from in paipu round results is already a CalledDirection (1=right, 2=across, 3=left)
+                              const calledDirection = m.from ?? -1
                               let displayTiles = [...m.tiles]
                               let stolenTileId = -1
                               if (m.from != null && m.from >= 0 && displayTiles.length > 0) {
