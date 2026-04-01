@@ -151,6 +151,9 @@ func (r *Room) Start() {
 					r.storePaipuSnapshot()
 				}
 				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+					r.storePaipuSnapshot()
+				}
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -190,6 +193,9 @@ func (r *Room) Start() {
 					r.storePaipuSnapshot()
 				}
 				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+					r.storePaipuSnapshot()
+				}
 
 				// 4. Handle Phase Transitions
 				currentPhase := r.Engine.State.Phase
