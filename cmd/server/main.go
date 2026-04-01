@@ -16,12 +16,12 @@ func main() {
 	log.Println("Booting Mahjong Server...")
 
 	// Open DB connection with retry
-	dsn := getEnv("DATABASE_URL", "host=localhost user=fh_admin password=fh_password dbname=fh_mahjong port=5432 sslmode=disable TimeZone=UTC")
+	dsn := getEnv("DATABASE_URL", "host=localhost user=fh_admin dbname=fh_mahjong port=5432 sslmode=disable TimeZone=UTC")
 	var db *gorm.DB
 	var err error
 	for i := 0; i < 5; i++ {
 		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Info),
+			Logger: logger.Default.LogMode(logger.Warn),
 		})
 		if err == nil {
 			break
