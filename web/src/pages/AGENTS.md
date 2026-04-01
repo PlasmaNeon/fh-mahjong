@@ -23,13 +23,13 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 - **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
   - Now renders as a pre-game table scene with seat cards, central status HUD, share-link panel, and ready-state side panel so `/table/:tableId` visually matches the live game more closely
-  - Restores the private-room guest session from durable local storage for the same `tableId`, so reopening the shared link in the same browser can reconnect to the live room instead of silently creating a brand new guest identity
+  - Restores the private-room guest session from tab-scoped session storage for the same `tableId`, so refreshing the tab reconnects cleanly without forcing every same-browser tab to share one guest identity
   - If the server reports that the shared table is already active, original participants are redirected back to the current `matchId` while non-participants are blocked from spawning a second game off the same link
   - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
 
 - **privateRoomSession.ts** — Private-room browser session helpers:
-  - Persists the active private-room guest token, username, and `tableId` in local storage
-  - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them
+  - Persists the active private-room guest token, username, and `tableId` in session storage
+  - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them, and removes the old local-storage key from the reverted cross-tab reconnect flow
   - Shared by `Table.tsx` and `Game.tsx` so both waiting-room and live-game routes can recover the same private-room identity
 
 - **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
@@ -50,7 +50,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Callable discards get a distinct teal pulse ring so the current claim target is obvious without reusing the wild-tile gold glow
   - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP; stray `FLOWER_REVEAL` actions from the backend are auto-submitted immediately instead of surfacing a user-facing button
   - Interrupt UX: `hasSubmittedInterrupt` state hides interrupt buttons immediately after player clicks, before server resolves (prevents double-clicks and improves responsiveness)
-  - Private-room reconnect fallback now reads the durable private-room session helper instead of a per-tab session value, so a refreshed live game can recover the same guest identity
+  - Private-room reconnect fallback now reads the tab-scoped private-room session helper so a refreshed live game can recover the same guest identity without making all same-browser tabs collapse into one player
   - Flower melds: rendered as small face-up tiles next to open melds for all 4 players
   - Seat flower strips are anchored separately from the open-meld flow so they sit on the table-facing side of the first meld for each player and do not overlap concealed hands on the side seats
   - Round-result modal: glass-styled result dialog matching the table HUD, with a compact single-line TSUMO/RON + winner header, background-free winning-hand/payout sections, a two-column breakdown layout, each payout seat card also carrying ready state, tightened spacing to avoid the outer modal scrollbar on normal desktop screens, and a narrower short-landscape profile so left/right hands remain visible on phones

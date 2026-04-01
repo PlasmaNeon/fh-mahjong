@@ -17,8 +17,8 @@ Contains all React components, context providers, custom hooks, and utility func
   - `getWebSocketUrl(path)` uses `VITE_WS_BASE_URL` when present, otherwise falls back to browser-origin WebSocket URLs
   - `VITE_WS_BASE_URL` may be supplied as `http(s)` or `ws(s)`; the helper normalizes `http -> ws` and `https -> wss`
 - **pages/privateRoomSession.ts** — Durable private-room session helper:
-  - Stores the active guest token, username, and `tableId` in local storage for private-room reconnects
-  - Drops expired guest JWTs before the UI attempts a reconnect
+  - Stores the active guest token, username, and `tableId` in tab-scoped session storage so refreshes reconnect cleanly without making every tab share the same guest identity
+  - Drops expired guest JWTs before the UI attempts a reconnect and clears the legacy local-storage key from the short-lived cross-tab experiment
 - **index.css** — Global styles (TailwindCSS + custom classes for tiles, melds, table layout)
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
   - Includes the centered match HUD and discard-tray placeholder styling used by `Game.tsx`
@@ -46,4 +46,4 @@ Contains all React components, context providers, custom hooks, and utility func
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
 - The non-game route pages (`/`, `/lobby`, `/create-room`, `/table/:tableId`) now intentionally share the same emerald/glass tabletop visual language as the live game so the room-creation and waiting flow feels continuous.
-- Private-room reconnects intentionally use durable browser storage rather than per-tab session storage, because `/table/:tableId` is a share link and reopening it in a new tab should preserve the same guest identity when possible.
+- Private-room reconnects intentionally use per-tab browser storage so refreshes still reconnect, but opening multiple `/table/:tableId` tabs in the same browser can simulate multiple local players without all tabs sharing one guest identity.
