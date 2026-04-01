@@ -183,7 +183,7 @@ export default function Replay() {
               <div className="wild-tile-corner">
                 <div className="wild-tile-corner-label">Wild Tile</div>
                 <div className="wild-tile-corner-face">
-                  <TileImg tile={state.wildTiles[0]} />
+                  <TileImg tile={state.wildTiles[0]} noGlow />
                 </div>
               </div>
             )}
@@ -303,125 +303,139 @@ export default function Replay() {
               )
             })}
 
-            {/* Round Result Overlay */}
-            {state.isRoundEnd && state.result && (
-              <div className="round-result-overlay">
-                <div className="round-result-modal">
-                  {state.result.type === 'draw' ? (
-                    <div className="round-result-draw">
-                      <div className="round-result-badge round-result-badge-draw">Draw</div>
-                      <h2 className="round-result-title round-result-title-draw">Exhaustive Draw</h2>
-                      <p className="round-result-subtitle">No tiles remaining in the wall.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="round-result-header-line">
-                        <div className={`round-result-badge ${state.result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
-                          {state.result.winType === 'tsumo' ? 'TSUMO!' : 'RON!'}
-                        </div>
-                        <h2 className={`round-result-title ${state.result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
-                          {paipu.players[state.result.winner ?? 0]?.name ?? `Seat ${state.result.winner}`} wins
-                        </h2>
-                      </div>
-                      {state.result.winType === 'ron' && state.result.discarder != null && (
-                        <p className="round-result-subtitle">
-                          From {paipu.players[state.result.discarder]?.name ?? `Seat ${state.result.discarder}`}
-                        </p>
-                      )}
-
-                      {/* Winning Hand + Melds */}
-                      {state.result.hand && (
-                        <div className="round-result-panel round-result-panel-plain round-result-hand-panel">
-                          <div className="round-result-hand-row">
-                            <div className="round-result-closed-hand">
-                              {state.result.hand.map(tileObjectFromId).sort((a, b) => {
-                                const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit)
-                                return sa !== sb ? sa - sb : a.value - b.value
-                              }).map((t, i) => (
-                                <div key={i} className="pov-bottom small">
-                                  <TileImg tile={t} size="small" isWild={isWild(t)} />
-                                </div>
-                              ))}
-                              {state.result.winTile != null && (
-                                <div className="pov-bottom small round-result-win-tile">
-                                  <TileImg tile={tileObjectFromId(state.result.winTile)} size="small" isWild={isWild(tileObjectFromId(state.result.winTile))} />
-                                </div>
-                              )}
-                            </div>
-                            {/* Open melds in result */}
-                            {state.result.melds && state.result.melds.length > 0 && (
-                              <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
-                                {state.result.melds.map((m, mIdx) => (
-                                  <div key={mIdx} className="meld-group meld-group-bottom">
-                                    {m.tiles.map((tid, tIdx) => {
-                                      const t = tileObjectFromId(tid)
-                                      return (
-                                        <div key={tIdx} className="pov-bottom small">
-                                          <TileImg tile={t} size="small" isWild={isWild(t)} />
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {/* Flowers in result */}
-                            {state.result.flowers && state.result.flowers.length > 0 && (
-                              <div style={{ display: 'flex', gap: '2px', marginLeft: '8px' }}>
-                                {state.result.flowers.map((fid, fi) => {
-                                  const t = tileObjectFromId(fid)
-                                  return (
-                                    <div key={fi} className="pov-bottom small">
-                                      <TileImg tile={t} size="small" isWild={isWild(t)} />
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Score Breakdown */}
-                      {state.result.breakdown && state.result.breakdown.length > 0 && (
-                        <div className="round-result-panel">
-                          <div className="round-result-breakdown-scroll">
-                            <div className="round-result-breakdown-grid">
-                              {state.result.breakdown.map((entry, i) => (
-                                <div key={i} className="round-result-breakdown-item">
-                                  <div className="round-result-breakdown-name">{entry.name}</div>
-                                  <div className="round-result-breakdown-points">+{entry.points}</div>
-                                </div>
-                              ))}
-                              <div className="round-result-breakdown-total-row">
-                                <div>Total</div>
-                                <div>{state.result.totalScore}</div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Score Changes */}
-                      <div className="round-result-panel round-result-panel-plain">
-                        <div className="round-result-payout-grid">
-                          {state.result.scoreChanges.map((amount, i) => (
-                            <div key={i} className={`round-result-payout-cell ${amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}>
-                              <div className="round-result-payout-seat">{paipu.players[i]?.name ?? `Seat ${i}`}</div>
-                              <div className="round-result-payout-amount">
-                                {amount > 0 ? '+' : ''}{amount}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         </div>
+        {/* Round Result Overlay — rendered outside .game-stage to avoid transform containment */}
+        {state.isRoundEnd && state.result && (
+          <div className="round-result-overlay">
+            <div className="round-result-modal">
+              {state.result.type === 'draw' ? (
+                <div className="round-result-draw">
+                  <div className="round-result-badge round-result-badge-draw">Draw</div>
+                  <h2 className="round-result-title round-result-title-draw">Exhaustive Draw</h2>
+                  <p className="round-result-subtitle">No tiles remaining in the wall.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="round-result-header-line">
+                    <div className={`round-result-badge ${state.result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
+                      {state.result.winType === 'tsumo' ? 'TSUMO!' : 'RON!'}
+                    </div>
+                    <h2 className={`round-result-title ${state.result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
+                      {paipu.players[state.result.winner ?? 0]?.name ?? `Seat ${state.result.winner}`} wins
+                    </h2>
+                  </div>
+                  {state.result.winType === 'ron' && state.result.discarder != null && (
+                    <p className="round-result-subtitle">
+                      From {paipu.players[state.result.discarder]?.name ?? `Seat ${state.result.discarder}`}
+                    </p>
+                  )}
+
+                  {/* Winning Hand + Melds */}
+                  {state.result.hand && (
+                    <div className="round-result-panel round-result-panel-plain round-result-hand-panel">
+                      <div className="round-result-hand-row">
+                        <div className="round-result-closed-hand">
+                          {state.result.hand.map(tileObjectFromId).sort((a, b) => {
+                            const sa = getSuitOrder(a.suit), sb = getSuitOrder(b.suit)
+                            return sa !== sb ? sa - sb : a.value - b.value
+                          }).map((t, i) => (
+                            <div key={i} className="pov-bottom small">
+                              <TileImg tile={t} size="small" isWild={isWild(t)} />
+                            </div>
+                          ))}
+                          {state.result.winTile != null && (
+                            <div className="pov-bottom small round-result-win-tile">
+                              <TileImg tile={tileObjectFromId(state.result.winTile)} size="small" isWild={isWild(tileObjectFromId(state.result.winTile))} />
+                            </div>
+                          )}
+                        </div>
+                        {/* Open melds in result — same rearrangement logic as table view */}
+                        {state.result.melds && state.result.melds.length > 0 && (
+                          <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
+                            {[...state.result.melds].reverse().map((m, mIdx) => {
+                              const calledDirection = getCalledDirection(state.result.winner ?? 0, m.from ?? -1)
+                              let displayTiles = [...m.tiles]
+                              let stolenTileId = -1
+                              if (m.from != null && m.from >= 0 && displayTiles.length > 0) {
+                                stolenTileId = displayTiles[displayTiles.length - 1]
+                                const stolen = displayTiles.pop()!
+                                if (calledDirection === 3) displayTiles.unshift(stolen)
+                                else if (calledDirection === 1) displayTiles.push(stolen)
+                                else if (calledDirection === 2) displayTiles.splice(1, 0, stolen)
+                                else displayTiles.push(stolen)
+                              }
+                              return (
+                                <div key={mIdx} className="meld-group meld-group-bottom">
+                                  {displayTiles.map((tid, tIdx) => {
+                                    const t = tileObjectFromId(tid)
+                                    const isStolen = tid === stolenTileId
+                                    return (
+                                      <div key={tIdx} className={`pov-bottom small ${isStolen ? 'stolen-tile' : ''}`}>
+                                        <TileImg tile={t} size="small" isWild={isWild(t)} />
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {/* Flowers in result */}
+                        {state.result.flowers && state.result.flowers.length > 0 && (
+                          <div style={{ display: 'flex', gap: '2px', marginLeft: '8px' }}>
+                            {state.result.flowers.map((fid, fi) => {
+                              const t = tileObjectFromId(fid)
+                              return (
+                                <div key={fi} className="pov-bottom small">
+                                  <TileImg tile={t} size="small" isWild={isWild(t)} />
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Score Breakdown */}
+                  {state.result.breakdown && state.result.breakdown.length > 0 && (
+                    <div className="round-result-panel">
+                      <div className="round-result-breakdown-scroll">
+                        <div className="round-result-breakdown-grid">
+                          {state.result.breakdown.map((entry, i) => (
+                            <div key={i} className="round-result-breakdown-item">
+                              <div className="round-result-breakdown-name">{entry.name}</div>
+                              <div className="round-result-breakdown-points">+{entry.points}</div>
+                            </div>
+                          ))}
+                          <div className="round-result-breakdown-total-row">
+                            <div>Total</div>
+                            <div>{state.result.totalScore}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Score Changes */}
+                  <div className="round-result-panel round-result-panel-plain">
+                    <div className="round-result-payout-grid">
+                      {state.result.scoreChanges.map((amount, i) => (
+                        <div key={i} className={`round-result-payout-cell ${amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}>
+                          <div className="round-result-payout-seat">{paipu.players[i]?.name ?? `Seat ${i}`}</div>
+                          <div className="round-result-payout-amount">
+                            {amount > 0 ? '+' : ''}{amount}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Control Panel */}
