@@ -15,9 +15,13 @@ import (
 func main() {
 	log.Println("Booting Mahjong Server...")
 
-	// Open DB connection (only if DATABASE_URL is set)
+	// Open DB connection: use DATABASE_URL if set, otherwise try local docker-compose defaults
 	var db *gorm.DB
-	if dsn, ok := os.LookupEnv("DATABASE_URL"); ok {
+	dsn, hasExplicitDSN := os.LookupEnv("DATABASE_URL")
+	if !hasExplicitDSN {
+		dsn = "host=localhost user=fh_admin password=fh_password dbname=fh_mahjong port=5433 sslmode=disable TimeZone=UTC"
+	}
+	if hasExplicitDSN {
 		var err error
 		for i := 0; i < 5; i++ {
 			db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -37,7 +41,20 @@ func main() {
 			log.Fatalf("Failed to run schema migrations: %v", err)
 		}
 	} else {
-		log.Println("DATABASE_URL not set. Running in guest-only mode (no database).")
+		// Local dev: try docker-compose defaults, but don't crash if unavailable
+		var err error
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Warn),
+		})
+		if err != nil {
+			log.Printf("Local database not available, running without DB: %v", err)
+			db = nil
+		} else {
+			log.Println("Connected to local database. Running migrations...")
+			if err := models.AutoMigrate(db); err != nil {
+				log.Fatalf("Failed to run schema migrations: %v", err)
+			}
+		}
 	}
 
 	// Initialize WebSocket Hub
