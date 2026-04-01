@@ -6,6 +6,22 @@ type PrivateRoomSession = {
 
 const PRIVATE_ROOM_SESSION_KEY = 'mahjong_private_room_session_v1'
 
+function getSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  return window.sessionStorage
+}
+
+function getLegacyLocalStorage(): Storage | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  return window.localStorage
+}
+
 function decodeTokenPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.')
   if (parts.length < 2) {
@@ -31,11 +47,12 @@ function isTokenExpired(token: string): boolean {
 }
 
 export function loadPrivateRoomSession(tableId?: string): PrivateRoomSession | null {
-  if (typeof window === 'undefined') {
+  const storage = getSessionStorage()
+  if (!storage) {
     return null
   }
 
-  const raw = window.localStorage.getItem(PRIVATE_ROOM_SESSION_KEY)
+  const raw = storage.getItem(PRIVATE_ROOM_SESSION_KEY)
   if (!raw) {
     return null
   }
@@ -43,12 +60,12 @@ export function loadPrivateRoomSession(tableId?: string): PrivateRoomSession | n
   try {
     const session = JSON.parse(raw) as PrivateRoomSession
     if (!session?.token || !session?.username || !session?.tableId) {
-      window.localStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+      storage.removeItem(PRIVATE_ROOM_SESSION_KEY)
       return null
     }
 
     if (isTokenExpired(session.token)) {
-      window.localStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+      storage.removeItem(PRIVATE_ROOM_SESSION_KEY)
       return null
     }
 
@@ -58,33 +75,39 @@ export function loadPrivateRoomSession(tableId?: string): PrivateRoomSession | n
 
     return session
   } catch {
-    window.localStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+    storage.removeItem(PRIVATE_ROOM_SESSION_KEY)
     return null
   }
 }
 
 export function savePrivateRoomSession(session: PrivateRoomSession) {
-  if (typeof window === 'undefined') {
+  const sessionStorage = getSessionStorage()
+  if (!sessionStorage) {
     return
   }
 
-  window.localStorage.setItem(PRIVATE_ROOM_SESSION_KEY, JSON.stringify(session))
+  sessionStorage.setItem(PRIVATE_ROOM_SESSION_KEY, JSON.stringify(session))
+  getLegacyLocalStorage()?.removeItem(PRIVATE_ROOM_SESSION_KEY)
 }
 
 export function clearPrivateRoomSession(tableId?: string) {
-  if (typeof window === 'undefined') {
+  const sessionStorage = getSessionStorage()
+  if (!sessionStorage) {
     return
   }
 
   if (!tableId) {
-    window.localStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+    sessionStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+    getLegacyLocalStorage()?.removeItem(PRIVATE_ROOM_SESSION_KEY)
     return
   }
 
   const existing = loadPrivateRoomSession()
   if (existing?.tableId === tableId) {
-    window.localStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
+    sessionStorage.removeItem(PRIVATE_ROOM_SESSION_KEY)
   }
+
+  getLegacyLocalStorage()?.removeItem(PRIVATE_ROOM_SESSION_KEY)
 }
 
 export function getPrivateRoomToken(): string | null {
