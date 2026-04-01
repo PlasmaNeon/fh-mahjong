@@ -15,28 +15,29 @@ import (
 func main() {
 	log.Println("Booting Mahjong Server...")
 
-	// Open DB connection with retry
-	dsn := getEnv("DATABASE_URL", "host=localhost user=fh_admin password=fh_password dbname=fh_mahjong port=5433 sslmode=disable TimeZone=UTC")
+	// Open DB connection (only if DATABASE_URL is set)
 	var db *gorm.DB
-	var err error
-	for i := 0; i < 5; i++ {
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Warn),
-		})
-		if err == nil {
-			break
+	if dsn, ok := os.LookupEnv("DATABASE_URL"); ok {
+		var err error
+		for i := 0; i < 5; i++ {
+			db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+				Logger: logger.Default.LogMode(logger.Warn),
+			})
+			if err == nil {
+				break
+			}
+			log.Printf("Failed to connect to database. Retrying in 2 seconds... (%v)", err)
+			time.Sleep(2 * time.Second)
 		}
-		log.Printf("Failed to connect to database. Retrying in 2 seconds... (%v)", err)
-		time.Sleep(2 * time.Second)
-	}
-
-	if err != nil {
-		log.Fatalf("Could not connect to database after 5 attempts: %v", err)
-	}
-
-	log.Println("Successfully connected to Database. Running migrations...")
-	if err := models.AutoMigrate(db); err != nil {
-		log.Fatalf("Failed to run schema migrations: %v", err)
+		if err != nil {
+			log.Fatalf("Could not connect to database after 5 attempts: %v", err)
+		}
+		log.Println("Successfully connected to Database. Running migrations...")
+		if err := models.AutoMigrate(db); err != nil {
+			log.Fatalf("Failed to run schema migrations: %v", err)
+		}
+	} else {
+		log.Println("DATABASE_URL not set. Running in guest-only mode (no database).")
 	}
 
 	// Initialize WebSocket Hub
