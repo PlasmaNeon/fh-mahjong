@@ -19,6 +19,7 @@ RUN go mod download
 # Copy the source code
 COPY cmd/ cmd/
 COPY api/ api/
+COPY bot/ bot/
 COPY core/ core/
 COPY models/ models/
 COPY proto/ proto/
