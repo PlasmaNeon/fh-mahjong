@@ -23,13 +23,13 @@ Contains the top-level page components rendered by React Router. Each page repre
 
 - **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
   - Now renders as a pre-game table scene with seat cards, central status HUD, share-link panel, and ready-state side panel so `/table/:tableId` visually matches the live game more closely
-  - Restores the private-room guest session from durable local storage for the same `tableId`, so reopening the shared link in the same browser can reconnect to the live room instead of silently creating a brand new guest identity
+  - Restores the private-room guest session from tab-scoped session storage for the same `tableId`, so refreshing the tab reconnects cleanly without forcing every same-browser tab to share one guest identity
   - If the server reports that the shared table is already active, original participants are redirected back to the current `matchId` while non-participants are blocked from spawning a second game off the same link
   - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
 
 - **privateRoomSession.ts** — Private-room browser session helpers:
-  - Persists the active private-room guest token, username, and `tableId` in local storage
-  - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them
+  - Persists the active private-room guest token, username, and `tableId` in session storage
+  - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them, and removes the old local-storage key from the reverted cross-tab reconnect flow
   - Shared by `Table.tsx` and `Game.tsx` so both waiting-room and live-game routes can recover the same private-room identity
 
 - **Game.tsx** — Live match controller page:
@@ -37,14 +37,13 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `web/src/table/TableScene.tsx`
   - Supplies live HUD chips, callable discard highlighting, discard animation IDs, and bottom-seat action-bar content to the shared table presenter
   - Keeps the fixed 1600x900 stage scaling via `useGameStageLayout()` so the shared seat/discard lanes stay locked to one coordinate system during resize and rotation
-  - Private-room reconnect fallback now reads the durable private-room session helper instead of a per-tab session value, so a refreshed live game can recover the same guest identity
+  - Uses the tab-scoped private-room session helper so a refreshed live game can recover the same guest identity without making every same-browser tab collapse into one player
 
 - **Replay.tsx** — Replay viewer route:
   - Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the same shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play
   - Must forward replay-time `drawnTileId` state into the shared table presenter so the current draw stays in its separate slot instead of collapsing into the concealed hand
   - Keeps its replay transport controls, perspective selector, and “show all hands” toggle in a side panel while the actual table layout stays shared with `Game.tsx`
-  - The table shell lives in a flex row beside a fixed-width side panel, so it must override the default `width: 100%` shell behavior with `flex: 1 1 0%`, `width: auto`, and `min-width: 0`; the centered fixed stage inside that shell should use a scaled frame sized from `scaledWidth`/`scaledHeight` so the whole logical board remains visible when the split pane shrinks
-  - Replay renders a loading screen before the table shell exists, so any stage-layout integration must tolerate the shell mounting after the hook has already run once
+  - The table shell lives in a flex row beside a fixed-width side panel, so it must override the default `width: 100%` shell behavior with `flex: 1 1 0%`, `width: auto`, and `min-width: 0`; replay also renders a loading screen before the real shell exists, so the stage-layout hook must tolerate the shell mounting after its first render
   - Reuses the same fixed-stage scaling system as live play so replay seat lanes and discard lanes match the live board exactly
 
 - **Calc.tsx** — Typed Fenghua rules debugger for `/calc`:
