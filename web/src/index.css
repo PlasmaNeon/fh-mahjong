@@ -127,7 +127,8 @@ body {
   border-radius: 6px;
 }
 
-.discard-pool-tile-callable::after {
+.discard-pool-tile-callable::after,
+.discard-lane__tile--callable::after {
   content: '';
   position: absolute;
   inset: -3px;
@@ -695,28 +696,33 @@ body {
   align-items: flex-start;
 }
 
-.meld-group {
+.meld-group,
+.seat-meld-group {
   display: flex;
   gap: 0px;
   align-items: center;
 }
 
-.meld-group-bottom {
+.meld-group-bottom,
+.seat-meld-group--bottom {
   flex-direction: row;
   align-items: flex-end;
 }
 
-.meld-group-top {
+.meld-group-top,
+.seat-meld-group--top {
   flex-direction: row-reverse;
   align-items: flex-start;
 }
 
-.meld-group-right {
+.meld-group-right,
+.seat-meld-group--right {
   flex-direction: column-reverse;
   align-items: flex-end;
 }
 
-.meld-group-left {
+.meld-group-left,
+.seat-meld-group--left {
   flex-direction: column;
   align-items: flex-start;
 }
@@ -1229,6 +1235,9 @@ body {
   height: 100dvh;
   overflow: hidden;
   box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding-top: env(safe-area-inset-top, 0px);
   padding-right: env(safe-area-inset-right, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -1247,6 +1256,11 @@ body {
   will-change: transform;
 }
 
+.game-stage-frame {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .game-stage .mahjong-table {
   --tile-width: 44px;
   --tile-height: 62px;
@@ -1256,8 +1270,8 @@ body {
   --drawn-gap: 14px;
   --discard-gap: 3px;
   --discard-padding: 6px;
-  --discard-lane-size: calc((var(--tile-small-height) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
-  --center-hud-size: 184px;
+  --discard-lane-size: calc((var(--tile-small-width) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
+  --center-hud-size: var(--discard-lane-size);
   --side-seat-lane: 88px;
   --wild-tile-top: 24px;
   --wild-tile-left: 26px;
@@ -1269,11 +1283,17 @@ body {
   --side-hand-top: 128px;
   --side-hand-bottom: 108px;
   --side-hand-edge: 34px;
+  --discard-hud-gap: 14px;
   --discard-top-top: 112px;
   --discard-side-edge: 264px;
   --discard-bottom-bottom: 250px;
   --action-left: 1106px;
   --action-bottom: 124px;
+  --seat-bottom-height: 96px;
+  --seat-top-height: 84px;
+  --seat-side-width: 160px;
+  --seat-gap-min: 28px;
+  --seat-exposed-gap: 10px;
   display: block;
   width: 100%;
   height: 100%;
@@ -1357,113 +1377,242 @@ body {
   min-height: 0;
 }
 
-.game-stage .discard-pool {
+.game-stage .discard-lane {
   position: absolute;
+  display: flex;
   gap: var(--discard-gap);
   padding: var(--discard-padding);
 }
 
-.game-stage .discard-pool-bottom {
-  left: 50%;
-  bottom: var(--discard-bottom-bottom);
-  transform: translateX(-50%);
-  width: var(--discard-lane-size);
-  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+.game-stage .discard-lane__tile {
+  position: relative;
+  border-radius: 6px;
 }
 
-.game-stage .discard-pool-top {
-  left: 50%;
-  top: var(--discard-top-top);
-  transform: translateX(-50%);
-  width: var(--discard-lane-size);
-  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+.game-stage .discard-lane--empty {
+  align-items: center;
+  justify-content: center;
 }
 
-.game-stage .discard-pool-left {
-  left: var(--discard-side-edge);
+.game-stage .discard-lane__placeholder {
+  width: 0;
+  height: 0;
+}
+
+.game-stage .discard-lane--bottom {
+  left: calc(50% - var(--center-hud-size) / 2);
+  top: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
+  bottom: auto;
+  width: var(--discard-lane-size);
+  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+
+.game-stage .discard-lane--top {
+  left: calc(50% - var(--center-hud-size) / 2);
+  top: auto;
+  bottom: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
+  width: var(--discard-lane-size);
+  min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+  flex-direction: row-reverse;
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+}
+
+.game-stage .discard-lane--left {
+  left: auto;
+  right: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
   top: 50%;
   transform: translateY(-50%);
   height: var(--discard-lane-size);
   min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+  flex-direction: column;
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
 }
 
-.game-stage .discard-pool-right {
-  right: var(--discard-side-edge);
+.game-stage .discard-lane--right {
+  right: auto;
+  left: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
   top: 50%;
   transform: translateY(-50%);
   height: var(--discard-lane-size);
   min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
+  flex-direction: column-reverse;
+  flex-wrap: wrap;
+  align-content: flex-start;
 }
 
-.game-stage .hand-container-bottom,
-.game-stage .hand-container-top,
-.game-stage .hand-container-left,
-.game-stage .hand-container-right {
+.game-stage .seat-lane-shell {
   position: absolute;
-  padding: 0;
   pointer-events: none;
 }
 
-.game-stage .hand-container-bottom {
+.game-stage .seat-lane-shell--bottom {
   left: var(--bottom-hand-left);
   right: var(--bottom-hand-right);
   bottom: var(--bottom-hand-bottom);
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 16px;
+  height: var(--seat-bottom-height);
 }
 
-.game-stage .hand-container-top {
+.game-stage .seat-lane-shell--top {
   left: var(--top-hand-side-gap);
   right: var(--top-hand-side-gap);
   top: var(--top-hand-top);
-  display: flex;
-  flex-direction: row-reverse;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 18px;
+  height: var(--seat-top-height);
 }
 
-.game-stage .hand-container-left {
+.game-stage .seat-lane-shell--left {
   left: var(--side-hand-edge);
   top: var(--side-hand-top);
   bottom: var(--side-hand-bottom);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
+  width: var(--seat-side-width);
 }
 
-.game-stage .hand-container-right {
+.game-stage .seat-lane-shell--right {
   right: var(--side-hand-edge);
   top: var(--side-hand-top);
   bottom: var(--side-hand-bottom);
+  width: var(--seat-side-width);
+}
+
+.game-stage .seat-lane {
+  position: relative;
+  width: 100%;
+  height: 100%;
   display: flex;
+}
+
+.game-stage .seat-lane--bottom {
+  flex-direction: row;
+  align-items: flex-end;
+}
+
+.game-stage .seat-lane--top {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+
+.game-stage .seat-lane--right {
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+.game-stage .seat-lane--left {
   flex-direction: column;
+  align-items: flex-start;
+}
+
+.game-stage .seat-lane__closed {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .seat-lane__gap {
+  flex: 1 1 auto;
+}
+
+.game-stage .seat-lane--bottom .seat-lane__gap,
+.game-stage .seat-lane--top .seat-lane__gap {
+  min-width: var(--seat-gap-min);
+}
+
+.game-stage .seat-lane--left .seat-lane__gap,
+.game-stage .seat-lane--right .seat-lane__gap {
+  min-height: var(--seat-gap-min);
+}
+
+.game-stage .seat-hand,
+.game-stage .seat-exposed {
+  pointer-events: auto;
+}
+
+.game-stage .seat-hand {
+  display: flex;
+  gap: calc(var(--tile-gap) + var(--drawn-gap));
+}
+
+.game-stage .seat-hand__tiles {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--tile-gap);
+  min-width: 0;
+  min-height: 0;
+}
+
+.game-stage .seat-hand__tiles--bottom {
+  flex-direction: row;
+  align-items: flex-end;
+}
+
+.game-stage .seat-hand__tiles--top {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+}
+
+.game-stage .seat-hand__tiles--right {
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+.game-stage .seat-hand__tiles--left {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.game-stage .seat-hand__drawn-slot {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.game-stage .seat-hand__drawn-slot--bottom {
+  align-items: flex-end;
+}
+
+.game-stage .seat-hand__drawn-slot--top {
+  align-items: flex-start;
+}
+
+.game-stage .seat-hand__drawn-slot--right {
+  align-items: flex-end;
+}
+
+.game-stage .seat-hand__drawn-slot--left {
+  align-items: flex-start;
+}
+
+.game-stage .seat-hand--bottom {
+  flex-direction: row;
+  align-items: flex-end;
+  width: calc(var(--tile-width) * 14 + var(--tile-gap) * 13 + var(--drawn-gap));
+  height: var(--tile-height);
+}
+
+.game-stage .seat-hand--top {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  width: calc(var(--tile-small-width) * 14 + var(--tile-gap) * 13 + var(--drawn-gap));
+  height: var(--tile-small-height);
+}
+
+.game-stage .seat-hand--right {
+  flex-direction: column-reverse;
   align-items: flex-end;
   justify-content: flex-start;
+  height: calc(var(--tile-small-width) * 14 + var(--tile-gap) * 13 + var(--drawn-gap));
+  width: var(--tile-small-height);
 }
 
-.game-stage .hand-main-block-left {
-  margin-left: var(--side-seat-lane);
-}
-
-.game-stage .hand-main-block-right {
-  margin-right: var(--side-seat-lane);
-}
-
-.game-stage .hand-inner {
-  gap: var(--tile-gap);
-}
-
-.game-stage .hand-inner-bottom,
-.game-stage .hand-inner-top,
-.game-stage .hand-inner-left,
-.game-stage .hand-inner-right {
-  width: auto;
-  height: auto;
+.game-stage .seat-hand--left {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  height: calc(var(--tile-small-width) * 14 + var(--tile-gap) * 13 + var(--drawn-gap));
+  width: var(--tile-small-height);
 }
 
 .game-stage .center-info {
@@ -1478,63 +1627,87 @@ body {
   gap: 10px;
 }
 
-.game-stage .drawn-tile.pov-bottom {
-  margin-left: var(--drawn-gap);
-}
-
-.game-stage .drawn-tile.pov-top {
-  margin-right: var(--drawn-gap);
-}
-
-.game-stage .drawn-tile.pov-left {
-  margin-top: var(--drawn-gap);
-}
-
+.game-stage .drawn-tile.pov-bottom,
+.game-stage .drawn-tile.pov-top,
+.game-stage .drawn-tile.pov-left,
 .game-stage .drawn-tile.pov-right {
-  margin-bottom: var(--drawn-gap);
+  margin: 0;
 }
 
-.game-stage .melds-container-bottom {
-  margin-left: 12px;
-  gap: 12px;
+.game-stage .seat-exposed {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--seat-exposed-gap);
+  min-width: 0;
+  min-height: 0;
 }
 
-.game-stage .melds-container-top {
-  gap: 12px;
+.game-stage .seat-exposed--bottom {
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
 }
 
-.game-stage .melds-container-right {
-  right: calc(var(--side-seat-lane) - 4px);
-  top: auto;
-  bottom: 84px;
+.game-stage .seat-exposed--top {
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 
-.game-stage .melds-container-left {
-  left: calc(var(--side-seat-lane) - 4px);
-  bottom: 84px;
+.game-stage .seat-exposed--right {
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: flex-end;
 }
 
-.game-stage .melds-main-bottom,
-.game-stage .melds-main-top,
-.game-stage .melds-main-right,
-.game-stage .melds-main-left {
+.game-stage .seat-exposed--left {
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.game-stage .seat-flower-rail {
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.game-stage .seat-flower-rail--bottom {
+  flex-direction: row-reverse;
+  align-items: flex-end;
+}
+
+.game-stage .seat-flower-rail--top {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.game-stage .seat-flower-rail--right {
+  flex-direction: column-reverse;
+  align-items: flex-end;
+}
+
+.game-stage .seat-flower-rail--left {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.game-stage .seat-meld-rail {
+  display: flex;
   gap: 10px;
 }
 
-.game-stage .flowers-container-bottom {
-  bottom: calc(100% + 8px);
+.game-stage .seat-meld-rail--bottom,
+.game-stage .seat-meld-rail--top {
+  flex-direction: row;
 }
 
-.game-stage .flowers-container-top {
-  top: calc(100% + 8px);
+.game-stage .seat-meld-rail--right {
+  flex-direction: column;
 }
 
-.game-stage .flowers-container-right {
-  right: calc(100% + 8px);
-}
-
-.game-stage .flowers-container-left {
-  left: calc(100% + 8px);
+.game-stage .seat-meld-rail--left {
+  flex-direction: column-reverse;
 }
 
 .game-stage .pov-bottom.stolen-tile,

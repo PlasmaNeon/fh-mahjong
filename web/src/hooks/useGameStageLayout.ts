@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
+import type { RefCallback } from 'react';
 
 type GameStageLayoutOptions = {
     stageWidth?: number;
@@ -13,17 +14,19 @@ type StageBounds = {
 export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
     const stageWidth = options.stageWidth ?? 1600;
     const stageHeight = options.stageHeight ?? 900;
-    const containerRef = useRef<HTMLDivElement | null>(null);
+    const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
     const [bounds, setBounds] = useState<StageBounds>({
         width: stageWidth,
         height: stageHeight,
     });
 
     useLayoutEffect(() => {
-        const element = containerRef.current;
+        const element = containerElement;
         if (!element) {
             return;
         }
+
+        let frameId = 0;
 
         const updateBounds = () => {
             const rect = element.getBoundingClientRect();
@@ -42,30 +45,49 @@ export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
             });
         };
 
+        const scheduleUpdateBounds = () => {
+            if (frameId) {
+                cancelAnimationFrame(frameId);
+            }
+
+            frameId = requestAnimationFrame(() => {
+                frameId = 0;
+                updateBounds();
+            });
+        };
+
         updateBounds();
 
         const resizeObserver = new ResizeObserver(() => {
-            updateBounds();
+            scheduleUpdateBounds();
         });
         resizeObserver.observe(element);
+        if (element.parentElement) {
+            resizeObserver.observe(element.parentElement);
+        }
 
         const visualViewport = window.visualViewport;
-        visualViewport?.addEventListener('resize', updateBounds);
-        window.addEventListener('orientationchange', updateBounds);
+        visualViewport?.addEventListener('resize', scheduleUpdateBounds);
+        window.addEventListener('resize', scheduleUpdateBounds);
+        window.addEventListener('orientationchange', scheduleUpdateBounds);
 
         return () => {
+            if (frameId) {
+                cancelAnimationFrame(frameId);
+            }
             resizeObserver.disconnect();
-            visualViewport?.removeEventListener('resize', updateBounds);
-            window.removeEventListener('orientationchange', updateBounds);
+            visualViewport?.removeEventListener('resize', scheduleUpdateBounds);
+            window.removeEventListener('resize', scheduleUpdateBounds);
+            window.removeEventListener('orientationchange', scheduleUpdateBounds);
         };
-    }, [stageWidth, stageHeight]);
+    }, [containerElement, stageWidth, stageHeight]);
 
     const scale = Math.min(bounds.width / stageWidth, bounds.height / stageHeight);
     const scaledWidth = stageWidth * scale;
     const scaledHeight = stageHeight * scale;
 
     return {
-        containerRef,
+        containerRef: setContainerElement as RefCallback<HTMLDivElement>,
         stageWidth,
         stageHeight,
         availableWidth: bounds.width,

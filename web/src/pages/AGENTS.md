@@ -32,31 +32,20 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Decodes JWT expiry client-side so obviously stale guest sessions are discarded before the UI tries to reconnect with them
   - Shared by `Table.tsx` and `Game.tsx` so both waiting-room and live-game routes can recover the same private-room identity
 
-- **Game.tsx** — Main tabletop renderer (~32KB, the largest component):
-  - The live table now renders inside a fixed 1600x900 DOM stage that is uniformly scaled and centered by `useGameStageLayout()`, so seat lanes, hands, discard trays, melds, and HUD anchors keep stable relative positions during window resize and phone rotation
-  - Renders 4 player positions (bottom=self, right, top, left)
-  - Shows the round wild tile as a real face-up tile badge in the upper-left table corner instead of center-HUD text
-  - Uses an absolutely centered glass HUD for match/wall/turn info so the center panel stays visually centered regardless of seat/discard layout
-  - Center HUD now surfaces round debug chips for exact dice values and live wangpai tiles left
-  - Empty discard trays render as intentional placeholder trays instead of collapsing into thin lines
-  - Bottom-player interrupt/turn actions use a compact glass action bar positioned in the elevated lower-right table gap beside the bottom discard zone, avoiding overlap with the self hand and open melds
-  - The left seat uses a dedicated lower-left meld anchor and shared inner-left lane so the concealed hand and open meld column align visually without pushing tiles under the wild-tile badge
-  - Tile rendering with layered SVGs (`Front.svg` + face)
-  - Sorted closed hand with drawn tile separation
-  - Open melds with stolen tile rotation (`pov-{dir} small stolen-tile`)
-  - Discard pools per player
-  - Round-result modal now sits above the stage shell instead of inside the scaled board transform, so it stays readable while still aligning to the same live-game viewport system
-  - Newly discarded tiles use a very fast move-in animation for all seats, including opponents whose concealed hands are face-down
-  - Callable discards get a distinct teal pulse ring so the current claim target is obvious without reusing the wild-tile gold glow
-  - Action buttons: CHII, PON, KAN, RON, TSUMO, SKIP; stray `FLOWER_REVEAL` actions from the backend are auto-submitted immediately instead of surfacing a user-facing button
-  - Interrupt UX: `hasSubmittedInterrupt` state hides interrupt buttons immediately after player clicks, before server resolves (prevents double-clicks and improves responsiveness)
+- **Game.tsx** — Live match controller page:
+  - Owns socket / action submission flow, interrupt state, auto-flower reveal handling, and the live round-result action buttons
+  - Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `web/src/table/TableScene.tsx`
+  - Supplies live HUD chips, callable discard highlighting, discard animation IDs, and bottom-seat action-bar content to the shared table presenter
+  - Keeps the fixed 1600x900 stage scaling via `useGameStageLayout()` so the shared seat/discard lanes stay locked to one coordinate system during resize and rotation
   - Private-room reconnect fallback now reads the durable private-room session helper instead of a per-tab session value, so a refreshed live game can recover the same guest identity
-  - Flower melds: rendered as small face-up tiles next to open melds for all 4 players
-  - Seat flower strips are anchored separately from the open-meld flow so they sit on the table-facing side of the first meld for each player and do not overlap concealed hands on the side seats
-  - Round-result modal: glass-styled result dialog matching the table HUD, with a compact single-line TSUMO/RON + winner header, background-free winning-hand/payout sections, a two-column breakdown layout, each payout seat card also carrying ready state, tightened spacing to avoid the outer modal scrollbar on normal desktop screens, and a narrower short-landscape profile so left/right hands remain visible on phones
-  - Framer Motion `layoutId` animations for tile movement
-  - `TileComponent` helper for consistent tile rendering
-  - `getSuitOrder()` / `getTileSvgName()` / `getTileName()` utilities
+
+- **Replay.tsx** — Replay viewer route:
+  - Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the same shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play
+  - Must forward replay-time `drawnTileId` state into the shared table presenter so the current draw stays in its separate slot instead of collapsing into the concealed hand
+  - Keeps its replay transport controls, perspective selector, and “show all hands” toggle in a side panel while the actual table layout stays shared with `Game.tsx`
+  - The table shell lives in a flex row beside a fixed-width side panel, so it must override the default `width: 100%` shell behavior with `flex: 1 1 0%`, `width: auto`, and `min-width: 0`; the centered fixed stage inside that shell should use a scaled frame sized from `scaledWidth`/`scaledHeight` so the whole logical board remains visible when the split pane shrinks
+  - Replay renders a loading screen before the table shell exists, so any stage-layout integration must tolerate the shell mounting after the hook has already run once
+  - Reuses the same fixed-stage scaling system as live play so replay seat lanes and discard lanes match the live board exactly
 
 - **Calc.tsx** — Typed Fenghua rules debugger for `/calc`:
   - Header language toggle switches the calculator UI between English and Chinese
@@ -81,6 +70,7 @@ Contains the top-level page components rendered by React Router. Each page repre
 ## Architecture Notes
 
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.
+- `Game.tsx` and `Replay.tsx` should not own seat/discard layout markup directly anymore; shared table layout belongs in `web/src/table/`.
 - The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - `Calc.tsx` is intentionally self-contained and does not share state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
 - Player perspective: the `mySeatId` determines which player is rendered at the bottom position; others are rotated around the table.

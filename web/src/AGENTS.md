@@ -21,18 +21,24 @@ Contains all React components, context providers, custom hooks, and utility func
   - Drops expired guest JWTs before the UI attempts a reconnect
 - **index.css** — Global styles (TailwindCSS + custom classes for tiles, melds, table layout)
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
-  - Includes the centered match HUD and discard-tray placeholder styling used by `Game.tsx`
-  - Discard trays are sized for a full 6 small tiles per row/column before wrapping
+  - Includes the centered match HUD plus the fixed-stage seat-lane / discard-lane styling used by the shared table presenter
+  - Seat lanes now own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives instead of page-specific side rules
+  - Left/right seat lanes intentionally preserve the old main-branch semantics rather than pure rotational symmetry: right concealed hands flow `column-reverse`, left concealed hands flow `column`, right exposed rails live above the hand, and left exposed rails live below it
+  - The shared seat lane keeps the drawn tile in a dedicated slot next to the concealed-hand rail instead of folding it back into the sorted closed-hand list
+  - Discard lanes are sized by the small tile main-axis dimension so only 6 discards fit before wrapping, align off the center HUD rather than fixed edge offsets, and keep the horizontal trays left-anchored instead of center-anchored
+  - The center HUD is now sized from that same 6-tile discard-lane footprint, with a slightly larger HUD-to-discard gap so the center panel and discard trays read as aligned but visually separated
+  - All four discard trays now use the same center-HUD-relative gap variable, so the top/right/bottom/left tray spacing from the panel stays symmetric
   - Newly discarded tiles use a faster move-in animation for every seat, and callable discards use a brighter teal-cyan pulse ring rather than the wild-tile gold glow
   - Includes the glass action-bar styling used for bottom-player `CHII / PON / KAN / RON / TSUMO / SKIP` controls in the elevated lower-right table gap beside the bottom discard tray, kept above the bottom hand line
   - Includes a glass round-result modal styled to match the table HUD/cards instead of the older flat dark dialog, but without backdrop blur so players can still inspect the table behind it
-  - The left seat keeps its melds in a dedicated lower-left anchor and aligns concealed hand plus melds off a shared inner-left lane so the tile columns line up visually
   - The live table now has a fixed-stage override layer: a 1600x900 board scaled as one unit inside a safe-area-aware shell so resizing the viewport no longer reflows each hand/discard region independently
+  - The shell should center a real scaled stage frame (`scaledWidth`/`scaledHeight`) while the inner stage keeps the logical 1600x900 coordinate system; avoid relying on a scaled visual without matching layout footprint in split-pane layouts
 
 ## Subdirectories
 
 - **contexts/** — React context providers (Socket, Game state)
 - **pages/** — Route page components (Login, Lobby, Table, Game, Calc)
+- **table/** — Shared tabletop presentation primitives for live play and replay
 - **hooks/** — Custom React hooks (WASM loader)
 - **utils/** — Utility functions (tile name/SVG mapping)
 - **proto/** — Auto-generated Protobuf JS/TS bindings
@@ -40,7 +46,7 @@ Contains all React components, context providers, custom hooks, and utility func
 ## Architecture Notes
 
 - State flow: WebSocket binary message → `GameContext` decodes Protobuf → `gameState` updates → components re-render.
-- The `Game.tsx` page is the largest component (~32KB), handling tile rendering, meld display, table-overlay action buttons, discard pools, and the round-result modal.
+- Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableScene.tsx` instead of maintaining two separate seat/discard DOM trees.
 - The live board now uses `useGameStageLayout()` from `hooks/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.

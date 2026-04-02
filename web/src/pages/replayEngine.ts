@@ -17,6 +17,7 @@ export interface ReplayMeld {
 export interface ReplayPlayerState {
   seat: number
   hand: ReplayTile[]
+  drawnTileId: number | null
   discards: ReplayTile[]
   melds: ReplayMeld[]
   flowers: ReplayTile[]
@@ -113,6 +114,7 @@ export class ReplayEngine {
     const players = [0, 1, 2, 3].map(seat => ({
       seat,
       hand: round.deals[seat].map(tileObjectFromId),
+      drawnTileId: null,
       discards: [] as ReplayTile[],
       melds: [] as ReplayMeld[],
       flowers: [] as ReplayTile[],
@@ -141,17 +143,20 @@ export class ReplayEngine {
         case 'draw':
         case 'haitei':
           p.hand.push(tileObjectFromId(action.tile as number))
+          p.drawnTileId = action.tile as number
           activeDiscard = null
           break
 
         case 'discard':
           removeFromHand(p.hand, action.tile as number)
+          p.drawnTileId = null
           p.discards.push(tileObjectFromId(action.tile as number))
           activeDiscard = tileObjectFromId(action.tile as number)
           break
 
         case 'chii':
         case 'pon': {
+          p.drawnTileId = null
           for (const tid of (action.tiles ?? [])) {
             removeFromHand(p.hand, tid)
           }
@@ -166,6 +171,7 @@ export class ReplayEngine {
         }
 
         case 'okan': {
+          p.drawnTileId = null
           for (const tid of (action.tiles ?? [])) {
             removeFromHand(p.hand, tid)
           }
@@ -180,6 +186,7 @@ export class ReplayEngine {
         }
 
         case 'ckan': {
+          p.drawnTileId = null
           for (const tid of (action.tiles ?? [])) {
             removeFromHand(p.hand, tid)
           }
@@ -189,6 +196,7 @@ export class ReplayEngine {
         }
 
         case 'ukan': {
+          p.drawnTileId = null
           removeFromHand(p.hand, action.tile as number)
           const ponIdx = p.melds.findIndex(m =>
             m.type === 'pon' && m.tiles.some(t => {
@@ -205,16 +213,19 @@ export class ReplayEngine {
         }
 
         case 'flower':
+          p.drawnTileId = null
           removeFromHand(p.hand, action.tile as number)
           p.flowers.push(tileObjectFromId(action.tile as number))
           break
 
         case 'tsumo':
+          p.drawnTileId = null
           isRoundEnd = true
           activeDiscard = null
           break
 
         case 'ron': {
+          p.drawnTileId = null
           const fromP = players[action.from as number]
           if (fromP.discards.length > 0) fromP.discards.pop()
           isRoundEnd = true
@@ -223,6 +234,7 @@ export class ReplayEngine {
         }
 
         case 'haiteiRefuse':
+          p.drawnTileId = null
           isRoundEnd = true
           break
       }
