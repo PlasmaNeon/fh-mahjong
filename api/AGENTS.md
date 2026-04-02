@@ -38,6 +38,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **paipu.go** — Read-only paipu API:
   - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
+  - Local-dev fallback: serves checked-in `testdata/paipu/<matchId>.json` fixtures when no in-memory/DB record exists, which keeps replay pages usable without a populated database
+  - Only queries the legacy `matches` table for canonical UUID match IDs; per-hand IDs like `match-1` skip the UUID-only lookup to avoid noisy Postgres cast errors
 
 - **client.go** — Individual player WebSocket connection:
   - `Client` struct — UserID, Send channel, WebSocket conn

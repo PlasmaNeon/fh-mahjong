@@ -5,9 +5,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/models"
+	"gorm.io/gorm"
 )
 
 func (s *Server) handleGetPaipu(c *gin.Context) {
@@ -23,6 +26,13 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
+	// Local dev fallback: allow replaying checked-in paipu fixtures even when DB
+	// persistence is unavailable or the requested hand was never imported.
+	if data, ok := loadPaipuFixture(matchID); ok {
+		c.Data(http.StatusOK, "application/json", data)
+		return
+	}
+
 	// Fall back to database
 	if s.DB == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
@@ -34,12 +44,24 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 	if err := s.DB.Where("id = ?", matchID).First(&record).Error; err == nil {
 		c.Data(http.StatusOK, "application/json", []byte(record.Data))
 		return
+	} else if err != nil && err != gorm.ErrRecordNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
+		return
 	}
 
-	// Fall back to legacy Match.PaipuJSON
+	// Fall back to legacy Match.PaipuJSON, but only for canonical match UUIDs.
+	if _, err := uuid.Parse(matchID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+		return
+	}
+
 	var match models.Match
 	if err := s.DB.Where("id = ?", matchID).First(&match).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
 		return
 	}
 
@@ -77,4 +99,28 @@ func (s *Server) handleUploadPaipu(c *gin.Context) {
 
 	s.StorePaipu(matchID, string(body))
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "matchId": matchID})
+}
+
+func loadPaipuFixture(matchID string) ([]byte, bool) {
+	filename := matchID + ".json"
+	candidates := []string{
+		filepath.Join("testdata", "paipu", filename),
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "testdata", "paipu", filename),
+			filepath.Join(exeDir, "..", "testdata", "paipu", filename),
+		)
+	}
+
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			return data, true
+		}
+	}
+
+	return nil, false
 }
