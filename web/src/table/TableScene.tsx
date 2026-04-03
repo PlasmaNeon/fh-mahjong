@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { getSuitOrder, getTileName, getTileSvgName } from '../utils/tileUtils'
@@ -521,10 +521,10 @@ export function TableBoard({
   const animationKeyRef = useRef(0)
   const [flyingTiles, setFlyingTiles] = useState<FlyingTileAnimation[]>([])
 
-  const seatViews = players.map((player) => ({
+  const seatViews = useMemo(() => players.map((player) => ({
     player,
     direction: getSeatDirection(player.seat, viewSeat),
-  }))
+  })), [players, viewSeat])
 
   useLayoutEffect(() => {
     const currentLocations = new Map<number, TileMotionDescriptor>()

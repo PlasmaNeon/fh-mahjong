@@ -1249,11 +1249,7 @@ body {
 }
 
 .game-stage {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: top left;
-  will-change: transform;
+  position: relative;
 }
 
 .game-stage-frame {
@@ -1704,10 +1700,12 @@ body {
 
 .game-stage .seat-meld-rail--right {
   flex-direction: column;
+  align-self: flex-start;
 }
 
 .game-stage .seat-meld-rail--left {
   flex-direction: column-reverse;
+  align-self: flex-end;
 }
 
 .game-stage .pov-bottom.stolen-tile,
