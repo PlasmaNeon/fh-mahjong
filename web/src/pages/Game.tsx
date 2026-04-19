@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
@@ -206,13 +206,9 @@ export default function Game() {
     const stageStyle = {
         width: `${stageLayout.stageWidth}px`,
         height: `${stageLayout.stageHeight}px`,
-        transform: `scale(${stageLayout.scale})`,
-        transformOrigin: 'top left',
+        zoom: stageLayout.scale,
     } as React.CSSProperties;
-    const stageFrameStyle = {
-        width: `${stageLayout.scaledWidth}px`,
-        height: `${stageLayout.scaledHeight}px`,
-    } as React.CSSProperties;
+    const stageFrameStyle = {} as React.CSSProperties;
 
     const activeDiscardTile = gameState.players
         .find((player: any) => player.seat === gameState.activePlayer)
@@ -284,7 +280,7 @@ export default function Game() {
         </div>
     ) : null;
 
-    const playerViews = gameState.players.map((player: any) => ({
+    const playerViews = useMemo(() => gameState.players.map((player: any) => ({
         seat: player.seat,
         seatWind: player.seatWind,
         closedHand: player.closedHand || [],
@@ -301,7 +297,7 @@ export default function Game() {
         shantenLabel: player.seat === mySeatId && gameState.phase === 2
             ? (player.shanten === -1 ? '和了' : player.shanten === 0 ? '听牌' : `向听: ${player.shanten}`)
             : null,
-    }));
+    })), [gameState.players, gameState.phase, mySeatId]);
 
     const readyActions = (
         <>

@@ -133,13 +133,9 @@ export default function Replay() {
   const stageStyle = {
     width: `${stageLayout.stageWidth}px`,
     height: `${stageLayout.stageHeight}px`,
-    transform: `scale(${stageLayout.scale})`,
-    transformOrigin: 'top left',
+    zoom: stageLayout.scale,
   } as React.CSSProperties
-  const stageFrameStyle = {
-    width: `${stageLayout.scaledWidth}px`,
-    height: `${stageLayout.scaledHeight}px`,
-  } as React.CSSProperties
+  const stageFrameStyle = {} as React.CSSProperties
 
   const hudChips = [
     { label: `Round ${state.roundNum}` },

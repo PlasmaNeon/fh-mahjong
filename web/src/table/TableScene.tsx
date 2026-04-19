@@ -1,4 +1,5 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { getSuitOrder, getTileName, getTileSvgName } from '../utils/tileUtils'
@@ -247,7 +248,7 @@ function FloatingTile({
   const svgName = getTileSvgName(animation.tile)
   const rotation = getTileRotation(animation.direction)
 
-  return (
+  return createPortal(
     <motion.div
       initial={{
         left: animation.fromRect.left,
@@ -308,7 +309,8 @@ function FloatingTile({
           </div>
         </div>
       </div>
-    </motion.div>
+    </motion.div>,
+    document.body
   )
 }
 
@@ -400,7 +402,7 @@ function SeatLane({
 
     return (
       <motion.div
-        layout="position"
+        layout={isCurrentDrawnSlot ? false : "position"}
         key={tile.id}
         style={{
           zIndex: isRecentlyDrawn ? 0 : 10,
@@ -521,10 +523,10 @@ export function TableBoard({
   const animationKeyRef = useRef(0)
   const [flyingTiles, setFlyingTiles] = useState<FlyingTileAnimation[]>([])
 
-  const seatViews = players.map((player) => ({
+  const seatViews = useMemo(() => players.map((player) => ({
     player,
     direction: getSeatDirection(player.seat, viewSeat),
-  }))
+  })), [players, viewSeat])
 
   useLayoutEffect(() => {
     const currentLocations = new Map<number, TileMotionDescriptor>()

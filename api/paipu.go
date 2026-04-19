@@ -26,15 +26,13 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
-	// Local dev fallback: allow replaying checked-in paipu fixtures even when DB
-	// persistence is unavailable or the requested hand was never imported.
-	if data, ok := loadPaipuFixture(matchID); ok {
-		c.Data(http.StatusOK, "application/json", data)
-		return
-	}
-
 	// Fall back to database
 	if s.DB == nil {
+		// No DB: fall back to local dev fixtures
+		if data, ok := loadPaipuFixture(matchID); ok {
+			c.Data(http.StatusOK, "application/json", data)
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
 		return
 	}
@@ -50,27 +48,26 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 	}
 
 	// Fall back to legacy Match.PaipuJSON, but only for canonical match UUIDs.
-	if _, err := uuid.Parse(matchID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
-		return
-	}
-
-	var match models.Match
-	if err := s.DB.Where("id = ?", matchID).First(&match).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+	if _, err := uuid.Parse(matchID); err == nil {
+		var match models.Match
+		if err := s.DB.Where("id = ?", matchID).First(&match).Error; err == nil {
+			if match.PaipuJSON != "" {
+				c.Data(http.StatusOK, "application/json", []byte(match.PaipuJSON))
+				return
+			}
+		} else if err != gorm.ErrRecordNotFound {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
+	}
+
+	// Local dev fallback: serve checked-in fixtures when no DB record exists.
+	if data, ok := loadPaipuFixture(matchID); ok {
+		c.Data(http.StatusOK, "application/json", data)
 		return
 	}
 
-	if match.PaipuJSON == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Paipu not available for this match"})
-		return
-	}
-
-	c.Data(http.StatusOK, "application/json", []byte(match.PaipuJSON))
+	c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
 }
 
 func (s *Server) handleUploadPaipu(c *gin.Context) {
@@ -102,6 +99,7 @@ func (s *Server) handleUploadPaipu(c *gin.Context) {
 }
 
 func loadPaipuFixture(matchID string) ([]byte, bool) {
+	matchID = filepath.Base(matchID) // sanitize: strip any path separators
 	filename := matchID + ".json"
 	candidates := []string{
 		filepath.Join("testdata", "paipu", filename),
