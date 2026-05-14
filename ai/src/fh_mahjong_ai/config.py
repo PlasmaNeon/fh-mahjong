@@ -21,9 +21,12 @@ class EnvConfig:
 @dataclass
 class ModelConfig:
     channels: int = 96
+    residual_blocks: int = 2
+    plane_feature_dim: int = 256
     scalar_hidden_dim: int = 128
     trunk_hidden_dim: int = 256
     value_hidden_dim: int = 128
+    pool_planes: bool = False
 
 
 @dataclass
@@ -33,6 +36,17 @@ class TrainConfig:
     weight_decay: float = 1e-4
     max_grad_norm: float = 5.0
     device: str = "cpu"
+    seed: int = 0
+
+
+@dataclass
+class OfflineQConfig:
+    gamma: float = 0.99
+    conservative_weight: float = 0.1
+    bc_weight: float = 0.1
+    value_weight: float = 0.25
+    target_update_interval: int = 25
+    target_tau: float = 1.0
 
 
 @dataclass

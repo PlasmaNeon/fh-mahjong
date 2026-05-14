@@ -38,6 +38,7 @@ class ReplayBuffer:
         scalars = np.stack([item.observation.scalars for item in items]).astype(np.float32)
         action_mask = np.stack([item.observation.action_mask for item in items]).astype(np.int8)
         action_ids = np.asarray([item.action_id for item in items], dtype=np.int64)
+
         def _return_for(item: Transition) -> float:
             seat = item.observation.seat
             tr = item.info.get("terminal_rewards")
@@ -45,11 +46,27 @@ class ReplayBuffer:
                 return float(tr[seat])
             return float(item.rewards[seat])
 
+        def _reward_for(item: Transition) -> float:
+            return float(item.rewards[item.observation.seat])
+
         returns = np.asarray([_return_for(item) for item in items], dtype=np.float32)
+        next_planes = np.stack([item.next_observation.planes for item in items]).astype(np.float32)
+        next_scalars = np.stack([item.next_observation.scalars for item in items]).astype(np.float32)
+        next_action_mask = np.stack([item.next_observation.action_mask for item in items]).astype(np.int8)
+        rewards = np.asarray([_reward_for(item) for item in items], dtype=np.float32)
+        dones = np.asarray(
+            [float(item.terminated or item.truncated) for item in items],
+            dtype=np.float32,
+        )
         return TrainBatch(
             planes=planes,
             scalars=scalars,
             action_mask=action_mask,
             action_ids=action_ids,
             returns=returns,
+            next_planes=next_planes,
+            next_scalars=next_scalars,
+            next_action_mask=next_action_mask,
+            rewards=rewards,
+            dones=dones,
         )

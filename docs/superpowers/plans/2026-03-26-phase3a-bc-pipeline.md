@@ -148,7 +148,7 @@ class TestBackfillReturns:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd ai && python -m pytest tests/test_data.py -v`
+Run: `uv run --project ai pytest ai/tests/test_data.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'fh_mahjong_ai.data'`
 
 - [ ] **Step 3: Implement `data.py`**
@@ -203,7 +203,7 @@ def backfill_returns(transitions: List[Transition]) -> List[Transition]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd ai && python -m pytest tests/test_data.py -v`
+Run: `uv run --project ai pytest ai/tests/test_data.py -v`
 Expected: All 6 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -276,7 +276,7 @@ def test_sample_falls_back_to_step_rewards() -> None:
 
 - [ ] **Step 2: Run tests to verify the terminal-reward test fails**
 
-Run: `cd ai && python -m pytest tests/test_buffer.py -v`
+Run: `uv run --project ai pytest ai/tests/test_buffer.py -v`
 Expected: `test_sample_uses_terminal_rewards_when_available` FAILS (returns 0.0 instead of 10.0), `test_sample_falls_back_to_step_rewards` PASSES
 
 - [ ] **Step 3: Update `buffer.py` to use terminal rewards when available**
@@ -300,7 +300,7 @@ Replace line 41 in `ai/src/fh_mahjong_ai/buffer.py`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd ai && python -m pytest tests/test_buffer.py -v`
+Run: `uv run --project ai pytest ai/tests/test_buffer.py -v`
 Expected: Both tests PASS
 
 - [ ] **Step 5: Commit**
@@ -359,7 +359,7 @@ def test_generate_dataset_mock(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd ai && python -m pytest tests/test_generate_data.py -v`
+Run: `uv run --project ai pytest ai/tests/test_generate_data.py -v`
 Expected: FAIL with `ImportError: cannot import name 'generate_dataset' from 'fh_mahjong_ai.scripts.generate_data'`
 
 - [ ] **Step 3: Implement `generate_data.py`**
@@ -444,7 +444,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd ai && python -m pytest tests/test_generate_data.py -v`
+Run: `uv run --project ai pytest ai/tests/test_generate_data.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Add entry point to `pyproject.toml`**
@@ -552,7 +552,7 @@ def test_train_bc_respects_resume(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd ai && python -m pytest tests/test_train_bc.py -v`
+Run: `uv run --project ai pytest ai/tests/test_train_bc.py -v`
 Expected: FAIL with `ImportError: cannot import name 'train_bc'`
 
 - [ ] **Step 3: Implement `train_bc.py`**
@@ -680,7 +680,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd ai && python -m pytest tests/test_train_bc.py -v`
+Run: `uv run --project ai pytest ai/tests/test_train_bc.py -v`
 Expected: Both tests PASS
 
 - [ ] **Step 5: Add entry point to `pyproject.toml`**
@@ -803,7 +803,7 @@ class TestEvaluateOnline:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd ai && python -m pytest tests/test_evaluate.py -v`
+Run: `uv run --project ai pytest ai/tests/test_evaluate.py -v`
 Expected: FAIL with `ImportError: cannot import name 'compute_action_agreement'`
 
 - [ ] **Step 3: Implement `evaluate.py`**
@@ -915,7 +915,7 @@ def evaluate_online(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd ai && python -m pytest tests/test_evaluate.py -v`
+Run: `uv run --project ai pytest ai/tests/test_evaluate.py -v`
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
@@ -1061,7 +1061,7 @@ def test_full_pipeline_mock(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd ai && python -m pytest tests/test_pipeline_e2e.py -v`
+Run: `uv run --project ai pytest ai/tests/test_pipeline_e2e.py -v`
 Expected: FAIL with `ImportError: cannot import name 'run_pipeline'`
 
 - [ ] **Step 3: Implement `run_pipeline.py`**
@@ -1202,7 +1202,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd ai && python -m pytest tests/test_pipeline_e2e.py -v`
+Run: `uv run --project ai pytest ai/tests/test_pipeline_e2e.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Add entry point to `pyproject.toml`**
@@ -1214,7 +1214,7 @@ fh-mj-pipeline = "fh_mahjong_ai.scripts.run_pipeline:main"
 
 - [ ] **Step 6: Run all tests together**
 
-Run: `cd ai && python -m pytest tests/ -v`
+Run: `uv run --project ai pytest ai/tests -v`
 Expected: All tests PASS
 
 - [ ] **Step 7: Commit**
@@ -1234,11 +1234,11 @@ After all tasks are implemented and committed, here's how to run the real pipeli
 # 1. Build the c-shared bridge (from repo root)
 go build -buildmode=c-shared -o build/libfh_mahjong_bridge.dylib ./cmd/rlbridge
 
-# 2. Activate the Python venv
-cd ai && source .venv/bin/activate
+# 2. Sync Python dependencies
+uv sync --project ai --extra dev
 
 # 3. Run the full pipeline
-python -m fh_mahjong_ai.scripts.run_pipeline \
+uv run --project ai fh-mj-pipeline \
   --episodes 500 \
   --epochs 20 \
   --batch-size 128 \
@@ -1246,9 +1246,9 @@ python -m fh_mahjong_ai.scripts.run_pipeline \
   --output-dir output/run1
 
 # Or step-by-step:
-python -m fh_mahjong_ai.scripts.generate_data --episodes 500 --output output/run1/data/heuristic.jsonl
-python -m fh_mahjong_ai.scripts.train_bc --data output/run1/data/heuristic.jsonl --epochs 20 --batch-size 128
-python -m fh_mahjong_ai.scripts.evaluate --checkpoint checkpoints/bc/epoch_020.pt --data output/run1/data/heuristic.jsonl --online-episodes 50
+uv run --project ai fh-mj-generate-data --episodes 500 --output output/run1/data/heuristic.jsonl
+uv run --project ai fh-mj-train-bc --data output/run1/data/heuristic.jsonl --epochs 20 --batch-size 128
+uv run --project ai fh-mj-evaluate --checkpoint checkpoints/bc/epoch_020.pt --data output/run1/data/heuristic.jsonl --online-episodes 50
 ```
 
 ## What Comes Next (Phase 3B/3C — Separate Plans)

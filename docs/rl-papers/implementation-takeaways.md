@@ -58,7 +58,7 @@ Later:
 
 The reading strongly supports adding rule-engine look-ahead features, especially for discard decisions:
 
-- overall shanten
+- overall shanten (already implemented in observation scalar index 25)
 - route-specific shanten
 - useful tile counts
 - wild-preservation signals

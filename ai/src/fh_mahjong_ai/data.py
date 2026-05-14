@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 
@@ -42,3 +42,33 @@ def backfill_returns(transitions: List[Transition]) -> List[Transition]:
             t.info["terminal_rewards"] = terminal.copy()
 
     return transitions
+
+
+def split_train_validation(
+    transitions: List[Transition],
+    validation_fraction: float = 0.2,
+    seed: int = 0,
+) -> Tuple[List[Transition], List[Transition]]:
+    """Split transitions by episode so validation does not share a round with train."""
+    if validation_fraction < 0.0 or validation_fraction >= 1.0:
+        raise ValueError("validation_fraction must be in [0.0, 1.0)")
+
+    episodes = split_episodes(transitions)
+    if len(episodes) <= 1 or validation_fraction == 0.0:
+        return list(transitions), []
+
+    rng = np.random.default_rng(seed)
+    indices = np.arange(len(episodes))
+    rng.shuffle(indices)
+
+    validation_count = int(round(len(episodes) * validation_fraction))
+    validation_count = min(max(validation_count, 1), len(episodes) - 1)
+    validation_indices = set(int(index) for index in indices[:validation_count])
+
+    train: List[Transition] = []
+    validation: List[Transition] = []
+    for index, episode in enumerate(episodes):
+        target = validation if index in validation_indices else train
+        target.extend(episode)
+
+    return train, validation

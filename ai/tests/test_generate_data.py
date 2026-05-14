@@ -19,8 +19,11 @@ def test_generate_dataset_mock(tmp_path: Path) -> None:
     )
 
     assert output.exists()
+    manifest = output.with_suffix(".manifest.json")
+    assert manifest.exists()
     assert stats["episodes"] == 2
     assert stats["transitions"] > 0
+    assert stats["manifest_path"] == str(manifest)
 
     # Verify JSONL is loadable
     lines = output.read_text().strip().split("\n")
@@ -28,3 +31,11 @@ def test_generate_dataset_mock(tmp_path: Path) -> None:
     first = json.loads(lines[0])
     assert "observation" in first
     assert "action_id" in first
+
+    manifest_payload = json.loads(manifest.read_text())
+    assert manifest_payload["schema_version"] == 1
+    assert manifest_payload["dataset"]["start_seed"] == 1
+    assert manifest_payload["dataset"]["end_seed"] == 2
+    assert manifest_payload["dataset"]["transitions"] == stats["transitions"]
+    assert manifest_payload["source"]["policy"] == "mock_random_masked"
+    assert manifest_payload["environment"]["action_space_size"] == 204

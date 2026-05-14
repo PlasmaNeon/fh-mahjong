@@ -1,0 +1,414 @@
+{
+  "version": 1,
+  "matchId": "rl-seed-1",
+  "ruleset": "hometown",
+  "players": [
+    {
+      "seat": 0,
+      "name": "Heuristic 1",
+      "userId": 0
+    },
+    {
+      "seat": 1,
+      "name": "Heuristic 2",
+      "userId": 0
+    },
+    {
+      "seat": 2,
+      "name": "Heuristic 3",
+      "userId": 0
+    },
+    {
+      "seat": 3,
+      "name": "Heuristic 4",
+      "userId": 0
+    }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "prevailingWind": 0,
+      "dealer": 3,
+      "dice": [
+        1,
+        6
+      ],
+      "wallSeed": "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",
+      "wildTiles": [
+        {
+          "id": 47,
+          "suit": 3,
+          "value": 3
+        }
+      ],
+      "wangpaiStacks": 7,
+      "startingScores": [
+        25000,
+        25000,
+        25000,
+        25000
+      ],
+      "deals": [
+        [
+          4,
+          106,
+          108,
+          50,
+          88,
+          11,
+          32,
+          49,
+          19,
+          57,
+          31,
+          84,
+          21
+        ],
+        [
+          78,
+          42,
+          67,
+          95,
+          25,
+          101,
+          70,
+          75,
+          137,
+          46,
+          81,
+          18,
+          89
+        ],
+        [
+          52,
+          117,
+          14,
+          41,
+          73,
+          143,
+          138,
+          72,
+          58,
+          27,
+          98,
+          30,
+          20
+        ],
+        [
+          15,
+          39,
+          68,
+          66,
+          91,
+          29,
+          43,
+          60,
+          48,
+          51,
+          79,
+          116,
+          65
+        ]
+      ],
+      "initialFlowers": [
+        {
+          "seat": 1,
+          "flower": 137,
+          "replacement": 102
+        },
+        {
+          "seat": 2,
+          "flower": 143,
+          "replacement": 6
+        },
+        {
+          "seat": 2,
+          "flower": 138,
+          "replacement": 69
+        }
+      ],
+      "actions": [
+        {
+          "act": "draw",
+          "seat": 3,
+          "tile": 55
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 116
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 17
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 108
+        },
+        {
+          "act": "draw",
+          "seat": 1,
+          "tile": 86
+        },
+        {
+          "act": "discard",
+          "seat": 1,
+          "tile": 42
+        },
+        {
+          "act": "draw",
+          "seat": 2,
+          "tile": 24
+        },
+        {
+          "act": "discard",
+          "seat": 2,
+          "tile": 117
+        },
+        {
+          "act": "draw",
+          "seat": 3,
+          "tile": 135
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 135
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 134
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 134
+        },
+        {
+          "act": "draw",
+          "seat": 1,
+          "tile": 56
+        },
+        {
+          "act": "discard",
+          "seat": 1,
+          "tile": 56
+        },
+        {
+          "act": "draw",
+          "seat": 2,
+          "tile": 34
+        },
+        {
+          "act": "discard",
+          "seat": 2,
+          "tile": 69
+        },
+        {
+          "act": "chii",
+          "seat": 3,
+          "tiles": [
+            60,
+            65
+          ],
+          "from": 2
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 79
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 0
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 106
+        },
+        {
+          "act": "draw",
+          "seat": 1,
+          "tile": 76
+        },
+        {
+          "act": "discard",
+          "seat": 1,
+          "tile": 76
+        },
+        {
+          "act": "draw",
+          "seat": 2,
+          "tile": 100
+        },
+        {
+          "act": "discard",
+          "seat": 2,
+          "tile": 41
+        },
+        {
+          "act": "draw",
+          "seat": 3,
+          "tile": 133
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 133
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 13
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 57
+        },
+        {
+          "act": "draw",
+          "seat": 1,
+          "tile": 113
+        },
+        {
+          "act": "discard",
+          "seat": 1,
+          "tile": 113
+        },
+        {
+          "act": "draw",
+          "seat": 2,
+          "tile": 35
+        },
+        {
+          "act": "discard",
+          "seat": 2,
+          "tile": 24
+        },
+        {
+          "act": "draw",
+          "seat": 3,
+          "tile": 109
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 109
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 22
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 32
+        },
+        {
+          "act": "pon",
+          "seat": 2,
+          "tiles": [
+            34,
+            35
+          ],
+          "from": 0
+        },
+        {
+          "act": "discard",
+          "seat": 2,
+          "tile": 6
+        },
+        {
+          "act": "draw",
+          "seat": 3,
+          "tile": 104
+        },
+        {
+          "act": "discard",
+          "seat": 3,
+          "tile": 104
+        },
+        {
+          "act": "draw",
+          "seat": 0,
+          "tile": 62
+        },
+        {
+          "act": "discard",
+          "seat": 0,
+          "tile": 62
+        },
+        {
+          "act": "ron",
+          "seat": 1,
+          "tile": 62,
+          "from": 0
+        }
+      ],
+      "result": {
+        "type": "win",
+        "winner": 1,
+        "winType": "ron",
+        "discarder": 0,
+        "winTile": 62,
+        "hand": [
+          78,
+          67,
+          95,
+          25,
+          101,
+          70,
+          75,
+          46,
+          81,
+          18,
+          89,
+          102,
+          86
+        ],
+        "flowers": [
+          137
+        ],
+        "breakdown": [
+          {
+            "name": "Base Point (坐台)",
+            "points": 1
+          },
+          {
+            "name": "One Wild Tile (一搭)",
+            "points": 1
+          },
+          {
+            "name": "Common Win (朋胡)",
+            "points": 1
+          },
+          {
+            "name": "Single/Pair Call (边嵌单吊对倒)",
+            "points": 1
+          }
+        ],
+        "totalScore": 4,
+        "scoreChanges": [
+          -8,
+          16,
+          -4,
+          -4
+        ]
+      }
+    }
+  ],
+  "finalScores": [
+    24992,
+    25016,
+    24996,
+    24996
+  ]
+}
