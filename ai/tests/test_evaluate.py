@@ -6,7 +6,7 @@ import torch
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.evaluate import action_family, compute_action_agreement, evaluate_duplicate_seats, evaluate_online
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.types import Observation, Transition
+from fh_mahjong_ai.types import Observation, StepResult, Transition
 
 
 def _obs(seat: int = 0, seed: int = 0) -> Observation:
@@ -98,6 +98,50 @@ class TestEvaluateOnline:
         assert "action_family_counts" in report
         assert "episodes" in report
         assert report["episodes"] == 2
+
+    def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
+        class TerminalResetBridge:
+            def __init__(self) -> None:
+                self.last_reset_result = None
+
+            def reset(self, seed=None):
+                mask = np.zeros(204, dtype=np.int8)
+                observation = Observation(
+                    seat=1,
+                    planes=np.zeros((39, 42, 1), dtype=np.float32),
+                    scalars=np.zeros(29, dtype=np.float32),
+                    action_mask=mask,
+                )
+                self.last_reset_result = StepResult(
+                    observation=observation,
+                    rewards=np.asarray([0.0, 0.25, -0.1, -0.15], dtype=np.float32),
+                    terminated=True,
+                    truncated=False,
+                )
+                return observation
+
+            def step(self, action_id):
+                raise AssertionError("terminal reset should not call step")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", lambda config: TerminalResetBridge())
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+
+        report = evaluate_online(
+            model=model,
+            episodes=1,
+            seeds=[200010],
+            bridge_kind="go",
+            device="cpu",
+            learning_seat=1,
+        )
+
+        assert report["episodes"] == 1
+        assert report["avg_reward"] == 0.25
+        assert report["win_count"] == 1
+        assert report["action_family_counts"] == {}
 
     def test_duplicate_seat_eval_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())

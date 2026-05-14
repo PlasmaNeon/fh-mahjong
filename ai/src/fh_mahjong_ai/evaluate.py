@@ -12,7 +12,6 @@ from .bridge import build_bridge
 from .config import EnvConfig
 from .env import MahjongEnv
 from .policies import TorchGreedyPolicy
-from .trainer import collect_episode
 from .types import Transition
 
 ACTION_PASS = 0
@@ -144,19 +143,49 @@ def evaluate_online(
     wins = 0
     large_losses = 0
 
+    def record_episode(rewards: np.ndarray, episode: list[Transition]) -> None:
+        nonlocal wins, large_losses
+        reward = float(rewards[learning_seat])
+        seat_rewards.append(reward)
+        if reward > 0:
+            wins += 1
+        if reward <= large_loss_threshold:
+            large_losses += 1
+        action_counts.update(action_family(t.action_id) for t in episode)
+
     try:
         for i in range(episodes):
             seed = seeds[i] if i < len(seeds) else seeds[-1] + i
-            episode = collect_episode(env, policy, seed=seed)
-            if episode:
-                terminal = episode[-1]
-                reward = float(terminal.rewards[learning_seat])
-                seat_rewards.append(reward)
-                if reward > 0:
-                    wins += 1
-                if reward <= large_loss_threshold:
-                    large_losses += 1
-                action_counts.update(action_family(t.action_id) for t in episode)
+            episode: list[Transition] = []
+            observation = env.reset(seed=seed)
+            reset_result = env.last_reset_result
+            if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                record_episode(reset_result.rewards, episode)
+                continue
+            if not observation.legal_actions:
+                continue
+
+            while True:
+                choice = policy.choose(observation)
+                step_result = env.step(choice.action_id)
+                episode.append(
+                    Transition(
+                        observation=observation,
+                        action_id=choice.action_id,
+                        rewards=step_result.rewards,
+                        next_observation=step_result.observation,
+                        terminated=step_result.terminated,
+                        truncated=step_result.truncated,
+                        info=step_result.info,
+                    )
+                )
+
+                observation = step_result.observation
+                if step_result.terminated or step_result.truncated:
+                    record_episode(step_result.rewards, episode)
+                    break
+                if not observation.legal_actions:
+                    break
     finally:
         env.close()
 

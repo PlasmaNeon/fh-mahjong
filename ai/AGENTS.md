@@ -14,6 +14,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/types.py** — Shared observation, transition, and bridge result types.
 - **src/fh_mahjong_ai/bridge.py** — Abstract bridge contract, mock bridge, and `CtypesGoBridge` implementation for the Go RL library.
   - `MockMahjongBridge` retains the last emitted observation so `step()` validates actions against the real current legal-action mask instead of sampling a fresh one.
+  - Bridges preserve `last_reset_result` so evaluation can count rounds that terminate during reset before the learning seat receives a decision.
   - `CtypesGoBridge` owns the Go-side handle lifecycle and supports `close()`, context-manager usage, and best-effort cleanup in `__del__`.
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.

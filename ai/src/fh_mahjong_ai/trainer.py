@@ -39,6 +39,11 @@ class OfflineQMetrics:
 def collect_episode(env: MahjongEnv, policy: PolicyLike, seed: Optional[int] = None) -> List[Transition]:
     transitions: List[Transition] = []
     observation = env.reset(seed=seed)
+    reset_result = env.last_reset_result
+    if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+        return transitions
+    if not observation.legal_actions:
+        return transitions
 
     while True:
         choice = policy.choose(observation)
