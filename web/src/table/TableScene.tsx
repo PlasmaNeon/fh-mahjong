@@ -168,17 +168,90 @@ export function getSeatDirection(seat: number, viewSeat: number): SeatLaneDirect
   return POSITIONS[(seat - viewSeat + 4) % 4]
 }
 
-function sortTiles(tiles: TileLike[], pinnedRightmostTileId: unknown = null) {
+function compareTileSortKey(a: TileLike, b: TileLike) {
+  const suitA = getSuitOrder(a.suit)
+  const suitB = getSuitOrder(b.suit)
+  if (suitA !== suitB) return suitA - suitB
+  return a.value - b.value
+}
+
+function sortTiles(tiles: TileLike[]) {
   return [...tiles].sort((a, b) => {
-    const suitA = getSuitOrder(a.suit)
-    const suitB = getSuitOrder(b.suit)
-    if (suitA !== suitB) return suitA - suitB
-    if (a.value !== b.value) return a.value - b.value
-    const aPinned = tileIdsEqual(a.id, pinnedRightmostTileId)
-    const bPinned = tileIdsEqual(b.id, pinnedRightmostTileId)
-    if (aPinned !== bPinned) return aPinned ? 1 : -1
+    const cmp = compareTileSortKey(a, b)
+    if (cmp !== 0) return cmp
     return a.id - b.id
   })
+}
+
+function insertTileAtRightmostOfGroup(
+  order: number[],
+  tile: TileLike,
+  tileMap: Map<number, TileLike>,
+) {
+  let insertIdx = order.length
+  for (let i = 0; i < order.length; i++) {
+    const current = tileMap.get(order[i])
+    if (current && compareTileSortKey(tile, current) < 0) {
+      insertIdx = i
+      break
+    }
+  }
+  order.splice(insertIdx, 0, tile.id)
+}
+
+// Positional-stability model: preserve the previous display order wherever
+// possible, so same-suit/value tiles never spontaneously swap places.
+//   - Single-in / single-out (typical draw→absorb after discard): if the new
+//     tile sort-fits at the discarded tile's position, slot it in place.
+//     Otherwise, insert at the rightmost position of its suit/value group.
+//   - All other deltas (calls, kan with replacement, initial deal): filter
+//     removed tiles and insert each added tile at the rightmost of its group.
+function computeStableDisplayOrder(
+  baseTiles: TileLike[],
+  previousOrder: number[] | null,
+): number[] {
+  const tileMap = new Map(baseTiles.map((t) => [t.id, t]))
+
+  if (!previousOrder) {
+    return sortTiles(baseTiles).map((t) => t.id)
+  }
+
+  const currentIds = baseTiles.map((t) => t.id)
+  const currentIdSet = new Set(currentIds)
+  const previousIdSet = new Set(previousOrder)
+  const removedIds = previousOrder.filter((id) => !currentIdSet.has(id))
+  const addedIds = currentIds.filter((id) => !previousIdSet.has(id))
+  const newOrder = previousOrder.filter((id) => currentIdSet.has(id))
+
+  if (removedIds.length === 1 && addedIds.length === 1) {
+    const removedId = removedIds[0]
+    const addedId = addedIds[0]
+    const addedTile = tileMap.get(addedId)
+    if (!addedTile) return newOrder
+    // After filtering removedId, the slot it occupied becomes `removedPosition`
+    // in newOrder (indices < removedPosition are unchanged; the element
+    // formerly at removedPosition+1 now sits at removedPosition).
+    const removedPosition = previousOrder.indexOf(removedId)
+    const leftTile =
+      removedPosition > 0 ? tileMap.get(newOrder[removedPosition - 1]) ?? null : null
+    const rightTile =
+      removedPosition < newOrder.length ? tileMap.get(newOrder[removedPosition]) ?? null : null
+    const fits =
+      (leftTile == null || compareTileSortKey(leftTile, addedTile) <= 0) &&
+      (rightTile == null || compareTileSortKey(addedTile, rightTile) <= 0)
+    if (fits) {
+      newOrder.splice(removedPosition, 0, addedId)
+    } else {
+      insertTileAtRightmostOfGroup(newOrder, addedTile, tileMap)
+    }
+  } else {
+    for (const addedId of addedIds) {
+      const tile = tileMap.get(addedId)
+      if (tile) insertTileAtRightmostOfGroup(newOrder, tile, tileMap)
+    }
+  }
+
+  return newOrder
 }
 
 function tileIdsEqual(left: unknown, right: unknown) {
@@ -371,6 +444,7 @@ function SeatLane({
   hiddenTileIds,
 }: SeatLaneProps) {
   const lastDrawnTileId = useRef<number | null>(null)
+  const displayOrderRef = useRef<number[] | null>(null)
   const isBottomSeat = direction === 'bottom'
   const drawMotionOffset = getDrawAnimationOffset(direction)
   const showClosedHand = player.showClosedHand !== false
@@ -394,7 +468,12 @@ function SeatLane({
     lastDrawnTileId.current = drawnTile.id
   }
 
-  const sortedBaseTiles = sortTiles(baseTiles, !hasDrawnTile ? lastDrawnTileId.current : null)
+  const nextDisplayOrder = computeStableDisplayOrder(baseTiles, displayOrderRef.current)
+  displayOrderRef.current = nextDisplayOrder
+  const baseTileMap = new Map(baseTiles.map((t) => [t.id, t]))
+  const sortedBaseTiles = nextDisplayOrder
+    .map((id) => baseTileMap.get(id))
+    .filter((t): t is TileLike => t != null)
 
   const renderHandTile = (tile: TileLike, { isCurrentDrawnSlot = false }: { isCurrentDrawnSlot?: boolean } = {}) => {
     const isRecentlyDrawn = isBottomSeat && lastDrawnTileId.current === tile.id && !hasDrawnTile
@@ -416,8 +495,8 @@ function SeatLane({
           },
         }}
         className={`pov-${direction} ${!isBottomSeat ? 'small' : ''} ${isCurrentDrawnSlot ? 'drawn-tile' : ''}`}
-        data-board-tile-id={tile.id}
-        data-board-tile-role={isCurrentDrawnSlot ? 'drawn' : 'hand'}
+        data-board-tile-id={isCurrentDrawnSlot ? undefined : tile.id}
+        data-board-tile-role={isCurrentDrawnSlot ? undefined : 'hand'}
       >
         <TileComponent
           tile={tile}
@@ -448,7 +527,11 @@ function SeatLane({
             </div>
 
             {showClosedHand && drawnTile && (
-              <div className={`seat-hand__drawn-slot seat-hand__drawn-slot--${direction}`}>
+              <div
+                className={`seat-hand__drawn-slot seat-hand__drawn-slot--${direction}`}
+                data-board-tile-id={drawnTile.id}
+                data-board-tile-role="drawn"
+              >
                 <motion.div
                   initial={{ opacity: 0, ...drawMotionOffset }}
                   animate={{ opacity: 1, x: 0, y: 0 }}

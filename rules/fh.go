@@ -634,10 +634,20 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		})
 	}
 
-	// Check for Closed/Upgraded Kongs (4 of a kind in hand)
-	counts := make(map[uint32][]*pb.Tile)
+	// Check for Concealed Kongs (4 of a kind in hand).
+	// Tiles in the closed hand each carry a unique instance Id, so we must
+	// group by tile face (Suit+Value) to detect four of a kind.
+	type faceKey struct {
+		suit  pb.Suit
+		value uint32
+	}
+	counts := make(map[faceKey][]*pb.Tile)
 	for _, t := range player.ClosedHand {
-		counts[t.Id] = append(counts[t.Id], t)
+		if t.Suit == pb.Suit_SUIT_FLOWER {
+			continue
+		}
+		k := faceKey{t.Suit, t.Value}
+		counts[k] = append(counts[k], t)
 	}
 
 	for _, tiles := range counts {
