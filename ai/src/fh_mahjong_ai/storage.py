@@ -26,9 +26,10 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     return int(payload.get("step", 0))
 
 
-def write_transitions_jsonl(path: Path, transitions: Iterable[Transition]) -> None:
+def write_transitions_jsonl(path: Path, transitions: Iterable[Transition], append: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    mode = "a" if append else "w"
+    with path.open(mode, encoding="utf-8") as handle:
         for transition in transitions:
             handle.write(json.dumps(_transition_to_dict(transition)) + "\n")
 
