@@ -2,9 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -96,6 +96,9 @@ type Matchmaker struct {
 
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
+
+	configuringMu     sync.Mutex
+	configuringTables map[string]*PrivateTable
 }
 
 type ActivePrivateTable struct {
@@ -110,6 +113,7 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		DB:                  db,
 		Hub:                 hub,
 		activePrivateTables: make(map[string]ActivePrivateTable),
+		configuringTables:   make(map[string]*PrivateTable),
 	}
 }
 
@@ -121,34 +125,6 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
-	return nil
-}
-
-// JoinPrivateTable adds a user to a specific private table queue
-func (m *Matchmaker) JoinPrivateTable(userID uint, username string, tableID string) error {
-	queueKey := "table:" + tableID
-
-	// Check if this user is already in the queue to prevent double-joins
-	existing := m.Queue.LRange(queueKey)
-	for _, id := range existing {
-		if id == fmt.Sprintf("%d", userID) {
-			return nil // User is already queued, silently succeed
-		}
-	}
-
-	// Add user to the in-memory queue
-	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
-
-	length := m.Queue.LLen(queueKey)
-
-	log.Printf("User %d (%s) joined private table queue '%s'", userID, username, tableID)
-
-	// Broadcast alert
-	msg := fmt.Sprintf(`{"type":"lobby_update", "table":"%s", "message":"Player %s is ready! (%d/4)"}`, tableID, username, length)
-	go func() {
-		m.Hub.LobbyBroadcast <- []byte(msg)
-	}()
-
 	return nil
 }
 
@@ -229,28 +205,6 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	}
 }
 
-func (m *Matchmaker) StartPrivateTableWatcher() {
-	log.Printf("Matchmaker polling for any private tables...")
-
-	for {
-		// Find all keys starting with table:
-		keys := m.Queue.Keys("table:*")
-		for _, key := range keys {
-			length := m.Queue.LLen(key)
-			if length >= 4 {
-				players := m.Queue.LPopCount(key, 4)
-				if len(players) == 4 {
-					log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
-					// For simplicity, default to hometown rules for private tables
-					go m.createMatch(players, "hometown", strings.TrimPrefix(key, "table:"))
-				}
-			}
-		}
-
-		time.Sleep(2 * time.Second)
-	}
-}
-
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
 	matchID := uuid.New().String()
 
@@ -306,4 +260,66 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		UserIDs: userIDs,
 		Room:    room,
 	}
+}
+
+// JoinOrCreatePrivateTable claims a seat for the given user. If the table
+// does not exist, the user becomes the host at seat 0. If the user is
+// already seated, this is a no-op.
+//
+// Returns a snapshot of the table state for the caller. The caller is
+// expected to broadcast a lobby_update afterward.
+func (m *Matchmaker) JoinOrCreatePrivateTable(tableID string, userID uint, username string) (*PrivateTable, error) {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+
+	table, ok := m.configuringTables[tableID]
+	if !ok {
+		table = newConfiguringTable(tableID, userID)
+		m.configuringTables[tableID] = table
+	}
+
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if table.State != "configuring" {
+		return nil, errors.New("table is no longer accepting players")
+	}
+
+	if _, err := table.claimNextHumanSeat(userID, username); err != nil {
+		return nil, err
+	}
+	table.normalize()
+	return table, nil
+}
+
+// GetConfiguringPrivateTable returns the live table struct (locked by
+// caller via Mutate) or nil if no such table exists in the "configuring"
+// state.
+func (m *Matchmaker) GetConfiguringPrivateTable(tableID string) *PrivateTable {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+	return m.configuringTables[tableID]
+}
+
+// MutatePrivateTable runs fn under the table lock. Returns the table for
+// snapshotting after fn returns successfully.
+func (m *Matchmaker) MutatePrivateTable(tableID string, fn func(t *PrivateTable) error) (*PrivateTable, error) {
+	table := m.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		return nil, errors.New("table not found")
+	}
+	table.mu.Lock()
+	defer table.mu.Unlock()
+	if err := fn(table); err != nil {
+		return nil, err
+	}
+	return table, nil
+}
+
+// removeConfiguringTable drops the table from the configuring registry.
+// Called after a successful start once the match has been dispatched.
+func (m *Matchmaker) removeConfiguringTable(tableID string) {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+	delete(m.configuringTables, tableID)
 }
