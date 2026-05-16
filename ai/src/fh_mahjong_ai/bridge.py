@@ -24,6 +24,7 @@ class MahjongBridge(ABC):
 
     def __init__(self, config: EnvConfig) -> None:
         self.config = config
+        self.last_reset_result: Optional[StepResult] = None
 
     @abstractmethod
     def reset(self, seed: Optional[int] = None) -> Observation:
@@ -58,6 +59,13 @@ class MockMahjongBridge(MahjongBridge):
             self._rng = np.random.default_rng(seed)
         self._state = MockState()
         self._current_observation = self._observe()
+        self.last_reset_result = StepResult(
+            observation=self._current_observation,
+            rewards=np.zeros(4, dtype=np.float32),
+            terminated=False,
+            truncated=False,
+            info={"reset": True, "bridge": "mock"},
+        )
         return self._current_observation
 
     def step(self, action_id: int) -> StepResult:
@@ -132,7 +140,15 @@ class CtypesGoBridge(MahjongBridge):
         request = game_pb2.EnvResetRequest(seed=int(effective_seed), config=self._config_message())
         response = game_pb2.EnvResetResponse()
         response.ParseFromString(self._call_bytes(self._library.FHEnvReset, self._handle, self._serialize(request)))
-        return self._decode_observation(response.observation)
+        observation = self._decode_observation(response.observation)
+        self.last_reset_result = StepResult(
+            observation=observation,
+            rewards=self._decode_rewards(response.rewards),
+            terminated=bool(response.terminated),
+            truncated=bool(response.truncated),
+            info={"reset": True, "bridge": "go"},
+        )
+        return observation
 
     def step(self, action_id: int) -> StepResult:
         request = game_pb2.EnvStepRequest(action_id=int(action_id))
@@ -140,7 +156,7 @@ class CtypesGoBridge(MahjongBridge):
         response.ParseFromString(self._call_bytes(self._library.FHEnvStep, self._handle, self._serialize(request)))
         return StepResult(
             observation=self._decode_observation(response.observation),
-            rewards=np.asarray(response.rewards, dtype=np.float32),
+            rewards=self._decode_rewards(response.rewards),
             terminated=bool(response.terminated),
             truncated=bool(response.truncated),
             info={},
@@ -250,6 +266,12 @@ class CtypesGoBridge(MahjongBridge):
                 "bridge": "go",
             },
         )
+
+    def _decode_rewards(self, rewards: object) -> np.ndarray:
+        decoded = np.asarray(rewards, dtype=np.float32)
+        if decoded.size == 0:
+            return np.zeros(4, dtype=np.float32)
+        return decoded
 
     def _decode_transition(self, sample: game_pb2.TrajectorySample) -> Transition:
         info = {"acting_seat": int(sample.acting_seat), "episode_index": int(sample.episode_index)}

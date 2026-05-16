@@ -37,7 +37,7 @@ func tileFaceIndex42(tile *pb.Tile) (int, bool) {
 	}
 
 	switch tile.Suit {
-	case pb.Suit_SUIT_SOU:
+	case pb.Suit_SUIT_MAN:
 		if tile.Value < 1 || tile.Value > 9 {
 			return 0, false
 		}
@@ -47,7 +47,7 @@ func tileFaceIndex42(tile *pb.Tile) (int, bool) {
 			return 0, false
 		}
 		return 9 + int(tile.Value-1), true
-	case pb.Suit_SUIT_MAN:
+	case pb.Suit_SUIT_SOU:
 		if tile.Value < 1 || tile.Value > 9 {
 			return 0, false
 		}
@@ -262,11 +262,11 @@ func chiiSequenceIndex(action *pb.PlayerAction) (int, bool) {
 
 	suitOffset := 0
 	switch action.Tile.Suit {
-	case pb.Suit_SUIT_SOU:
+	case pb.Suit_SUIT_MAN:
 		suitOffset = 0
 	case pb.Suit_SUIT_PIN:
 		suitOffset = 7
-	case pb.Suit_SUIT_MAN:
+	case pb.Suit_SUIT_SOU:
 		suitOffset = 14
 	}
 	return suitOffset + int(values[0]-1), true

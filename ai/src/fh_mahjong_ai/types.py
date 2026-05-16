@@ -50,3 +50,8 @@ class TrainBatch:
     action_mask: IntArray
     action_ids: IntArray
     returns: FloatArray
+    next_planes: FloatArray
+    next_scalars: FloatArray
+    next_action_mask: IntArray
+    rewards: FloatArray
+    dones: FloatArray

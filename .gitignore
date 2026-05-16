@@ -40,3 +40,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-*

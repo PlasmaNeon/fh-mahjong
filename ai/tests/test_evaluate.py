@@ -4,9 +4,9 @@ import numpy as np
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import compute_action_agreement, evaluate_online
+from fh_mahjong_ai.evaluate import action_family, compute_action_agreement, evaluate_duplicate_seats, evaluate_online
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.types import Observation, Transition
+from fh_mahjong_ai.types import Observation, StepResult, Transition
 
 
 def _obs(seat: int = 0, seed: int = 0) -> Observation:
@@ -33,6 +33,14 @@ def _transition(action_id: int, seed: int = 0) -> Transition:
 
 
 class TestActionAgreement:
+    def test_action_family_mapping(self) -> None:
+        assert action_family(0) == "pass"
+        assert action_family(1) == "win"
+        assert action_family(5) == "discard"
+        assert action_family(47) == "pon"
+        assert action_family(81) == "kan"
+        assert action_family(183) == "chii"
+
     def test_perfect_agreement(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
         # Get what the model would predict for this observation
@@ -47,6 +55,7 @@ class TestActionAgreement:
         t_matched = _transition(action_id=predicted, seed=42)
         report = compute_action_agreement(model, [t_matched], device="cpu")
         assert report["agreement_rate"] == 1.0
+        assert report["family_agreement"]["discard"]["agreement_rate"] == 1.0
 
     def test_zero_agreement(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
@@ -68,7 +77,18 @@ class TestActionAgreement:
         transitions = [_transition(action_id=i % 10 + 5, seed=i) for i in range(20)]
         report = compute_action_agreement(model, transitions, device="cpu")
         assert "top3_agreement_rate" in report
+        assert "family_agreement" in report
+        assert "discard" in report["family_agreement"]
         assert 0.0 <= report["top3_agreement_rate"] <= 1.0
+
+    def test_batched_agreement_matches_single_item_batches(self) -> None:
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+        transitions = [_transition(action_id=i % 10 + 5, seed=i) for i in range(17)]
+
+        single = compute_action_agreement(model, transitions, device="cpu", batch_size=1)
+        batched = compute_action_agreement(model, transitions, device="cpu", batch_size=8)
+
+        assert batched == single
 
 
 class TestEvaluateOnline:
@@ -82,5 +102,66 @@ class TestEvaluateOnline:
             device="cpu",
         )
         assert "avg_reward" in report
+        assert "win_rate" in report
+        assert "large_loss_rate" in report
+        assert "action_family_counts" in report
         assert "episodes" in report
         assert report["episodes"] == 2
+
+    def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
+        class TerminalResetBridge:
+            def __init__(self) -> None:
+                self.last_reset_result = None
+
+            def reset(self, seed=None):
+                mask = np.zeros(204, dtype=np.int8)
+                observation = Observation(
+                    seat=1,
+                    planes=np.zeros((39, 42, 1), dtype=np.float32),
+                    scalars=np.zeros(29, dtype=np.float32),
+                    action_mask=mask,
+                )
+                self.last_reset_result = StepResult(
+                    observation=observation,
+                    rewards=np.asarray([0.0, 0.25, -0.1, -0.15], dtype=np.float32),
+                    terminated=True,
+                    truncated=False,
+                )
+                return observation
+
+            def step(self, action_id):
+                raise AssertionError("terminal reset should not call step")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", lambda config: TerminalResetBridge())
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+
+        report = evaluate_online(
+            model=model,
+            episodes=1,
+            seeds=[200010],
+            bridge_kind="go",
+            device="cpu",
+            learning_seat=1,
+        )
+
+        assert report["episodes"] == 1
+        assert report["avg_reward"] == 0.25
+        assert report["win_count"] == 1
+        assert report["action_family_counts"] == {}
+
+    def test_duplicate_seat_eval_runs_with_mock_bridge(self) -> None:
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+        report = evaluate_duplicate_seats(
+            model=model,
+            seeds=[1, 2],
+            seats=(0, 1),
+            bridge_kind="mock",
+            device="cpu",
+        )
+
+        assert report["episodes"] == 4
+        assert report["seats"] == [0, 1]
+        assert len(report["seat_reports"]) == 2

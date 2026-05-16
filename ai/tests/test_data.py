@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fh_mahjong_ai.data import backfill_returns, split_episodes
+from fh_mahjong_ai.data import backfill_returns, split_episodes, split_train_validation
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -100,3 +100,37 @@ class TestBackfillReturns:
 
     def test_empty_input(self) -> None:
         assert backfill_returns([]) == []
+
+
+class TestTrainValidationSplit:
+    def test_splits_by_whole_episode(self) -> None:
+        transitions = [
+            _transition(episode=0),
+            _transition(episode=0, terminated=True),
+            _transition(episode=1),
+            _transition(episode=1, terminated=True),
+            _transition(episode=2),
+            _transition(episode=2, terminated=True),
+            _transition(episode=3),
+            _transition(episode=3, terminated=True),
+        ]
+
+        train, validation = split_train_validation(transitions, validation_fraction=0.25, seed=7)
+
+        assert len(train) == 6
+        assert len(validation) == 2
+        train_episodes = {t.info["episode_index"] for t in train}
+        validation_episodes = {t.info["episode_index"] for t in validation}
+        assert train_episodes.isdisjoint(validation_episodes)
+
+    def test_single_episode_keeps_all_training(self) -> None:
+        transitions = [_transition(episode=0), _transition(episode=0, terminated=True)]
+
+        train, validation = split_train_validation(transitions, validation_fraction=0.5)
+
+        assert train == transitions
+        assert validation == []
+
+    def test_rejects_invalid_fraction(self) -> None:
+        with pytest.raises(ValueError):
+            split_train_validation([], validation_fraction=1.0)

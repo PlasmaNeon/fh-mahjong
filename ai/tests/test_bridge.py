@@ -127,6 +127,8 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(fake_library.last_reset_seed, 0)
         self.assertEqual(fake_library.closed_handles, [7])
         self.assertEqual(observation.seat, 0)
+        self.assertIsNotNone(bridge.last_reset_result)
+        self.assertFalse(bridge.last_reset_result.terminated)
 
 
 if __name__ == "__main__":

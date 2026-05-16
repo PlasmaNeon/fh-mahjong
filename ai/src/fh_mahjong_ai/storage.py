@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
 import numpy as np
 import torch
 
 from .types import Observation, Transition
+
+SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
+SHARDED_TRANSITIONS_SCHEMA_VERSION = 1
 
 
 def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0) -> None:
@@ -26,18 +29,257 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     return int(payload.get("step", 0))
 
 
-def write_transitions_jsonl(path: Path, transitions: Iterable[Transition]) -> None:
+def write_transitions_jsonl(path: Path, transitions: Iterable[Transition], append: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    mode = "a" if append else "w"
+    with path.open(mode, encoding="utf-8") as handle:
         for transition in transitions:
             handle.write(json.dumps(_transition_to_dict(transition)) + "\n")
 
 
 def read_transitions_jsonl(path: Path) -> list[Transition]:
-    transitions: list[Transition] = []
+    return list(iter_transitions_jsonl(path))
+
+
+def iter_transitions_jsonl(path: Path) -> Iterable[Transition]:
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
-            transitions.append(_transition_from_dict(json.loads(line)))
+            yield _transition_from_dict(json.loads(line))
+
+
+def read_transitions(path: Path) -> list[Transition]:
+    """Read transitions from JSONL or a sharded NumPy dataset directory."""
+    if path.is_dir():
+        return read_transitions_npz_shards(path)
+    if path.name == SHARDED_TRANSITIONS_MANIFEST:
+        return read_transitions_npz_shards(path.parent)
+    return read_transitions_jsonl(path)
+
+
+def is_sharded_transition_dataset(path: Path) -> bool:
+    return path.is_dir() or path.name == SHARDED_TRANSITIONS_MANIFEST
+
+
+def read_transition_arrays(path: Path) -> dict[str, np.ndarray]:
+    """Read transitions as contiguous arrays for array-backed replay buffers."""
+    if is_sharded_transition_dataset(path):
+        directory = path.parent if path.name == SHARDED_TRANSITIONS_MANIFEST else path
+        return _read_npz_transition_arrays(directory)
+    return _transitions_to_arrays(read_transitions_jsonl(path))
+
+
+def iter_observation_action_batches(path: Path, batch_size: int) -> Iterator[dict[str, np.ndarray]]:
+    """Yield observation/action arrays for offline policy evaluation."""
+    effective_batch_size = max(1, int(batch_size))
+    if path.is_dir() or path.name == SHARDED_TRANSITIONS_MANIFEST:
+        directory = path.parent if path.name == SHARDED_TRANSITIONS_MANIFEST else path
+        yield from _iter_npz_observation_action_batches(directory, effective_batch_size)
+    else:
+        yield from _iter_jsonl_observation_action_batches(path, effective_batch_size)
+
+
+def write_transitions_npz_shards(
+    directory: Path,
+    transitions: Iterable[Transition],
+    shard_size: int = 50_000,
+    compressed: bool = False,
+) -> dict[str, object]:
+    """Write transitions to a directory of array shards plus a manifest."""
+    directory.mkdir(parents=True, exist_ok=True)
+    effective_shard_size = max(1, int(shard_size))
+    shards: list[dict[str, object]] = []
+    current: list[Transition] = []
+    total = 0
+
+    for transition in transitions:
+        current.append(transition)
+        if len(current) >= effective_shard_size:
+            total += _write_transition_shard(directory, current, len(shards), compressed, shards)
+            current = []
+    if current:
+        total += _write_transition_shard(directory, current, len(shards), compressed, shards)
+
+    manifest: dict[str, object] = {
+        "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
+        "format": "npz_shards",
+        "compressed": compressed,
+        "shard_size": effective_shard_size,
+        "transitions": total,
+        "shards": shards,
+    }
+    (directory / SHARDED_TRANSITIONS_MANIFEST).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def read_transitions_npz_shards(directory: Path) -> list[Transition]:
+    manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if int(manifest.get("schema_version", 0)) != SHARDED_TRANSITIONS_SCHEMA_VERSION:
+        raise ValueError(f"unsupported sharded transition schema in {manifest_path}")
+
+    transitions: list[Transition] = []
+    for shard in manifest.get("shards", []):
+        shard_path = directory / str(shard["path"])
+        transitions.extend(_read_transition_shard(shard_path))
+    return transitions
+
+
+def _iter_npz_observation_action_batches(directory: Path, batch_size: int) -> Iterator[dict[str, np.ndarray]]:
+    manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if int(manifest.get("schema_version", 0)) != SHARDED_TRANSITIONS_SCHEMA_VERSION:
+        raise ValueError(f"unsupported sharded transition schema in {manifest_path}")
+
+    for shard in manifest.get("shards", []):
+        shard_path = directory / str(shard["path"])
+        with np.load(shard_path, allow_pickle=False) as arrays:
+            total = int(arrays["action_ids"].shape[0])
+            for start in range(0, total, batch_size):
+                stop = min(start + batch_size, total)
+                yield {
+                    "planes": np.asarray(arrays["planes"][start:stop], dtype=np.float32),
+                    "scalars": np.asarray(arrays["scalars"][start:stop], dtype=np.float32),
+                    "action_mask": np.asarray(arrays["action_mask"][start:stop], dtype=np.int8),
+                    "action_ids": np.asarray(arrays["action_ids"][start:stop], dtype=np.int64),
+                }
+
+
+def _read_npz_transition_arrays(directory: Path) -> dict[str, np.ndarray]:
+    manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if int(manifest.get("schema_version", 0)) != SHARDED_TRANSITIONS_SCHEMA_VERSION:
+        raise ValueError(f"unsupported sharded transition schema in {manifest_path}")
+
+    shards = list(manifest.get("shards", []))
+    total = int(manifest.get("transitions", 0))
+    if total == 0:
+        raise ValueError(f"empty sharded transition dataset at {directory}")
+
+    first_path = directory / str(shards[0]["path"])
+    with np.load(first_path, allow_pickle=False) as first:
+        arrays = {
+            key: np.empty((total,) + first[key].shape[1:], dtype=first[key].dtype)
+            for key in first.files
+        }
+
+    offset = 0
+    for shard in shards:
+        shard_path = directory / str(shard["path"])
+        with np.load(shard_path, allow_pickle=False) as loaded:
+            count = int(loaded["action_ids"].shape[0])
+            for key, target in arrays.items():
+                target[offset : offset + count] = loaded[key]
+            offset += count
+    return arrays
+
+
+def _iter_jsonl_observation_action_batches(path: Path, batch_size: int) -> Iterator[dict[str, np.ndarray]]:
+    planes: list[np.ndarray] = []
+    scalars: list[np.ndarray] = []
+    masks: list[np.ndarray] = []
+    action_ids: list[int] = []
+
+    def emit() -> dict[str, np.ndarray]:
+        return {
+            "planes": np.stack(planes).astype(np.float32),
+            "scalars": np.stack(scalars).astype(np.float32),
+            "action_mask": np.stack(masks).astype(np.int8),
+            "action_ids": np.asarray(action_ids, dtype=np.int64),
+        }
+
+    for transition in iter_transitions_jsonl(path):
+        planes.append(transition.observation.planes)
+        scalars.append(transition.observation.scalars)
+        masks.append(transition.observation.action_mask)
+        action_ids.append(transition.action_id)
+        if len(action_ids) >= batch_size:
+            yield emit()
+            planes.clear()
+            scalars.clear()
+            masks.clear()
+            action_ids.clear()
+    if action_ids:
+        yield emit()
+
+
+def _write_transition_shard(
+    directory: Path,
+    transitions: list[Transition],
+    index: int,
+    compressed: bool,
+    shards: list[dict[str, object]],
+) -> int:
+    shard_name = f"transitions-{index:05d}.npz"
+    shard_path = directory / shard_name
+    payload = _transitions_to_arrays(transitions)
+    writer = np.savez_compressed if compressed else np.savez
+    writer(shard_path, **payload)
+    shards.append({"path": shard_name, "transitions": len(transitions)})
+    return len(transitions)
+
+
+def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarray]:
+    def terminal_rewards_for(transition: Transition) -> np.ndarray:
+        terminal_rewards = transition.info.get("terminal_rewards")
+        if terminal_rewards is None:
+            return np.asarray(transition.rewards, dtype=np.float32)
+        return np.asarray(terminal_rewards, dtype=np.float32)
+
+    return {
+        "seats": np.asarray([t.observation.seat for t in transitions], dtype=np.int16),
+        "planes": np.stack([t.observation.planes for t in transitions]).astype(np.float32),
+        "scalars": np.stack([t.observation.scalars for t in transitions]).astype(np.float32),
+        "action_mask": np.stack([t.observation.action_mask for t in transitions]).astype(np.int8),
+        "action_ids": np.asarray([t.action_id for t in transitions], dtype=np.int64),
+        "rewards": np.stack([t.rewards for t in transitions]).astype(np.float32),
+        "next_seats": np.asarray([t.next_observation.seat for t in transitions], dtype=np.int16),
+        "next_planes": np.stack([t.next_observation.planes for t in transitions]).astype(np.float32),
+        "next_scalars": np.stack([t.next_observation.scalars for t in transitions]).astype(np.float32),
+        "next_action_mask": np.stack([t.next_observation.action_mask for t in transitions]).astype(np.int8),
+        "terminated": np.asarray([t.terminated for t in transitions], dtype=np.bool_),
+        "truncated": np.asarray([t.truncated for t in transitions], dtype=np.bool_),
+        "episode_index": np.asarray(
+            [int(t.info.get("episode_index", 0)) for t in transitions],
+            dtype=np.int64,
+        ),
+        "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
+    }
+
+
+def _read_transition_shard(path: Path) -> list[Transition]:
+    with np.load(path, allow_pickle=False) as arrays:
+        total = int(arrays["action_ids"].shape[0])
+        transitions: list[Transition] = []
+        for index in range(total):
+            observation = Observation(
+                seat=int(arrays["seats"][index]),
+                planes=np.asarray(arrays["planes"][index], dtype=np.float32),
+                scalars=np.asarray(arrays["scalars"][index], dtype=np.float32),
+                action_mask=np.asarray(arrays["action_mask"][index], dtype=np.int8),
+            )
+            next_observation = Observation(
+                seat=int(arrays["next_seats"][index]),
+                planes=np.asarray(arrays["next_planes"][index], dtype=np.float32),
+                scalars=np.asarray(arrays["next_scalars"][index], dtype=np.float32),
+                action_mask=np.asarray(arrays["next_action_mask"][index], dtype=np.int8),
+            )
+            transitions.append(
+                Transition(
+                    observation=observation,
+                    action_id=int(arrays["action_ids"][index]),
+                    rewards=np.asarray(arrays["rewards"][index], dtype=np.float32),
+                    next_observation=next_observation,
+                    terminated=bool(arrays["terminated"][index]),
+                    truncated=bool(arrays["truncated"][index]),
+                    info={
+                        "episode_index": int(arrays["episode_index"][index]),
+                        "terminal_rewards": np.asarray(arrays["terminal_rewards"][index], dtype=np.float32),
+                    },
+                )
+            )
     return transitions
 
 

@@ -26,15 +26,17 @@ This directory stores paper summaries and implementation notes for the Fenghua M
 ## Synthesis
 
 - [Implementation Takeaways](./implementation-takeaways.md)
+- [RL Learning Roadmap And Mahjong AI Development Plan](./roadmap-and-development-plan.md)
 
 ## Suggested Reading Order
 
-1. Suphx
-2. Variational Oracle Guiding
-3. Offline RL Hands-On
-4. TD or not TD
-5. IQL and TD3+BC
-6. DTQN and GTrXL
-7. Tjong
+1. RL Learning Roadmap And Mahjong AI Development Plan
+2. Suphx
+3. Variational Oracle Guiding
+4. Offline RL Hands-On
+5. TD or not TD
+6. IQL and TD3+BC
+7. DTQN and GTrXL
+8. Tjong
 
 That order moves from Mahjong-specific ideas into concrete training-method choices and then into newer model directions.

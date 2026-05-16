@@ -14,9 +14,11 @@ class MahjongEnv:
         self.config = config
         self.bridge = bridge or build_bridge(config)
         self.current_observation: Optional[Observation] = None
+        self.last_reset_result: Optional[StepResult] = None
 
     def reset(self, seed: Optional[int] = None) -> Observation:
         self.current_observation = self.bridge.reset(seed=seed)
+        self.last_reset_result = self.bridge.last_reset_result
         return self.current_observation
 
     def step(self, action_id: int) -> StepResult:

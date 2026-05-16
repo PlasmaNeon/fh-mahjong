@@ -20,11 +20,17 @@ def test_full_pipeline_mock(tmp_path: Path) -> None:
 
     # Data was generated
     assert (tmp_path / "data" / "heuristic.jsonl").exists()
+    assert (tmp_path / "data" / "heuristic.manifest.json").exists()
 
     # Model was trained and checkpointed
     assert (tmp_path / "checkpoints" / "epoch_002.pt").exists()
 
     # Evaluation ran
+    assert (tmp_path / "reports" / "bc_training.json").exists()
+    assert (tmp_path / "reports" / "pipeline_report.json").exists()
     assert "agreement_rate" in report
+    assert "bc_training_report_path" in report
+    assert "family_agreement" in report
     assert "online_avg_reward" in report
+    assert "online_large_loss_rate" in report
     assert 0.0 <= report["agreement_rate"] <= 1.0
