@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from fh_mahjong_ai.buffer import ReplayBuffer
+from fh_mahjong_ai.buffer import ArrayReplayBuffer, ReplayBuffer
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -66,3 +66,23 @@ def test_sample_includes_next_observation_and_td_fields() -> None:
     assert batch.next_action_mask.shape == (1, 204)
     assert batch.rewards[0] == 3.0
     assert batch.dones[0] == 1.0
+
+
+def test_array_replay_buffer_supports_bc_only_arrays() -> None:
+    arrays = {
+        "seats": np.asarray([1], dtype=np.int16),
+        "planes": np.zeros((1, 39, 42, 1), dtype=np.float32),
+        "scalars": np.zeros((1, 29), dtype=np.float32),
+        "action_mask": np.ones((1, 204), dtype=np.int8),
+        "action_ids": np.asarray([7], dtype=np.int64),
+        "terminal_rewards": np.asarray([[0, 9, 0, 0]], dtype=np.float32),
+    }
+    buf = ArrayReplayBuffer(arrays=arrays, indices=np.asarray([0], dtype=np.int64))
+
+    batch = buf.sample(1, seed=42)
+
+    assert batch.action_ids[0] == 7
+    assert batch.returns[0] == 9.0
+    assert batch.next_planes.shape == (1, 0)
+    assert batch.rewards[0] == 0.0
+    assert batch.dones[0] == 0.0

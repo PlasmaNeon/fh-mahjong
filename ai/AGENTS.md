@@ -22,12 +22,16 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, and terminal-reward backfill (`backfill_returns`) utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
+  - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
   - `read_transitions()` accepts either JSONL or a NumPy shard directory containing `manifest.json`.
+  - `read_transition_arrays(..., keys=...)` can load only the arrays needed by a trainer.
+  - `ShardedTransitionWriter` supports incremental direct-to-shard generation without a temporary JSONL file.
 - **src/fh_mahjong_ai/trainer.py** — Self-play collection, behavior-cloning, and conservative offline Q-learning trainer utilities.
 - **src/fh_mahjong_ai/scripts/selfplay_smoke.py** — Mock-bridge smoke runner that exercises the package end to end.
-- **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL plus dataset manifest via the Go bridge (or mock fallback).
-  - `--chunk-size` bounds each bridge export request and appends chunks to one JSONL with globally unique `episode_index` values.
+- **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL or sharded NumPy plus dataset manifest via the Go bridge (or mock fallback).
+  - `--chunk-size` bounds each bridge export request and preserves globally unique `episode_index` values across chunks.
+  - `--format npz-shards` writes generated chunks directly to sharded NumPy storage.
 - **src/fh_mahjong_ai/scripts/convert_data.py** — CLI: convert JSONL transition data into sharded NumPy replay storage.
 - **src/fh_mahjong_ai/scripts/train_bc.py** — CLI: behavior cloning training with deterministic episode-level train/validation split, validation agreement reporting, checkpointing, and resume support.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
@@ -56,10 +60,11 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - `MockMahjongBridge` remains available for smoke tests, but `bridge_kind="go"` is now the default for real bridge work.
 - The Python package stays compatible with Python 3.9 by avoiding `dataclass(slots=True)` in the scaffold types/configs.
 - All action selection assumes the fixed 204-action catalog supplied by the Go bridge.
-- Dataset generation writes a manifest next to each JSONL file with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.
+- Dataset generation writes a manifest next to each JSONL file or shard directory with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.
 - Large Go-bridge exports should use chunked generation instead of one large protobuf response; the CLI defaults to `--chunk-size 1000`.
+- Large generated datasets should prefer `fh-mj-generate-data --format npz-shards` so the pipeline avoids a huge temporary JSONL file.
 - Large training datasets can be converted with `fh-mj-convert-data` to sharded NumPy storage; training/evaluation CLIs accept the shard directory as `--data`.
-- Sharded NumPy datasets use array-backed replay for BC/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object.
+- Sharded NumPy datasets use array-backed replay for BC/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC training loads only current-observation/action/return arrays to keep 50k+ datasets within WSL memory.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
 - Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids.

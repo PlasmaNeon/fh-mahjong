@@ -14,7 +14,7 @@ from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.data import backfill_returns
 from fh_mahjong_ai.env import MahjongEnv
 from fh_mahjong_ai.policies import RandomMaskedPolicy
-from fh_mahjong_ai.storage import write_transitions_jsonl
+from fh_mahjong_ai.storage import ShardedTransitionWriter, write_transitions_jsonl
 from fh_mahjong_ai.trainer import collect_episode
 from fh_mahjong_ai.types import Transition
 
@@ -27,12 +27,16 @@ def generate_dataset(
     bridge_library_path: Optional[Path] = None,
     manifest_path: Optional[Path] = None,
     chunk_size: Optional[int] = None,
+    output_format: str = "jsonl",
+    shard_size: int = 50_000,
+    compressed_shards: bool = False,
 ) -> dict:
-    """Generate heuristic trajectories and write to JSONL.
+    """Generate heuristic trajectories and write to JSONL or NumPy shards.
 
     Returns a stats dict with keys: episodes, transitions, elapsed_seconds,
     output_path, and manifest_path.
     """
+    normalized_output_format = normalize_output_format(output_format)
     config = EnvConfig(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
@@ -40,13 +44,21 @@ def generate_dataset(
         auto_play_heuristics=True,
     )
     bridge = build_bridge(config)
+    shard_writer: ShardedTransitionWriter | None = None
     chunk_stats: list[dict[str, Any]] = []
     total_transitions = 0
     try:
         t0 = time.monotonic()
         effective_chunk_size = normalize_chunk_size(episodes, chunk_size)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("", encoding="utf-8")
+        if normalized_output_format == "jsonl":
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("", encoding="utf-8")
+        else:
+            shard_writer = ShardedTransitionWriter(
+                output_path,
+                shard_size=shard_size,
+                compressed=compressed_shards,
+            )
 
         for chunk_index, episode_offset in enumerate(range(0, episodes, effective_chunk_size)):
             chunk_episodes = min(effective_chunk_size, episodes - episode_offset)
@@ -67,7 +79,11 @@ def generate_dataset(
                 offset_episode_indices(transitions, episode_offset)
 
             backfill_returns(transitions)
-            write_transitions_jsonl(output_path, transitions, append=True)
+            if normalized_output_format == "jsonl":
+                write_transitions_jsonl(output_path, transitions, append=True)
+            else:
+                assert shard_writer is not None
+                shard_writer.write_many(transitions)
             total_transitions += len(transitions)
             chunk_stats.append(
                 {
@@ -79,8 +95,11 @@ def generate_dataset(
                     "episode_index_offset": episode_offset,
                 }
             )
+        shard_manifest = shard_writer.close() if shard_writer is not None else None
         elapsed = time.monotonic() - t0
     finally:
+        if shard_writer is not None:
+            shard_writer.close()
         bridge.close()
 
     stats = {
@@ -90,9 +109,15 @@ def generate_dataset(
         "start_seed": start_seed,
         "end_seed": start_seed + episodes - 1 if episodes > 0 else start_seed,
         "output_path": str(output_path),
+        "output_format": normalized_output_format,
         "chunk_size": effective_chunk_size,
         "chunks": chunk_stats,
+        "shard_size": max(1, int(shard_size)),
+        "compressed_shards": compressed_shards,
     }
+    if shard_manifest is not None:
+        stats["shards"] = shard_manifest["shards"]
+        stats["shard_manifest_path"] = str(output_path / "manifest.json")
     manifest = dataset_manifest(
         config=config,
         stats=stats,
@@ -104,6 +129,13 @@ def generate_dataset(
     write_dataset_manifest(manifest_output, manifest)
     stats["manifest_path"] = str(manifest_output)
     return stats
+
+
+def normalize_output_format(output_format: str) -> str:
+    normalized = output_format.replace("-", "_")
+    if normalized not in {"jsonl", "npz_shards"}:
+        raise ValueError(f"unsupported output format: {output_format}")
+    return normalized
 
 
 def normalize_chunk_size(episodes: int, chunk_size: Optional[int]) -> int:
@@ -166,13 +198,17 @@ def dataset_manifest(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset": {
             "path": str(output_path),
-            "format": "jsonl",
+            "format": str(stats["output_format"]),
             "episodes": int(stats["episodes"]),
             "transitions": int(stats["transitions"]),
             "start_seed": int(stats["start_seed"]),
             "end_seed": int(stats["end_seed"]),
             "chunk_size": int(stats["chunk_size"]),
             "chunks": stats["chunks"],
+            "shard_size": int(stats["shard_size"]),
+            "compressed_shards": bool(stats["compressed_shards"]),
+            "shards": stats.get("shards", []),
+            "shard_manifest_path": stats.get("shard_manifest_path"),
         },
         "source": {
             "policy": policy_source,
@@ -222,9 +258,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate heuristic trajectory data")
     parser.add_argument("--episodes", type=int, default=100, help="Number of episodes")
     parser.add_argument("--start-seed", type=int, default=1, help="Starting RNG seed")
-    parser.add_argument("--output", type=Path, default=Path("data/heuristic.jsonl"), help="Output JSONL path")
+    parser.add_argument("--output", type=Path, default=Path("data/heuristic.jsonl"), help="Output JSONL path or shard directory")
     parser.add_argument("--manifest-output", type=Path, default=None, help="Output manifest JSON path")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
+    parser.add_argument(
+        "--format",
+        choices=("jsonl", "npz-shards"),
+        default="jsonl",
+        help="Dataset storage format",
+    )
+    parser.add_argument("--shard-size", type=int, default=50_000, help="Transitions per NumPy shard")
+    parser.add_argument("--compressed-shards", action="store_true", help="Write compressed NumPy shards")
     parser.add_argument(
         "--chunk-size",
         type=int,
@@ -242,9 +286,14 @@ def main() -> None:
         bridge_library_path=args.bridge_lib,
         manifest_path=args.manifest_output,
         chunk_size=args.chunk_size,
+        output_format=args.format,
+        shard_size=args.shard_size,
+        compressed_shards=args.compressed_shards,
     )
     print(f"Done: {stats['transitions']} transitions from {stats['episodes']} episodes in {stats['elapsed_seconds']}s")
     print(f"Saved to {args.output}")
+    if "shard_manifest_path" in stats:
+        print(f"Shard manifest saved to {stats['shard_manifest_path']}")
     print(f"Manifest saved to {stats['manifest_path']}")
 
 

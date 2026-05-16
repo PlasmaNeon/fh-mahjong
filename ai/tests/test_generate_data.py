@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from fh_mahjong_ai.scripts.generate_data import generate_dataset
-from fh_mahjong_ai.storage import read_transitions_jsonl
+from fh_mahjong_ai.storage import read_transitions, read_transitions_jsonl
 
 
 def test_generate_dataset_mock(tmp_path: Path) -> None:
@@ -64,3 +64,29 @@ def test_generate_dataset_mock_chunked_uses_global_episode_indices(tmp_path: Pat
     manifest_payload = json.loads(output.with_suffix(".manifest.json").read_text())
     assert manifest_payload["dataset"]["chunk_size"] == 2
     assert len(manifest_payload["dataset"]["chunks"]) == 3
+
+
+def test_generate_dataset_mock_can_write_npz_shards(tmp_path: Path) -> None:
+    output = tmp_path / "npz-data"
+    stats = generate_dataset(
+        episodes=3,
+        start_seed=20,
+        output_path=output,
+        bridge_kind="mock",
+        bridge_library_path=None,
+        chunk_size=1,
+        output_format="npz_shards",
+        shard_size=2,
+    )
+
+    transitions = read_transitions(output)
+    manifest_payload = json.loads((output / "manifest.json").read_text())
+    dataset_manifest = json.loads((tmp_path / "npz-data.manifest.json").read_text())
+
+    assert stats["output_format"] == "npz_shards"
+    assert stats["transitions"] == len(transitions)
+    assert stats["shard_manifest_path"] == str(output / "manifest.json")
+    assert manifest_payload["format"] == "npz_shards"
+    assert all(shard["transitions"] <= 2 for shard in manifest_payload["shards"])
+    assert dataset_manifest["dataset"]["format"] == "npz_shards"
+    assert dataset_manifest["dataset"]["shard_manifest_path"] == str(output / "manifest.json")

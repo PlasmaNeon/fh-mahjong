@@ -18,6 +18,16 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
 from fh_mahjong_ai.trainer import BehaviorCloningTrainer, TrainMetrics
 
+BC_ARRAY_KEYS = (
+    "seats",
+    "planes",
+    "scalars",
+    "action_mask",
+    "action_ids",
+    "episode_index",
+    "terminal_rewards",
+)
+
 
 def train_bc(
     data_path: Path,
@@ -44,7 +54,7 @@ def train_bc(
     validation_transitions = []
 
     if is_sharded_transition_dataset(data_path):
-        arrays = read_transition_arrays(data_path)
+        arrays = read_transition_arrays(data_path, keys=BC_ARRAY_KEYS)
         train_indices, validation_indices = split_array_train_validation(
             arrays["episode_index"],
             validation_fraction=validation_fraction,
