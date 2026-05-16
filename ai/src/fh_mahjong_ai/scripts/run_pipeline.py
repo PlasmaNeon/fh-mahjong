@@ -11,7 +11,7 @@ from fh_mahjong_ai.evaluate import compute_action_agreement, evaluate_duplicate_
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.generate_data import generate_dataset
 from fh_mahjong_ai.scripts.train_bc import train_bc
-from fh_mahjong_ai.storage import load_checkpoint, read_transitions_jsonl
+from fh_mahjong_ai.storage import load_checkpoint, read_transitions
 
 
 def run_pipeline(
@@ -73,7 +73,7 @@ def run_pipeline(
     latest_ckpt = sorted(ckpt_dir.glob("epoch_*.pt"))[-1]
     load_checkpoint(latest_ckpt, model)
 
-    transitions = read_transitions_jsonl(data_path)
+    transitions = read_transitions(data_path)
     offline_report = compute_action_agreement(model, transitions, device=device)
     print(f"Action agreement: {offline_report['agreement_rate']:.2%}")
     print(f"Top-3 agreement: {offline_report['top3_agreement_rate']:.2%}")

@@ -70,3 +70,46 @@ class ReplayBuffer:
             rewards=rewards,
             dones=dones,
         )
+
+
+@dataclass
+class ArrayReplayBuffer:
+    """Replay buffer backed by contiguous NumPy arrays instead of Transition objects."""
+
+    arrays: dict[str, np.ndarray]
+    indices: np.ndarray
+
+    def __post_init__(self) -> None:
+        self.indices = np.asarray(self.indices, dtype=np.int64)
+
+    def __len__(self) -> int:
+        return int(self.indices.size)
+
+    def sample(self, batch_size: int, seed: Optional[int] = None) -> TrainBatch:
+        if batch_size > len(self):
+            raise ValueError(f"cannot sample {batch_size} from replay buffer of size {len(self)}")
+
+        rng = np.random.default_rng(seed)
+        positions = rng.choice(len(self), size=batch_size, replace=False)
+        indices = self.indices[positions]
+        seats = self.arrays["seats"][indices].astype(np.int64, copy=False)
+
+        returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
+        rewards = self.arrays["rewards"][indices, seats].astype(np.float32, copy=False)
+        dones = np.logical_or(
+            self.arrays["terminated"][indices],
+            self.arrays["truncated"][indices],
+        ).astype(np.float32)
+
+        return TrainBatch(
+            planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
+            scalars=self.arrays["scalars"][indices].astype(np.float32, copy=False),
+            action_mask=self.arrays["action_mask"][indices].astype(np.int8, copy=False),
+            action_ids=self.arrays["action_ids"][indices].astype(np.int64, copy=False),
+            returns=returns,
+            next_planes=self.arrays["next_planes"][indices].astype(np.float32, copy=False),
+            next_scalars=self.arrays["next_scalars"][indices].astype(np.float32, copy=False),
+            next_action_mask=self.arrays["next_action_mask"][indices].astype(np.int8, copy=False),
+            rewards=rewards,
+            dones=dones,
+        )

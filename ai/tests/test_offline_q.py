@@ -9,7 +9,7 @@ from fh_mahjong_ai.buffer import ReplayBuffer
 from fh_mahjong_ai.config import EnvConfig, ModelConfig, OfflineQConfig, TrainConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_offline_q import train_offline_q
-from fh_mahjong_ai.storage import write_transitions_jsonl
+from fh_mahjong_ai.storage import write_transitions_jsonl, write_transitions_npz_shards
 from fh_mahjong_ai.trainer import OfflineQTrainer
 from fh_mahjong_ai.types import Observation, Transition
 
@@ -81,6 +81,27 @@ def test_train_offline_q_runs_and_saves_checkpoint(tmp_path: Path) -> None:
 
     metrics = train_offline_q(
         data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_offline_q_runs_from_npz_shards(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_dir, _transitions(12, env_config), shard_size=5)
+
+    metrics = train_offline_q(
+        data_path=shard_dir,
         checkpoint_dir=ckpt_dir,
         epochs=1,
         batch_size=6,

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from fh_mahjong_ai.scripts.train_bc import train_bc
-from fh_mahjong_ai.storage import write_transitions_jsonl
+from fh_mahjong_ai.storage import read_transitions_jsonl, write_transitions_jsonl, write_transitions_npz_shards
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -78,6 +78,27 @@ def test_train_bc_writes_validation_report(tmp_path: Path) -> None:
     assert report["train_transitions"] == 15
     assert report["validation_transitions"] == 5
     assert report["epochs"][0]["validation"]["total_transitions"] == 5
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_bc_runs_from_npz_shards(tmp_path: Path) -> None:
+    data_path = tmp_path / "data.jsonl"
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    write_transitions_npz_shards(shard_dir, read_transitions_jsonl(data_path), shard_size=7)
+
+    train_bc(
+        data_path=shard_dir,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=8,
+        learning_rate=1e-3,
+        device="cpu",
+        validation_fraction=0.25,
+        split_seed=2,
+    )
+
     assert (ckpt_dir / "epoch_001.pt").exists()
 
 

@@ -9,10 +9,10 @@ from typing import Any
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import compute_action_agreement, evaluate_duplicate_seats, evaluate_online
+from fh_mahjong_ai.evaluate import compute_action_agreement_from_batches, evaluate_duplicate_seats, evaluate_online
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import load_checkpoint, read_transitions_jsonl
+from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint
 
 
 def write_evaluation_report(path: Path, report: dict[str, Any]) -> None:
@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--duplicate-seats", action="store_true", help="Rotate the agent through all four seats")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--device", type=str, default="cpu", help="Device")
+    parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
@@ -65,6 +66,7 @@ def main() -> None:
                     "checkpoint_step": step,
                     "data": args.data,
                     "device": args.device,
+                    "offline_batch_size": args.offline_batch_size,
                     "online_episodes": args.online_episodes,
                     "start_seed": args.start_seed,
                     "duplicate_seats": args.duplicate_seats,
@@ -74,8 +76,11 @@ def main() -> None:
 
         if args.data is not None:
             print(f"\n--- Offline Evaluation (action agreement) ---")
-            transitions = read_transitions_jsonl(args.data)
-            offline_report = compute_action_agreement(model, transitions, device=args.device)
+            offline_report = compute_action_agreement_from_batches(
+                model,
+                iter_observation_action_batches(args.data, args.offline_batch_size),
+                device=args.device,
+            )
             final_report["offline"] = offline_report
             print(f"  Transitions:     {offline_report['total_transitions']}")
             print(f"  Agreement:       {offline_report['agreement_rate']:.2%}")

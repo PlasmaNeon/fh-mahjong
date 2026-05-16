@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -53,6 +53,7 @@ def compute_action_agreement(
     model: nn.Module,
     transitions: List[Transition],
     device: str = "cpu",
+    batch_size: int = 1024,
 ) -> Dict[str, Any]:
     """Compute how often the model's argmax action matches the expert's action.
 
@@ -73,25 +74,79 @@ def compute_action_agreement(
             "family_agreement": {},
         }
 
+    batches = (
+        {
+            "planes": np.stack([t.observation.planes for t in transitions[start : start + max(1, batch_size)]]).astype(
+                np.float32,
+                copy=False,
+            ),
+            "scalars": np.stack([t.observation.scalars for t in transitions[start : start + max(1, batch_size)]]).astype(
+                np.float32,
+                copy=False,
+            ),
+            "action_mask": np.stack(
+                [t.observation.action_mask for t in transitions[start : start + max(1, batch_size)]]
+            ).astype(np.int8, copy=False),
+            "action_ids": np.asarray(
+                [t.action_id for t in transitions[start : start + max(1, batch_size)]],
+                dtype=np.int64,
+            ),
+        }
+        for start in range(0, total, max(1, batch_size))
+    )
+    return compute_action_agreement_from_batches(model, batches, device=device)
+
+
+def compute_action_agreement_from_batches(
+    model: nn.Module,
+    batches: Iterator[dict[str, np.ndarray]],
+    device: str = "cpu",
+) -> Dict[str, Any]:
+    """Compute action agreement from pre-batched observation/action arrays."""
+    model.eval()
+    exact_matches = 0
+    top3_matches = 0
+    total = 0
+    families: dict[str, dict[str, int]] = {}
+
     with torch.inference_mode():
-        for t in transitions:
-            planes = torch.from_numpy(t.observation.planes).unsqueeze(0).to(device)
-            scalars = torch.from_numpy(t.observation.scalars).unsqueeze(0).to(device)
-            mask = torch.from_numpy(t.observation.action_mask).unsqueeze(0).to(device)
+        for batch in batches:
+            action_ids = np.asarray(batch["action_ids"], dtype=np.int64)
+            if action_ids.size == 0:
+                continue
+
+            planes = torch.from_numpy(np.asarray(batch["planes"], dtype=np.float32)).to(device)
+            scalars = torch.from_numpy(np.asarray(batch["scalars"], dtype=np.float32)).to(device)
+            mask = torch.from_numpy(np.asarray(batch["action_mask"], dtype=np.int8)).to(device)
 
             logits, _ = model(planes, scalars, mask)
-            top_actions = torch.topk(logits, k=min(3, logits.shape[1]), dim=1).indices[0]
-            predicted = int(top_actions[0].item())
+            top_actions_tensor = torch.topk(logits, k=min(3, logits.shape[1]), dim=1).indices.cpu()
+            top_actions = top_actions_tensor.numpy()
+            predicted_actions = top_actions[:, 0]
 
-            family = action_family(t.action_id)
-            family_stats = families.setdefault(family, {"total": 0, "exact": 0, "top3": 0})
-            family_stats["total"] += 1
-            if predicted == t.action_id:
-                exact_matches += 1
-                family_stats["exact"] += 1
-            if t.action_id in top_actions.tolist():
-                top3_matches += 1
-                family_stats["top3"] += 1
+            exact_batch = predicted_actions == action_ids
+            top3_batch = (top_actions == action_ids[:, None]).any(axis=1)
+            exact_matches += int(exact_batch.sum())
+            top3_matches += int(top3_batch.sum())
+            total += int(action_ids.size)
+
+            for index, action_id in enumerate(action_ids.tolist()):
+                family = action_family(int(action_id))
+                family_stats = families.setdefault(family, {"total": 0, "exact": 0, "top3": 0})
+                family_stats["total"] += 1
+                if bool(exact_batch[index]):
+                    family_stats["exact"] += 1
+                if bool(top3_batch[index]):
+                    family_stats["top3"] += 1
+
+    if total == 0:
+        return {
+            "agreement_rate": 0.0,
+            "top3_agreement_rate": 0.0,
+            "total_transitions": 0,
+            "action_family_counts": {},
+            "family_agreement": {},
+        }
 
     family_agreement = {
         family: {

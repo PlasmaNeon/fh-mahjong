@@ -5,14 +5,15 @@ import argparse
 from pathlib import Path
 from typing import List, Optional
 
+import numpy as np
 import torch
 
-from fh_mahjong_ai.buffer import ReplayBuffer
+from fh_mahjong_ai.buffer import ArrayReplayBuffer, ReplayBuffer
 from fh_mahjong_ai.config import EnvConfig, ModelConfig, OfflineQConfig, TrainConfig
 from fh_mahjong_ai.data import backfill_returns
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import load_checkpoint, read_transitions_jsonl, save_checkpoint
+from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
 from fh_mahjong_ai.trainer import OfflineQMetrics, OfflineQTrainer
 
 
@@ -38,11 +39,19 @@ def train_offline_q(
     mlflow_run_name: Optional[str] = None,
 ) -> List[OfflineQMetrics]:
     """Train a masked-action Q head from fixed offline trajectory data."""
-    transitions = read_transitions_jsonl(data_path)
-    backfill_returns(transitions)
-
-    buf = ReplayBuffer(capacity=len(transitions))
-    buf.extend(transitions)
+    if is_sharded_transition_dataset(data_path):
+        arrays = read_transition_arrays(data_path)
+        buf = ArrayReplayBuffer(
+            arrays=arrays,
+            indices=np.arange(arrays["action_ids"].shape[0], dtype=np.int64),
+        )
+        transition_count = len(buf)
+    else:
+        transitions = read_transitions(data_path)
+        backfill_returns(transitions)
+        buf = ReplayBuffer(capacity=len(transitions))
+        buf.extend(transitions)
+        transition_count = len(transitions)
 
     env_config = EnvConfig()
     model_config = ModelConfig()
@@ -105,7 +114,7 @@ def train_offline_q(
                     "target_update_interval": target_update_interval,
                     "target_tau": target_tau,
                     "device": device,
-                    "transitions": len(transitions),
+                    "transitions": transition_count,
                     "init_checkpoint": init_checkpoint,
                 }
             )

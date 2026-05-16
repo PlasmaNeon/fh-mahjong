@@ -81,6 +81,15 @@ class TestActionAgreement:
         assert "discard" in report["family_agreement"]
         assert 0.0 <= report["top3_agreement_rate"] <= 1.0
 
+    def test_batched_agreement_matches_single_item_batches(self) -> None:
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+        transitions = [_transition(action_id=i % 10 + 5, seed=i) for i in range(17)]
+
+        single = compute_action_agreement(model, transitions, device="cpu", batch_size=1)
+        batched = compute_action_agreement(model, transitions, device="cpu", batch_size=8)
+
+        assert batched == single
+
 
 class TestEvaluateOnline:
     def test_runs_with_mock_bridge(self) -> None:

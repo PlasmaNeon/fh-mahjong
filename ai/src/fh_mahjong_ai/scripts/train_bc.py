@@ -6,15 +6,16 @@ import json
 from pathlib import Path
 from typing import Any, List, Optional
 
+import numpy as np
 import torch
 
-from fh_mahjong_ai.buffer import ReplayBuffer
+from fh_mahjong_ai.buffer import ArrayReplayBuffer, ReplayBuffer
 from fh_mahjong_ai.config import EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.data import backfill_returns, split_train_validation
-from fh_mahjong_ai.evaluate import compute_action_agreement
+from fh_mahjong_ai.evaluate import compute_action_agreement, compute_action_agreement_from_batches
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import load_checkpoint, read_transitions_jsonl, save_checkpoint
+from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
 from fh_mahjong_ai.trainer import BehaviorCloningTrainer, TrainMetrics
 
 
@@ -34,21 +35,42 @@ def train_bc(
     mlflow_tracking_uri: Optional[str] = None,
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
+    validation_batch_size: int = 4096,
 ) -> List[TrainMetrics]:
     """Run BC training and return collected metrics."""
     torch.manual_seed(split_seed)
-    transitions = read_transitions_jsonl(data_path)
-    backfill_returns(transitions)
-    train_transitions, validation_transitions = split_train_validation(
-        transitions,
-        validation_fraction=validation_fraction,
-        seed=split_seed,
-    )
-    if not train_transitions:
-        raise ValueError(f"no training transitions found in {data_path}")
+    validation_arrays: Optional[dict[str, np.ndarray]] = None
+    validation_indices: Optional[np.ndarray] = None
+    validation_transitions = []
 
-    buf = ReplayBuffer(capacity=len(train_transitions))
-    buf.extend(train_transitions)
+    if is_sharded_transition_dataset(data_path):
+        arrays = read_transition_arrays(data_path)
+        train_indices, validation_indices = split_array_train_validation(
+            arrays["episode_index"],
+            validation_fraction=validation_fraction,
+            seed=split_seed,
+        )
+        total_transitions = int(arrays["action_ids"].shape[0])
+        train_count = int(train_indices.size)
+        validation_count = int(validation_indices.size)
+        validation_arrays = arrays
+        buf = ArrayReplayBuffer(arrays=arrays, indices=train_indices)
+    else:
+        transitions = read_transitions(data_path)
+        backfill_returns(transitions)
+        train_transitions, validation_transitions = split_train_validation(
+            transitions,
+            validation_fraction=validation_fraction,
+            seed=split_seed,
+        )
+        total_transitions = len(transitions)
+        train_count = len(train_transitions)
+        validation_count = len(validation_transitions)
+        buf = ReplayBuffer(capacity=len(train_transitions))
+        buf.extend(train_transitions)
+
+    if len(buf) == 0:
+        raise ValueError(f"no training transitions found in {data_path}")
 
     env_config = EnvConfig()
     model_config = ModelConfig()
@@ -77,12 +99,13 @@ def train_bc(
         "method": "behavior_cloning",
         "data_path": str(data_path),
         "checkpoint_dir": str(checkpoint_dir),
-        "total_transitions": len(transitions),
-        "train_transitions": len(train_transitions),
-        "validation_transitions": len(validation_transitions),
+        "total_transitions": total_transitions,
+        "train_transitions": train_count,
+        "validation_transitions": validation_count,
         "validation_fraction": validation_fraction,
         "split_seed": split_seed,
         "batch_size": train_config.batch_size,
+        "validation_batch_size": validation_batch_size,
         "learning_rate": learning_rate,
         "device": device,
         "epochs": [],
@@ -104,14 +127,15 @@ def train_bc(
                     "epochs": epochs,
                     "start_epoch": start_epoch,
                     "batch_size": train_config.batch_size,
+                    "validation_batch_size": validation_batch_size,
                     "learning_rate": learning_rate,
                     "weight_decay": train_config.weight_decay,
                     "validation_fraction": validation_fraction,
                     "split_seed": split_seed,
                     "device": device,
-                    "total_transitions": len(transitions),
-                    "train_transitions": len(train_transitions),
-                    "validation_transitions": len(validation_transitions),
+                    "total_transitions": total_transitions,
+                    "train_transitions": train_count,
+                    "validation_transitions": validation_count,
                 }
             )
 
@@ -141,12 +165,24 @@ def train_bc(
                 "avg_policy_loss": epoch_policy_loss / steps_per_epoch,
                 "avg_value_loss": epoch_value_loss / steps_per_epoch,
             }
-            if validation_transitions:
-                validation_report = compute_action_agreement(
-                    model,
-                    validation_transitions,
-                    device=device,
-                )
+            if validation_count:
+                if validation_arrays is not None and validation_indices is not None:
+                    validation_report = compute_action_agreement_from_batches(
+                        model,
+                        iter_array_observation_action_batches(
+                            validation_arrays,
+                            validation_indices,
+                            validation_batch_size,
+                        ),
+                        device=device,
+                    )
+                else:
+                    validation_report = compute_action_agreement(
+                        model,
+                        validation_transitions,
+                        device=device,
+                        batch_size=validation_batch_size,
+                    )
                 epoch_report["validation"] = validation_report
                 print(
                     f"--- epoch {epoch} avg_loss={avg_loss:.4f}  "
@@ -195,6 +231,46 @@ def write_training_report(path: Path, report: dict[str, Any]) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def split_array_train_validation(
+    episode_indices: np.ndarray,
+    validation_fraction: float = 0.2,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    if validation_fraction < 0.0 or validation_fraction >= 1.0:
+        raise ValueError("validation_fraction must be in [0.0, 1.0)")
+
+    unique_episodes = np.unique(episode_indices)
+    if unique_episodes.size <= 1 or validation_fraction == 0.0:
+        return np.arange(episode_indices.shape[0], dtype=np.int64), np.asarray([], dtype=np.int64)
+
+    rng = np.random.default_rng(seed)
+    shuffled = unique_episodes.copy()
+    rng.shuffle(shuffled)
+    validation_count = int(round(unique_episodes.size * validation_fraction))
+    validation_count = min(max(validation_count, 1), unique_episodes.size - 1)
+    validation_episodes = set(int(index) for index in shuffled[:validation_count])
+
+    validation_mask = np.asarray([int(index) in validation_episodes for index in episode_indices], dtype=bool)
+    all_indices = np.arange(episode_indices.shape[0], dtype=np.int64)
+    return all_indices[~validation_mask], all_indices[validation_mask]
+
+
+def iter_array_observation_action_batches(
+    arrays: dict[str, np.ndarray],
+    indices: np.ndarray,
+    batch_size: int,
+):
+    effective_batch_size = max(1, int(batch_size))
+    for start in range(0, indices.size, effective_batch_size):
+        selected = indices[start : start + effective_batch_size]
+        yield {
+            "planes": arrays["planes"][selected],
+            "scalars": arrays["scalars"][selected],
+            "action_mask": arrays["action_mask"][selected],
+            "action_ids": arrays["action_ids"][selected],
+        }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train behavior cloning model")
     parser.add_argument("--data", type=Path, required=True, help="JSONL trajectory data")
@@ -206,6 +282,7 @@ def main() -> None:
     parser.add_argument("--log-interval", type=int, default=10)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--validation-batch-size", type=int, default=4096, help="Batch size for validation inference")
     parser.add_argument("--split-seed", type=int, default=0)
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--mlflow", action="store_true", help="Log training params, metrics, and artifacts to MLflow")
@@ -232,6 +309,7 @@ def main() -> None:
         mlflow_tracking_uri=args.mlflow_tracking_uri,
         mlflow_experiment=args.mlflow_experiment,
         mlflow_run_name=args.mlflow_run_name,
+        validation_batch_size=args.validation_batch_size,
     )
     print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
     print(f"Report saved to {report_output}")
