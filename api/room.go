@@ -19,6 +19,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// fallbackHeuristicPolicy is a stateless package-level instance used by
+// policyForSeat when a configured policy is missing for an automated seat.
+// HeuristicPolicy carries no state, so a single shared instance is safe.
+var fallbackHeuristicPolicy bot.Policy = bot.NewHeuristicPolicy()
+
 const maxAutomatedSeatIterations = 200
 
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
@@ -40,8 +45,8 @@ type Room struct {
 	// supersedes BotPolicy for that seat. Populated by the matchmaker from
 	// the host's PrivateTable seat config. Seats not present in this map
 	// fall through to BotPolicy / the heuristic baseline (defensive only).
-	SeatPolicies map[uint32]bot.Policy
-	Seats        map[uint32]*Client // maps 0-3 to active WS connections
+	SeatPolicies    map[uint32]bot.Policy
+	Seats           map[uint32]*Client              // maps 0-3 to active WS connections
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
@@ -396,7 +401,7 @@ func (r *Room) policyForSeat(seat uint32) bot.Policy {
 	if r.BotPolicy != nil {
 		return r.BotPolicy
 	}
-	return bot.NewHeuristicPolicy()
+	return fallbackHeuristicPolicy
 }
 
 func (r *Room) hasConnectedInterruptSeat() bool {
