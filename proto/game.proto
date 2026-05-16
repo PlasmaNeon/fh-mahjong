@@ -305,3 +305,35 @@ message TrajectorySample {
 message TrajectoryDataset {
   repeated TrajectorySample samples = 1;
 }
+
+// ---------------------------------------------------------
+// Private Table Configuration
+// ---------------------------------------------------------
+
+enum Difficulty {
+  DIFFICULTY_UNSPECIFIED = 0;
+  DIFFICULTY_HEURISTIC = 1;
+}
+
+message SeatConfig {
+  // "empty" | "human" | "bot"
+  string kind = 1;
+
+  // Populated only when kind == "human".
+  uint32 user_id = 2;
+  string username = 3;
+
+  // Populated only when kind == "bot".
+  Difficulty difficulty = 4;
+}
+
+message PrivateTableState {
+  string table_id = 1;
+  uint32 host_user_id = 2;
+  // Exactly four entries, indexed 0-3 by seat.
+  repeated SeatConfig seats = 3;
+  // "configuring" | "started"
+  string state = 4;
+  // Empty until state == "started".
+  string match_id = 5;
+}

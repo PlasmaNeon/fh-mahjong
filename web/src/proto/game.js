@@ -7056,6 +7056,634 @@ export const game = $root.game = (() => {
         return TrajectoryDataset;
     })();
 
+    /**
+     * Difficulty enum.
+     * @name game.Difficulty
+     * @enum {number}
+     * @property {number} DIFFICULTY_UNSPECIFIED=0 DIFFICULTY_UNSPECIFIED value
+     * @property {number} DIFFICULTY_HEURISTIC=1 DIFFICULTY_HEURISTIC value
+     */
+    game.Difficulty = (function() {
+        const valuesById = {}, values = Object.create(valuesById);
+        values[valuesById[0] = "DIFFICULTY_UNSPECIFIED"] = 0;
+        values[valuesById[1] = "DIFFICULTY_HEURISTIC"] = 1;
+        return values;
+    })();
+
+    game.SeatConfig = (function() {
+
+        /**
+         * Properties of a SeatConfig.
+         * @memberof game
+         * @interface ISeatConfig
+         * @property {string|undefined} [kind] SeatConfig kind
+         * @property {number|undefined} [userId] SeatConfig userId
+         * @property {string|undefined} [username] SeatConfig username
+         * @property {game.Difficulty|undefined} [difficulty] SeatConfig difficulty
+         */
+
+        /**
+         * Constructs a new SeatConfig.
+         * @memberof game
+         * @classdesc Represents a SeatConfig.
+         * @implements ISeatConfig
+         * @constructor
+         * @param {game.ISeatConfig=} [properties] Properties to set
+         */
+        function SeatConfig(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * SeatConfig kind.
+         * @member {string} kind
+         * @memberof game.SeatConfig
+         * @instance
+         */
+        SeatConfig.prototype.kind = "";
+
+        /**
+         * SeatConfig userId.
+         * @member {number} userId
+         * @memberof game.SeatConfig
+         * @instance
+         */
+        SeatConfig.prototype.userId = 0;
+
+        /**
+         * SeatConfig username.
+         * @member {string} username
+         * @memberof game.SeatConfig
+         * @instance
+         */
+        SeatConfig.prototype.username = "";
+
+        /**
+         * SeatConfig difficulty.
+         * @member {game.Difficulty} difficulty
+         * @memberof game.SeatConfig
+         * @instance
+         */
+        SeatConfig.prototype.difficulty = 0;
+
+        /**
+         * Creates a new SeatConfig instance using the specified properties.
+         * @function create
+         * @memberof game.SeatConfig
+         * @static
+         * @param {game.ISeatConfig=} [properties] Properties to set
+         * @returns {game.SeatConfig} SeatConfig instance
+         */
+        SeatConfig.create = function create(properties) {
+            return new SeatConfig(properties);
+        };
+
+        /**
+         * Encodes the specified SeatConfig message. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
+         * @function encode
+         * @memberof game.SeatConfig
+         * @static
+         * @param {game.ISeatConfig} message SeatConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SeatConfig.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.kind != null && Object.hasOwnProperty.call(message, "kind"))
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.kind);
+            if (message.userId != null && Object.hasOwnProperty.call(message, "userId"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.userId);
+            if (message.username != null && Object.hasOwnProperty.call(message, "username"))
+                writer.uint32(/* id 3, wireType 2 =*/26).string(message.username);
+            if (message.difficulty != null && Object.hasOwnProperty.call(message, "difficulty"))
+                writer.uint32(/* id 4, wireType 0 =*/32).int32(message.difficulty);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified SeatConfig message, length delimited. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.SeatConfig
+         * @static
+         * @param {game.ISeatConfig} message SeatConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SeatConfig.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a SeatConfig message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.SeatConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.SeatConfig} SeatConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SeatConfig.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.SeatConfig();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.kind = reader.string();
+                        break;
+                    }
+                case 2: {
+                        message.userId = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        message.username = reader.string();
+                        break;
+                    }
+                case 4: {
+                        message.difficulty = reader.int32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a SeatConfig message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.SeatConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.SeatConfig} SeatConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SeatConfig.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a SeatConfig message.
+         * @function verify
+         * @memberof game.SeatConfig
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        SeatConfig.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.kind != null && message.hasOwnProperty("kind"))
+                if (!$util.isString(message.kind))
+                    return "kind: string expected";
+            if (message.userId != null && message.hasOwnProperty("userId"))
+                if (!$util.isInteger(message.userId))
+                    return "userId: integer expected";
+            if (message.username != null && message.hasOwnProperty("username"))
+                if (!$util.isString(message.username))
+                    return "username: string expected";
+            if (message.difficulty != null && message.hasOwnProperty("difficulty"))
+                switch (message.difficulty) {
+                default:
+                    return "difficulty: enum value expected";
+                case 0:
+                case 1:
+                    break;
+                }
+            return null;
+        };
+
+        /**
+         * Creates a SeatConfig message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.SeatConfig
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.SeatConfig} SeatConfig
+         */
+        SeatConfig.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.SeatConfig)
+                return object;
+            let message = new $root.game.SeatConfig();
+            if (object.kind != null)
+                message.kind = String(object.kind);
+            if (object.userId != null)
+                message.userId = object.userId >>> 0;
+            if (object.username != null)
+                message.username = String(object.username);
+            switch (object.difficulty) {
+            default:
+                if (typeof object.difficulty === "number") {
+                    message.difficulty = object.difficulty;
+                    break;
+                }
+                break;
+            case "DIFFICULTY_UNSPECIFIED":
+            case 0:
+                message.difficulty = 0;
+                break;
+            case "DIFFICULTY_HEURISTIC":
+            case 1:
+                message.difficulty = 1;
+                break;
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a SeatConfig message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.SeatConfig
+         * @static
+         * @param {game.SeatConfig} message SeatConfig
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        SeatConfig.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.kind = "";
+                object.userId = 0;
+                object.username = "";
+                object.difficulty = options.enums === String ? "DIFFICULTY_UNSPECIFIED" : 0;
+            }
+            if (message.kind != null && message.hasOwnProperty("kind"))
+                object.kind = message.kind;
+            if (message.userId != null && message.hasOwnProperty("userId"))
+                object.userId = message.userId;
+            if (message.username != null && message.hasOwnProperty("username"))
+                object.username = message.username;
+            if (message.difficulty != null && message.hasOwnProperty("difficulty"))
+                object.difficulty = options.enums === String ? $root.game.Difficulty[message.difficulty] === undefined ? message.difficulty : $root.game.Difficulty[message.difficulty] : message.difficulty;
+            return object;
+        };
+
+        /**
+         * Converts this SeatConfig to JSON.
+         * @function toJSON
+         * @memberof game.SeatConfig
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        SeatConfig.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for SeatConfig
+         * @function getTypeUrl
+         * @memberof game.SeatConfig
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        SeatConfig.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.SeatConfig";
+        };
+
+        return SeatConfig;
+    })();
+
+    game.PrivateTableState = (function() {
+
+        /**
+         * Properties of a PrivateTableState.
+         * @memberof game
+         * @interface IPrivateTableState
+         * @property {string|undefined} [tableId] PrivateTableState tableId
+         * @property {number|undefined} [hostUserId] PrivateTableState hostUserId
+         * @property {Array.<game.ISeatConfig>|undefined} [seats] PrivateTableState seats
+         * @property {string|undefined} [state] PrivateTableState state
+         * @property {string|undefined} [matchId] PrivateTableState matchId
+         */
+
+        /**
+         * Constructs a new PrivateTableState.
+         * @memberof game
+         * @classdesc Represents a PrivateTableState.
+         * @implements IPrivateTableState
+         * @constructor
+         * @param {game.IPrivateTableState=} [properties] Properties to set
+         */
+        function PrivateTableState(properties) {
+            this.seats = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * PrivateTableState tableId.
+         * @member {string} tableId
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.tableId = "";
+
+        /**
+         * PrivateTableState hostUserId.
+         * @member {number} hostUserId
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.hostUserId = 0;
+
+        /**
+         * PrivateTableState seats.
+         * @member {Array.<game.SeatConfig>} seats
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.seats = $util.emptyArray;
+
+        /**
+         * PrivateTableState state.
+         * @member {string} state
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.state = "";
+
+        /**
+         * PrivateTableState matchId.
+         * @member {string} matchId
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.matchId = "";
+
+        /**
+         * Creates a new PrivateTableState instance using the specified properties.
+         * @function create
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {game.IPrivateTableState=} [properties] Properties to set
+         * @returns {game.PrivateTableState} PrivateTableState instance
+         */
+        PrivateTableState.create = function create(properties) {
+            return new PrivateTableState(properties);
+        };
+
+        /**
+         * Encodes the specified PrivateTableState message. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
+         * @function encode
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {game.IPrivateTableState} message PrivateTableState message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        PrivateTableState.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.tableId != null && Object.hasOwnProperty.call(message, "tableId"))
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.tableId);
+            if (message.hostUserId != null && Object.hasOwnProperty.call(message, "hostUserId"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.hostUserId);
+            if (message.seats != null && message.seats.length)
+                for (let i = 0; i < message.seats.length; ++i)
+                    $root.game.SeatConfig.encode(message.seats[i], writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
+            if (message.state != null && Object.hasOwnProperty.call(message, "state"))
+                writer.uint32(/* id 4, wireType 2 =*/34).string(message.state);
+            if (message.matchId != null && Object.hasOwnProperty.call(message, "matchId"))
+                writer.uint32(/* id 5, wireType 2 =*/42).string(message.matchId);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified PrivateTableState message, length delimited. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {game.IPrivateTableState} message PrivateTableState message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        PrivateTableState.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a PrivateTableState message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.PrivateTableState} PrivateTableState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        PrivateTableState.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PrivateTableState();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.tableId = reader.string();
+                        break;
+                    }
+                case 2: {
+                        message.hostUserId = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        if (!(message.seats && message.seats.length))
+                            message.seats = [];
+                        message.seats.push($root.game.SeatConfig.decode(reader, reader.uint32()));
+                        break;
+                    }
+                case 4: {
+                        message.state = reader.string();
+                        break;
+                    }
+                case 5: {
+                        message.matchId = reader.string();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a PrivateTableState message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.PrivateTableState} PrivateTableState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        PrivateTableState.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a PrivateTableState message.
+         * @function verify
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        PrivateTableState.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.tableId != null && message.hasOwnProperty("tableId"))
+                if (!$util.isString(message.tableId))
+                    return "tableId: string expected";
+            if (message.hostUserId != null && message.hasOwnProperty("hostUserId"))
+                if (!$util.isInteger(message.hostUserId))
+                    return "hostUserId: integer expected";
+            if (message.seats != null && message.hasOwnProperty("seats")) {
+                if (!Array.isArray(message.seats))
+                    return "seats: array expected";
+                for (let i = 0; i < message.seats.length; ++i) {
+                    let error = $root.game.SeatConfig.verify(message.seats[i]);
+                    if (error)
+                        return "seats." + error;
+                }
+            }
+            if (message.state != null && message.hasOwnProperty("state"))
+                if (!$util.isString(message.state))
+                    return "state: string expected";
+            if (message.matchId != null && message.hasOwnProperty("matchId"))
+                if (!$util.isString(message.matchId))
+                    return "matchId: string expected";
+            return null;
+        };
+
+        /**
+         * Creates a PrivateTableState message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.PrivateTableState} PrivateTableState
+         */
+        PrivateTableState.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.PrivateTableState)
+                return object;
+            let message = new $root.game.PrivateTableState();
+            if (object.tableId != null)
+                message.tableId = String(object.tableId);
+            if (object.hostUserId != null)
+                message.hostUserId = object.hostUserId >>> 0;
+            if (object.seats) {
+                if (!Array.isArray(object.seats))
+                    throw TypeError(".game.PrivateTableState.seats: array expected");
+                message.seats = [];
+                for (let i = 0; i < object.seats.length; ++i) {
+                    if (typeof object.seats[i] !== "object")
+                        throw TypeError(".game.PrivateTableState.seats: object expected");
+                    message.seats[i] = $root.game.SeatConfig.fromObject(object.seats[i]);
+                }
+            }
+            if (object.state != null)
+                message.state = String(object.state);
+            if (object.matchId != null)
+                message.matchId = String(object.matchId);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a PrivateTableState message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {game.PrivateTableState} message PrivateTableState
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        PrivateTableState.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.seats = [];
+            if (options.defaults) {
+                object.tableId = "";
+                object.hostUserId = 0;
+                object.state = "";
+                object.matchId = "";
+            }
+            if (message.tableId != null && message.hasOwnProperty("tableId"))
+                object.tableId = message.tableId;
+            if (message.hostUserId != null && message.hasOwnProperty("hostUserId"))
+                object.hostUserId = message.hostUserId;
+            if (message.seats && message.seats.length) {
+                object.seats = [];
+                for (let j = 0; j < message.seats.length; ++j)
+                    object.seats[j] = $root.game.SeatConfig.toObject(message.seats[j], options);
+            }
+            if (message.state != null && message.hasOwnProperty("state"))
+                object.state = message.state;
+            if (message.matchId != null && message.hasOwnProperty("matchId"))
+                object.matchId = message.matchId;
+            return object;
+        };
+
+        /**
+         * Converts this PrivateTableState to JSON.
+         * @function toJSON
+         * @memberof game.PrivateTableState
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        PrivateTableState.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for PrivateTableState
+         * @function getTypeUrl
+         * @memberof game.PrivateTableState
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        PrivateTableState.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.PrivateTableState";
+        };
+
+        return PrivateTableState;
+    })();
+
     return game;
 })();
 

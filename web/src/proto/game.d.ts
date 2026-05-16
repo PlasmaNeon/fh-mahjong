@@ -2350,4 +2350,246 @@ export namespace game {
          */
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
+
+    /** Difficulty enum. */
+    enum Difficulty {
+        DIFFICULTY_UNSPECIFIED = 0,
+        DIFFICULTY_HEURISTIC = 1
+    }
+
+    /** Properties of a SeatConfig. */
+    interface ISeatConfig {
+
+        /** SeatConfig kind */
+        kind?: (string|undefined);
+
+        /** SeatConfig userId */
+        userId?: (number|undefined);
+
+        /** SeatConfig username */
+        username?: (string|undefined);
+
+        /** SeatConfig difficulty */
+        difficulty?: (game.Difficulty|undefined);
+    }
+
+    /** Represents a SeatConfig. */
+    class SeatConfig implements ISeatConfig {
+
+        /**
+         * Constructs a new SeatConfig.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ISeatConfig);
+
+        /** SeatConfig kind. */
+        public kind: string;
+
+        /** SeatConfig userId. */
+        public userId: number;
+
+        /** SeatConfig username. */
+        public username: string;
+
+        /** SeatConfig difficulty. */
+        public difficulty: game.Difficulty;
+
+        /**
+         * Creates a new SeatConfig instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns SeatConfig instance
+         */
+        public static create(properties?: game.ISeatConfig): game.SeatConfig;
+
+        /**
+         * Encodes the specified SeatConfig message. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
+         * @param message SeatConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ISeatConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified SeatConfig message, length delimited. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
+         * @param message SeatConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ISeatConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a SeatConfig message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns SeatConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatConfig;
+
+        /**
+         * Decodes a SeatConfig message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns SeatConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatConfig;
+
+        /**
+         * Verifies a SeatConfig message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a SeatConfig message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns SeatConfig
+         */
+        public static fromObject(object: { [k: string]: any }): game.SeatConfig;
+
+        /**
+         * Creates a plain object from a SeatConfig message. Also converts values to other types if specified.
+         * @param message SeatConfig
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.SeatConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this SeatConfig to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for SeatConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a PrivateTableState. */
+    interface IPrivateTableState {
+
+        /** PrivateTableState tableId */
+        tableId?: (string|undefined);
+
+        /** PrivateTableState hostUserId */
+        hostUserId?: (number|undefined);
+
+        /** PrivateTableState seats */
+        seats?: (game.ISeatConfig[]|undefined);
+
+        /** PrivateTableState state */
+        state?: (string|undefined);
+
+        /** PrivateTableState matchId */
+        matchId?: (string|undefined);
+    }
+
+    /** Represents a PrivateTableState. */
+    class PrivateTableState implements IPrivateTableState {
+
+        /**
+         * Constructs a new PrivateTableState.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IPrivateTableState);
+
+        /** PrivateTableState tableId. */
+        public tableId: string;
+
+        /** PrivateTableState hostUserId. */
+        public hostUserId: number;
+
+        /** PrivateTableState seats. */
+        public seats: game.SeatConfig[];
+
+        /** PrivateTableState state. */
+        public state: string;
+
+        /** PrivateTableState matchId. */
+        public matchId: string;
+
+        /**
+         * Creates a new PrivateTableState instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns PrivateTableState instance
+         */
+        public static create(properties?: game.IPrivateTableState): game.PrivateTableState;
+
+        /**
+         * Encodes the specified PrivateTableState message. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
+         * @param message PrivateTableState message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IPrivateTableState, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified PrivateTableState message, length delimited. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
+         * @param message PrivateTableState message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IPrivateTableState, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a PrivateTableState message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns PrivateTableState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PrivateTableState;
+
+        /**
+         * Decodes a PrivateTableState message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns PrivateTableState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PrivateTableState;
+
+        /**
+         * Verifies a PrivateTableState message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a PrivateTableState message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns PrivateTableState
+         */
+        public static fromObject(object: { [k: string]: any }): game.PrivateTableState;
+
+        /**
+         * Creates a plain object from a PrivateTableState message. Also converts values to other types if specified.
+         * @param message PrivateTableState
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.PrivateTableState, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this PrivateTableState to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for PrivateTableState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
 }

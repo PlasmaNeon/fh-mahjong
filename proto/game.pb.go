@@ -272,6 +272,52 @@ func (GamePhase) EnumDescriptor() ([]byte, []int) {
 	return file_proto_game_proto_rawDescGZIP(), []int{3}
 }
 
+type Difficulty int32
+
+const (
+	Difficulty_DIFFICULTY_UNSPECIFIED Difficulty = 0
+	Difficulty_DIFFICULTY_HEURISTIC   Difficulty = 1
+)
+
+// Enum value maps for Difficulty.
+var (
+	Difficulty_name = map[int32]string{
+		0: "DIFFICULTY_UNSPECIFIED",
+		1: "DIFFICULTY_HEURISTIC",
+	}
+	Difficulty_value = map[string]int32{
+		"DIFFICULTY_UNSPECIFIED": 0,
+		"DIFFICULTY_HEURISTIC":   1,
+	}
+)
+
+func (x Difficulty) Enum() *Difficulty {
+	p := new(Difficulty)
+	*p = x
+	return p
+}
+
+func (x Difficulty) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Difficulty) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_game_proto_enumTypes[4].Descriptor()
+}
+
+func (Difficulty) Type() protoreflect.EnumType {
+	return &file_proto_game_proto_enumTypes[4]
+}
+
+func (x Difficulty) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Difficulty.Descriptor instead.
+func (Difficulty) EnumDescriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{4}
+}
+
 type Tile struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique identifier for the tile (0-143). 0-135 standard, 136-143 flowers.
@@ -1848,6 +1894,156 @@ func (x *TrajectoryDataset) GetSamples() []*TrajectorySample {
 	return nil
 }
 
+type SeatConfig struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// "empty" | "human" | "bot"
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// Populated only when kind == "human".
+	UserId   uint32 `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Username string `protobuf:"bytes,3,opt,name=username,proto3" json:"username,omitempty"`
+	// Populated only when kind == "bot".
+	Difficulty    Difficulty `protobuf:"varint,4,opt,name=difficulty,proto3,enum=game.Difficulty" json:"difficulty,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeatConfig) Reset() {
+	*x = SeatConfig{}
+	mi := &file_proto_game_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeatConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeatConfig) ProtoMessage() {}
+
+func (x *SeatConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeatConfig.ProtoReflect.Descriptor instead.
+func (*SeatConfig) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SeatConfig) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *SeatConfig) GetUserId() uint32 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *SeatConfig) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *SeatConfig) GetDifficulty() Difficulty {
+	if x != nil {
+		return x.Difficulty
+	}
+	return Difficulty_DIFFICULTY_UNSPECIFIED
+}
+
+type PrivateTableState struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TableId    string                 `protobuf:"bytes,1,opt,name=table_id,json=tableId,proto3" json:"table_id,omitempty"`
+	HostUserId uint32                 `protobuf:"varint,2,opt,name=host_user_id,json=hostUserId,proto3" json:"host_user_id,omitempty"`
+	// Exactly four entries, indexed 0-3 by seat.
+	Seats []*SeatConfig `protobuf:"bytes,3,rep,name=seats,proto3" json:"seats,omitempty"`
+	// "configuring" | "started"
+	State string `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	// Empty until state == "started".
+	MatchId       string `protobuf:"bytes,5,opt,name=match_id,json=matchId,proto3" json:"match_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrivateTableState) Reset() {
+	*x = PrivateTableState{}
+	mi := &file_proto_game_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrivateTableState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrivateTableState) ProtoMessage() {}
+
+func (x *PrivateTableState) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrivateTableState.ProtoReflect.Descriptor instead.
+func (*PrivateTableState) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PrivateTableState) GetTableId() string {
+	if x != nil {
+		return x.TableId
+	}
+	return ""
+}
+
+func (x *PrivateTableState) GetHostUserId() uint32 {
+	if x != nil {
+		return x.HostUserId
+	}
+	return 0
+}
+
+func (x *PrivateTableState) GetSeats() []*SeatConfig {
+	if x != nil {
+		return x.Seats
+	}
+	return nil
+}
+
+func (x *PrivateTableState) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *PrivateTableState) GetMatchId() string {
+	if x != nil {
+		return x.MatchId
+	}
+	return ""
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -2019,7 +2215,22 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x10terminal_outcome\x18\n" +
 	" \x01(\v2\x12.game.RoundOutcomeR\x0fterminalOutcome\"E\n" +
 	"\x11TrajectoryDataset\x120\n" +
-	"\asamples\x18\x01 \x03(\v2\x16.game.TrajectorySampleR\asamples*c\n" +
+	"\asamples\x18\x01 \x03(\v2\x16.game.TrajectorySampleR\asamples\"\x87\x01\n" +
+	"\n" +
+	"SeatConfig\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\rR\x06userId\x12\x1a\n" +
+	"\busername\x18\x03 \x01(\tR\busername\x120\n" +
+	"\n" +
+	"difficulty\x18\x04 \x01(\x0e2\x10.game.DifficultyR\n" +
+	"difficulty\"\xa9\x01\n" +
+	"\x11PrivateTableState\x12\x19\n" +
+	"\btable_id\x18\x01 \x01(\tR\atableId\x12 \n" +
+	"\fhost_user_id\x18\x02 \x01(\rR\n" +
+	"hostUserId\x12&\n" +
+	"\x05seats\x18\x03 \x03(\v2\x10.game.SeatConfigR\x05seats\x12\x14\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12\x19\n" +
+	"\bmatch_id\x18\x05 \x01(\tR\amatchId*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -2059,7 +2270,11 @@ const file_proto_game_proto_rawDesc = "" +
 	"PHASE_DEAL\x10\x01\x12\x15\n" +
 	"\x11PHASE_PLAYER_TURN\x10\x02\x12\x17\n" +
 	"\x13PHASE_WAIT_DISCARDS\x10\x03\x12\x13\n" +
-	"\x0fPHASE_ROUND_END\x10\x04B)Z'github.com/plasma/fh-mahjong/proto/gameb\x06proto3"
+	"\x0fPHASE_ROUND_END\x10\x04*B\n" +
+	"\n" +
+	"Difficulty\x12\x1a\n" +
+	"\x16DIFFICULTY_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14DIFFICULTY_HEURISTIC\x10\x01B)Z'github.com/plasma/fh-mahjong/proto/gameb\x06proto3"
 
 var (
 	file_proto_game_proto_rawDescOnce sync.Once
@@ -2073,74 +2288,79 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 	return file_proto_game_proto_rawDescData
 }
 
-var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),                 // 0: game.Suit
 	(ActionType)(0),           // 1: game.ActionType
 	(MeldDirection)(0),        // 2: game.MeldDirection
 	(GamePhase)(0),            // 3: game.GamePhase
-	(*Tile)(nil),              // 4: game.Tile
-	(*PlayerAction)(nil),      // 5: game.PlayerAction
-	(*Meld)(nil),              // 6: game.Meld
-	(*PlayerState)(nil),       // 7: game.PlayerState
-	(*GameState)(nil),         // 8: game.GameState
-	(*ScoreEntry)(nil),        // 9: game.ScoreEntry
-	(*PlayerPayout)(nil),      // 10: game.PlayerPayout
-	(*RoundResult)(nil),       // 11: game.RoundResult
-	(*RoundOutcome)(nil),      // 12: game.RoundOutcome
-	(*EnvConfig)(nil),         // 13: game.EnvConfig
-	(*SeatObservation)(nil),   // 14: game.SeatObservation
-	(*EnvResetRequest)(nil),   // 15: game.EnvResetRequest
-	(*EnvResetResponse)(nil),  // 16: game.EnvResetResponse
-	(*EnvStepRequest)(nil),    // 17: game.EnvStepRequest
-	(*EnvStepResponse)(nil),   // 18: game.EnvStepResponse
-	(*TrajectoryRequest)(nil), // 19: game.TrajectoryRequest
-	(*TrajectorySample)(nil),  // 20: game.TrajectorySample
-	(*TrajectoryDataset)(nil), // 21: game.TrajectoryDataset
+	(Difficulty)(0),           // 4: game.Difficulty
+	(*Tile)(nil),              // 5: game.Tile
+	(*PlayerAction)(nil),      // 6: game.PlayerAction
+	(*Meld)(nil),              // 7: game.Meld
+	(*PlayerState)(nil),       // 8: game.PlayerState
+	(*GameState)(nil),         // 9: game.GameState
+	(*ScoreEntry)(nil),        // 10: game.ScoreEntry
+	(*PlayerPayout)(nil),      // 11: game.PlayerPayout
+	(*RoundResult)(nil),       // 12: game.RoundResult
+	(*RoundOutcome)(nil),      // 13: game.RoundOutcome
+	(*EnvConfig)(nil),         // 14: game.EnvConfig
+	(*SeatObservation)(nil),   // 15: game.SeatObservation
+	(*EnvResetRequest)(nil),   // 16: game.EnvResetRequest
+	(*EnvResetResponse)(nil),  // 17: game.EnvResetResponse
+	(*EnvStepRequest)(nil),    // 18: game.EnvStepRequest
+	(*EnvStepResponse)(nil),   // 19: game.EnvStepResponse
+	(*TrajectoryRequest)(nil), // 20: game.TrajectoryRequest
+	(*TrajectorySample)(nil),  // 21: game.TrajectorySample
+	(*TrajectoryDataset)(nil), // 22: game.TrajectoryDataset
+	(*SeatConfig)(nil),        // 23: game.SeatConfig
+	(*PrivateTableState)(nil), // 24: game.PrivateTableState
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
 	1,  // 1: game.PlayerAction.type:type_name -> game.ActionType
-	4,  // 2: game.PlayerAction.tile:type_name -> game.Tile
-	4,  // 3: game.PlayerAction.meld_tiles:type_name -> game.Tile
+	5,  // 2: game.PlayerAction.tile:type_name -> game.Tile
+	5,  // 3: game.PlayerAction.meld_tiles:type_name -> game.Tile
 	1,  // 4: game.Meld.type:type_name -> game.ActionType
-	4,  // 5: game.Meld.tiles:type_name -> game.Tile
+	5,  // 5: game.Meld.tiles:type_name -> game.Tile
 	2,  // 6: game.Meld.called_direction:type_name -> game.MeldDirection
-	4,  // 7: game.PlayerState.closed_hand:type_name -> game.Tile
-	6,  // 8: game.PlayerState.open_melds:type_name -> game.Meld
-	4,  // 9: game.PlayerState.discards:type_name -> game.Tile
-	4,  // 10: game.PlayerState.flower_melds:type_name -> game.Tile
-	5,  // 11: game.PlayerState.valid_actions:type_name -> game.PlayerAction
+	5,  // 7: game.PlayerState.closed_hand:type_name -> game.Tile
+	7,  // 8: game.PlayerState.open_melds:type_name -> game.Meld
+	5,  // 9: game.PlayerState.discards:type_name -> game.Tile
+	5,  // 10: game.PlayerState.flower_melds:type_name -> game.Tile
+	6,  // 11: game.PlayerState.valid_actions:type_name -> game.PlayerAction
 	3,  // 12: game.GameState.phase:type_name -> game.GamePhase
-	7,  // 13: game.GameState.players:type_name -> game.PlayerState
-	4,  // 14: game.GameState.active_discard:type_name -> game.Tile
-	4,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
-	11, // 16: game.GameState.round_result:type_name -> game.RoundResult
+	8,  // 13: game.GameState.players:type_name -> game.PlayerState
+	5,  // 14: game.GameState.active_discard:type_name -> game.Tile
+	5,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
+	12, // 16: game.GameState.round_result:type_name -> game.RoundResult
 	1,  // 17: game.RoundResult.win_type:type_name -> game.ActionType
-	4,  // 18: game.RoundResult.winning_hand:type_name -> game.Tile
-	6,  // 19: game.RoundResult.winning_melds:type_name -> game.Meld
-	4,  // 20: game.RoundResult.win_tile:type_name -> game.Tile
-	9,  // 21: game.RoundResult.breakdown:type_name -> game.ScoreEntry
-	10, // 22: game.RoundResult.payouts:type_name -> game.PlayerPayout
+	5,  // 18: game.RoundResult.winning_hand:type_name -> game.Tile
+	7,  // 19: game.RoundResult.winning_melds:type_name -> game.Meld
+	5,  // 20: game.RoundResult.win_tile:type_name -> game.Tile
+	10, // 21: game.RoundResult.breakdown:type_name -> game.ScoreEntry
+	11, // 22: game.RoundResult.payouts:type_name -> game.PlayerPayout
 	1,  // 23: game.RoundOutcome.win_type:type_name -> game.ActionType
-	10, // 24: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
+	11, // 24: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
 	3,  // 25: game.SeatObservation.phase:type_name -> game.GamePhase
-	13, // 26: game.EnvResetRequest.config:type_name -> game.EnvConfig
-	14, // 27: game.EnvResetResponse.observation:type_name -> game.SeatObservation
-	12, // 28: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
-	14, // 29: game.EnvStepResponse.observation:type_name -> game.SeatObservation
-	12, // 30: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
-	13, // 31: game.TrajectoryRequest.config:type_name -> game.EnvConfig
-	14, // 32: game.TrajectorySample.observation:type_name -> game.SeatObservation
-	14, // 33: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
-	12, // 34: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
-	20, // 35: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
-	36, // [36:36] is the sub-list for method output_type
-	36, // [36:36] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	14, // 26: game.EnvResetRequest.config:type_name -> game.EnvConfig
+	15, // 27: game.EnvResetResponse.observation:type_name -> game.SeatObservation
+	13, // 28: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
+	15, // 29: game.EnvStepResponse.observation:type_name -> game.SeatObservation
+	13, // 30: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
+	14, // 31: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	15, // 32: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	15, // 33: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	13, // 34: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
+	21, // 35: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	4,  // 36: game.SeatConfig.difficulty:type_name -> game.Difficulty
+	23, // 37: game.PrivateTableState.seats:type_name -> game.SeatConfig
+	38, // [38:38] is the sub-list for method output_type
+	38, // [38:38] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -2154,8 +2374,8 @@ func file_proto_game_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   18,
+			NumEnums:      5,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
