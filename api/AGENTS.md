@@ -28,8 +28,9 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **room.go** — Single match room orchestration:
   - `Room` struct — 4 `Client` seats + 1 `core.Game` engine
-  - `BotPolicy` — deterministic policy used for seats with no connected client entry
+  - `BotPolicy` — room-wide default automated-seat policy. Injected via `WithBotPolicy()` for server-wide swaps (e.g. remote AI for all seats).
   - `WithBotPolicy()` — room option for injecting a non-default automated-seat policy while keeping the heuristic default
+  - `SeatPolicies` — per-seat override map. Populated by the matchmaker from the host's `PrivateTable` seat config; falls through to `BotPolicy` (then heuristic) when a seat is missing.
   - Initializes `core.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer

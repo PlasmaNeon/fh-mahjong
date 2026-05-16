@@ -30,9 +30,18 @@ type Room struct {
 	MatchRecord    *models.Match
 	OnShutdown     func()
 
-	Engine          *core.Game
-	BotPolicy       bot.Policy
-	Seats           map[uint32]*Client              // maps 0-3 to active WS connections
+	Engine *core.Game
+	// BotPolicy is the room-wide default automated-seat policy. Server-side
+	// injection via WithBotPolicy() lets ops swap in a remote AI policy
+	// without per-seat configuration. When unset, the package-level
+	// heuristic baseline is used.
+	BotPolicy bot.Policy
+	// SeatPolicies maps a seat index (0-3) to a per-seat override that
+	// supersedes BotPolicy for that seat. Populated by the matchmaker from
+	// the host's PrivateTable seat config. Seats not present in this map
+	// fall through to BotPolicy / the heuristic baseline (defensive only).
+	SeatPolicies map[uint32]bot.Policy
+	Seats        map[uint32]*Client // maps 0-3 to active WS connections
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
@@ -71,7 +80,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		Hub:                hub,
 		DB:                 db,
 		Engine:             core.NewGame(matchID, ruleset),
-		BotPolicy:          bot.NewHeuristicPolicy(),
+		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,
 		ActionQueue:        make(chan ClientAction),
@@ -282,7 +291,7 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 				return payloads
 			}
 
-			action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+			action := r.policyForSeat(seat).ChooseAction(r.Engine.State, seat)
 			if action == nil {
 				log.Printf("bot policy produced no action for active seat %d in room %s", seat, r.ID)
 				return payloads
@@ -304,7 +313,7 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 					continue
 				}
 
-				action := r.BotPolicy.ChooseAction(r.Engine.State, seat)
+				action := r.policyForSeat(seat).ChooseAction(r.Engine.State, seat)
 				if action == nil {
 					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
 				}
@@ -373,6 +382,21 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 func (r *Room) isAutomatedSeat(seat uint32) bool {
 	_, connected := r.Seats[seat]
 	return !connected
+}
+
+// policyForSeat returns the bot policy for an automated seat. The lookup
+// order is: per-seat override in SeatPolicies (set by the matchmaker from
+// the host's PrivateTable seat config) → room-wide default BotPolicy (set
+// by WithBotPolicy, e.g. server-side remote AI injection) → the heuristic
+// baseline so the engine never stalls due to a config bug.
+func (r *Room) policyForSeat(seat uint32) bot.Policy {
+	if p, ok := r.SeatPolicies[seat]; ok && p != nil {
+		return p
+	}
+	if r.BotPolicy != nil {
+		return r.BotPolicy
+	}
+	return bot.NewHeuristicPolicy()
 }
 
 func (r *Room) hasConnectedInterruptSeat() bool {
@@ -446,7 +470,11 @@ func (r *Room) registerPaipuPlayers() {
 			continue
 		}
 
-		r.Engine.Recorder.AddPlayer(seat, fmt.Sprintf("Bot %d", seat+1), 0)
+		name := fmt.Sprintf("Bot %d", seat+1)
+		if _, configured := r.SeatPolicies[seat]; configured {
+			name = fmt.Sprintf("Bot %d (Heuristic)", seat+1)
+		}
+		r.Engine.Recorder.AddPlayer(seat, name, 0)
 	}
 }
 
