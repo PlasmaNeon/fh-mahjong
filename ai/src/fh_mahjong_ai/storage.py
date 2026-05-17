@@ -13,6 +13,80 @@ SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
 SHARDED_TRANSITIONS_SCHEMA_VERSION = 1
 
 
+class ShardedTransitionWriter:
+    """Incrementally write transition arrays to NumPy shards."""
+
+    def __init__(
+        self,
+        directory: Path,
+        shard_size: int = 50_000,
+        compressed: bool = False,
+        overwrite: bool = True,
+    ) -> None:
+        self.directory = directory
+        self.shard_size = max(1, int(shard_size))
+        self.compressed = compressed
+        self.shards: list[dict[str, object]] = []
+        self.total = 0
+        self._current: list[Transition] = []
+        self._closed = False
+
+        self.directory.mkdir(parents=True, exist_ok=True)
+        if overwrite:
+            for path in self.directory.glob("transitions-*.npz"):
+                path.unlink()
+            manifest_path = self.directory / SHARDED_TRANSITIONS_MANIFEST
+            if manifest_path.exists():
+                manifest_path.unlink()
+
+    def write_many(self, transitions: Iterable[Transition]) -> None:
+        if self._closed:
+            raise RuntimeError("cannot write to a closed ShardedTransitionWriter")
+        for transition in transitions:
+            self._current.append(transition)
+            if len(self._current) >= self.shard_size:
+                self._flush_current()
+
+    def close(self) -> dict[str, object]:
+        if self._closed:
+            return self.manifest()
+        if self._current:
+            self._flush_current()
+        manifest = self.manifest()
+        (self.directory / SHARDED_TRANSITIONS_MANIFEST).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self._closed = True
+        return manifest
+
+    def manifest(self) -> dict[str, object]:
+        return {
+            "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
+            "format": "npz_shards",
+            "compressed": self.compressed,
+            "shard_size": self.shard_size,
+            "transitions": self.total,
+            "shards": self.shards,
+        }
+
+    def _flush_current(self) -> None:
+        self.total += _write_transition_shard(
+            self.directory,
+            self._current,
+            len(self.shards),
+            self.compressed,
+            self.shards,
+        )
+        self._current = []
+
+    def __enter__(self) -> "ShardedTransitionWriter":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+
 def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"model": model.state_dict(), "step": step}
@@ -60,12 +134,16 @@ def is_sharded_transition_dataset(path: Path) -> bool:
     return path.is_dir() or path.name == SHARDED_TRANSITIONS_MANIFEST
 
 
-def read_transition_arrays(path: Path) -> dict[str, np.ndarray]:
+def read_transition_arrays(path: Path, keys: Optional[Iterable[str]] = None) -> dict[str, np.ndarray]:
     """Read transitions as contiguous arrays for array-backed replay buffers."""
     if is_sharded_transition_dataset(path):
         directory = path.parent if path.name == SHARDED_TRANSITIONS_MANIFEST else path
-        return _read_npz_transition_arrays(directory)
-    return _transitions_to_arrays(read_transitions_jsonl(path))
+        return _read_npz_transition_arrays(directory, keys=keys)
+    arrays = _transitions_to_arrays(read_transitions_jsonl(path))
+    if keys is None:
+        return arrays
+    selected = set(keys)
+    return {key: value for key, value in arrays.items() if key in selected}
 
 
 def iter_observation_action_batches(path: Path, batch_size: int) -> Iterator[dict[str, np.ndarray]]:
@@ -85,33 +163,9 @@ def write_transitions_npz_shards(
     compressed: bool = False,
 ) -> dict[str, object]:
     """Write transitions to a directory of array shards plus a manifest."""
-    directory.mkdir(parents=True, exist_ok=True)
-    effective_shard_size = max(1, int(shard_size))
-    shards: list[dict[str, object]] = []
-    current: list[Transition] = []
-    total = 0
-
-    for transition in transitions:
-        current.append(transition)
-        if len(current) >= effective_shard_size:
-            total += _write_transition_shard(directory, current, len(shards), compressed, shards)
-            current = []
-    if current:
-        total += _write_transition_shard(directory, current, len(shards), compressed, shards)
-
-    manifest: dict[str, object] = {
-        "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
-        "format": "npz_shards",
-        "compressed": compressed,
-        "shard_size": effective_shard_size,
-        "transitions": total,
-        "shards": shards,
-    }
-    (directory / SHARDED_TRANSITIONS_MANIFEST).write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    return manifest
+    writer = ShardedTransitionWriter(directory, shard_size=shard_size, compressed=compressed)
+    writer.write_many(transitions)
+    return writer.close()
 
 
 def read_transitions_npz_shards(directory: Path) -> list[Transition]:
@@ -147,7 +201,7 @@ def _iter_npz_observation_action_batches(directory: Path, batch_size: int) -> It
                 }
 
 
-def _read_npz_transition_arrays(directory: Path) -> dict[str, np.ndarray]:
+def _read_npz_transition_arrays(directory: Path, keys: Optional[Iterable[str]] = None) -> dict[str, np.ndarray]:
     manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(manifest.get("schema_version", 0)) != SHARDED_TRANSITIONS_SCHEMA_VERSION:
@@ -160,9 +214,13 @@ def _read_npz_transition_arrays(directory: Path) -> dict[str, np.ndarray]:
 
     first_path = directory / str(shards[0]["path"])
     with np.load(first_path, allow_pickle=False) as first:
+        selected_keys = list(first.files if keys is None else keys)
+        missing = sorted(set(selected_keys) - set(first.files))
+        if missing:
+            raise KeyError(f"sharded transition dataset is missing arrays: {', '.join(missing)}")
         arrays = {
             key: np.empty((total,) + first[key].shape[1:], dtype=first[key].dtype)
-            for key in first.files
+            for key in selected_keys
         }
 
     offset = 0

@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 
 from fh_mahjong_ai.storage import (
+    ShardedTransitionWriter,
     iter_observation_action_batches,
+    read_transition_arrays,
     read_transitions,
     write_transitions_jsonl,
     write_transitions_npz_shards,
@@ -71,6 +73,33 @@ def test_npz_shards_round_trip(tmp_path: Path) -> None:
     assert loaded[3].info["episode_index"] == 1
     np.testing.assert_allclose(loaded[0].info["terminal_rewards"], [2, -2, 0, 0])
     np.testing.assert_allclose(loaded[2].observation.planes, source[2].observation.planes)
+
+
+def test_incremental_npz_writer_flushes_across_calls(tmp_path: Path) -> None:
+    output_dir = tmp_path / "npz"
+
+    writer = ShardedTransitionWriter(output_dir, shard_size=3)
+    writer.write_many(_transitions(2))
+    writer.write_many(_transitions(3))
+    manifest = writer.close()
+
+    loaded = read_transitions(output_dir)
+
+    assert manifest["transitions"] == 5
+    assert [shard["transitions"] for shard in manifest["shards"]] == [3, 2]
+    assert len(loaded) == 5
+    assert (output_dir / "manifest.json").exists()
+
+
+def test_read_transition_arrays_can_select_keys(tmp_path: Path) -> None:
+    output_dir = tmp_path / "npz"
+    write_transitions_npz_shards(output_dir, _transitions(5), shard_size=2)
+
+    arrays = read_transition_arrays(output_dir, keys=("planes", "action_ids"))
+
+    assert set(arrays) == {"planes", "action_ids"}
+    assert arrays["planes"].shape == (5, 39, 42, 1)
+    assert arrays["action_ids"].tolist() == [5, 6, 7, 8, 9]
 
 
 def test_iter_observation_action_batches_reads_npz_without_transition_objects(tmp_path: Path) -> None:

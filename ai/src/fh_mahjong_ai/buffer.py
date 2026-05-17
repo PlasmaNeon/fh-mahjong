@@ -95,11 +95,19 @@ class ArrayReplayBuffer:
         seats = self.arrays["seats"][indices].astype(np.int64, copy=False)
 
         returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
-        rewards = self.arrays["rewards"][indices, seats].astype(np.float32, copy=False)
-        dones = np.logical_or(
-            self.arrays["terminated"][indices],
-            self.arrays["truncated"][indices],
-        ).astype(np.float32)
+        rewards = (
+            self.arrays["rewards"][indices, seats].astype(np.float32, copy=False)
+            if "rewards" in self.arrays
+            else np.zeros(batch_size, dtype=np.float32)
+        )
+        dones = (
+            np.logical_or(
+                self.arrays["terminated"][indices],
+                self.arrays["truncated"][indices],
+            ).astype(np.float32)
+            if "terminated" in self.arrays and "truncated" in self.arrays
+            else np.zeros(batch_size, dtype=np.float32)
+        )
 
         return TrainBatch(
             planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
@@ -107,9 +115,15 @@ class ArrayReplayBuffer:
             action_mask=self.arrays["action_mask"][indices].astype(np.int8, copy=False),
             action_ids=self.arrays["action_ids"][indices].astype(np.int64, copy=False),
             returns=returns,
-            next_planes=self.arrays["next_planes"][indices].astype(np.float32, copy=False),
-            next_scalars=self.arrays["next_scalars"][indices].astype(np.float32, copy=False),
-            next_action_mask=self.arrays["next_action_mask"][indices].astype(np.int8, copy=False),
+            next_planes=self.arrays["next_planes"][indices].astype(np.float32, copy=False)
+            if "next_planes" in self.arrays
+            else np.empty((batch_size, 0), dtype=np.float32),
+            next_scalars=self.arrays["next_scalars"][indices].astype(np.float32, copy=False)
+            if "next_scalars" in self.arrays
+            else np.empty((batch_size, 0), dtype=np.float32),
+            next_action_mask=self.arrays["next_action_mask"][indices].astype(np.int8, copy=False)
+            if "next_action_mask" in self.arrays
+            else np.empty((batch_size, 0), dtype=np.int8),
             rewards=rewards,
             dones=dones,
         )

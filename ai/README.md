@@ -59,9 +59,21 @@ uv run --project ai fh-mj-selfplay-smoke
 
 ## Behavior cloning
 
+Generate larger datasets directly as NumPy shards so training can skip the temporary JSONL conversion step:
+
+```bash
+uv run --project ai fh-mj-generate-data \
+  --episodes 50000 \
+  --start-seed 1 \
+  --output /tmp/fh-mahjong-runs/heuristic-50000-npz \
+  --format npz-shards \
+  --chunk-size 1000 \
+  --shard-size 50000
+```
+
 ```bash
 uv run --project ai fh-mj-train-bc \
-  --data /private/tmp/fh-mahjong-rl-step12/heuristic-50.jsonl \
+  --data /tmp/fh-mahjong-runs/heuristic-50000-npz \
   --checkpoint-dir /private/tmp/fh-mahjong-rl-step12/checkpoints/bc \
   --report-output /private/tmp/fh-mahjong-rl-step12/reports/bc_training.json \
   --mlflow \
