@@ -21,6 +21,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/policies.py** — Random and torch-backed policy adapters.
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, and terminal-reward backfill (`backfill_returns`) utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.
+  - Online reports include precise mean/sum reward, reward distribution, action-family rates, and duplicate-seat `seat_summary`.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
@@ -67,6 +68,6 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Sharded NumPy datasets use array-backed replay for BC/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC training loads only current-observation/action/return arrays to keep 50k+ datasets within WSL memory.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
-- Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids.
+- Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids. Online evaluation also records reward distribution and per-seat summaries for duplicate-seat comparisons.
 - Heuristic trajectory samples preserve per-step rewards in `rewards` and attach round-outcome targets separately in `terminal_rewards` for warm-start consumers.
 - The first implemented training loop is behavior cloning / offline warm-start. Online RL can layer on top of the same environment, replay, and checkpoint utilities.

@@ -49,6 +49,55 @@ def action_family(action_id: int) -> str:
     return "unknown"
 
 
+def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
+    values = [float(reward) for reward in rewards]
+    if not values:
+        return {
+            "count": 0,
+            "sum": 0.0,
+            "mean": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "positive_count": 0,
+            "zero_count": 0,
+            "negative_count": 0,
+            "positive_rate": 0.0,
+            "zero_rate": 0.0,
+            "negative_rate": 0.0,
+        }
+
+    array = np.asarray(values, dtype=np.float32)
+    count = int(array.size)
+    positive_count = int(np.sum(array > 0))
+    zero_count = int(np.sum(array == 0))
+    negative_count = int(np.sum(array < 0))
+    return {
+        "count": count,
+        "sum": float(np.sum(array)),
+        "mean": float(np.mean(array)),
+        "std": float(np.std(array)),
+        "min": float(np.min(array)),
+        "max": float(np.max(array)),
+        "positive_count": positive_count,
+        "zero_count": zero_count,
+        "negative_count": negative_count,
+        "positive_rate": positive_count / count,
+        "zero_rate": zero_count / count,
+        "negative_rate": negative_count / count,
+    }
+
+
+def action_family_rates(action_counts: Counter[str]) -> Dict[str, float]:
+    total = sum(action_counts.values())
+    if total == 0:
+        return {}
+    return {
+        family: count / total
+        for family, count in sorted(action_counts.items())
+    }
+
+
 def compute_action_agreement(
     model: nn.Module,
     transitions: List[Transition],
@@ -245,10 +294,13 @@ def evaluate_online(
         env.close()
 
     completed = len(seat_rewards)
-    avg = float(np.mean(seat_rewards)) if seat_rewards else 0.0
+    rewards = reward_summary(seat_rewards)
     return {
         "seat": learning_seat,
-        "avg_reward": round(avg, 2),
+        "avg_reward": round(float(rewards["mean"]), 2),
+        "mean_reward": rewards["mean"],
+        "reward_sum": rewards["sum"],
+        "reward_summary": rewards,
         "win_count": wins,
         "win_rate": wins / completed if completed else 0.0,
         "large_loss_count": large_losses,
@@ -256,6 +308,7 @@ def evaluate_online(
         "episodes": completed,
         "per_episode_rewards": seat_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),
+        "action_family_rates": action_family_rates(action_counts),
     }
 
 
@@ -295,11 +348,25 @@ def evaluate_duplicate_seats(
         large_losses += int(report["large_loss_count"])
         completed += int(report["episodes"])
 
-    avg = float(np.mean(all_rewards)) if all_rewards else 0.0
+    rewards = reward_summary(all_rewards)
+    seat_summary = {
+        str(report["seat"]): {
+            "episodes": report["episodes"],
+            "mean_reward": report["mean_reward"],
+            "reward_sum": report["reward_sum"],
+            "win_rate": report["win_rate"],
+            "large_loss_rate": report["large_loss_rate"],
+            "action_family_rates": report["action_family_rates"],
+        }
+        for report in seat_reports
+    }
     return {
         "seeds": list(seeds),
         "seats": seat_list,
-        "avg_reward": round(avg, 2),
+        "avg_reward": round(float(rewards["mean"]), 2),
+        "mean_reward": rewards["mean"],
+        "reward_sum": rewards["sum"],
+        "reward_summary": rewards,
         "win_count": wins,
         "win_rate": wins / completed if completed else 0.0,
         "large_loss_count": large_losses,
@@ -307,5 +374,7 @@ def evaluate_duplicate_seats(
         "episodes": completed,
         "per_episode_rewards": all_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),
+        "action_family_rates": action_family_rates(action_counts),
+        "seat_summary": seat_summary,
         "seat_reports": seat_reports,
     }
