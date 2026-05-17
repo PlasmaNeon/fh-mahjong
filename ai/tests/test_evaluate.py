@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import action_family, compute_action_agreement, evaluate_duplicate_seats, evaluate_online
+from fh_mahjong_ai.evaluate import action_family, compute_action_agreement, evaluate_duplicate_seats, evaluate_online, reward_summary
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.types import Observation, StepResult, Transition
 
@@ -91,6 +91,17 @@ class TestActionAgreement:
         assert batched == single
 
 
+def test_reward_summary_reports_distribution() -> None:
+    report = reward_summary([1.0, 0.0, -2.0, 3.0])
+
+    assert report["count"] == 4
+    assert report["sum"] == 2.0
+    assert report["positive_count"] == 2
+    assert report["zero_count"] == 1
+    assert report["negative_count"] == 1
+    assert report["positive_rate"] == 0.5
+
+
 class TestEvaluateOnline:
     def test_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
@@ -104,9 +115,13 @@ class TestEvaluateOnline:
         assert "avg_reward" in report
         assert "win_rate" in report
         assert "large_loss_rate" in report
+        assert "mean_reward" in report
+        assert "reward_summary" in report
         assert "action_family_counts" in report
+        assert "action_family_rates" in report
         assert "episodes" in report
         assert report["episodes"] == 2
+        assert report["reward_summary"]["count"] == 2
 
     def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
         class TerminalResetBridge:
@@ -149,8 +164,11 @@ class TestEvaluateOnline:
 
         assert report["episodes"] == 1
         assert report["avg_reward"] == 0.25
+        assert report["mean_reward"] == 0.25
+        assert report["reward_sum"] == 0.25
         assert report["win_count"] == 1
         assert report["action_family_counts"] == {}
+        assert report["action_family_rates"] == {}
 
     def test_duplicate_seat_eval_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
@@ -165,3 +183,6 @@ class TestEvaluateOnline:
         assert report["episodes"] == 4
         assert report["seats"] == [0, 1]
         assert len(report["seat_reports"]) == 2
+        assert set(report["seat_summary"]) == {"0", "1"}
+        assert "reward_summary" in report
+        assert "action_family_rates" in report
