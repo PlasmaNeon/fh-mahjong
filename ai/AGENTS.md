@@ -61,7 +61,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Avoid non-uv package or environment commands in this repo.
 - `ai/.python-version` pins the uv-managed Python interpreter used by this package.
 - Python support is pinned to uv-managed CPython 3.12 for the AI package.
-- `EnvConfig` defaults now match the real Go bridge (`39 x 42 x 1` observations, 29 scalars, 204 discrete actions).
+- `EnvConfig` defaults now match the real Go bridge (`39 x 42 x 1` observations, 42 scalars, 204 discrete actions).
 - `MockMahjongBridge` remains available for smoke tests, but `bridge_kind="go"` is now the default for real bridge work.
 - The Python package stays compatible with Python 3.9 by avoiding `dataclass(slots=True)` in the scaffold types/configs.
 - All action selection assumes the fixed 204-action catalog supplied by the Go bridge.

@@ -17,7 +17,7 @@ def _make_dataset(path: Path, n: int = 20) -> None:
         obs = Observation(
             seat=0,
             planes=np.random.default_rng(i).standard_normal((39, 42, 1)).astype(np.float32),
-            scalars=np.random.default_rng(i).standard_normal(29).astype(np.float32),
+            scalars=np.random.default_rng(i).standard_normal(42).astype(np.float32),
             action_mask=np.ones(204, dtype=np.int8),
         )
         transitions.append(

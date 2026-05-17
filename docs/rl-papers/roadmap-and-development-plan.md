@@ -264,8 +264,9 @@ Mahjong exercise:
    - Use the same wall seeds with rotated seats against the heuristic baseline.
    - Track EV, win rate, large-loss rate, and action frequencies.
 6. Add visible look-ahead features:
-   - Keep `overall shanten` marked as already implemented.
-   - Add route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics.
+   - Implemented in the 42-scalar observation schema.
+   - Keep `overall shanten` at scalar index 25.
+   - Route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics now occupy scalar indices 29-41.
 7. Add offline RL:
    - Start with advantage-weighted behavior cloning or discrete IQL-style training.
    - Keep behavior-cloning regularization.

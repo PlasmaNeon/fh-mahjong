@@ -16,7 +16,7 @@ def _obs(seat: int = 0, seed: int = 0) -> Observation:
     return Observation(
         seat=seat,
         planes=rng.standard_normal((39, 42, 1)).astype(np.float32),
-        scalars=rng.standard_normal(29).astype(np.float32),
+        scalars=rng.standard_normal(42).astype(np.float32),
         action_mask=mask,
     )
 
@@ -136,7 +136,7 @@ class TestEvaluateOnline:
                 observation = Observation(
                     seat=1,
                     planes=np.zeros((39, 42, 1), dtype=np.float32),
-                    scalars=np.zeros(29, dtype=np.float32),
+                    scalars=np.zeros(42, dtype=np.float32),
                     action_mask=mask,
                 )
                 self.last_reset_result = StepResult(

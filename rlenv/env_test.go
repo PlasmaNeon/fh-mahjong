@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/rules/shanten"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -113,6 +114,65 @@ func TestObservationIgnoresHiddenOpponentTiles(t *testing.T) {
 	}
 
 	assertObservationEqual(t, observationA, observationB)
+}
+
+func TestObservationIncludesVisibleLookaheadScalars(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       128,
+	}
+
+	env := New(config)
+	reset, err := env.Reset(&pb.EnvResetRequest{Seed: 37, Config: config})
+	if err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+
+	observation := reset.Observation
+	if len(observation.Scalars) != ObservationScalarCount {
+		t.Fatalf("scalar count = %d, want %d", len(observation.Scalars), ObservationScalarCount)
+	}
+
+	player := env.game.State.Players[observation.Seat]
+	analysis := shanten.AnalyzeHand(player.ClosedHand, len(player.OpenMelds), env.game.State.WildTiles)
+	if observation.Scalars[29] != normalizeShanten(analysis.Routes.Standard) {
+		t.Fatalf("standard shanten scalar = %v, want %v", observation.Scalars[29], normalizeShanten(analysis.Routes.Standard))
+	}
+	if observation.Scalars[30] != normalizeShanten(analysis.Routes.SevenPairs) {
+		t.Fatalf("seven-pairs shanten scalar = %v, want %v", observation.Scalars[30], normalizeShanten(analysis.Routes.SevenPairs))
+	}
+	if observation.Scalars[31] != normalizeShanten(analysis.Routes.Independence) {
+		t.Fatalf("independence shanten scalar = %v, want %v", observation.Scalars[31], normalizeShanten(analysis.Routes.Independence))
+	}
+	if observation.Scalars[32] != normalizeUsefulTileCount(analysis.TotalUseful) {
+		t.Fatalf("ukeire scalar = %v, want %v", observation.Scalars[32], normalizeUsefulTileCount(analysis.TotalUseful))
+	}
+	for index := 29; index < ObservationScalarCount; index++ {
+		if observation.Scalars[index] < 0 || observation.Scalars[index] > 1 {
+			t.Fatalf("lookahead scalar[%d] out of range: %v", index, observation.Scalars[index])
+		}
+	}
+}
+
+func TestPublicDangerDropsAfterSameTileIsVisible(t *testing.T) {
+	target := &pb.Tile{Suit: pb.Suit_SUIT_MAN, Value: 5}
+	state := &pb.GameState{
+		Players: []*pb.PlayerState{
+			{Seat: 0, HandSize: 13},
+			{Seat: 1, HandSize: 13},
+			{Seat: 2, HandSize: 13},
+			{Seat: 3, HandSize: 13},
+		},
+	}
+
+	unknownDanger := publicDangerScore(state, 0, target)
+	state.Players[1].Discards = []*pb.Tile{{Suit: pb.Suit_SUIT_MAN, Value: 5}}
+	seenDanger := publicDangerScore(state, 0, target)
+
+	if seenDanger >= unknownDanger {
+		t.Fatalf("expected visible same-tile discard to reduce danger, got before=%v after=%v", unknownDanger, seenDanger)
+	}
 }
 
 func TestGenerateHeuristicTrajectoryDeterministic(t *testing.T) {

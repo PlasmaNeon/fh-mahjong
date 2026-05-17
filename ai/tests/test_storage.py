@@ -23,7 +23,7 @@ def _observation(seed: int, seat: int = 0) -> Observation:
     return Observation(
         seat=seat,
         planes=rng.standard_normal((39, 42, 1)).astype(np.float32),
-        scalars=rng.standard_normal(29).astype(np.float32),
+        scalars=rng.standard_normal(42).astype(np.float32),
         action_mask=mask,
     )
 
@@ -120,5 +120,5 @@ def test_iter_observation_action_batches_reads_npz_without_transition_objects(tm
 
     assert [batch["action_ids"].shape[0] for batch in batches] == [3, 1, 1]
     assert batches[0]["planes"].shape == (3, 39, 42, 1)
-    assert batches[0]["scalars"].shape == (3, 29)
+    assert batches[0]["scalars"].shape == (3, 42)
     assert batches[0]["action_mask"].shape == (3, 204)
