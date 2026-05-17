@@ -166,8 +166,20 @@ func TestPrivateTableStartWithThreeBots(t *testing.T) {
 	if body["state"] != "started" {
 		t.Fatalf("expected state=started, got %#v", body["state"])
 	}
-	if body["matchId"] == "" || body["matchId"] == nil {
-		t.Fatalf("expected matchId to be set, got %#v", body["matchId"])
+	matchID, _ := body["matchId"].(string)
+	if matchID == "" {
+		t.Fatal("matchId missing from response body")
+	}
+
+	active, ok := server.Matchmaker.GetActivePrivateTable("test-room")
+	if !ok {
+		t.Fatalf("expected active private table after start, but registry has none")
+	}
+	if active.MatchID != matchID {
+		t.Fatalf("expected active MatchID %q, got %q", matchID, active.MatchID)
+	}
+	if _, isParticipant := active.ParticipantIDs[101]; !isParticipant {
+		t.Fatalf("expected user 101 in active participant set, got %#v", active.ParticipantIDs)
 	}
 }
 
