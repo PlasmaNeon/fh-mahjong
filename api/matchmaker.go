@@ -323,3 +323,84 @@ func (m *Matchmaker) removeConfiguringTable(tableID string) {
 	defer m.configuringMu.Unlock()
 	delete(m.configuringTables, tableID)
 }
+
+// StartPrivateTable validates host + seat fullness, constructs the Room
+// with per-seat bot policies, persists the match, and dispatches the room
+// via the Hub. Returns the table snapshot (with State == "started" and
+// MatchID populated) on success.
+func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*PrivateTable, error) {
+	table := m.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		return nil, errors.New("table not found")
+	}
+
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if table.State != "configuring" {
+		return nil, errors.New("table already started")
+	}
+	if requesterUserID != table.HostUserID {
+		return nil, errors.New("only the host can start the match")
+	}
+	if err := table.canStart(); err != nil {
+		return nil, err
+	}
+
+	seatPolicies := make(map[uint32]bot.Policy)
+	var humanUserIDs []uint
+	for i, s := range table.Seats {
+		seat := uint32(i)
+		switch s.Kind {
+		case "human":
+			humanUserIDs = append(humanUserIDs, s.UserID)
+		case "bot":
+			policy, err := bot.NewPolicy(s.Difficulty)
+			if err != nil {
+				return nil, fmt.Errorf("seat %d: %w", i, err)
+			}
+			seatPolicies[seat] = policy
+		default:
+			return nil, fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
+		}
+	}
+
+	matchID := uuid.New().String()
+
+	match := models.Match{
+		ID:        matchID,
+		Status:    "in_progress",
+		StartTime: time.Now(),
+		Ruleset:   "hometown",
+	}
+	if m.DB != nil {
+		if err := m.DB.Create(&match).Error; err != nil {
+			return nil, fmt.Errorf("persist match: %w", err)
+		}
+	} else {
+		log.Printf("Database disabled, skipping match persistence for %s", matchID)
+	}
+
+	room := NewRoom(matchID, m.Hub, m.DB)
+	room.PaipuStore = m.PaipuStore
+	room.PrivateTableID = tableID
+	room.SeatPolicies = seatPolicies
+	room.OnShutdown = func() {
+		m.unregisterActivePrivateTable(tableID)
+	}
+
+	m.registerActivePrivateTable(tableID, matchID, humanUserIDs)
+
+	table.State = "started"
+	table.MatchID = matchID
+
+	m.Hub.BindRoom <- RoomBind{
+		UserIDs: humanUserIDs,
+		Room:    room,
+	}
+
+	// Drop the configuring entry now that the room owns the match lifecycle.
+	go m.removeConfiguringTable(tableID)
+
+	return table, nil
+}
