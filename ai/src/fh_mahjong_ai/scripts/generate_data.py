@@ -63,6 +63,7 @@ def generate_dataset(
         for chunk_index, episode_offset in enumerate(range(0, episodes, effective_chunk_size)):
             chunk_episodes = min(effective_chunk_size, episodes - episode_offset)
             chunk_seed = start_seed + episode_offset
+            chunk_t0 = time.monotonic()
             if bridge_kind == "mock":
                 transitions = collect_mock_episodes(
                     config=config,
@@ -85,6 +86,7 @@ def generate_dataset(
                 assert shard_writer is not None
                 shard_writer.write_many(transitions)
             total_transitions += len(transitions)
+            chunk_elapsed = time.monotonic() - chunk_t0
             chunk_stats.append(
                 {
                     "index": chunk_index,
@@ -93,7 +95,14 @@ def generate_dataset(
                     "start_seed": chunk_seed,
                     "end_seed": chunk_seed + chunk_episodes - 1 if chunk_episodes > 0 else chunk_seed,
                     "episode_index_offset": episode_offset,
+                    "elapsed_seconds": round(chunk_elapsed, 2),
                 }
+            )
+            print(
+                f"chunk {chunk_index + 1}/{(episodes + effective_chunk_size - 1) // effective_chunk_size}: "
+                f"episodes={chunk_episodes} transitions={len(transitions)} "
+                f"elapsed={chunk_elapsed:.2f}s total_transitions={total_transitions}",
+                flush=True,
             )
         shard_manifest = shard_writer.close() if shard_writer is not None else None
         elapsed = time.monotonic() - t0
@@ -204,6 +213,7 @@ def dataset_manifest(
             "start_seed": int(stats["start_seed"]),
             "end_seed": int(stats["end_seed"]),
             "chunk_size": int(stats["chunk_size"]),
+            "elapsed_seconds": float(stats["elapsed_seconds"]),
             "chunks": stats["chunks"],
             "shard_size": int(stats["shard_size"]),
             "compressed_shards": bool(stats["compressed_shards"]),
