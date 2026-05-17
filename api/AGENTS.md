@@ -11,6 +11,11 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
   - Public tool routes: `/api/v1/calc`, `/api/v1/shanten`, `/api/v1/paipu/:matchId`, `/api/v1/ws`
+  - Protected private-table routes (JWT required):
+    - `/api/v1/private-tables/:tableId` (GET) — read current seat config.
+    - `/api/v1/private-tables/:tableId/join` (POST) — claim a seat.
+    - `/api/v1/private-tables/:tableId/seat` (POST, host-only) — assign or clear an AI seat.
+    - `/api/v1/private-tables/:tableId/start` (POST, host-only) — launch the match.
   - Optional SPA/static serving from `web/dist` for single-service production deploys
   - Production SPA asset mounts use explicit `GET`/`HEAD` file handlers for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
@@ -51,6 +56,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `Matchmaker` struct — Queue of waiting clients
   - Groups 4 players into a `Room`
   - `BotPolicyFactory` creates one automated-seat policy per new room; the server uses this to enable remote AI bots without sharing policy state across matches
+  - Tracks `configuringTables` (host + 4-seat config) and exposes `JoinOrCreatePrivateTable`, `MutatePrivateTable`, and `StartPrivateTable`. The first joiner of a `tableId` becomes the host; only the host can mutate seats or start the match.
   - Tracks active private tables by `tableId` so the same `/table/:tableId` link cannot accidentally start a second game while the first one is still running
   - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
 
@@ -86,6 +92,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - The interrupt timer runs in a separate goroutine and calls `ResolveInterrupts()` directly — potential race condition to be aware of.
 - State is broadcast as raw Protobuf bytes; no per-player filtering yet (all players see full state including opponent hands).
 - Private tables are now a two-stage concept: `tableId` is the shareable waiting-room key, and once 4 players are ready the server records an active `tableId -> matchId + participant set` mapping so reconnects can rejoin the live room while non-participants are rejected.
+- WS `lobby_update` envelopes for private tables now carry the full `PrivateTableState` as JSON, so the waiting room renders seat assignments directly from each broadcast.
 - `/api/v1/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
 - When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/calc` and `/create-room` work behind the Go server.
 - Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
