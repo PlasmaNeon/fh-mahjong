@@ -106,8 +106,8 @@ export default function CreateRoom() {
                         <div className="space-y-5 text-sm leading-7 text-slate-300">
                             <p>1. Generate a private link here.</p>
                             <p>2. Send the link to your friends.</p>
-                            <p>3. Everyone opens the same `/table/...` link, enters a temporary name, and clicks ready.</p>
-                            <p>4. The game starts automatically once four players are in the room.</p>
+                            <p>3. Everyone opens the same `/table/...` link and enters a temporary name.</p>
+                            <p>4. The host (first joiner) fills any empty seats with AI and clicks Start when ready.</p>
                         </div>
 
                         <div className="mt-8 rounded-2xl border border-amber-300/18 bg-amber-950/25 px-4 py-4 text-sm leading-7 text-amber-100/90">

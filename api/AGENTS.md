@@ -101,7 +101,9 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Built JS asset requests return JavaScript, not `index.html`
   - Missing asset requests return `404`, not the SPA shell
 
-- **private_table_test.go** — Private-room join regression coverage:
-  - Inactive private tables queue normally
-  - Returning participants get `"active"` with the existing `matchId`
-  - Fresh users cannot queue into an already-active private table
+- **private_tables_test.go** — Seat-config + lifecycle regression coverage:
+  - First joiner is assigned host at seat 0; subsequent joiners claim the next empty seat
+  - Host can set/clear a bot seat; non-host gets 403
+  - `/start` rejects empty seats (400) and non-host callers (403)
+  - 1-human + 3-bot start path constructs an active private table and registers the host as a participant
+  - Returning participants on an active table get `"active"` with the existing `matchId`; outsiders get 409

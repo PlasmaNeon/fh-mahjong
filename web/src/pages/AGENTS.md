@@ -18,7 +18,7 @@ Contains the top-level page components rendered by React Router. Each page repre
 - **CreateRoom.tsx** — Public private-room generator page for `/create-room`:
   - Generates a random `tableId` client-side and builds a shareable `/table/:tableId` URL
   - Lets the user copy the link or open/join the generated table immediately
-  - Reuses the existing private-table queue flow instead of adding a separate backend room-creation API
+  - Acts purely as a link generator; the seat-configuration flow happens on `/table/:tableId`
   - Shares the same tabletop/glass visual language as the waiting room and game pages
 
 - **Table.tsx** — Private-table seat configuration screen for `/table/:tableId`:
