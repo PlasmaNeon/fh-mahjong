@@ -26,10 +26,13 @@ type ClientAction struct {
 	Action *pb.PlayerAction
 }
 
-// RoomBind maps a group of users to a specific match Room
+// RoomBind maps a group of users to a specific match Room. Seats holds
+// the explicit seat→userID assignment so the Hub binds each connected
+// client to the seat the matchmaker chose (mixed human+AI tables can
+// have non-contiguous human seats).
 type RoomBind struct {
-	UserIDs []uint
-	Room    *Room
+	Seats map[uint32]uint
+	Room  *Room
 }
 
 // Hub maintains the set of active clients and broadcasts messages to the match rooms.
@@ -110,12 +113,9 @@ func (h *Hub) Run() {
 				log.Printf("User %d submitted action but is not in a room", payload.Client.UserID)
 			}
 		case bind := <-h.BindRoom:
-			// Find clients for these UserIDs and attach them to the room
-			seat := uint32(0)
-			for _, uid := range bind.UserIDs {
+			for seat, uid := range bind.Seats {
 				h.UserRooms[uid] = bind.Room
 
-				// Search active connections for this user to wire to the engine
 				for client := range h.Clients {
 					if client.UserID == uid {
 						bind.Room.Seats[seat] = client
@@ -129,7 +129,6 @@ func (h *Hub) Run() {
 						break
 					}
 				}
-				seat++
 			}
 			// Engine and web sockets are wired, start the room loop
 			go bind.Room.Start()

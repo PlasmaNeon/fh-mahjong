@@ -256,9 +256,13 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		m.registerActivePrivateTable(tableID, matchID, userIDs)
 	}
 
+	seats := make(map[uint32]uint, len(userIDs))
+	for i, uid := range userIDs {
+		seats[uint32(i)] = uid
+	}
 	m.Hub.BindRoom <- RoomBind{
-		UserIDs: userIDs,
-		Room:    room,
+		Seats: seats,
+		Room:  room,
 	}
 }
 
@@ -334,73 +338,102 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		return nil, errors.New("table not found")
 	}
 
-	table.mu.Lock()
-	defer table.mu.Unlock()
+	var room *Room
+	var humanSeats map[uint32]uint
+	var matchID string
 
-	if table.State != "configuring" {
-		return nil, errors.New("table already started")
-	}
-	if requesterUserID != table.HostUserID {
-		return nil, errors.New("only the host can start the match")
-	}
-	if err := table.canStart(); err != nil {
+	err := func() error {
+		table.mu.Lock()
+		defer table.mu.Unlock()
+
+		if table.State != "configuring" {
+			return errors.New("table already started")
+		}
+		if requesterUserID != table.HostUserID {
+			return errors.New("only the host can start the match")
+		}
+		if err := table.canStart(); err != nil {
+			return err
+		}
+
+		seatPolicies := make(map[uint32]bot.Policy)
+		humanSeats = make(map[uint32]uint)
+		for i, s := range table.Seats {
+			seat := uint32(i)
+			switch s.Kind {
+			case "human":
+				humanSeats[seat] = s.UserID
+			case "bot":
+				policy, perr := bot.NewPolicy(s.Difficulty)
+				if perr != nil {
+					return fmt.Errorf("seat %d: %w", i, perr)
+				}
+				seatPolicies[seat] = policy
+			default:
+				return fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
+			}
+		}
+
+		matchID = uuid.New().String()
+		match := models.Match{
+			ID:        matchID,
+			Status:    "in_progress",
+			StartTime: time.Now(),
+			Ruleset:   "hometown",
+		}
+		if m.DB != nil {
+			if dberr := m.DB.Create(&match).Error; dberr != nil {
+				return fmt.Errorf("persist match: %w", dberr)
+			}
+		} else {
+			log.Printf("Database disabled, skipping match persistence for %s", matchID)
+		}
+
+		room = NewRoom(matchID, m.Hub, m.DB)
+		room.PaipuStore = m.PaipuStore
+		room.PrivateTableID = tableID
+		room.SeatPolicies = seatPolicies
+		room.OnShutdown = func() {
+			m.unregisterActivePrivateTable(tableID)
+		}
+
+		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats))
+
+		table.State = "started"
+		table.MatchID = matchID
+
+		return nil
+	}()
+
+	if err != nil {
 		return nil, err
 	}
 
-	seatPolicies := make(map[uint32]bot.Policy)
-	var humanUserIDs []uint
-	for i, s := range table.Seats {
-		seat := uint32(i)
-		switch s.Kind {
-		case "human":
-			humanUserIDs = append(humanUserIDs, s.UserID)
-		case "bot":
-			policy, err := bot.NewPolicy(s.Difficulty)
-			if err != nil {
-				return nil, fmt.Errorf("seat %d: %w", i, err)
-			}
-			seatPolicies[seat] = policy
-		default:
-			return nil, fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
-		}
-	}
-
-	matchID := uuid.New().String()
-
-	match := models.Match{
-		ID:        matchID,
-		Status:    "in_progress",
-		StartTime: time.Now(),
-		Ruleset:   "hometown",
-	}
-	if m.DB != nil {
-		if err := m.DB.Create(&match).Error; err != nil {
-			return nil, fmt.Errorf("persist match: %w", err)
-		}
-	} else {
-		log.Printf("Database disabled, skipping match persistence for %s", matchID)
-	}
-
-	room := NewRoom(matchID, m.Hub, m.DB)
-	room.PaipuStore = m.PaipuStore
-	room.PrivateTableID = tableID
-	room.SeatPolicies = seatPolicies
-	room.OnShutdown = func() {
-		m.unregisterActivePrivateTable(tableID)
-	}
-
-	m.registerActivePrivateTable(tableID, matchID, humanUserIDs)
-
-	table.State = "started"
-	table.MatchID = matchID
-
+	// BindRoom send happens AFTER table.mu is released so a slow Hub.Run
+	// doesn't block concurrent readers. State is already "started", so
+	// any incoming join request will be rejected cleanly.
 	m.Hub.BindRoom <- RoomBind{
-		UserIDs: humanUserIDs,
-		Room:    room,
+		Seats: humanSeats,
+		Room:  room,
 	}
 
-	// Drop the configuring entry now that the room owns the match lifecycle.
+	// Async to avoid acquiring configuringMu while we'd otherwise be
+	// holding table.mu (lock-order inversion with JoinOrCreatePrivateTable).
+	// Even now (after the lock is released) the goroutine is harmless and
+	// keeps the caller responsive.
 	go m.removeConfiguringTable(tableID)
 
+	// Return the live pointer; State is "started" so future readers can
+	// still SnapshotProto() without seeing an inconsistent view.
 	return table, nil
+}
+
+// mapValues returns the values of a uint32→uint map as a slice. Used to
+// adapt the seat-keyed human map to the userID-list APIs.
+func mapValues(m map[uint32]uint) []uint {
+	out := make([]uint, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }
