@@ -226,6 +226,11 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	tableID := c.Param("tableId")
 
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		return
+	}
+
 	var req struct {
 		Seat       uint32        `json:"seat"`
 		Kind       string        `json:"kind"`
@@ -241,7 +246,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 			return errHostOnly
 		}
 		if t.State != "configuring" {
-			return errors.New("table already started")
+			return ErrPrivateTableAlreadyStarted
 		}
 		if req.Kind == "bot" {
 			if _, perr := bot.NewPolicy(req.Difficulty); perr != nil {
@@ -252,8 +257,11 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 	})
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errHostOnly) {
+		switch {
+		case errors.Is(err, errHostOnly):
 			status = http.StatusForbidden
+		case errors.Is(err, ErrPrivateTableAlreadyStarted):
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
@@ -267,14 +275,23 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	tableID := c.Param("tableId")
 
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		return
+	}
+
 	table, err := s.Matchmaker.StartPrivateTable(tableID, userID.(uint))
 	if err != nil {
 		status := http.StatusBadRequest
-		switch err.Error() {
-		case "only the host can start the match":
+		switch {
+		case errors.Is(err, ErrPrivateTableHostOnly):
 			status = http.StatusForbidden
-		case "table not found":
+		case errors.Is(err, ErrPrivateTableNotFound):
 			status = http.StatusNotFound
+		case errors.Is(err, ErrPrivateTableAlreadyStarted):
+			status = http.StatusConflict
+		case errors.Is(err, ErrPrivateTablePersistFailed):
+			status = http.StatusInternalServerError
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return

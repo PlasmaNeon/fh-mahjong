@@ -16,6 +16,15 @@ import (
 
 var ctx = context.Background()
 
+// Private-table lifecycle sentinels. Used by handlers (via errors.Is) to map
+// internal errors to HTTP status codes without string-matching.
+var (
+	ErrPrivateTableNotFound       = errors.New("table not found")
+	ErrPrivateTableAlreadyStarted = errors.New("table already started")
+	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
+	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
+)
+
 // InMemoryQueue simulates Redis lists
 type InMemoryQueue struct {
 	mu    sync.Mutex
@@ -310,7 +319,7 @@ func (m *Matchmaker) GetConfiguringPrivateTable(tableID string) *PrivateTable {
 func (m *Matchmaker) MutatePrivateTable(tableID string, fn func(t *PrivateTable) error) (*PrivateTable, error) {
 	table := m.GetConfiguringPrivateTable(tableID)
 	if table == nil {
-		return nil, errors.New("table not found")
+		return nil, ErrPrivateTableNotFound
 	}
 	table.mu.Lock()
 	defer table.mu.Unlock()
@@ -335,7 +344,7 @@ func (m *Matchmaker) removeConfiguringTable(tableID string) {
 func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*PrivateTable, error) {
 	table := m.GetConfiguringPrivateTable(tableID)
 	if table == nil {
-		return nil, errors.New("table not found")
+		return nil, ErrPrivateTableNotFound
 	}
 
 	var room *Room
@@ -347,10 +356,10 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		defer table.mu.Unlock()
 
 		if table.State != "configuring" {
-			return errors.New("table already started")
+			return ErrPrivateTableAlreadyStarted
 		}
 		if requesterUserID != table.HostUserID {
-			return errors.New("only the host can start the match")
+			return ErrPrivateTableHostOnly
 		}
 		if err := table.canStart(); err != nil {
 			return err
@@ -383,7 +392,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 		if m.DB != nil {
 			if dberr := m.DB.Create(&match).Error; dberr != nil {
-				return fmt.Errorf("persist match: %w", dberr)
+				return fmt.Errorf("%w: %w", ErrPrivateTablePersistFailed, dberr)
 			}
 		} else {
 			log.Printf("Database disabled, skipping match persistence for %s", matchID)
