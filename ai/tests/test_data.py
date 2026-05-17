@@ -11,7 +11,7 @@ def _obs(seat: int = 0) -> Observation:
     return Observation(
         seat=seat,
         planes=np.zeros((39, 42, 1), dtype=np.float32),
-        scalars=np.zeros(29, dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
         action_mask=np.ones(204, dtype=np.int8),
     )
 

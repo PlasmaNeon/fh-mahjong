@@ -10,7 +10,7 @@ def _obs(seat: int = 0) -> Observation:
     return Observation(
         seat=seat,
         planes=np.zeros((39, 42, 1), dtype=np.float32),
-        scalars=np.zeros(29, dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
         action_mask=np.ones(204, dtype=np.int8),
     )
 
@@ -72,7 +72,7 @@ def test_array_replay_buffer_supports_bc_only_arrays() -> None:
     arrays = {
         "seats": np.asarray([1], dtype=np.int16),
         "planes": np.zeros((1, 39, 42, 1), dtype=np.float32),
-        "scalars": np.zeros((1, 29), dtype=np.float32),
+        "scalars": np.zeros((1, 42), dtype=np.float32),
         "action_mask": np.ones((1, 204), dtype=np.int8),
         "action_ids": np.asarray([7], dtype=np.int64),
         "terminal_rewards": np.asarray([[0, 9, 0, 0]], dtype=np.float32),

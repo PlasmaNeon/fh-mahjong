@@ -59,11 +59,11 @@ Later:
 The reading strongly supports adding rule-engine look-ahead features, especially for discard decisions:
 
 - overall shanten (already implemented in observation scalar index 25)
-- route-specific shanten
-- useful tile counts
-- wild-preservation signals
-- estimated score potential
-- danger or deal-in heuristics
+- route-specific shanten (implemented in observation scalar indices 29-31)
+- useful tile counts / ukeire (implemented in scalar indices 32 and 34)
+- wild-preservation signals (implemented in scalar indices 36-37)
+- estimated score potential (implemented in scalar index 38)
+- public danger heuristics (implemented in scalar indices 39-41)
 
 These features are compatible with the current Go heuristic analysis and should help both BC and RL.
 
@@ -77,8 +77,8 @@ These features are compatible with the current Go heuristic analysis and should 
 ## Recommended order of work
 
 1. Strengthen behavior cloning training and evaluation.
-2. Add richer heuristic and look-ahead features to observations or auxiliary inputs.
-3. Add oracle-only auxiliary heads.
-4. Add conservative offline RL after BC.
+2. Rebuild the heuristic dataset with the expanded 42-scalar observation schema.
+3. Retrain BC from scratch on the new observations and rerun duplicate evaluation.
+4. Add oracle-only auxiliary heads.
 5. Add online self-play with checkpoint promotion.
 6. Explore transformer and hierarchical models after the pipeline is stable.

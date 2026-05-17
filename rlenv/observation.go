@@ -11,7 +11,7 @@ const (
 	ObservationPlaneChannels = 39
 	ObservationPlaneHeight   = 42
 	ObservationPlaneWidth    = 1
-	ObservationScalarCount   = 29
+	ObservationScalarCount   = 42
 )
 
 func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
@@ -111,6 +111,29 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 	scalars[26] = float32(len(right.Discards)) / 40.0
 	scalars[27] = float32(len(across.Discards)) / 40.0
 	scalars[28] = float32(len(left.Discards)) / 40.0
+	scalars[29] = normalizeShanten(selfAnalysis.Routes.Standard)
+	scalars[30] = normalizeShanten(selfAnalysis.Routes.SevenPairs)
+	scalars[31] = normalizeShanten(selfAnalysis.Routes.Independence)
+	scalars[32] = normalizeUsefulTileCount(selfAnalysis.TotalUseful)
+
+	bestDiscard := bestVisibleDiscardLookahead(selfAnalysis)
+	if bestDiscard != nil {
+		scalars[33] = normalizeShanten(bestDiscard.After.Overall)
+		scalars[34] = normalizeUsefulTileCount(bestDiscard.TotalUseful)
+		scalars[35] = normalizeRouteDelta(bestDiscard.After.Overall - selfAnalysis.Routes.Overall)
+		if bestDiscard.IsWild {
+			scalars[37] = 1
+		}
+		if discardTile := tileFromType(bestDiscard.Discard); discardTile != nil {
+			scalars[40] = publicDangerScore(state, seat, discardTile)
+		}
+	}
+	scalars[36] = float32(countWildTiles(self.ClosedHand, state.WildTiles)) / 4.0
+	scalars[38] = visibleScorePotential(self, selfAnalysis, state.WildTiles)
+	if state.ActiveDiscard != nil {
+		scalars[39] = publicDangerScore(state, seat, state.ActiveDiscard)
+	}
+	scalars[41] = legalDiscardDangerRange(state, seat, mask)
 
 	return &pb.SeatObservation{
 		Seat:            seat,
@@ -281,6 +304,151 @@ func addCounts(dst *[42]int, src [42]int) {
 	}
 }
 
+func bestVisibleDiscardLookahead(analysis shanten.HandAnalysis) *shanten.DiscardOption {
+	if len(analysis.DiscardOptions) == 0 {
+		return nil
+	}
+	return &analysis.DiscardOptions[0]
+}
+
+func countWildTiles(tiles []*pb.Tile, wildTiles []*pb.Tile) int {
+	wildSet := make(map[uint32]bool, len(wildTiles))
+	for _, tile := range wildTiles {
+		wildSet[tileTypeKey(tile)] = true
+	}
+
+	count := 0
+	for _, tile := range tiles {
+		if wildSet[tileTypeKey(tile)] {
+			count++
+		}
+	}
+	return count
+}
+
+func tileFromType(tileType shanten.TileType) *pb.Tile {
+	if tileType.Suit == pb.Suit_SUIT_UNKNOWN || tileType.Value == 0 {
+		return nil
+	}
+	return &pb.Tile{Suit: tileType.Suit, Value: tileType.Value}
+}
+
+func visibleScorePotential(player *pb.PlayerState, analysis shanten.HandAnalysis, wildTiles []*pb.Tile) float32 {
+	if player == nil {
+		return 0
+	}
+
+	score := 1 + len(player.FlowerMelds)
+	wildCount := countWildTiles(player.ClosedHand, wildTiles)
+	switch {
+	case wildCount >= 3:
+		score += 50
+	case wildCount == 2:
+		score += 2
+	case wildCount == 1:
+		score += 1
+	default:
+		score += 1
+	}
+
+	if len(player.OpenMelds) == 0 {
+		score += 2
+	}
+	if analysis.Routes.Standard <= 0 {
+		score += 5
+	}
+	if analysis.Routes.SevenPairs <= 1 {
+		score += 20
+	}
+	if analysis.Routes.Independence <= 1 {
+		score += 20
+	}
+
+	return clamp01(float32(score) / 100.0)
+}
+
+func publicDangerScore(state *pb.GameState, observerSeat uint32, tile *pb.Tile) float32 {
+	if state == nil || tile == nil {
+		return 0
+	}
+
+	seen := publicSeenCounts(state)
+	faceIndex, ok := tileFaceIndex42(tile)
+	if !ok {
+		return 0
+	}
+
+	danger := float32(0.2)
+	seenCopies := seen[faceIndex]
+	switch {
+	case seenCopies <= 0:
+		danger += 0.3
+	case seenCopies == 1:
+		danger += 0.18
+	case seenCopies == 2:
+		danger += 0.08
+	default:
+		danger -= 0.05
+	}
+
+	for offset := uint32(1); offset < 4; offset++ {
+		opponentSeat := (observerSeat + offset) % 4
+		if int(opponentSeat) >= len(state.Players) {
+			continue
+		}
+		opponent := state.Players[opponentSeat]
+		danger += float32(len(opponent.OpenMelds)) * 0.04
+		if len(opponent.Discards) < 12 {
+			danger += float32(12-len(opponent.Discards)) * 0.01
+		}
+		if opponent.HandSize <= 4 {
+			danger += 0.04
+		}
+	}
+
+	return clamp01(danger)
+}
+
+func legalDiscardDangerRange(state *pb.GameState, seat uint32, mask []byte) float32 {
+	if state == nil || int(seat) >= len(state.Players) {
+		return 0
+	}
+
+	minDanger := float32(1)
+	maxDanger := float32(0)
+	found := false
+	for actionID := DiscardBase; actionID < DiscardBase+DiscardCount && actionID < len(mask); actionID++ {
+		if mask[actionID] != 1 {
+			continue
+		}
+		tile := firstTileForFace(state.Players[seat].ClosedHand, actionID-DiscardBase)
+		if tile == nil {
+			continue
+		}
+		danger := publicDangerScore(state, seat, tile)
+		if danger < minDanger {
+			minDanger = danger
+		}
+		if danger > maxDanger {
+			maxDanger = danger
+		}
+		found = true
+	}
+	if !found {
+		return 0
+	}
+	return clamp01(maxDanger - minDanger)
+}
+
+func firstTileForFace(tiles []*pb.Tile, faceIndex int) *pb.Tile {
+	for _, tile := range tiles {
+		if index, ok := tileFaceIndex42(tile); ok && index == faceIndex {
+			return tile
+		}
+	}
+	return nil
+}
+
 func channelOffset(channel int) int {
 	return channel * ObservationPlaneHeight * ObservationPlaneWidth
 }
@@ -301,8 +469,36 @@ func normalizeScore(score int32) float32 {
 }
 
 func normalizeShanten(value int) float32 {
+	if value == shanten.RouteUnavailable {
+		return 1
+	}
 	clamped := float32(maxInt(-1, minInt(8, value)) + 1)
 	return clamped / 9.0
+}
+
+func normalizeUsefulTileCount(value int) float32 {
+	return clamp01(float32(maxInt(0, value)) / 64.0)
+}
+
+func normalizeRouteDelta(value int) float32 {
+	return clamp01((float32(maxInt(-4, minInt(4, value))) + 4.0) / 8.0)
+}
+
+func tileTypeKey(tile *pb.Tile) uint32 {
+	if tile == nil {
+		return 0
+	}
+	return uint32(tile.Suit)*100 + tile.Value
+}
+
+func clamp01(value float32) float32 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func minInt(lhs int, rhs int) int {
