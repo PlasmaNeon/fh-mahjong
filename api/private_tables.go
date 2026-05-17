@@ -1,11 +1,16 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 
+	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // SeatConfig mirrors pb.SeatConfig for in-memory mutation. JSON marshalling
@@ -135,4 +140,161 @@ func (t *PrivateTable) SnapshotProto() *pb.PrivateTableState {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.toProto()
+}
+
+// broadcastPrivateTable serializes the table to the proto JSON shape and
+// fans it out via Hub.LobbyBroadcast. The frontend listens for
+// `type: "lobby_update"` JSON messages and updates its seat state.
+//
+// Uses SnapshotProto so the marshal happens under the table lock; any
+// caller that already holds the lock should release it before calling
+// this helper (the registry methods return after `defer Unlock`, so the
+// typical handler flow is safe).
+func (s *Server) broadcastPrivateTable(table *PrivateTable) {
+	if s.Hub == nil {
+		return
+	}
+	statePB := table.SnapshotProto()
+	stateJSON, err := protojson.MarshalOptions{EmitUnpopulated: true, UseEnumNumbers: true}.Marshal(statePB)
+	if err != nil {
+		return
+	}
+	envelope := struct {
+		Type  string          `json:"type"`
+		Table string          `json:"table"`
+		State json.RawMessage `json:"state"`
+	}{
+		Type:  "lobby_update",
+		Table: table.TableID,
+		State: stateJSON,
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return
+	}
+	go func() { s.Hub.LobbyBroadcast <- payload }()
+}
+
+func (s *Server) handlePrivateTableJoin(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	username, _ := c.Get("username")
+	tableID := c.Param("tableId")
+	if tableID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tableId is required"})
+		return
+	}
+
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		return
+	}
+
+	if activeTable, isActive, isParticipant := s.Matchmaker.IsPrivateTableParticipant(tableID, userID.(uint)); isActive {
+		if isParticipant {
+			c.JSON(http.StatusOK, gin.H{"status": "active", "table": tableID, "matchId": activeTable.MatchID})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "This private table is already in an active game", "status": "active", "table": tableID, "matchId": activeTable.MatchID})
+		return
+	}
+
+	table, err := s.Matchmaker.JoinOrCreatePrivateTable(tableID, userID.(uint), username.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.broadcastPrivateTable(table)
+	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
+func (s *Server) handlePrivateTableGet(c *gin.Context) {
+	tableID := c.Param("tableId")
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		return
+	}
+	table := s.Matchmaker.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "table not found"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
+func (s *Server) handlePrivateTableSeat(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	tableID := c.Param("tableId")
+
+	var req struct {
+		Seat       uint32        `json:"seat"`
+		Kind       string        `json:"kind"`
+		Difficulty pb.Difficulty `json:"difficulty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	table, err := s.Matchmaker.MutatePrivateTable(tableID, func(t *PrivateTable) error {
+		if t.HostUserID != userID.(uint) {
+			return errHostOnly
+		}
+		if t.State != "configuring" {
+			return errors.New("table already started")
+		}
+		if req.Kind == "bot" {
+			if _, perr := bot.NewPolicy(req.Difficulty); perr != nil {
+				return perr
+			}
+		}
+		return t.setSeat(req.Seat, req.Kind, req.Difficulty)
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errHostOnly) {
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.broadcastPrivateTable(table)
+	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
+func (s *Server) handlePrivateTableStart(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	tableID := c.Param("tableId")
+
+	table, err := s.Matchmaker.StartPrivateTable(tableID, userID.(uint))
+	if err != nil {
+		status := http.StatusBadRequest
+		switch err.Error() {
+		case "only the host can start the match":
+			status = http.StatusForbidden
+		case "table not found":
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.broadcastPrivateTable(table)
+	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
+var errHostOnly = errors.New("only the host can modify seats")
+
+// marshalPrivateTableJSON snapshots the table under its lock and returns
+// the proto-JSON encoding. Safe to call from any handler regardless of
+// whether the caller currently holds the lock — the registry mutate
+// helpers release the lock before returning, so this path never blocks
+// indefinitely.
+func marshalPrivateTableJSON(t *PrivateTable) []byte {
+	data, err := protojson.MarshalOptions{EmitUnpopulated: true, UseEnumNumbers: true}.Marshal(t.SnapshotProto())
+	if err != nil {
+		return []byte(`{"error":"failed to marshal table state"}`)
+	}
+	return data
 }
