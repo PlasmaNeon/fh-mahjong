@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from .buffer import ReplayBuffer
-from .config import OfflineQConfig, TrainConfig
+from .config import AdvantageWeightedBCConfig, OfflineQConfig, TrainConfig
 from .env import MahjongEnv
 from .policies import ActionChoice
 from .types import StepResult, Transition
@@ -34,6 +34,16 @@ class OfflineQMetrics:
     value_loss: float
     avg_q: float
     avg_target: float
+
+
+@dataclass
+class AdvantageWeightedBCMetrics:
+    loss: float
+    policy_loss: float
+    value_loss: float
+    avg_weight: float
+    max_weight: float
+    avg_advantage: float
 
 
 def collect_episode(env: MahjongEnv, policy: PolicyLike, seed: Optional[int] = None) -> List[Transition]:
@@ -96,6 +106,57 @@ class BehaviorCloningTrainer:
             loss=float(loss.item()),
             policy_loss=float(policy_loss.item()),
             value_loss=float(value_loss.item()),
+        )
+
+
+class AdvantageWeightedBCTrainer:
+    """Conservative offline policy improvement via advantage-weighted imitation."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        train_config: TrainConfig,
+        awbc_config: Optional[AdvantageWeightedBCConfig] = None,
+    ) -> None:
+        self.model = model
+        self.optimizer = optimizer
+        self.train_config = train_config
+        self.awbc_config = awbc_config or AdvantageWeightedBCConfig()
+        self._sample_rng = np.random.default_rng(train_config.seed)
+
+    def train_step(self, replay_buffer: ReplayBuffer) -> AdvantageWeightedBCMetrics:
+        sample_seed = int(self._sample_rng.integers(0, np.iinfo(np.uint32).max))
+        batch = replay_buffer.sample(self.train_config.batch_size, seed=sample_seed)
+
+        planes = torch.from_numpy(batch.planes).to(self.train_config.device)
+        scalars = torch.from_numpy(batch.scalars).to(self.train_config.device)
+        action_mask = torch.from_numpy(batch.action_mask).to(self.train_config.device)
+        action_ids = torch.from_numpy(batch.action_ids).to(self.train_config.device)
+        returns = torch.from_numpy(batch.returns).to(self.train_config.device)
+
+        logits, values = self.model(planes, scalars, action_mask)
+        advantages = returns - values.detach()
+        weights = torch.exp(advantages / max(self.awbc_config.temperature, 1e-6))
+        weights = torch.clamp(weights, max=self.awbc_config.max_weight)
+
+        per_sample_policy_loss = nn.functional.cross_entropy(logits, action_ids, reduction="none")
+        policy_loss = (weights * per_sample_policy_loss).mean()
+        value_loss = nn.functional.mse_loss(values, returns)
+        loss = policy_loss + self.awbc_config.value_weight * value_loss
+
+        self.optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.train_config.max_grad_norm)
+        self.optimizer.step()
+
+        return AdvantageWeightedBCMetrics(
+            loss=float(loss.item()),
+            policy_loss=float(policy_loss.item()),
+            value_loss=float(value_loss.item()),
+            avg_weight=float(weights.mean().item()),
+            max_weight=float(weights.max().item()),
+            avg_advantage=float(advantages.mean().item()),
         )
 
 
