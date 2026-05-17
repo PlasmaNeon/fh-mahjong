@@ -121,6 +121,11 @@ def main() -> None:
             print(f"  Wins:        {online_report['win_count']}")
             print(f"  Win Rate:    {online_report['win_rate']:.2%}")
             print(f"  Large Loss:  {online_report['large_loss_rate']:.2%}")
+            if online_report.get("round_outcome_rates"):
+                print("  Round Outcomes:")
+                for name, rate in online_report["round_outcome_rates"].items():
+                    count = online_report.get("round_outcome_counts", {}).get(name, 0)
+                    print(f"    {name}: n={count} rate={rate:.2%}")
             if mlflow_run is not None:
                 log_metrics({"online": online_report})
 

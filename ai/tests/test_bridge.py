@@ -92,11 +92,30 @@ class FakeGoLibrary:
         request = game_pb2.EnvResetRequest()
         request.ParseFromString(ctypes.string_at(request_ptr, request_len))
         self.last_reset_seed = request.seed
-        response = game_pb2.EnvResetResponse(observation=self._observation())
+        response = game_pb2.EnvResetResponse(
+            observation=self._observation(),
+            round_outcome=game_pb2.RoundOutcome(
+                is_draw=False,
+                winner_seat=0,
+                win_type=game_pb2.ACTION_TSUMO,
+                total_score=4,
+                payouts=[game_pb2.PlayerPayout(seat=0, amount=6)],
+            ),
+        )
         return self._bytes_result(response.SerializeToString())
 
     def _step(self, handle, request_ptr, request_len):
-        response = game_pb2.EnvStepResponse(observation=self._observation(), rewards=[0.0, 0.0, 0.0, 0.0])
+        response = game_pb2.EnvStepResponse(
+            observation=self._observation(),
+            rewards=[0.0, 0.0, 0.0, 0.0],
+            round_outcome=game_pb2.RoundOutcome(
+                is_draw=False,
+                winner_seat=1,
+                win_type=game_pb2.ACTION_RON,
+                discarder_seat=0,
+                total_score=2,
+            ),
+        )
         return self._bytes_result(response.SerializeToString())
 
     def _close(self, handle) -> None:
@@ -129,6 +148,26 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(observation.seat, 0)
         self.assertIsNotNone(bridge.last_reset_result)
         self.assertFalse(bridge.last_reset_result.terminated)
+        self.assertEqual(bridge.last_reset_result.info["round_outcome"]["win_type_name"], "ACTION_TSUMO")
+        self.assertEqual(bridge.last_reset_result.info["round_outcome"]["payouts"], [{"seat": 0, "amount": 6}])
+
+    def test_step_decodes_round_outcome(self) -> None:
+        fake_library = FakeGoLibrary()
+        config = EnvConfig(
+            plane_shape=(1, 1, 1),
+            scalar_features=1,
+            action_space_size=2,
+            bridge_library_path=Path("/tmp/libfh_mahjong_bridge_fake.so"),
+        )
+
+        with mock.patch.object(bridge_module.ctypes, "CDLL", return_value=fake_library):
+            bridge = CtypesGoBridge(config)
+            result = bridge.step(0)
+            bridge.close()
+
+        self.assertEqual(result.info["round_outcome"]["win_type_name"], "ACTION_RON")
+        self.assertEqual(result.info["round_outcome"]["winner_seat"], 1)
+        self.assertEqual(result.info["round_outcome"]["discarder_seat"], 0)
 
 
 if __name__ == "__main__":

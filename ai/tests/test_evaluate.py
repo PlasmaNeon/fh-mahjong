@@ -119,9 +119,12 @@ class TestEvaluateOnline:
         assert "reward_summary" in report
         assert "action_family_counts" in report
         assert "action_family_rates" in report
+        assert "round_outcome_counts" in report
+        assert "round_outcome_rates" in report
         assert "episodes" in report
         assert report["episodes"] == 2
         assert report["reward_summary"]["count"] == 2
+        assert report["round_outcome_counts"]["unknown"] == 2
 
     def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
         class TerminalResetBridge:
@@ -141,6 +144,14 @@ class TestEvaluateOnline:
                     rewards=np.asarray([0.0, 0.25, -0.1, -0.15], dtype=np.float32),
                     terminated=True,
                     truncated=False,
+                    info={
+                        "round_outcome": {
+                            "is_draw": False,
+                            "winner_seat": 1,
+                            "win_type_name": "ACTION_RON",
+                            "discarder_seat": 0,
+                        }
+                    },
                 )
                 return observation
 
@@ -169,6 +180,8 @@ class TestEvaluateOnline:
         assert report["win_count"] == 1
         assert report["action_family_counts"] == {}
         assert report["action_family_rates"] == {}
+        assert report["round_outcome_counts"] == {"ron_win": 1}
+        assert report["round_outcome_rates"] == {"ron_win": 1.0}
 
     def test_duplicate_seat_eval_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
@@ -186,3 +199,4 @@ class TestEvaluateOnline:
         assert set(report["seat_summary"]) == {"0", "1"}
         assert "reward_summary" in report
         assert "action_family_rates" in report
+        assert "round_outcome_rates" in report

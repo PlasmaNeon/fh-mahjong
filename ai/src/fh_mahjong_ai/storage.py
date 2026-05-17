@@ -286,6 +286,12 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
             return np.asarray(transition.rewards, dtype=np.float32)
         return np.asarray(terminal_rewards, dtype=np.float32)
 
+    def terminal_outcome_for(transition: Transition) -> dict[str, object]:
+        outcome = transition.info.get("terminal_outcome") or transition.info.get("round_outcome")
+        return outcome if isinstance(outcome, dict) else {}
+
+    outcomes = [terminal_outcome_for(t) for t in transitions]
+
     return {
         "seats": np.asarray([t.observation.seat for t in transitions], dtype=np.int16),
         "planes": np.stack([t.observation.planes for t in transitions]).astype(np.float32),
@@ -304,6 +310,11 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
             dtype=np.int64,
         ),
         "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
+        "terminal_is_draw": np.asarray([bool(o.get("is_draw", False)) for o in outcomes], dtype=np.bool_),
+        "terminal_winner_seat": np.asarray([int(o.get("winner_seat", -1)) for o in outcomes], dtype=np.int16),
+        "terminal_win_type": np.asarray([int(o.get("win_type", 0)) for o in outcomes], dtype=np.int16),
+        "terminal_discarder_seat": np.asarray([int(o.get("discarder_seat", -1)) for o in outcomes], dtype=np.int16),
+        "terminal_total_score": np.asarray([int(o.get("total_score", 0)) for o in outcomes], dtype=np.int32),
     }
 
 
@@ -335,10 +346,42 @@ def _read_transition_shard(path: Path) -> list[Transition]:
                     info={
                         "episode_index": int(arrays["episode_index"][index]),
                         "terminal_rewards": np.asarray(arrays["terminal_rewards"][index], dtype=np.float32),
+                        **_terminal_outcome_info(arrays, index),
                     },
                 )
             )
     return transitions
+
+
+def _terminal_outcome_info(arrays: np.lib.npyio.NpzFile, index: int) -> dict[str, object]:
+    required = {
+        "terminal_is_draw",
+        "terminal_winner_seat",
+        "terminal_win_type",
+        "terminal_discarder_seat",
+        "terminal_total_score",
+    }
+    if not required.issubset(set(arrays.files)):
+        return {}
+
+    is_draw = bool(arrays["terminal_is_draw"][index])
+    winner_seat = int(arrays["terminal_winner_seat"][index])
+    win_type = int(arrays["terminal_win_type"][index])
+    discarder_seat = int(arrays["terminal_discarder_seat"][index])
+    total_score = int(arrays["terminal_total_score"][index])
+    if not is_draw and winner_seat < 0 and win_type == 0:
+        return {}
+
+    return {
+        "terminal_outcome": {
+            "is_draw": is_draw,
+            "winner_seat": winner_seat,
+            "win_type": win_type,
+            "discarder_seat": discarder_seat,
+            "total_score": total_score,
+            "payouts": [],
+        }
+    }
 
 
 def _transition_to_dict(transition: Transition) -> dict[str, object]:

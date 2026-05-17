@@ -51,10 +51,11 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		return nil, err
 	}
 	return &pb.EnvResetResponse{
-		Observation: cloneObservation(stepResponse.Observation),
-		Rewards:     append([]float32(nil), stepResponse.Rewards...),
-		Terminated:  stepResponse.Terminated,
-		Truncated:   stepResponse.Truncated,
+		Observation:  cloneObservation(stepResponse.Observation),
+		Rewards:      append([]float32(nil), stepResponse.Rewards...),
+		Terminated:   stepResponse.Terminated,
+		Truncated:    stepResponse.Truncated,
+		RoundOutcome: cloneRoundOutcome(stepResponse.RoundOutcome),
 	}, nil
 }
 
@@ -140,20 +141,25 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 				Truncated:       stepResponse.Truncated,
 				ActingSeat:      seat,
 				EpisodeIndex:    uint64(episode),
+				TerminalOutcome: cloneRoundOutcome(stepResponse.RoundOutcome),
 			}
 			episodeSamples = append(episodeSamples, sample)
 			observation = cloneObservation(stepResponse.Observation)
 			resetResponse = &pb.EnvResetResponse{
-				Observation: cloneObservation(stepResponse.Observation),
-				Rewards:     append([]float32(nil), stepResponse.Rewards...),
-				Terminated:  stepResponse.Terminated,
-				Truncated:   stepResponse.Truncated,
+				Observation:  cloneObservation(stepResponse.Observation),
+				Rewards:      append([]float32(nil), stepResponse.Rewards...),
+				Terminated:   stepResponse.Terminated,
+				Truncated:    stepResponse.Truncated,
+				RoundOutcome: cloneRoundOutcome(stepResponse.RoundOutcome),
 			}
 			finalRewards = append([]float32(nil), stepResponse.Rewards...)
 		}
 
 		for _, sample := range episodeSamples {
 			sample.TerminalRewards = append([]float32(nil), finalRewards...)
+			if sample.TerminalOutcome == nil {
+				sample.TerminalOutcome = cloneRoundOutcome(resetResponse.RoundOutcome)
+			}
 			dataset.Samples = append(dataset.Samples, sample)
 		}
 	}
@@ -165,9 +171,10 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 	for {
 		if e.game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount),
-				Rewards:     finalRewards(e.game.State),
-				Terminated:  true,
+				Observation:  emptyObservation(e.game.State, e.decisionCount),
+				Rewards:      finalRewards(e.game.State),
+				Terminated:   true,
+				RoundOutcome: roundOutcome(e.game.State),
 			}, nil
 		}
 
@@ -319,6 +326,52 @@ func finalRewards(state *pb.GameState) []float32 {
 		}
 	}
 	return rewards
+}
+
+func roundOutcome(state *pb.GameState) *pb.RoundOutcome {
+	if state == nil || state.RoundResult == nil {
+		return nil
+	}
+	result := state.RoundResult
+	return &pb.RoundOutcome{
+		IsDraw:        result.IsDraw,
+		WinnerSeat:    result.WinnerSeat,
+		WinType:       result.WinType,
+		DiscarderSeat: result.DiscarderSeat,
+		TotalScore:    result.TotalScore,
+		Payouts:       clonePayouts(result.Payouts),
+	}
+}
+
+func cloneRoundOutcome(outcome *pb.RoundOutcome) *pb.RoundOutcome {
+	if outcome == nil {
+		return nil
+	}
+	return &pb.RoundOutcome{
+		IsDraw:        outcome.IsDraw,
+		WinnerSeat:    outcome.WinnerSeat,
+		WinType:       outcome.WinType,
+		DiscarderSeat: outcome.DiscarderSeat,
+		TotalScore:    outcome.TotalScore,
+		Payouts:       clonePayouts(outcome.Payouts),
+	}
+}
+
+func clonePayouts(payouts []*pb.PlayerPayout) []*pb.PlayerPayout {
+	if len(payouts) == 0 {
+		return nil
+	}
+	cloned := make([]*pb.PlayerPayout, 0, len(payouts))
+	for _, payout := range payouts {
+		if payout == nil {
+			continue
+		}
+		cloned = append(cloned, &pb.PlayerPayout{
+			Seat:   payout.Seat,
+			Amount: payout.Amount,
+		})
+	}
+	return cloned
 }
 
 func configOrDefault(request *pb.TrajectoryRequest) *pb.EnvConfig {

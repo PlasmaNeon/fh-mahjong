@@ -1159,6 +1159,133 @@ export namespace game {
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
+    /** Properties of a RoundOutcome. */
+    interface IRoundOutcome {
+
+        /** RoundOutcome isDraw */
+        isDraw?: (boolean|undefined);
+
+        /** RoundOutcome winnerSeat */
+        winnerSeat?: (number|undefined);
+
+        /** RoundOutcome winType */
+        winType?: (game.ActionType|undefined);
+
+        /** RoundOutcome discarderSeat */
+        discarderSeat?: (number|undefined);
+
+        /** RoundOutcome totalScore */
+        totalScore?: (number|undefined);
+
+        /** RoundOutcome payouts */
+        payouts?: (game.IPlayerPayout[]|undefined);
+    }
+
+    /** Represents a RoundOutcome. */
+    class RoundOutcome implements IRoundOutcome {
+
+        /**
+         * Constructs a new RoundOutcome.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IRoundOutcome);
+
+        /** RoundOutcome isDraw. */
+        public isDraw: boolean;
+
+        /** RoundOutcome winnerSeat. */
+        public winnerSeat: number;
+
+        /** RoundOutcome winType. */
+        public winType: game.ActionType;
+
+        /** RoundOutcome discarderSeat. */
+        public discarderSeat: number;
+
+        /** RoundOutcome totalScore. */
+        public totalScore: number;
+
+        /** RoundOutcome payouts. */
+        public payouts: game.PlayerPayout[];
+
+        /**
+         * Creates a new RoundOutcome instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns RoundOutcome instance
+         */
+        public static create(properties?: game.IRoundOutcome): game.RoundOutcome;
+
+        /**
+         * Encodes the specified RoundOutcome message. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
+         * @param message RoundOutcome message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IRoundOutcome, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified RoundOutcome message, length delimited. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
+         * @param message RoundOutcome message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IRoundOutcome, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a RoundOutcome message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns RoundOutcome
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundOutcome;
+
+        /**
+         * Decodes a RoundOutcome message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns RoundOutcome
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundOutcome;
+
+        /**
+         * Verifies a RoundOutcome message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a RoundOutcome message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns RoundOutcome
+         */
+        public static fromObject(object: { [k: string]: any }): game.RoundOutcome;
+
+        /**
+         * Creates a plain object from a RoundOutcome message. Also converts values to other types if specified.
+         * @param message RoundOutcome
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.RoundOutcome, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this RoundOutcome to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for RoundOutcome
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
     /** Properties of an EnvConfig. */
     interface IEnvConfig {
 
@@ -1542,6 +1669,9 @@ export namespace game {
 
         /** EnvResetResponse truncated */
         truncated?: (boolean|undefined);
+
+        /** EnvResetResponse roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents an EnvResetResponse. */
@@ -1564,6 +1694,9 @@ export namespace game {
 
         /** EnvResetResponse truncated. */
         public truncated: boolean;
+
+        /** EnvResetResponse roundOutcome. */
+        public roundOutcome: game.RoundOutcome;
 
         /**
          * Creates a new EnvResetResponse instance using the specified properties.
@@ -1754,6 +1887,9 @@ export namespace game {
 
         /** EnvStepResponse truncated */
         truncated?: (boolean|undefined);
+
+        /** EnvStepResponse roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents an EnvStepResponse. */
@@ -1776,6 +1912,9 @@ export namespace game {
 
         /** EnvStepResponse truncated. */
         public truncated: boolean;
+
+        /** EnvStepResponse roundOutcome. */
+        public roundOutcome: game.RoundOutcome;
 
         /**
          * Creates a new EnvStepResponse instance using the specified properties.
@@ -1993,6 +2132,9 @@ export namespace game {
 
         /** TrajectorySample terminalRewards */
         terminalRewards?: (number[]|undefined);
+
+        /** TrajectorySample terminalOutcome */
+        terminalOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents a TrajectorySample. */
@@ -2030,6 +2172,9 @@ export namespace game {
 
         /** TrajectorySample terminalRewards. */
         public terminalRewards: number[];
+
+        /** TrajectorySample terminalOutcome. */
+        public terminalOutcome: game.RoundOutcome;
 
         /**
          * Creates a new TrajectorySample instance using the specified properties.

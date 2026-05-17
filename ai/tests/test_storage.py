@@ -42,6 +42,14 @@ def _transitions(count: int = 5) -> list[Transition]:
                 info={
                     "episode_index": index // 2,
                     "terminal_rewards": np.asarray([2, -2, 0, 0], dtype=np.float32),
+                    "terminal_outcome": {
+                        "is_draw": False,
+                        "winner_seat": 0,
+                        "win_type": 6,
+                        "discarder_seat": 1,
+                        "total_score": 4,
+                        "payouts": [],
+                    },
                 },
             )
         )
@@ -72,6 +80,8 @@ def test_npz_shards_round_trip(tmp_path: Path) -> None:
     assert loaded[4].terminated
     assert loaded[3].info["episode_index"] == 1
     np.testing.assert_allclose(loaded[0].info["terminal_rewards"], [2, -2, 0, 0])
+    assert loaded[0].info["terminal_outcome"]["winner_seat"] == 0
+    assert loaded[0].info["terminal_outcome"]["win_type"] == 6
     np.testing.assert_allclose(loaded[2].observation.planes, source[2].observation.planes)
 
 

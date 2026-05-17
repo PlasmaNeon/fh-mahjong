@@ -148,11 +148,18 @@ func TestGenerateHeuristicTrajectoryDeterministic(t *testing.T) {
 	if len(terminalRewards) != 4 {
 		t.Fatalf("expected four terminal rewards, got %v", terminalRewards)
 	}
+	terminalOutcome := datasetA.Samples[len(datasetA.Samples)-1].TerminalOutcome
+	if datasetA.Samples[len(datasetA.Samples)-1].Terminated && terminalOutcome == nil {
+		t.Fatalf("expected terminal sample to include round outcome")
+	}
 
 	sawIntermediateStep := false
 	for _, sample := range datasetA.Samples {
 		if !almostEqualSlices(sample.TerminalRewards, terminalRewards) {
 			t.Fatalf("terminal rewards drifted across samples")
+		}
+		if terminalOutcome != nil && sample.TerminalOutcome == nil {
+			t.Fatalf("terminal outcome missing from sample")
 		}
 		if sample.Terminated || sample.Truncated {
 			continue

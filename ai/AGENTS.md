@@ -15,6 +15,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/bridge.py** — Abstract bridge contract, mock bridge, and `CtypesGoBridge` implementation for the Go RL library.
   - `MockMahjongBridge` retains the last emitted observation so `step()` validates actions against the real current legal-action mask instead of sampling a fresh one.
   - Bridges preserve `last_reset_result` so evaluation can count rounds that terminate during reset before the learning seat receives a decision.
+  - `CtypesGoBridge` decodes `round_outcome` / `terminal_outcome` protobuf messages into `StepResult.info` / `Transition.info`.
   - `CtypesGoBridge` owns the Go-side handle lifecycle and supports `close()`, context-manager usage, and best-effort cleanup in `__del__`.
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
@@ -28,6 +29,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `read_transitions()` accepts either JSONL or a NumPy shard directory containing `manifest.json`.
   - `read_transition_arrays(..., keys=...)` can load only the arrays needed by a trainer.
   - `ShardedTransitionWriter` supports incremental direct-to-shard generation without a temporary JSONL file.
+  - Sharded transition data preserves compact terminal outcome fields for future offline diagnostics.
 - **src/fh_mahjong_ai/trainer.py** — Self-play collection, behavior-cloning, and conservative offline Q-learning trainer utilities.
 - **src/fh_mahjong_ai/scripts/selfplay_smoke.py** — Mock-bridge smoke runner that exercises the package end to end.
 - **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL or sharded NumPy plus dataset manifest via the Go bridge (or mock fallback).
@@ -68,6 +70,6 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Sharded NumPy datasets use array-backed replay for BC/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC training loads only current-observation/action/return arrays to keep 50k+ datasets within WSL memory.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
-- Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids. Online evaluation also records reward distribution and per-seat summaries for duplicate-seat comparisons.
+- Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids. Online evaluation also records reward distribution, round-outcome counts, and per-seat summaries for duplicate-seat comparisons.
 - Heuristic trajectory samples preserve per-step rewards in `rewards` and attach round-outcome targets separately in `terminal_rewards` for warm-start consumers.
 - The first implemented training loop is behavior cloning / offline warm-start. Online RL can layer on top of the same environment, replay, and checkpoint utilities.
