@@ -35,6 +35,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL or sharded NumPy plus dataset manifest via the Go bridge (or mock fallback).
   - `--chunk-size` bounds each bridge export request and preserves globally unique `episode_index` values across chunks.
   - `--format npz-shards` writes generated chunks directly to sharded NumPy storage.
+  - Long generation jobs print per-chunk progress and include elapsed seconds in the dataset manifest.
 - **src/fh_mahjong_ai/scripts/convert_data.py** — CLI: convert JSONL transition data into sharded NumPy replay storage.
 - **src/fh_mahjong_ai/scripts/train_bc.py** — CLI: behavior cloning training with deterministic episode-level train/validation split, validation agreement reporting, checkpointing, and resume support.
 - **src/fh_mahjong_ai/scripts/train_awbc.py** — CLI: advantage-weighted behavior cloning, intended as the first conservative offline RL improvement over a BC warm-start.
