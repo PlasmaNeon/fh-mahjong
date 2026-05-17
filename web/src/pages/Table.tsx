@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { getApiUrl } from '../config';
-import { loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
+import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import SeatCard from './SeatCard';
 import { game } from '../proto/game';
 
@@ -40,19 +40,30 @@ export default function Table() {
         }
     }, [connect, isConnected, tableId]);
 
+    const handleAuthFailure = useCallback(() => {
+        clearPrivateRoomSession(tableId);
+        setGuestToken('');
+        setTableState(null);
+        setError('Your private room session expired. Enter your name again.');
+    }, [tableId]);
+
     const fetchTableState = useCallback(async () => {
         if (!tableId || !guestToken) return;
         try {
             const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}`), {
                 headers: { Authorization: `Bearer ${guestToken}` },
             });
+            if (res.status === 401) {
+                handleAuthFailure();
+                return;
+            }
             if (res.ok) {
                 setTableState(await res.json());
             }
         } catch (err) {
             console.error('fetch table state failed', err);
         }
-    }, [guestToken, tableId]);
+    }, [guestToken, tableId, handleAuthFailure]);
 
     useEffect(() => { fetchTableState(); }, [fetchTableState]);
 
@@ -86,6 +97,10 @@ export default function Table() {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({}),
             });
+            if (res.status === 401) {
+                handleAuthFailure();
+                return;
+            }
             const data = await res.json().catch(() => ({}));
             if (res.status === 409) {
                 setError(data.error || 'This private table is already in an active game.');
@@ -103,7 +118,7 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to join private table');
         }
-    }, [navigate, tableId]);
+    }, [navigate, tableId, handleAuthFailure]);
 
     const handleGuestJoin = async () => {
         if (!username.trim() || !tableId) return;
@@ -141,6 +156,10 @@ export default function Table() {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
                 body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED }),
             });
+            if (res.status === 401) {
+                handleAuthFailure();
+                return;
+            }
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 setError(data.error || 'Failed to update seat');
@@ -148,7 +167,7 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to update seat');
         }
-    }, [guestToken, tableId]);
+    }, [guestToken, tableId, handleAuthFailure]);
 
     const handleStart = async () => {
         if (!tableId || !guestToken) return;
@@ -158,6 +177,10 @@ export default function Table() {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
                 body: JSON.stringify({}),
             });
+            if (res.status === 401) {
+                handleAuthFailure();
+                return;
+            }
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 setError(data.error || 'Failed to start match');
