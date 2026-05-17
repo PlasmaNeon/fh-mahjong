@@ -146,7 +146,11 @@ class CtypesGoBridge(MahjongBridge):
             rewards=self._decode_rewards(response.rewards),
             terminated=bool(response.terminated),
             truncated=bool(response.truncated),
-            info={"reset": True, "bridge": "go"},
+            info={
+                "reset": True,
+                "bridge": "go",
+                **self._round_outcome_info(response, "round_outcome"),
+            },
         )
         return observation
 
@@ -159,7 +163,7 @@ class CtypesGoBridge(MahjongBridge):
             rewards=self._decode_rewards(response.rewards),
             terminated=bool(response.terminated),
             truncated=bool(response.truncated),
-            info={},
+            info=self._round_outcome_info(response, "round_outcome"),
         )
 
     def close(self) -> None:
@@ -273,10 +277,36 @@ class CtypesGoBridge(MahjongBridge):
             return np.zeros(4, dtype=np.float32)
         return decoded
 
+    def _round_outcome_info(self, message: object, field_name: str) -> dict[str, object]:
+        if not hasattr(message, "HasField") or not message.HasField(field_name):
+            return {}
+        outcome = getattr(message, field_name)
+        return {field_name: self._decode_round_outcome(outcome)}
+
+    def _decode_round_outcome(self, outcome: game_pb2.RoundOutcome) -> dict[str, object]:
+        win_type = int(outcome.win_type)
+        try:
+            win_type_name = game_pb2.ActionType.Name(win_type)
+        except ValueError:
+            win_type_name = "ACTION_UNKNOWN"
+        return {
+            "is_draw": bool(outcome.is_draw),
+            "winner_seat": int(outcome.winner_seat),
+            "win_type": win_type,
+            "win_type_name": win_type_name,
+            "discarder_seat": int(outcome.discarder_seat),
+            "total_score": int(outcome.total_score),
+            "payouts": [
+                {"seat": int(payout.seat), "amount": int(payout.amount)}
+                for payout in outcome.payouts
+            ],
+        }
+
     def _decode_transition(self, sample: game_pb2.TrajectorySample) -> Transition:
         info = {"acting_seat": int(sample.acting_seat), "episode_index": int(sample.episode_index)}
         if sample.terminal_rewards:
             info["terminal_rewards"] = np.asarray(sample.terminal_rewards, dtype=np.float32)
+        info.update(self._round_outcome_info(sample, "terminal_outcome"))
         return Transition(
             observation=self._decode_observation(sample.observation),
             action_id=int(sample.action_id),

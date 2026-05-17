@@ -98,6 +98,48 @@ def action_family_rates(action_counts: Counter[str]) -> Dict[str, float]:
     }
 
 
+def outcome_rates(outcome_counts: Counter[str]) -> Dict[str, float]:
+    total = sum(outcome_counts.values())
+    if total == 0:
+        return {}
+    return {
+        name: count / total
+        for name, count in sorted(outcome_counts.items())
+    }
+
+
+def update_outcome_counts(outcome_counts: Counter[str], outcome: Optional[dict[str, Any]], learning_seat: int) -> None:
+    if not outcome:
+        outcome_counts["unknown"] += 1
+        return
+
+    if bool(outcome.get("is_draw", False)):
+        outcome_counts["draw"] += 1
+        return
+
+    winner = int(outcome.get("winner_seat", -1))
+    discarder = int(outcome.get("discarder_seat", -1))
+    win_type_name = str(outcome.get("win_type_name", ""))
+
+    if win_type_name == "ACTION_TSUMO":
+        if winner == learning_seat:
+            outcome_counts["tsumo_win"] += 1
+        else:
+            outcome_counts["tsumo_loss"] += 1
+        return
+
+    if win_type_name == "ACTION_RON":
+        if winner == learning_seat:
+            outcome_counts["ron_win"] += 1
+        elif discarder == learning_seat:
+            outcome_counts["deal_in"] += 1
+        else:
+            outcome_counts["ron_other_loss"] += 1
+        return
+
+    outcome_counts["other"] += 1
+
+
 def compute_action_agreement(
     model: nn.Module,
     transitions: List[Transition],
@@ -244,10 +286,11 @@ def evaluate_online(
 
     seat_rewards: List[float] = []
     action_counts: Counter[str] = Counter()
+    outcome_counts: Counter[str] = Counter()
     wins = 0
     large_losses = 0
 
-    def record_episode(rewards: np.ndarray, episode: list[Transition]) -> None:
+    def record_episode(rewards: np.ndarray, episode: list[Transition], outcome: Optional[dict[str, Any]]) -> None:
         nonlocal wins, large_losses
         reward = float(rewards[learning_seat])
         seat_rewards.append(reward)
@@ -256,6 +299,7 @@ def evaluate_online(
         if reward <= large_loss_threshold:
             large_losses += 1
         action_counts.update(action_family(t.action_id) for t in episode)
+        update_outcome_counts(outcome_counts, outcome, learning_seat)
 
     try:
         for i in range(episodes):
@@ -264,7 +308,7 @@ def evaluate_online(
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
-                record_episode(reset_result.rewards, episode)
+                record_episode(reset_result.rewards, episode, reset_result.info.get("round_outcome"))
                 continue
             if not observation.legal_actions:
                 continue
@@ -286,7 +330,7 @@ def evaluate_online(
 
                 observation = step_result.observation
                 if step_result.terminated or step_result.truncated:
-                    record_episode(step_result.rewards, episode)
+                    record_episode(step_result.rewards, episode, step_result.info.get("round_outcome"))
                     break
                 if not observation.legal_actions:
                     break
@@ -309,6 +353,8 @@ def evaluate_online(
         "per_episode_rewards": seat_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
+        "round_outcome_counts": dict(sorted(outcome_counts.items())),
+        "round_outcome_rates": outcome_rates(outcome_counts),
     }
 
 
@@ -326,6 +372,7 @@ def evaluate_duplicate_seats(
     seat_reports = []
     all_rewards: list[float] = []
     action_counts: Counter[str] = Counter()
+    outcome_counts: Counter[str] = Counter()
     wins = 0
     large_losses = 0
     completed = 0
@@ -344,6 +391,7 @@ def evaluate_duplicate_seats(
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
         action_counts.update(report["action_family_counts"])
+        outcome_counts.update(report.get("round_outcome_counts", {}))
         wins += int(report["win_count"])
         large_losses += int(report["large_loss_count"])
         completed += int(report["episodes"])
@@ -357,6 +405,7 @@ def evaluate_duplicate_seats(
             "win_rate": report["win_rate"],
             "large_loss_rate": report["large_loss_rate"],
             "action_family_rates": report["action_family_rates"],
+            "round_outcome_rates": report.get("round_outcome_rates", {}),
         }
         for report in seat_reports
     }
@@ -375,6 +424,8 @@ def evaluate_duplicate_seats(
         "per_episode_rewards": all_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
+        "round_outcome_counts": dict(sorted(outcome_counts.items())),
+        "round_outcome_rates": outcome_rates(outcome_counts),
         "seat_summary": seat_summary,
         "seat_reports": seat_reports,
     }

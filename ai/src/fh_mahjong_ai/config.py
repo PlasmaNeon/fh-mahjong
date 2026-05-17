@@ -50,6 +50,13 @@ class OfflineQConfig:
 
 
 @dataclass
+class AdvantageWeightedBCConfig:
+    temperature: float = 1.0
+    max_weight: float = 20.0
+    value_weight: float = 0.25
+
+
+@dataclass
 class SelfPlayConfig:
     episodes_per_iteration: int = 32
     checkpoint_dir: Path = Path("checkpoints")

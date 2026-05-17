@@ -16,13 +16,14 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - `GameState`, `PlayerState`: full match state
   - `GameState` round-debug fields include `dice_sum`, individual `dice1`/`dice2`, `wangpai_stacks`, and live `wangpai_tiles_left`
   - `Meld`, `PlayerAction`: action/meld data
-  - `ScoreEntry`, `PlayerPayout`, `RoundResult`: scoring and payouts
+  - `ScoreEntry`, `PlayerPayout`, `RoundResult`, `RoundOutcome`: scoring, payouts, and compact RL round-result metadata
   - RL bridge messages:
     - `EnvConfig`, `SeatObservation`
     - `EnvResetRequest` / `EnvResetResponse`
     - `EnvStepRequest` / `EnvStepResponse`
     - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
-      - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` carries final round payouts for offline warm-start consumers
+      - `EnvResetResponse.round_outcome` / `EnvStepResponse.round_outcome` carry terminal round metadata when a round ends
+      - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` and `terminal_outcome` carry final round targets for offline warm-start consumers
 - **game.pb.go** — Auto-generated Go bindings (do not edit manually)
 
 ## Regeneration Commands

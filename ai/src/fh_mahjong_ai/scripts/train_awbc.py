@@ -1,0 +1,200 @@
+"""Advantage-weighted behavior cloning on saved Mahjong trajectories."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import List, Optional
+
+import numpy as np
+import torch
+
+from fh_mahjong_ai.buffer import ArrayReplayBuffer, ReplayBuffer
+from fh_mahjong_ai.config import AdvantageWeightedBCConfig, EnvConfig, ModelConfig, TrainConfig
+from fh_mahjong_ai.data import backfill_returns
+from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
+from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.scripts.train_bc import BC_ARRAY_KEYS
+from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
+from fh_mahjong_ai.trainer import AdvantageWeightedBCMetrics, AdvantageWeightedBCTrainer
+
+
+def train_awbc(
+    data_path: Path,
+    checkpoint_dir: Path,
+    epochs: int = 10,
+    batch_size: int = 64,
+    learning_rate: float = 1e-4,
+    temperature: float = 1.0,
+    max_weight: float = 20.0,
+    value_weight: float = 0.25,
+    device: str = "cpu",
+    log_interval: int = 10,
+    init_checkpoint: Optional[Path] = None,
+    resume: bool = False,
+    mlflow_enabled: bool = False,
+    mlflow_tracking_uri: Optional[str] = None,
+    mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
+    mlflow_run_name: Optional[str] = None,
+) -> List[AdvantageWeightedBCMetrics]:
+    """Train a policy with advantage-weighted imitation over fixed data."""
+    if is_sharded_transition_dataset(data_path):
+        arrays = read_transition_arrays(data_path, keys=BC_ARRAY_KEYS)
+        buf = ArrayReplayBuffer(
+            arrays=arrays,
+            indices=np.arange(arrays["action_ids"].shape[0], dtype=np.int64),
+        )
+        transition_count = len(buf)
+    else:
+        transitions = read_transitions(data_path)
+        backfill_returns(transitions)
+        buf = ReplayBuffer(capacity=len(transitions))
+        buf.extend(transitions)
+        transition_count = len(transitions)
+
+    env_config = EnvConfig()
+    model_config = ModelConfig()
+    model = PolicyValueNet(env_config, model_config).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+
+    start_epoch = 0
+    if init_checkpoint is not None:
+        load_checkpoint(init_checkpoint, model)
+
+    if resume:
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoints = sorted(checkpoint_dir.glob("epoch_*.pt"))
+        if checkpoints:
+            start_epoch = load_checkpoint(checkpoints[-1], model, optimizer)
+
+    train_config = TrainConfig(
+        batch_size=min(batch_size, len(buf)),
+        learning_rate=learning_rate,
+        device=device,
+    )
+    awbc_config = AdvantageWeightedBCConfig(
+        temperature=temperature,
+        max_weight=max_weight,
+        value_weight=value_weight,
+    )
+    trainer = AdvantageWeightedBCTrainer(model, optimizer, train_config, awbc_config)
+    steps_per_epoch = max(1, len(buf) // batch_size)
+    all_metrics: List[AdvantageWeightedBCMetrics] = []
+
+    with start_run(
+        enabled=mlflow_enabled,
+        experiment_name=mlflow_experiment,
+        tracking_uri=mlflow_tracking_uri,
+        run_name=mlflow_run_name,
+        tags={"stage": "training", "method": "advantage_weighted_bc"},
+    ) as mlflow_run:
+        if mlflow_run is not None:
+            log_params(
+                {
+                    "method": "advantage_weighted_bc",
+                    "data_path": data_path,
+                    "checkpoint_dir": checkpoint_dir,
+                    "epochs": epochs,
+                    "start_epoch": start_epoch,
+                    "batch_size": train_config.batch_size,
+                    "learning_rate": learning_rate,
+                    "temperature": temperature,
+                    "max_weight": max_weight,
+                    "value_weight": value_weight,
+                    "device": device,
+                    "transitions": transition_count,
+                    "init_checkpoint": init_checkpoint,
+                }
+            )
+
+        for epoch in range(start_epoch + 1, epochs + 1):
+            epoch_loss = 0.0
+            latest_metrics = None
+            for step in range(1, steps_per_epoch + 1):
+                metrics = trainer.train_step(buf)
+                latest_metrics = metrics
+                all_metrics.append(metrics)
+                epoch_loss += metrics.loss
+
+                global_step = (epoch - 1) * steps_per_epoch + step
+                if global_step % log_interval == 0:
+                    print(
+                        f"epoch {epoch}/{epochs}  step {step}/{steps_per_epoch}  "
+                        f"loss={metrics.loss:.4f}  policy={metrics.policy_loss:.4f}  "
+                        f"value={metrics.value_loss:.4f}  weight={metrics.avg_weight:.3f}  "
+                        f"adv={metrics.avg_advantage:.4f}"
+                    )
+
+            avg_loss = epoch_loss / steps_per_epoch
+            print(f"--- epoch {epoch} avg_loss={avg_loss:.4f}")
+
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint_path = checkpoint_dir / f"epoch_{epoch:03d}.pt"
+            save_checkpoint(checkpoint_path, model, optimizer, step=epoch)
+
+            if mlflow_run is not None and latest_metrics is not None:
+                log_metrics(
+                    {
+                        "train": {
+                            "avg_loss": avg_loss,
+                            "last_loss": latest_metrics.loss,
+                            "last_policy_loss": latest_metrics.policy_loss,
+                            "last_value_loss": latest_metrics.value_loss,
+                            "last_avg_weight": latest_metrics.avg_weight,
+                            "last_max_weight": latest_metrics.max_weight,
+                            "last_avg_advantage": latest_metrics.avg_advantage,
+                        }
+                    },
+                    step=epoch,
+                )
+                log_artifact(checkpoint_path, artifact_path="checkpoints")
+
+        if mlflow_run is not None:
+            print(f"MLflow run: {mlflow_run.info.run_id}")
+
+    return all_metrics
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train advantage-weighted behavior cloning model")
+    parser.add_argument("--data", type=Path, required=True, help="JSONL or sharded trajectory data")
+    parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints/awbc"))
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--max-weight", type=float, default=20.0)
+    parser.add_argument("--value-weight", type=float, default=0.25)
+    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--log-interval", type=int, default=10)
+    parser.add_argument("--init-checkpoint", type=Path, default=None, help="Optional BC checkpoint to warm-start from")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--mlflow", action="store_true", help="Log training params, metrics, and artifacts to MLflow")
+    parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
+    parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
+    parser.add_argument("--mlflow-run-name", type=str, default=None)
+    args = parser.parse_args()
+
+    print(f"Loading data from {args.data}...")
+    metrics = train_awbc(
+        data_path=args.data,
+        checkpoint_dir=args.checkpoint_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        temperature=args.temperature,
+        max_weight=args.max_weight,
+        value_weight=args.value_weight,
+        device=args.device,
+        log_interval=args.log_interval,
+        init_checkpoint=args.init_checkpoint,
+        resume=args.resume,
+        mlflow_enabled=args.mlflow,
+        mlflow_tracking_uri=args.mlflow_tracking_uri,
+        mlflow_experiment=args.mlflow_experiment,
+        mlflow_run_name=args.mlflow_run_name,
+    )
+    print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
+
+
+if __name__ == "__main__":
+    main()

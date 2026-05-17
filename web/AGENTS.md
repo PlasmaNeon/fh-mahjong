@@ -27,4 +27,5 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 - Build: `npm run build` (outputs to `dist/`)
 - Production hosting: Vercel can serve the built SPA, but the app must be given `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` for a reachable backend because Vite proxying only exists in local dev
 - All game state arrives as Protobuf binary via WebSocket; decoded by `protobufjs`.
+- `src/proto/game.js` and `src/proto/game.d.ts` are generated from `proto/game.proto`; regenerate them whenever proto schemas change.
 - Tile rendering uses layered SVG images: `Front.svg` (background) + tile face SVG.

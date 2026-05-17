@@ -3711,6 +3711,423 @@ export const game = $root.game = (() => {
         return RoundResult;
     })();
 
+    game.RoundOutcome = (function() {
+
+        /**
+         * Properties of a RoundOutcome.
+         * @memberof game
+         * @interface IRoundOutcome
+         * @property {boolean|undefined} [isDraw] RoundOutcome isDraw
+         * @property {number|undefined} [winnerSeat] RoundOutcome winnerSeat
+         * @property {game.ActionType|undefined} [winType] RoundOutcome winType
+         * @property {number|undefined} [discarderSeat] RoundOutcome discarderSeat
+         * @property {number|undefined} [totalScore] RoundOutcome totalScore
+         * @property {Array.<game.IPlayerPayout>|undefined} [payouts] RoundOutcome payouts
+         */
+
+        /**
+         * Constructs a new RoundOutcome.
+         * @memberof game
+         * @classdesc Represents a RoundOutcome.
+         * @implements IRoundOutcome
+         * @constructor
+         * @param {game.IRoundOutcome=} [properties] Properties to set
+         */
+        function RoundOutcome(properties) {
+            this.payouts = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * RoundOutcome isDraw.
+         * @member {boolean} isDraw
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.isDraw = false;
+
+        /**
+         * RoundOutcome winnerSeat.
+         * @member {number} winnerSeat
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.winnerSeat = 0;
+
+        /**
+         * RoundOutcome winType.
+         * @member {game.ActionType} winType
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.winType = 0;
+
+        /**
+         * RoundOutcome discarderSeat.
+         * @member {number} discarderSeat
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.discarderSeat = 0;
+
+        /**
+         * RoundOutcome totalScore.
+         * @member {number} totalScore
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.totalScore = 0;
+
+        /**
+         * RoundOutcome payouts.
+         * @member {Array.<game.PlayerPayout>} payouts
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.payouts = $util.emptyArray;
+
+        /**
+         * Creates a new RoundOutcome instance using the specified properties.
+         * @function create
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {game.IRoundOutcome=} [properties] Properties to set
+         * @returns {game.RoundOutcome} RoundOutcome instance
+         */
+        RoundOutcome.create = function create(properties) {
+            return new RoundOutcome(properties);
+        };
+
+        /**
+         * Encodes the specified RoundOutcome message. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
+         * @function encode
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {game.IRoundOutcome} message RoundOutcome message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RoundOutcome.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.isDraw != null && Object.hasOwnProperty.call(message, "isDraw"))
+                writer.uint32(/* id 1, wireType 0 =*/8).bool(message.isDraw);
+            if (message.winnerSeat != null && Object.hasOwnProperty.call(message, "winnerSeat"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.winnerSeat);
+            if (message.winType != null && Object.hasOwnProperty.call(message, "winType"))
+                writer.uint32(/* id 3, wireType 0 =*/24).int32(message.winType);
+            if (message.discarderSeat != null && Object.hasOwnProperty.call(message, "discarderSeat"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.discarderSeat);
+            if (message.totalScore != null && Object.hasOwnProperty.call(message, "totalScore"))
+                writer.uint32(/* id 5, wireType 0 =*/40).int32(message.totalScore);
+            if (message.payouts != null && message.payouts.length)
+                for (let i = 0; i < message.payouts.length; ++i)
+                    $root.game.PlayerPayout.encode(message.payouts[i], writer.uint32(/* id 6, wireType 2 =*/50).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified RoundOutcome message, length delimited. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {game.IRoundOutcome} message RoundOutcome message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RoundOutcome.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a RoundOutcome message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.RoundOutcome} RoundOutcome
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RoundOutcome.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RoundOutcome();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.isDraw = reader.bool();
+                        break;
+                    }
+                case 2: {
+                        message.winnerSeat = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        message.winType = reader.int32();
+                        break;
+                    }
+                case 4: {
+                        message.discarderSeat = reader.uint32();
+                        break;
+                    }
+                case 5: {
+                        message.totalScore = reader.int32();
+                        break;
+                    }
+                case 6: {
+                        if (!(message.payouts && message.payouts.length))
+                            message.payouts = [];
+                        message.payouts.push($root.game.PlayerPayout.decode(reader, reader.uint32()));
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a RoundOutcome message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.RoundOutcome} RoundOutcome
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RoundOutcome.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a RoundOutcome message.
+         * @function verify
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        RoundOutcome.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.isDraw != null && message.hasOwnProperty("isDraw"))
+                if (typeof message.isDraw !== "boolean")
+                    return "isDraw: boolean expected";
+            if (message.winnerSeat != null && message.hasOwnProperty("winnerSeat"))
+                if (!$util.isInteger(message.winnerSeat))
+                    return "winnerSeat: integer expected";
+            if (message.winType != null && message.hasOwnProperty("winType"))
+                switch (message.winType) {
+                default:
+                    return "winType: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                case 3:
+                case 4:
+                case 5:
+                case 6:
+                case 7:
+                case 8:
+                case 9:
+                case 10:
+                case 11:
+                case 12:
+                    break;
+                }
+            if (message.discarderSeat != null && message.hasOwnProperty("discarderSeat"))
+                if (!$util.isInteger(message.discarderSeat))
+                    return "discarderSeat: integer expected";
+            if (message.totalScore != null && message.hasOwnProperty("totalScore"))
+                if (!$util.isInteger(message.totalScore))
+                    return "totalScore: integer expected";
+            if (message.payouts != null && message.hasOwnProperty("payouts")) {
+                if (!Array.isArray(message.payouts))
+                    return "payouts: array expected";
+                for (let i = 0; i < message.payouts.length; ++i) {
+                    let error = $root.game.PlayerPayout.verify(message.payouts[i]);
+                    if (error)
+                        return "payouts." + error;
+                }
+            }
+            return null;
+        };
+
+        /**
+         * Creates a RoundOutcome message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.RoundOutcome} RoundOutcome
+         */
+        RoundOutcome.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.RoundOutcome)
+                return object;
+            let message = new $root.game.RoundOutcome();
+            if (object.isDraw != null)
+                message.isDraw = Boolean(object.isDraw);
+            if (object.winnerSeat != null)
+                message.winnerSeat = object.winnerSeat >>> 0;
+            switch (object.winType) {
+            default:
+                if (typeof object.winType === "number") {
+                    message.winType = object.winType;
+                    break;
+                }
+                break;
+            case "ACTION_UNKNOWN":
+            case 0:
+                message.winType = 0;
+                break;
+            case "ACTION_DRAW":
+            case 1:
+                message.winType = 1;
+                break;
+            case "ACTION_DISCARD":
+            case 2:
+                message.winType = 2;
+                break;
+            case "ACTION_CHII":
+            case 3:
+                message.winType = 3;
+                break;
+            case "ACTION_PON":
+            case 4:
+                message.winType = 4;
+                break;
+            case "ACTION_KAN":
+            case 5:
+                message.winType = 5;
+                break;
+            case "ACTION_TSUMO":
+            case 6:
+                message.winType = 6;
+                break;
+            case "ACTION_RON":
+            case 7:
+                message.winType = 7;
+                break;
+            case "ACTION_PASS":
+            case 8:
+                message.winType = 8;
+                break;
+            case "ACTION_FLOWER_REVEAL":
+            case 9:
+                message.winType = 9;
+                break;
+            case "ACTION_READY":
+            case 10:
+                message.winType = 10;
+                break;
+            case "ACTION_ACCEPT_HAITEI":
+            case 11:
+                message.winType = 11;
+                break;
+            case "ACTION_REFUSE_HAITEI":
+            case 12:
+                message.winType = 12;
+                break;
+            }
+            if (object.discarderSeat != null)
+                message.discarderSeat = object.discarderSeat >>> 0;
+            if (object.totalScore != null)
+                message.totalScore = object.totalScore | 0;
+            if (object.payouts) {
+                if (!Array.isArray(object.payouts))
+                    throw TypeError(".game.RoundOutcome.payouts: array expected");
+                message.payouts = [];
+                for (let i = 0; i < object.payouts.length; ++i) {
+                    if (typeof object.payouts[i] !== "object")
+                        throw TypeError(".game.RoundOutcome.payouts: object expected");
+                    message.payouts[i] = $root.game.PlayerPayout.fromObject(object.payouts[i]);
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a RoundOutcome message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {game.RoundOutcome} message RoundOutcome
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        RoundOutcome.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.payouts = [];
+            if (options.defaults) {
+                object.isDraw = false;
+                object.winnerSeat = 0;
+                object.winType = options.enums === String ? "ACTION_UNKNOWN" : 0;
+                object.discarderSeat = 0;
+                object.totalScore = 0;
+            }
+            if (message.isDraw != null && message.hasOwnProperty("isDraw"))
+                object.isDraw = message.isDraw;
+            if (message.winnerSeat != null && message.hasOwnProperty("winnerSeat"))
+                object.winnerSeat = message.winnerSeat;
+            if (message.winType != null && message.hasOwnProperty("winType"))
+                object.winType = options.enums === String ? $root.game.ActionType[message.winType] === undefined ? message.winType : $root.game.ActionType[message.winType] : message.winType;
+            if (message.discarderSeat != null && message.hasOwnProperty("discarderSeat"))
+                object.discarderSeat = message.discarderSeat;
+            if (message.totalScore != null && message.hasOwnProperty("totalScore"))
+                object.totalScore = message.totalScore;
+            if (message.payouts && message.payouts.length) {
+                object.payouts = [];
+                for (let j = 0; j < message.payouts.length; ++j)
+                    object.payouts[j] = $root.game.PlayerPayout.toObject(message.payouts[j], options);
+            }
+            return object;
+        };
+
+        /**
+         * Converts this RoundOutcome to JSON.
+         * @function toJSON
+         * @memberof game.RoundOutcome
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        RoundOutcome.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for RoundOutcome
+         * @function getTypeUrl
+         * @memberof game.RoundOutcome
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        RoundOutcome.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.RoundOutcome";
+        };
+
+        return RoundOutcome;
+    })();
+
     game.EnvConfig = (function() {
 
         /**
@@ -4789,6 +5206,7 @@ export const game = $root.game = (() => {
          * @property {Array.<number>|undefined} [rewards] EnvResetResponse rewards
          * @property {boolean|undefined} [terminated] EnvResetResponse terminated
          * @property {boolean|undefined} [truncated] EnvResetResponse truncated
+         * @property {game.IRoundOutcome|undefined} [roundOutcome] EnvResetResponse roundOutcome
          */
 
         /**
@@ -4840,6 +5258,14 @@ export const game = $root.game = (() => {
         EnvResetResponse.prototype.truncated = false;
 
         /**
+         * EnvResetResponse roundOutcome.
+         * @member {game.RoundOutcome} roundOutcome
+         * @memberof game.EnvResetResponse
+         * @instance
+         */
+        EnvResetResponse.prototype.roundOutcome = null;
+
+        /**
          * Creates a new EnvResetResponse instance using the specified properties.
          * @function create
          * @memberof game.EnvResetResponse
@@ -4875,6 +5301,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 3, wireType 0 =*/24).bool(message.terminated);
             if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
                 writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            if (message.roundOutcome != null && Object.hasOwnProperty.call(message, "roundOutcome"))
+                $root.game.RoundOutcome.encode(message.roundOutcome, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             return writer;
         };
 
@@ -4934,6 +5362,10 @@ export const game = $root.game = (() => {
                         message.truncated = reader.bool();
                         break;
                     }
+                case 5: {
+                        message.roundOutcome = $root.game.RoundOutcome.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -4987,6 +5419,11 @@ export const game = $root.game = (() => {
             if (message.truncated != null && message.hasOwnProperty("truncated"))
                 if (typeof message.truncated !== "boolean")
                     return "truncated: boolean expected";
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome")) {
+                let error = $root.game.RoundOutcome.verify(message.roundOutcome);
+                if (error)
+                    return "roundOutcome." + error;
+            }
             return null;
         };
 
@@ -5018,6 +5455,11 @@ export const game = $root.game = (() => {
                 message.terminated = Boolean(object.terminated);
             if (object.truncated != null)
                 message.truncated = Boolean(object.truncated);
+            if (object.roundOutcome != null) {
+                if (typeof object.roundOutcome !== "object")
+                    throw TypeError(".game.EnvResetResponse.roundOutcome: object expected");
+                message.roundOutcome = $root.game.RoundOutcome.fromObject(object.roundOutcome);
+            }
             return message;
         };
 
@@ -5040,6 +5482,7 @@ export const game = $root.game = (() => {
                 object.observation = null;
                 object.terminated = false;
                 object.truncated = false;
+                object.roundOutcome = null;
             }
             if (message.observation != null && message.hasOwnProperty("observation"))
                 object.observation = $root.game.SeatObservation.toObject(message.observation, options);
@@ -5052,6 +5495,8 @@ export const game = $root.game = (() => {
                 object.terminated = message.terminated;
             if (message.truncated != null && message.hasOwnProperty("truncated"))
                 object.truncated = message.truncated;
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome"))
+                object.roundOutcome = $root.game.RoundOutcome.toObject(message.roundOutcome, options);
             return object;
         };
 
@@ -5299,6 +5744,7 @@ export const game = $root.game = (() => {
          * @property {Array.<number>|undefined} [rewards] EnvStepResponse rewards
          * @property {boolean|undefined} [terminated] EnvStepResponse terminated
          * @property {boolean|undefined} [truncated] EnvStepResponse truncated
+         * @property {game.IRoundOutcome|undefined} [roundOutcome] EnvStepResponse roundOutcome
          */
 
         /**
@@ -5350,6 +5796,14 @@ export const game = $root.game = (() => {
         EnvStepResponse.prototype.truncated = false;
 
         /**
+         * EnvStepResponse roundOutcome.
+         * @member {game.RoundOutcome} roundOutcome
+         * @memberof game.EnvStepResponse
+         * @instance
+         */
+        EnvStepResponse.prototype.roundOutcome = null;
+
+        /**
          * Creates a new EnvStepResponse instance using the specified properties.
          * @function create
          * @memberof game.EnvStepResponse
@@ -5385,6 +5839,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 3, wireType 0 =*/24).bool(message.terminated);
             if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
                 writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            if (message.roundOutcome != null && Object.hasOwnProperty.call(message, "roundOutcome"))
+                $root.game.RoundOutcome.encode(message.roundOutcome, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             return writer;
         };
 
@@ -5444,6 +5900,10 @@ export const game = $root.game = (() => {
                         message.truncated = reader.bool();
                         break;
                     }
+                case 5: {
+                        message.roundOutcome = $root.game.RoundOutcome.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -5497,6 +5957,11 @@ export const game = $root.game = (() => {
             if (message.truncated != null && message.hasOwnProperty("truncated"))
                 if (typeof message.truncated !== "boolean")
                     return "truncated: boolean expected";
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome")) {
+                let error = $root.game.RoundOutcome.verify(message.roundOutcome);
+                if (error)
+                    return "roundOutcome." + error;
+            }
             return null;
         };
 
@@ -5528,6 +5993,11 @@ export const game = $root.game = (() => {
                 message.terminated = Boolean(object.terminated);
             if (object.truncated != null)
                 message.truncated = Boolean(object.truncated);
+            if (object.roundOutcome != null) {
+                if (typeof object.roundOutcome !== "object")
+                    throw TypeError(".game.EnvStepResponse.roundOutcome: object expected");
+                message.roundOutcome = $root.game.RoundOutcome.fromObject(object.roundOutcome);
+            }
             return message;
         };
 
@@ -5550,6 +6020,7 @@ export const game = $root.game = (() => {
                 object.observation = null;
                 object.terminated = false;
                 object.truncated = false;
+                object.roundOutcome = null;
             }
             if (message.observation != null && message.hasOwnProperty("observation"))
                 object.observation = $root.game.SeatObservation.toObject(message.observation, options);
@@ -5562,6 +6033,8 @@ export const game = $root.game = (() => {
                 object.terminated = message.terminated;
             if (message.truncated != null && message.hasOwnProperty("truncated"))
                 object.truncated = message.truncated;
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome"))
+                object.roundOutcome = $root.game.RoundOutcome.toObject(message.roundOutcome, options);
             return object;
         };
 
@@ -5880,6 +6353,7 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [actingSeat] TrajectorySample actingSeat
          * @property {number|Long|undefined} [episodeIndex] TrajectorySample episodeIndex
          * @property {Array.<number>|undefined} [terminalRewards] TrajectorySample terminalRewards
+         * @property {game.IRoundOutcome|undefined} [terminalOutcome] TrajectorySample terminalOutcome
          */
 
         /**
@@ -5972,6 +6446,14 @@ export const game = $root.game = (() => {
         TrajectorySample.prototype.terminalRewards = $util.emptyArray;
 
         /**
+         * TrajectorySample terminalOutcome.
+         * @member {game.RoundOutcome} terminalOutcome
+         * @memberof game.TrajectorySample
+         * @instance
+         */
+        TrajectorySample.prototype.terminalOutcome = null;
+
+        /**
          * Creates a new TrajectorySample instance using the specified properties.
          * @function create
          * @memberof game.TrajectorySample
@@ -6021,6 +6503,8 @@ export const game = $root.game = (() => {
                     writer.float(message.terminalRewards[i]);
                 writer.ldelim();
             }
+            if (message.terminalOutcome != null && Object.hasOwnProperty.call(message, "terminalOutcome"))
+                $root.game.RoundOutcome.encode(message.terminalOutcome, writer.uint32(/* id 10, wireType 2 =*/82).fork()).ldelim();
             return writer;
         };
 
@@ -6107,6 +6591,10 @@ export const game = $root.game = (() => {
                             message.terminalRewards.push(reader.float());
                         break;
                     }
+                case 10: {
+                        message.terminalOutcome = $root.game.RoundOutcome.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -6181,6 +6669,11 @@ export const game = $root.game = (() => {
                     if (typeof message.terminalRewards[i] !== "number")
                         return "terminalRewards: number[] expected";
             }
+            if (message.terminalOutcome != null && message.hasOwnProperty("terminalOutcome")) {
+                let error = $root.game.RoundOutcome.verify(message.terminalOutcome);
+                if (error)
+                    return "terminalOutcome." + error;
+            }
             return null;
         };
 
@@ -6237,6 +6730,11 @@ export const game = $root.game = (() => {
                 for (let i = 0; i < object.terminalRewards.length; ++i)
                     message.terminalRewards[i] = Number(object.terminalRewards[i]);
             }
+            if (object.terminalOutcome != null) {
+                if (typeof object.terminalOutcome !== "object")
+                    throw TypeError(".game.TrajectorySample.terminalOutcome: object expected");
+                message.terminalOutcome = $root.game.RoundOutcome.fromObject(object.terminalOutcome);
+            }
             return message;
         };
 
@@ -6269,6 +6767,7 @@ export const game = $root.game = (() => {
                     object.episodeIndex = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
                 } else
                     object.episodeIndex = options.longs === String ? "0" : 0;
+                object.terminalOutcome = null;
             }
             if (message.observation != null && message.hasOwnProperty("observation"))
                 object.observation = $root.game.SeatObservation.toObject(message.observation, options);
@@ -6297,6 +6796,8 @@ export const game = $root.game = (() => {
                 for (let j = 0; j < message.terminalRewards.length; ++j)
                     object.terminalRewards[j] = options.json && !isFinite(message.terminalRewards[j]) ? String(message.terminalRewards[j]) : message.terminalRewards[j];
             }
+            if (message.terminalOutcome != null && message.hasOwnProperty("terminalOutcome"))
+                object.terminalOutcome = $root.game.RoundOutcome.toObject(message.terminalOutcome, options);
             return object;
         };
 

@@ -225,6 +225,15 @@ message RoundResult {
   bool is_draw = 10;                 // Exhaustive draw (no winner)
 }
 
+message RoundOutcome {
+  bool is_draw = 1;
+  uint32 winner_seat = 2;
+  ActionType win_type = 3;
+  uint32 discarder_seat = 4;
+  int32 total_score = 5;
+  repeated PlayerPayout payouts = 6;
+}
+
 // ---------------------------------------------------------
 // RL Environment Bridge
 // ---------------------------------------------------------
@@ -259,6 +268,7 @@ message EnvResetResponse {
   repeated float rewards = 2;
   bool terminated = 3;
   bool truncated = 4;
+  RoundOutcome round_outcome = 5;
 }
 
 message EnvStepRequest {
@@ -270,6 +280,7 @@ message EnvStepResponse {
   repeated float rewards = 2;
   bool terminated = 3;
   bool truncated = 4;
+  RoundOutcome round_outcome = 5;
 }
 
 message TrajectoryRequest {
@@ -288,6 +299,7 @@ message TrajectorySample {
   uint32 acting_seat = 7;
   uint64 episode_index = 8;
   repeated float terminal_rewards = 9;
+  RoundOutcome terminal_outcome = 10;
 }
 
 message TrajectoryDataset {
