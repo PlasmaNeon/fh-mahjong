@@ -2,9 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +15,15 @@ import (
 )
 
 var ctx = context.Background()
+
+// Private-table lifecycle sentinels. Used by handlers (via errors.Is) to map
+// internal errors to HTTP status codes without string-matching.
+var (
+	ErrPrivateTableNotFound       = errors.New("table not found")
+	ErrPrivateTableAlreadyStarted = errors.New("table already started")
+	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
+	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
+)
 
 // InMemoryQueue simulates Redis lists
 type InMemoryQueue struct {
@@ -96,6 +105,9 @@ type Matchmaker struct {
 
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
+
+	configuringMu     sync.Mutex
+	configuringTables map[string]*PrivateTable
 }
 
 type ActivePrivateTable struct {
@@ -110,6 +122,7 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		DB:                  db,
 		Hub:                 hub,
 		activePrivateTables: make(map[string]ActivePrivateTable),
+		configuringTables:   make(map[string]*PrivateTable),
 	}
 }
 
@@ -121,34 +134,6 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
-	return nil
-}
-
-// JoinPrivateTable adds a user to a specific private table queue
-func (m *Matchmaker) JoinPrivateTable(userID uint, username string, tableID string) error {
-	queueKey := "table:" + tableID
-
-	// Check if this user is already in the queue to prevent double-joins
-	existing := m.Queue.LRange(queueKey)
-	for _, id := range existing {
-		if id == fmt.Sprintf("%d", userID) {
-			return nil // User is already queued, silently succeed
-		}
-	}
-
-	// Add user to the in-memory queue
-	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
-
-	length := m.Queue.LLen(queueKey)
-
-	log.Printf("User %d (%s) joined private table queue '%s'", userID, username, tableID)
-
-	// Broadcast alert
-	msg := fmt.Sprintf(`{"type":"lobby_update", "table":"%s", "message":"Player %s is ready! (%d/4)"}`, tableID, username, length)
-	go func() {
-		m.Hub.LobbyBroadcast <- []byte(msg)
-	}()
-
 	return nil
 }
 
@@ -229,28 +214,6 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	}
 }
 
-func (m *Matchmaker) StartPrivateTableWatcher() {
-	log.Printf("Matchmaker polling for any private tables...")
-
-	for {
-		// Find all keys starting with table:
-		keys := m.Queue.Keys("table:*")
-		for _, key := range keys {
-			length := m.Queue.LLen(key)
-			if length >= 4 {
-				players := m.Queue.LPopCount(key, 4)
-				if len(players) == 4 {
-					log.Printf("Matchmaker found 4 players for private %s: %v", key, players)
-					// For simplicity, default to hometown rules for private tables
-					go m.createMatch(players, "hometown", strings.TrimPrefix(key, "table:"))
-				}
-			}
-		}
-
-		time.Sleep(2 * time.Second)
-	}
-}
-
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
 	matchID := uuid.New().String()
 
@@ -302,8 +265,188 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		m.registerActivePrivateTable(tableID, matchID, userIDs)
 	}
 
-	m.Hub.BindRoom <- RoomBind{
-		UserIDs: userIDs,
-		Room:    room,
+	seats := make(map[uint32]uint, len(userIDs))
+	for i, uid := range userIDs {
+		seats[uint32(i)] = uid
 	}
+	m.Hub.BindRoom <- RoomBind{
+		Seats: seats,
+		Room:  room,
+	}
+}
+
+// JoinOrCreatePrivateTable claims a seat for the given user. If the table
+// does not exist, the user becomes the host at seat 0. If the user is
+// already seated, this is a no-op.
+//
+// Returns a snapshot of the table state for the caller. The caller is
+// expected to broadcast a lobby_update afterward.
+func (m *Matchmaker) JoinOrCreatePrivateTable(tableID string, userID uint, username string) (*PrivateTable, error) {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+
+	table, ok := m.configuringTables[tableID]
+	if !ok {
+		table = newConfiguringTable(tableID, userID)
+		m.configuringTables[tableID] = table
+	}
+
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	if table.State != "configuring" {
+		return nil, errors.New("table is no longer accepting players")
+	}
+
+	if _, err := table.claimNextHumanSeat(userID, username); err != nil {
+		return nil, err
+	}
+	table.normalize()
+	return table, nil
+}
+
+// GetConfiguringPrivateTable returns the live table struct (locked by
+// caller via Mutate) or nil if no such table exists in the "configuring"
+// state.
+func (m *Matchmaker) GetConfiguringPrivateTable(tableID string) *PrivateTable {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+	return m.configuringTables[tableID]
+}
+
+// MutatePrivateTable runs fn under the table lock. Returns the table for
+// snapshotting after fn returns successfully.
+func (m *Matchmaker) MutatePrivateTable(tableID string, fn func(t *PrivateTable) error) (*PrivateTable, error) {
+	table := m.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		return nil, ErrPrivateTableNotFound
+	}
+	table.mu.Lock()
+	defer table.mu.Unlock()
+	if err := fn(table); err != nil {
+		return nil, err
+	}
+	return table, nil
+}
+
+// removeConfiguringTable drops the table from the configuring registry.
+// Called after a successful start once the match has been dispatched.
+func (m *Matchmaker) removeConfiguringTable(tableID string) {
+	m.configuringMu.Lock()
+	defer m.configuringMu.Unlock()
+	delete(m.configuringTables, tableID)
+}
+
+// StartPrivateTable validates host + seat fullness, constructs the Room
+// with per-seat bot policies, persists the match, and dispatches the room
+// via the Hub. Returns the table snapshot (with State == "started" and
+// MatchID populated) on success.
+func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*PrivateTable, error) {
+	table := m.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		return nil, ErrPrivateTableNotFound
+	}
+
+	var room *Room
+	var humanSeats map[uint32]uint
+	var matchID string
+
+	err := func() error {
+		table.mu.Lock()
+		defer table.mu.Unlock()
+
+		if table.State != "configuring" {
+			return ErrPrivateTableAlreadyStarted
+		}
+		if requesterUserID != table.HostUserID {
+			return ErrPrivateTableHostOnly
+		}
+		if err := table.canStart(); err != nil {
+			return err
+		}
+
+		seatPolicies := make(map[uint32]bot.Policy)
+		humanSeats = make(map[uint32]uint)
+		for i, s := range table.Seats {
+			seat := uint32(i)
+			switch s.Kind {
+			case "human":
+				humanSeats[seat] = s.UserID
+			case "bot":
+				policy, perr := bot.NewPolicy(s.Difficulty)
+				if perr != nil {
+					return fmt.Errorf("seat %d: %w", i, perr)
+				}
+				seatPolicies[seat] = policy
+			default:
+				return fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
+			}
+		}
+
+		matchID = uuid.New().String()
+		match := models.Match{
+			ID:        matchID,
+			Status:    "in_progress",
+			StartTime: time.Now(),
+			Ruleset:   "hometown",
+		}
+		if m.DB != nil {
+			if dberr := m.DB.Create(&match).Error; dberr != nil {
+				return fmt.Errorf("%w: %w", ErrPrivateTablePersistFailed, dberr)
+			}
+		} else {
+			log.Printf("Database disabled, skipping match persistence for %s", matchID)
+		}
+
+		var roomOptions []RoomOption
+		if m.BotPolicyFactory != nil {
+			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
+		}
+		room = NewRoom(matchID, m.Hub, m.DB, roomOptions...)
+		room.PaipuStore = m.PaipuStore
+		room.PrivateTableID = tableID
+		room.SeatPolicies = seatPolicies
+		room.OnShutdown = func() {
+			m.unregisterActivePrivateTable(tableID)
+		}
+
+		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats))
+
+		table.State = "started"
+		table.MatchID = matchID
+
+		return nil
+	}()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// BindRoom send happens AFTER table.mu is released so a slow Hub.Run
+	// doesn't block concurrent readers. State is already "started", so
+	// any incoming join request will be rejected cleanly.
+	m.Hub.BindRoom <- RoomBind{
+		Seats: humanSeats,
+		Room:  room,
+	}
+
+	// Async to avoid acquiring configuringMu while we'd otherwise be
+	// holding table.mu (lock-order inversion with JoinOrCreatePrivateTable).
+	// Even now (after the lock is released) the goroutine is harmless and
+	// keeps the caller responsive.
+	go m.removeConfiguringTable(tableID)
+
+	// Return the live pointer; State is "started" so future readers can
+	// still SnapshotProto() without seeing an inconsistent view.
+	return table, nil
+}
+
+// mapValues returns the values of a uint32→uint map as a slice. Used to
+// adapt the seat-keyed human map to the userID-list APIs.
+func mapValues(m map[uint32]uint) []uint {
+	out := make([]uint, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }

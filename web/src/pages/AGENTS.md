@@ -18,14 +18,17 @@ Contains the top-level page components rendered by React Router. Each page repre
 - **CreateRoom.tsx** — Public private-room generator page for `/create-room`:
   - Generates a random `tableId` client-side and builds a shareable `/table/:tableId` URL
   - Lets the user copy the link or open/join the generated table immediately
-  - Reuses the existing private-table queue flow instead of adding a separate backend room-creation API
+  - Acts purely as a link generator; the seat-configuration flow happens on `/table/:tableId`
   - Shares the same tabletop/glass visual language as the waiting room and game pages
 
-- **Table.tsx** — Pre-game room. Shows 4 seats, player ready status. Uses runtime-configured auth/matchmaking URLs and initiates the WebSocket connection to the room.
-  - Now renders as a pre-game table scene with seat cards, central status HUD, share-link panel, and ready-state side panel so `/table/:tableId` visually matches the live game more closely
-  - Restores the private-room guest session from tab-scoped session storage for the same `tableId`, so refreshing the tab reconnects cleanly without forcing every same-browser tab to share one guest identity
-  - If the server reports that the shared table is already active, original participants are redirected back to the current `matchId` while non-participants are blocked from spawning a second game off the same link
-  - Listens for JSON `lobby_update` socket messages for the current `tableId` while the room is filling
+- **Table.tsx** — Private-table seat configuration screen for `/table/:tableId`:
+  - Reads/POSTs `/api/v1/private-tables/:tableId/...` for join, get, seat mutation, and start
+  - Renders four `SeatCard` components; the host (first joiner) sees per-empty-seat AI controls and a "Start Match" button enabled when all seats are filled
+  - Subscribes to `lobby_update` envelopes carrying the full `PrivateTableState` JSON and re-renders on every broadcast
+  - On `state === 'started'`, redirects everyone to `/game/:matchId`
+  - Uses tab-scoped private-room session storage for guest-token reconnects (unchanged)
+
+- **SeatCard.tsx** — Single seat-card component. Renders waiting/human/bot states; if `canEdit` is true, shows "Add AI · Heuristic" buttons for empty seats and a "Remove AI" button for bot seats. Pure presentation; all mutations bubble up to `Table.tsx`.
 
 - **privateRoomSession.ts** — Private-room browser session helpers:
   - Persists the active private-room guest token, username, and `tableId` in session storage

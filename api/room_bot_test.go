@@ -106,7 +106,8 @@ func TestAdvanceAutomatedSeatsReadyBotsAtRoundEnd(t *testing.T) {
 
 func TestAdvanceAutomatedSeatsAllBotsStartNextRound(t *testing.T) {
 	room := NewRoom("bot-ready-room", nil, nil)
-	room.BotPolicy = stubPolicy{}
+	stub := stubPolicy{}
+	room.SeatPolicies = map[uint32]bot.Policy{0: stub, 1: stub, 2: stub, 3: stub}
 	room.Engine.State.Phase = pb.GamePhase_PHASE_ROUND_END
 	room.Engine.State.PlayerReady = []bool{false, false, false, false}
 	initialHandNum := room.Engine.State.HandNum

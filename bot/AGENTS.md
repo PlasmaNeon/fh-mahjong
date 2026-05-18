@@ -17,6 +17,8 @@ This package hosts server-side and CLI bot logic. Policies consume a `GameState`
   - clones protobuf actions/tiles field-by-field to avoid copying generated message mutex state
 - **heuristic_test.go** — Coverage for discard ranking, route preservation, call choices, and legality.
 - **remote/** — Subpackage for Python-served AI policies. It calls a remote policy endpoint for an `action_id`, decodes that id through `rlenv`, and falls back to the heuristic policy on service or legality failures.
+- **factory.go** — `NewPolicy(pb.Difficulty)` selects the policy implementation for a seat. Returns an error for unsupported / unspecified difficulty values. Used by `api.Matchmaker` when assembling per-seat policies for a `Room`.
+- **factory_test.go** — Coverage for heuristic resolution and rejection of unspecified/unknown difficulty values.
 
 ## Architecture Notes
 

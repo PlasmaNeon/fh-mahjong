@@ -72,7 +72,11 @@ func (s *Server) setupRoutes() {
 		{
 			protected.GET("/users/me", s.handleGetMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
-			protected.POST("/matchmaking/private", s.handleJoinPrivate)
+
+			protected.GET("/private-tables/:tableId", s.handlePrivateTableGet)
+			protected.POST("/private-tables/:tableId/join", s.handlePrivateTableJoin)
+			protected.POST("/private-tables/:tableId/seat", s.handlePrivateTableSeat)
+			protected.POST("/private-tables/:tableId/start", s.handlePrivateTableStart)
 		}
 	}
 
@@ -301,52 +305,6 @@ func (s *Server) handleJoinQueue(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "queued", "ruleset": req.Ruleset})
-}
-
-// handleJoinPrivate lets a user manually connect to a private link/table identifier
-func (s *Server) handleJoinPrivate(c *gin.Context) {
-	userID, _ := c.Get("userID")
-	username, _ := c.Get("username")
-
-	var req struct {
-		TableID string `json:"tableId" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking is unavailable"})
-		return
-	}
-
-	if activeTable, isActive, isParticipant := s.Matchmaker.IsPrivateTableParticipant(req.TableID, userID.(uint)); isActive {
-		if isParticipant {
-			c.JSON(http.StatusOK, gin.H{
-				"status":  "active",
-				"table":   req.TableID,
-				"matchId": activeTable.MatchID,
-			})
-			return
-		}
-
-		c.JSON(http.StatusConflict, gin.H{
-			"error":   "This private table is already in an active game",
-			"status":  "active",
-			"table":   req.TableID,
-			"matchId": activeTable.MatchID,
-		})
-		return
-	}
-
-	if err := s.Matchmaker.JoinPrivateTable(userID.(uint), username.(string), req.TableID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join private table"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "queued", "table": req.TableID})
 }
 
 // handleGetMe returns the authenticated user's profile
