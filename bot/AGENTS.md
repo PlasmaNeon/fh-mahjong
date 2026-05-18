@@ -16,9 +16,11 @@ This package hosts server-side and CLI bot logic. Policies consume a `GameState`
   - applies conservative `KAN` rules that avoid wild tiles and unstable hand shapes
   - clones protobuf actions/tiles field-by-field to avoid copying generated message mutex state
 - **heuristic_test.go** — Coverage for discard ranking, route preservation, call choices, and legality.
+- **remote/** — Subpackage for Python-served AI policies. It calls a remote policy endpoint for an `action_id`, decodes that id through `rlenv`, and falls back to the heuristic policy on service or legality failures.
 
 ## Architecture Notes
 
 - The package intentionally stays outside `core/` so the state machine remains ruleset-agnostic.
 - Policies only rely on state already produced by the engine; they do not re-implement rules or mutate the game directly.
 - The same policy should be reused by CLI demos, server-side empty seats, and future RL self-play data generation.
+- Remote AI policies must keep the Go engine as final authority: every returned `action_id` is decoded against current legal actions before it can become a `PlayerAction`.

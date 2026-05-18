@@ -150,6 +150,10 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 	}, nil
 }
 
+func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
+	return encodeObservation(state, seat, decisionIndex)
+}
+
 func emptyObservation(state *pb.GameState, decisionIndex uint64) *pb.SeatObservation {
 	activePlayer := uint32(0)
 	phase := pb.GamePhase_PHASE_INIT

@@ -186,6 +186,10 @@ func decodeActionID(state *pb.GameState, seat uint32, actionID int) (*pb.PlayerA
 	return cloneAction(action), nil
 }
 
+func DecodeActionID(state *pb.GameState, seat uint32, actionID int) (*pb.PlayerAction, error) {
+	return decodeActionID(state, seat, actionID)
+}
+
 func encodeAction(state *pb.GameState, seat uint32, action *pb.PlayerAction) (int, bool) {
 	if action == nil {
 		return 0, false
