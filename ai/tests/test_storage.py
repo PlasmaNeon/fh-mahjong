@@ -79,6 +79,7 @@ def test_npz_shards_round_trip(tmp_path: Path) -> None:
     assert len(loaded) == 5
     assert loaded[4].terminated
     assert loaded[3].info["episode_index"] == 1
+    assert loaded[4].info["steps_to_done"] == 0
     np.testing.assert_allclose(loaded[0].info["terminal_rewards"], [2, -2, 0, 0])
     assert loaded[0].info["terminal_outcome"]["winner_seat"] == 0
     assert loaded[0].info["terminal_outcome"]["win_type"] == 6
@@ -110,6 +111,29 @@ def test_read_transition_arrays_can_select_keys(tmp_path: Path) -> None:
     assert set(arrays) == {"planes", "action_ids"}
     assert arrays["planes"].shape == (5, 39, 42, 1)
     assert arrays["action_ids"].tolist() == [5, 6, 7, 8, 9]
+
+
+def test_read_transition_arrays_can_limit_rows(tmp_path: Path) -> None:
+    output_dir = tmp_path / "npz"
+    write_transitions_npz_shards(output_dir, _transitions(5), shard_size=2)
+
+    arrays = read_transition_arrays(output_dir, keys=("planes", "action_ids"), limit=3)
+
+    assert arrays["planes"].shape == (3, 39, 42, 1)
+    assert arrays["action_ids"].tolist() == [5, 6, 7]
+
+
+def test_npz_shards_include_steps_to_done(tmp_path: Path) -> None:
+    output_dir = tmp_path / "npz"
+    transitions = _transitions(3)
+    for index, transition in enumerate(transitions):
+        transition.info["episode_index"] = 7
+        transition.terminated = index == 2
+    write_transitions_npz_shards(output_dir, transitions, shard_size=3)
+
+    arrays = read_transition_arrays(output_dir, keys=("steps_to_done",))
+
+    assert arrays["steps_to_done"].tolist() == [2, 1, 0]
 
 
 def test_iter_observation_action_batches_reads_npz_without_transition_objects(tmp_path: Path) -> None:

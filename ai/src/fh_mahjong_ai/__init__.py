@@ -1,13 +1,23 @@
 """Python RL training stack for Fenghua Mahjong."""
 
-from .config import AdvantageWeightedBCConfig, EnvConfig, ModelConfig, OfflineQConfig, SelfPlayConfig, TrainConfig
+from .config import (
+    AdvantageWeightedBCConfig,
+    DiscreteIQLConfig,
+    EnvConfig,
+    ModelConfig,
+    OfflineQConfig,
+    SelfPlayConfig,
+    TrainConfig,
+)
 from .env import MahjongEnv
 from .model import PolicyValueNet
-from .trainer import AdvantageWeightedBCTrainer, OfflineQTrainer
+from .trainer import AdvantageWeightedBCTrainer, DiscreteIQLTrainer, OfflineQTrainer
 
 __all__ = [
     "AdvantageWeightedBCConfig",
     "AdvantageWeightedBCTrainer",
+    "DiscreteIQLConfig",
+    "DiscreteIQLTrainer",
     "EnvConfig",
     "MahjongEnv",
     "ModelConfig",

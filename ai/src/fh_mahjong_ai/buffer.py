@@ -50,6 +50,10 @@ class ReplayBuffer:
             return float(item.rewards[item.observation.seat])
 
         returns = np.asarray([_return_for(item) for item in items], dtype=np.float32)
+        steps_to_done = np.asarray(
+            [int(item.info.get("steps_to_done", 0)) for item in items],
+            dtype=np.int32,
+        )
         next_planes = np.stack([item.next_observation.planes for item in items]).astype(np.float32)
         next_scalars = np.stack([item.next_observation.scalars for item in items]).astype(np.float32)
         next_action_mask = np.stack([item.next_observation.action_mask for item in items]).astype(np.int8)
@@ -64,6 +68,7 @@ class ReplayBuffer:
             action_mask=action_mask,
             action_ids=action_ids,
             returns=returns,
+            steps_to_done=steps_to_done,
             next_planes=next_planes,
             next_scalars=next_scalars,
             next_action_mask=next_action_mask,
@@ -95,6 +100,11 @@ class ArrayReplayBuffer:
         seats = self.arrays["seats"][indices].astype(np.int64, copy=False)
 
         returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
+        steps_to_done = (
+            self.arrays["steps_to_done"][indices].astype(np.int32, copy=False)
+            if "steps_to_done" in self.arrays
+            else np.zeros(batch_size, dtype=np.int32)
+        )
         rewards = (
             self.arrays["rewards"][indices, seats].astype(np.float32, copy=False)
             if "rewards" in self.arrays
@@ -115,6 +125,7 @@ class ArrayReplayBuffer:
             action_mask=self.arrays["action_mask"][indices].astype(np.int8, copy=False),
             action_ids=self.arrays["action_ids"][indices].astype(np.int64, copy=False),
             returns=returns,
+            steps_to_done=steps_to_done,
             next_planes=self.arrays["next_planes"][indices].astype(np.float32, copy=False)
             if "next_planes" in self.arrays
             else np.empty((batch_size, 0), dtype=np.float32),

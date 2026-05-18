@@ -3,7 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fh_mahjong_ai.data import backfill_returns, split_episodes, split_train_validation
+from fh_mahjong_ai.data import (
+    backfill_returns,
+    backfill_steps_to_done,
+    compute_steps_to_done,
+    split_episodes,
+    split_train_validation,
+)
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -100,6 +106,27 @@ class TestBackfillReturns:
 
     def test_empty_input(self) -> None:
         assert backfill_returns([]) == []
+
+
+class TestStepsToDone:
+    def test_computes_steps_to_done_by_episode(self) -> None:
+        steps = compute_steps_to_done(
+            np.asarray([0, 0, 0, 1, 1]),
+            np.asarray([False, False, True, False, True]),
+        )
+
+        assert steps.tolist() == [2, 1, 0, 1, 0]
+
+    def test_backfills_steps_to_done(self) -> None:
+        transitions = [
+            _transition(episode=0),
+            _transition(episode=0),
+            _transition(episode=0, terminated=True),
+        ]
+
+        backfill_steps_to_done(transitions)
+
+        assert [t.info["steps_to_done"] for t in transitions] == [2, 1, 0]
 
 
 class TestTrainValidationSplit:
