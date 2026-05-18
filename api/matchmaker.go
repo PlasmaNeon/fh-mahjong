@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/models"
 	"gorm.io/gorm"
 )
@@ -36,7 +37,7 @@ func (q *InMemoryQueue) RPush(key string, val string) {
 func (q *InMemoryQueue) LRange(key string) []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	
+
 	// Return a copy to avoid race conditions
 	if lst, ok := q.lists[key]; ok {
 		copied := make([]string, len(lst))
@@ -63,7 +64,7 @@ func (q *InMemoryQueue) LPopCount(key string, count int) []string {
 
 	popped := lst[:count]
 	q.lists[key] = lst[count:]
-	
+
 	return popped
 }
 
@@ -90,7 +91,8 @@ type Matchmaker struct {
 	DB    *gorm.DB
 	Hub   *Hub
 
-	PaipuStore func(matchID, paipuJSON string) // in-memory fallback when DB is nil
+	BotPolicyFactory func() bot.Policy
+	PaipuStore       func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
@@ -104,9 +106,9 @@ type ActivePrivateTable struct {
 
 func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 	return &Matchmaker{
-		Queue: queue,
-		DB:    db,
-		Hub:   hub,
+		Queue:               queue,
+		DB:                  db,
+		Hub:                 hub,
 		activePrivateTables: make(map[string]ActivePrivateTable),
 	}
 }
@@ -117,7 +119,6 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 
 	// Add user to the in-memory queue
 	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
-
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
 	return nil
@@ -276,7 +277,11 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	// Note: Skipped explicit MatchPlayer insertion here for brevity; the Room engine handles scores.
 
 	// 3. Create the Room Goroutine explicitly
-	room := NewRoom(matchID, m.Hub, m.DB)
+	roomOptions := []RoomOption{}
+	if m.BotPolicyFactory != nil {
+		roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
+	}
+	room := NewRoom(matchID, m.Hub, m.DB, roomOptions...)
 	room.PaipuStore = m.PaipuStore
 	room.PrivateTableID = tableID
 	room.OnShutdown = func() {
