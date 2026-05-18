@@ -9,8 +9,9 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 ## Key Files
 
 - **pyproject.toml** — Python package metadata and dependencies for the RL stack.
-- **src/fh_mahjong_ai/config.py** — Dataclass configs for environment, model, training, advantage-weighted BC, offline Q-learning, and self-play.
+- **src/fh_mahjong_ai/config.py** — Dataclass configs for environment, model, training, advantage-weighted BC, discrete IQL, offline Q-learning, and self-play.
 - **src/fh_mahjong_ai/mlflow_tracking.py** — Shared MLflow setup/logging helpers for training and inference/evaluation scripts.
+- **src/fh_mahjong_ai/checkpoint_manifest.py** — Loader/resolver for tracked best-checkpoint metadata in `ai/checkpoints/best-checkpoints.json`; binary checkpoint files stay outside git.
 - **src/fh_mahjong_ai/types.py** — Shared observation, transition, and bridge result types.
 - **src/fh_mahjong_ai/bridge.py** — Abstract bridge contract, mock bridge, and `CtypesGoBridge` implementation for the Go RL library.
   - `MockMahjongBridge` retains the last emitted observation so `step()` validates actions against the real current legal-action mask instead of sampling a fresh one.
@@ -18,19 +19,21 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `CtypesGoBridge` decodes `round_outcome` / `terminal_outcome` protobuf messages into `StepResult.info` / `Transition.info`.
   - `CtypesGoBridge` owns the Go-side handle lifecycle and supports `close()`, context-manager usage, and best-effort cleanup in `__del__`.
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
-- **src/fh_mahjong_ai/model.py** — PyTorch policy/value network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
+- **src/fh_mahjong_ai/model.py** — PyTorch policy/value/Q network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
 - **src/fh_mahjong_ai/policies.py** — Random and torch-backed policy adapters.
-- **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, and terminal-reward backfill (`backfill_returns`) utilities for trajectory post-processing.
+- **src/fh_mahjong_ai/serving.py** — Checkpoint-backed inference helpers and bridge smoke tests for serving actions while the Go bridge validates legality.
+- **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, terminal-reward backfill (`backfill_returns`), and `steps_to_done` utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.
   - Online reports include precise mean/sum reward, reward distribution, action-family rates, and duplicate-seat `seat_summary`.
+- **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
   - `read_transitions()` accepts either JSONL or a NumPy shard directory containing `manifest.json`.
   - `read_transition_arrays(..., keys=...)` can load only the arrays needed by a trainer.
   - `ShardedTransitionWriter` supports incremental direct-to-shard generation without a temporary JSONL file.
-  - Sharded transition data preserves compact terminal outcome fields for future offline diagnostics.
-- **src/fh_mahjong_ai/trainer.py** — Self-play collection, behavior-cloning, advantage-weighted BC, and conservative offline Q-learning trainer utilities.
+  - Sharded transition data preserves `steps_to_done` and compact terminal outcome fields for future offline diagnostics.
+- **src/fh_mahjong_ai/trainer.py** — Self-play collection, behavior-cloning, advantage-weighted BC, discrete IQL, and conservative offline Q-learning trainer utilities.
 - **src/fh_mahjong_ai/scripts/selfplay_smoke.py** — Mock-bridge smoke runner that exercises the package end to end.
 - **src/fh_mahjong_ai/scripts/generate_data.py** — CLI: generate heuristic trajectories → JSONL or sharded NumPy plus dataset manifest via the Go bridge (or mock fallback).
   - `--chunk-size` bounds each bridge export request and preserves globally unique `episode_index` values across chunks.
@@ -39,21 +42,31 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/convert_data.py** — CLI: convert JSONL transition data into sharded NumPy replay storage.
 - **src/fh_mahjong_ai/scripts/train_bc.py** — CLI: behavior cloning training with deterministic episode-level train/validation split, validation agreement reporting, checkpointing, and resume support.
 - **src/fh_mahjong_ai/scripts/train_awbc.py** — CLI: advantage-weighted behavior cloning, intended as the first conservative offline RL improvement over a BC warm-start.
+- **src/fh_mahjong_ai/scripts/train_iql.py** — CLI: discrete implicit Q-learning style offline RL with MC terminal-return targets by default, optional TD Q targets, expectile value learning, advantage-weighted policy updates, optional CQL penalty, BC regularization, and optional transition limiting for memory control.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
+- **src/fh_mahjong_ai/scripts/reward_calibration.py** — CLI: report Q/value calibration against discounted terminal payout targets before promoting reward-trained checkpoints.
+- **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
+- **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
 - **src/fh_mahjong_ai/scripts/run_pipeline.py** — CLI: orchestrate generate → train → evaluate in one command, writing `reports/bc_training.json` and `reports/pipeline_report.json`.
+- **README.md** — Python stack workflow notes, including the WSL/4090 policy-server flow, SSH tunnel setup, live Go integration check, and `AI_BOT_POLICY_URL` server wiring.
+- **checkpoints/best-checkpoints.json** — Tracked metadata for the current reward-trained best checkpoint and BC fallback, including remote checkpoint/report paths and duplicate-evaluation gates. Do not commit checkpoint binaries.
 - **tests/test_bridge.py** — `unittest` coverage for the mock bridge reset/step contract and action-mask validation behavior.
+- **tests/test_checkpoint_manifest.py** — Tests for best-checkpoint manifest loading and path resolution.
 - **tests/test_data.py** — Tests for episode grouping and terminal-reward backfill.
 - **tests/test_buffer.py** — Tests for terminal-reward-aware replay buffer sampling.
 - **tests/test_storage.py** — Tests for JSONL auto-reading and sharded NumPy transition round-trips.
 - **tests/test_generate_data.py** — Tests for heuristic data generation (mock bridge path).
 - **tests/test_train_bc.py** — Tests for BC training loop and checkpoint resume.
 - **tests/test_awbc.py** — Tests for the advantage-weighted BC trainer and checkpoint-producing CLI.
+- **tests/test_iql.py** — Tests for the discrete IQL trainer and checkpoint-producing CLI.
 - **tests/test_offline_q.py** — Tests for the conservative offline Q trainer and checkpoint-producing CLI.
 - **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
+- **tests/test_reward_calibration.py** — Tests for reward-calibration reports and `steps_to_done` fallback handling.
+- **tests/test_serving.py** — Tests for checkpoint-backed serving decisions, JSON observation parsing, and bridge legality smoke behavior.
 - **tests/test_pipeline_e2e.py** — End-to-end pipeline integration test (mock bridge).
-- **tests/test_model.py** — Tests for the no-pooling default encoder, pooled ablation, and action-mask behavior.
+- **tests/test_model.py** — Tests for the no-pooling default encoder, pooled ablation, policy/Q action-mask behavior, and old-checkpoint compatibility.
 - **src/fh_mahjong_ai/generated/proto/game_pb2.py** — Generated Python protobuf bindings shared with the Go RL bridge.
 
 ## Architecture Notes
@@ -70,9 +83,14 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Large Go-bridge exports should use chunked generation instead of one large protobuf response; the CLI defaults to `--chunk-size 1000`.
 - Large generated datasets should prefer `fh-mj-generate-data --format npz-shards` so the pipeline avoids a huge temporary JSONL file.
 - Large training datasets can be converted with `fh-mj-convert-data` to sharded NumPy storage; training/evaluation CLIs accept the shard directory as `--data`.
-- Sharded NumPy datasets use array-backed replay for BC/AWBC/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC and AWBC training load only current-observation/action/return arrays to keep 50k+ datasets within WSL memory.
+- Sharded NumPy datasets use array-backed replay for BC/AWBC/IQL/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC and AWBC training load only current-observation/action/return arrays to keep 50k+ datasets within WSL memory; IQL/offline-Q need next-state arrays and may use transition limits for memory control.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
+- Serving defaults to `ai/checkpoints/best-checkpoints.json`. Override binary checkpoint location with `--checkpoint` or `FH_MAHJONG_AI_CHECKPOINT`; large `.pt` files remain outside git.
+- `fh-mj-serve-policy` is an inference boundary only. The Go server/bridge must still decode and validate returned `action_id` values against the current legal action set before applying them.
 - Evaluation reports aggregate exact/top-3 agreement and action-family metrics for discard, chii, pon, kan, win, pass, haitei, and unknown action ids. Online evaluation also records reward distribution, round-outcome counts, and per-seat summaries for duplicate-seat comparisons.
 - Heuristic trajectory samples preserve per-step rewards in `rewards` and attach round-outcome targets separately in `terminal_rewards` for warm-start consumers.
-- The first implemented training loop is behavior cloning / offline warm-start. The first conservative offline RL candidate is advantage-weighted BC from a BC checkpoint; naive offline Q remains experimental until duplicate-seat evaluation beats the BC baseline.
+- IQL uses `steps_to_done` to discount sparse terminal round payout as `gamma ** steps_to_done * terminal_reward`, matching the Mortal-style sparse-reward target shape.
+- IQL should not initialize `q_head` from BC policy logits by default; policy logits are action scores, not reward-scaled Q estimates. Use `--init-q-from-policy` only as an explicit ablation.
+- `--cql-weight` adds a Mortal-style conservative Q penalty over legal masked actions; keep it as an explicit offline-RL ablation until duplicate-seat evaluation beats BC.
+- The first implemented training loop is behavior cloning / offline warm-start. Conservative reward-based offline RL candidates are advantage-weighted BC and discrete IQL from a BC checkpoint; discrete IQL uses a separate Q head and defaults to discounted MC terminal-return targets so reward learning does not overwrite the inference policy head or depend on unstable sparse TD bootstrapping. Keep BC regularization enabled. Naive offline Q remains experimental until duplicate-seat evaluation beats the BC baseline.

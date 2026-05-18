@@ -3,9 +3,12 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/plasma/fh-mahjong/api"
+	"github.com/plasma/fh-mahjong/bot"
+	"github.com/plasma/fh-mahjong/bot/remote"
 	"github.com/plasma/fh-mahjong/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -66,6 +69,12 @@ func main() {
 
 	// 4. Start Matchmaking Service
 	matchmaker := api.NewMatchmaker(inMemoryQueue, db, hub)
+	if remotePolicyURL := strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL")); remotePolicyURL != "" {
+		log.Printf("Using remote AI bot policy endpoint for automated seats: %s", remotePolicyURL)
+		matchmaker.BotPolicyFactory = func() bot.Policy {
+			return remote.NewHTTPPolicy(remotePolicyURL)
+		}
+	}
 	go matchmaker.StartQueueWatcher("hometown")
 	go matchmaker.StartPrivateTableWatcher()
 

@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from fh_mahjong_ai.buffer import ReplayBuffer
+from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
+from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.scripts.train_iql import train_iql
+from fh_mahjong_ai.storage import write_transitions_jsonl, write_transitions_npz_shards
+from fh_mahjong_ai.trainer import DiscreteIQLTrainer, discounted_terminal_returns
+from fh_mahjong_ai.types import Observation, Transition
+
+
+def _obs(seed: int, env_config: EnvConfig) -> Observation:
+    rng = np.random.default_rng(seed)
+    return Observation(
+        seat=0,
+        planes=rng.standard_normal(env_config.plane_shape).astype(np.float32),
+        scalars=rng.standard_normal(env_config.scalar_features).astype(np.float32),
+        action_mask=np.ones(env_config.action_space_size, dtype=np.int8),
+    )
+
+
+def _transitions(n: int, env_config: EnvConfig) -> list[Transition]:
+    transitions = []
+    for i in range(n):
+        transitions.append(
+            Transition(
+                observation=_obs(i, env_config),
+                action_id=i % env_config.action_space_size,
+                rewards=np.asarray([float(i == n - 1), 0, 0, 0], dtype=np.float32),
+                next_observation=_obs(i + 100, env_config),
+                terminated=i == n - 1,
+                info={
+                    "episode_index": i // 4,
+                    "terminal_rewards": np.asarray([1, -1, 0, 0], dtype=np.float32),
+                },
+            )
+        )
+    return transitions
+
+
+def test_discrete_iql_trainer_runs_one_step() -> None:
+    env_config = EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    target_model = PolicyValueNet(env_config, model_config)
+    target_model.load_state_dict(model.state_dict())
+
+    buf = ReplayBuffer(capacity=8)
+    buf.extend(_transitions(8, env_config))
+
+    trainer = DiscreteIQLTrainer(
+        model=model,
+        target_model=target_model,
+        optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3),
+        train_config=TrainConfig(batch_size=4),
+        iql_config=DiscreteIQLConfig(target_update_interval=1, target_tau=1.0, max_weight=5.0),
+    )
+
+    metrics = trainer.train_step(buf)
+    trainer.update_target_network()
+
+    assert np.isfinite(metrics.loss)
+    assert np.isfinite(metrics.q_loss)
+    assert np.isfinite(metrics.value_loss)
+    assert np.isfinite(metrics.policy_loss)
+    assert np.isfinite(metrics.bc_loss)
+    assert np.isfinite(metrics.cql_loss)
+    assert 0.0 <= metrics.avg_weight <= 5.0
+    assert 0.0 <= metrics.max_weight <= 5.0
+
+
+def test_discounted_terminal_returns_use_steps_to_done() -> None:
+    returns = torch.tensor([1.0, 1.0, -2.0])
+    steps_to_done = torch.tensor([0, 1, 2])
+
+    targets = discounted_terminal_returns(returns, steps_to_done, gamma=0.5)
+
+    torch.testing.assert_close(targets, torch.tensor([1.0, 0.5, -0.5]))
+
+
+def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+
+    metrics = train_iql(
+        data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_iql_runs_from_npz_shards_with_limit(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_dir, _transitions(12, env_config), shard_size=5)
+
+    metrics = train_iql(
+        data_path=shard_dir,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=4,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        max_transitions=8,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_iql_can_initialize_q_head_from_policy(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    model = PolicyValueNet(env_config, ModelConfig())
+    checkpoint = tmp_path / "bc.pt"
+    torch.save({"model": {key: value for key, value in model.state_dict().items() if not key.startswith("q_head.")}}, checkpoint)
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+
+    metrics = train_iql(
+        data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        init_checkpoint=checkpoint,
+        init_q_from_policy=True,
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0

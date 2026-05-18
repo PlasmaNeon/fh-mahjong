@@ -29,6 +29,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **room.go** — Single match room orchestration:
   - `Room` struct — 4 `Client` seats + 1 `core.Game` engine
   - `BotPolicy` — deterministic policy used for seats with no connected client entry
+  - `WithBotPolicy()` — room option for injecting a non-default automated-seat policy while keeping the heuristic default
   - Initializes `core.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
@@ -48,6 +49,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **matchmaker.go** — Player queue and pairing:
   - `Matchmaker` struct — Queue of waiting clients
   - Groups 4 players into a `Room`
+  - `BotPolicyFactory` creates one automated-seat policy per new room; the server uses this to enable remote AI bots without sharing policy state across matches
   - Tracks active private tables by `tableId` so the same `/table/:tableId` link cannot accidentally start a second game while the first one is still running
   - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
 
@@ -72,6 +74,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `NewRoom()` initializes paipu recording for match replay export
   - Round-end automation marks bot seats ready and can advance all-bot tables into the next round
   - Paipu player registration includes placeholder bot seats alongside connected humans
+  - `room_remote_test.go` contains a skipped-by-default live remote-policy integration test; set `FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act` when a Python policy server is running
 
 ## Architecture Notes
 

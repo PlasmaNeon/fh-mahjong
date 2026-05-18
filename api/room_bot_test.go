@@ -3,6 +3,7 @@ package api
 import (
 	"testing"
 
+	"github.com/plasma/fh-mahjong/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -31,6 +32,34 @@ func TestNewRoomInitializesPaipuRecorder(t *testing.T) {
 	room := NewRoom("paipu-room", nil, nil)
 	if room.Engine.Recorder == nil {
 		t.Fatal("expected room to initialize paipu recorder")
+	}
+}
+
+func TestNewRoomAcceptsInjectedBotPolicy(t *testing.T) {
+	room := NewRoom("custom-bot-room", nil, nil, WithBotPolicy(stubPolicy{}))
+	if _, ok := room.BotPolicy.(stubPolicy); !ok {
+		t.Fatalf("expected injected bot policy, got %T", room.BotPolicy)
+	}
+}
+
+func TestMatchmakerCreateMatchUsesBotPolicyFactory(t *testing.T) {
+	hub := NewHub()
+	hub.BindRoom = make(chan RoomBind, 1)
+	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+	factoryCalled := false
+	matchmaker.BotPolicyFactory = func() bot.Policy {
+		factoryCalled = true
+		return stubPolicy{}
+	}
+
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "hometown", "")
+
+	if !factoryCalled {
+		t.Fatal("expected bot policy factory to be called")
+	}
+	bind := <-hub.BindRoom
+	if _, ok := bind.Room.BotPolicy.(stubPolicy); !ok {
+		t.Fatalf("expected room to use factory bot policy, got %T", bind.Room.BotPolicy)
 	}
 }
 

@@ -8,7 +8,7 @@ import torch
 from torch import nn
 
 from .buffer import ReplayBuffer
-from .config import AdvantageWeightedBCConfig, OfflineQConfig, TrainConfig
+from .config import AdvantageWeightedBCConfig, DiscreteIQLConfig, OfflineQConfig, TrainConfig
 from .env import MahjongEnv
 from .policies import ActionChoice
 from .types import StepResult, Transition
@@ -44,6 +44,22 @@ class AdvantageWeightedBCMetrics:
     avg_weight: float
     max_weight: float
     avg_advantage: float
+
+
+@dataclass
+class DiscreteIQLMetrics:
+    loss: float
+    q_loss: float
+    value_loss: float
+    policy_loss: float
+    bc_loss: float
+    cql_loss: float
+    avg_q: float
+    avg_v: float
+    avg_target_q: float
+    avg_advantage: float
+    avg_weight: float
+    max_weight: float
 
 
 def collect_episode(env: MahjongEnv, policy: PolicyLike, seed: Optional[int] = None) -> List[Transition]:
@@ -238,6 +254,115 @@ class OfflineQTrainer:
             for target_param, source_param in zip(self.target_model.parameters(), self.model.parameters()):
                 target_param.data.mul_(1.0 - tau)
                 target_param.data.add_(source_param.data, alpha=tau)
+
+
+class DiscreteIQLTrainer:
+    """Implicit Q-learning style offline RL with separate policy and critic heads."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        target_model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        train_config: TrainConfig,
+        iql_config: Optional[DiscreteIQLConfig] = None,
+    ) -> None:
+        self.model = model
+        self.target_model = target_model
+        self.optimizer = optimizer
+        self.train_config = train_config
+        self.iql_config = iql_config or DiscreteIQLConfig()
+        self._sample_rng = np.random.default_rng(train_config.seed)
+
+    def train_step(self, replay_buffer: ReplayBuffer) -> DiscreteIQLMetrics:
+        sample_seed = int(self._sample_rng.integers(0, np.iinfo(np.uint32).max))
+        batch = replay_buffer.sample(self.train_config.batch_size, seed=sample_seed)
+
+        planes = torch.from_numpy(batch.planes).to(self.train_config.device)
+        scalars = torch.from_numpy(batch.scalars).to(self.train_config.device)
+        action_mask = torch.from_numpy(batch.action_mask).to(self.train_config.device)
+        action_ids = torch.from_numpy(batch.action_ids).to(self.train_config.device)
+        next_planes = torch.from_numpy(batch.next_planes).to(self.train_config.device)
+        next_scalars = torch.from_numpy(batch.next_scalars).to(self.train_config.device)
+        next_action_mask = torch.from_numpy(batch.next_action_mask).to(self.train_config.device)
+        rewards = torch.from_numpy(batch.rewards).to(self.train_config.device)
+        dones = torch.from_numpy(batch.dones).to(self.train_config.device)
+        returns = torch.from_numpy(batch.returns).to(self.train_config.device)
+        steps_to_done = torch.from_numpy(batch.steps_to_done).to(self.train_config.device)
+
+        policy_logits, values = self.model(planes, scalars, action_mask)
+        q_values, _ = self.model.q_values(planes, scalars, action_mask)
+        dataset_q = q_values.gather(1, action_ids.unsqueeze(1)).squeeze(1)
+
+        target_mode = self.iql_config.target_mode.lower()
+        if target_mode == "mc":
+            target_q = discounted_terminal_returns(returns, steps_to_done, self.iql_config.gamma)
+        elif target_mode == "td":
+            with torch.no_grad():
+                _, next_values = self.target_model(next_planes, next_scalars, next_action_mask)
+                target_q = rewards + self.iql_config.gamma * (1.0 - dones) * next_values
+        else:
+            raise ValueError(f"unsupported discrete IQL target_mode={self.iql_config.target_mode!r}")
+
+        q_loss = nn.functional.smooth_l1_loss(dataset_q, target_q)
+        value_loss = expectile_loss(dataset_q.detach() - values, self.iql_config.expectile)
+        cql_loss = torch.logsumexp(q_values, dim=1).mean() - dataset_q.mean()
+
+        advantages = dataset_q.detach() - values.detach()
+        weights = torch.exp(advantages / max(self.iql_config.temperature, 1e-6))
+        weights = torch.clamp(weights, max=self.iql_config.max_weight)
+        per_sample_policy_loss = nn.functional.cross_entropy(policy_logits, action_ids, reduction="none")
+        policy_loss = (weights * per_sample_policy_loss).mean()
+        bc_loss = per_sample_policy_loss.mean()
+
+        loss = (
+            self.iql_config.q_weight * q_loss
+            + self.iql_config.value_weight * value_loss
+            + self.iql_config.policy_weight * policy_loss
+            + self.iql_config.bc_weight * bc_loss
+            + self.iql_config.cql_weight * cql_loss
+        )
+
+        self.optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.train_config.max_grad_norm)
+        self.optimizer.step()
+
+        return DiscreteIQLMetrics(
+            loss=float(loss.item()),
+            q_loss=float(q_loss.item()),
+            value_loss=float(value_loss.item()),
+            policy_loss=float(policy_loss.item()),
+            bc_loss=float(bc_loss.item()),
+            cql_loss=float(cql_loss.item()),
+            avg_q=float(dataset_q.mean().item()),
+            avg_v=float(values.mean().item()),
+            avg_target_q=float(target_q.mean().item()),
+            avg_advantage=float(advantages.mean().item()),
+            avg_weight=float(weights.mean().item()),
+            max_weight=float(weights.max().item()),
+        )
+
+    def update_target_network(self) -> None:
+        tau = self.iql_config.target_tau
+        with torch.no_grad():
+            for target_param, source_param in zip(self.target_model.parameters(), self.model.parameters()):
+                target_param.data.mul_(1.0 - tau)
+                target_param.data.add_(source_param.data, alpha=tau)
+
+
+def expectile_loss(diff: torch.Tensor, expectile: float) -> torch.Tensor:
+    tau = min(0.999, max(0.001, expectile))
+    weights = torch.where(diff > 0, tau, 1.0 - tau)
+    return (weights * diff.pow(2)).mean()
+
+
+def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tensor, gamma: float) -> torch.Tensor:
+    discount = torch.pow(
+        torch.as_tensor(gamma, dtype=returns.dtype, device=returns.device),
+        steps_to_done.to(dtype=returns.dtype, device=returns.device),
+    )
+    return returns * discount
 
 
 def fill_buffer_from_episodes(replay_buffer: ReplayBuffer, episodes: Iterable[List[Transition]]) -> None:

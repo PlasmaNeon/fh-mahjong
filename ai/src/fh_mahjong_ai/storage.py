@@ -7,6 +7,7 @@ from typing import Iterable, Iterator, Optional
 import numpy as np
 import torch
 
+from .data import compute_steps_to_done
 from .types import Observation, Transition
 
 SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
@@ -97,7 +98,14 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
 
 def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> int:
     payload = torch.load(path, map_location="cpu")
-    model.load_state_dict(payload["model"])
+    missing, unexpected = model.load_state_dict(payload["model"], strict=False)
+    missing_bad = [key for key in missing if not key.startswith("q_head.")]
+    unexpected_bad = [key for key in unexpected if not key.startswith("q_head.")]
+    if missing_bad or unexpected_bad:
+        raise RuntimeError(
+            "checkpoint is incompatible with model state: "
+            f"missing={missing_bad}, unexpected={unexpected_bad}"
+        )
     if optimizer is not None and "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload.get("step", 0))
@@ -134,12 +142,18 @@ def is_sharded_transition_dataset(path: Path) -> bool:
     return path.is_dir() or path.name == SHARDED_TRANSITIONS_MANIFEST
 
 
-def read_transition_arrays(path: Path, keys: Optional[Iterable[str]] = None) -> dict[str, np.ndarray]:
+def read_transition_arrays(
+    path: Path,
+    keys: Optional[Iterable[str]] = None,
+    limit: Optional[int] = None,
+) -> dict[str, np.ndarray]:
     """Read transitions as contiguous arrays for array-backed replay buffers."""
     if is_sharded_transition_dataset(path):
         directory = path.parent if path.name == SHARDED_TRANSITIONS_MANIFEST else path
-        return _read_npz_transition_arrays(directory, keys=keys)
+        return _read_npz_transition_arrays(directory, keys=keys, limit=limit)
     arrays = _transitions_to_arrays(read_transitions_jsonl(path))
+    if limit is not None:
+        arrays = {key: value[: max(0, int(limit))] for key, value in arrays.items()}
     if keys is None:
         return arrays
     selected = set(keys)
@@ -201,7 +215,11 @@ def _iter_npz_observation_action_batches(directory: Path, batch_size: int) -> It
                 }
 
 
-def _read_npz_transition_arrays(directory: Path, keys: Optional[Iterable[str]] = None) -> dict[str, np.ndarray]:
+def _read_npz_transition_arrays(
+    directory: Path,
+    keys: Optional[Iterable[str]] = None,
+    limit: Optional[int] = None,
+) -> dict[str, np.ndarray]:
     manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(manifest.get("schema_version", 0)) != SHARDED_TRANSITIONS_SCHEMA_VERSION:
@@ -209,6 +227,8 @@ def _read_npz_transition_arrays(directory: Path, keys: Optional[Iterable[str]] =
 
     shards = list(manifest.get("shards", []))
     total = int(manifest.get("transitions", 0))
+    if limit is not None:
+        total = min(total, max(0, int(limit)))
     if total == 0:
         raise ValueError(f"empty sharded transition dataset at {directory}")
 
@@ -227,10 +247,14 @@ def _read_npz_transition_arrays(directory: Path, keys: Optional[Iterable[str]] =
     for shard in shards:
         shard_path = directory / str(shard["path"])
         with np.load(shard_path, allow_pickle=False) as loaded:
-            count = int(loaded["action_ids"].shape[0])
+            count = min(int(loaded["action_ids"].shape[0]), total - offset)
+            if count <= 0:
+                break
             for key, target in arrays.items():
-                target[offset : offset + count] = loaded[key]
+                target[offset : offset + count] = loaded[key][:count]
             offset += count
+            if offset >= total:
+                break
     return arrays
 
 
@@ -291,6 +315,20 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         return outcome if isinstance(outcome, dict) else {}
 
     outcomes = [terminal_outcome_for(t) for t in transitions]
+    episode_indices = np.asarray(
+        [int(t.info.get("episode_index", 0)) for t in transitions],
+        dtype=np.int64,
+    )
+    dones = np.asarray([t.terminated or t.truncated for t in transitions], dtype=np.bool_)
+    steps_to_done = np.asarray(
+        [
+            int(t.info["steps_to_done"])
+            if "steps_to_done" in t.info
+            else int(value)
+            for t, value in zip(transitions, compute_steps_to_done(episode_indices, dones))
+        ],
+        dtype=np.int32,
+    )
 
     return {
         "seats": np.asarray([t.observation.seat for t in transitions], dtype=np.int16),
@@ -305,10 +343,8 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         "next_action_mask": np.stack([t.next_observation.action_mask for t in transitions]).astype(np.int8),
         "terminated": np.asarray([t.terminated for t in transitions], dtype=np.bool_),
         "truncated": np.asarray([t.truncated for t in transitions], dtype=np.bool_),
-        "episode_index": np.asarray(
-            [int(t.info.get("episode_index", 0)) for t in transitions],
-            dtype=np.int64,
-        ),
+        "episode_index": episode_indices,
+        "steps_to_done": steps_to_done,
         "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
         "terminal_is_draw": np.asarray([bool(o.get("is_draw", False)) for o in outcomes], dtype=np.bool_),
         "terminal_winner_seat": np.asarray([int(o.get("winner_seat", -1)) for o in outcomes], dtype=np.int16),
@@ -345,6 +381,7 @@ def _read_transition_shard(path: Path) -> list[Transition]:
                     truncated=bool(arrays["truncated"][index]),
                     info={
                         "episode_index": int(arrays["episode_index"][index]),
+                        "steps_to_done": int(arrays["steps_to_done"][index]) if "steps_to_done" in arrays.files else 0,
                         "terminal_rewards": np.asarray(arrays["terminal_rewards"][index], dtype=np.float32),
                         **_terminal_outcome_info(arrays, index),
                     },

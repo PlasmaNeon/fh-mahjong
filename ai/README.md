@@ -83,6 +83,24 @@ uv run --project ai fh-mj-train-bc \
 
 The report records train/validation transition counts, per-epoch losses, exact action agreement, top-3 action agreement, and action-family agreement.
 
+## Reward-trained best checkpoint
+
+Tracked metadata for the current reward-trained best checkpoint lives in:
+
+```bash
+ai/checkpoints/best-checkpoints.json
+```
+
+The manifest records remote checkpoint paths, duplicate-evaluation metrics, and the BC fallback. It intentionally does not track `.pt` checkpoint binaries.
+
+On the WSL training machine, the current reward-trained best is:
+
+```bash
+/root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/checkpoints/iql_sweep_cql010_bc6_pol010_lr5e6/epoch_002.pt
+```
+
+Use `FH_MAHJONG_AI_CHECKPOINT` or `--checkpoint` to override the binary path on another machine.
+
 ## Inference/evaluation tracking
 
 ```bash
@@ -92,3 +110,91 @@ uv run --project ai fh-mj-evaluate \
   --report-output /private/tmp/fh-mahjong-rl-step12/reports/eval.json \
   --mlflow
 ```
+
+## Serving smoke
+
+Before wiring a checkpoint into a live table, run it through the bridge path. The model chooses from the visible observation/action mask, then the Go bridge validates the returned `action_id`.
+
+```bash
+uv run --project ai fh-mj-serving-smoke \
+  --checkpoint /root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/checkpoints/iql_sweep_cql010_bc6_pol010_lr5e6/epoch_002.pt \
+  --bridge-kind go \
+  --bridge-lib build/libfh_mahjong_bridge.so \
+  --episodes 20 \
+  --device cuda
+```
+
+For a lightweight JSON inference boundary:
+
+```bash
+uv run --project ai fh-mj-serve-policy \
+  --checkpoint /root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/checkpoints/iql_sweep_cql010_bc6_pol010_lr5e6/epoch_002.pt \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+`POST /act` returns an `action_id`. The Go caller must still decode and validate that action against current legal actions before mutating game state.
+
+## WSL policy serving for the Go server
+
+Use this flow when the checkpoint runs on the WSL/4090 machine and the Go server runs on macOS.
+
+On WSL, use a clean worktree for the PR branch so existing local training edits are not disturbed:
+
+```bash
+cd /root/fh-mahjong
+git fetch origin codex/discrete-iql-offline-rl
+git worktree add -B codex/discrete-iql-offline-rl-serving \
+  /root/fh-mahjong-pr41-serving \
+  origin/codex/discrete-iql-offline-rl
+cd /root/fh-mahjong-pr41-serving
+uv sync --project ai --extra dev
+mkdir -p build
+go build -buildmode=c-shared -o build/libfh_mahjong_bridge.so ./cmd/rlbridge
+```
+
+Validate the checkpoint through the Go bridge before serving it:
+
+```bash
+uv run --project ai fh-mj-serving-smoke \
+  --manifest ai/checkpoints/best-checkpoints.json \
+  --checkpoint-id current \
+  --bridge-kind go \
+  --bridge-lib build/libfh_mahjong_bridge.so \
+  --episodes 10 \
+  --start-seed 13000 \
+  --device cuda
+```
+
+Start the policy server on WSL:
+
+```bash
+uv run --project ai fh-mj-serve-policy \
+  --manifest ai/checkpoints/best-checkpoints.json \
+  --checkpoint-id current \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --device cuda
+```
+
+If macOS cannot reach the WSL port directly, open an SSH tunnel from macOS:
+
+```bash
+ssh -fN -L 8765:127.0.0.1:8765 wsl
+curl http://127.0.0.1:8765/healthz
+```
+
+Run the live Go integration check from macOS:
+
+```bash
+FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act \
+  go test ./api -run TestAdvanceAutomatedSeatsWithLiveRemotePolicy -count=1
+```
+
+Start the Go server with remote AI enabled for empty seats:
+
+```bash
+AI_BOT_POLICY_URL=http://127.0.0.1:8765/act go run cmd/server/main.go
+```
+
+Leave `AI_BOT_POLICY_URL` unset to use the deterministic heuristic bot.

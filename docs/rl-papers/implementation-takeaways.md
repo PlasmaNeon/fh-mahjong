@@ -45,14 +45,21 @@ These targets should be training-only. The deployed policy should still consume 
 
 Near term:
 
-- terminal round payout
-- optional small terminal win/loss bonus
+- use terminal round payout as the first reward target for the current single-round Fenghua mode
+- keep optional small terminal win/loss bonus as an ablation, not the default objective
+- train reward-based updates from a BC checkpoint and preserve BC regularization during offline policy improvement
+- keep critic/Q training separate from the deployed policy logits so TD targets do not overwrite imitation quality
+- do not initialize a Q head from policy logits by default; logits rank actions but are not calibrated payout predictions
+- prefer discounted Monte Carlo terminal-return targets for the first offline reward learner: `gamma ** steps_to_done * terminal_round_payout`
+- keep one-step TD as an explicit experiment after value calibration improves
+- add a conservative Q penalty as an explicit offline-RL ablation, following Mortal's preference for conservative offline Q estimates
 
 Later:
 
-- multi-round or match-level value prediction
-- backward-propagated score or fan shaping
-- placement-aware reward if full-match play becomes the main objective
+- add multi-round or match-level value prediction when a placement contest mode exists
+- use a Mortal-style global ranking / placement predictor to convert score and rank trajectory into delta expected placement value
+- add backward-propagated score or fan shaping only after single-round EV evaluation is stable
+- make placement-aware reward the main objective only for full-match or contest play, not the current single-round agent
 
 ## Feature engineering ideas
 

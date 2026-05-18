@@ -50,6 +50,22 @@ class OfflineQConfig:
 
 
 @dataclass
+class DiscreteIQLConfig:
+    gamma: float = 0.99
+    target_mode: str = "mc"
+    expectile: float = 0.7
+    temperature: float = 1.0
+    max_weight: float = 20.0
+    q_weight: float = 1.0
+    value_weight: float = 1.0
+    policy_weight: float = 1.0
+    bc_weight: float = 1.0
+    cql_weight: float = 0.0
+    target_update_interval: int = 25
+    target_tau: float = 0.005
+
+
+@dataclass
 class AdvantageWeightedBCConfig:
     temperature: float = 1.0
     max_weight: float = 20.0

@@ -47,6 +47,7 @@ class PolicyValueNet(nn.Module):
             nn.GELU(),
         )
         self.policy_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
+        self.q_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
         self.value_head = nn.Sequential(
             nn.Linear(model_config.trunk_hidden_dim, model_config.value_hidden_dim),
             nn.GELU(),
@@ -55,14 +56,30 @@ class PolicyValueNet(nn.Module):
         )
 
     def forward(self, planes: Tensor, scalars: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
-        plane_features = self.plane_head(self.plane_projection(self.plane_blocks(self.plane_stem(planes))))
-        scalar_features = self.scalar_encoder(scalars)
-        features = self.trunk(torch.cat([plane_features, scalar_features], dim=1))
+        features = self.encode(planes, scalars)
 
         logits = self.policy_head(features)
         masked_logits = logits.masked_fill(action_mask <= 0, torch.finfo(logits.dtype).min)
         value = self.value_head(features).squeeze(-1)
         return masked_logits, value
+
+    def encode(self, planes: Tensor, scalars: Tensor) -> Tensor:
+        plane_features = self.plane_head(self.plane_projection(self.plane_blocks(self.plane_stem(planes))))
+        scalar_features = self.scalar_encoder(scalars)
+        return self.trunk(torch.cat([plane_features, scalar_features], dim=1))
+
+    def q_values(self, planes: Tensor, scalars: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
+        features = self.encode(planes, scalars)
+        q_values = self.q_head(features)
+        masked_q_values = q_values.masked_fill(action_mask <= 0, torch.finfo(q_values.dtype).min)
+        value = self.value_head(features).squeeze(-1)
+        return masked_q_values, value
+
+    def initialize_q_head_from_policy(self) -> None:
+        """Warm-start the critic head from a BC policy checkpoint."""
+        with torch.no_grad():
+            self.q_head.weight.copy_(self.policy_head.weight)
+            self.q_head.bias.copy_(self.policy_head.bias)
 
 
 class ResidualBlock(nn.Module):

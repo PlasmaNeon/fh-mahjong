@@ -30,9 +30,9 @@ type Room struct {
 	MatchRecord    *models.Match
 	OnShutdown     func()
 
-	Engine     *core.Game
-	BotPolicy  bot.Policy
-	Seats      map[uint32]*Client // maps 0-3 to active WS connections
+	Engine          *core.Game
+	BotPolicy       bot.Policy
+	Seats           map[uint32]*Client              // maps 0-3 to active WS connections
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
@@ -46,8 +46,18 @@ type Room struct {
 	interruptEpoch   uint64 // incremented each interrupt cycle to prevent stale goroutines
 }
 
+type RoomOption func(*Room)
+
+func WithBotPolicy(policy bot.Policy) RoomOption {
+	return func(room *Room) {
+		if policy != nil {
+			room.BotPolicy = policy
+		}
+	}
+}
+
 // NewRoom creates a new match
-func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
+func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 	ruleset := &rules.HometownRuleset{}
 
 	obfMap := make(map[uint32]uint32)
@@ -68,6 +78,9 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		Shutdown:           make(chan bool),
 		InterruptChan:      make(chan bool, 1),
 		TimerResolveChan:   make(chan bool, 1),
+	}
+	for _, opt := range opts {
+		opt(room)
 	}
 
 	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")

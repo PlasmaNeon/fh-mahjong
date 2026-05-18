@@ -44,6 +44,52 @@ def backfill_returns(transitions: List[Transition]) -> List[Transition]:
     return transitions
 
 
+def compute_steps_to_done(episode_indices: np.ndarray, dones: np.ndarray) -> np.ndarray:
+    """Compute decision-step distance to the terminal/truncated transition.
+
+    Terminal rows have distance 0; the row before terminal has distance 1.
+    This gives a Mortal-style exponent for sparse terminal rewards:
+    gamma ** steps_to_done * terminal_reward.
+    """
+    episode_indices = np.asarray(episode_indices)
+    dones = np.asarray(dones, dtype=np.bool_)
+    if episode_indices.shape[0] != dones.shape[0]:
+        raise ValueError("episode_indices and dones must have the same length")
+
+    steps = np.zeros(episode_indices.shape[0], dtype=np.int32)
+    episode_positions: dict[int, list[int]] = defaultdict(list)
+    for index, episode_index in enumerate(episode_indices.tolist()):
+        episode_positions[int(episode_index)].append(index)
+
+    for positions in episode_positions.values():
+        distance = 0
+        for position in reversed(positions):
+            if dones[position]:
+                distance = 0
+                steps[position] = 0
+            else:
+                distance += 1
+                steps[position] = distance
+    return steps
+
+
+def backfill_steps_to_done(transitions: List[Transition]) -> List[Transition]:
+    """Attach steps_to_done metadata to each transition in complete episodes."""
+    if not transitions:
+        return transitions
+
+    for episode in split_episodes(transitions):
+        distance = 0
+        for transition in reversed(episode):
+            if transition.terminated or transition.truncated:
+                distance = 0
+                transition.info["steps_to_done"] = 0
+            else:
+                distance += 1
+                transition.info["steps_to_done"] = distance
+    return transitions
+
+
 def split_train_validation(
     transitions: List[Transition],
     validation_fraction: float = 0.2,
