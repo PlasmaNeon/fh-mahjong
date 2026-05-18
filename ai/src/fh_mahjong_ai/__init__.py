@@ -11,6 +11,7 @@ from .config import (
 )
 from .env import MahjongEnv
 from .model import PolicyValueNet
+from .serving import CheckpointPolicy
 from .trainer import AdvantageWeightedBCTrainer, DiscreteIQLTrainer, OfflineQTrainer
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "DiscreteIQLConfig",
     "DiscreteIQLTrainer",
     "EnvConfig",
+    "CheckpointPolicy",
     "MahjongEnv",
     "ModelConfig",
     "OfflineQConfig",

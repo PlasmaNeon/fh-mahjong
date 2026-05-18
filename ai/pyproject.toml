@@ -30,6 +30,8 @@ fh-mj-train-iql = "fh_mahjong_ai.scripts.train_iql:main"
 fh-mj-train-offline-q = "fh_mahjong_ai.scripts.train_offline_q:main"
 fh-mj-evaluate = "fh_mahjong_ai.scripts.evaluate:main"
 fh-mj-reward-calibration = "fh_mahjong_ai.scripts.reward_calibration:main"
+fh-mj-serve-policy = "fh_mahjong_ai.scripts.serve_policy:main"
+fh-mj-serving-smoke = "fh_mahjong_ai.scripts.serving_smoke:main"
 fh-mj-pipeline = "fh_mahjong_ai.scripts.run_pipeline:main"
 
 [tool.setuptools]
