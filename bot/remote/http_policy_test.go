@@ -2,8 +2,10 @@ package remote
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -29,7 +31,7 @@ func TestHTTPPolicyUsesRemoteLegalAction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := NewHTTPPolicy(server.URL + "/act")
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
 	action := policy.ChooseAction(state, 0)
 
 	if action == nil || action.Type != pb.ActionType_ACTION_DISCARD || action.Tile == nil {
@@ -38,6 +40,7 @@ func TestHTTPPolicyUsesRemoteLegalAction(t *testing.T) {
 	if action.Tile.Suit != pb.Suit_SUIT_MAN || action.Tile.Value != 1 {
 		t.Fatalf("expected remote action to discard 1m, got %+v", action.Tile)
 	}
+	assertStats(t, policy.Stats(), 1, 1, 0, "")
 }
 
 func TestHTTPPolicyFallsBackOnServiceError(t *testing.T) {
@@ -47,10 +50,17 @@ func TestHTTPPolicyFallsBackOnServiceError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := NewHTTPPolicy(server.URL + "/act")
+	var logs []string
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}))
 	action := policy.ChooseAction(state, 0)
 
 	assertFallbackDiscard(t, action)
+	assertStats(t, policy.Stats(), 1, 0, 1, FallbackReasonStatus)
+	if len(logs) != 1 {
+		t.Fatalf("expected one fallback log, got %d", len(logs))
+	}
 }
 
 func TestHTTPPolicyFallsBackOnIllegalActionID(t *testing.T) {
@@ -60,16 +70,71 @@ func TestHTTPPolicyFallsBackOnIllegalActionID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	policy := NewHTTPPolicy(server.URL + "/act")
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
 	action := policy.ChooseAction(state, 0)
 
 	assertFallbackDiscard(t, action)
+	assertStats(t, policy.Stats(), 1, 0, 1, FallbackReasonIllegalAction)
+}
+
+func TestHTTPPolicyRecordsNoFallback(t *testing.T) {
+	policy := NewHTTPPolicy("", WithFallback(nil), WithLogger(nil))
+	action := policy.ChooseAction(testDiscardState(), 0)
+
+	if action != nil {
+		t.Fatalf("expected nil action without fallback, got %+v", action)
+	}
+	stats := policy.Stats()
+	if stats.RemoteCalls != 1 || stats.RemoteSuccesses != 0 || stats.Fallbacks != 1 || stats.NoFallback != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	if got := stats.FallbackReasons[FallbackReasonConfig]; got != 1 {
+		t.Fatalf("expected config fallback count 1, got %d", got)
+	}
+}
+
+func TestHTTPPolicyLogsPeriodicStats(t *testing.T) {
+	state := testDiscardState()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	var logs []string
+	policy := NewHTTPPolicy(
+		server.URL+"/act",
+		WithLogger(func(format string, args ...any) {
+			logs = append(logs, fmt.Sprintf(format, args...))
+		}),
+		WithStatsLogEvery(1),
+	)
+
+	action := policy.ChooseAction(state, 0)
+
+	if action == nil {
+		t.Fatal("expected remote action")
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], "remote policy stats") {
+		t.Fatalf("expected one periodic stats log, got %#v", logs)
+	}
 }
 
 func assertFallbackDiscard(t *testing.T, action *pb.PlayerAction) {
 	t.Helper()
 	if action == nil || action.Type != pb.ActionType_ACTION_DISCARD || action.Tile == nil {
 		t.Fatalf("expected fallback discard action, got %+v", action)
+	}
+}
+
+func assertStats(t *testing.T, stats HTTPPolicyStats, calls, successes, fallbacks uint64, reason string) {
+	t.Helper()
+	if stats.RemoteCalls != calls || stats.RemoteSuccesses != successes || stats.Fallbacks != fallbacks {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	if reason != "" {
+		if got := stats.FallbackReasons[reason]; got != fallbacks {
+			t.Fatalf("expected fallback reason %q count %d, got %d in %+v", reason, fallbacks, got, stats)
+		}
 	}
 }
 
