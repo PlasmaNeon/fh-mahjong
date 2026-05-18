@@ -74,6 +74,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `NewRoom()` initializes paipu recording for match replay export
   - Round-end automation marks bot seats ready and can advance all-bot tables into the next round
   - Paipu player registration includes placeholder bot seats alongside connected humans
+  - `room_remote_test.go` contains a skipped-by-default live remote-policy integration test; set `FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act` when a Python policy server is running
 
 ## Architecture Notes
 
