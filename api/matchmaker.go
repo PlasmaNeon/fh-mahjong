@@ -398,7 +398,11 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			log.Printf("Database disabled, skipping match persistence for %s", matchID)
 		}
 
-		room = NewRoom(matchID, m.Hub, m.DB)
+		var roomOptions []RoomOption
+		if m.BotPolicyFactory != nil {
+			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
+		}
+		room = NewRoom(matchID, m.Hub, m.DB, roomOptions...)
 		room.PaipuStore = m.PaipuStore
 		room.PrivateTableID = tableID
 		room.SeatPolicies = seatPolicies
