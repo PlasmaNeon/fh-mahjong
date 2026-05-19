@@ -84,7 +84,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		ID:                 matchID,
 		Hub:                hub,
 		DB:                 db,
-		Engine:             core.NewGame(matchID, ruleset),
+		Engine:             core.NewGame(matchID, ruleset, core.MatchOptions{}),
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,

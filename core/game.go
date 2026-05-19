@@ -33,8 +33,22 @@ type Game struct {
 	wallSeedOverride *[MT19937SeedSize]uint32
 }
 
+// MatchOptions configures a freshly constructed Game. The zero value
+// yields the project's classic match (endless hands, random dealer per
+// hand, players start at 25000). When Mode == MATCH_MODE_CHONGCI,
+// ChongciConfig must be non-nil and is copied onto State.
+type MatchOptions struct {
+	Mode          pb.MatchMode
+	ChongciConfig *pb.ChongciConfig
+}
+
 // NewGame initializes a brand new game using the provided Ruleset plugin.
-func NewGame(matchID string, rules RuleEngine) *Game {
+func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
+	mode := opts.Mode
+	if mode == pb.MatchMode_MATCH_MODE_UNSPECIFIED {
+		mode = pb.MatchMode_MATCH_MODE_CLASSIC
+	}
+
 	g := &Game{
 		Rules: rules,
 		State: &pb.GameState{
@@ -45,15 +59,17 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 			HandNum:       1, // East 1
 			Players:       make([]*pb.PlayerState, 4),
 			ActiveDiscard: nil,
+			MatchMode:     mode,
 		},
 		interruptQueue: make(map[uint32]*pb.PlayerAction),
 	}
 	g.haiteiDrawIndex = -1
 
+	startingScore := int32(25000)
 	for i := 0; i < 4; i++ {
 		g.State.Players[i] = &pb.PlayerState{
 			Seat:        uint32(i),
-			Score:       25000, // Standard starting score, could be parameterized by rules
+			Score:       startingScore,
 			ClosedHand:  make([]*pb.Tile, 0),
 			HandSize:    0,
 			DrawnTileId: nil,

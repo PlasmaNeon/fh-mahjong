@@ -8,9 +8,26 @@ import (
 	"github.com/plasma/fh-mahjong/rules"
 )
 
+func TestNewGame_ClassicDefault(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-classic", r, core.MatchOptions{})
+
+	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("default MatchMode = %v, want CLASSIC", got)
+	}
+	if g.State.ChongciConfig != nil {
+		t.Fatalf("classic-mode ChongciConfig should be nil, got %+v", g.State.ChongciConfig)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 25000 {
+			t.Fatalf("classic seat %d Score = %d, want 25000", i, p.Score)
+		}
+	}
+}
+
 func TestGameInitialization(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 
 	if g.State.Phase != pb.GamePhase_PHASE_INIT {
 		t.Errorf("Expected PHASE_INIT, got %v", g.State.Phase)
@@ -22,7 +39,7 @@ func TestGameInitialization(t *testing.T) {
 
 func TestGameStartAndDeal(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 
 	err := g.Start()
 	if err != nil {
@@ -48,7 +65,7 @@ func TestGameStartAndDeal(t *testing.T) {
 
 func TestDiscardAction(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -82,7 +99,7 @@ func TestDiscardAction(t *testing.T) {
 
 func TestDirectedMelds(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -136,7 +153,7 @@ func TestDirectedMelds(t *testing.T) {
 
 func TestDeadWallKanDraw(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer

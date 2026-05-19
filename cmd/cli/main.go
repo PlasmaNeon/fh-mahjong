@@ -96,7 +96,7 @@ func getRealIndex(closed []*pb.Tile, uiIdx int) int {
 
 func main() {
 	fmt.Println("Starting Fenghua Mahjong CLI Demo...")
-	game := core.NewGame("demo-1", &rules.HometownRuleset{})
+	game := core.NewGame("demo-1", &rules.HometownRuleset{}, core.MatchOptions{})
 	botPolicy := bot.NewHeuristicPolicy()
 	err := game.Start()
 	if err != nil {
