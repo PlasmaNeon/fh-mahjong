@@ -600,7 +600,8 @@ export namespace game {
         PHASE_DEAL = 1,
         PHASE_PLAYER_TURN = 2,
         PHASE_WAIT_DISCARDS = 3,
-        PHASE_ROUND_END = 4
+        PHASE_ROUND_END = 4,
+        PHASE_MATCH_END = 5
     }
 
     /** Properties of a GameState. */
@@ -659,6 +660,15 @@ export namespace game {
 
         /** GameState wangpaiTilesLeft */
         wangpaiTilesLeft?: (number|undefined);
+
+        /** GameState matchMode */
+        matchMode?: (game.MatchMode|undefined);
+
+        /** GameState chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
+
+        /** GameState matchEndResult */
+        matchEndResult?: (game.IMatchEndResult|undefined);
     }
 
     /** Represents a GameState. */
@@ -723,6 +733,15 @@ export namespace game {
 
         /** GameState wangpaiTilesLeft. */
         public wangpaiTilesLeft: number;
+
+        /** GameState matchMode. */
+        public matchMode: game.MatchMode;
+
+        /** GameState chongciConfig. */
+        public chongciConfig: game.ChongciConfig;
+
+        /** GameState matchEndResult. */
+        public matchEndResult: game.MatchEndResult;
 
         /**
          * Creates a new GameState instance using the specified properties.
@@ -2489,6 +2508,12 @@ export namespace game {
 
         /** PrivateTableState matchId */
         matchId?: (string|undefined);
+
+        /** PrivateTableState matchMode */
+        matchMode?: (game.MatchMode|undefined);
+
+        /** PrivateTableState chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
     }
 
     /** Represents a PrivateTableState. */
@@ -2514,6 +2539,12 @@ export namespace game {
 
         /** PrivateTableState matchId. */
         public matchId: string;
+
+        /** PrivateTableState matchMode. */
+        public matchMode: game.MatchMode;
+
+        /** PrivateTableState chongciConfig. */
+        public chongciConfig: game.ChongciConfig;
 
         /**
          * Creates a new PrivateTableState instance using the specified properties.
@@ -2587,6 +2618,346 @@ export namespace game {
 
         /**
          * Gets the default type url for PrivateTableState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** MatchMode enum. */
+    enum MatchMode {
+        MATCH_MODE_UNSPECIFIED = 0,
+        MATCH_MODE_CLASSIC = 1,
+        MATCH_MODE_CHONGCI = 2
+    }
+
+    /** Properties of a ChongciConfig. */
+    interface IChongciConfig {
+
+        /** ChongciConfig startingScore */
+        startingScore?: (number|undefined);
+
+        /** ChongciConfig bustThreshold */
+        bustThreshold?: (number|undefined);
+
+        /** ChongciConfig maxHands */
+        maxHands?: (number|undefined);
+    }
+
+    /** Represents a ChongciConfig. */
+    class ChongciConfig implements IChongciConfig {
+
+        /**
+         * Constructs a new ChongciConfig.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IChongciConfig);
+
+        /** ChongciConfig startingScore. */
+        public startingScore: number;
+
+        /** ChongciConfig bustThreshold. */
+        public bustThreshold: number;
+
+        /** ChongciConfig maxHands. */
+        public maxHands: number;
+
+        /**
+         * Creates a new ChongciConfig instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns ChongciConfig instance
+         */
+        public static create(properties?: game.IChongciConfig): game.ChongciConfig;
+
+        /**
+         * Encodes the specified ChongciConfig message. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
+         * @param message ChongciConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IChongciConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified ChongciConfig message, length delimited. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
+         * @param message ChongciConfig message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IChongciConfig, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a ChongciConfig message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns ChongciConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ChongciConfig;
+
+        /**
+         * Decodes a ChongciConfig message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns ChongciConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ChongciConfig;
+
+        /**
+         * Verifies a ChongciConfig message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a ChongciConfig message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns ChongciConfig
+         */
+        public static fromObject(object: { [k: string]: any }): game.ChongciConfig;
+
+        /**
+         * Creates a plain object from a ChongciConfig message. Also converts values to other types if specified.
+         * @param message ChongciConfig
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.ChongciConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this ChongciConfig to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for ChongciConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a PlayerStanding. */
+    interface IPlayerStanding {
+
+        /** PlayerStanding seat */
+        seat?: (number|undefined);
+
+        /** PlayerStanding rank */
+        rank?: (number|undefined);
+
+        /** PlayerStanding finalScore */
+        finalScore?: (number|undefined);
+
+        /** PlayerStanding netChange */
+        netChange?: (number|undefined);
+    }
+
+    /** Represents a PlayerStanding. */
+    class PlayerStanding implements IPlayerStanding {
+
+        /**
+         * Constructs a new PlayerStanding.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IPlayerStanding);
+
+        /** PlayerStanding seat. */
+        public seat: number;
+
+        /** PlayerStanding rank. */
+        public rank: number;
+
+        /** PlayerStanding finalScore. */
+        public finalScore: number;
+
+        /** PlayerStanding netChange. */
+        public netChange: number;
+
+        /**
+         * Creates a new PlayerStanding instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns PlayerStanding instance
+         */
+        public static create(properties?: game.IPlayerStanding): game.PlayerStanding;
+
+        /**
+         * Encodes the specified PlayerStanding message. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
+         * @param message PlayerStanding message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IPlayerStanding, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified PlayerStanding message, length delimited. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
+         * @param message PlayerStanding message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IPlayerStanding, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a PlayerStanding message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns PlayerStanding
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerStanding;
+
+        /**
+         * Decodes a PlayerStanding message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns PlayerStanding
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerStanding;
+
+        /**
+         * Verifies a PlayerStanding message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a PlayerStanding message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns PlayerStanding
+         */
+        public static fromObject(object: { [k: string]: any }): game.PlayerStanding;
+
+        /**
+         * Creates a plain object from a PlayerStanding message. Also converts values to other types if specified.
+         * @param message PlayerStanding
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.PlayerStanding, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this PlayerStanding to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for PlayerStanding
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a MatchEndResult. */
+    interface IMatchEndResult {
+
+        /** MatchEndResult reason */
+        reason?: (string|undefined);
+
+        /** MatchEndResult finalHandNum */
+        finalHandNum?: (number|undefined);
+
+        /** MatchEndResult standings */
+        standings?: (game.IPlayerStanding[]|undefined);
+    }
+
+    /** Represents a MatchEndResult. */
+    class MatchEndResult implements IMatchEndResult {
+
+        /**
+         * Constructs a new MatchEndResult.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IMatchEndResult);
+
+        /** MatchEndResult reason. */
+        public reason: string;
+
+        /** MatchEndResult finalHandNum. */
+        public finalHandNum: number;
+
+        /** MatchEndResult standings. */
+        public standings: game.PlayerStanding[];
+
+        /**
+         * Creates a new MatchEndResult instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns MatchEndResult instance
+         */
+        public static create(properties?: game.IMatchEndResult): game.MatchEndResult;
+
+        /**
+         * Encodes the specified MatchEndResult message. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
+         * @param message MatchEndResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IMatchEndResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified MatchEndResult message, length delimited. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
+         * @param message MatchEndResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IMatchEndResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a MatchEndResult message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns MatchEndResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.MatchEndResult;
+
+        /**
+         * Decodes a MatchEndResult message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns MatchEndResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.MatchEndResult;
+
+        /**
+         * Verifies a MatchEndResult message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a MatchEndResult message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns MatchEndResult
+         */
+        public static fromObject(object: { [k: string]: any }): game.MatchEndResult;
+
+        /**
+         * Creates a plain object from a MatchEndResult message. Also converts values to other types if specified.
+         * @param message MatchEndResult
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.MatchEndResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this MatchEndResult to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for MatchEndResult
          * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
          * @returns The default type url
          */

@@ -225,6 +225,7 @@ const (
 	GamePhase_PHASE_PLAYER_TURN   GamePhase = 2 // Waiting for them to discard
 	GamePhase_PHASE_WAIT_DISCARDS GamePhase = 3 // Someone discarded, waiting a few sec for steals
 	GamePhase_PHASE_ROUND_END     GamePhase = 4
+	GamePhase_PHASE_MATCH_END     GamePhase = 5 // Terminal; no further hands will start
 )
 
 // Enum value maps for GamePhase.
@@ -235,6 +236,7 @@ var (
 		2: "PHASE_PLAYER_TURN",
 		3: "PHASE_WAIT_DISCARDS",
 		4: "PHASE_ROUND_END",
+		5: "PHASE_MATCH_END",
 	}
 	GamePhase_value = map[string]int32{
 		"PHASE_INIT":          0,
@@ -242,6 +244,7 @@ var (
 		"PHASE_PLAYER_TURN":   2,
 		"PHASE_WAIT_DISCARDS": 3,
 		"PHASE_ROUND_END":     4,
+		"PHASE_MATCH_END":     5,
 	}
 )
 
@@ -316,6 +319,55 @@ func (x Difficulty) Number() protoreflect.EnumNumber {
 // Deprecated: Use Difficulty.Descriptor instead.
 func (Difficulty) EnumDescriptor() ([]byte, []int) {
 	return file_proto_game_proto_rawDescGZIP(), []int{4}
+}
+
+type MatchMode int32
+
+const (
+	MatchMode_MATCH_MODE_UNSPECIFIED MatchMode = 0
+	MatchMode_MATCH_MODE_CLASSIC     MatchMode = 1 // Endless hands, random dealer per hand
+	MatchMode_MATCH_MODE_CHONGCI     MatchMode = 2 // Bust-out match, dealer succession to winner
+)
+
+// Enum value maps for MatchMode.
+var (
+	MatchMode_name = map[int32]string{
+		0: "MATCH_MODE_UNSPECIFIED",
+		1: "MATCH_MODE_CLASSIC",
+		2: "MATCH_MODE_CHONGCI",
+	}
+	MatchMode_value = map[string]int32{
+		"MATCH_MODE_UNSPECIFIED": 0,
+		"MATCH_MODE_CLASSIC":     1,
+		"MATCH_MODE_CHONGCI":     2,
+	}
+)
+
+func (x MatchMode) Enum() *MatchMode {
+	p := new(MatchMode)
+	*p = x
+	return p
+}
+
+func (x MatchMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (MatchMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_game_proto_enumTypes[5].Descriptor()
+}
+
+func (MatchMode) Type() protoreflect.EnumType {
+	return &file_proto_game_proto_enumTypes[5]
+}
+
+func (x MatchMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use MatchMode.Descriptor instead.
+func (MatchMode) EnumDescriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{5}
 }
 
 type Tile struct {
@@ -777,7 +829,10 @@ type GameState struct {
 	Dice1 uint32 `protobuf:"varint,18,opt,name=dice1,proto3" json:"dice1,omitempty"`
 	Dice2 uint32 `protobuf:"varint,19,opt,name=dice2,proto3" json:"dice2,omitempty"`
 	// Current number of drawable tiles left in the wangpai zone
-	WangpaiTilesLeft uint32 `protobuf:"varint,20,opt,name=wangpai_tiles_left,json=wangpaiTilesLeft,proto3" json:"wangpai_tiles_left,omitempty"`
+	WangpaiTilesLeft uint32          `protobuf:"varint,20,opt,name=wangpai_tiles_left,json=wangpaiTilesLeft,proto3" json:"wangpai_tiles_left,omitempty"`
+	MatchMode        MatchMode       `protobuf:"varint,21,opt,name=match_mode,json=matchMode,proto3,enum=game.MatchMode" json:"match_mode,omitempty"`
+	ChongciConfig    *ChongciConfig  `protobuf:"bytes,22,opt,name=chongci_config,json=chongciConfig,proto3" json:"chongci_config,omitempty"`      // set iff match_mode == MATCH_MODE_CHONGCI
+	MatchEndResult   *MatchEndResult `protobuf:"bytes,23,opt,name=match_end_result,json=matchEndResult,proto3" json:"match_end_result,omitempty"` // set iff phase == PHASE_MATCH_END
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -936,6 +991,27 @@ func (x *GameState) GetWangpaiTilesLeft() uint32 {
 		return x.WangpaiTilesLeft
 	}
 	return 0
+}
+
+func (x *GameState) GetMatchMode() MatchMode {
+	if x != nil {
+		return x.MatchMode
+	}
+	return MatchMode_MATCH_MODE_UNSPECIFIED
+}
+
+func (x *GameState) GetChongciConfig() *ChongciConfig {
+	if x != nil {
+		return x.ChongciConfig
+	}
+	return nil
+}
+
+func (x *GameState) GetMatchEndResult() *MatchEndResult {
+	if x != nil {
+		return x.MatchEndResult
+	}
+	return nil
 }
 
 type ScoreEntry struct {
@@ -1974,7 +2050,9 @@ type PrivateTableState struct {
 	// "configuring" | "started"
 	State string `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
 	// Empty until state == "started".
-	MatchId       string `protobuf:"bytes,5,opt,name=match_id,json=matchId,proto3" json:"match_id,omitempty"`
+	MatchId       string         `protobuf:"bytes,5,opt,name=match_id,json=matchId,proto3" json:"match_id,omitempty"`
+	MatchMode     MatchMode      `protobuf:"varint,6,opt,name=match_mode,json=matchMode,proto3,enum=game.MatchMode" json:"match_mode,omitempty"`
+	ChongciConfig *ChongciConfig `protobuf:"bytes,7,opt,name=chongci_config,json=chongciConfig,proto3" json:"chongci_config,omitempty"` // set iff match_mode == MATCH_MODE_CHONGCI
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2044,6 +2122,208 @@ func (x *PrivateTableState) GetMatchId() string {
 	return ""
 }
 
+func (x *PrivateTableState) GetMatchMode() MatchMode {
+	if x != nil {
+		return x.MatchMode
+	}
+	return MatchMode_MATCH_MODE_UNSPECIFIED
+}
+
+func (x *PrivateTableState) GetChongciConfig() *ChongciConfig {
+	if x != nil {
+		return x.ChongciConfig
+	}
+	return nil
+}
+
+type ChongciConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StartingScore int32                  `protobuf:"varint,1,opt,name=starting_score,json=startingScore,proto3" json:"starting_score,omitempty"` // e.g. 2000
+	BustThreshold int32                  `protobuf:"varint,2,opt,name=bust_threshold,json=bustThreshold,proto3" json:"bust_threshold,omitempty"` // Match ends when any player score <= this; default 0
+	MaxHands      uint32                 `protobuf:"varint,3,opt,name=max_hands,json=maxHands,proto3" json:"max_hands,omitempty"`                // 0 = unbounded
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChongciConfig) Reset() {
+	*x = ChongciConfig{}
+	mi := &file_proto_game_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChongciConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChongciConfig) ProtoMessage() {}
+
+func (x *ChongciConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChongciConfig.ProtoReflect.Descriptor instead.
+func (*ChongciConfig) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ChongciConfig) GetStartingScore() int32 {
+	if x != nil {
+		return x.StartingScore
+	}
+	return 0
+}
+
+func (x *ChongciConfig) GetBustThreshold() int32 {
+	if x != nil {
+		return x.BustThreshold
+	}
+	return 0
+}
+
+func (x *ChongciConfig) GetMaxHands() uint32 {
+	if x != nil {
+		return x.MaxHands
+	}
+	return 0
+}
+
+type PlayerStanding struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seat          uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
+	Rank          uint32                 `protobuf:"varint,2,opt,name=rank,proto3" json:"rank,omitempty"` // 1-based; tied players share rank
+	FinalScore    int32                  `protobuf:"varint,3,opt,name=final_score,json=finalScore,proto3" json:"final_score,omitempty"`
+	NetChange     int32                  `protobuf:"varint,4,opt,name=net_change,json=netChange,proto3" json:"net_change,omitempty"` // final_score - starting_score
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlayerStanding) Reset() {
+	*x = PlayerStanding{}
+	mi := &file_proto_game_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlayerStanding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlayerStanding) ProtoMessage() {}
+
+func (x *PlayerStanding) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlayerStanding.ProtoReflect.Descriptor instead.
+func (*PlayerStanding) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *PlayerStanding) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+func (x *PlayerStanding) GetRank() uint32 {
+	if x != nil {
+		return x.Rank
+	}
+	return 0
+}
+
+func (x *PlayerStanding) GetFinalScore() int32 {
+	if x != nil {
+		return x.FinalScore
+	}
+	return 0
+}
+
+func (x *PlayerStanding) GetNetChange() int32 {
+	if x != nil {
+		return x.NetChange
+	}
+	return 0
+}
+
+type MatchEndResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // "bust" | "hand_cap"
+	FinalHandNum  uint32                 `protobuf:"varint,2,opt,name=final_hand_num,json=finalHandNum,proto3" json:"final_hand_num,omitempty"`
+	Standings     []*PlayerStanding      `protobuf:"bytes,3,rep,name=standings,proto3" json:"standings,omitempty"` // length 4, sorted by score desc
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MatchEndResult) Reset() {
+	*x = MatchEndResult{}
+	mi := &file_proto_game_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MatchEndResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MatchEndResult) ProtoMessage() {}
+
+func (x *MatchEndResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MatchEndResult.ProtoReflect.Descriptor instead.
+func (*MatchEndResult) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MatchEndResult) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *MatchEndResult) GetFinalHandNum() uint32 {
+	if x != nil {
+		return x.FinalHandNum
+	}
+	return 0
+}
+
+func (x *MatchEndResult) GetStandings() []*PlayerStanding {
+	if x != nil {
+		return x.Standings
+	}
+	return nil
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -2097,7 +2377,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
 	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01\x12\x18\n" +
 	"\ashanten\x18\x12 \x01(\x05R\ashantenB\x10\n" +
-	"\x0e_drawn_tile_id\"\x8f\x05\n" +
+	"\x0e_drawn_tile_id\"\xbb\x06\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -2120,7 +2400,11 @@ const file_proto_game_proto_rawDesc = "" +
 	"\tis_haitei\x18\x11 \x01(\bR\bisHaitei\x12\x14\n" +
 	"\x05dice1\x18\x12 \x01(\rR\x05dice1\x12\x14\n" +
 	"\x05dice2\x18\x13 \x01(\rR\x05dice2\x12,\n" +
-	"\x12wangpai_tiles_left\x18\x14 \x01(\rR\x10wangpaiTilesLeft\"G\n" +
+	"\x12wangpai_tiles_left\x18\x14 \x01(\rR\x10wangpaiTilesLeft\x12.\n" +
+	"\n" +
+	"match_mode\x18\x15 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
+	"\x0echongci_config\x18\x16 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12>\n" +
+	"\x10match_end_result\x18\x17 \x01(\v2\x14.game.MatchEndResultR\x0ematchEndResult\"G\n" +
 	"\n" +
 	"ScoreEntry\x12!\n" +
 	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +
@@ -2223,14 +2507,32 @@ const file_proto_game_proto_rawDesc = "" +
 	"\busername\x18\x03 \x01(\tR\busername\x120\n" +
 	"\n" +
 	"difficulty\x18\x04 \x01(\x0e2\x10.game.DifficultyR\n" +
-	"difficulty\"\xa9\x01\n" +
+	"difficulty\"\x95\x02\n" +
 	"\x11PrivateTableState\x12\x19\n" +
 	"\btable_id\x18\x01 \x01(\tR\atableId\x12 \n" +
 	"\fhost_user_id\x18\x02 \x01(\rR\n" +
 	"hostUserId\x12&\n" +
 	"\x05seats\x18\x03 \x03(\v2\x10.game.SeatConfigR\x05seats\x12\x14\n" +
 	"\x05state\x18\x04 \x01(\tR\x05state\x12\x19\n" +
-	"\bmatch_id\x18\x05 \x01(\tR\amatchId*c\n" +
+	"\bmatch_id\x18\x05 \x01(\tR\amatchId\x12.\n" +
+	"\n" +
+	"match_mode\x18\x06 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
+	"\x0echongci_config\x18\a \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\"z\n" +
+	"\rChongciConfig\x12%\n" +
+	"\x0estarting_score\x18\x01 \x01(\x05R\rstartingScore\x12%\n" +
+	"\x0ebust_threshold\x18\x02 \x01(\x05R\rbustThreshold\x12\x1b\n" +
+	"\tmax_hands\x18\x03 \x01(\rR\bmaxHands\"x\n" +
+	"\x0ePlayerStanding\x12\x12\n" +
+	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x12\n" +
+	"\x04rank\x18\x02 \x01(\rR\x04rank\x12\x1f\n" +
+	"\vfinal_score\x18\x03 \x01(\x05R\n" +
+	"finalScore\x12\x1d\n" +
+	"\n" +
+	"net_change\x18\x04 \x01(\x05R\tnetChange\"\x82\x01\n" +
+	"\x0eMatchEndResult\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12$\n" +
+	"\x0efinal_hand_num\x18\x02 \x01(\rR\ffinalHandNum\x122\n" +
+	"\tstandings\x18\x03 \x03(\v2\x14.game.PlayerStandingR\tstandings*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -2262,7 +2564,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x16MELD_DIRECTION_UNKNOWN\x10\x00\x12\x18\n" +
 	"\x14MELD_DIRECTION_RIGHT\x10\x01\x12\x19\n" +
 	"\x15MELD_DIRECTION_ACROSS\x10\x02\x12\x17\n" +
-	"\x13MELD_DIRECTION_LEFT\x10\x03*p\n" +
+	"\x13MELD_DIRECTION_LEFT\x10\x03*\x85\x01\n" +
 	"\tGamePhase\x12\x0e\n" +
 	"\n" +
 	"PHASE_INIT\x10\x00\x12\x0e\n" +
@@ -2270,11 +2572,16 @@ const file_proto_game_proto_rawDesc = "" +
 	"PHASE_DEAL\x10\x01\x12\x15\n" +
 	"\x11PHASE_PLAYER_TURN\x10\x02\x12\x17\n" +
 	"\x13PHASE_WAIT_DISCARDS\x10\x03\x12\x13\n" +
-	"\x0fPHASE_ROUND_END\x10\x04*B\n" +
+	"\x0fPHASE_ROUND_END\x10\x04\x12\x13\n" +
+	"\x0fPHASE_MATCH_END\x10\x05*B\n" +
 	"\n" +
 	"Difficulty\x12\x1a\n" +
 	"\x16DIFFICULTY_UNSPECIFIED\x10\x00\x12\x18\n" +
-	"\x14DIFFICULTY_HEURISTIC\x10\x01B)Z'github.com/plasma/fh-mahjong/proto/gameb\x06proto3"
+	"\x14DIFFICULTY_HEURISTIC\x10\x01*W\n" +
+	"\tMatchMode\x12\x1a\n" +
+	"\x16MATCH_MODE_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12MATCH_MODE_CLASSIC\x10\x01\x12\x16\n" +
+	"\x12MATCH_MODE_CHONGCI\x10\x02B)Z'github.com/plasma/fh-mahjong/proto/gameb\x06proto3"
 
 var (
 	file_proto_game_proto_rawDescOnce sync.Once
@@ -2288,79 +2595,89 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 	return file_proto_game_proto_rawDescData
 }
 
-var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),                 // 0: game.Suit
 	(ActionType)(0),           // 1: game.ActionType
 	(MeldDirection)(0),        // 2: game.MeldDirection
 	(GamePhase)(0),            // 3: game.GamePhase
 	(Difficulty)(0),           // 4: game.Difficulty
-	(*Tile)(nil),              // 5: game.Tile
-	(*PlayerAction)(nil),      // 6: game.PlayerAction
-	(*Meld)(nil),              // 7: game.Meld
-	(*PlayerState)(nil),       // 8: game.PlayerState
-	(*GameState)(nil),         // 9: game.GameState
-	(*ScoreEntry)(nil),        // 10: game.ScoreEntry
-	(*PlayerPayout)(nil),      // 11: game.PlayerPayout
-	(*RoundResult)(nil),       // 12: game.RoundResult
-	(*RoundOutcome)(nil),      // 13: game.RoundOutcome
-	(*EnvConfig)(nil),         // 14: game.EnvConfig
-	(*SeatObservation)(nil),   // 15: game.SeatObservation
-	(*EnvResetRequest)(nil),   // 16: game.EnvResetRequest
-	(*EnvResetResponse)(nil),  // 17: game.EnvResetResponse
-	(*EnvStepRequest)(nil),    // 18: game.EnvStepRequest
-	(*EnvStepResponse)(nil),   // 19: game.EnvStepResponse
-	(*TrajectoryRequest)(nil), // 20: game.TrajectoryRequest
-	(*TrajectorySample)(nil),  // 21: game.TrajectorySample
-	(*TrajectoryDataset)(nil), // 22: game.TrajectoryDataset
-	(*SeatConfig)(nil),        // 23: game.SeatConfig
-	(*PrivateTableState)(nil), // 24: game.PrivateTableState
+	(MatchMode)(0),            // 5: game.MatchMode
+	(*Tile)(nil),              // 6: game.Tile
+	(*PlayerAction)(nil),      // 7: game.PlayerAction
+	(*Meld)(nil),              // 8: game.Meld
+	(*PlayerState)(nil),       // 9: game.PlayerState
+	(*GameState)(nil),         // 10: game.GameState
+	(*ScoreEntry)(nil),        // 11: game.ScoreEntry
+	(*PlayerPayout)(nil),      // 12: game.PlayerPayout
+	(*RoundResult)(nil),       // 13: game.RoundResult
+	(*RoundOutcome)(nil),      // 14: game.RoundOutcome
+	(*EnvConfig)(nil),         // 15: game.EnvConfig
+	(*SeatObservation)(nil),   // 16: game.SeatObservation
+	(*EnvResetRequest)(nil),   // 17: game.EnvResetRequest
+	(*EnvResetResponse)(nil),  // 18: game.EnvResetResponse
+	(*EnvStepRequest)(nil),    // 19: game.EnvStepRequest
+	(*EnvStepResponse)(nil),   // 20: game.EnvStepResponse
+	(*TrajectoryRequest)(nil), // 21: game.TrajectoryRequest
+	(*TrajectorySample)(nil),  // 22: game.TrajectorySample
+	(*TrajectoryDataset)(nil), // 23: game.TrajectoryDataset
+	(*SeatConfig)(nil),        // 24: game.SeatConfig
+	(*PrivateTableState)(nil), // 25: game.PrivateTableState
+	(*ChongciConfig)(nil),     // 26: game.ChongciConfig
+	(*PlayerStanding)(nil),    // 27: game.PlayerStanding
+	(*MatchEndResult)(nil),    // 28: game.MatchEndResult
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
 	1,  // 1: game.PlayerAction.type:type_name -> game.ActionType
-	5,  // 2: game.PlayerAction.tile:type_name -> game.Tile
-	5,  // 3: game.PlayerAction.meld_tiles:type_name -> game.Tile
+	6,  // 2: game.PlayerAction.tile:type_name -> game.Tile
+	6,  // 3: game.PlayerAction.meld_tiles:type_name -> game.Tile
 	1,  // 4: game.Meld.type:type_name -> game.ActionType
-	5,  // 5: game.Meld.tiles:type_name -> game.Tile
+	6,  // 5: game.Meld.tiles:type_name -> game.Tile
 	2,  // 6: game.Meld.called_direction:type_name -> game.MeldDirection
-	5,  // 7: game.PlayerState.closed_hand:type_name -> game.Tile
-	7,  // 8: game.PlayerState.open_melds:type_name -> game.Meld
-	5,  // 9: game.PlayerState.discards:type_name -> game.Tile
-	5,  // 10: game.PlayerState.flower_melds:type_name -> game.Tile
-	6,  // 11: game.PlayerState.valid_actions:type_name -> game.PlayerAction
+	6,  // 7: game.PlayerState.closed_hand:type_name -> game.Tile
+	8,  // 8: game.PlayerState.open_melds:type_name -> game.Meld
+	6,  // 9: game.PlayerState.discards:type_name -> game.Tile
+	6,  // 10: game.PlayerState.flower_melds:type_name -> game.Tile
+	7,  // 11: game.PlayerState.valid_actions:type_name -> game.PlayerAction
 	3,  // 12: game.GameState.phase:type_name -> game.GamePhase
-	8,  // 13: game.GameState.players:type_name -> game.PlayerState
-	5,  // 14: game.GameState.active_discard:type_name -> game.Tile
-	5,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
-	12, // 16: game.GameState.round_result:type_name -> game.RoundResult
-	1,  // 17: game.RoundResult.win_type:type_name -> game.ActionType
-	5,  // 18: game.RoundResult.winning_hand:type_name -> game.Tile
-	7,  // 19: game.RoundResult.winning_melds:type_name -> game.Meld
-	5,  // 20: game.RoundResult.win_tile:type_name -> game.Tile
-	10, // 21: game.RoundResult.breakdown:type_name -> game.ScoreEntry
-	11, // 22: game.RoundResult.payouts:type_name -> game.PlayerPayout
-	1,  // 23: game.RoundOutcome.win_type:type_name -> game.ActionType
-	11, // 24: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
-	3,  // 25: game.SeatObservation.phase:type_name -> game.GamePhase
-	14, // 26: game.EnvResetRequest.config:type_name -> game.EnvConfig
-	15, // 27: game.EnvResetResponse.observation:type_name -> game.SeatObservation
-	13, // 28: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
-	15, // 29: game.EnvStepResponse.observation:type_name -> game.SeatObservation
-	13, // 30: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
-	14, // 31: game.TrajectoryRequest.config:type_name -> game.EnvConfig
-	15, // 32: game.TrajectorySample.observation:type_name -> game.SeatObservation
-	15, // 33: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
-	13, // 34: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
-	21, // 35: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
-	4,  // 36: game.SeatConfig.difficulty:type_name -> game.Difficulty
-	23, // 37: game.PrivateTableState.seats:type_name -> game.SeatConfig
-	38, // [38:38] is the sub-list for method output_type
-	38, // [38:38] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	9,  // 13: game.GameState.players:type_name -> game.PlayerState
+	6,  // 14: game.GameState.active_discard:type_name -> game.Tile
+	6,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
+	13, // 16: game.GameState.round_result:type_name -> game.RoundResult
+	5,  // 17: game.GameState.match_mode:type_name -> game.MatchMode
+	26, // 18: game.GameState.chongci_config:type_name -> game.ChongciConfig
+	28, // 19: game.GameState.match_end_result:type_name -> game.MatchEndResult
+	1,  // 20: game.RoundResult.win_type:type_name -> game.ActionType
+	6,  // 21: game.RoundResult.winning_hand:type_name -> game.Tile
+	8,  // 22: game.RoundResult.winning_melds:type_name -> game.Meld
+	6,  // 23: game.RoundResult.win_tile:type_name -> game.Tile
+	11, // 24: game.RoundResult.breakdown:type_name -> game.ScoreEntry
+	12, // 25: game.RoundResult.payouts:type_name -> game.PlayerPayout
+	1,  // 26: game.RoundOutcome.win_type:type_name -> game.ActionType
+	12, // 27: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
+	3,  // 28: game.SeatObservation.phase:type_name -> game.GamePhase
+	15, // 29: game.EnvResetRequest.config:type_name -> game.EnvConfig
+	16, // 30: game.EnvResetResponse.observation:type_name -> game.SeatObservation
+	14, // 31: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
+	16, // 32: game.EnvStepResponse.observation:type_name -> game.SeatObservation
+	14, // 33: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
+	15, // 34: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	16, // 35: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	16, // 36: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	14, // 37: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
+	22, // 38: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	4,  // 39: game.SeatConfig.difficulty:type_name -> game.Difficulty
+	24, // 40: game.PrivateTableState.seats:type_name -> game.SeatConfig
+	5,  // 41: game.PrivateTableState.match_mode:type_name -> game.MatchMode
+	26, // 42: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
+	27, // 43: game.MatchEndResult.standings:type_name -> game.PlayerStanding
+	44, // [44:44] is the sub-list for method output_type
+	44, // [44:44] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -2374,8 +2691,8 @@ func file_proto_game_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   20,
+			NumEnums:      6,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

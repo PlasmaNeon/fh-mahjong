@@ -1955,6 +1955,7 @@ export const game = $root.game = (() => {
      * @property {number} PHASE_PLAYER_TURN=2 PHASE_PLAYER_TURN value
      * @property {number} PHASE_WAIT_DISCARDS=3 PHASE_WAIT_DISCARDS value
      * @property {number} PHASE_ROUND_END=4 PHASE_ROUND_END value
+     * @property {number} PHASE_MATCH_END=5 PHASE_MATCH_END value
      */
     game.GamePhase = (function() {
         const valuesById = {}, values = Object.create(valuesById);
@@ -1963,6 +1964,7 @@ export const game = $root.game = (() => {
         values[valuesById[2] = "PHASE_PLAYER_TURN"] = 2;
         values[valuesById[3] = "PHASE_WAIT_DISCARDS"] = 3;
         values[valuesById[4] = "PHASE_ROUND_END"] = 4;
+        values[valuesById[5] = "PHASE_MATCH_END"] = 5;
         return values;
     })();
 
@@ -1990,6 +1992,9 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [dice1] GameState dice1
          * @property {number|undefined} [dice2] GameState dice2
          * @property {number|undefined} [wangpaiTilesLeft] GameState wangpaiTilesLeft
+         * @property {game.MatchMode|undefined} [matchMode] GameState matchMode
+         * @property {game.IChongciConfig|undefined} [chongciConfig] GameState chongciConfig
+         * @property {game.IMatchEndResult|undefined} [matchEndResult] GameState matchEndResult
          */
 
         /**
@@ -2155,6 +2160,30 @@ export const game = $root.game = (() => {
         GameState.prototype.wangpaiTilesLeft = 0;
 
         /**
+         * GameState matchMode.
+         * @member {game.MatchMode} matchMode
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.matchMode = 0;
+
+        /**
+         * GameState chongciConfig.
+         * @member {game.ChongciConfig} chongciConfig
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.chongciConfig = null;
+
+        /**
+         * GameState matchEndResult.
+         * @member {game.MatchEndResult} matchEndResult
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.matchEndResult = null;
+
+        /**
          * Creates a new GameState instance using the specified properties.
          * @function create
          * @memberof game.GameState
@@ -2220,6 +2249,12 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 19, wireType 0 =*/152).uint32(message.dice2);
             if (message.wangpaiTilesLeft != null && Object.hasOwnProperty.call(message, "wangpaiTilesLeft"))
                 writer.uint32(/* id 20, wireType 0 =*/160).uint32(message.wangpaiTilesLeft);
+            if (message.matchMode != null && Object.hasOwnProperty.call(message, "matchMode"))
+                writer.uint32(/* id 21, wireType 0 =*/168).int32(message.matchMode);
+            if (message.chongciConfig != null && Object.hasOwnProperty.call(message, "chongciConfig"))
+                $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 22, wireType 2 =*/178).fork()).ldelim();
+            if (message.matchEndResult != null && Object.hasOwnProperty.call(message, "matchEndResult"))
+                $root.game.MatchEndResult.encode(message.matchEndResult, writer.uint32(/* id 23, wireType 2 =*/186).fork()).ldelim();
             return writer;
         };
 
@@ -2339,6 +2374,18 @@ export const game = $root.game = (() => {
                         message.wangpaiTilesLeft = reader.uint32();
                         break;
                     }
+                case 21: {
+                        message.matchMode = reader.int32();
+                        break;
+                    }
+                case 22: {
+                        message.chongciConfig = $root.game.ChongciConfig.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 23: {
+                        message.matchEndResult = $root.game.MatchEndResult.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -2386,6 +2433,7 @@ export const game = $root.game = (() => {
                 case 2:
                 case 3:
                 case 4:
+                case 5:
                     break;
                 }
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
@@ -2456,6 +2504,25 @@ export const game = $root.game = (() => {
             if (message.wangpaiTilesLeft != null && message.hasOwnProperty("wangpaiTilesLeft"))
                 if (!$util.isInteger(message.wangpaiTilesLeft))
                     return "wangpaiTilesLeft: integer expected";
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                switch (message.matchMode) {
+                default:
+                    return "matchMode: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                    break;
+                }
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig")) {
+                let error = $root.game.ChongciConfig.verify(message.chongciConfig);
+                if (error)
+                    return "chongciConfig." + error;
+            }
+            if (message.matchEndResult != null && message.hasOwnProperty("matchEndResult")) {
+                let error = $root.game.MatchEndResult.verify(message.matchEndResult);
+                if (error)
+                    return "matchEndResult." + error;
+            }
             return null;
         };
 
@@ -2499,6 +2566,10 @@ export const game = $root.game = (() => {
             case "PHASE_ROUND_END":
             case 4:
                 message.phase = 4;
+                break;
+            case "PHASE_MATCH_END":
+            case 5:
+                message.phase = 5;
                 break;
             }
             if (object.activePlayer != null)
@@ -2560,6 +2631,36 @@ export const game = $root.game = (() => {
                 message.dice2 = object.dice2 >>> 0;
             if (object.wangpaiTilesLeft != null)
                 message.wangpaiTilesLeft = object.wangpaiTilesLeft >>> 0;
+            switch (object.matchMode) {
+            default:
+                if (typeof object.matchMode === "number") {
+                    message.matchMode = object.matchMode;
+                    break;
+                }
+                break;
+            case "MATCH_MODE_UNSPECIFIED":
+            case 0:
+                message.matchMode = 0;
+                break;
+            case "MATCH_MODE_CLASSIC":
+            case 1:
+                message.matchMode = 1;
+                break;
+            case "MATCH_MODE_CHONGCI":
+            case 2:
+                message.matchMode = 2;
+                break;
+            }
+            if (object.chongciConfig != null) {
+                if (typeof object.chongciConfig !== "object")
+                    throw TypeError(".game.GameState.chongciConfig: object expected");
+                message.chongciConfig = $root.game.ChongciConfig.fromObject(object.chongciConfig);
+            }
+            if (object.matchEndResult != null) {
+                if (typeof object.matchEndResult !== "object")
+                    throw TypeError(".game.GameState.matchEndResult: object expected");
+                message.matchEndResult = $root.game.MatchEndResult.fromObject(object.matchEndResult);
+            }
             return message;
         };
 
@@ -2597,6 +2698,9 @@ export const game = $root.game = (() => {
                 object.dice1 = 0;
                 object.dice2 = 0;
                 object.wangpaiTilesLeft = 0;
+                object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
+                object.chongciConfig = null;
+                object.matchEndResult = null;
             }
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
@@ -2643,6 +2747,12 @@ export const game = $root.game = (() => {
                 object.dice2 = message.dice2;
             if (message.wangpaiTilesLeft != null && message.hasOwnProperty("wangpaiTilesLeft"))
                 object.wangpaiTilesLeft = message.wangpaiTilesLeft;
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                object.matchMode = options.enums === String ? $root.game.MatchMode[message.matchMode] === undefined ? message.matchMode : $root.game.MatchMode[message.matchMode] : message.matchMode;
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig"))
+                object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
+            if (message.matchEndResult != null && message.hasOwnProperty("matchEndResult"))
+                object.matchEndResult = $root.game.MatchEndResult.toObject(message.matchEndResult, options);
             return object;
         };
 
@@ -4756,6 +4866,7 @@ export const game = $root.game = (() => {
                 case 2:
                 case 3:
                 case 4:
+                case 5:
                     break;
                 }
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
@@ -4840,6 +4951,10 @@ export const game = $root.game = (() => {
             case "PHASE_ROUND_END":
             case 4:
                 message.phase = 4;
+                break;
+            case "PHASE_MATCH_END":
+            case 5:
+                message.phase = 5;
                 break;
             }
             if (object.activePlayer != null)
@@ -7375,6 +7490,8 @@ export const game = $root.game = (() => {
          * @property {Array.<game.ISeatConfig>|undefined} [seats] PrivateTableState seats
          * @property {string|undefined} [state] PrivateTableState state
          * @property {string|undefined} [matchId] PrivateTableState matchId
+         * @property {game.MatchMode|undefined} [matchMode] PrivateTableState matchMode
+         * @property {game.IChongciConfig|undefined} [chongciConfig] PrivateTableState chongciConfig
          */
 
         /**
@@ -7434,6 +7551,22 @@ export const game = $root.game = (() => {
         PrivateTableState.prototype.matchId = "";
 
         /**
+         * PrivateTableState matchMode.
+         * @member {game.MatchMode} matchMode
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.matchMode = 0;
+
+        /**
+         * PrivateTableState chongciConfig.
+         * @member {game.ChongciConfig} chongciConfig
+         * @memberof game.PrivateTableState
+         * @instance
+         */
+        PrivateTableState.prototype.chongciConfig = null;
+
+        /**
          * Creates a new PrivateTableState instance using the specified properties.
          * @function create
          * @memberof game.PrivateTableState
@@ -7468,6 +7601,10 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 4, wireType 2 =*/34).string(message.state);
             if (message.matchId != null && Object.hasOwnProperty.call(message, "matchId"))
                 writer.uint32(/* id 5, wireType 2 =*/42).string(message.matchId);
+            if (message.matchMode != null && Object.hasOwnProperty.call(message, "matchMode"))
+                writer.uint32(/* id 6, wireType 0 =*/48).int32(message.matchMode);
+            if (message.chongciConfig != null && Object.hasOwnProperty.call(message, "chongciConfig"))
+                $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
             return writer;
         };
 
@@ -7526,6 +7663,14 @@ export const game = $root.game = (() => {
                         message.matchId = reader.string();
                         break;
                     }
+                case 6: {
+                        message.matchMode = reader.int32();
+                        break;
+                    }
+                case 7: {
+                        message.chongciConfig = $root.game.ChongciConfig.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -7582,6 +7727,20 @@ export const game = $root.game = (() => {
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 if (!$util.isString(message.matchId))
                     return "matchId: string expected";
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                switch (message.matchMode) {
+                default:
+                    return "matchMode: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                    break;
+                }
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig")) {
+                let error = $root.game.ChongciConfig.verify(message.chongciConfig);
+                if (error)
+                    return "chongciConfig." + error;
+            }
             return null;
         };
 
@@ -7615,6 +7774,31 @@ export const game = $root.game = (() => {
                 message.state = String(object.state);
             if (object.matchId != null)
                 message.matchId = String(object.matchId);
+            switch (object.matchMode) {
+            default:
+                if (typeof object.matchMode === "number") {
+                    message.matchMode = object.matchMode;
+                    break;
+                }
+                break;
+            case "MATCH_MODE_UNSPECIFIED":
+            case 0:
+                message.matchMode = 0;
+                break;
+            case "MATCH_MODE_CLASSIC":
+            case 1:
+                message.matchMode = 1;
+                break;
+            case "MATCH_MODE_CHONGCI":
+            case 2:
+                message.matchMode = 2;
+                break;
+            }
+            if (object.chongciConfig != null) {
+                if (typeof object.chongciConfig !== "object")
+                    throw TypeError(".game.PrivateTableState.chongciConfig: object expected");
+                message.chongciConfig = $root.game.ChongciConfig.fromObject(object.chongciConfig);
+            }
             return message;
         };
 
@@ -7638,6 +7822,8 @@ export const game = $root.game = (() => {
                 object.hostUserId = 0;
                 object.state = "";
                 object.matchId = "";
+                object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
+                object.chongciConfig = null;
             }
             if (message.tableId != null && message.hasOwnProperty("tableId"))
                 object.tableId = message.tableId;
@@ -7652,6 +7838,10 @@ export const game = $root.game = (() => {
                 object.state = message.state;
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                object.matchMode = options.enums === String ? $root.game.MatchMode[message.matchMode] === undefined ? message.matchMode : $root.game.MatchMode[message.matchMode] : message.matchMode;
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig"))
+                object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
             return object;
         };
 
@@ -7682,6 +7872,823 @@ export const game = $root.game = (() => {
         };
 
         return PrivateTableState;
+    })();
+
+    /**
+     * MatchMode enum.
+     * @name game.MatchMode
+     * @enum {number}
+     * @property {number} MATCH_MODE_UNSPECIFIED=0 MATCH_MODE_UNSPECIFIED value
+     * @property {number} MATCH_MODE_CLASSIC=1 MATCH_MODE_CLASSIC value
+     * @property {number} MATCH_MODE_CHONGCI=2 MATCH_MODE_CHONGCI value
+     */
+    game.MatchMode = (function() {
+        const valuesById = {}, values = Object.create(valuesById);
+        values[valuesById[0] = "MATCH_MODE_UNSPECIFIED"] = 0;
+        values[valuesById[1] = "MATCH_MODE_CLASSIC"] = 1;
+        values[valuesById[2] = "MATCH_MODE_CHONGCI"] = 2;
+        return values;
+    })();
+
+    game.ChongciConfig = (function() {
+
+        /**
+         * Properties of a ChongciConfig.
+         * @memberof game
+         * @interface IChongciConfig
+         * @property {number|undefined} [startingScore] ChongciConfig startingScore
+         * @property {number|undefined} [bustThreshold] ChongciConfig bustThreshold
+         * @property {number|undefined} [maxHands] ChongciConfig maxHands
+         */
+
+        /**
+         * Constructs a new ChongciConfig.
+         * @memberof game
+         * @classdesc Represents a ChongciConfig.
+         * @implements IChongciConfig
+         * @constructor
+         * @param {game.IChongciConfig=} [properties] Properties to set
+         */
+        function ChongciConfig(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * ChongciConfig startingScore.
+         * @member {number} startingScore
+         * @memberof game.ChongciConfig
+         * @instance
+         */
+        ChongciConfig.prototype.startingScore = 0;
+
+        /**
+         * ChongciConfig bustThreshold.
+         * @member {number} bustThreshold
+         * @memberof game.ChongciConfig
+         * @instance
+         */
+        ChongciConfig.prototype.bustThreshold = 0;
+
+        /**
+         * ChongciConfig maxHands.
+         * @member {number} maxHands
+         * @memberof game.ChongciConfig
+         * @instance
+         */
+        ChongciConfig.prototype.maxHands = 0;
+
+        /**
+         * Creates a new ChongciConfig instance using the specified properties.
+         * @function create
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {game.IChongciConfig=} [properties] Properties to set
+         * @returns {game.ChongciConfig} ChongciConfig instance
+         */
+        ChongciConfig.create = function create(properties) {
+            return new ChongciConfig(properties);
+        };
+
+        /**
+         * Encodes the specified ChongciConfig message. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
+         * @function encode
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {game.IChongciConfig} message ChongciConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        ChongciConfig.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.startingScore != null && Object.hasOwnProperty.call(message, "startingScore"))
+                writer.uint32(/* id 1, wireType 0 =*/8).int32(message.startingScore);
+            if (message.bustThreshold != null && Object.hasOwnProperty.call(message, "bustThreshold"))
+                writer.uint32(/* id 2, wireType 0 =*/16).int32(message.bustThreshold);
+            if (message.maxHands != null && Object.hasOwnProperty.call(message, "maxHands"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxHands);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified ChongciConfig message, length delimited. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {game.IChongciConfig} message ChongciConfig message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        ChongciConfig.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a ChongciConfig message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.ChongciConfig} ChongciConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        ChongciConfig.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.ChongciConfig();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.startingScore = reader.int32();
+                        break;
+                    }
+                case 2: {
+                        message.bustThreshold = reader.int32();
+                        break;
+                    }
+                case 3: {
+                        message.maxHands = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a ChongciConfig message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.ChongciConfig} ChongciConfig
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        ChongciConfig.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a ChongciConfig message.
+         * @function verify
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        ChongciConfig.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.startingScore != null && message.hasOwnProperty("startingScore"))
+                if (!$util.isInteger(message.startingScore))
+                    return "startingScore: integer expected";
+            if (message.bustThreshold != null && message.hasOwnProperty("bustThreshold"))
+                if (!$util.isInteger(message.bustThreshold))
+                    return "bustThreshold: integer expected";
+            if (message.maxHands != null && message.hasOwnProperty("maxHands"))
+                if (!$util.isInteger(message.maxHands))
+                    return "maxHands: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a ChongciConfig message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.ChongciConfig} ChongciConfig
+         */
+        ChongciConfig.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.ChongciConfig)
+                return object;
+            let message = new $root.game.ChongciConfig();
+            if (object.startingScore != null)
+                message.startingScore = object.startingScore | 0;
+            if (object.bustThreshold != null)
+                message.bustThreshold = object.bustThreshold | 0;
+            if (object.maxHands != null)
+                message.maxHands = object.maxHands >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a ChongciConfig message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {game.ChongciConfig} message ChongciConfig
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        ChongciConfig.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.startingScore = 0;
+                object.bustThreshold = 0;
+                object.maxHands = 0;
+            }
+            if (message.startingScore != null && message.hasOwnProperty("startingScore"))
+                object.startingScore = message.startingScore;
+            if (message.bustThreshold != null && message.hasOwnProperty("bustThreshold"))
+                object.bustThreshold = message.bustThreshold;
+            if (message.maxHands != null && message.hasOwnProperty("maxHands"))
+                object.maxHands = message.maxHands;
+            return object;
+        };
+
+        /**
+         * Converts this ChongciConfig to JSON.
+         * @function toJSON
+         * @memberof game.ChongciConfig
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        ChongciConfig.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for ChongciConfig
+         * @function getTypeUrl
+         * @memberof game.ChongciConfig
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        ChongciConfig.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.ChongciConfig";
+        };
+
+        return ChongciConfig;
+    })();
+
+    game.PlayerStanding = (function() {
+
+        /**
+         * Properties of a PlayerStanding.
+         * @memberof game
+         * @interface IPlayerStanding
+         * @property {number|undefined} [seat] PlayerStanding seat
+         * @property {number|undefined} [rank] PlayerStanding rank
+         * @property {number|undefined} [finalScore] PlayerStanding finalScore
+         * @property {number|undefined} [netChange] PlayerStanding netChange
+         */
+
+        /**
+         * Constructs a new PlayerStanding.
+         * @memberof game
+         * @classdesc Represents a PlayerStanding.
+         * @implements IPlayerStanding
+         * @constructor
+         * @param {game.IPlayerStanding=} [properties] Properties to set
+         */
+        function PlayerStanding(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * PlayerStanding seat.
+         * @member {number} seat
+         * @memberof game.PlayerStanding
+         * @instance
+         */
+        PlayerStanding.prototype.seat = 0;
+
+        /**
+         * PlayerStanding rank.
+         * @member {number} rank
+         * @memberof game.PlayerStanding
+         * @instance
+         */
+        PlayerStanding.prototype.rank = 0;
+
+        /**
+         * PlayerStanding finalScore.
+         * @member {number} finalScore
+         * @memberof game.PlayerStanding
+         * @instance
+         */
+        PlayerStanding.prototype.finalScore = 0;
+
+        /**
+         * PlayerStanding netChange.
+         * @member {number} netChange
+         * @memberof game.PlayerStanding
+         * @instance
+         */
+        PlayerStanding.prototype.netChange = 0;
+
+        /**
+         * Creates a new PlayerStanding instance using the specified properties.
+         * @function create
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {game.IPlayerStanding=} [properties] Properties to set
+         * @returns {game.PlayerStanding} PlayerStanding instance
+         */
+        PlayerStanding.create = function create(properties) {
+            return new PlayerStanding(properties);
+        };
+
+        /**
+         * Encodes the specified PlayerStanding message. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
+         * @function encode
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {game.IPlayerStanding} message PlayerStanding message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        PlayerStanding.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.seat != null && Object.hasOwnProperty.call(message, "seat"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.seat);
+            if (message.rank != null && Object.hasOwnProperty.call(message, "rank"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.rank);
+            if (message.finalScore != null && Object.hasOwnProperty.call(message, "finalScore"))
+                writer.uint32(/* id 3, wireType 0 =*/24).int32(message.finalScore);
+            if (message.netChange != null && Object.hasOwnProperty.call(message, "netChange"))
+                writer.uint32(/* id 4, wireType 0 =*/32).int32(message.netChange);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified PlayerStanding message, length delimited. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {game.IPlayerStanding} message PlayerStanding message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        PlayerStanding.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a PlayerStanding message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.PlayerStanding} PlayerStanding
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        PlayerStanding.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.PlayerStanding();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.seat = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.rank = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        message.finalScore = reader.int32();
+                        break;
+                    }
+                case 4: {
+                        message.netChange = reader.int32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a PlayerStanding message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.PlayerStanding} PlayerStanding
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        PlayerStanding.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a PlayerStanding message.
+         * @function verify
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        PlayerStanding.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                if (!$util.isInteger(message.seat))
+                    return "seat: integer expected";
+            if (message.rank != null && message.hasOwnProperty("rank"))
+                if (!$util.isInteger(message.rank))
+                    return "rank: integer expected";
+            if (message.finalScore != null && message.hasOwnProperty("finalScore"))
+                if (!$util.isInteger(message.finalScore))
+                    return "finalScore: integer expected";
+            if (message.netChange != null && message.hasOwnProperty("netChange"))
+                if (!$util.isInteger(message.netChange))
+                    return "netChange: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a PlayerStanding message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.PlayerStanding} PlayerStanding
+         */
+        PlayerStanding.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.PlayerStanding)
+                return object;
+            let message = new $root.game.PlayerStanding();
+            if (object.seat != null)
+                message.seat = object.seat >>> 0;
+            if (object.rank != null)
+                message.rank = object.rank >>> 0;
+            if (object.finalScore != null)
+                message.finalScore = object.finalScore | 0;
+            if (object.netChange != null)
+                message.netChange = object.netChange | 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a PlayerStanding message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {game.PlayerStanding} message PlayerStanding
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        PlayerStanding.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.seat = 0;
+                object.rank = 0;
+                object.finalScore = 0;
+                object.netChange = 0;
+            }
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                object.seat = message.seat;
+            if (message.rank != null && message.hasOwnProperty("rank"))
+                object.rank = message.rank;
+            if (message.finalScore != null && message.hasOwnProperty("finalScore"))
+                object.finalScore = message.finalScore;
+            if (message.netChange != null && message.hasOwnProperty("netChange"))
+                object.netChange = message.netChange;
+            return object;
+        };
+
+        /**
+         * Converts this PlayerStanding to JSON.
+         * @function toJSON
+         * @memberof game.PlayerStanding
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        PlayerStanding.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for PlayerStanding
+         * @function getTypeUrl
+         * @memberof game.PlayerStanding
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        PlayerStanding.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.PlayerStanding";
+        };
+
+        return PlayerStanding;
+    })();
+
+    game.MatchEndResult = (function() {
+
+        /**
+         * Properties of a MatchEndResult.
+         * @memberof game
+         * @interface IMatchEndResult
+         * @property {string|undefined} [reason] MatchEndResult reason
+         * @property {number|undefined} [finalHandNum] MatchEndResult finalHandNum
+         * @property {Array.<game.IPlayerStanding>|undefined} [standings] MatchEndResult standings
+         */
+
+        /**
+         * Constructs a new MatchEndResult.
+         * @memberof game
+         * @classdesc Represents a MatchEndResult.
+         * @implements IMatchEndResult
+         * @constructor
+         * @param {game.IMatchEndResult=} [properties] Properties to set
+         */
+        function MatchEndResult(properties) {
+            this.standings = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * MatchEndResult reason.
+         * @member {string} reason
+         * @memberof game.MatchEndResult
+         * @instance
+         */
+        MatchEndResult.prototype.reason = "";
+
+        /**
+         * MatchEndResult finalHandNum.
+         * @member {number} finalHandNum
+         * @memberof game.MatchEndResult
+         * @instance
+         */
+        MatchEndResult.prototype.finalHandNum = 0;
+
+        /**
+         * MatchEndResult standings.
+         * @member {Array.<game.PlayerStanding>} standings
+         * @memberof game.MatchEndResult
+         * @instance
+         */
+        MatchEndResult.prototype.standings = $util.emptyArray;
+
+        /**
+         * Creates a new MatchEndResult instance using the specified properties.
+         * @function create
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {game.IMatchEndResult=} [properties] Properties to set
+         * @returns {game.MatchEndResult} MatchEndResult instance
+         */
+        MatchEndResult.create = function create(properties) {
+            return new MatchEndResult(properties);
+        };
+
+        /**
+         * Encodes the specified MatchEndResult message. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
+         * @function encode
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {game.IMatchEndResult} message MatchEndResult message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        MatchEndResult.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.reason != null && Object.hasOwnProperty.call(message, "reason"))
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.reason);
+            if (message.finalHandNum != null && Object.hasOwnProperty.call(message, "finalHandNum"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.finalHandNum);
+            if (message.standings != null && message.standings.length)
+                for (let i = 0; i < message.standings.length; ++i)
+                    $root.game.PlayerStanding.encode(message.standings[i], writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified MatchEndResult message, length delimited. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {game.IMatchEndResult} message MatchEndResult message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        MatchEndResult.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a MatchEndResult message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.MatchEndResult} MatchEndResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        MatchEndResult.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.MatchEndResult();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.reason = reader.string();
+                        break;
+                    }
+                case 2: {
+                        message.finalHandNum = reader.uint32();
+                        break;
+                    }
+                case 3: {
+                        if (!(message.standings && message.standings.length))
+                            message.standings = [];
+                        message.standings.push($root.game.PlayerStanding.decode(reader, reader.uint32()));
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a MatchEndResult message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.MatchEndResult} MatchEndResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        MatchEndResult.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a MatchEndResult message.
+         * @function verify
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        MatchEndResult.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.reason != null && message.hasOwnProperty("reason"))
+                if (!$util.isString(message.reason))
+                    return "reason: string expected";
+            if (message.finalHandNum != null && message.hasOwnProperty("finalHandNum"))
+                if (!$util.isInteger(message.finalHandNum))
+                    return "finalHandNum: integer expected";
+            if (message.standings != null && message.hasOwnProperty("standings")) {
+                if (!Array.isArray(message.standings))
+                    return "standings: array expected";
+                for (let i = 0; i < message.standings.length; ++i) {
+                    let error = $root.game.PlayerStanding.verify(message.standings[i]);
+                    if (error)
+                        return "standings." + error;
+                }
+            }
+            return null;
+        };
+
+        /**
+         * Creates a MatchEndResult message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.MatchEndResult} MatchEndResult
+         */
+        MatchEndResult.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.MatchEndResult)
+                return object;
+            let message = new $root.game.MatchEndResult();
+            if (object.reason != null)
+                message.reason = String(object.reason);
+            if (object.finalHandNum != null)
+                message.finalHandNum = object.finalHandNum >>> 0;
+            if (object.standings) {
+                if (!Array.isArray(object.standings))
+                    throw TypeError(".game.MatchEndResult.standings: array expected");
+                message.standings = [];
+                for (let i = 0; i < object.standings.length; ++i) {
+                    if (typeof object.standings[i] !== "object")
+                        throw TypeError(".game.MatchEndResult.standings: object expected");
+                    message.standings[i] = $root.game.PlayerStanding.fromObject(object.standings[i]);
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a MatchEndResult message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {game.MatchEndResult} message MatchEndResult
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        MatchEndResult.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.standings = [];
+            if (options.defaults) {
+                object.reason = "";
+                object.finalHandNum = 0;
+            }
+            if (message.reason != null && message.hasOwnProperty("reason"))
+                object.reason = message.reason;
+            if (message.finalHandNum != null && message.hasOwnProperty("finalHandNum"))
+                object.finalHandNum = message.finalHandNum;
+            if (message.standings && message.standings.length) {
+                object.standings = [];
+                for (let j = 0; j < message.standings.length; ++j)
+                    object.standings[j] = $root.game.PlayerStanding.toObject(message.standings[j], options);
+            }
+            return object;
+        };
+
+        /**
+         * Converts this MatchEndResult to JSON.
+         * @function toJSON
+         * @memberof game.MatchEndResult
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        MatchEndResult.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for MatchEndResult
+         * @function getTypeUrl
+         * @memberof game.MatchEndResult
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        MatchEndResult.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.MatchEndResult";
+        };
+
+        return MatchEndResult;
     })();
 
     return game;

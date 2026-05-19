@@ -143,6 +143,7 @@ enum GamePhase {
   PHASE_PLAYER_TURN = 2; // Waiting for them to discard
   PHASE_WAIT_DISCARDS = 3; // Someone discarded, waiting a few sec for steals
   PHASE_ROUND_END = 4;
+  PHASE_MATCH_END = 5;            // Terminal; no further hands will start
 }
 
 message GameState {
@@ -196,6 +197,10 @@ message GameState {
 
   // Current number of drawable tiles left in the wangpai zone
   uint32 wangpai_tiles_left = 20;
+
+  MatchMode match_mode = 21;
+  ChongciConfig chongci_config = 22;     // set iff match_mode == MATCH_MODE_CHONGCI
+  MatchEndResult match_end_result = 23;  // set iff phase == PHASE_MATCH_END
 }
 
 // ---------------------------------------------------------
@@ -336,4 +341,35 @@ message PrivateTableState {
   string state = 4;
   // Empty until state == "started".
   string match_id = 5;
+  MatchMode match_mode = 6;
+  ChongciConfig chongci_config = 7;      // set iff match_mode == MATCH_MODE_CHONGCI
+}
+
+// ---------------------------------------------------------
+// Match Mode (Chongci)
+// ---------------------------------------------------------
+
+enum MatchMode {
+  MATCH_MODE_UNSPECIFIED = 0;
+  MATCH_MODE_CLASSIC = 1;   // Endless hands, random dealer per hand
+  MATCH_MODE_CHONGCI = 2;   // Bust-out match, dealer succession to winner
+}
+
+message ChongciConfig {
+  int32 starting_score = 1;       // e.g. 2000
+  int32 bust_threshold = 2;       // Match ends when any player score <= this; default 0
+  uint32 max_hands = 3;           // 0 = unbounded
+}
+
+message PlayerStanding {
+  uint32 seat = 1;
+  uint32 rank = 2;                // 1-based; tied players share rank
+  int32 final_score = 3;
+  int32 net_change = 4;           // final_score - starting_score
+}
+
+message MatchEndResult {
+  string reason = 1;              // "bust" | "hand_cap"
+  uint32 final_hand_num = 2;
+  repeated PlayerStanding standings = 3;  // length 4, sorted by score desc
 }
