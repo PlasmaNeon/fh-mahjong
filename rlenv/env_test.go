@@ -3,7 +3,9 @@ package rlenv
 import (
 	"testing"
 
+	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/rules"
 	"github.com/plasma/fh-mahjong/rules/shanten"
 	"google.golang.org/protobuf/proto"
 )
@@ -231,6 +233,47 @@ func TestGenerateHeuristicTrajectoryDeterministic(t *testing.T) {
 	}
 	if !sawIntermediateStep {
 		t.Fatalf("expected at least one non-terminal sample in heuristic dataset")
+	}
+}
+
+func TestAdvanceToDecisionResolvesReadyInterruptWindowWithoutAutoplay(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       128,
+	}
+
+	env := New(config)
+	env.game = core.NewGame("ready-interrupt-window", &rules.HometownRuleset{})
+	env.game.SetWallSeed(core.SeedFromUint64(101))
+	if err := env.game.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+
+	// This mirrors a WAIT_DISCARDS edge case hit during long heuristic exports:
+	// no non-active interrupt seat still needs input, but the active discarder
+	// has stale turn actions. The RL wrapper should resolve the interrupt
+	// window instead of treating it as a non-learning-seat dead end.
+	active := env.game.State.ActivePlayer
+	env.game.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	env.game.State.ActiveDiscard = env.game.State.Players[active].ClosedHand[0]
+	for seat, player := range env.game.State.Players {
+		if uint32(seat) == active {
+			player.ValidActions = []*pb.PlayerAction{{Type: pb.ActionType_ACTION_DISCARD, Tile: player.ClosedHand[0]}}
+			continue
+		}
+		player.ValidActions = nil
+	}
+
+	response, err := env.advanceToDecision()
+	if err != nil {
+		t.Fatalf("advanceToDecision failed: %v", err)
+	}
+	if response.Terminated || response.Truncated {
+		t.Fatalf("expected next decision, got terminal response: %#v", response)
+	}
+	if response.Observation == nil {
+		t.Fatalf("expected next observation")
 	}
 }
 

@@ -225,7 +225,7 @@ func TestResolveInterrupts_AutoRevealsClaimersNonWildFlowers(t *testing.T) {
 	g.State.Players[discarderSeat].Discards = []*pb.Tile{discardedTile}
 	g.wall = []*pb.Tile{
 		{Id: 998, Suit: pb.Suit_SUIT_FLOWER, Value: 4}, // wild indicator
-		replacement,                                    // dead wall supplement after flower reveal
+		replacement, // dead wall supplement after flower reveal
 	}
 	g.wallIndex = 0
 	g.deadWallIndex = 0
@@ -256,5 +256,38 @@ func TestResolveInterrupts_AutoRevealsClaimersNonWildFlowers(t *testing.T) {
 	}
 	if len(claimer.ValidActions) != 1 || claimer.ValidActions[0].Type != pb.ActionType_ACTION_DISCARD {
 		t.Fatalf("expected discard-only valid actions after auto-reveal, got %+v", claimer.ValidActions)
+	}
+}
+
+func TestFlowerRevealKeepsRoundEndWhenDeadWallIsExhausted(t *testing.T) {
+	g := NewGame("test-flower-exhausted-dead-wall", &flowerAutoRevealRules{})
+	seat := uint32(0)
+	flower := &pb.Tile{Id: 201, Suit: pb.Suit_SUIT_FLOWER, Value: 1}
+
+	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+	g.State.ActivePlayer = seat
+	g.State.WildTiles = nil
+	g.State.WallCount = 0
+	player := g.State.Players[seat]
+	player.ClosedHand = []*pb.Tile{flower}
+	player.HandSize = 1
+
+	err := g.ProcessPlayerAction(seat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_FLOWER_REVEAL,
+		MeldTiles: []*pb.Tile{flower},
+	})
+	if err != nil {
+		t.Fatalf("flower reveal failed: %v", err)
+	}
+	if g.State.Phase != pb.GamePhase_PHASE_ROUND_END {
+		t.Fatalf("expected round end after exhausted dead-wall draw, got %v", g.State.Phase)
+	}
+	if g.State.RoundResult == nil || !g.State.RoundResult.IsDraw {
+		t.Fatalf("expected exhaustive draw round result, got %+v", g.State.RoundResult)
+	}
+	for seat, player := range g.State.Players {
+		if len(player.ValidActions) != 0 {
+			t.Fatalf("expected no valid actions after round end for seat %d, got %+v", seat, player.ValidActions)
+		}
 	}
 }
