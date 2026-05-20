@@ -96,6 +96,40 @@ func (t *PrivateTable) setSeat(seat uint32, kind string, difficulty pb.Difficult
 	return nil
 }
 
+// setMatchMode applies a host-driven match-mode change to the table.
+// Returns ErrChongciConfigInvalid for any validation failure, or a plain
+// error for an unknown mode string.
+func (t *PrivateTable) setMatchMode(mode string, cfg *pb.ChongciConfig) error {
+	switch mode {
+	case "classic":
+		t.MatchMode = pb.MatchMode_MATCH_MODE_CLASSIC
+		t.ChongciConfig = nil
+		return nil
+	case "chongci":
+		if cfg == nil {
+			return fmt.Errorf("%w: chongci_config required", ErrChongciConfigInvalid)
+		}
+		if cfg.StartingScore < 100 || cfg.StartingScore > 1_000_000 {
+			return fmt.Errorf("%w: starting_score %d out of range [100, 1000000]", ErrChongciConfigInvalid, cfg.StartingScore)
+		}
+		if cfg.BustThreshold >= cfg.StartingScore {
+			return fmt.Errorf("%w: bust_threshold %d must be < starting_score %d", ErrChongciConfigInvalid, cfg.BustThreshold, cfg.StartingScore)
+		}
+		if cfg.BustThreshold < -1_000_000 {
+			return fmt.Errorf("%w: bust_threshold %d below floor -1000000", ErrChongciConfigInvalid, cfg.BustThreshold)
+		}
+		if cfg.MaxHands > 200 {
+			return fmt.Errorf("%w: max_hands %d above ceiling 200", ErrChongciConfigInvalid, cfg.MaxHands)
+		}
+		copied := *cfg
+		t.MatchMode = pb.MatchMode_MATCH_MODE_CHONGCI
+		t.ChongciConfig = &copied
+		return nil
+	default:
+		return fmt.Errorf("unsupported match mode %q", mode)
+	}
+}
+
 // canStart returns nil if all four seats are non-empty.
 func (t *PrivateTable) canStart() error {
 	for i, s := range t.Seats {
@@ -317,6 +351,9 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 }
 
 var errHostOnly = errors.New("only the host can modify seats")
+
+var ErrChongciConfigInvalid = errors.New("chongci config invalid")
+var ErrModeLocked = errors.New("cannot change mode after match has started")
 
 // marshalPrivateTableJSON snapshots the table under its lock and returns
 // the proto-JSON encoding. Safe to call from any handler regardless of

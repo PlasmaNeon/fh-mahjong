@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -251,5 +252,61 @@ func TestPrivateTable_ChongciProto(t *testing.T) {
 	}
 	if state.ChongciConfig == nil || state.ChongciConfig.StartingScore != 2000 {
 		t.Fatalf("proto ChongciConfig = %+v", state.ChongciConfig)
+	}
+}
+
+func TestSetMatchMode_Classic(t *testing.T) {
+	pt := newConfiguringTable("table-x", 42)
+	pt.MatchMode = pb.MatchMode_MATCH_MODE_CHONGCI
+	pt.ChongciConfig = &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 50}
+
+	if err := pt.setMatchMode("classic", nil); err != nil {
+		t.Fatalf("setMatchMode(classic) error: %v", err)
+	}
+	if pt.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("MatchMode = %v, want CLASSIC", pt.MatchMode)
+	}
+	if pt.ChongciConfig != nil {
+		t.Fatalf("ChongciConfig should be cleared, got %+v", pt.ChongciConfig)
+	}
+}
+
+func TestSetMatchMode_Chongci(t *testing.T) {
+	pt := newConfiguringTable("table-x", 42)
+	cfg := &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 50}
+	if err := pt.setMatchMode("chongci", cfg); err != nil {
+		t.Fatalf("setMatchMode(chongci) error: %v", err)
+	}
+	if pt.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", pt.MatchMode)
+	}
+	if pt.ChongciConfig == nil || pt.ChongciConfig.StartingScore != 2000 {
+		t.Fatalf("ChongciConfig = %+v", pt.ChongciConfig)
+	}
+}
+
+func TestSetMatchMode_ValidationErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		mode string
+		cfg  *pb.ChongciConfig
+	}{
+		{"chongci without config", "chongci", nil},
+		{"unknown mode", "tonpuusen", &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 50}},
+		{"starting too low", "chongci", &pb.ChongciConfig{StartingScore: 50, BustThreshold: 0, MaxHands: 50}},
+		{"starting too high", "chongci", &pb.ChongciConfig{StartingScore: 2_000_000, BustThreshold: 0, MaxHands: 50}},
+		{"threshold above starting", "chongci", &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 2000, MaxHands: 50}},
+		{"threshold below floor", "chongci", &pb.ChongciConfig{StartingScore: 2000, BustThreshold: -2_000_000, MaxHands: 50}},
+		{"max_hands above ceiling", "chongci", &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 500}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pt := newConfiguringTable("t", 42)
+			if err := pt.setMatchMode(c.mode, c.cfg); err == nil {
+				t.Fatalf("expected error, got nil")
+			} else if !errors.Is(err, ErrChongciConfigInvalid) && c.mode == "chongci" {
+				t.Fatalf("expected ErrChongciConfigInvalid, got %v", err)
+			}
+		})
 	}
 }
