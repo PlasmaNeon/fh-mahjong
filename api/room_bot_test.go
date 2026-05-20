@@ -236,3 +236,30 @@ func TestRoom_GraceShutdown_NotArmedBeforeMatchEnd(t *testing.T) {
 		t.Fatal("grace-shutdown armed before PHASE_MATCH_END")
 	}
 }
+
+func TestRoom_ChongciHandCap_Terminates(t *testing.T) {
+	cfg := &pb.ChongciConfig{
+		StartingScore: 10_000_000, // intentionally high so nobody busts
+		BustThreshold: 0,
+		MaxHands:      1,            // cap after one hand
+	}
+	room := NewRoom("handcap-test", nil, nil, WithMatchOptions(core.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cfg,
+	}))
+
+	phase := runBotOnlyRoomUntilTerminal(t, room, 200_000)
+	if phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("phase = %v, want PHASE_MATCH_END (handNum=%d)", phase, room.Engine.State.HandNum)
+	}
+	if room.Engine.State.MatchEndResult.Reason != "hand_cap" {
+		t.Fatalf("Reason = %q, want hand_cap (scores=%v)",
+			room.Engine.State.MatchEndResult.Reason,
+			[]int32{
+				room.Engine.State.Players[0].Score,
+				room.Engine.State.Players[1].Score,
+				room.Engine.State.Players[2].Score,
+				room.Engine.State.Players[3].Score,
+			})
+	}
+}
