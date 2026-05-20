@@ -384,3 +384,114 @@ func TestCurrentDealerSeat(t *testing.T) {
 		t.Fatalf("CurrentDealerSeat = %d, want 2", got)
 	}
 }
+
+func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.Players[3].Score = -300
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 1, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult == nil || g.State.MatchEndResult.Reason != "bust" {
+		t.Fatalf("MatchEndResult = %+v, want reason=bust", g.State.MatchEndResult)
+	}
+}
+
+func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+	g.State.HandNum = 3
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult.Reason != "hand_cap" {
+		t.Fatalf("Reason = %q, want hand_cap", g.State.MatchEndResult.Reason)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 2 {
+		t.Fatalf("nextDealerOverride = %v, want pointer-to-2", got)
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = PHASE_MATCH_END, expected continue")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 3) % 4) + 1 // East at seat 1
+	}
+	g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 1 {
+		t.Fatalf("draw renchan: nextDealerOverride = %v, want pointer-to-1", got)
+	}
+}
+
+func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.NextDealerOverrideForTest() != nil {
+		t.Fatal("classic mode must not set next-dealer override")
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatal("classic mode must not transition to PHASE_MATCH_END")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("classic PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}

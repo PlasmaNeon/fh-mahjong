@@ -1110,6 +1110,34 @@ func (g *Game) ResolveInterrupts() {
 // tasks; today it preserves the literal PlayerReady initialization that
 // every hand-end site used to perform inline.
 func (g *Game) finalizeRoundEnd() {
+	if g.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		if g.State.RoundResult != nil {
+			if g.State.RoundResult.IsDraw {
+				g.SetNextDealer(g.currentDealerSeat()) // renchan, no honba
+			} else {
+				g.SetNextDealer(g.State.RoundResult.WinnerSeat)
+			}
+		}
+		if g.shouldEndChongciMatch() {
+			reason := "bust"
+			cfg := g.State.ChongciConfig
+			if cfg != nil && cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
+				busted := false
+				for _, p := range g.State.Players {
+					if p.Score <= cfg.BustThreshold {
+						busted = true
+						break
+					}
+				}
+				if !busted {
+					reason = "hand_cap"
+				}
+			}
+			g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+			g.State.MatchEndResult = g.computeMatchEndResult(reason)
+			return
+		}
+	}
 	g.State.PlayerReady = []bool{false, false, false, false}
 }
 
@@ -1329,3 +1357,10 @@ func (g *Game) ShouldEndChongciMatchForTest() bool { return g.shouldEndChongciMa
 func (g *Game) ComputeMatchEndResultForTest(reason string) *pb.MatchEndResult {
 	return g.computeMatchEndResult(reason)
 }
+
+// FinalizeRoundEndForTest exposes finalizeRoundEnd to tests.
+func (g *Game) FinalizeRoundEndForTest() { g.finalizeRoundEnd() }
+
+// NextDealerOverrideForTest exposes the override pointer to tests.
+// Returns nil if no override is currently queued.
+func (g *Game) NextDealerOverrideForTest() *uint32 { return g.nextDealerOverride }
