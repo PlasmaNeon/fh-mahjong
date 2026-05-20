@@ -22,7 +22,7 @@ export default function Lobby() {
         }
     }, [isConnected, gameState, navigate, connect]);
 
-    const joinQueue = async () => {
+    const joinQueue = async (ruleset: 'hometown' | 'chongci-fh' = 'hometown') => {
         const token = localStorage.getItem('fh_token');
         if (!token) return navigate('/');
 
@@ -35,11 +35,12 @@ export default function Lobby() {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`,
                 },
-                body: JSON.stringify({ ruleset: 'hometown' }),
+                body: JSON.stringify({ ruleset }),
             });
 
             if (!res.ok) {
-                throw new Error('Failed to join queue');
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to join queue');
             }
         } catch (e: any) {
             setError(e.message || 'Error contacting matchmaker');
@@ -84,11 +85,18 @@ export default function Lobby() {
                         ) : (
                             <div className="mt-8 flex flex-wrap gap-4">
                                 <button
-                                    onClick={joinQueue}
+                                    onClick={() => joinQueue('hometown')}
                                     disabled={!isConnected}
                                     className="rounded-[24px] border border-emerald-300/24 bg-emerald-600 px-7 py-4 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_20px_40px_rgba(5,150,105,0.32)] transition hover:-translate-y-0.5 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-45"
                                 >
                                     Find Match
+                                </button>
+                                <button
+                                    onClick={() => joinQueue('chongci-fh')}
+                                    disabled={!isConnected}
+                                    className="rounded-[24px] border border-teal-300/24 bg-teal-600 px-7 py-4 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_20px_40px_rgba(13,148,136,0.32)] transition hover:-translate-y-0.5 hover:bg-teal-500 disabled:cursor-not-allowed disabled:opacity-45"
+                                >
+                                    Quick Match — Chongci
                                 </button>
                                 <Link
                                     to="/create-room"
