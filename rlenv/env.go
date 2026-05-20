@@ -2,6 +2,7 @@ package rlenv
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/core"
@@ -197,31 +198,34 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 			}, nil
 		}
 
-		if !e.config.AutoPlayHeuristics {
-			return nil, fmt.Errorf("non-learning seat is waiting for input while auto heuristics are disabled")
-		}
+		if e.config.AutoPlayHeuristics {
+			if seat, ok := e.currentHeuristicSeat(); ok {
+				action := e.heuristic.ChooseAction(e.game.State, seat)
+				if action == nil {
+					return nil, fmt.Errorf("heuristic returned nil action for seat %d", seat)
+				}
 
-		seat, ok := e.currentHeuristicSeat()
-		if !ok {
-			if e.game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-				if err := e.assertInterruptsReadyToResolve(); err != nil {
+				e.decisionCount++
+				if err := e.game.ProcessPlayerAction(seat, action); err != nil {
 					return nil, err
 				}
-				e.game.ResolveInterrupts()
 				continue
 			}
-			return nil, fmt.Errorf("no actionable seat found in phase %v", e.game.State.Phase)
 		}
 
-		action := e.heuristic.ChooseAction(e.game.State, seat)
-		if action == nil {
-			return nil, fmt.Errorf("heuristic returned nil action for seat %d", seat)
+		if e.game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+			if err := e.assertInterruptsReadyToResolve(); err != nil {
+				return nil, err
+			}
+			e.game.ResolveInterrupts()
+			continue
 		}
 
-		e.decisionCount++
-		if err := e.game.ProcessPlayerAction(seat, action); err != nil {
-			return nil, err
+		if !e.config.AutoPlayHeuristics {
+			return nil, fmt.Errorf("non-learning seat is waiting for input while auto heuristics are disabled: %s", e.decisionStateSummary())
 		}
+
+		return nil, fmt.Errorf("no actionable seat found: %s", e.decisionStateSummary())
 	}
 }
 
@@ -282,6 +286,32 @@ func (e *Env) assertInterruptsReadyToResolve() error {
 		return fmt.Errorf("cannot resolve interrupts while seat %d still has an unqueued response", seat)
 	}
 	return nil
+}
+
+func (e *Env) decisionStateSummary() string {
+	if e == nil || e.game == nil || e.game.State == nil {
+		return "state=<nil>"
+	}
+
+	parts := []string{
+		fmt.Sprintf("phase=%v", e.game.State.Phase),
+		fmt.Sprintf("active=%d", e.game.State.ActivePlayer),
+		fmt.Sprintf("auto=%t", e.config != nil && e.config.AutoPlayHeuristics),
+	}
+	for seat, player := range e.game.State.Players {
+		if player == nil {
+			parts = append(parts, fmt.Sprintf("seat%d=<nil>", seat))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf(
+			"seat%d{learning=%t valid=%d queued=%t}",
+			seat,
+			e.learningSeats[uint32(seat)],
+			len(player.ValidActions),
+			e.game.InterruptQueued(uint32(seat)),
+		))
+	}
+	return strings.Join(parts, " ")
 }
 
 func normalizeConfig(config *pb.EnvConfig) *pb.EnvConfig {

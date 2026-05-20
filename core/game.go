@@ -811,8 +811,15 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			}
 		}
 
-		// Player immediately gets a supplementary tile from the Dead Wall
-		g.ExecuteDeadWallDraw(seat)
+		// Player immediately gets a supplementary tile from the Dead Wall.
+		// If the supplementary draw exhausts the wall, the round is already over;
+		// do not restore PLAYER_TURN with an empty valid-action set.
+		if err := g.ExecuteDeadWallDraw(seat); err != nil {
+			return err
+		}
+		if g.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+			return nil
+		}
 
 		// Set kong bonus flag: winning on the dead wall draw after a flower reveal
 		if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {

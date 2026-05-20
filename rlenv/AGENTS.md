@@ -20,6 +20,7 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 - `rlenv/` wraps `core.Game`; it must not fork rules or state-transition logic.
 - Non-learning seats are automated through the shared Go heuristic bot when `auto_play_heuristics` is enabled.
 - `advanceToDecision()` only resolves WAIT_DISCARDS automatically after verifying every pending interrupt seat has already queued a response; otherwise it returns an error instead of silently skipping input.
+- `advanceToDecision()` must resolve an already-ready WAIT_DISCARDS window even when `AutoPlayHeuristics` is disabled, because all-four-seat heuristic trajectory export records each seat as a learning seat and can otherwise stall after queued interrupt responses.
 - Tile-face indices in observations and tile-specific action ids use the same order as the rules/shanten backend: `man(0-8), pin(9-17), sou(18-26), jihai(27-33), flower(34-41)`.
 - Scalar features include overall and route-specific shanten, ukeire, discard look-ahead, wild preservation, visible score potential, and public danger heuristics.
 - Heuristic trajectory export keeps immediate step rewards in `TrajectorySample.rewards` and stores final round payouts/outcomes separately in `TrajectorySample.terminal_rewards` and `TrajectorySample.terminal_outcome`.
