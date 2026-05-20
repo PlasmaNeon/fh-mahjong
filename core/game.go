@@ -30,7 +30,8 @@ type Game struct {
 	// We wait a few seconds before resolving priority.
 	interruptQueue   map[uint32]*pb.PlayerAction
 	interruptTimer   *time.Timer
-	wallSeedOverride *[MT19937SeedSize]uint32
+	wallSeedOverride   *[MT19937SeedSize]uint32
+	nextDealerOverride *uint32
 }
 
 // MatchOptions configures a freshly constructed Game. The zero value
@@ -87,6 +88,16 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 func (g *Game) SetWallSeed(seed [MT19937SeedSize]uint32) {
 	copySeed := seed
 	g.wallSeedOverride = &copySeed
+}
+
+// SetNextDealer queues a deterministic dealer for the next deal. The
+// override is consumed once; subsequent deals re-randomize unless another
+// override is set.
+func (g *Game) SetNextDealer(seat uint32) {
+	if seat > 3 {
+		return
+	}
+	g.nextDealerOverride = &seat
 }
 
 // InterruptQueued reports whether the seat has already submitted an interrupt
@@ -148,7 +159,13 @@ func (g *Game) dealTiles() uint32 {
 	mt := MTFromSeed(seed)
 
 	// Pick a random dealer (0-3) and assign seat winds accordingly
-	dealer := mt.GenU32() % 4
+	var dealer uint32
+	if g.nextDealerOverride != nil {
+		dealer = *g.nextDealerOverride
+		g.nextDealerOverride = nil
+	} else {
+		dealer = mt.GenU32() % 4
+	}
 	for i := 0; i < 4; i++ {
 		// Wind offset: dealer=East(1), next=South(2), etc.
 		g.State.Players[i].SeatWind = uint32(((i - int(dealer) + 4) % 4) + 1)
@@ -1129,6 +1146,14 @@ func (g *Game) startNextRound() {
 	// Auto-reveal if the dealer's drawn tile is a flower
 	g.revealInitialFlowers(dealer)
 	g.State.Players[dealer].ValidActions = g.Rules.GetValidActions(g.State, dealer)
+}
+
+// DealForNextHand runs the same re-deal pipeline as startNextRound,
+// resetting per-player hand state and dealing. Intended for tests that
+// need to exercise dealer-override behavior in isolation; production
+// callers should use the normal round-end → ready flow.
+func (g *Game) DealForNextHand() {
+	g.startNextRound()
 }
 
 // recordRoundEnd captures the round result into the paipu recorder.

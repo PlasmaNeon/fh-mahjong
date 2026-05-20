@@ -224,3 +224,42 @@ func TestDeadWallKanDraw(t *testing.T) {
 		t.Errorf("Expected phase PHASE_PLAYER_TURN after Kan, got %v", g.State.Phase)
 	}
 }
+
+func TestSetNextDealer_ConsumedOnce(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-override", r, core.MatchOptions{})
+	if err := g.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Confirm there is exactly one East-wind seat after Start.
+	eastCount := 0
+	for _, p := range g.State.Players {
+		if p.SeatWind == 1 {
+			eastCount++
+		}
+	}
+	if eastCount != 1 {
+		t.Fatalf("after Start, expected exactly one East seat, got %d", eastCount)
+	}
+
+	// Override the next dealer and re-deal.
+	g.SetNextDealer(2)
+	g.DealForNextHand()
+
+	if g.State.Players[2].SeatWind != 1 {
+		t.Fatalf("after SetNextDealer(2), seat 2 SeatWind = %d, want 1 (East)", g.State.Players[2].SeatWind)
+	}
+
+	// Override is single-shot — running 20 more deals should produce at least one non-2 dealer.
+	sawOther := false
+	for i := 0; i < 20 && !sawOther; i++ {
+		g.DealForNextHand()
+		if g.State.Players[2].SeatWind != 1 {
+			sawOther = true
+		}
+	}
+	if !sawOther {
+		t.Fatalf("override leaked: seat 2 was dealer for 20 consecutive deals")
+	}
+}
