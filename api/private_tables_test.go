@@ -225,3 +225,31 @@ func TestPrivateTableJoinRejectsOutsiderForActiveTable(t *testing.T) {
 		t.Fatalf("expected 409, got %d", recorder.Code)
 	}
 }
+
+func TestPrivateTable_DefaultMatchMode(t *testing.T) {
+	pt := newConfiguringTable("table-x", 42)
+	if pt.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("default MatchMode = %v, want CLASSIC", pt.MatchMode)
+	}
+	if pt.ChongciConfig != nil {
+		t.Fatalf("default ChongciConfig should be nil, got %+v", pt.ChongciConfig)
+	}
+	state := pt.SnapshotProto()
+	if state.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("proto MatchMode = %v, want CLASSIC", state.MatchMode)
+	}
+}
+
+func TestPrivateTable_ChongciProto(t *testing.T) {
+	pt := newConfiguringTable("table-x", 42)
+	pt.MatchMode = pb.MatchMode_MATCH_MODE_CHONGCI
+	pt.ChongciConfig = &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 50}
+
+	state := pt.SnapshotProto()
+	if state.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("proto MatchMode = %v, want CHONGCI", state.MatchMode)
+	}
+	if state.ChongciConfig == nil || state.ChongciConfig.StartingScore != 2000 {
+		t.Fatalf("proto ChongciConfig = %+v", state.ChongciConfig)
+	}
+}

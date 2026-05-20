@@ -33,14 +33,23 @@ type PrivateTable struct {
 	Seats      [4]SeatConfig
 	State      string // "configuring" | "started"
 	MatchID    string // populated when State == "started"
+
+	// MatchMode selects the match ruleset. The public constructor
+	// newConfiguringTable sets this to MATCH_MODE_CLASSIC; direct struct
+	// literal callers will see the zero value (MATCH_MODE_UNSPECIFIED).
+	MatchMode pb.MatchMode
+	// ChongciConfig is non-nil iff MatchMode == MATCH_MODE_CHONGCI.
+	ChongciConfig *pb.ChongciConfig
 }
 
-// newConfiguringTable returns a table with all four seats empty.
+// newConfiguringTable returns a table with all four seats empty and the
+// default match mode (classic).
 func newConfiguringTable(tableID string, hostUserID uint) *PrivateTable {
 	return &PrivateTable{
 		TableID:    tableID,
 		HostUserID: hostUserID,
 		State:      "configuring",
+		MatchMode:  pb.MatchMode_MATCH_MODE_CLASSIC,
 	}
 }
 
@@ -123,13 +132,19 @@ func (t *PrivateTable) toProto() *pb.PrivateTableState {
 		}
 		seats[i] = sc
 	}
-	return &pb.PrivateTableState{
+	state := &pb.PrivateTableState{
 		TableId:    t.TableID,
 		HostUserId: uint32(t.HostUserID),
 		Seats:      seats,
 		State:      t.State,
 		MatchId:    t.MatchID,
+		MatchMode:  t.MatchMode,
 	}
+	if t.ChongciConfig != nil {
+		cfg := *t.ChongciConfig
+		state.ChongciConfig = &cfg
+	}
+	return state
 }
 
 // SnapshotProto returns a proto state snapshot, acquiring t.mu for the
