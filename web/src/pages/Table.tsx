@@ -18,6 +18,7 @@ export default function Table() {
     const [joining, setJoining] = useState(false);
     const [error, setError] = useState('');
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
+    const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
@@ -169,6 +170,38 @@ export default function Table() {
         }
     }, [guestToken, tableId, handleAuthFailure]);
 
+    const setMatchMode = useCallback(async (mode: 'classic' | 'chongci', cfg?: { starting_score: number; bust_threshold: number; max_hands: number }) => {
+        if (!tableId || !guestToken) return;
+        try {
+            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}/mode`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
+                body: JSON.stringify({ mode, chongci_config: cfg }),
+            });
+            if (res.status === 401) {
+                handleAuthFailure();
+                return;
+            }
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                setError(data.error || 'Failed to update match mode');
+            }
+        } catch (err: any) {
+            setError(err.message || 'Failed to update match mode');
+        }
+    }, [guestToken, tableId, handleAuthFailure]);
+
+    useEffect(() => {
+        const cfg = tableState?.chongciConfig;
+        if (cfg) {
+            setChongciDraft({
+                starting_score: Number(cfg.startingScore ?? 2000),
+                bust_threshold: Number(cfg.bustThreshold ?? 0),
+                max_hands: Number(cfg.maxHands ?? 50),
+            });
+        }
+    }, [tableState?.chongciConfig]);
+
     const handleStart = async () => {
         if (!tableId || !guestToken) return;
         try {
@@ -243,6 +276,58 @@ export default function Table() {
                 </header>
 
                 {error && <div className="mb-4 rounded-2xl border border-rose-400/30 bg-rose-950/30 px-4 py-3 text-sm text-rose-100">{error}</div>}
+
+                {(() => {
+                    const currentMode = tableState?.matchMode ?? 1; // 1 = CLASSIC
+                    const isChongci = currentMode === 2;
+                    return (
+                        <section className="mb-6 rounded-3xl border border-emerald-300/15 bg-slate-950/55 p-6">
+                            <h2 className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Match Mode</h2>
+                            <div className="mt-4 flex gap-3">
+                                <button
+                                    disabled={!iAmHost || tableState?.state === 'started'}
+                                    onClick={() => setMatchMode('classic')}
+                                    className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.18em] ${!isChongci ? 'border-emerald-300/40 bg-emerald-600/30 text-emerald-100' : 'border-slate-700 bg-slate-900/60 text-slate-400'} disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                    Classic
+                                </button>
+                                <button
+                                    disabled={!iAmHost || tableState?.state === 'started'}
+                                    onClick={() => setMatchMode('chongci', chongciDraft)}
+                                    className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.18em] ${isChongci ? 'border-emerald-300/40 bg-emerald-600/30 text-emerald-100' : 'border-slate-700 bg-slate-900/60 text-slate-400'} disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                    Chongci
+                                </button>
+                            </div>
+                            {isChongci && (
+                                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                    {[
+                                        { key: 'starting_score', label: 'Starting points', min: 100, max: 1_000_000 },
+                                        { key: 'bust_threshold', label: 'Bust threshold', min: -1_000_000, max: 0 },
+                                        { key: 'max_hands', label: 'Max hands (0=∞)', min: 0, max: 200 },
+                                    ].map(({ key, label, min, max }) => (
+                                        <label key={key} className="block text-xs uppercase tracking-[0.18em] text-emerald-200/70">
+                                            {label}
+                                            <input
+                                                type="number"
+                                                min={min}
+                                                max={max}
+                                                value={(chongciDraft as any)[key]}
+                                                disabled={!iAmHost || tableState?.state === 'started'}
+                                                onChange={e => setChongciDraft(d => ({ ...d, [key]: Number(e.target.value) }))}
+                                                onBlur={() => iAmHost && setMatchMode('chongci', chongciDraft)}
+                                                className="mt-2 w-full rounded-2xl border border-emerald-300/20 bg-slate-900/60 px-3 py-2 text-sm text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 disabled:opacity-50"
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                            {!iAmHost && (
+                                <p className="mt-3 text-xs text-slate-400">Only the host can change match settings.</p>
+                            )}
+                        </section>
+                    );
+                })()}
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     {seats.map((seat, i) => (
