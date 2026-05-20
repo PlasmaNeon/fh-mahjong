@@ -495,3 +495,19 @@ func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
 		t.Fatalf("classic PlayerReady not armed: %v", g.State.PlayerReady)
 	}
 }
+
+func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000, BustThreshold: 0, MaxHands: 50,
+		},
+	})
+	g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	err := g.HandleReadyActionForTest(0)
+	if err == nil {
+		t.Fatal("expected error on ready after match end")
+	}
+}

@@ -1210,6 +1210,9 @@ func (g *Game) computeMatchEndResult(reason string) *pb.MatchEndResult {
 
 // handleReadyAction marks a player as ready for the next round.
 func (g *Game) handleReadyAction(seat uint32) error {
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		return fmt.Errorf("cannot ready: match has ended")
+	}
 	if int(seat) >= len(g.State.PlayerReady) {
 		return fmt.Errorf("invalid seat %d for ready action", seat)
 	}
@@ -1364,3 +1367,6 @@ func (g *Game) FinalizeRoundEndForTest() { g.finalizeRoundEnd() }
 // NextDealerOverrideForTest exposes the override pointer to tests.
 // Returns nil if no override is currently queued.
 func (g *Game) NextDealerOverrideForTest() *uint32 { return g.nextDealerOverride }
+
+// HandleReadyActionForTest exposes handleReadyAction to tests.
+func (g *Game) HandleReadyActionForTest(seat uint32) error { return g.handleReadyAction(seat) }
