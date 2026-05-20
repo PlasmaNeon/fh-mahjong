@@ -263,3 +263,31 @@ func TestSetNextDealer_ConsumedOnce(t *testing.T) {
 		t.Fatalf("override leaked: seat 2 was dealer for 20 consecutive deals")
 	}
 }
+
+func TestNewGame_ChongciInitialization(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	cfg := &pb.ChongciConfig{
+		StartingScore: 2000,
+		BustThreshold: 0,
+		MaxHands:      50,
+	}
+	g := core.NewGame("test-chongci", r, core.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cfg,
+	})
+
+	if g.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", g.State.MatchMode)
+	}
+	if g.State.ChongciConfig == nil {
+		t.Fatalf("ChongciConfig is nil")
+	}
+	if got := g.State.ChongciConfig.StartingScore; got != 2000 {
+		t.Fatalf("ChongciConfig.StartingScore = %d, want 2000", got)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 2000 {
+			t.Fatalf("chongci seat %d Score = %d, want 2000", i, p.Score)
+		}
+	}
+}

@@ -67,6 +67,23 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 	g.haiteiDrawIndex = -1
 
 	startingScore := int32(25000)
+	if mode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		if opts.ChongciConfig == nil {
+			// Defensive: caller passed CHONGCI without a config. Fall back to
+			// the default public-queue config so the engine never produces an
+			// inconsistent state.
+			opts.ChongciConfig = &pb.ChongciConfig{
+				StartingScore: 2000,
+				BustThreshold: 0,
+				MaxHands:      50,
+			}
+		}
+		startingScore = opts.ChongciConfig.StartingScore
+		// Store a copy so future engine mutations cannot leak back to the caller.
+		cfgCopy := *opts.ChongciConfig
+		g.State.ChongciConfig = &cfgCopy
+	}
+
 	for i := 0; i < 4; i++ {
 		g.State.Players[i] = &pb.PlayerState{
 			Seat:        uint32(i),
