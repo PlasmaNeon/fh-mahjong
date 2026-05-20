@@ -206,7 +206,7 @@ func TestPrivateTableStartRejectsNonHost(t *testing.T) {
 
 func TestPrivateTableJoinReturnsActiveForExistingParticipant(t *testing.T) {
 	server := newPrivateTableTestServer()
-	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104})
+	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104}, nil)
 
 	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 	if recorder.Code != http.StatusOK {
@@ -219,7 +219,7 @@ func TestPrivateTableJoinReturnsActiveForExistingParticipant(t *testing.T) {
 
 func TestPrivateTableJoinRejectsOutsiderForActiveTable(t *testing.T) {
 	server := newPrivateTableTestServer()
-	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104})
+	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104}, nil)
 
 	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 999, "eve"), map[string]any{})
 	if recorder.Code != http.StatusConflict {
@@ -387,5 +387,46 @@ func TestHandlePrivateTableMode_AfterStartLocked(t *testing.T) {
 	// removed by async removeConfiguringTable goroutine). Both communicate "mode change rejected".
 	if w.Code != http.StatusConflict && w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 409 or 404", w.Code)
+	}
+}
+
+func TestStartPrivateTable_ChongciThreaded(t *testing.T) {
+	s := newPrivateTableTestServer()
+	hostToken := privateTableAuthToken(t, 100, "Host")
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/join", hostToken, nil)
+
+	w1, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/mode", hostToken, map[string]any{
+		"mode":           "chongci",
+		"chongci_config": map[string]any{"starting_score": 2000, "bust_threshold": 0, "max_hands": 50},
+	})
+	if w1.Code != http.StatusOK {
+		t.Fatalf("set mode: %d body=%s", w1.Code, w1.Body.String())
+	}
+
+	for seat := 1; seat <= 3; seat++ {
+		w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/seat", hostToken, map[string]any{
+			"seat": seat, "kind": "bot", "difficulty": 1,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("set seat %d: %d body=%s", seat, w.Code, w.Body.String())
+		}
+	}
+
+	w2, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/start", hostToken, map[string]any{})
+	if w2.Code != http.StatusOK {
+		t.Fatalf("start: %d body=%s", w2.Code, w2.Body.String())
+	}
+
+	room := s.Matchmaker.RoomForTableForTest("table-chongci-1")
+	if room == nil {
+		t.Fatal("no active room for table")
+	}
+	if room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("engine MatchMode = %v, want CHONGCI", room.Engine.State.MatchMode)
+	}
+	for i, p := range room.Engine.State.Players {
+		if p.Score != 2000 {
+			t.Fatalf("seat %d Score = %d, want 2000", i, p.Score)
+		}
 	}
 }

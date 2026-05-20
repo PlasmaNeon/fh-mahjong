@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/plasma/fh-mahjong/bot"
+	"github.com/plasma/fh-mahjong/core"
 	"github.com/plasma/fh-mahjong/models"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"gorm.io/gorm"
 )
 
@@ -114,6 +116,7 @@ type ActivePrivateTable struct {
 	TableID        string
 	MatchID        string
 	ParticipantIDs map[uint]bool
+	Room           *Room
 }
 
 func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
@@ -164,7 +167,7 @@ func (m *Matchmaker) IsPrivateTableParticipant(tableID string, userID uint) (Act
 	return table, true, table.ParticipantIDs[userID]
 }
 
-func (m *Matchmaker) registerActivePrivateTable(tableID string, matchID string, userIDs []uint) {
+func (m *Matchmaker) registerActivePrivateTable(tableID string, matchID string, userIDs []uint, room *Room) {
 	participants := make(map[uint]bool, len(userIDs))
 	for _, userID := range userIDs {
 		participants[userID] = true
@@ -176,6 +179,7 @@ func (m *Matchmaker) registerActivePrivateTable(tableID string, matchID string, 
 		TableID:        tableID,
 		MatchID:        matchID,
 		ParticipantIDs: participants,
+		Room:           room,
 	}
 }
 
@@ -262,7 +266,7 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	}
 
 	if tableID != "" {
-		m.registerActivePrivateTable(tableID, matchID, userIDs)
+		m.registerActivePrivateTable(tableID, matchID, userIDs, room)
 	}
 
 	seats := make(map[uint32]uint, len(userIDs))
@@ -398,9 +402,16 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			log.Printf("Database disabled, skipping match persistence for %s", matchID)
 		}
 
-		var roomOptions []RoomOption
+		roomOptions := []RoomOption{}
 		if m.BotPolicyFactory != nil {
 			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
+		}
+		if table.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI && table.ChongciConfig != nil {
+			cfg := *table.ChongciConfig
+			roomOptions = append(roomOptions, WithMatchOptions(core.MatchOptions{
+				Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+				ChongciConfig: &cfg,
+			}))
 		}
 		room = NewRoom(matchID, m.Hub, m.DB, roomOptions...)
 		room.PaipuStore = m.PaipuStore
@@ -410,7 +421,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			m.unregisterActivePrivateTable(tableID)
 		}
 
-		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats))
+		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats), room)
 
 		table.State = "started"
 		table.MatchID = matchID
@@ -439,6 +450,18 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 	// Return the live pointer; State is "started" so future readers can
 	// still SnapshotProto() without seeing an inconsistent view.
 	return table, nil
+}
+
+// RoomForTableForTest returns the live *Room registered for the given
+// private-table ID, or nil if no match is active. Test-only.
+func (m *Matchmaker) RoomForTableForTest(tableID string) *Room {
+	m.privateTablesMu.RLock()
+	defer m.privateTablesMu.RUnlock()
+	ap, ok := m.activePrivateTables[tableID]
+	if !ok {
+		return nil
+	}
+	return ap.Room
 }
 
 // mapValues returns the values of a uint32→uint map as a slice. Used to

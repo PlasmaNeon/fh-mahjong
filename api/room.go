@@ -50,6 +50,10 @@ type Room struct {
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
+	// matchOptions seeds core.NewGame with match-mode + Chongci config.
+	// Populated by WithMatchOptions; defaults to MatchOptions{} (classic).
+	matchOptions core.MatchOptions
+
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
 	ActionQueue      chan ClientAction
@@ -70,6 +74,14 @@ func WithBotPolicy(policy bot.Policy) RoomOption {
 	}
 }
 
+// WithMatchOptions configures the engine constructed by NewRoom with a
+// match-mode + Chongci config. Default is MatchOptions{} (classic).
+func WithMatchOptions(opts core.MatchOptions) RoomOption {
+	return func(r *Room) {
+		r.matchOptions = opts
+	}
+}
+
 // NewRoom creates a new match
 func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 	ruleset := &rules.HometownRuleset{}
@@ -84,7 +96,6 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		ID:                 matchID,
 		Hub:                hub,
 		DB:                 db,
-		Engine:             core.NewGame(matchID, ruleset, core.MatchOptions{}),
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,
@@ -97,6 +108,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		opt(room)
 	}
 
+	room.Engine = core.NewGame(matchID, ruleset, room.matchOptions)
 	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
 
 	return room
