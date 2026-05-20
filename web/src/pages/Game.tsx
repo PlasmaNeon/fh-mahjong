@@ -366,6 +366,21 @@ export default function Game() {
 
     return (
         <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
+            {gameState?.matchMode === 2 && gameState.chongciConfig && (
+                <div className="mt-1 inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-900/30 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">
+                    <span>Chongci</span>
+                    <span className="text-amber-400/70">·</span>
+                    <span>Start {Number(gameState.chongciConfig.startingScore)}</span>
+                    <span className="text-amber-400/70">·</span>
+                    <span>Bust ≤ {Number(gameState.chongciConfig.bustThreshold)}</span>
+                    <span className="text-amber-400/70">·</span>
+                    <span>
+                        {Number(gameState.chongciConfig.maxHands) === 0
+                            ? 'No cap'
+                            : `Cap ${Number(gameState.chongciConfig.maxHands)}`}
+                    </span>
+                </div>
+            )}
             <div className="game-stage-frame" style={stageFrameStyle}>
                 <div className="game-stage" style={stageStyle}>
                     <TableBoard
