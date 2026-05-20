@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/plasma/fh-mahjong/bot"
+	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -165,5 +166,73 @@ func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
 	}
 	if bind.Room.Engine.State.Players[0].Score != 25000 {
 		t.Fatalf("classic seat Score = %d, want 25000", bind.Room.Engine.State.Players[0].Score)
+	}
+}
+
+// runBotOnlyRoomUntilTerminal repeatedly drives advanceAutomatedSeats on
+// a fully-bot room until the engine reports PHASE_MATCH_END or the safety
+// iteration cap trips. Returns the final-phase reached.
+func runBotOnlyRoomUntilTerminal(t *testing.T, room *Room, maxIters int) pb.GamePhase {
+	t.Helper()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("Engine.Start: %v", err)
+	}
+	for i := 0; i < maxIters; i++ {
+		if room.Engine.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			return room.Engine.State.Phase
+		}
+		room.advanceAutomatedSeats()
+	}
+	return room.Engine.State.Phase
+}
+
+func TestRoom_ChongciBust_TerminatesViaPhaseMatchEnd(t *testing.T) {
+	cfg := &pb.ChongciConfig{
+		StartingScore: 50,
+		BustThreshold: 0,
+		MaxHands:      30,
+	}
+	room := NewRoom("bust-test", nil, nil, WithMatchOptions(core.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cfg,
+	}))
+
+	phase := runBotOnlyRoomUntilTerminal(t, room, 200_000)
+	if phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("phase = %v, want PHASE_MATCH_END (handNum=%d)", phase, room.Engine.State.HandNum)
+	}
+	if room.Engine.State.MatchEndResult == nil {
+		t.Fatal("MatchEndResult is nil")
+	}
+	got := room.Engine.State.MatchEndResult.Reason
+	if got != "bust" && got != "hand_cap" {
+		t.Fatalf("Reason = %q, want bust or hand_cap", got)
+	}
+	if len(room.Engine.State.MatchEndResult.Standings) != 4 {
+		t.Fatalf("Standings length = %d, want 4", len(room.Engine.State.MatchEndResult.Standings))
+	}
+}
+
+func TestRoom_GraceShutdown_ArmedOnMatchEnd(t *testing.T) {
+	room := NewRoom("grace-test", nil, nil)
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	room.CheckMatchEndShutdownForTest()
+	if !room.MatchEndScheduledForTest() {
+		t.Fatal("first check after PHASE_MATCH_END must arm grace-shutdown timer")
+	}
+
+	prev := room.MatchEndScheduledForTest()
+	room.CheckMatchEndShutdownForTest()
+	if room.MatchEndScheduledForTest() != prev {
+		t.Fatal("second check must not re-arm the timer (idempotent)")
+	}
+}
+
+func TestRoom_GraceShutdown_NotArmedBeforeMatchEnd(t *testing.T) {
+	room := NewRoom("grace-test-pre", nil, nil)
+	room.CheckMatchEndShutdownForTest()
+	if room.MatchEndScheduledForTest() {
+		t.Fatal("grace-shutdown armed before PHASE_MATCH_END")
 	}
 }

@@ -62,6 +62,11 @@ type Room struct {
 	TimerResolveChan chan bool // timer goroutine signals main loop to resolve interrupts
 	interruptTmr     *time.Timer
 	interruptEpoch   uint64 // incremented each interrupt cycle to prevent stale goroutines
+
+	// matchEndScheduled tracks whether the grace-shutdown timer has been
+	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
+	// of the terminal phase don't spawn multiple timer goroutines.
+	matchEndScheduled bool
 }
 
 type RoomOption func(*Room)
@@ -556,8 +561,42 @@ func (r *Room) BroadcastState() []byte {
 		}
 	}
 
+	r.checkMatchEndShutdown()
+
 	return rawPayload
 }
+
+// checkMatchEndShutdown arms a 30-second timer the first time the engine
+// reports PHASE_MATCH_END. When the timer fires, it sends on the Shutdown
+// channel so the main loop runs its usual teardown (paipu persistence,
+// hub deregister, etc.). Players see the final state during the grace
+// window so client overlays render before any reconnect attempt 404s.
+//
+// The send is non-blocking: if no one is reading from Shutdown (e.g.
+// synchronous tests that never started Room.Start), the timer signal is
+// silently dropped. Production rooms always have a Shutdown receiver.
+func (r *Room) checkMatchEndShutdown() {
+	if r.matchEndScheduled {
+		return
+	}
+	if r.Engine.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		return
+	}
+	r.matchEndScheduled = true
+	go func() {
+		time.Sleep(30 * time.Second)
+		select {
+		case r.Shutdown <- true:
+		default:
+		}
+	}()
+}
+
+// MatchEndScheduledForTest exposes the matchEndScheduled flag to tests.
+func (r *Room) MatchEndScheduledForTest() bool { return r.matchEndScheduled }
+
+// CheckMatchEndShutdownForTest exposes checkMatchEndShutdown to tests.
+func (r *Room) CheckMatchEndShutdownForTest() { r.checkMatchEndShutdown() }
 
 // SendStateToClient sends the serialized GameState Protobuf strictly to one single connected player (used for reconnects)
 func (r *Room) SendStateToClient(client *Client) {
