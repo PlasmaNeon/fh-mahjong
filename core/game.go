@@ -450,7 +450,7 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 			// No drawable tiles remain at all → ryuukyoku
 			g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 			g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-			g.State.PlayerReady = []bool{false, false, false, false}
+			g.finalizeRoundEnd()
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
@@ -534,7 +534,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	if g.State.WallCount == 0 {
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -563,7 +563,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 		if drawIndex < g.wallIndex {
 			g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 			g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-			g.State.PlayerReady = []bool{false, false, false, false}
+			g.finalizeRoundEnd()
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
@@ -671,7 +671,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		}
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -744,7 +744,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 				g.State.IsHaitei = false
 				g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 				g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-				g.State.PlayerReady = []bool{false, false, false, false}
+				g.finalizeRoundEnd()
 				for _, p := range g.State.Players {
 					p.ValidActions = nil
 				}
@@ -903,7 +903,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		}
 
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -1074,7 +1074,7 @@ func (g *Game) ResolveInterrupts() {
 		}
 
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -1083,6 +1083,16 @@ func (g *Game) ResolveInterrupts() {
 
 	// clear queue
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+}
+
+// finalizeRoundEnd is called at every hand-end to set up the next-round
+// transition. In classic mode it just arms PlayerReady so each player must
+// ack before the next hand starts. Chongci-specific behavior (dealer
+// succession, end-of-match detection) is wired into this helper in later
+// tasks; today it preserves the literal PlayerReady initialization that
+// every hand-end site used to perform inline.
+func (g *Game) finalizeRoundEnd() {
+	g.State.PlayerReady = []bool{false, false, false, false}
 }
 
 // handleReadyAction marks a player as ready for the next round.
