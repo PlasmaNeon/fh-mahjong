@@ -291,3 +291,96 @@ func TestNewGame_ChongciInitialization(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeMatchEndResult_Standings(t *testing.T) {
+	cases := []struct {
+		name      string
+		scores    [4]int32
+		startScore int32
+		wantRanks [4]uint32 // indexed by seat
+	}{
+		{
+			name:       "all distinct",
+			scores:     [4]int32{1500, 3000, -200, 1700},
+			startScore: 2000,
+			wantRanks:  [4]uint32{3, 1, 4, 2},
+		},
+		{
+			name:       "two-way tie for first",
+			scores:     [4]int32{3000, 3000, 1000, -1000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 3, 4},
+		},
+		{
+			name:       "four-way tie",
+			scores:     [4]int32{2000, 2000, 2000, 2000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 1, 1},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &rules.HometownRuleset{}
+			g := core.NewGame("t", r, core.MatchOptions{
+				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+				ChongciConfig: &pb.ChongciConfig{
+					StartingScore: c.startScore,
+					BustThreshold: 0,
+					MaxHands:      0,
+				},
+			})
+			for i, s := range c.scores {
+				g.State.Players[i].Score = s
+			}
+			result := g.ComputeMatchEndResultForTest("bust")
+			if result == nil || len(result.Standings) != 4 {
+				t.Fatalf("nil or wrong-length standings: %+v", result)
+			}
+			gotRanks := [4]uint32{}
+			for _, s := range result.Standings {
+				gotRanks[s.Seat] = s.Rank
+			}
+			if gotRanks != c.wantRanks {
+				t.Fatalf("ranks = %v, want %v", gotRanks, c.wantRanks)
+			}
+		})
+	}
+}
+
+func TestShouldEndChongciMatch(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+
+	if g.ShouldEndChongciMatchForTest() {
+		t.Fatal("unexpected end on healthy state")
+	}
+
+	g.State.Players[1].Score = 0
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected bust on score == 0 with threshold 0")
+	}
+
+	g.State.Players[1].Score = 1500
+	g.State.HandNum = 3
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected hand_cap on HandNum == MaxHands")
+	}
+}
+
+func TestCurrentDealerSeat(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
+	}
+	if got := g.CurrentDealerSeatForTest(); got != 2 {
+		t.Fatalf("CurrentDealerSeat = %d, want 2", got)
+	}
+}

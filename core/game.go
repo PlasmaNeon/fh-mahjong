@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -1112,6 +1113,73 @@ func (g *Game) finalizeRoundEnd() {
 	g.State.PlayerReady = []bool{false, false, false, false}
 }
 
+// currentDealerSeat returns the seat whose SeatWind == 1 (East). Falls
+// back to seat 0 if no East is set (defensive — shouldn't happen).
+func (g *Game) currentDealerSeat() uint32 {
+	for _, p := range g.State.Players {
+		if p.SeatWind == 1 {
+			return p.Seat
+		}
+	}
+	return 0
+}
+
+// shouldEndChongciMatch returns true if the match should terminate based
+// on the current scores and hand number. Only meaningful when
+// State.MatchMode == MATCH_MODE_CHONGCI and ChongciConfig is set.
+func (g *Game) shouldEndChongciMatch() bool {
+	cfg := g.State.ChongciConfig
+	if cfg == nil {
+		return false
+	}
+	for _, p := range g.State.Players {
+		if p.Score <= cfg.BustThreshold {
+			return true
+		}
+	}
+	if cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
+		return true
+	}
+	return false
+}
+
+// computeMatchEndResult builds a sorted, rank-annotated standings list
+// for the current scores. Tied players share the same rank; the rank of
+// the player after a tie is incremented by the size of the tie group
+// (e.g. two tied 1st → next player is 3rd).
+func (g *Game) computeMatchEndResult(reason string) *pb.MatchEndResult {
+	cfg := g.State.ChongciConfig
+	var startScore int32
+	if cfg != nil {
+		startScore = cfg.StartingScore
+	}
+
+	standings := make([]*pb.PlayerStanding, 4)
+	for i, p := range g.State.Players {
+		standings[i] = &pb.PlayerStanding{
+			Seat:       p.Seat,
+			FinalScore: p.Score,
+			NetChange:  p.Score - startScore,
+		}
+	}
+	sort.SliceStable(standings, func(i, j int) bool {
+		return standings[i].FinalScore > standings[j].FinalScore
+	})
+	for i := 0; i < 4; i++ {
+		if i == 0 || standings[i].FinalScore != standings[i-1].FinalScore {
+			standings[i].Rank = uint32(i + 1)
+		} else {
+			standings[i].Rank = standings[i-1].Rank
+		}
+	}
+
+	return &pb.MatchEndResult{
+		Reason:       reason,
+		FinalHandNum: g.State.HandNum,
+		Standings:    standings,
+	}
+}
+
 // handleReadyAction marks a player as ready for the next round.
 func (g *Game) handleReadyAction(seat uint32) error {
 	if int(seat) >= len(g.State.PlayerReady) {
@@ -1249,4 +1317,15 @@ func (g *Game) recordRoundEnd() {
 	}
 
 	g.Recorder.EndRound(paipuResult)
+}
+
+// CurrentDealerSeatForTest exposes currentDealerSeat to package-external tests.
+func (g *Game) CurrentDealerSeatForTest() uint32 { return g.currentDealerSeat() }
+
+// ShouldEndChongciMatchForTest exposes shouldEndChongciMatch to tests.
+func (g *Game) ShouldEndChongciMatchForTest() bool { return g.shouldEndChongciMatch() }
+
+// ComputeMatchEndResultForTest exposes computeMatchEndResult to tests.
+func (g *Game) ComputeMatchEndResultForTest(reason string) *pb.MatchEndResult {
+	return g.computeMatchEndResult(reason)
 }
