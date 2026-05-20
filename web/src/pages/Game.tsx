@@ -8,6 +8,7 @@ import { useGameStageLayout } from '../hooks/useGameStageLayout';
 import { getPrivateRoomToken } from './privateRoomSession';
 import { preloadAllTileSvgs } from '../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../table/TableScene';
+import MatchEndOverlay from './MatchEndOverlay';
 
 export default function Game() {
     const { matchId } = useParams();
@@ -366,6 +367,12 @@ export default function Game() {
 
     return (
         <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
+            {gameState?.phase === 5 /* PHASE_MATCH_END */ && (
+                <MatchEndOverlay
+                    state={gameState}
+                    seatNames={[null, null, null, null]}
+                />
+            )}
             {gameState?.matchMode === 2 && gameState.chongciConfig && (
                 <div className="mt-1 inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-amber-900/30 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">
                     <span>Chongci</span>

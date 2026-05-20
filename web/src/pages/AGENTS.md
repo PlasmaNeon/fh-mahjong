@@ -64,6 +64,8 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Calculator network handling validates response content type before parsing JSON and surfaces a clear backend-configuration error on Vercel when `VITE_API_BASE_URL` is missing
   - Result panel for total score / breakdown and a normalized backend debug summary
 
+- **MatchEndOverlay.tsx** — Chongci final-standings modal rendered when `gameState.phase === PHASE_MATCH_END`.
+
 - **calcHelpers.ts** — Calculator-only helpers:
   - Typed draft models for tiles and melds
   - Canonical tile notation parse/format helpers
