@@ -51,7 +51,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
 - **src/fh_mahjong_ai/scripts/run_pipeline.py** — CLI: orchestrate generate → train → evaluate in one command, writing `reports/bc_training.json` and `reports/pipeline_report.json`.
 - **README.md** — Python stack workflow notes, including the WSL/4090 policy-server flow, SSH tunnel setup, live Go integration check, and `AI_BOT_POLICY_URL` server wiring.
-- **checkpoints/best-checkpoints.json** — Tracked metadata for the current reward-trained best checkpoint and BC fallback, including remote checkpoint/report paths and duplicate-evaluation gates. Do not commit checkpoint binaries.
+- **checkpoints/best-checkpoints.json** — Tracked metadata for the current reward-trained best checkpoint and BC fallback, including remote checkpoint/report paths and duplicate-evaluation gates. The current promoted reward checkpoint is the AWBC epoch 6 run from `/root/fh-mahjong-runs/reward-next-ev-20260519-003157`, selected by expected payout over BC20 across two independent 1000-seed duplicate windows. Do not commit checkpoint binaries.
 - **tests/test_bridge.py** — `unittest` coverage for the mock bridge reset/step contract and action-mask validation behavior.
 - **tests/test_checkpoint_manifest.py** — Tests for best-checkpoint manifest loading and path resolution.
 - **tests/test_data.py** — Tests for episode grouping and terminal-reward backfill.
