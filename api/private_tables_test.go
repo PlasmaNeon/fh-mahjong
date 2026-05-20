@@ -310,3 +310,82 @@ func TestSetMatchMode_ValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlePrivateTableMode_HostSuccess(t *testing.T) {
+	s := newPrivateTableTestServer()
+	hostToken := privateTableAuthToken(t, 100, "Host")
+
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-1/join", hostToken, nil)
+
+	body := map[string]any{
+		"mode": "chongci",
+		"chongci_config": map[string]any{
+			"starting_score": 2000,
+			"bust_threshold": 0,
+			"max_hands":      50,
+		},
+	}
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-1/mode", hostToken, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	tbl := s.Matchmaker.GetConfiguringPrivateTable("table-mode-1")
+	if tbl.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", tbl.MatchMode)
+	}
+	if tbl.ChongciConfig.StartingScore != 2000 {
+		t.Fatalf("StartingScore = %d", tbl.ChongciConfig.StartingScore)
+	}
+}
+
+func TestHandlePrivateTableMode_NonHostForbidden(t *testing.T) {
+	s := newPrivateTableTestServer()
+	hostToken := privateTableAuthToken(t, 100, "Host")
+	otherToken := privateTableAuthToken(t, 200, "Other")
+
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/join", otherToken, nil)
+
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/mode", otherToken, map[string]any{"mode": "classic"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestHandlePrivateTableMode_InvalidConfig(t *testing.T) {
+	s := newPrivateTableTestServer()
+	hostToken := privateTableAuthToken(t, 100, "Host")
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-3/join", hostToken, nil)
+
+	body := map[string]any{
+		"mode":           "chongci",
+		"chongci_config": map[string]any{"starting_score": 50, "bust_threshold": 0, "max_hands": 50},
+	}
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-3/mode", hostToken, body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandlePrivateTableMode_AfterStartLocked(t *testing.T) {
+	s := newPrivateTableTestServer()
+	hostToken := privateTableAuthToken(t, 100, "Host")
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/join", hostToken, nil)
+	for seat := 1; seat <= 3; seat++ {
+		doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/seat", hostToken, map[string]any{
+			"seat": seat, "kind": "bot", "difficulty": 1,
+		})
+	}
+	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/start", hostToken, map[string]any{})
+
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/mode", hostToken, map[string]any{
+		"mode":           "chongci",
+		"chongci_config": map[string]any{"starting_score": 2000, "bust_threshold": 0, "max_hands": 50},
+	})
+	// Accept both 409 (table still configuring with state=started) and 404 (table already
+	// removed by async removeConfiguringTable goroutine). Both communicate "mode change rejected".
+	if w.Code != http.StatusConflict && w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 409 or 404", w.Code)
+	}
+}

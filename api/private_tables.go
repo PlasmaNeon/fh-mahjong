@@ -320,6 +320,66 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
 }
 
+func (s *Server) handlePrivateTableMode(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	tableID := c.Param("tableId")
+
+	if s.Matchmaker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		return
+	}
+
+	var req struct {
+		Mode          string `json:"mode"`
+		ChongciConfig *struct {
+			StartingScore int32  `json:"starting_score"`
+			BustThreshold int32  `json:"bust_threshold"`
+			MaxHands      uint32 `json:"max_hands"`
+		} `json:"chongci_config,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var cfg *pb.ChongciConfig
+	if req.ChongciConfig != nil {
+		cfg = &pb.ChongciConfig{
+			StartingScore: req.ChongciConfig.StartingScore,
+			BustThreshold: req.ChongciConfig.BustThreshold,
+			MaxHands:      req.ChongciConfig.MaxHands,
+		}
+	}
+
+	table, err := s.Matchmaker.MutatePrivateTable(tableID, func(t *PrivateTable) error {
+		if t.HostUserID != userID.(uint) {
+			return errHostOnly
+		}
+		if t.State != "configuring" {
+			return ErrModeLocked
+		}
+		return t.setMatchMode(req.Mode, cfg)
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, errHostOnly):
+			status = http.StatusForbidden
+		case errors.Is(err, ErrModeLocked):
+			status = http.StatusConflict
+		case errors.Is(err, ErrChongciConfigInvalid):
+			status = http.StatusBadRequest
+		case errors.Is(err, ErrPrivateTableNotFound):
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	s.broadcastPrivateTable(table)
+	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
 func (s *Server) handlePrivateTableStart(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	tableID := c.Param("tableId")
