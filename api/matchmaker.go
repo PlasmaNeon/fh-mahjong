@@ -248,6 +248,9 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	if m.BotPolicyFactory != nil {
 		roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
 	}
+	if matchOpts, ok := defaultMatchOptionsFor(ruleset); ok {
+		roomOptions = append(roomOptions, WithMatchOptions(matchOpts))
+	}
 	room := NewRoom(matchID, m.Hub, m.DB, roomOptions...)
 	room.PaipuStore = m.PaipuStore
 	room.PrivateTableID = tableID
@@ -462,6 +465,25 @@ func (m *Matchmaker) RoomForTableForTest(tableID string) *Room {
 		return nil
 	}
 	return ap.Room
+}
+
+// defaultMatchOptionsFor returns the canonical MatchOptions for a public
+// queue ruleset key. Returns false if the key has no match-mode mapping
+// (i.e. classic queues fall through to MatchOptions{}).
+func defaultMatchOptionsFor(ruleset string) (core.MatchOptions, bool) {
+	switch ruleset {
+	case "chongci-fh":
+		return core.MatchOptions{
+			Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000,
+				BustThreshold: 0,
+				MaxHands:      50,
+			},
+		}, true
+	default:
+		return core.MatchOptions{}, false
+	}
 }
 
 // mapValues returns the values of a uint32→uint map as a slice. Used to

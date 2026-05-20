@@ -129,3 +129,41 @@ type stubPolicy struct{}
 func (stubPolicy) ChooseAction(_ *pb.GameState, _ uint32) *pb.PlayerAction {
 	return nil
 }
+
+func TestCreateMatch_ChongciRulesetThreadsMatchOptions(t *testing.T) {
+	hub := NewHub()
+	hub.BindRoom = make(chan RoomBind, 1)
+	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "chongci-fh", "")
+
+	bind := <-hub.BindRoom
+	if bind.Room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", bind.Room.Engine.State.MatchMode)
+	}
+	for i, p := range bind.Room.Engine.State.Players {
+		if p.Score != 2000 {
+			t.Fatalf("seat %d Score = %d, want 2000", i, p.Score)
+		}
+	}
+	if bind.Room.Engine.State.ChongciConfig == nil ||
+		bind.Room.Engine.State.ChongciConfig.MaxHands != 50 {
+		t.Fatalf("ChongciConfig = %+v, want MaxHands=50", bind.Room.Engine.State.ChongciConfig)
+	}
+}
+
+func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
+	hub := NewHub()
+	hub.BindRoom = make(chan RoomBind, 1)
+	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "hometown", "")
+
+	bind := <-hub.BindRoom
+	if bind.Room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("MatchMode = %v, want CLASSIC", bind.Room.Engine.State.MatchMode)
+	}
+	if bind.Room.Engine.State.Players[0].Score != 25000 {
+		t.Fatalf("classic seat Score = %d, want 25000", bind.Room.Engine.State.Players[0].Score)
+	}
+}
