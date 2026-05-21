@@ -54,6 +54,12 @@ type Room struct {
 	// Populated by WithMatchOptions; defaults to MatchOptions{} (classic).
 	matchOptions core.MatchOptions
 
+	// botActionDelay is how long the room waits before each bot move in
+	// PHASE_PLAYER_TURN and PHASE_WAIT_DISCARDS so the game has a human
+	// pace. Zero means no delay (used by tests). ACTION_READY between
+	// hands is unaffected.
+	botActionDelay time.Duration
+
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
 	ActionQueue      chan ClientAction
@@ -84,6 +90,17 @@ func WithBotPolicy(policy bot.Policy) RoomOption {
 func WithMatchOptions(opts core.MatchOptions) RoomOption {
 	return func(r *Room) {
 		r.matchOptions = opts
+	}
+}
+
+// WithBotActionDelay sets the per-action think-time pause for automated
+// seats. Applied before discard, chii, pon, kan, ron, and tsumo. Zero
+// (the default) disables the pause.
+func WithBotActionDelay(d time.Duration) RoomOption {
+	return func(r *Room) {
+		if d > 0 {
+			r.botActionDelay = d
+		}
 	}
 }
 
@@ -319,6 +336,8 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 				return payloads
 			}
 
+			r.sleepBotThink(action.Type)
+
 			if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
 				return payloads
@@ -339,6 +358,8 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 				if action == nil {
 					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
 				}
+
+				r.sleepBotThink(action.Type)
 
 				if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 					log.Printf("bot interrupt failed for seat %d in room %s: %v", seat, r.ID, err)
@@ -404,6 +425,21 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 func (r *Room) isAutomatedSeat(seat uint32) bool {
 	_, connected := r.Seats[seat]
 	return !connected
+}
+
+// sleepBotThink pauses for r.botActionDelay before a bot action so the
+// game has a human pace. Skipped when the delay is 0 (tests / RL env) or
+// when the action is a between-hands READY ack (which has no animation
+// to wait for; the round-end overlay already has its own client-side
+// duration).
+func (r *Room) sleepBotThink(actionType pb.ActionType) {
+	if r.botActionDelay <= 0 {
+		return
+	}
+	if actionType == pb.ActionType_ACTION_READY {
+		return
+	}
+	time.Sleep(r.botActionDelay)
 }
 
 // policyForSeat returns the bot policy for an automated seat. The lookup

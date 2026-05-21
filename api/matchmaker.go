@@ -18,6 +18,12 @@ import (
 
 var ctx = context.Background()
 
+// defaultBotActionDelay paces automated seats during PHASE_PLAYER_TURN and
+// PHASE_WAIT_DISCARDS so the game has a human rhythm (discard, chii, pon,
+// kan, ron, tsumo). Applied by the matchmaker when constructing rooms for
+// real matches; tests construct Room directly and inherit zero delay.
+const defaultBotActionDelay = 800 * time.Millisecond
+
 // Private-table lifecycle sentinels. Used by handlers (via errors.Is) to map
 // internal errors to HTTP status codes without string-matching.
 var (
@@ -244,7 +250,7 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	// Note: Skipped explicit MatchPlayer insertion here for brevity; the Room engine handles scores.
 
 	// 3. Create the Room Goroutine explicitly
-	roomOptions := []RoomOption{}
+	roomOptions := []RoomOption{WithBotActionDelay(defaultBotActionDelay)}
 	if m.BotPolicyFactory != nil {
 		roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
 	}
@@ -405,7 +411,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			log.Printf("Database disabled, skipping match persistence for %s", matchID)
 		}
 
-		roomOptions := []RoomOption{}
+		roomOptions := []RoomOption{WithBotActionDelay(defaultBotActionDelay)}
 		if m.BotPolicyFactory != nil {
 			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
 		}
