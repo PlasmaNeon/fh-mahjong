@@ -8,9 +8,26 @@ import (
 	"github.com/plasma/fh-mahjong/rules"
 )
 
+func TestNewGame_ClassicDefault(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-classic", r, core.MatchOptions{})
+
+	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("default MatchMode = %v, want CLASSIC", got)
+	}
+	if g.State.ChongciConfig != nil {
+		t.Fatalf("classic-mode ChongciConfig should be nil, got %+v", g.State.ChongciConfig)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 25000 {
+			t.Fatalf("classic seat %d Score = %d, want 25000", i, p.Score)
+		}
+	}
+}
+
 func TestGameInitialization(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 
 	if g.State.Phase != pb.GamePhase_PHASE_INIT {
 		t.Errorf("Expected PHASE_INIT, got %v", g.State.Phase)
@@ -22,7 +39,7 @@ func TestGameInitialization(t *testing.T) {
 
 func TestGameStartAndDeal(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 
 	err := g.Start()
 	if err != nil {
@@ -48,7 +65,7 @@ func TestGameStartAndDeal(t *testing.T) {
 
 func TestDiscardAction(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -82,7 +99,7 @@ func TestDiscardAction(t *testing.T) {
 
 func TestDirectedMelds(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -136,7 +153,7 @@ func TestDirectedMelds(t *testing.T) {
 
 func TestDeadWallKanDraw(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r)
+	g := core.NewGame("test-uuid", r, core.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -205,5 +222,292 @@ func TestDeadWallKanDraw(t *testing.T) {
 	}
 	if g.State.Phase != pb.GamePhase_PHASE_PLAYER_TURN {
 		t.Errorf("Expected phase PHASE_PLAYER_TURN after Kan, got %v", g.State.Phase)
+	}
+}
+
+func TestSetNextDealer_ConsumedOnce(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-override", r, core.MatchOptions{})
+	if err := g.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Confirm there is exactly one East-wind seat after Start.
+	eastCount := 0
+	for _, p := range g.State.Players {
+		if p.SeatWind == 1 {
+			eastCount++
+		}
+	}
+	if eastCount != 1 {
+		t.Fatalf("after Start, expected exactly one East seat, got %d", eastCount)
+	}
+
+	// Override the next dealer and re-deal.
+	g.SetNextDealer(2)
+	g.DealForNextHand()
+
+	if g.State.Players[2].SeatWind != 1 {
+		t.Fatalf("after SetNextDealer(2), seat 2 SeatWind = %d, want 1 (East)", g.State.Players[2].SeatWind)
+	}
+
+	// Override is single-shot — running 20 more deals should produce at least one non-2 dealer.
+	sawOther := false
+	for i := 0; i < 20 && !sawOther; i++ {
+		g.DealForNextHand()
+		if g.State.Players[2].SeatWind != 1 {
+			sawOther = true
+		}
+	}
+	if !sawOther {
+		t.Fatalf("override leaked: seat 2 was dealer for 20 consecutive deals")
+	}
+}
+
+func TestNewGame_ChongciInitialization(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	cfg := &pb.ChongciConfig{
+		StartingScore: 2000,
+		BustThreshold: 0,
+		MaxHands:      50,
+	}
+	g := core.NewGame("test-chongci", r, core.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cfg,
+	})
+
+	if g.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", g.State.MatchMode)
+	}
+	if g.State.ChongciConfig == nil {
+		t.Fatalf("ChongciConfig is nil")
+	}
+	if got := g.State.ChongciConfig.StartingScore; got != 2000 {
+		t.Fatalf("ChongciConfig.StartingScore = %d, want 2000", got)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 2000 {
+			t.Fatalf("chongci seat %d Score = %d, want 2000", i, p.Score)
+		}
+	}
+}
+
+func TestComputeMatchEndResult_Standings(t *testing.T) {
+	cases := []struct {
+		name      string
+		scores    [4]int32
+		startScore int32
+		wantRanks [4]uint32 // indexed by seat
+	}{
+		{
+			name:       "all distinct",
+			scores:     [4]int32{1500, 3000, -200, 1700},
+			startScore: 2000,
+			wantRanks:  [4]uint32{3, 1, 4, 2},
+		},
+		{
+			name:       "two-way tie for first",
+			scores:     [4]int32{3000, 3000, 1000, -1000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 3, 4},
+		},
+		{
+			name:       "four-way tie",
+			scores:     [4]int32{2000, 2000, 2000, 2000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 1, 1},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &rules.HometownRuleset{}
+			g := core.NewGame("t", r, core.MatchOptions{
+				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+				ChongciConfig: &pb.ChongciConfig{
+					StartingScore: c.startScore,
+					BustThreshold: 0,
+					MaxHands:      0,
+				},
+			})
+			for i, s := range c.scores {
+				g.State.Players[i].Score = s
+			}
+			result := g.ComputeMatchEndResultForTest("bust")
+			if result == nil || len(result.Standings) != 4 {
+				t.Fatalf("nil or wrong-length standings: %+v", result)
+			}
+			gotRanks := [4]uint32{}
+			for _, s := range result.Standings {
+				gotRanks[s.Seat] = s.Rank
+			}
+			if gotRanks != c.wantRanks {
+				t.Fatalf("ranks = %v, want %v", gotRanks, c.wantRanks)
+			}
+		})
+	}
+}
+
+func TestShouldEndChongciMatch(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+
+	if g.ShouldEndChongciMatchForTest() {
+		t.Fatal("unexpected end on healthy state")
+	}
+
+	g.State.Players[1].Score = 0
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected bust on score == 0 with threshold 0")
+	}
+
+	g.State.Players[1].Score = 1500
+	g.State.HandNum = 3
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected hand_cap on HandNum == MaxHands")
+	}
+}
+
+func TestCurrentDealerSeat(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
+	}
+	if got := g.CurrentDealerSeatForTest(); got != 2 {
+		t.Fatalf("CurrentDealerSeat = %d, want 2", got)
+	}
+}
+
+func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.Players[3].Score = -300
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 1, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult == nil || g.State.MatchEndResult.Reason != "bust" {
+		t.Fatalf("MatchEndResult = %+v, want reason=bust", g.State.MatchEndResult)
+	}
+}
+
+func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+	g.State.HandNum = 3
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult.Reason != "hand_cap" {
+		t.Fatalf("Reason = %q, want hand_cap", g.State.MatchEndResult.Reason)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 2 {
+		t.Fatalf("nextDealerOverride = %v, want pointer-to-2", got)
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = PHASE_MATCH_END, expected continue")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 3) % 4) + 1 // East at seat 1
+	}
+	g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 1 {
+		t.Fatalf("draw renchan: nextDealerOverride = %v, want pointer-to-1", got)
+	}
+}
+
+func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.NextDealerOverrideForTest() != nil {
+		t.Fatal("classic mode must not set next-dealer override")
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatal("classic mode must not transition to PHASE_MATCH_END")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("classic PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}
+
+func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("t", r, core.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000, BustThreshold: 0, MaxHands: 50,
+		},
+	})
+	g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	err := g.HandleReadyActionForTest(0)
+	if err == nil {
+		t.Fatal("expected error on ready after match end")
 	}
 }

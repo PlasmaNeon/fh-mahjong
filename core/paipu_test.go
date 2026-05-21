@@ -92,7 +92,7 @@ func TestPaipuRecorderBasicFlow(t *testing.T) {
 
 func TestPaipuRecorderIntegration(t *testing.T) {
 	ruleset := &rules.HometownRuleset{}
-	g := core.NewGame("test-paipu", ruleset)
+	g := core.NewGame("test-paipu", ruleset, core.MatchOptions{})
 	g.Recorder = core.NewPaipuRecorder("test-paipu", "hometown")
 
 	err := g.Start()

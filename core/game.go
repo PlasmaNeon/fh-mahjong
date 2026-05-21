@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -30,11 +31,26 @@ type Game struct {
 	// We wait a few seconds before resolving priority.
 	interruptQueue   map[uint32]*pb.PlayerAction
 	interruptTimer   *time.Timer
-	wallSeedOverride *[MT19937SeedSize]uint32
+	wallSeedOverride   *[MT19937SeedSize]uint32
+	nextDealerOverride *uint32
+}
+
+// MatchOptions configures a freshly constructed Game. The zero value
+// yields the project's classic match (endless hands, random dealer per
+// hand, players start at 25000). When Mode == MATCH_MODE_CHONGCI,
+// ChongciConfig must be non-nil and is copied onto State.
+type MatchOptions struct {
+	Mode          pb.MatchMode
+	ChongciConfig *pb.ChongciConfig
 }
 
 // NewGame initializes a brand new game using the provided Ruleset plugin.
-func NewGame(matchID string, rules RuleEngine) *Game {
+func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
+	mode := opts.Mode
+	if mode == pb.MatchMode_MATCH_MODE_UNSPECIFIED {
+		mode = pb.MatchMode_MATCH_MODE_CLASSIC
+	}
+
 	g := &Game{
 		Rules: rules,
 		State: &pb.GameState{
@@ -45,15 +61,34 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 			HandNum:       1, // East 1
 			Players:       make([]*pb.PlayerState, 4),
 			ActiveDiscard: nil,
+			MatchMode:     mode,
 		},
 		interruptQueue: make(map[uint32]*pb.PlayerAction),
 	}
 	g.haiteiDrawIndex = -1
 
+	startingScore := int32(25000)
+	if mode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		if opts.ChongciConfig == nil {
+			// Defensive: caller passed CHONGCI without a config. Fall back to
+			// the default public-queue config so the engine never produces an
+			// inconsistent state.
+			opts.ChongciConfig = &pb.ChongciConfig{
+				StartingScore: 2000,
+				BustThreshold: 0,
+				MaxHands:      50,
+			}
+		}
+		startingScore = opts.ChongciConfig.StartingScore
+		// Store a copy so future engine mutations cannot leak back to the caller.
+		cfgCopy := *opts.ChongciConfig
+		g.State.ChongciConfig = &cfgCopy
+	}
+
 	for i := 0; i < 4; i++ {
 		g.State.Players[i] = &pb.PlayerState{
 			Seat:        uint32(i),
-			Score:       25000, // Standard starting score, could be parameterized by rules
+			Score:       startingScore,
 			ClosedHand:  make([]*pb.Tile, 0),
 			HandSize:    0,
 			DrawnTileId: nil,
@@ -71,6 +106,16 @@ func NewGame(matchID string, rules RuleEngine) *Game {
 func (g *Game) SetWallSeed(seed [MT19937SeedSize]uint32) {
 	copySeed := seed
 	g.wallSeedOverride = &copySeed
+}
+
+// SetNextDealer queues a deterministic dealer for the next deal. The
+// override is consumed once; subsequent deals re-randomize unless another
+// override is set.
+func (g *Game) SetNextDealer(seat uint32) {
+	if seat > 3 {
+		return
+	}
+	g.nextDealerOverride = &seat
 }
 
 // InterruptQueued reports whether the seat has already submitted an interrupt
@@ -132,7 +177,13 @@ func (g *Game) dealTiles() uint32 {
 	mt := MTFromSeed(seed)
 
 	// Pick a random dealer (0-3) and assign seat winds accordingly
-	dealer := mt.GenU32() % 4
+	var dealer uint32
+	if g.nextDealerOverride != nil {
+		dealer = *g.nextDealerOverride
+		g.nextDealerOverride = nil
+	} else {
+		dealer = mt.GenU32() % 4
+	}
 	for i := 0; i < 4; i++ {
 		// Wind offset: dealer=East(1), next=South(2), etc.
 		g.State.Players[i].SeatWind = uint32(((i - int(dealer) + 4) % 4) + 1)
@@ -417,7 +468,7 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 			// No drawable tiles remain at all → ryuukyoku
 			g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 			g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-			g.State.PlayerReady = []bool{false, false, false, false}
+			g.finalizeRoundEnd()
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
@@ -501,7 +552,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	if g.State.WallCount == 0 {
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -530,7 +581,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 		if drawIndex < g.wallIndex {
 			g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 			g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-			g.State.PlayerReady = []bool{false, false, false, false}
+			g.finalizeRoundEnd()
 			for _, p := range g.State.Players {
 				p.ValidActions = nil
 			}
@@ -638,7 +689,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		}
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -711,7 +762,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 				g.State.IsHaitei = false
 				g.State.Phase = pb.GamePhase_PHASE_ROUND_END
 				g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-				g.State.PlayerReady = []bool{false, false, false, false}
+				g.finalizeRoundEnd()
 				for _, p := range g.State.Players {
 					p.ValidActions = nil
 				}
@@ -877,7 +928,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		}
 
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -1048,7 +1099,7 @@ func (g *Game) ResolveInterrupts() {
 		}
 
 		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.State.PlayerReady = []bool{false, false, false, false}
+		g.finalizeRoundEnd()
 		for _, p := range g.State.Players {
 			p.ValidActions = nil
 		}
@@ -1059,8 +1110,116 @@ func (g *Game) ResolveInterrupts() {
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
 }
 
+// finalizeRoundEnd is called at every hand-end to set up the next-round
+// transition. In classic mode it just arms PlayerReady so each player must
+// ack before the next hand starts. Chongci-specific behavior (dealer
+// succession, end-of-match detection) is wired into this helper in later
+// tasks; today it preserves the literal PlayerReady initialization that
+// every hand-end site used to perform inline.
+func (g *Game) finalizeRoundEnd() {
+	if g.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		if g.State.RoundResult != nil {
+			if g.State.RoundResult.IsDraw {
+				g.SetNextDealer(g.currentDealerSeat()) // renchan, no honba
+			} else {
+				g.SetNextDealer(g.State.RoundResult.WinnerSeat)
+			}
+		}
+		if g.shouldEndChongciMatch() {
+			reason := "bust"
+			cfg := g.State.ChongciConfig
+			if cfg != nil && cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
+				busted := false
+				for _, p := range g.State.Players {
+					if p.Score <= cfg.BustThreshold {
+						busted = true
+						break
+					}
+				}
+				if !busted {
+					reason = "hand_cap"
+				}
+			}
+			g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+			g.State.MatchEndResult = g.computeMatchEndResult(reason)
+			return
+		}
+	}
+	g.State.PlayerReady = []bool{false, false, false, false}
+}
+
+// currentDealerSeat returns the seat whose SeatWind == 1 (East). Falls
+// back to seat 0 if no East is set (defensive — shouldn't happen).
+func (g *Game) currentDealerSeat() uint32 {
+	for _, p := range g.State.Players {
+		if p.SeatWind == 1 {
+			return p.Seat
+		}
+	}
+	return 0
+}
+
+// shouldEndChongciMatch returns true if the match should terminate based
+// on the current scores and hand number. Only meaningful when
+// State.MatchMode == MATCH_MODE_CHONGCI and ChongciConfig is set.
+func (g *Game) shouldEndChongciMatch() bool {
+	cfg := g.State.ChongciConfig
+	if cfg == nil {
+		return false
+	}
+	for _, p := range g.State.Players {
+		if p.Score <= cfg.BustThreshold {
+			return true
+		}
+	}
+	if cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
+		return true
+	}
+	return false
+}
+
+// computeMatchEndResult builds a sorted, rank-annotated standings list
+// for the current scores. Tied players share the same rank; the rank of
+// the player after a tie is incremented by the size of the tie group
+// (e.g. two tied 1st → next player is 3rd).
+func (g *Game) computeMatchEndResult(reason string) *pb.MatchEndResult {
+	cfg := g.State.ChongciConfig
+	var startScore int32
+	if cfg != nil {
+		startScore = cfg.StartingScore
+	}
+
+	standings := make([]*pb.PlayerStanding, 4)
+	for i, p := range g.State.Players {
+		standings[i] = &pb.PlayerStanding{
+			Seat:       p.Seat,
+			FinalScore: p.Score,
+			NetChange:  p.Score - startScore,
+		}
+	}
+	sort.SliceStable(standings, func(i, j int) bool {
+		return standings[i].FinalScore > standings[j].FinalScore
+	})
+	for i := 0; i < 4; i++ {
+		if i == 0 || standings[i].FinalScore != standings[i-1].FinalScore {
+			standings[i].Rank = uint32(i + 1)
+		} else {
+			standings[i].Rank = standings[i-1].Rank
+		}
+	}
+
+	return &pb.MatchEndResult{
+		Reason:       reason,
+		FinalHandNum: g.State.HandNum,
+		Standings:    standings,
+	}
+}
+
 // handleReadyAction marks a player as ready for the next round.
 func (g *Game) handleReadyAction(seat uint32) error {
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		return fmt.Errorf("cannot ready: match has ended")
+	}
 	if int(seat) >= len(g.State.PlayerReady) {
 		return fmt.Errorf("invalid seat %d for ready action", seat)
 	}
@@ -1120,6 +1279,14 @@ func (g *Game) startNextRound() {
 	// Auto-reveal if the dealer's drawn tile is a flower
 	g.revealInitialFlowers(dealer)
 	g.State.Players[dealer].ValidActions = g.Rules.GetValidActions(g.State, dealer)
+}
+
+// DealForNextHand runs the same re-deal pipeline as startNextRound,
+// resetting per-player hand state and dealing. Intended for tests that
+// need to exercise dealer-override behavior in isolation; production
+// callers should use the normal round-end → ready flow.
+func (g *Game) DealForNextHand() {
+	g.startNextRound()
 }
 
 // recordRoundEnd captures the round result into the paipu recorder.
@@ -1189,3 +1356,24 @@ func (g *Game) recordRoundEnd() {
 
 	g.Recorder.EndRound(paipuResult)
 }
+
+// CurrentDealerSeatForTest exposes currentDealerSeat to package-external tests.
+func (g *Game) CurrentDealerSeatForTest() uint32 { return g.currentDealerSeat() }
+
+// ShouldEndChongciMatchForTest exposes shouldEndChongciMatch to tests.
+func (g *Game) ShouldEndChongciMatchForTest() bool { return g.shouldEndChongciMatch() }
+
+// ComputeMatchEndResultForTest exposes computeMatchEndResult to tests.
+func (g *Game) ComputeMatchEndResultForTest(reason string) *pb.MatchEndResult {
+	return g.computeMatchEndResult(reason)
+}
+
+// FinalizeRoundEndForTest exposes finalizeRoundEnd to tests.
+func (g *Game) FinalizeRoundEndForTest() { g.finalizeRoundEnd() }
+
+// NextDealerOverrideForTest exposes the override pointer to tests.
+// Returns nil if no override is currently queued.
+func (g *Game) NextDealerOverrideForTest() *uint32 { return g.nextDealerOverride }
+
+// HandleReadyActionForTest exposes handleReadyAction to tests.
+func (g *Game) HandleReadyActionForTest(seat uint32) error { return g.handleReadyAction(seat) }

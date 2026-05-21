@@ -367,12 +367,44 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 	}
 
 	// Fenghua Minimum Win Points Enforcement ---
-	// Ron requires 4 total points minimum. Tsumo has no minimum.
-	if !isTsumo && totalPoints < 4 {
-		return totalPoints, entries, false
+	// Ron requires 4 *qualifying* points. Reward bonuses (Four Flowers, Own
+	// Flower, kan-completion bonuses) are awarded but do NOT count toward
+	// the minimum — they describe lucky tile collection, not the playing
+	// hand. The minimum must be reached by base + structural patterns.
+	// Tsumo has no minimum.
+	if !isTsumo {
+		qualifying := int32(0)
+		for _, e := range entries {
+			if isRewardPattern(e.PatternName) {
+				continue
+			}
+			qualifying += e.Points
+		}
+		if qualifying < 4 {
+			return totalPoints, entries, false
+		}
 	}
 
 	return totalPoints, entries, true
+}
+
+// isRewardPattern reports whether a scoring entry is a "reward" bonus
+// (flower collection, kan completion) that is awarded but does not count
+// toward the 4-point Ron minimum.
+func isRewardPattern(name string) bool {
+	switch name {
+	case "Four Flowers (四花)",
+		"Own Flower (花)",
+		"Budding Direct Kong (直杠不开花)",
+		"Blooming Direct Kong (直杠开花)",
+		"Budding Closed Kong (暗杠不开花)",
+		"Blooming Closed Kong (暗杠开花)",
+		"Budding Risky Kong (风险杠不开花)",
+		"Blooming Risky Kong (风险杠开花)",
+		"Blooming Flower Kong (花杠杠开)":
+		return true
+	}
+	return false
 }
 
 // CalculatePayouts computes per-player payment amounts based on Fenghua rules.
@@ -626,12 +658,20 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		Type: pb.ActionType_ACTION_DISCARD,
 	})
 
-	// Check if the 14-tile hand is a winning hand (Tsumo)
-	_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
-	if canWin {
-		actions = append(actions, &pb.PlayerAction{
-			Type: pb.ActionType_ACTION_TSUMO,
-		})
+	// Tsumo is only legal if the player has actually drawn a tile this turn
+	// (DrawnTileId set by wall draw / kan replacement / haitei accept). After
+	// a Pon or Chii steal the player has not drawn, so the hand-completing tile
+	// they took came from another seat's discard — that's a Ron, not a Tsumo,
+	// and would have had to be declared at the interrupt window. Allowing
+	// Tsumo here would let a player retroactively turn the discarded tile into
+	// a self-draw and bypass the Ron's 4-point minimum (rules.md).
+	if player.DrawnTileId != nil {
+		_, _, canWin := r.EvaluateHand(player.ClosedHand, player.OpenMelds, nil, state, playerSeat, true)
+		if canWin {
+			actions = append(actions, &pb.PlayerAction{
+				Type: pb.ActionType_ACTION_TSUMO,
+			})
+		}
 	}
 
 	// Check for Concealed Kongs (4 of a kind in hand).

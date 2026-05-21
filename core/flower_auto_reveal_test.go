@@ -72,7 +72,7 @@ func (r *flowerAutoRevealRules) ResolveInterruptPriority(actions map[uint32]*pb.
 }
 
 func TestExecuteSystemDraw_AutoRevealsAllNonWildFlowers(t *testing.T) {
-	g := NewGame("test-auto-flower", &flowerAutoRevealRules{})
+	g := NewGame("test-auto-flower", &flowerAutoRevealRules{}, MatchOptions{})
 	seat := uint32(0)
 
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
@@ -141,7 +141,7 @@ func TestExecuteSystemDraw_AutoRevealsAllNonWildFlowers(t *testing.T) {
 }
 
 func TestExecuteSystemDraw_DoesNotAutoRevealWildFlower(t *testing.T) {
-	g := NewGame("test-wild-flower", &flowerAutoRevealRules{})
+	g := NewGame("test-wild-flower", &flowerAutoRevealRules{}, MatchOptions{})
 	seat := uint32(0)
 
 	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
@@ -198,7 +198,7 @@ func TestExecuteSystemDraw_DoesNotAutoRevealWildFlower(t *testing.T) {
 }
 
 func TestResolveInterrupts_AutoRevealsClaimersNonWildFlowers(t *testing.T) {
-	g := NewGame("test-claim-auto-flower", &flowerAutoRevealRules{})
+	g := NewGame("test-claim-auto-flower", &flowerAutoRevealRules{}, MatchOptions{})
 
 	discarderSeat := uint32(0)
 	claimerSeat := uint32(1)

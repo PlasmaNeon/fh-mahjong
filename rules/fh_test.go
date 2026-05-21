@@ -1243,3 +1243,212 @@ func TestHometownRuleset_UncompletedEightFlowers(t *testing.T) {
 		}
 	})
 }
+
+// --- Ron 4-point minimum excludes reward bonuses ---
+// Regression: Four Flowers (+150) and kan-completion bonuses (50-200) are
+// awarded but must NOT satisfy the 4-point Ron minimum. The minimum has
+// to come from base + structural patterns (Common Win, wild bonuses,
+// pungs, suits, etc.).
+func TestHometownRuleset_RonMinimum_RewardBonusesExcluded(t *testing.T) {
+	r := &rules.HometownRuleset{}
+
+	// Common-win hand: 1m2m3m, 4p5p6p, 7m8m9m, 1m2m3m + pair 3z. Wait on 3z.
+	// Patterns when winning: Base(1) + NoWild(1) + Common(1) + SingleWait(1) = 4
+	// (exactly the Ron minimum). We'll test variants with sub-minimum
+	// structural sums to verify rewards don't push them over.
+	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 3}
+
+	// A weaker hand: structural patterns sum to 2 (Base + NoWild), no Common
+	// (e.g. break the structure so EvaluateHand doesn't grant Common Win).
+	// Simpler: construct a hand where structural sum is exactly 2 and the
+	// only thing that could push over is Four Flowers.
+	//
+	// We use seven-pairs structure with NO wild and NO seven-pairs-bonus
+	// patterns... actually simpler: drive the test through state setup.
+	//
+	// Construct a junk hand that wins via 8-flower path stripped down to
+	// Four-Flowers reward only: use a normal hand that scores 2 + flowers.
+
+	// Approach: use the Common Win hand structure but on a wait that ISN'T
+	// a single-wait/pair-wait — this strips off the Wait Pattern Bonus (+1).
+	// Hand: 1m2m3m, 4p5p6p, 7m8m9m, 234m + pair(7z). Winning on a "double
+	// wait" — sou tile completing as 3m4m wait for 2m/5m. This is harder to
+	// construct deterministically; instead, drive via state with FlowerMelds
+	// pre-populated to claim Four Flowers.
+
+	// Easier path: take an already-2-point Ron-blocked common hand and add
+	// 4 flowers via state. Old behavior would let it Ron (2 + 150 = 152);
+	// new behavior must still block it (qualifying = 2 < 4).
+	hand := []*pb.Tile{
+		{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},
+		{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},
+		{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},
+		{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+		{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},
+		{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},
+		{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},
+		{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},
+		{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},
+		{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1},
+		{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 2},
+		{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+	}
+
+	// Build a state with 4 flowers melded for player 0.
+	stateWithFlowers := &pb.GameState{
+		Players: []*pb.PlayerState{{
+			Seat: 0,
+			FlowerMelds: []*pb.Tile{
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 1},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 2},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 3},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 4},
+			},
+		}},
+	}
+
+	t.Run("Ron baseline (no flowers) → 4 points, wins", func(t *testing.T) {
+		// Base(1)+NoWild(1)+Common(1)+SingleWait(1) = 4. Meets Ron minimum.
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, false)
+		if !ok || s != 4 {
+			t.Fatalf("baseline want score 4 + canWin, got score %d canWin %v", s, ok)
+		}
+	})
+
+	t.Run("Ron with Four Flowers reward → must NOT bypass minimum", func(t *testing.T) {
+		// Same hand but rewrite to remove the Single Wait so structural
+		// sum is 3 (Base+NoWild+Common). That's still below 4. Without
+		// the bug fix, +150 Four Flowers would push the displayed total
+		// over and incorrectly allow Ron. With the fix, qualifying total
+		// is 3 < 4, so canWin must be false.
+		//
+		// Build hand with shanpon (double-pair) wait instead of single
+		// wait: 2s3s4s, 4p5p6p, 7m8m9m, pair(3z), pair(1m). Wait on 1m or
+		// 3z. Common Win does not require single-wait, so structural sum
+		// = Base(1)+NoWild(1)+Common(1) = 3.
+		shanponHand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},
+			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1},
+			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 1},
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+		}
+		winOn1m := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_MAN, Value: 1}
+
+		_, _, ok := r.EvaluateHand(shanponHand, nil, winOn1m, stateWithFlowers, 0, false)
+		if ok {
+			t.Fatalf("Ron incorrectly allowed: qualifying patterns sum below 4 but Four Flowers pushed display over")
+		}
+	})
+
+	t.Run("Tsumo path is not affected by reward exclusion", func(t *testing.T) {
+		// Tsumo has no minimum, so a 3-structural-point hand + Four
+		// Flowers still wins on tsumo.
+		shanponHand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},
+			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1},
+			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 1},
+			{Id: 12, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+		}
+		winOn1m := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_MAN, Value: 1}
+
+		_, _, ok := r.EvaluateHand(shanponHand, nil, winOn1m, stateWithFlowers, 0, true)
+		if !ok {
+			t.Fatal("Tsumo blocked unexpectedly; tsumo has no minimum")
+		}
+	})
+}
+
+// --- GetValidActions: Tsumo gated on DrawnTileId ---
+// Regression: after a Pon/Chii steal, the player's hand may be in a winning
+// shape (the called tile plus their open melds and closed hand can complete),
+// but Tsumo must NOT be offered because the completing tile came from another
+// seat's discard, not from a self-draw. The engine clears DrawnTileId on a
+// steal; GetValidActions must respect that gate.
+func TestHometownRuleset_GetValidActions_TsumoRequiresDraw(t *testing.T) {
+	r := &rules.HometownRuleset{}
+
+	// Build a state where ClosedHand+OpenMelds is a complete winning shape:
+	//   open melds (3 chii): 1s2s3s, 4p5p6p, 7m8m9m
+	//   closed: 2m 3m 4m 9s 9s  (3 tiles to chii 234m, pair = 9s9s)
+	// 11 closed + 3 in meld = 14 = winning hand shape.
+	closedHand := []*pb.Tile{
+		{Id: 1, Suit: pb.Suit_SUIT_MAN, Value: 2},
+		{Id: 2, Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Id: 3, Suit: pb.Suit_SUIT_MAN, Value: 4},
+		{Id: 4, Suit: pb.Suit_SUIT_SOU, Value: 9},
+		{Id: 5, Suit: pb.Suit_SUIT_SOU, Value: 9},
+	}
+	openMelds := []*pb.Meld{
+		{Type: pb.ActionType_ACTION_CHII, Tiles: []*pb.Tile{
+			{Id: 100, Suit: pb.Suit_SUIT_SOU, Value: 1},
+			{Id: 101, Suit: pb.Suit_SUIT_SOU, Value: 2},
+			{Id: 102, Suit: pb.Suit_SUIT_SOU, Value: 3},
+		}},
+		{Type: pb.ActionType_ACTION_CHII, Tiles: []*pb.Tile{
+			{Id: 103, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 104, Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Id: 105, Suit: pb.Suit_SUIT_PIN, Value: 6},
+		}},
+		{Type: pb.ActionType_ACTION_CHII, Tiles: []*pb.Tile{
+			{Id: 106, Suit: pb.Suit_SUIT_MAN, Value: 7},
+			{Id: 107, Suit: pb.Suit_SUIT_MAN, Value: 8},
+			{Id: 108, Suit: pb.Suit_SUIT_MAN, Value: 9},
+		}},
+	}
+
+	buildState := func(drawn *int32) *pb.GameState {
+		return &pb.GameState{
+			Phase:        pb.GamePhase_PHASE_PLAYER_TURN,
+			ActivePlayer: 0,
+			Players: []*pb.PlayerState{
+				{Seat: 0, ClosedHand: closedHand, OpenMelds: openMelds, DrawnTileId: drawn},
+				{Seat: 1},
+				{Seat: 2},
+				{Seat: 3},
+			},
+		}
+	}
+
+	hasTsumo := func(actions []*pb.PlayerAction) bool {
+		for _, a := range actions {
+			if a.Type == pb.ActionType_ACTION_TSUMO {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("after pon/chii (DrawnTileId nil) → no tsumo", func(t *testing.T) {
+		actions := r.GetValidActions(buildState(nil), 0)
+		if hasTsumo(actions) {
+			t.Fatalf("Tsumo offered after steal (DrawnTileId nil); actions=%v", actions)
+		}
+	})
+
+	t.Run("after wall draw (DrawnTileId set) → tsumo offered", func(t *testing.T) {
+		drawnID := int32(5) // any of the closed-hand IDs is fine
+		actions := r.GetValidActions(buildState(&drawnID), 0)
+		if !hasTsumo(actions) {
+			t.Fatalf("Tsumo missing on legitimate self-draw; actions=%v", actions)
+		}
+	})
+}

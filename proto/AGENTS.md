@@ -13,6 +13,8 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - `Tile`: id, suit, value, is_red
   - `ActionType` enum: DRAW, DISCARD, CHII, PON, KAN, TSUMO, RON, PASS, FLOWER_REVEAL, READY
   - `GamePhase` enum: INIT, DEAL, PLAYER_TURN, WAIT_DISCARDS, ROUND_END
+  - Match-mode types: `MatchMode`, `ChongciConfig`, `PlayerStanding`, `MatchEndResult`
+  - `GamePhase` adds `PHASE_MATCH_END` terminal value
   - `GameState`, `PlayerState`: full match state
   - `GameState` round-debug fields include `dice_sum`, individual `dice1`/`dice2`, `wangpai_stacks`, and live `wangpai_tiles_left`
   - `Meld`, `PlayerAction`: action/meld data

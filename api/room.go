@@ -50,6 +50,16 @@ type Room struct {
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
+	// matchOptions seeds core.NewGame with match-mode + Chongci config.
+	// Populated by WithMatchOptions; defaults to MatchOptions{} (classic).
+	matchOptions core.MatchOptions
+
+	// botActionDelay is how long the room waits before each bot move in
+	// PHASE_PLAYER_TURN and PHASE_WAIT_DISCARDS so the game has a human
+	// pace. Zero means no delay (used by tests). ACTION_READY between
+	// hands is unaffected.
+	botActionDelay time.Duration
+
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
 
 	ActionQueue      chan ClientAction
@@ -58,6 +68,11 @@ type Room struct {
 	TimerResolveChan chan bool // timer goroutine signals main loop to resolve interrupts
 	interruptTmr     *time.Timer
 	interruptEpoch   uint64 // incremented each interrupt cycle to prevent stale goroutines
+
+	// matchEndScheduled tracks whether the grace-shutdown timer has been
+	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
+	// of the terminal phase don't spawn multiple timer goroutines.
+	matchEndScheduled bool
 }
 
 type RoomOption func(*Room)
@@ -66,6 +81,25 @@ func WithBotPolicy(policy bot.Policy) RoomOption {
 	return func(room *Room) {
 		if policy != nil {
 			room.BotPolicy = policy
+		}
+	}
+}
+
+// WithMatchOptions configures the engine constructed by NewRoom with a
+// match-mode + Chongci config. Default is MatchOptions{} (classic).
+func WithMatchOptions(opts core.MatchOptions) RoomOption {
+	return func(r *Room) {
+		r.matchOptions = opts
+	}
+}
+
+// WithBotActionDelay sets the per-action think-time pause for automated
+// seats. Applied before discard, chii, pon, kan, ron, and tsumo. Zero
+// (the default) disables the pause.
+func WithBotActionDelay(d time.Duration) RoomOption {
+	return func(r *Room) {
+		if d > 0 {
+			r.botActionDelay = d
 		}
 	}
 }
@@ -84,7 +118,6 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		ID:                 matchID,
 		Hub:                hub,
 		DB:                 db,
-		Engine:             core.NewGame(matchID, ruleset),
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		TileObfuscationMap: obfMap,
@@ -97,6 +130,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		opt(room)
 	}
 
+	room.Engine = core.NewGame(matchID, ruleset, room.matchOptions)
 	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
 
 	return room
@@ -302,6 +336,8 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 				return payloads
 			}
 
+			r.sleepBotThink(action.Type)
+
 			if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
 				return payloads
@@ -322,6 +358,8 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 				if action == nil {
 					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
 				}
+
+				r.sleepBotThink(action.Type)
 
 				if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 					log.Printf("bot interrupt failed for seat %d in room %s: %v", seat, r.ID, err)
@@ -387,6 +425,21 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 func (r *Room) isAutomatedSeat(seat uint32) bool {
 	_, connected := r.Seats[seat]
 	return !connected
+}
+
+// sleepBotThink pauses for r.botActionDelay before a bot action so the
+// game has a human pace. Skipped when the delay is 0 (tests / RL env) or
+// when the action is a between-hands READY ack (which has no animation
+// to wait for; the round-end overlay already has its own client-side
+// duration).
+func (r *Room) sleepBotThink(actionType pb.ActionType) {
+	if r.botActionDelay <= 0 {
+		return
+	}
+	if actionType == pb.ActionType_ACTION_READY {
+		return
+	}
+	time.Sleep(r.botActionDelay)
 }
 
 // policyForSeat returns the bot policy for an automated seat. The lookup
@@ -544,8 +597,42 @@ func (r *Room) BroadcastState() []byte {
 		}
 	}
 
+	r.checkMatchEndShutdown()
+
 	return rawPayload
 }
+
+// checkMatchEndShutdown arms a 30-second timer the first time the engine
+// reports PHASE_MATCH_END. When the timer fires, it sends on the Shutdown
+// channel so the main loop runs its usual teardown (paipu persistence,
+// hub deregister, etc.). Players see the final state during the grace
+// window so client overlays render before any reconnect attempt 404s.
+//
+// The send is non-blocking: if no one is reading from Shutdown (e.g.
+// synchronous tests that never started Room.Start), the timer signal is
+// silently dropped. Production rooms always have a Shutdown receiver.
+func (r *Room) checkMatchEndShutdown() {
+	if r.matchEndScheduled {
+		return
+	}
+	if r.Engine.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		return
+	}
+	r.matchEndScheduled = true
+	go func() {
+		time.Sleep(30 * time.Second)
+		select {
+		case r.Shutdown <- true:
+		default:
+		}
+	}()
+}
+
+// MatchEndScheduledForTest exposes the matchEndScheduled flag to tests.
+func (r *Room) MatchEndScheduledForTest() bool { return r.matchEndScheduled }
+
+// CheckMatchEndShutdownForTest exposes checkMatchEndShutdown to tests.
+func (r *Room) CheckMatchEndShutdownForTest() { r.checkMatchEndShutdown() }
 
 // SendStateToClient sends the serialized GameState Protobuf strictly to one single connected player (used for reconnects)
 func (r *Room) SendStateToClient(client *Client) {

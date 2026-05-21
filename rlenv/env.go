@@ -41,7 +41,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		seed = request.Seed
 	}
 
-	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{})
+	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, core.MatchOptions{})
 	e.game.SetWallSeed(core.SeedFromUint64(seed))
 	e.decisionCount = 0
 	if err := e.game.Start(); err != nil {

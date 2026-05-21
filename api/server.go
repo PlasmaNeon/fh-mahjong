@@ -77,6 +77,7 @@ func (s *Server) setupRoutes() {
 			protected.POST("/private-tables/:tableId/join", s.handlePrivateTableJoin)
 			protected.POST("/private-tables/:tableId/seat", s.handlePrivateTableSeat)
 			protected.POST("/private-tables/:tableId/start", s.handlePrivateTableStart)
+			protected.POST("/private-tables/:tableId/mode", s.handlePrivateTableMode)
 		}
 	}
 

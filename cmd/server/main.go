@@ -76,6 +76,7 @@ func main() {
 		}
 	}
 	go matchmaker.StartQueueWatcher("hometown")
+	go matchmaker.StartQueueWatcher("chongci-fh")
 
 	// Initialize Server
 	server := api.NewServer(db, hub, matchmaker)
