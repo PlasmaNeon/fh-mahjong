@@ -4247,6 +4247,8 @@ export const game = $root.game = (() => {
          * @property {Array.<number>|undefined} [learningSeats] EnvConfig learningSeats
          * @property {boolean|undefined} [autoPlayHeuristics] EnvConfig autoPlayHeuristics
          * @property {number|undefined} [maxDecisions] EnvConfig maxDecisions
+         * @property {game.MatchMode|undefined} [matchMode] EnvConfig matchMode
+         * @property {game.IChongciConfig|undefined} [chongciConfig] EnvConfig chongciConfig
          */
 
         /**
@@ -4290,6 +4292,22 @@ export const game = $root.game = (() => {
         EnvConfig.prototype.maxDecisions = 0;
 
         /**
+         * EnvConfig matchMode.
+         * @member {game.MatchMode} matchMode
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.matchMode = 0;
+
+        /**
+         * EnvConfig chongciConfig.
+         * @member {game.ChongciConfig} chongciConfig
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.chongciConfig = null;
+
+        /**
          * Creates a new EnvConfig instance using the specified properties.
          * @function create
          * @memberof game.EnvConfig
@@ -4323,6 +4341,10 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 2, wireType 0 =*/16).bool(message.autoPlayHeuristics);
             if (message.maxDecisions != null && Object.hasOwnProperty.call(message, "maxDecisions"))
                 writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxDecisions);
+            if (message.matchMode != null && Object.hasOwnProperty.call(message, "matchMode"))
+                writer.uint32(/* id 4, wireType 0 =*/32).int32(message.matchMode);
+            if (message.chongciConfig != null && Object.hasOwnProperty.call(message, "chongciConfig"))
+                $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             return writer;
         };
 
@@ -4378,6 +4400,14 @@ export const game = $root.game = (() => {
                         message.maxDecisions = reader.uint32();
                         break;
                     }
+                case 4: {
+                        message.matchMode = reader.int32();
+                        break;
+                    }
+                case 5: {
+                        message.chongciConfig = $root.game.ChongciConfig.decode(reader, reader.uint32());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -4426,6 +4456,20 @@ export const game = $root.game = (() => {
             if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
                 if (!$util.isInteger(message.maxDecisions))
                     return "maxDecisions: integer expected";
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                switch (message.matchMode) {
+                default:
+                    return "matchMode: enum value expected";
+                case 0:
+                case 1:
+                case 2:
+                    break;
+                }
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig")) {
+                let error = $root.game.ChongciConfig.verify(message.chongciConfig);
+                if (error)
+                    return "chongciConfig." + error;
+            }
             return null;
         };
 
@@ -4452,6 +4496,31 @@ export const game = $root.game = (() => {
                 message.autoPlayHeuristics = Boolean(object.autoPlayHeuristics);
             if (object.maxDecisions != null)
                 message.maxDecisions = object.maxDecisions >>> 0;
+            switch (object.matchMode) {
+            default:
+                if (typeof object.matchMode === "number") {
+                    message.matchMode = object.matchMode;
+                    break;
+                }
+                break;
+            case "MATCH_MODE_UNSPECIFIED":
+            case 0:
+                message.matchMode = 0;
+                break;
+            case "MATCH_MODE_CLASSIC":
+            case 1:
+                message.matchMode = 1;
+                break;
+            case "MATCH_MODE_CHONGCI":
+            case 2:
+                message.matchMode = 2;
+                break;
+            }
+            if (object.chongciConfig != null) {
+                if (typeof object.chongciConfig !== "object")
+                    throw TypeError(".game.EnvConfig.chongciConfig: object expected");
+                message.chongciConfig = $root.game.ChongciConfig.fromObject(object.chongciConfig);
+            }
             return message;
         };
 
@@ -4473,6 +4542,8 @@ export const game = $root.game = (() => {
             if (options.defaults) {
                 object.autoPlayHeuristics = false;
                 object.maxDecisions = 0;
+                object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
+                object.chongciConfig = null;
             }
             if (message.learningSeats && message.learningSeats.length) {
                 object.learningSeats = [];
@@ -4483,6 +4554,10 @@ export const game = $root.game = (() => {
                 object.autoPlayHeuristics = message.autoPlayHeuristics;
             if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
                 object.maxDecisions = message.maxDecisions;
+            if (message.matchMode != null && message.hasOwnProperty("matchMode"))
+                object.matchMode = options.enums === String ? $root.game.MatchMode[message.matchMode] === undefined ? message.matchMode : $root.game.MatchMode[message.matchMode] : message.matchMode;
+            if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig"))
+                object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
             return object;
         };
 

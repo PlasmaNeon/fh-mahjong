@@ -30,6 +30,13 @@ class CheckpointManifest:
         return _entry_from_payload(self.payload["current_reward_trained_best"])
 
     @property
+    def current_chongci(self) -> Optional[CheckpointEntry]:
+        payload = self.payload.get("current_chongci_reward_trained_best")
+        if payload is None:
+            return None
+        return _entry_from_payload(payload)
+
+    @property
     def fallbacks(self) -> tuple[CheckpointEntry, ...]:
         return tuple(_entry_from_payload(item) for item in self.payload.get("fallbacks", []))
 
@@ -71,10 +78,16 @@ def resolve_checkpoint_path(
         return Path(env_value)
     if checkpoint_id == "current":
         return manifest.current.checkpoint_path
+    if checkpoint_id in {"current_chongci", "chongci"}:
+        if manifest.current_chongci is None:
+            raise KeyError(f"checkpoint manifest {manifest.path} has no Chongci current checkpoint")
+        return manifest.current_chongci.checkpoint_path
     if checkpoint_id == "fallback":
         return manifest.fallback().checkpoint_path
     if checkpoint_id == manifest.current.id:
         return manifest.current.checkpoint_path
+    if manifest.current_chongci is not None and checkpoint_id == manifest.current_chongci.id:
+        return manifest.current_chongci.checkpoint_path
     for fallback in manifest.fallbacks:
         if checkpoint_id == fallback.id:
             return fallback.checkpoint_path

@@ -137,6 +137,32 @@ def test_train_iql_runs_from_npz_shards_with_limit(tmp_path: Path) -> None:
     assert (ckpt_dir / "epoch_001.pt").exists()
 
 
+def test_train_iql_runs_from_multiple_npz_shards_with_mixed_scalar_shapes(tmp_path: Path) -> None:
+    env_50 = EnvConfig()
+    env_42 = EnvConfig(scalar_features=42)
+    shard_50 = tmp_path / "shards-50"
+    shard_42 = tmp_path / "shards-42"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_50, _transitions(6, env_50), shard_size=3)
+    write_transitions_npz_shards(shard_42, _transitions(6, env_42), shard_size=3)
+
+    metrics = train_iql(
+        data_path=[shard_42, shard_50],
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=8,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
 def test_train_iql_can_initialize_q_head_from_policy(tmp_path: Path) -> None:
     env_config = EnvConfig()
     model = PolicyValueNet(env_config, ModelConfig())

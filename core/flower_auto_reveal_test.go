@@ -260,7 +260,7 @@ func TestResolveInterrupts_AutoRevealsClaimersNonWildFlowers(t *testing.T) {
 }
 
 func TestFlowerRevealKeepsRoundEndWhenDeadWallIsExhausted(t *testing.T) {
-	g := NewGame("test-flower-exhausted-dead-wall", &flowerAutoRevealRules{})
+	g := NewGame("test-flower-exhausted-dead-wall", &flowerAutoRevealRules{}, MatchOptions{})
 	seat := uint32(0)
 	flower := &pb.Tile{Id: 201, Suit: pb.Suit_SUIT_FLOWER, Value: 1}
 

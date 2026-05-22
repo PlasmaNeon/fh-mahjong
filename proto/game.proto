@@ -247,6 +247,8 @@ message EnvConfig {
   repeated uint32 learning_seats = 1;
   bool auto_play_heuristics = 2;
   uint32 max_decisions = 3;
+  MatchMode match_mode = 4;
+  ChongciConfig chongci_config = 5; // set iff match_mode == MATCH_MODE_CHONGCI
 }
 
 message SeatObservation {

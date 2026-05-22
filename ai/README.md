@@ -166,6 +166,8 @@ uv run --project ai fh-mj-serving-smoke \
   --device cuda
 ```
 
+Use `--checkpoint-id current_chongci` for the promoted Chongci checkpoint.
+
 Start the policy server on WSL:
 
 ```bash

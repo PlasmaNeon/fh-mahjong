@@ -157,6 +157,53 @@ func TestObservationIncludesVisibleLookaheadScalars(t *testing.T) {
 	}
 }
 
+func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       128,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	}
+
+	env := New(config)
+	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 43, Config: config}); err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+
+	env.game.State.HandNum = 10
+	env.game.State.Players[0].Score = 1500
+	env.game.State.Players[1].Score = 2500
+	env.game.State.Players[2].Score = 1000
+	env.game.State.Players[3].Score = -100
+	observation, err := encodeObservation(env.game.State, 0, 0)
+	if err != nil {
+		t.Fatalf("encode observation failed: %v", err)
+	}
+
+	scalars := observation.Scalars
+	if len(scalars) != ObservationScalarCount {
+		t.Fatalf("scalar count = %d, want %d", len(scalars), ObservationScalarCount)
+	}
+	expected := []float32{
+		1.0,
+		0.2,
+		0.8,
+		2.0 / 3.0,
+		0.5,
+		0.9,
+		0.75,
+		1.0,
+	}
+	if !almostEqualSlices(scalars[42:50], expected) {
+		t.Fatalf("chongci scalar tail = %v, want %v", scalars[42:50], expected)
+	}
+}
+
 func TestPublicDangerDropsAfterSameTileIsVisible(t *testing.T) {
 	target := &pb.Tile{Suit: pb.Suit_SUIT_MAN, Value: 5}
 	state := &pb.GameState{
@@ -236,6 +283,48 @@ func TestGenerateHeuristicTrajectoryDeterministic(t *testing.T) {
 	}
 }
 
+func TestGenerateHeuristicTrajectoryChongciReachesMatchEnd(t *testing.T) {
+	request := &pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 41,
+		Config: &pb.EnvConfig{
+			AutoPlayHeuristics: true,
+			MaxDecisions:       4096,
+			MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000,
+				BustThreshold: 0,
+				MaxHands:      1,
+			},
+		},
+	}
+
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(request)
+	if err != nil {
+		t.Fatalf("chongci dataset generation failed: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("expected chongci heuristic dataset to contain samples")
+	}
+
+	last := dataset.Samples[len(dataset.Samples)-1]
+	if !last.Terminated {
+		t.Fatalf("expected chongci trajectory to terminate at match end")
+	}
+	if len(last.TerminalRewards) != 4 {
+		t.Fatalf("expected four chongci terminal rewards, got %v", last.TerminalRewards)
+	}
+	if last.Observation == nil || last.Observation.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("terminal sample should keep the acting observation before match end")
+	}
+	for _, sample := range dataset.Samples {
+		if !almostEqualSlices(sample.TerminalRewards, last.TerminalRewards) {
+			t.Fatalf("terminal rewards drifted across chongci samples")
+		}
+	}
+}
+
 func TestAdvanceToDecisionResolvesReadyInterruptWindowWithoutAutoplay(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
@@ -244,7 +333,7 @@ func TestAdvanceToDecisionResolvesReadyInterruptWindowWithoutAutoplay(t *testing
 	}
 
 	env := New(config)
-	env.game = core.NewGame("ready-interrupt-window", &rules.HometownRuleset{})
+	env.game = core.NewGame("ready-interrupt-window", &rules.HometownRuleset{}, core.MatchOptions{})
 	env.game.SetWallSeed(core.SeedFromUint64(101))
 	if err := env.game.Start(); err != nil {
 		t.Fatalf("start failed: %v", err)

@@ -4,15 +4,18 @@ This roadmap is a self-contained study-and-build path for the Fenghua Mahjong AI
 
 The required learning path intentionally avoids video lectures. Classic papers and books still appear where they are the right source, but the default path favors maintained docs, written tutorials, and recent implementation references.
 
-The development direction is:
+The development direction is now Mortal-style first:
 
 1. simulator correctness
 2. heuristic trajectories
 3. behavior cloning
 4. duplicate evaluation
-5. conservative offline RL
-6. checkpoint self-play
+5. operation-level Q/value learning
+6. mixed checkpoint self-play
 7. live AI integration
+8. Suphx-style oracle/global-reward auxiliaries after the core loop is stable
+
+Mortal-style means the model should learn Q/value estimates for each legal operation from the current visible Mahjong state: discard from the hand, pass/win after a discard, chii, pon, kan, haitei decisions, and any future mode-specific actions. Training samples are individual decision transitions, not one sample per hand or match. The reward is still delayed: for Chongci, the main target is final match net score; for classic Fenghua, the main target is terminal hand payout.
 
 ## Code-First Loop
 
@@ -21,10 +24,47 @@ Use this loop when you want the code to drive the learning:
 1. Generate a small deterministic trajectory dataset with `fh_mahjong_ai.scripts.generate_data`.
 2. Train behavior cloning with `fh_mahjong_ai.scripts.train_bc`.
 3. Evaluate exact/top-3/action-family agreement with `fh_mahjong_ai.scripts.evaluate`.
-4. Train the first conservative value-learning pass with `fh_mahjong_ai.scripts.train_offline_q`.
-5. Promote a checkpoint only after duplicate-seat evaluation improves against the heuristic baseline.
+4. Train the first conservative value-learning pass with `fh_mahjong_ai.scripts.train_iql`.
+5. Generate mixed self-play trajectories with frozen checkpoint opponents.
+6. Promote a checkpoint only after duplicate-seat evaluation improves against the heuristic baseline and frozen checkpoint pool.
 
-The current offline Q-learning trainer is intentionally conservative: it treats the masked action head as Q-values, uses TD targets `r + gamma max_a Q_target(s', a)`, adds a CQL-style penalty against unsupported legal actions, and keeps a behavior-cloning regularizer so the policy does not drift too far from the generated data.
+The current reward-learning trainer is intentionally conservative: discrete IQL trains Q, value, and policy heads from operation-level transitions, defaults to discounted terminal-return targets, and keeps behavior-cloning regularization so the policy does not drift too far from supported data. The older one-step offline Q trainer remains an ablation; it should not be the default until value calibration and duplicate-seat evaluation improve.
+
+## Mortal-Style Development Target
+
+Goal: make the agent improve from its own operation-level experience, similar in spirit to Mortal's Q-value decision engine.
+
+The target training unit is:
+
+```text
+visible observation at decision t
+legal action mask
+chosen operation action_id
+next visible observation
+terminal / truncated flag
+final hand or match reward target
+```
+
+The model should learn:
+
+```text
+Q(observation_t, action_t) = expected future score from choosing this operation
+V(observation_t) = expected future score from this decision state
+policy(observation_t) = action distribution used for exploration and serving
+```
+
+Near-term policy:
+
+- Keep the flat 204-action catalog because the Go bridge already validates it.
+- Use dueling Q/value heads and action masking for every decision.
+- Use IQL-style offline updates first, then add online self-play collection.
+- Use a frozen checkpoint pool so one new model does not only learn to exploit its own clone.
+- Evaluate with fixed-seed duplicate Chongci matches and report mean net reward, positive-reward rate, large-loss rate, and per-seat breakdown.
+
+Later policy:
+
+- Split the flat action space into decision-family heads if the flat head becomes a bottleneck.
+- Add Suphx-style oracle/global reward prediction as auxiliary training, not as the first serving path.
 
 ## Stage 0: Working Vocabulary
 
@@ -146,9 +186,9 @@ Mahjong exercise:
 - Inspect `PolicyValueNet` and verify that the default encoder preserves tile-position semantics.
 - Keep the v1 model as a no-pooling residual CNN over `39 x 42 x 1` tile planes plus scalar features.
 
-## Stage 5: Offline RL
+## Stage 5: Mortal-Style Offline Q/Value Learning
 
-Goal: improve beyond imitation without unstable online self-play.
+Goal: improve beyond imitation while still using fixed operation-level datasets.
 
 Materials:
 
@@ -166,12 +206,16 @@ Learn:
 - conservative policy improvement
 - advantage-weighted behavior cloning
 - why behavior cloning remains a serious baseline
+- Q/value/policy separation
+- why a Q head should predict reward-scaled value, not copied policy logits
 
 Mahjong exercise:
 
 - Add dataset manifests: seed range, policy source, commit SHA, action count, and observation shape.
-- Run the conservative offline Q-learning scaffold as the first code-level TD exercise.
-- Treat advantage-weighted behavior cloning or discrete IQL-style training as the next offline RL candidate, not naive max-Q over all 204 actions.
+- Run discrete IQL as the default operation-level Q/value learner.
+- Compare IQL checkpoints against behavior cloning and heuristic baselines on the same duplicate-seat seeds.
+- Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
+- Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -195,8 +239,9 @@ Learn:
 Mahjong exercise:
 
 - Start with terminal round payout as the value target.
-- Add optional win/loss bonus only as an ablation.
-- Defer multi-round placement reward until single-round EV evaluation is stable.
+- For Chongci, use final match net score as the main value target.
+- Add optional win/loss or fan/score shaping only as ablations.
+- Use discounted terminal returns for every operation-level transition before experimenting with one-step TD bootstrapping.
 
 ## Stage 7: POMDPs, Memory, And Oracle Training
 
@@ -267,21 +312,31 @@ Mahjong exercise:
    - Implemented in the 42-scalar observation schema.
    - Keep `overall shanten` at scalar index 25.
    - Route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics now occupy scalar indices 29-41.
-7. Add offline RL:
-   - Start with advantage-weighted behavior cloning or discrete IQL-style training.
+7. Add Mortal-style operation-level Q/value learning:
+   - Use discrete IQL as the default reward learner.
+   - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
+   - Use final hand or Chongci match reward as the delayed target.
    - Keep behavior-cloning regularization.
-   - Promote only if duplicate evaluation improves over BC.
-8. Add self-play and live serving:
-   - Use frozen checkpoint pools.
-   - Promote checkpoints by fixed-seed arena results.
-   - Serve the Python/PyTorch model first; Go still validates every returned action.
+   - Promote only if duplicate evaluation improves over BC and heuristic baselines.
+8. Add mixed self-play:
+   - Generate random wall seeds and let checkpoint agents play through full matches.
+   - Use a frozen opponent pool: heuristic, BC, current best IQL, and older checkpoints.
+   - Store every operation transition from every learning seat.
+   - Retrain IQL from mixed self-play plus heuristic data.
+   - Promote checkpoints by fixed-seed duplicate arena results.
+9. Add live serving:
+   - Serve the Python/PyTorch model first.
+   - Go still validates every returned action.
+   - Keep hidden information out of deployed observations.
 
 ## Design Defaults
 
-- First objective: single-round expected payout.
+- First objective: expected score from each operation.
+- First Chongci objective: final match net score.
 - First model: no-pooling residual CNN, not transformer.
 - First learning method: behavior cloning, not PPO.
-- First RL improvement: conservative offline RL, not from-scratch online RL.
+- First RL improvement: discrete IQL-style Q/value learning, not PPO.
+- First self-play method: mixed frozen checkpoint pool, not four latest-model clones.
 - First evaluation: duplicate fixed-seed arena, not raw random win rate.
 - First serving path: Python inference service, not Go-native model inference.
 

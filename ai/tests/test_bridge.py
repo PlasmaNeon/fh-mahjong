@@ -58,13 +58,20 @@ class FakeGoLibrary:
     def __init__(self) -> None:
         self._buffers = []
         self.closed_handles = []
+        self.last_new_config = None
         self.last_reset_seed = None
-        self.FHEnvNew = FakeFunction(return_value=7)
+        self.FHEnvNew = FakeFunction(callback=self._new)
         self.FHEnvReset = FakeFunction(callback=self._reset)
         self.FHEnvStep = FakeFunction(callback=self._step)
         self.FHEnvClose = FakeFunction(callback=self._close)
         self.FHGenerateHeuristicTrajectory = FakeFunction(callback=self._trajectory)
         self.FHFree = FakeFunction(callback=self._free)
+
+    def _new(self, config_ptr, config_len):
+        config = game_pb2.EnvConfig()
+        config.ParseFromString(ctypes.string_at(config_ptr, config_len))
+        self.last_new_config = config
+        return 7
 
     def _bytes_result(self, payload: bytes) -> bridge_module.FHBytesResult:
         buffer = ctypes.create_string_buffer(payload)
@@ -168,6 +175,29 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(result.info["round_outcome"]["win_type_name"], "ACTION_RON")
         self.assertEqual(result.info["round_outcome"]["winner_seat"], 1)
         self.assertEqual(result.info["round_outcome"]["discarder_seat"], 0)
+
+    def test_chongci_config_is_forwarded_to_go_bridge(self) -> None:
+        fake_library = FakeGoLibrary()
+        config = EnvConfig(
+            plane_shape=(1, 1, 1),
+            scalar_features=1,
+            action_space_size=2,
+            bridge_library_path=Path("/tmp/libfh_mahjong_bridge_fake.so"),
+            match_mode="chongci",
+            chongci_starting_score=3000,
+            chongci_bust_threshold=-100,
+            chongci_max_hands=12,
+        )
+
+        with mock.patch.object(bridge_module.ctypes, "CDLL", return_value=fake_library):
+            bridge = CtypesGoBridge(config)
+            bridge.close()
+
+        self.assertIsNotNone(fake_library.last_new_config)
+        self.assertEqual(fake_library.last_new_config.match_mode, game_pb2.MATCH_MODE_CHONGCI)
+        self.assertEqual(fake_library.last_new_config.chongci_config.starting_score, 3000)
+        self.assertEqual(fake_library.last_new_config.chongci_config.bust_threshold, -100)
+        self.assertEqual(fake_library.last_new_config.chongci_config.max_hands, 12)
 
 
 if __name__ == "__main__":

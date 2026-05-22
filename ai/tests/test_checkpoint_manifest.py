@@ -14,6 +14,11 @@ def _manifest(path: Path) -> Path:
             "method": "iql",
             "checkpoint_path": "/tmp/reward.pt",
         },
+        "current_chongci_reward_trained_best": {
+            "id": "chongci_reward",
+            "method": "iql",
+            "checkpoint_path": "/tmp/chongci.pt",
+        },
         "fallbacks": [
             {
                 "id": "bc",
@@ -30,7 +35,12 @@ def test_load_checkpoint_manifest_and_resolve_ids(tmp_path: Path) -> None:
     manifest = load_checkpoint_manifest(_manifest(tmp_path / "best.json"))
 
     assert manifest.current.id == "reward"
+    assert manifest.current_chongci is not None
+    assert manifest.current_chongci.id == "chongci_reward"
     assert resolve_checkpoint_path(manifest) == Path("/tmp/reward.pt")
+    assert resolve_checkpoint_path(manifest, checkpoint_id="current_chongci") == Path("/tmp/chongci.pt")
+    assert resolve_checkpoint_path(manifest, checkpoint_id="chongci") == Path("/tmp/chongci.pt")
+    assert resolve_checkpoint_path(manifest, checkpoint_id="chongci_reward") == Path("/tmp/chongci.pt")
     assert resolve_checkpoint_path(manifest, checkpoint_id="fallback") == Path("/tmp/bc.pt")
     assert resolve_checkpoint_path(manifest, checkpoint_id="bc") == Path("/tmp/bc.pt")
 

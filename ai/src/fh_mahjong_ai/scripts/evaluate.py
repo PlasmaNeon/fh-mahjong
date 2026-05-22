@@ -28,6 +28,22 @@ def main() -> None:
     parser.add_argument("--start-seed", type=int, default=1000, help="Starting seed for online eval")
     parser.add_argument("--duplicate-seats", action="store_true", help="Rotate the agent through all four seats")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
+    parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
+    parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
+    parser.add_argument("--chongci-bust-threshold", type=int, default=0, help="Chongci bust threshold")
+    parser.add_argument("--chongci-max-hands", type=int, default=50, help="Chongci hand cap")
+    parser.add_argument(
+        "--max-steps-per-episode",
+        type=int,
+        default=None,
+        help="Bridge decision cap per online episode; defaults to EnvConfig",
+    )
+    parser.add_argument(
+        "--large-loss-threshold",
+        type=float,
+        default=None,
+        help="Reward threshold for large-loss reporting; defaults by match mode",
+    )
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
@@ -48,6 +64,14 @@ def main() -> None:
         "checkpoint_step": step,
         "data": str(args.data) if args.data else None,
         "device": args.device,
+        "match_mode": args.match_mode,
+        "chongci_config": {
+            "starting_score": args.chongci_starting_score,
+            "bust_threshold": args.chongci_bust_threshold,
+            "max_hands": args.chongci_max_hands,
+        }
+        if args.match_mode == "chongci"
+        else None,
         "offline": None,
         "online": None,
     }
@@ -71,6 +95,12 @@ def main() -> None:
                     "start_seed": args.start_seed,
                     "duplicate_seats": args.duplicate_seats,
                     "bridge_library_path": args.bridge_lib,
+                    "match_mode": args.match_mode,
+                    "chongci_starting_score": args.chongci_starting_score,
+                    "chongci_bust_threshold": args.chongci_bust_threshold,
+                    "chongci_max_hands": args.chongci_max_hands,
+                    "max_steps_per_episode": args.max_steps_per_episode,
+                    "large_loss_threshold": args.large_loss_threshold,
                 }
             )
 
@@ -105,6 +135,12 @@ def main() -> None:
                     bridge_kind="go",
                     bridge_library_path=args.bridge_lib,
                     device=args.device,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=args.max_steps_per_episode,
                 )
             else:
                 online_report = evaluate_online(
@@ -114,12 +150,26 @@ def main() -> None:
                     bridge_kind="go",
                     bridge_library_path=args.bridge_lib,
                     device=args.device,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=args.max_steps_per_episode,
                 )
             final_report["online"] = online_report
+            print(f"  Match Mode:  {online_report['match_mode']}")
             print(f"  Episodes:    {online_report['episodes']}")
             print(f"  Avg Reward:  {online_report['avg_reward']}")
-            print(f"  Wins:        {online_report['win_count']}")
-            print(f"  Win Rate:    {online_report['win_rate']:.2%}")
+            print(
+                f"  Reward > 0:  {online_report['positive_reward_count']} "
+                f"({online_report['positive_reward_rate']:.2%})"
+            )
+            if args.match_mode == "classic":
+                print(f"  Wins:        {online_report['win_count']}")
+                print(f"  Win Rate:    {online_report['win_rate']:.2%}")
+            else:
+                print("  Win Rate:    reward-positive compatibility metric; use Reward > 0 for Chongci")
             print(f"  Large Loss:  {online_report['large_loss_rate']:.2%}")
             if online_report.get("round_outcome_rates"):
                 print("  Round Outcomes:")
