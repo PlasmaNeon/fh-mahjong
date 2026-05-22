@@ -29,8 +29,8 @@ type Game struct {
 
 	// Interruption queue for actions that happen asynchronously (like multiple players trying to Pong/Ron).
 	// We wait a few seconds before resolving priority.
-	interruptQueue   map[uint32]*pb.PlayerAction
-	interruptTimer   *time.Timer
+	interruptQueue     map[uint32]*pb.PlayerAction
+	interruptTimer     *time.Timer
 	wallSeedOverride   *[MT19937SeedSize]uint32
 	nextDealerOverride *uint32
 }
@@ -868,7 +868,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		if err := g.ExecuteDeadWallDraw(seat); err != nil {
 			return err
 		}
-		if g.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		if g.State.Phase == pb.GamePhase_PHASE_ROUND_END || g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
 			return nil
 		}
 
@@ -1038,7 +1038,9 @@ func (g *Game) ResolveInterrupts() {
 		if winningAction.Type == pb.ActionType_ACTION_KAN {
 			// A Kong requires a supplementary tile from the dead wall before discarding
 			g.ExecuteDeadWallDraw(winnerSeat)
-			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+			if g.State.Phase != pb.GamePhase_PHASE_ROUND_END && g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+				g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+			}
 		} else {
 			// Chii or Pon just resume turn phase (player must discard now, no drawing).
 			// If the claimer is already holding any non-wild flowers, reveal them

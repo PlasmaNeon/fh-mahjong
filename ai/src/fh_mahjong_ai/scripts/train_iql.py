@@ -13,7 +13,15 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
+from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.storage import (
+    is_sharded_transition_dataset,
+    load_checkpoint,
+    load_compatible_checkpoint,
+    read_transition_arrays,
+    read_transitions,
+    save_checkpoint,
+)
 from fh_mahjong_ai.trainer import DiscreteIQLMetrics, DiscreteIQLTrainer
 
 IQL_ARRAY_KEYS = (
@@ -51,16 +59,20 @@ def train_iql(
     cql_weight: float = 0.0,
     target_update_interval: int = 25,
     target_tau: float = 0.005,
+    large_loss_threshold: Optional[float] = None,
+    large_loss_penalty: float = 0.0,
     max_transitions: Optional[int] = None,
     device: str = "cpu",
     log_interval: int = 10,
     init_checkpoint: Optional[Path] = None,
     init_q_from_policy: bool = False,
+    partial_init_checkpoint: bool = False,
     resume: bool = False,
     mlflow_enabled: bool = False,
     mlflow_tracking_uri: Optional[str] = None,
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
+    model_config: Optional[ModelConfig] = None,
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
     data_paths = normalize_data_paths(data_path)
@@ -72,14 +84,24 @@ def train_iql(
         raise ValueError(f"no transitions loaded from {data_paths}")
 
     env_config = EnvConfig()
-    model_config = ModelConfig()
+    model_config = model_config or ModelConfig()
     model = PolicyValueNet(env_config, model_config).to(device)
     target_model = PolicyValueNet(env_config, model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
     start_epoch = 0
+    partial_init_report: Optional[dict[str, object]] = None
     if init_checkpoint is not None:
-        load_checkpoint(init_checkpoint, model)
+        if partial_init_checkpoint:
+            _, partial_init_report = load_compatible_checkpoint(init_checkpoint, model)
+            print(
+                "Partial checkpoint init: "
+                f"loaded={partial_init_report['loaded_keys']} "
+                f"missing={len(partial_init_report['missing_keys'])} "
+                f"skipped={len(partial_init_report['skipped_keys'])}"
+            )
+        else:
+            load_checkpoint(init_checkpoint, model)
         if init_q_from_policy:
             model.initialize_q_head_from_policy()
 
@@ -110,6 +132,8 @@ def train_iql(
         cql_weight=cql_weight,
         target_update_interval=target_update_interval,
         target_tau=target_tau,
+        large_loss_threshold=large_loss_threshold,
+        large_loss_penalty=large_loss_penalty,
     )
     trainer = DiscreteIQLTrainer(model, target_model, optimizer, train_config, iql_config)
 
@@ -147,11 +171,18 @@ def train_iql(
                     "cql_weight": cql_weight,
                     "target_update_interval": target_update_interval,
                     "target_tau": target_tau,
+                    "large_loss_threshold": large_loss_threshold,
+                    "large_loss_penalty": large_loss_penalty,
                     "max_transitions": max_transitions,
                     "device": device,
                     "transitions": transition_count,
                     "init_checkpoint": init_checkpoint,
                     "init_q_from_policy": init_q_from_policy,
+                    "partial_init_checkpoint": partial_init_checkpoint,
+                    "partial_init_loaded_keys": partial_init_report["loaded_keys"] if partial_init_report else None,
+                    "partial_init_missing_keys": len(partial_init_report["missing_keys"]) if partial_init_report else None,
+                    "partial_init_skipped_keys": len(partial_init_report["skipped_keys"]) if partial_init_report else None,
+                    **model_config_params(model_config),
                 }
             )
 
@@ -288,6 +319,18 @@ def main() -> None:
     parser.add_argument("--target-update-interval", type=int, default=25)
     parser.add_argument("--target-tau", type=float, default=0.005)
     parser.add_argument(
+        "--large-loss-threshold",
+        type=float,
+        default=None,
+        help="Optional return threshold below which IQL targets receive extra downside penalty.",
+    )
+    parser.add_argument(
+        "--large-loss-penalty",
+        type=float,
+        default=0.0,
+        help="Extra utility penalty multiplier for returns below --large-loss-threshold.",
+    )
+    parser.add_argument(
         "--max-transitions",
         type=int,
         default=None,
@@ -301,11 +344,17 @@ def main() -> None:
         action="store_true",
         help="Copy BC policy logits into q_head. Off by default because policy logits are not reward-scaled.",
     )
+    parser.add_argument(
+        "--partial-init-checkpoint",
+        action="store_true",
+        help="Load only compatible tensors from --init-checkpoint for explicit architecture ablations.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--mlflow", action="store_true", help="Log training params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
+    add_model_config_args(parser)
     args = parser.parse_args()
 
     print("Loading data from:")
@@ -329,16 +378,20 @@ def main() -> None:
         cql_weight=args.cql_weight,
         target_update_interval=args.target_update_interval,
         target_tau=args.target_tau,
+        large_loss_threshold=args.large_loss_threshold,
+        large_loss_penalty=args.large_loss_penalty,
         max_transitions=args.max_transitions,
         device=args.device,
         log_interval=args.log_interval,
         init_checkpoint=args.init_checkpoint,
         init_q_from_policy=args.init_q_from_policy,
+        partial_init_checkpoint=args.partial_init_checkpoint,
         resume=args.resume,
         mlflow_enabled=args.mlflow,
         mlflow_tracking_uri=args.mlflow_tracking_uri,
         mlflow_experiment=args.mlflow_experiment,
         mlflow_run_name=args.mlflow_run_name,
+        model_config=model_config_from_args(args),
     )
     print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
 

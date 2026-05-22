@@ -71,6 +71,8 @@ class DiscreteIQLConfig:
     cql_weight: float = 0.0
     target_update_interval: int = 25
     target_tau: float = 0.005
+    large_loss_threshold: Optional[float] = None
+    large_loss_penalty: float = 0.0
 
 
 @dataclass

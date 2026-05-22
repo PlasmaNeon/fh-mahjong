@@ -291,3 +291,45 @@ func TestFlowerRevealKeepsRoundEndWhenDeadWallIsExhausted(t *testing.T) {
 		}
 	}
 }
+
+func TestInterruptKanKeepsRoundEndWhenDeadWallIsExhausted(t *testing.T) {
+	g := NewGame("test-interrupt-kan-exhausted-dead-wall", &flowerAutoRevealRules{}, MatchOptions{})
+	discarderSeat := uint32(0)
+	claimerSeat := uint32(1)
+	discardedTile := &pb.Tile{Id: 900, Suit: pb.Suit_SUIT_MAN, Value: 3}
+	claimTiles := []*pb.Tile{
+		{Id: 901, Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Id: 902, Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Id: 903, Suit: pb.Suit_SUIT_MAN, Value: 3},
+	}
+
+	g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	g.State.ActivePlayer = discarderSeat
+	g.State.ActiveDiscard = discardedTile
+	g.State.WallCount = 0
+	g.State.Players[discarderSeat].Discards = []*pb.Tile{discardedTile}
+	g.State.Players[claimerSeat].ClosedHand = claimTiles
+	g.State.Players[claimerSeat].HandSize = uint32(len(claimTiles))
+	g.State.Players[claimerSeat].ValidActions = []*pb.PlayerAction{{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: claimTiles,
+	}}
+	g.interruptQueue[claimerSeat] = &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: claimTiles,
+	}
+
+	g.ResolveInterrupts()
+
+	if g.State.Phase != pb.GamePhase_PHASE_ROUND_END {
+		t.Fatalf("expected round end after exhausted interrupt-kan replacement draw, got %v", g.State.Phase)
+	}
+	if g.State.RoundResult == nil || !g.State.RoundResult.IsDraw {
+		t.Fatalf("expected exhaustive draw round result, got %+v", g.State.RoundResult)
+	}
+	for seat, player := range g.State.Players {
+		if len(player.ValidActions) != 0 {
+			t.Fatalf("expected no valid actions after round end for seat %d, got %+v", seat, player.ValidActions)
+		}
+	}
+}

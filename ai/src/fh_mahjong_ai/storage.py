@@ -112,6 +112,37 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     return int(payload.get("step", 0))
 
 
+def load_compatible_checkpoint(path: Path, model: torch.nn.Module) -> tuple[int, dict[str, object]]:
+    """Load only same-name, same-shape tensors from a checkpoint.
+
+    This is intended for explicit architecture ablations, for example adding
+    residual blocks while reusing the existing stem, early blocks, and heads.
+    Normal serving/evaluation should use `load_checkpoint`.
+    """
+    payload = torch.load(path, map_location="cpu")
+    target_state = model.state_dict()
+    checkpoint_state = _adapt_checkpoint_state(payload["model"], target_state)
+    compatible = {
+        key: value
+        for key, value in checkpoint_state.items()
+        if key in target_state and value.shape == target_state[key].shape
+    }
+    skipped = sorted(
+        key
+        for key, value in checkpoint_state.items()
+        if key not in target_state or value.shape != target_state[key].shape
+    )
+    missing = sorted(key for key in target_state if key not in compatible)
+    merged = dict(target_state)
+    merged.update(compatible)
+    model.load_state_dict(merged)
+    return int(payload.get("step", 0)), {
+        "loaded_keys": len(compatible),
+        "missing_keys": missing,
+        "skipped_keys": skipped,
+    }
+
+
 def _adapt_checkpoint_state(
     checkpoint_state: dict[str, torch.Tensor],
     model_state: dict[str, torch.Tensor],

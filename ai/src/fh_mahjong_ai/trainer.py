@@ -289,6 +289,16 @@ class DiscreteIQLTrainer:
         dones = torch.from_numpy(batch.dones).to(self.train_config.device)
         returns = torch.from_numpy(batch.returns).to(self.train_config.device)
         steps_to_done = torch.from_numpy(batch.steps_to_done).to(self.train_config.device)
+        utility_returns = large_loss_adjusted_rewards(
+            returns,
+            self.iql_config.large_loss_threshold,
+            self.iql_config.large_loss_penalty,
+        )
+        utility_rewards = large_loss_adjusted_rewards(
+            rewards,
+            self.iql_config.large_loss_threshold,
+            self.iql_config.large_loss_penalty,
+        )
 
         policy_logits, values = self.model(planes, scalars, action_mask)
         q_values, _ = self.model.q_values(planes, scalars, action_mask)
@@ -296,11 +306,11 @@ class DiscreteIQLTrainer:
 
         target_mode = self.iql_config.target_mode.lower()
         if target_mode == "mc":
-            target_q = discounted_terminal_returns(returns, steps_to_done, self.iql_config.gamma)
+            target_q = discounted_terminal_returns(utility_returns, steps_to_done, self.iql_config.gamma)
         elif target_mode == "td":
             with torch.no_grad():
                 _, next_values = self.target_model(next_planes, next_scalars, next_action_mask)
-                target_q = rewards + self.iql_config.gamma * (1.0 - dones) * next_values
+                target_q = utility_rewards + self.iql_config.gamma * (1.0 - dones) * next_values
         else:
             raise ValueError(f"unsupported discrete IQL target_mode={self.iql_config.target_mode!r}")
 
@@ -363,6 +373,20 @@ def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tens
         steps_to_done.to(dtype=returns.dtype, device=returns.device),
     )
     return returns * discount
+
+
+def large_loss_adjusted_rewards(
+    rewards: torch.Tensor,
+    threshold: Optional[float],
+    penalty: float,
+) -> torch.Tensor:
+    if threshold is None or penalty <= 0.0:
+        return rewards
+    downside = torch.clamp(
+        torch.as_tensor(threshold, dtype=rewards.dtype, device=rewards.device) - rewards,
+        min=0.0,
+    )
+    return rewards - float(penalty) * downside
 
 
 def fill_buffer_from_episodes(replay_buffer: ReplayBuffer, episodes: Iterable[List[Transition]]) -> None:
