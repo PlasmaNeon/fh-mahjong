@@ -41,7 +41,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		seed = request.Seed
 	}
 
-	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, core.MatchOptions{})
+	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, matchOptionsFromConfig(e.config))
 	e.game.SetWallSeed(core.SeedFromUint64(seed))
 	e.decisionCount = 0
 	if err := e.game.Start(); err != nil {
@@ -99,10 +99,13 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 
 	dataset := &pb.TrajectoryDataset{}
 	for episode := uint32(0); episode < episodes; episode++ {
+		config := configOrDefault(request)
 		env := New(&pb.EnvConfig{
 			LearningSeats:      []uint32{0, 1, 2, 3},
 			AutoPlayHeuristics: false,
-			MaxDecisions:       configOrDefault(request).MaxDecisions,
+			MaxDecisions:       config.MaxDecisions,
+			MatchMode:          config.MatchMode,
+			ChongciConfig:      cloneChongciConfig(config.ChongciConfig),
 		})
 
 		resetResponse, err := env.Reset(&pb.EnvResetRequest{
@@ -170,10 +173,24 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 
 func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 	for {
+		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			return &pb.EnvStepResponse{
+				Observation: emptyObservation(e.game.State, e.decisionCount),
+				Rewards:     matchEndRewards(e.game.State),
+				Terminated:  true,
+			}, nil
+		}
+
 		if e.game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+			if e.game.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+				if err := e.readyAllPlayersForNextRound(); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return &pb.EnvStepResponse{
 				Observation:  emptyObservation(e.game.State, e.decisionCount),
-				Rewards:      finalRewards(e.game.State),
+				Rewards:      roundRewards(e.game.State),
 				Terminated:   true,
 				RoundOutcome: roundOutcome(e.game.State),
 			}, nil
@@ -227,6 +244,21 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 
 		return nil, fmt.Errorf("no actionable seat found: %s", e.decisionStateSummary())
 	}
+}
+
+func (e *Env) readyAllPlayersForNextRound() error {
+	for seat := uint32(0); seat < 4; seat++ {
+		if e.game.State.Phase != pb.GamePhase_PHASE_ROUND_END {
+			return nil
+		}
+		if len(e.game.State.PlayerReady) > int(seat) && e.game.State.PlayerReady[seat] {
+			continue
+		}
+		if err := e.game.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Env) currentLearningSeat() (uint32, bool) {
@@ -320,6 +352,7 @@ func normalizeConfig(config *pb.EnvConfig) *pb.EnvConfig {
 			LearningSeats:      []uint32{0},
 			AutoPlayHeuristics: true,
 			MaxDecisions:       512,
+			MatchMode:          pb.MatchMode_MATCH_MODE_CLASSIC,
 		}
 	}
 
@@ -327,12 +360,21 @@ func normalizeConfig(config *pb.EnvConfig) *pb.EnvConfig {
 		LearningSeats:      append([]uint32(nil), config.LearningSeats...),
 		AutoPlayHeuristics: config.AutoPlayHeuristics,
 		MaxDecisions:       config.MaxDecisions,
+		MatchMode:          config.MatchMode,
+		ChongciConfig:      cloneChongciConfig(config.ChongciConfig),
 	}
 	if len(normalized.LearningSeats) == 0 {
 		normalized.LearningSeats = []uint32{0}
 	}
 	if normalized.MaxDecisions == 0 {
-		normalized.MaxDecisions = 512
+		if normalized.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+			normalized.MaxDecisions = 8192
+		} else {
+			normalized.MaxDecisions = 512
+		}
+	}
+	if normalized.MatchMode == pb.MatchMode_MATCH_MODE_UNSPECIFIED {
+		normalized.MatchMode = pb.MatchMode_MATCH_MODE_CLASSIC
 	}
 	return normalized
 }
@@ -345,7 +387,7 @@ func learningSeatSet(config *pb.EnvConfig) map[uint32]bool {
 	return set
 }
 
-func finalRewards(state *pb.GameState) []float32 {
+func roundRewards(state *pb.GameState) []float32 {
 	rewards := make([]float32, 4)
 	if state == nil || state.RoundResult == nil {
 		return rewards
@@ -356,6 +398,37 @@ func finalRewards(state *pb.GameState) []float32 {
 		}
 	}
 	return rewards
+}
+
+func matchEndRewards(state *pb.GameState) []float32 {
+	rewards := make([]float32, 4)
+	if state == nil || state.MatchEndResult == nil {
+		return rewards
+	}
+	for _, standing := range state.MatchEndResult.Standings {
+		if int(standing.Seat) < len(rewards) {
+			rewards[standing.Seat] = float32(standing.NetChange) / 1000.0
+		}
+	}
+	return rewards
+}
+
+func matchOptionsFromConfig(config *pb.EnvConfig) core.MatchOptions {
+	if config == nil || config.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		return core.MatchOptions{}
+	}
+	return core.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cloneChongciConfig(config.ChongciConfig),
+	}
+}
+
+func cloneChongciConfig(config *pb.ChongciConfig) *pb.ChongciConfig {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
 }
 
 func roundOutcome(state *pb.GameState) *pb.RoundOutcome {

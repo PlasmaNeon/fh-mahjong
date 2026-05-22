@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 import torch
 
-from fh_mahjong_ai.buffer import ArrayReplayBuffer, ReplayBuffer
+from fh_mahjong_ai.buffer import ArrayReplayBuffer, CompositeReplayBuffer, ReplayBuffer
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
@@ -34,7 +34,7 @@ IQL_ARRAY_KEYS = (
 
 
 def train_iql(
-    data_path: Path,
+    data_path: Path | Sequence[Path],
     checkpoint_dir: Path,
     epochs: int = 10,
     batch_size: int = 64,
@@ -62,31 +62,14 @@ def train_iql(
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
 ) -> List[DiscreteIQLMetrics]:
-    """Train a conservative discrete IQL model from fixed offline trajectory data."""
-    if is_sharded_transition_dataset(data_path):
-        arrays = read_transition_arrays(data_path, keys=IQL_ARRAY_KEYS, limit=max_transitions)
-        if "steps_to_done" not in arrays:
-            arrays["steps_to_done"] = compute_steps_to_done(
-                arrays["episode_index"],
-                np.logical_or(arrays["terminated"], arrays["truncated"]),
-            )
-        buf = ArrayReplayBuffer(
-            arrays=arrays,
-            indices=np.arange(arrays["action_ids"].shape[0], dtype=np.int64),
-        )
-        transition_count = len(buf)
-    else:
-        transitions = read_transitions(data_path)
-        if max_transitions is not None:
-            transitions = transitions[: max(0, int(max_transitions))]
-        backfill_returns(transitions)
-        backfill_steps_to_done(transitions)
-        buf = ReplayBuffer(capacity=len(transitions))
-        buf.extend(transitions)
-        transition_count = len(transitions)
-
+    """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
+    data_paths = normalize_data_paths(data_path)
+    buf, transition_count, dataset_transition_counts = load_iql_replay_buffer(
+        data_paths,
+        max_transitions=max_transitions,
+    )
     if transition_count <= 0:
-        raise ValueError(f"no transitions loaded from {data_path}")
+        raise ValueError(f"no transitions loaded from {data_paths}")
 
     env_config = EnvConfig()
     model_config = ModelConfig()
@@ -144,7 +127,9 @@ def train_iql(
             log_params(
                 {
                     "method": "discrete_iql",
-                    "data_path": data_path,
+                    "data_path": data_paths[0] if len(data_paths) == 1 else ",".join(str(path) for path in data_paths),
+                    "data_paths": ",".join(str(path) for path in data_paths),
+                    "dataset_transition_counts": ",".join(str(count) for count in dataset_transition_counts),
                     "checkpoint_dir": checkpoint_dir,
                     "epochs": epochs,
                     "start_epoch": start_epoch,
@@ -229,9 +214,63 @@ def train_iql(
     return all_metrics
 
 
+def normalize_data_paths(data_path: Path | Sequence[Path]) -> list[Path]:
+    if isinstance(data_path, (str, Path)):
+        return [Path(data_path)]
+    paths = [Path(path) for path in data_path]
+    if not paths:
+        raise ValueError("at least one data path is required")
+    return paths
+
+
+def load_iql_replay_buffer(
+    data_paths: Sequence[Path],
+    max_transitions: Optional[int] = None,
+) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
+    buffers: list[ReplayBuffer | ArrayReplayBuffer] = []
+    counts: list[int] = []
+
+    for path in data_paths:
+        if is_sharded_transition_dataset(path):
+            arrays = read_transition_arrays(path, keys=IQL_ARRAY_KEYS, limit=max_transitions)
+            if "steps_to_done" not in arrays:
+                arrays["steps_to_done"] = compute_steps_to_done(
+                    arrays["episode_index"],
+                    np.logical_or(arrays["terminated"], arrays["truncated"]),
+                )
+            buffer = ArrayReplayBuffer(
+                arrays=arrays,
+                indices=np.arange(arrays["action_ids"].shape[0], dtype=np.int64),
+            )
+        else:
+            transitions = read_transitions(path)
+            if max_transitions is not None:
+                transitions = transitions[: max(0, int(max_transitions))]
+            backfill_returns(transitions)
+            backfill_steps_to_done(transitions)
+            buffer = ReplayBuffer(capacity=len(transitions))
+            buffer.extend(transitions)
+
+        buffers.append(buffer)
+        counts.append(len(buffer))
+
+    transition_count = int(sum(counts))
+    if transition_count <= 0:
+        raise ValueError(f"no transitions loaded from {data_paths}")
+    if len(buffers) == 1:
+        return buffers[0], transition_count, counts
+    return CompositeReplayBuffer(buffers), transition_count, counts
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train discrete IQL model")
-    parser.add_argument("--data", type=Path, required=True, help="JSONL or sharded trajectory data")
+    parser.add_argument(
+        "--data",
+        type=Path,
+        required=True,
+        action="append",
+        help="JSONL or sharded trajectory data. Repeat to mix heuristic and self-play datasets.",
+    )
     parser.add_argument("--checkpoint-dir", type=Path, default=Path("checkpoints/iql"))
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -248,10 +287,15 @@ def main() -> None:
     parser.add_argument("--cql-weight", type=float, default=0.0)
     parser.add_argument("--target-update-interval", type=int, default=25)
     parser.add_argument("--target-tau", type=float, default=0.005)
-    parser.add_argument("--max-transitions", type=int, default=None)
+    parser.add_argument(
+        "--max-transitions",
+        type=int,
+        default=None,
+        help="Optional row limit per data path. With repeated --data, the limit applies to each dataset.",
+    )
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--log-interval", type=int, default=10)
-    parser.add_argument("--init-checkpoint", type=Path, default=None, help="Optional BC checkpoint to warm-start from")
+    parser.add_argument("--init-checkpoint", type=Path, default=None, help="Optional BC/IQL checkpoint to warm-start from")
     parser.add_argument(
         "--init-q-from-policy",
         action="store_true",
@@ -264,7 +308,9 @@ def main() -> None:
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     args = parser.parse_args()
 
-    print(f"Loading data from {args.data}...")
+    print("Loading data from:")
+    for path in args.data:
+        print(f"  {path}")
     metrics = train_iql(
         data_path=args.data,
         checkpoint_dir=args.checkpoint_dir,

@@ -1323,6 +1323,8 @@ type EnvConfig struct {
 	LearningSeats      []uint32               `protobuf:"varint,1,rep,packed,name=learning_seats,json=learningSeats,proto3" json:"learning_seats,omitempty"`
 	AutoPlayHeuristics bool                   `protobuf:"varint,2,opt,name=auto_play_heuristics,json=autoPlayHeuristics,proto3" json:"auto_play_heuristics,omitempty"`
 	MaxDecisions       uint32                 `protobuf:"varint,3,opt,name=max_decisions,json=maxDecisions,proto3" json:"max_decisions,omitempty"`
+	MatchMode          MatchMode              `protobuf:"varint,4,opt,name=match_mode,json=matchMode,proto3,enum=game.MatchMode" json:"match_mode,omitempty"`
+	ChongciConfig      *ChongciConfig         `protobuf:"bytes,5,opt,name=chongci_config,json=chongciConfig,proto3" json:"chongci_config,omitempty"` // set iff match_mode == MATCH_MODE_CHONGCI
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1376,6 +1378,20 @@ func (x *EnvConfig) GetMaxDecisions() uint32 {
 		return x.MaxDecisions
 	}
 	return 0
+}
+
+func (x *EnvConfig) GetMatchMode() MatchMode {
+	if x != nil {
+		return x.MatchMode
+	}
+	return MatchMode_MATCH_MODE_UNSPECIFIED
+}
+
+func (x *EnvConfig) GetChongciConfig() *ChongciConfig {
+	if x != nil {
+		return x.ChongciConfig
+	}
+	return nil
 }
 
 type SeatObservation struct {
@@ -2437,11 +2453,14 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0ediscarder_seat\x18\x04 \x01(\rR\rdiscarderSeat\x12\x1f\n" +
 	"\vtotal_score\x18\x05 \x01(\x05R\n" +
 	"totalScore\x12,\n" +
-	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\x89\x01\n" +
+	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xf5\x01\n" +
 	"\tEnvConfig\x12%\n" +
 	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
 	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
-	"\rmax_decisions\x18\x03 \x01(\rR\fmaxDecisions\"\x82\x03\n" +
+	"\rmax_decisions\x18\x03 \x01(\rR\fmaxDecisions\x12.\n" +
+	"\n" +
+	"match_mode\x18\x04 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
+	"\x0echongci_config\x18\x05 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\"\x82\x03\n" +
 	"\x0fSeatObservation\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
 	"\x06planes\x18\x02 \x03(\x02R\x06planes\x12%\n" +
@@ -2657,27 +2676,29 @@ var file_proto_game_proto_depIdxs = []int32{
 	12, // 25: game.RoundResult.payouts:type_name -> game.PlayerPayout
 	1,  // 26: game.RoundOutcome.win_type:type_name -> game.ActionType
 	12, // 27: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
-	3,  // 28: game.SeatObservation.phase:type_name -> game.GamePhase
-	15, // 29: game.EnvResetRequest.config:type_name -> game.EnvConfig
-	16, // 30: game.EnvResetResponse.observation:type_name -> game.SeatObservation
-	14, // 31: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
-	16, // 32: game.EnvStepResponse.observation:type_name -> game.SeatObservation
-	14, // 33: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
-	15, // 34: game.TrajectoryRequest.config:type_name -> game.EnvConfig
-	16, // 35: game.TrajectorySample.observation:type_name -> game.SeatObservation
-	16, // 36: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
-	14, // 37: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
-	22, // 38: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
-	4,  // 39: game.SeatConfig.difficulty:type_name -> game.Difficulty
-	24, // 40: game.PrivateTableState.seats:type_name -> game.SeatConfig
-	5,  // 41: game.PrivateTableState.match_mode:type_name -> game.MatchMode
-	26, // 42: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
-	27, // 43: game.MatchEndResult.standings:type_name -> game.PlayerStanding
-	44, // [44:44] is the sub-list for method output_type
-	44, // [44:44] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	5,  // 28: game.EnvConfig.match_mode:type_name -> game.MatchMode
+	26, // 29: game.EnvConfig.chongci_config:type_name -> game.ChongciConfig
+	3,  // 30: game.SeatObservation.phase:type_name -> game.GamePhase
+	15, // 31: game.EnvResetRequest.config:type_name -> game.EnvConfig
+	16, // 32: game.EnvResetResponse.observation:type_name -> game.SeatObservation
+	14, // 33: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
+	16, // 34: game.EnvStepResponse.observation:type_name -> game.SeatObservation
+	14, // 35: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
+	15, // 36: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	16, // 37: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	16, // 38: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	14, // 39: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
+	22, // 40: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	4,  // 41: game.SeatConfig.difficulty:type_name -> game.Difficulty
+	24, // 42: game.PrivateTableState.seats:type_name -> game.SeatConfig
+	5,  // 43: game.PrivateTableState.match_mode:type_name -> game.MatchMode
+	26, // 44: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
+	27, // 45: game.MatchEndResult.standings:type_name -> game.PlayerStanding
+	46, // [46:46] is the sub-list for method output_type
+	46, // [46:46] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }

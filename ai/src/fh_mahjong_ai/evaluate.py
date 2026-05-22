@@ -140,6 +140,34 @@ def update_outcome_counts(outcome_counts: Counter[str], outcome: Optional[dict[s
     outcome_counts["other"] += 1
 
 
+def _normalize_match_mode(match_mode: str) -> str:
+    normalized = match_mode.lower()
+    if normalized not in {"classic", "chongci"}:
+        raise ValueError(f"unsupported match_mode={match_mode!r}; expected 'classic' or 'chongci'")
+    return normalized
+
+
+def _default_large_loss_threshold(match_mode: str) -> float:
+    if match_mode == "chongci":
+        return -1.0
+    return -16.0
+
+
+def _chongci_report_config(
+    match_mode: str,
+    starting_score: int,
+    bust_threshold: int,
+    max_hands: int,
+) -> Optional[dict[str, int]]:
+    if match_mode != "chongci":
+        return None
+    return {
+        "starting_score": int(starting_score),
+        "bust_threshold": int(bust_threshold),
+        "max_hands": int(max_hands),
+    }
+
+
 def compute_action_agreement(
     model: nn.Module,
     transitions: List[Transition],
@@ -268,18 +296,35 @@ def evaluate_online(
     bridge_library_path: Optional[str] = None,
     device: str = "cpu",
     learning_seat: int = 0,
-    large_loss_threshold: float = -16.0,
+    large_loss_threshold: Optional[float] = None,
+    match_mode: str = "classic",
+    chongci_starting_score: int = 2000,
+    chongci_bust_threshold: int = 0,
+    chongci_max_hands: int = 50,
+    max_steps_per_episode: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run the learned policy for one seat against heuristic opponents.
 
     Returns aggregate reward and action-frequency metrics.
     """
+    normalized_match_mode = _normalize_match_mode(match_mode)
+    resolved_large_loss_threshold = (
+        float(large_loss_threshold)
+        if large_loss_threshold is not None
+        else _default_large_loss_threshold(normalized_match_mode)
+    )
     config = EnvConfig(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
         learning_seats=(learning_seat,),
         auto_play_heuristics=True,
+        match_mode=normalized_match_mode,
+        chongci_starting_score=chongci_starting_score,
+        chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands,
     )
+    if max_steps_per_episode is not None:
+        config.max_steps_per_episode = int(max_steps_per_episode)
     bridge = build_bridge(config)
     env = MahjongEnv(config, bridge)
     policy = TorchGreedyPolicy(model, device=device)
@@ -290,16 +335,24 @@ def evaluate_online(
     wins = 0
     large_losses = 0
 
-    def record_episode(rewards: np.ndarray, episode: list[Transition], outcome: Optional[dict[str, Any]]) -> None:
+    def record_episode(
+        rewards: np.ndarray,
+        episode: list[Transition],
+        outcome: Optional[dict[str, Any]],
+        truncated: bool = False,
+    ) -> None:
         nonlocal wins, large_losses
         reward = float(rewards[learning_seat])
         seat_rewards.append(reward)
         if reward > 0:
             wins += 1
-        if reward <= large_loss_threshold:
+        if reward <= resolved_large_loss_threshold:
             large_losses += 1
         action_counts.update(action_family(t.action_id) for t in episode)
-        update_outcome_counts(outcome_counts, outcome, learning_seat)
+        if outcome is None and normalized_match_mode == "chongci":
+            outcome_counts["match_truncated" if truncated else "match_end"] += 1
+        else:
+            update_outcome_counts(outcome_counts, outcome, learning_seat)
 
     try:
         for i in range(episodes):
@@ -308,7 +361,12 @@ def evaluate_online(
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
-                record_episode(reset_result.rewards, episode, reset_result.info.get("round_outcome"))
+                record_episode(
+                    reset_result.rewards,
+                    episode,
+                    reset_result.info.get("round_outcome"),
+                    truncated=reset_result.truncated,
+                )
                 continue
             if not observation.legal_actions:
                 continue
@@ -330,7 +388,12 @@ def evaluate_online(
 
                 observation = step_result.observation
                 if step_result.terminated or step_result.truncated:
-                    record_episode(step_result.rewards, episode, step_result.info.get("round_outcome"))
+                    record_episode(
+                        step_result.rewards,
+                        episode,
+                        step_result.info.get("round_outcome"),
+                        truncated=step_result.truncated,
+                    )
                     break
                 if not observation.legal_actions:
                     break
@@ -339,7 +402,17 @@ def evaluate_online(
 
     completed = len(seat_rewards)
     rewards = reward_summary(seat_rewards)
+    positive_reward_count = int(rewards["positive_count"])
+    zero_reward_count = int(rewards["zero_count"])
+    negative_reward_count = int(rewards["negative_count"])
     return {
+        "match_mode": normalized_match_mode,
+        "chongci_config": _chongci_report_config(
+            normalized_match_mode,
+            chongci_starting_score,
+            chongci_bust_threshold,
+            chongci_max_hands,
+        ),
         "seat": learning_seat,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
@@ -347,8 +420,21 @@ def evaluate_online(
         "reward_summary": rewards,
         "win_count": wins,
         "win_rate": wins / completed if completed else 0.0,
+        "win_metric_note": (
+            "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
+            "not single-hand win rate."
+            if normalized_match_mode == "chongci"
+            else "Reward-positive single-round result."
+        ),
+        "positive_reward_count": positive_reward_count,
+        "positive_reward_rate": rewards["positive_rate"],
+        "zero_reward_count": zero_reward_count,
+        "zero_reward_rate": rewards["zero_rate"],
+        "negative_reward_count": negative_reward_count,
+        "negative_reward_rate": rewards["negative_rate"],
         "large_loss_count": large_losses,
         "large_loss_rate": large_losses / completed if completed else 0.0,
+        "large_loss_threshold": resolved_large_loss_threshold,
         "episodes": completed,
         "per_episode_rewards": seat_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),
@@ -365,9 +451,15 @@ def evaluate_duplicate_seats(
     bridge_kind: str = "go",
     bridge_library_path: Optional[str] = None,
     device: str = "cpu",
-    large_loss_threshold: float = -16.0,
+    large_loss_threshold: Optional[float] = None,
+    match_mode: str = "classic",
+    chongci_starting_score: int = 2000,
+    chongci_bust_threshold: int = 0,
+    chongci_max_hands: int = 50,
+    max_steps_per_episode: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Evaluate the same seeds with the learning agent rotated through seats."""
+    normalized_match_mode = _normalize_match_mode(match_mode)
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
@@ -387,6 +479,11 @@ def evaluate_duplicate_seats(
             device=device,
             learning_seat=seat,
             large_loss_threshold=large_loss_threshold,
+            match_mode=normalized_match_mode,
+            chongci_starting_score=chongci_starting_score,
+            chongci_bust_threshold=chongci_bust_threshold,
+            chongci_max_hands=chongci_max_hands,
+            max_steps_per_episode=max_steps_per_episode,
         )
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -403,6 +500,8 @@ def evaluate_duplicate_seats(
             "mean_reward": report["mean_reward"],
             "reward_sum": report["reward_sum"],
             "win_rate": report["win_rate"],
+            "positive_reward_rate": report["positive_reward_rate"],
+            "negative_reward_rate": report["negative_reward_rate"],
             "large_loss_rate": report["large_loss_rate"],
             "action_family_rates": report["action_family_rates"],
             "round_outcome_rates": report.get("round_outcome_rates", {}),
@@ -410,6 +509,13 @@ def evaluate_duplicate_seats(
         for report in seat_reports
     }
     return {
+        "match_mode": normalized_match_mode,
+        "chongci_config": _chongci_report_config(
+            normalized_match_mode,
+            chongci_starting_score,
+            chongci_bust_threshold,
+            chongci_max_hands,
+        ),
         "seeds": list(seeds),
         "seats": seat_list,
         "avg_reward": round(float(rewards["mean"]), 2),
@@ -418,8 +524,21 @@ def evaluate_duplicate_seats(
         "reward_summary": rewards,
         "win_count": wins,
         "win_rate": wins / completed if completed else 0.0,
+        "win_metric_note": (
+            "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
+            "not single-hand win rate."
+            if normalized_match_mode == "chongci"
+            else "Reward-positive single-round result."
+        ),
+        "positive_reward_count": int(rewards["positive_count"]),
+        "positive_reward_rate": rewards["positive_rate"],
+        "zero_reward_count": int(rewards["zero_count"]),
+        "zero_reward_rate": rewards["zero_rate"],
+        "negative_reward_count": int(rewards["negative_count"]),
+        "negative_reward_rate": rewards["negative_rate"],
         "large_loss_count": large_losses,
         "large_loss_rate": large_losses / completed if completed else 0.0,
+        "large_loss_threshold": seat_reports[0]["large_loss_threshold"] if seat_reports else None,
         "episodes": completed,
         "per_episode_rewards": all_rewards,
         "action_family_counts": dict(sorted(action_counts.items())),

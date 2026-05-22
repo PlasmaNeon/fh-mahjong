@@ -98,7 +98,8 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
 
 def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> int:
     payload = torch.load(path, map_location="cpu")
-    missing, unexpected = model.load_state_dict(payload["model"], strict=False)
+    checkpoint_state = _adapt_checkpoint_state(payload["model"], model.state_dict())
+    missing, unexpected = model.load_state_dict(checkpoint_state, strict=False)
     missing_bad = [key for key in missing if not key.startswith("q_head.")]
     unexpected_bad = [key for key in unexpected if not key.startswith("q_head.")]
     if missing_bad or unexpected_bad:
@@ -109,6 +110,30 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     if optimizer is not None and "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload.get("step", 0))
+
+
+def _adapt_checkpoint_state(
+    checkpoint_state: dict[str, torch.Tensor],
+    model_state: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    adapted = dict(checkpoint_state)
+    key = "scalar_encoder.0.weight"
+    if key not in adapted or key not in model_state:
+        return adapted
+
+    source = adapted[key]
+    target = model_state[key]
+    if source.shape == target.shape or source.ndim != 2 or target.ndim != 2:
+        return adapted
+
+    migrated = target.clone()
+    rows = min(source.shape[0], target.shape[0])
+    cols = min(source.shape[1], target.shape[1])
+    migrated[:rows, :cols] = source[:rows, :cols]
+    if target.shape[1] > source.shape[1]:
+        migrated[:, source.shape[1] :] = 0
+    adapted[key] = migrated
+    return adapted
 
 
 def write_transitions_jsonl(path: Path, transitions: Iterable[Transition], append: bool = False) -> None:
@@ -345,6 +370,8 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         "truncated": np.asarray([t.truncated for t in transitions], dtype=np.bool_),
         "episode_index": episode_indices,
         "steps_to_done": steps_to_done,
+        "policy_source_ids": np.asarray([int(t.info.get("policy_source_id", -1)) for t in transitions], dtype=np.int16),
+        "policy_values": np.asarray([float(t.info.get("policy_value", np.nan)) for t in transitions], dtype=np.float32),
         "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
         "terminal_is_draw": np.asarray([bool(o.get("is_draw", False)) for o in outcomes], dtype=np.bool_),
         "terminal_winner_seat": np.asarray([int(o.get("winner_seat", -1)) for o in outcomes], dtype=np.int16),
@@ -383,11 +410,23 @@ def _read_transition_shard(path: Path) -> list[Transition]:
                         "episode_index": int(arrays["episode_index"][index]),
                         "steps_to_done": int(arrays["steps_to_done"][index]) if "steps_to_done" in arrays.files else 0,
                         "terminal_rewards": np.asarray(arrays["terminal_rewards"][index], dtype=np.float32),
+                        **_policy_source_info(arrays, index),
                         **_terminal_outcome_info(arrays, index),
                     },
                 )
             )
     return transitions
+
+
+def _policy_source_info(arrays: np.lib.npyio.NpzFile, index: int) -> dict[str, object]:
+    info: dict[str, object] = {}
+    if "policy_source_ids" in arrays.files:
+        info["policy_source_id"] = int(arrays["policy_source_ids"][index])
+    if "policy_values" in arrays.files:
+        value = float(arrays["policy_values"][index])
+        if not np.isnan(value):
+            info["policy_value"] = value
+    return info
 
 
 def _terminal_outcome_info(arrays: np.lib.npyio.NpzFile, index: int) -> dict[str, object]:

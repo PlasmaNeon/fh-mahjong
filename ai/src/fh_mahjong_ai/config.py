@@ -9,13 +9,17 @@ from typing import Optional
 class EnvConfig:
     action_space_size: int = 204
     plane_shape: tuple[int, int, int] = (39, 42, 1)
-    scalar_features: int = 42
+    scalar_features: int = 50
     max_steps_per_episode: int = 256
     bridge_kind: str = "go"
     seed: int = 1
     learning_seats: tuple[int, ...] = (0,)
     auto_play_heuristics: bool = True
     bridge_library_path: Optional[Path] = None
+    match_mode: str = "classic"
+    chongci_starting_score: int = 2000
+    chongci_bust_threshold: int = 0
+    chongci_max_hands: int = 50
 
 
 @dataclass
@@ -26,7 +30,11 @@ class ModelConfig:
     scalar_hidden_dim: int = 128
     trunk_hidden_dim: int = 256
     value_hidden_dim: int = 128
+    q_hidden_dim: int = 256
     pool_planes: bool = False
+    channel_attention: bool = False
+    channel_attention_ratio: int = 16
+    dueling_q: bool = True
 
 
 @dataclass

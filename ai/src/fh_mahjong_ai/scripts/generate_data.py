@@ -30,6 +30,11 @@ def generate_dataset(
     output_format: str = "jsonl",
     shard_size: int = 50_000,
     compressed_shards: bool = False,
+    match_mode: str = "classic",
+    max_steps_per_episode: int = 0,
+    chongci_starting_score: int = 2000,
+    chongci_bust_threshold: int = 0,
+    chongci_max_hands: int = 50,
 ) -> dict:
     """Generate heuristic trajectories and write to JSONL or NumPy shards.
 
@@ -42,6 +47,11 @@ def generate_dataset(
         bridge_library_path=bridge_library_path,
         learning_seats=(0,),
         auto_play_heuristics=True,
+        max_steps_per_episode=max_steps_per_episode,
+        match_mode=match_mode,
+        chongci_starting_score=chongci_starting_score,
+        chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands,
     )
     bridge = build_bridge(config)
     shard_writer: ShardedTransitionWriter | None = None
@@ -233,6 +243,14 @@ def dataset_manifest(
             "action_space_size": config.action_space_size,
             "plane_shape": list(config.plane_shape),
             "scalar_features": config.scalar_features,
+            "match_mode": config.match_mode,
+            "chongci_config": {
+                "starting_score": config.chongci_starting_score,
+                "bust_threshold": config.chongci_bust_threshold,
+                "max_hands": config.chongci_max_hands,
+            }
+            if config.match_mode == "chongci"
+            else None,
         },
         "recommended_seed_splits": {
             "train": [1, 99999],
@@ -279,6 +297,11 @@ def main() -> None:
     )
     parser.add_argument("--shard-size", type=int, default=50_000, help="Transitions per NumPy shard")
     parser.add_argument("--compressed-shards", action="store_true", help="Write compressed NumPy shards")
+    parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
+    parser.add_argument("--max-steps-per-episode", type=int, default=0, help="Bridge decision cap per episode; 0 uses the Go default")
+    parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
+    parser.add_argument("--chongci-bust-threshold", type=int, default=0, help="Chongci bust threshold")
+    parser.add_argument("--chongci-max-hands", type=int, default=50, help="Chongci hand cap")
     parser.add_argument(
         "--chunk-size",
         type=int,
@@ -299,6 +322,11 @@ def main() -> None:
         output_format=args.format,
         shard_size=args.shard_size,
         compressed_shards=args.compressed_shards,
+        match_mode=args.match_mode,
+        max_steps_per_episode=args.max_steps_per_episode,
+        chongci_starting_score=args.chongci_starting_score,
+        chongci_bust_threshold=args.chongci_bust_threshold,
+        chongci_max_hands=args.chongci_max_hands,
     )
     print(f"Done: {stats['transitions']} transitions from {stats['episodes']} episodes in {stats['elapsed_seconds']}s")
     print(f"Saved to {args.output}")

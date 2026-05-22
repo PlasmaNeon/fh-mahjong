@@ -23,6 +23,7 @@ dev = [
 [project.scripts]
 fh-mj-selfplay-smoke = "fh_mahjong_ai.scripts.selfplay_smoke:main"
 fh-mj-generate-data = "fh_mahjong_ai.scripts.generate_data:main"
+fh-mj-generate-selfplay = "fh_mahjong_ai.scripts.generate_selfplay:main"
 fh-mj-convert-data = "fh_mahjong_ai.scripts.convert_data:main"
 fh-mj-train-bc = "fh_mahjong_ai.scripts.train_bc:main"
 fh-mj-train-awbc = "fh_mahjong_ai.scripts.train_awbc:main"

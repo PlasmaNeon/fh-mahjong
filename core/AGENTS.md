@@ -9,7 +9,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 ## Key Files
 
 - **game.go** — `Game` struct: central state machine
-  - `NewGame(ruleset)` — Constructor, injects a RuleEngine
+  - `NewGame(matchID, ruleset, MatchOptions)` — Constructor, injects a RuleEngine and optional match-mode config
   - Optional `Recorder` hook captures paipu events at authoritative game-engine action points
   - `SetWallSeed(seed)` — One-shot deterministic wall seed injection used by replay verification and the RL environment
   - `InterruptQueued(seat)` — Read-only helper for RL wrappers to see which WAIT_DISCARDS responses have already been submitted

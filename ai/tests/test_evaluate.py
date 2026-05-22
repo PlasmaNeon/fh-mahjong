@@ -117,6 +117,8 @@ class TestEvaluateOnline:
         assert "large_loss_rate" in report
         assert "mean_reward" in report
         assert "reward_summary" in report
+        assert "positive_reward_rate" in report
+        assert report["match_mode"] == "classic"
         assert "action_family_counts" in report
         assert "action_family_rates" in report
         assert "round_outcome_counts" in report
@@ -183,6 +185,67 @@ class TestEvaluateOnline:
         assert report["round_outcome_counts"] == {"ron_win": 1}
         assert report["round_outcome_rates"] == {"ron_win": 1.0}
 
+    def test_forwards_chongci_eval_config(self, monkeypatch) -> None:
+        captured: dict[str, EnvConfig] = {}
+
+        class TerminalChongciBridge:
+            def __init__(self) -> None:
+                self.last_reset_result = None
+
+            def reset(self, seed=None):
+                mask = np.zeros(204, dtype=np.int8)
+                observation = Observation(
+                    seat=0,
+                    planes=np.zeros((39, 42, 1), dtype=np.float32),
+                    scalars=np.zeros(50, dtype=np.float32),
+                    action_mask=mask,
+                )
+                self.last_reset_result = StepResult(
+                    observation=observation,
+                    rewards=np.asarray([0.75, -0.1, -0.2, -0.45], dtype=np.float32),
+                    terminated=True,
+                    truncated=False,
+                    info={},
+                )
+                return observation
+
+            def step(self, action_id):
+                raise AssertionError("terminal reset should not call step")
+
+            def close(self):
+                return None
+
+        def fake_build_bridge(config: EnvConfig):
+            captured["config"] = config
+            return TerminalChongciBridge()
+
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", fake_build_bridge)
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+
+        report = evaluate_online(
+            model=model,
+            episodes=1,
+            seeds=[5000],
+            bridge_kind="go",
+            device="cpu",
+            match_mode="chongci",
+            chongci_starting_score=3000,
+            chongci_bust_threshold=-100,
+            chongci_max_hands=12,
+            max_steps_per_episode=1024,
+        )
+
+        config = captured["config"]
+        assert config.match_mode == "chongci"
+        assert config.chongci_starting_score == 3000
+        assert config.chongci_bust_threshold == -100
+        assert config.chongci_max_hands == 12
+        assert config.max_steps_per_episode == 1024
+        assert report["match_mode"] == "chongci"
+        assert report["chongci_config"] == {"starting_score": 3000, "bust_threshold": -100, "max_hands": 12}
+        assert report["positive_reward_rate"] == 1.0
+        assert report["round_outcome_counts"] == {"match_end": 1}
+
     def test_duplicate_seat_eval_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
         report = evaluate_duplicate_seats(
@@ -194,9 +257,11 @@ class TestEvaluateOnline:
         )
 
         assert report["episodes"] == 4
+        assert report["match_mode"] == "classic"
         assert report["seats"] == [0, 1]
         assert len(report["seat_reports"]) == 2
         assert set(report["seat_summary"]) == {"0", "1"}
         assert "reward_summary" in report
+        assert "positive_reward_rate" in report
         assert "action_family_rates" in report
         assert "round_outcome_rates" in report

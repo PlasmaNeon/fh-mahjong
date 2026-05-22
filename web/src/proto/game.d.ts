@@ -1316,6 +1316,12 @@ export namespace game {
 
         /** EnvConfig maxDecisions */
         maxDecisions?: (number|undefined);
+
+        /** EnvConfig matchMode */
+        matchMode?: (game.MatchMode|undefined);
+
+        /** EnvConfig chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
     }
 
     /** Represents an EnvConfig. */
@@ -1335,6 +1341,12 @@ export namespace game {
 
         /** EnvConfig maxDecisions. */
         public maxDecisions: number;
+
+        /** EnvConfig matchMode. */
+        public matchMode: game.MatchMode;
+
+        /** EnvConfig chongciConfig. */
+        public chongciConfig: game.ChongciConfig;
 
         /**
          * Creates a new EnvConfig instance using the specified properties.

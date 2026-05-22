@@ -11,7 +11,8 @@ const (
 	ObservationPlaneChannels = 39
 	ObservationPlaneHeight   = 42
 	ObservationPlaneWidth    = 1
-	ObservationScalarCount   = 42
+	ObservationScalarCount   = 50
+	maxInt32                 = int32(^uint32(0) >> 1)
 )
 
 func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
@@ -134,6 +135,7 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 		scalars[39] = publicDangerScore(state, seat, state.ActiveDiscard)
 	}
 	scalars[41] = legalDiscardDangerRange(state, seat, mask)
+	setMatchContextScalars(scalars, state, seat)
 
 	return &pb.SeatObservation{
 		Seat:            seat,
@@ -175,6 +177,102 @@ func emptyObservation(state *pb.GameState, decisionIndex uint64) *pb.SeatObserva
 		Phase:           phase,
 		ActivePlayer:    activePlayer,
 	}
+}
+
+func setMatchContextScalars(scalars []float32, state *pb.GameState, seat uint32) {
+	if state == nil || int(seat) >= len(state.Players) || len(scalars) < ObservationScalarCount {
+		return
+	}
+
+	if state.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		scalars[42] = 1
+	}
+
+	maxHands := uint32(50)
+	startingScore := int32(25000)
+	bustThreshold := int32(0)
+	if state.ChongciConfig != nil {
+		if state.ChongciConfig.MaxHands > 0 {
+			maxHands = state.ChongciConfig.MaxHands
+		}
+		if state.ChongciConfig.StartingScore > 0 {
+			startingScore = state.ChongciConfig.StartingScore
+		}
+		bustThreshold = state.ChongciConfig.BustThreshold
+	}
+
+	scalars[43] = normalizeUint(state.HandNum, float32(maxHands))
+	if state.HandNum < maxHands {
+		scalars[44] = float32(maxHands-state.HandNum) / float32(maxHands)
+	}
+
+	self := state.Players[seat]
+	selfRank, leaderScore, lowestOtherScore, minOpponentScore := rankAndScoreContext(state, seat)
+	scalars[45] = 1.0 - float32(selfRank-1)/3.0
+	scalars[46] = 1.0 - normalizePositiveScoreDelta(leaderScore-self.Score, startingScore)
+	scalars[47] = normalizeSignedScoreDelta(self.Score-lowestOtherScore, startingScore)
+	scalars[48] = normalizePositiveScoreDelta(self.Score-bustThreshold, startingScore)
+	scalars[49] = 1.0 - normalizePositiveScoreDelta(minOpponentScore-bustThreshold, startingScore)
+}
+
+func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32, int32) {
+	selfScore := state.Players[seat].Score
+	rank := uint32(1)
+	leaderScore := selfScore
+	lowestOtherScore := selfScore
+	minOpponentScore := maxInt32
+	for _, player := range state.Players {
+		if player == nil {
+			continue
+		}
+		if player.Score > selfScore {
+			rank++
+		}
+		if player.Score > leaderScore {
+			leaderScore = player.Score
+		}
+		if player.Seat == seat {
+			continue
+		}
+		if player.Score < lowestOtherScore {
+			lowestOtherScore = player.Score
+		}
+		if player.Score < minOpponentScore {
+			minOpponentScore = player.Score
+		}
+	}
+	if minOpponentScore == maxInt32 {
+		minOpponentScore = selfScore
+	}
+	return rank, leaderScore, lowestOtherScore, minOpponentScore
+}
+
+func normalizePositiveScoreDelta(delta int32, scale int32) float32 {
+	if scale <= 0 {
+		scale = 1
+	}
+	value := float32(delta) / float32(scale)
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func normalizeSignedScoreDelta(delta int32, scale int32) float32 {
+	if scale <= 0 {
+		scale = 1
+	}
+	value := 0.5 + float32(delta)/(2.0*float32(scale))
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func faceCountsFromTile(tile *pb.Tile) [42]int {

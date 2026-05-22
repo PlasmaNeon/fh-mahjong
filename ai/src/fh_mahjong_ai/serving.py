@@ -48,6 +48,11 @@ class CheckpointPolicy:
 
         planes = torch.from_numpy(observation.planes).unsqueeze(0).to(self.device)
         scalars = torch.from_numpy(observation.scalars).unsqueeze(0).to(self.device)
+        expected_scalars = self.model.scalar_encoder[0].in_features
+        if scalars.shape[1] < expected_scalars:
+            scalars = torch.nn.functional.pad(scalars, (0, expected_scalars - scalars.shape[1]))
+        elif scalars.shape[1] > expected_scalars:
+            raise ValueError(f"expected at most {expected_scalars} scalars, got {scalars.shape[1]}")
         action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(self.device)
         logits, value = self.model(planes, scalars, action_mask)
         action_id = int(torch.argmax(logits, dim=1).item())

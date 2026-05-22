@@ -21,6 +21,7 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - `ScoreEntry`, `PlayerPayout`, `RoundResult`, `RoundOutcome`: scoring, payouts, and compact RL round-result metadata
   - RL bridge messages:
     - `EnvConfig`, `SeatObservation`
+      - `EnvConfig.match_mode` / `chongci_config` let training choose classic single-hand or Chongci multi-hand simulator mode
     - `EnvResetRequest` / `EnvResetResponse`
     - `EnvStepRequest` / `EnvStepResponse`
     - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`

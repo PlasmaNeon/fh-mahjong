@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-19",
+  "updated_at": "2026-05-22",
   "selection_policy": {
     "objective": "single-round Fenghua expected payout",
     "gate": "fixed-seed duplicate-seat evaluation",
@@ -63,6 +63,116 @@
         "mean_reward": -0.001707374930381775,
         "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed15000 and /root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed17000"
       }
+    ]
+  },
+  "current_chongci_reward_trained_best": {
+    "id": "iql_lowlr_selfplay200_epoch003",
+    "method": "discrete_iql_mixed_selfplay",
+    "match_mode": "chongci",
+    "checkpoint_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+    "source_datasets": [
+      "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+      "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+      "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz"
+    ],
+    "previous_best_id": "iql_mixed_selfplay_50_epoch004",
+    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/checkpoints/iql_mixed_selfplay_50_4ep/epoch_004.pt",
+    "score_config": {
+      "starting_score": 2000,
+      "bust_threshold": 0,
+      "max_hands": 50
+    },
+    "training": {
+      "init_checkpoint": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/checkpoints/iql_mixed_selfplay_50_4ep/epoch_004.pt",
+      "selfplay_episodes": 200,
+      "selfplay_start_seed": 500000,
+      "selfplay_transitions": 203539,
+      "selfplay_checkpoint_seats": [
+        0,
+        2
+      ],
+      "epochs": 3,
+      "batch_size": 4096,
+      "learning_rate": 0.00003,
+      "gamma": 0.99,
+      "target_mode": "mc",
+      "expectile": 0.7,
+      "temperature": 1.0,
+      "max_weight": 20.0,
+      "bc_weight": 1.0,
+      "cql_weight": 0.0,
+      "max_transitions_per_dataset": 200000,
+      "mlflow_run_id": "66bb53bf9b8d4d76882022369b823f3d"
+    },
+    "screening": [
+      {
+        "label": "duplicate_20_seed368000",
+        "seats": 80,
+        "start_seed": 368000,
+        "positive_reward_rate": 0.5625,
+        "large_loss_rate": 0.125,
+        "mean_reward": 0.20102500915527344,
+        "previous_best_positive_reward_rate": 0.5125,
+        "previous_best_large_loss_rate": 0.25,
+        "previous_best_mean_reward": 0.03981251269578934,
+        "report_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/reports/lowlr_3ep_epoch_003_duplicate20_seed368000.json",
+        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/reports/promoted_duplicate20_seed368000.json"
+      }
+    ],
+    "evaluation": [
+      {
+        "label": "duplicate_20_seed369000",
+        "seats": 80,
+        "start_seed": 369000,
+        "positive_reward_rate": 0.5375,
+        "large_loss_rate": 0.2375,
+        "mean_reward": 0.041212499141693115,
+        "previous_best_positive_reward_rate": 0.35,
+        "previous_best_large_loss_rate": 0.2125,
+        "previous_best_mean_reward": -0.21621248126029968,
+        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/candidate_duplicate20_seed369000.json",
+        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/promoted_duplicate20_seed369000.json"
+      },
+      {
+        "label": "duplicate_20_seed370000",
+        "seats": 80,
+        "start_seed": 370000,
+        "positive_reward_rate": 0.5,
+        "large_loss_rate": 0.1875,
+        "mean_reward": 0.029124995693564415,
+        "previous_best_positive_reward_rate": 0.5,
+        "previous_best_large_loss_rate": 0.15,
+        "previous_best_mean_reward": 0.025887494906783104,
+        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/candidate_duplicate20_seed370000.json",
+        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/promoted_duplicate20_seed370000.json"
+      },
+      {
+        "label": "combined_duplicate_40_seed369000_370000",
+        "seats": 160,
+        "positive_reward_rate": 0.51875,
+        "large_loss_rate": 0.2125,
+        "mean_reward": 0.03516874760389328,
+        "previous_best_positive_reward_rate": 0.425,
+        "previous_best_large_loss_rate": 0.18125,
+        "previous_best_mean_reward": -0.09516249597072601,
+        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports"
+      },
+      {
+        "label": "combined_duplicate_60_seed368000_369000_370000",
+        "seats": 240,
+        "positive_reward_rate": 0.5333333333333333,
+        "large_loss_rate": 0.18333333333333332,
+        "mean_reward": 0.09045416812102,
+        "previous_best_positive_reward_rate": 0.45416666666666666,
+        "previous_best_large_loss_rate": 0.20416666666666666,
+        "previous_best_mean_reward": -0.05017082591851552,
+        "report_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/reports and /root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports"
+      }
+    ],
+    "notes": [
+      "Promoted for Chongci only; the classic Fenghua reward-trained best remains current_reward_trained_best.",
+      "The independent seed 369000-370000 gate improved mean reward and positive reward rate but regressed large-loss rate; including the seed 368000 screening window, the candidate improved mean reward, positive reward rate, and large-loss rate.",
+      "The previous 6-epoch 200-self-play run overfit after epoch 2; the promoted checkpoint uses a lower learning rate and 3 epochs."
     ]
   },
   "fallbacks": [

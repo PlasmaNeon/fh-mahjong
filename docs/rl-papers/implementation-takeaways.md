@@ -7,8 +7,11 @@ This file turns the reading notes into concrete guidance for this repo.
 1. Generate heuristic self-play trajectories with the Go simulator.
 2. Train a behavior cloning policy on those trajectories.
 3. Evaluate with fixed seeds and duplicate-style runs.
-4. If BC plateaus, add an offline improvement stage such as IQL-style conservative policy improvement.
-5. Only after that, move into online self-play RL with checkpoint arenas.
+4. Train Mortal-style operation-level Q/value/policy updates with discrete IQL.
+5. Generate mixed checkpoint self-play trajectories.
+6. Promote checkpoints only through fixed-seed duplicate arenas.
+
+The preferred direction is now Mortal-style first: every discard, pass, chii, pon, kan, win, and haitei decision is a training transition. The reward target remains delayed, but the Q/value/policy update is attached to the operation state that caused it.
 
 ## Best near-term model choice
 
@@ -16,9 +19,11 @@ For a strong and practical v1, use:
 
 - a no-pooling residual CNN over tile planes
 - scalar context features alongside the planes
-- split action heads by decision type where helpful
+- a dueling Q head for reward-based offline RL so state value and action advantage are separated
+- channel attention as an explicit ablation, not an automatic default for old policy checkpoints
+- the flat 204-action masked head until the training loop proves it needs split heads
 
-This is closer to the Suphx design and is a lower-risk fit for the current pipeline than a transformer-first approach.
+This is closer to Mortal's operation-level Q-value style while still borrowing Suphx's tile-plane discipline. Split action heads remain a later optimization, not the first blocker.
 
 ## Best next-generation model direction
 
@@ -46,6 +51,7 @@ These targets should be training-only. The deployed policy should still consume 
 Near term:
 
 - use terminal round payout as the first reward target for the current single-round Fenghua mode
+- use final match net score as the main reward target for Chongci mode
 - keep optional small terminal win/loss bonus as an ablation, not the default objective
 - train reward-based updates from a BC checkpoint and preserve BC regularization during offline policy improvement
 - keep critic/Q training separate from the deployed policy logits so TD targets do not overwrite imitation quality
@@ -58,6 +64,7 @@ Later:
 
 - add multi-round or match-level value prediction when a placement contest mode exists
 - use a Mortal-style global ranking / placement predictor to convert score and rank trajectory into delta expected placement value
+- for Chongci, prioritize a global placement/ranking auxiliary model over simply making the tile CNN deeper
 - add backward-propagated score or fan shaping only after single-round EV evaluation is stable
 - make placement-aware reward the main objective only for full-match or contest play, not the current single-round agent
 
@@ -71,6 +78,7 @@ The reading strongly supports adding rule-engine look-ahead features, especially
 - wild-preservation signals (implemented in scalar indices 36-37)
 - estimated score potential (implemented in scalar index 38)
 - public danger heuristics (implemented in scalar indices 39-41)
+- Chongci match context: mode flag, hand progress, rank strength, score gaps, and bust pressure (implemented in scalar indices 42-49)
 
 These features are compatible with the current Go heuristic analysis and should help both BC and RL.
 
@@ -80,12 +88,15 @@ These features are compatible with the current Go heuristic analysis and should 
 - rotate seat assignments on the same wall
 - track round EV, deal-in rate, win rate, and large-loss rate
 - compare new checkpoints against the heuristic bot and a pool of frozen older checkpoints
+- for Chongci, prefer mean final net reward, positive-reward rate, large-loss rate, and per-seat breakdown over raw win rate
 
 ## Recommended order of work
 
-1. Strengthen behavior cloning training and evaluation.
-2. Rebuild the heuristic dataset with the expanded 42-scalar observation schema.
-3. Retrain BC from scratch on the new observations and rerun duplicate evaluation.
-4. Add oracle-only auxiliary heads.
-5. Add online self-play with checkpoint promotion.
-6. Explore transformer and hierarchical models after the pipeline is stable.
+1. Keep the current best BC/IQL checkpoints as frozen baselines.
+2. Implement mixed self-play trajectory generation with checkpoint seats and heuristic seats.
+3. Store every operation-level transition from self-play, including policy source and checkpoint metadata.
+4. Train discrete IQL on heuristic plus mixed self-play data by passing repeated `--data` inputs instead of merging or discarding older datasets.
+5. Evaluate on fixed Chongci duplicate arenas against heuristic, BC, current IQL, and older checkpoint pools.
+6. Promote only if mean net reward improves and large-loss rate does not regress.
+7. Add oracle-only auxiliary heads after the operation-level self-play loop is stable.
+8. Explore transformer and hierarchical models after the pipeline is stable.
