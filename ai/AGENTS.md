@@ -28,6 +28,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Online reports include precise mean/sum reward, reward distribution, action-family rates, and duplicate-seat `seat_summary`.
   - Online/duplicate evaluation accepts `match_mode="chongci"` plus Chongci score/hand-cap config; Chongci reports `positive_reward_rate` as the final-match net-positive metric while keeping `win_rate` as a backward-compatible reward-positive alias.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
+- **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
@@ -56,6 +57,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
   - `--match-mode chongci` forwards Chongci settings into online and duplicate-seat evaluation.
 - **src/fh_mahjong_ai/scripts/reward_calibration.py** — CLI: report Q/value calibration against discounted terminal payout targets before promoting reward-trained checkpoints.
+- **src/fh_mahjong_ai/scripts/paired_trace.py** — CLI: run paired checkpoint traces over duplicate seed windows and save reward-delta, divergence, and context-bucket diagnostics.
 - **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
 - **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
 - **src/fh_mahjong_ai/scripts/model_config_args.py** — Shared CLI/model-config helpers for architecture ablations in training and evaluation scripts.
@@ -75,6 +77,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **tests/test_offline_q.py** — Tests for the conservative offline Q trainer and checkpoint-producing CLI.
 - **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
 - **tests/test_reward_calibration.py** — Tests for reward-calibration reports and `steps_to_done` fallback handling.
+- **tests/test_paired_trace.py** — Tests for paired-trace divergence detection and observation summary helpers.
 - **tests/test_serving.py** — Tests for checkpoint-backed serving decisions, JSON observation parsing, and bridge legality smoke behavior.
 - **tests/test_pipeline_e2e.py** — End-to-end pipeline integration test (mock bridge).
 - **tests/test_model.py** — Tests for the no-pooling default encoder, pooled/channel-attention ablations, dueling-Q action-mask behavior, and old-checkpoint compatibility.
