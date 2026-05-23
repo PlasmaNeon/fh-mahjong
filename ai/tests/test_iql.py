@@ -9,8 +9,8 @@ from fh_mahjong_ai.buffer import ReplayBuffer
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_iql import train_iql
-from fh_mahjong_ai.storage import write_transitions_jsonl, write_transitions_npz_shards
-from fh_mahjong_ai.trainer import DiscreteIQLTrainer, discounted_terminal_returns
+from fh_mahjong_ai.storage import load_compatible_checkpoint, write_transitions_jsonl, write_transitions_npz_shards
+from fh_mahjong_ai.trainer import DiscreteIQLTrainer, discounted_terminal_returns, large_loss_adjusted_rewards
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -90,6 +90,21 @@ def test_discounted_terminal_returns_use_steps_to_done() -> None:
     torch.testing.assert_close(targets, torch.tensor([1.0, 0.5, -0.5]))
 
 
+def test_large_loss_adjusted_rewards_penalizes_only_below_threshold() -> None:
+    rewards = torch.tensor([1.0, -0.5, -1.0, -1.5, -2.0])
+
+    adjusted = large_loss_adjusted_rewards(rewards, threshold=-1.0, penalty=0.25)
+
+    torch.testing.assert_close(adjusted, torch.tensor([1.0, -0.5, -1.0, -1.625, -2.25]))
+
+
+def test_large_loss_adjusted_rewards_is_default_noop() -> None:
+    rewards = torch.tensor([1.0, -2.0])
+
+    torch.testing.assert_close(large_loss_adjusted_rewards(rewards, threshold=None, penalty=0.25), rewards)
+    torch.testing.assert_close(large_loss_adjusted_rewards(rewards, threshold=-1.0, penalty=0.0), rewards)
+
+
 def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
     env_config = EnvConfig()
     data_path = tmp_path / "data.jsonl"
@@ -105,6 +120,8 @@ def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
         target_update_interval=1,
         target_tau=1.0,
         max_weight=5.0,
+        large_loss_threshold=-1.0,
+        large_loss_penalty=0.1,
         device="cpu",
         log_interval=1,
     )
@@ -189,3 +206,47 @@ def test_train_iql_can_initialize_q_head_from_policy(tmp_path: Path) -> None:
     )
 
     assert len(metrics) > 0
+
+
+def test_load_compatible_checkpoint_reuses_matching_architecture_parts(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    source = PolicyValueNet(env_config, ModelConfig(residual_blocks=2))
+    target = PolicyValueNet(env_config, ModelConfig(residual_blocks=3))
+    checkpoint = tmp_path / "source.pt"
+    torch.save({"model": source.state_dict(), "step": 7}, checkpoint)
+
+    step, report = load_compatible_checkpoint(checkpoint, target)
+
+    assert step == 7
+    assert report["loaded_keys"] > 0
+    assert any(str(key).startswith("plane_blocks.2.") for key in report["missing_keys"])
+
+
+def test_train_iql_supports_partial_init_for_deeper_model(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    source = PolicyValueNet(env_config, ModelConfig(residual_blocks=2))
+    checkpoint = tmp_path / "source.pt"
+    torch.save({"model": source.state_dict(), "step": 2}, checkpoint)
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+
+    metrics = train_iql(
+        data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        init_checkpoint=checkpoint,
+        partial_init_checkpoint=True,
+        model_config=ModelConfig(residual_blocks=3),
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()

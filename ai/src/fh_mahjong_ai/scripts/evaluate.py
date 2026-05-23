@@ -12,6 +12,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.evaluate import compute_action_agreement_from_batches, evaluate_duplicate_seats, evaluate_online
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint
 
 
@@ -51,9 +52,11 @@ def main() -> None:
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
+    add_model_config_args(parser)
     args = parser.parse_args()
 
-    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    model_config = model_config_from_args(args)
+    model = PolicyValueNet(EnvConfig(), model_config)
     step = load_checkpoint(args.checkpoint, model)
     model.to(args.device)
     print(f"Loaded checkpoint from epoch {step}")
@@ -65,6 +68,7 @@ def main() -> None:
         "data": str(args.data) if args.data else None,
         "device": args.device,
         "match_mode": args.match_mode,
+        "model_config": model_config_params(model_config),
         "chongci_config": {
             "starting_score": args.chongci_starting_score,
             "bust_threshold": args.chongci_bust_threshold,
@@ -101,6 +105,7 @@ def main() -> None:
                     "chongci_max_hands": args.chongci_max_hands,
                     "max_steps_per_episode": args.max_steps_per_episode,
                     "large_loss_threshold": args.large_loss_threshold,
+                    **model_config_params(model_config),
                 }
             )
 

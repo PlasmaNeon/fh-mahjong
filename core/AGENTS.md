@@ -19,7 +19,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `ResolveInterrupts()` — Priority resolution after timer/all responses. After Pon/Chii, calls `GetValidActions()` to populate valid actions for the claiming player
   - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — Wall draws. `ExecuteSystemDraw` clears all kong/flower bonus flags at start to prevent stale flags
   - Draw-time flower handling is enforced in the game loop: any non-wild flower drawn from the live wall, dead wall, or accepted haitei is auto-revealed immediately, even if multiple revealable flowers are present
-  - If a flower/kan supplementary dead-wall draw exhausts the wall, keep `PHASE_ROUND_END`; never restore `PHASE_PLAYER_TURN` with an empty valid-action set
+  - If a flower/kan supplementary dead-wall draw exhausts the wall or ends a Chongci match, keep the terminal phase; never restore `PHASE_PLAYER_TURN` with an empty valid-action set, including interrupt-Kan claims
   - Claim-time flower handling matches draw-time behavior: after a Chii/Pon handoff, any non-wild flowers already in the claimer's concealed hand are auto-revealed before valid actions are sent
   - `revealInitialFlowers(dealer)` — Auto-separates flower tiles from all players' hands after dealing. Loops through all 4 seats starting from dealer, moves flowers to `FlowerMelds`, draws replacements from dead wall. Called after `dealTiles()` and after dealer's 14th tile draw
   - `startNextRound()` — Reset for next round (keeps scores)

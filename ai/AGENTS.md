@@ -28,6 +28,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Online reports include precise mean/sum reward, reward distribution, action-family rates, and duplicate-seat `seat_summary`.
   - Online/duplicate evaluation accepts `match_mode="chongci"` plus Chongci score/hand-cap config; Chongci reports `positive_reward_rate` as the final-match net-positive metric while keeping `win_rate` as a backward-compatible reward-positive alias.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
+- **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
@@ -56,11 +57,13 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
   - `--match-mode chongci` forwards Chongci settings into online and duplicate-seat evaluation.
 - **src/fh_mahjong_ai/scripts/reward_calibration.py** — CLI: report Q/value calibration against discounted terminal payout targets before promoting reward-trained checkpoints.
+- **src/fh_mahjong_ai/scripts/paired_trace.py** — CLI: run paired checkpoint traces over duplicate seed windows and save reward-delta, divergence, and context-bucket diagnostics.
 - **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
 - **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
+- **src/fh_mahjong_ai/scripts/model_config_args.py** — Shared CLI/model-config helpers for architecture ablations in training and evaluation scripts.
 - **src/fh_mahjong_ai/scripts/run_pipeline.py** — CLI: orchestrate generate → train → evaluate in one command, writing `reports/bc_training.json` and `reports/pipeline_report.json`.
 - **README.md** — Python stack workflow notes, including the WSL/4090 policy-server flow, SSH tunnel setup, live Go integration check, and `AI_BOT_POLICY_URL` server wiring.
-- **checkpoints/best-checkpoints.json** — Tracked metadata for promoted reward-trained checkpoints and fallbacks, including remote checkpoint/report paths and duplicate-evaluation gates. The classic Fenghua promoted reward checkpoint is the AWBC epoch 6 run from `/root/fh-mahjong-runs/reward-next-ev-20260519-003157`, selected by expected payout over BC20 across two independent 1000-seed duplicate windows. The Chongci promoted reward checkpoint is the low-learning-rate mixed self-play IQL epoch 3 run from `/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945`, selected by aggregate duplicate-seat reward over the previous Chongci mixed self-play checkpoint. Do not commit checkpoint binaries.
+- **checkpoints/best-checkpoints.json** — Tracked metadata for promoted reward-trained checkpoints, rejected candidates, and fallbacks, including remote checkpoint/report paths and duplicate-evaluation gates. The classic Fenghua promoted reward checkpoint is the AWBC epoch 6 run from `/root/fh-mahjong-runs/reward-next-ev-20260519-003157`, selected by expected payout over BC20 across two independent 1000-seed duplicate windows. The Chongci promoted reward checkpoint is the low-learning-rate mixed self-play IQL epoch 3 run from `/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945`, selected by aggregate duplicate-seat reward over the previous Chongci mixed self-play checkpoint. Record rejected reward-learning candidates when a wider duplicate gate reverses a promising quick screen. Do not commit checkpoint binaries.
 - **tests/test_bridge.py** — `unittest` coverage for the mock bridge reset/step contract and action-mask validation behavior.
 - **tests/test_checkpoint_manifest.py** — Tests for best-checkpoint manifest loading and path resolution.
 - **tests/test_data.py** — Tests for episode grouping and terminal-reward backfill.
@@ -74,6 +77,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **tests/test_offline_q.py** — Tests for the conservative offline Q trainer and checkpoint-producing CLI.
 - **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
 - **tests/test_reward_calibration.py** — Tests for reward-calibration reports and `steps_to_done` fallback handling.
+- **tests/test_paired_trace.py** — Tests for paired-trace divergence detection and observation summary helpers.
 - **tests/test_serving.py** — Tests for checkpoint-backed serving decisions, JSON observation parsing, and bridge legality smoke behavior.
 - **tests/test_pipeline_e2e.py** — End-to-end pipeline integration test (mock bridge).
 - **tests/test_model.py** — Tests for the no-pooling default encoder, pooled/channel-attention ablations, dueling-Q action-mask behavior, and old-checkpoint compatibility.
@@ -97,6 +101,8 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Large training datasets can be converted with `fh-mj-convert-data` to sharded NumPy storage; training/evaluation CLIs accept the shard directory as `--data`.
 - Sharded NumPy datasets use array-backed replay for BC/AWBC/IQL/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC and AWBC training load only current-observation/action/return arrays to keep 50k+ datasets within WSL memory; IQL/offline-Q need next-state arrays and may use transition limits for memory control.
 - IQL can mix repeated `--data` inputs directly; this is the preferred way to reuse older heuristic datasets alongside newer mixed self-play datasets.
+- IQL supports default-off large-loss utility shaping through `--large-loss-threshold` plus `--large-loss-penalty`. Use it only as an explicit Chongci reward-learning ablation and keep promotion decisions based on duplicate-seat EV/positive-rate/large-loss gates, not training loss.
+- IQL/evaluation CLIs expose model-size flags such as `--model-channels`, `--model-residual-blocks`, and `--model-channel-attention` for controlled architecture ablations. `--partial-init-checkpoint` may be used for explicit ablations that add compatible layers, such as more residual blocks with the same channel width. Record these flags in MLflow and report outputs whenever a non-default checkpoint is trained.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
 - Serving defaults to `ai/checkpoints/best-checkpoints.json`. Override binary checkpoint location with `--checkpoint` or `FH_MAHJONG_AI_CHECKPOINT`; large `.pt` files remain outside git.
