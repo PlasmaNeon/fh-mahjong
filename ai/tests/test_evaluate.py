@@ -14,6 +14,7 @@ from fh_mahjong_ai.evaluate import (
 )
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import ActionChoice
+from fh_mahjong_ai.scripts.evaluate import parse_seed_windows
 from fh_mahjong_ai.types import Observation, StepResult, Transition
 
 
@@ -108,6 +109,11 @@ def test_reward_summary_reports_distribution() -> None:
     assert report["zero_count"] == 1
     assert report["negative_count"] == 1
     assert report["positive_rate"] == 0.5
+
+
+def test_parse_seed_windows_supports_non_contiguous_eval_windows() -> None:
+    assert parse_seed_windows([], episodes=3, start_seed=10) == [10, 11, 12]
+    assert parse_seed_windows(["100:2", "200"], episodes=3, start_seed=10) == [100, 101, 200, 201, 202]
 
 
 class TestEvaluateOnline:
