@@ -65,6 +65,73 @@ def action_family_rates(action_counts: Counter[str]) -> Dict[str, float]:
     }
 
 
+def summarize_policy_choices(choice_infos: Sequence[dict[str, Any]]) -> Dict[str, Any]:
+    source_counts: Counter[str] = Counter()
+    q_margins: list[float] = []
+    first_candidate: Optional[dict[str, Any]] = None
+    for info in choice_infos:
+        source = info.get("source")
+        if source is not None:
+            source_counts[str(source)] += 1
+        q_margin = info.get("q_margin")
+        if q_margin is not None:
+            q_margins.append(float(q_margin))
+        if first_candidate is None and source == "candidate":
+            first_candidate = {
+                "anchor_action_id": info.get("anchor_action_id"),
+                "anchor_action_label": info.get("anchor_action_label"),
+                "candidate_action_id": info.get("candidate_action_id"),
+                "candidate_action_label": info.get("candidate_action_label"),
+                "chosen_action_label": info.get("chosen_action_label"),
+                "q_margin": float(q_margin) if q_margin is not None else None,
+                "candidate_q": info.get("candidate_q"),
+                "anchor_action_q": info.get("anchor_action_q"),
+            }
+    candidate_count = int(source_counts.get("candidate", 0))
+    return {
+        "decision_count": len(choice_infos),
+        "source_counts": dict(sorted(source_counts.items())),
+        "source_rates": action_family_rates(source_counts),
+        "candidate_override_count": candidate_count,
+        "candidate_override_rate": candidate_count / len(choice_infos) if choice_infos else 0.0,
+        "q_margin_summary": reward_summary(q_margins),
+        "first_candidate_override": first_candidate,
+    }
+
+
+def summarize_policy_episode_outcomes(episode_summaries: Sequence[dict[str, Any]]) -> Dict[str, Any]:
+    no_candidate_rewards: list[float] = []
+    candidate_rewards: list[float] = []
+    override_bucket_rewards: dict[str, list[float]] = {
+        "0": [],
+        "1": [],
+        "2-4": [],
+        "5+": [],
+    }
+    for summary in episode_summaries:
+        reward = float(summary["reward"])
+        count = int(summary.get("candidate_override_count", 0))
+        if count == 0:
+            no_candidate_rewards.append(reward)
+            override_bucket_rewards["0"].append(reward)
+        else:
+            candidate_rewards.append(reward)
+            if count == 1:
+                override_bucket_rewards["1"].append(reward)
+            elif count <= 4:
+                override_bucket_rewards["2-4"].append(reward)
+            else:
+                override_bucket_rewards["5+"].append(reward)
+    return {
+        "no_candidate_override_reward": reward_summary(no_candidate_rewards),
+        "candidate_override_reward": reward_summary(candidate_rewards),
+        "by_candidate_override_count": {
+            bucket: reward_summary(rewards)
+            for bucket, rewards in override_bucket_rewards.items()
+        },
+    }
+
+
 def outcome_rates(outcome_counts: Counter[str]) -> Dict[str, float]:
     total = sum(outcome_counts.values())
     if total == 0:
@@ -299,12 +366,15 @@ def evaluate_policy_online(
     outcome_counts: Counter[str] = Counter()
     choice_source_counts: Counter[str] = Counter()
     q_margins: list[float] = []
+    policy_episode_summaries: list[dict[str, Any]] = []
     wins = 0
     large_losses = 0
 
     def record_episode(
+        seed: int,
         rewards: np.ndarray,
         episode: list[Transition],
+        choice_infos: Sequence[dict[str, Any]],
         outcome: Optional[dict[str, Any]],
         truncated: bool = False,
     ) -> None:
@@ -320,17 +390,30 @@ def evaluate_policy_online(
             outcome_counts["match_truncated" if truncated else "match_end"] += 1
         else:
             update_outcome_counts(outcome_counts, outcome, learning_seat)
+        policy_summary = summarize_policy_choices(choice_infos)
+        policy_summary.update(
+            {
+                "seed": int(seed),
+                "seat": int(learning_seat),
+                "reward": reward,
+                "truncated": bool(truncated),
+            }
+        )
+        policy_episode_summaries.append(policy_summary)
 
     try:
         for i in range(episodes):
             seed = seeds[i] if i < len(seeds) else seeds[-1] + i
             episode: list[Transition] = []
+            episode_choice_infos: list[dict[str, Any]] = []
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 record_episode(
+                    seed,
                     reset_result.rewards,
                     episode,
+                    episode_choice_infos,
                     reset_result.info.get("round_outcome"),
                     truncated=reset_result.truncated,
                 )
@@ -347,6 +430,7 @@ def evaluate_policy_online(
                 q_margin = choice_info.get("q_margin")
                 if q_margin is not None:
                     q_margins.append(float(q_margin))
+                episode_choice_infos.append(choice_info)
                 step_result = env.step(choice.action_id)
                 episode.append(
                     Transition(
@@ -363,8 +447,10 @@ def evaluate_policy_online(
                 observation = step_result.observation
                 if step_result.terminated or step_result.truncated:
                     record_episode(
+                        seed,
                         step_result.rewards,
                         episode,
+                        episode_choice_infos,
                         step_result.info.get("round_outcome"),
                         truncated=step_result.truncated,
                     )
@@ -419,6 +505,8 @@ def evaluate_policy_online(
         "policy_choice_rates": action_family_rates(choice_source_counts),
         "policy_q_margins": q_margins,
         "policy_q_margin_summary": reward_summary(q_margins),
+        "policy_episode_summaries": policy_episode_summaries,
+        "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
     }
 
 
@@ -477,6 +565,7 @@ def evaluate_duplicate_seats_policy(
     outcome_counts: Counter[str] = Counter()
     choice_source_counts: Counter[str] = Counter()
     q_margins: list[float] = []
+    policy_episode_summaries: list[dict[str, Any]] = []
     wins = 0
     large_losses = 0
     completed = 0
@@ -502,6 +591,7 @@ def evaluate_duplicate_seats_policy(
         outcome_counts.update(report.get("round_outcome_counts", {}))
         choice_source_counts.update(report.get("policy_choice_counts", {}))
         q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
+        policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
         wins += int(report["win_count"])
         large_losses += int(report["large_loss_count"])
         completed += int(report["episodes"])
@@ -563,6 +653,8 @@ def evaluate_duplicate_seats_policy(
         "policy_choice_rates": action_family_rates(choice_source_counts),
         "policy_q_margins": q_margins,
         "policy_q_margin_summary": reward_summary(q_margins),
+        "policy_episode_summaries": policy_episode_summaries,
+        "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
         "seat_summary": seat_summary,
         "seat_reports": seat_reports,
     }

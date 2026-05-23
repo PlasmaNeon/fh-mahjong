@@ -4,8 +4,16 @@ import numpy as np
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import action_family, compute_action_agreement, evaluate_duplicate_seats, evaluate_online, reward_summary
+from fh_mahjong_ai.evaluate import (
+    action_family,
+    compute_action_agreement,
+    evaluate_duplicate_seats,
+    evaluate_online,
+    evaluate_policy_online,
+    reward_summary,
+)
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.policies import ActionChoice
 from fh_mahjong_ai.types import Observation, StepResult, Transition
 
 
@@ -127,6 +135,38 @@ class TestEvaluateOnline:
         assert report["episodes"] == 2
         assert report["reward_summary"]["count"] == 2
         assert report["round_outcome_counts"]["unknown"] == 2
+
+    def test_policy_episode_summary_reports_guard_overrides(self) -> None:
+        class CandidatePolicy:
+            def choose(self, observation: Observation) -> ActionChoice:
+                return ActionChoice(
+                    action_id=observation.legal_actions[0],
+                    info={
+                        "source": "candidate",
+                        "anchor_action_id": 5,
+                        "anchor_action_label": "discard 1m",
+                        "candidate_action_id": observation.legal_actions[0],
+                        "candidate_action_label": "discard 2m",
+                        "chosen_action_label": "discard 2m",
+                        "q_margin": 0.25,
+                        "candidate_q": 0.75,
+                        "anchor_action_q": 0.50,
+                    },
+                )
+
+        report = evaluate_policy_online(
+            policy=CandidatePolicy(),
+            episodes=2,
+            seeds=[1, 2],
+            bridge_kind="mock",
+        )
+
+        assert report["policy_choice_counts"]["candidate"] > 0
+        assert report["policy_q_margin_summary"]["mean"] == 0.25
+        assert len(report["policy_episode_summaries"]) == 2
+        assert report["policy_episode_summaries"][0]["candidate_override_count"] > 0
+        assert report["policy_episode_summaries"][0]["first_candidate_override"]["q_margin"] == 0.25
+        assert report["policy_episode_outcome_summary"]["candidate_override_reward"]["count"] == 2
 
     def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
         class TerminalResetBridge:
