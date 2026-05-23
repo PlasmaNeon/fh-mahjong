@@ -55,6 +55,7 @@ def test_summarize_trace_pairs_handles_terminal_length_divergence() -> None:
                 "first_divergence": {
                     "left": {
                         "action_family": "discard",
+                        "action_label": "discard 1m",
                         "observation": {"scalars": {"overall_shanten": 0.1}},
                     },
                     "right": None,

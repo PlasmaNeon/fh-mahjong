@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import numpy as np
 from torch import nn
 
+from .action_catalog import action_label
 from .config import EnvConfig
 from .env import MahjongEnv
 from .evaluate import action_family, action_family_rates, reward_summary
@@ -49,6 +50,7 @@ class StepTrace:
     seat: int
     action_id: int
     action_family: str
+    action_label: str
     value: Optional[float]
     observation: dict[str, Any]
 
@@ -123,6 +125,7 @@ def run_policy_trace(
                     seat=int(observation.seat),
                     action_id=int(choice.action_id),
                     action_family=action_family(int(choice.action_id)),
+                    action_label=action_label(int(choice.action_id)),
                     value=choice.value,
                     observation=summarize_observation(observation),
                 )
@@ -331,6 +334,7 @@ def step_payload(step: StepTrace) -> dict[str, Any]:
         "seat": step.seat,
         "action_id": step.action_id,
         "action_family": step.action_family,
+        "action_label": step.action_label,
         "value": step.value,
         "observation": step.observation,
     }

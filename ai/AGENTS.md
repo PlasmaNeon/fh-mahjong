@@ -10,6 +10,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 
 - **pyproject.toml** — Python package metadata and dependencies for the RL stack.
 - **src/fh_mahjong_ai/config.py** — Dataclass configs for environment, model, training, advantage-weighted BC, discrete IQL, offline Q-learning, and self-play.
+- **src/fh_mahjong_ai/action_catalog.py** — Python labels and family helpers for the Go bridge's fixed 204-action catalog, using the same backend tile-face order as `rlenv/action.go`.
 - **src/fh_mahjong_ai/mlflow_tracking.py** — Shared MLflow setup/logging helpers for training and inference/evaluation scripts.
 - **src/fh_mahjong_ai/checkpoint_manifest.py** — Loader/resolver for tracked best-checkpoint metadata in `ai/checkpoints/best-checkpoints.json`; binary checkpoint files stay outside git. Serving can resolve the classic current checkpoint with `current` and the Chongci current checkpoint with `current_chongci`.
 - **src/fh_mahjong_ai/types.py** — Shared observation, transition, and bridge result types.
@@ -21,12 +22,13 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value/Q network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
   - The Q path uses a Mortal-style dueling value/advantage head by default; channel attention is available as an explicit `ModelConfig(channel_attention=True)` ablation.
-- **src/fh_mahjong_ai/policies.py** — Random and torch-backed policy adapters.
+- **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters.
 - **src/fh_mahjong_ai/serving.py** — Checkpoint-backed inference helpers and bridge smoke tests for serving actions while the Go bridge validates legality.
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, terminal-reward backfill (`backfill_returns`), and `steps_to_done` utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.
   - Online reports include precise mean/sum reward, reward distribution, action-family rates, and duplicate-seat `seat_summary`.
   - Online/duplicate evaluation accepts `match_mode="chongci"` plus Chongci score/hand-cap config; Chongci reports `positive_reward_rate` as the final-match net-positive metric while keeping `win_rate` as a backward-compatible reward-positive alias.
+  - `evaluate_policy_online()` / `evaluate_duplicate_seats_policy()` support non-model policy adapters such as Q-margin guards while preserving the same duplicate-seat metrics.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
 - **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
@@ -56,6 +58,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
   - `--match-mode chongci` forwards Chongci settings into online and duplicate-seat evaluation.
+- **src/fh_mahjong_ai/scripts/evaluate_guarded.py** — CLI: evaluate a candidate reward/Q checkpoint behind a promoted anchor policy, sweeping one or more minimum Q-margin thresholds.
 - **src/fh_mahjong_ai/scripts/reward_calibration.py** — CLI: report Q/value calibration against discounted terminal payout targets before promoting reward-trained checkpoints.
 - **src/fh_mahjong_ai/scripts/paired_trace.py** — CLI: run paired checkpoint traces over duplicate seed windows and save reward-delta, divergence, and context-bucket diagnostics.
 - **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
@@ -65,6 +68,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **README.md** — Python stack workflow notes, including the WSL/4090 policy-server flow, SSH tunnel setup, live Go integration check, and `AI_BOT_POLICY_URL` server wiring.
 - **checkpoints/best-checkpoints.json** — Tracked metadata for promoted reward-trained checkpoints, rejected candidates, and fallbacks, including remote checkpoint/report paths and duplicate-evaluation gates. The classic Fenghua promoted reward checkpoint is the AWBC epoch 6 run from `/root/fh-mahjong-runs/reward-next-ev-20260519-003157`, selected by expected payout over BC20 across two independent 1000-seed duplicate windows. The Chongci promoted reward checkpoint is the low-learning-rate mixed self-play IQL epoch 3 run from `/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945`, selected by aggregate duplicate-seat reward over the previous Chongci mixed self-play checkpoint. Record rejected reward-learning candidates when a wider duplicate gate reverses a promising quick screen. Do not commit checkpoint binaries.
 - **tests/test_bridge.py** — `unittest` coverage for the mock bridge reset/step contract and action-mask validation behavior.
+- **tests/test_action_catalog.py** — Tests for readable 204-action labels and backend tile-face order.
 - **tests/test_checkpoint_manifest.py** — Tests for best-checkpoint manifest loading and path resolution.
 - **tests/test_data.py** — Tests for episode grouping and terminal-reward backfill.
 - **tests/test_buffer.py** — Tests for terminal-reward-aware replay buffer sampling.
@@ -76,6 +80,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **tests/test_iql.py** — Tests for the discrete IQL trainer and checkpoint-producing CLI.
 - **tests/test_offline_q.py** — Tests for the conservative offline Q trainer and checkpoint-producing CLI.
 - **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
+- **tests/test_policies.py** — Tests for guarded Q-policy action selection.
 - **tests/test_reward_calibration.py** — Tests for reward-calibration reports and `steps_to_done` fallback handling.
 - **tests/test_paired_trace.py** — Tests for paired-trace divergence detection and observation summary helpers.
 - **tests/test_serving.py** — Tests for checkpoint-backed serving decisions, JSON observation parsing, and bridge legality smoke behavior.

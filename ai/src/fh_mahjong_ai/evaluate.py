@@ -8,45 +8,12 @@ import numpy as np
 import torch
 from torch import nn
 
+from .action_catalog import action_family
 from .bridge import build_bridge
 from .config import EnvConfig
 from .env import MahjongEnv
 from .policies import TorchGreedyPolicy
 from .types import Transition
-
-ACTION_PASS = 0
-ACTION_TSUMO = 1
-ACTION_RON = 2
-ACTION_ACCEPT_HAITEI = 3
-ACTION_REFUSE_HAITEI = 4
-DISCARD_BASE = 5
-DISCARD_COUNT = 42
-PON_BASE = DISCARD_BASE + DISCARD_COUNT
-PON_COUNT = 34
-KAN_DIRECT_BASE = PON_BASE + PON_COUNT
-KAN_MODE_COUNT = 34
-KAN_CLOSED_BASE = KAN_DIRECT_BASE + KAN_MODE_COUNT
-KAN_UPGRADED_BASE = KAN_CLOSED_BASE + KAN_MODE_COUNT
-CHII_BASE = KAN_UPGRADED_BASE + KAN_MODE_COUNT
-CHII_COUNT = 21
-
-
-def action_family(action_id: int) -> str:
-    if action_id == ACTION_PASS:
-        return "pass"
-    if action_id in (ACTION_TSUMO, ACTION_RON):
-        return "win"
-    if action_id in (ACTION_ACCEPT_HAITEI, ACTION_REFUSE_HAITEI):
-        return "haitei"
-    if DISCARD_BASE <= action_id < DISCARD_BASE + DISCARD_COUNT:
-        return "discard"
-    if PON_BASE <= action_id < PON_BASE + PON_COUNT:
-        return "pon"
-    if KAN_DIRECT_BASE <= action_id < KAN_UPGRADED_BASE + KAN_MODE_COUNT:
-        return "kan"
-    if CHII_BASE <= action_id < CHII_BASE + CHII_COUNT:
-        return "chii"
-    return "unknown"
 
 
 def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
@@ -288,13 +255,12 @@ def compute_action_agreement_from_batches(
     }
 
 
-def evaluate_online(
-    model: nn.Module,
+def evaluate_policy_online(
+    policy: Any,
     episodes: int,
     seeds: List[int],
     bridge_kind: str = "go",
     bridge_library_path: Optional[str] = None,
-    device: str = "cpu",
     learning_seat: int = 0,
     large_loss_threshold: Optional[float] = None,
     match_mode: str = "classic",
@@ -303,7 +269,7 @@ def evaluate_online(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Run the learned policy for one seat against heuristic opponents.
+    """Run a policy for one seat against heuristic opponents.
 
     Returns aggregate reward and action-frequency metrics.
     """
@@ -327,11 +293,12 @@ def evaluate_online(
         config.max_steps_per_episode = int(max_steps_per_episode)
     bridge = build_bridge(config)
     env = MahjongEnv(config, bridge)
-    policy = TorchGreedyPolicy(model, device=device)
 
     seat_rewards: List[float] = []
     action_counts: Counter[str] = Counter()
     outcome_counts: Counter[str] = Counter()
+    choice_source_counts: Counter[str] = Counter()
+    q_margins: list[float] = []
     wins = 0
     large_losses = 0
 
@@ -373,6 +340,13 @@ def evaluate_online(
 
             while True:
                 choice = policy.choose(observation)
+                choice_info = choice.info or {}
+                source = choice_info.get("source")
+                if source is not None:
+                    choice_source_counts[str(source)] += 1
+                q_margin = choice_info.get("q_margin")
+                if q_margin is not None:
+                    q_margins.append(float(q_margin))
                 step_result = env.step(choice.action_id)
                 episode.append(
                     Transition(
@@ -441,6 +415,156 @@ def evaluate_online(
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
         "round_outcome_rates": outcome_rates(outcome_counts),
+        "policy_choice_counts": dict(sorted(choice_source_counts.items())),
+        "policy_choice_rates": action_family_rates(choice_source_counts),
+        "policy_q_margins": q_margins,
+        "policy_q_margin_summary": reward_summary(q_margins),
+    }
+
+
+def evaluate_online(
+    model: nn.Module,
+    episodes: int,
+    seeds: List[int],
+    bridge_kind: str = "go",
+    bridge_library_path: Optional[str] = None,
+    device: str = "cpu",
+    learning_seat: int = 0,
+    large_loss_threshold: Optional[float] = None,
+    match_mode: str = "classic",
+    chongci_starting_score: int = 2000,
+    chongci_bust_threshold: int = 0,
+    chongci_max_hands: int = 50,
+    max_steps_per_episode: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Run a model's greedy policy for one seat against heuristic opponents."""
+    policy = TorchGreedyPolicy(model, device=device)
+    return evaluate_policy_online(
+        policy=policy,
+        episodes=episodes,
+        seeds=seeds,
+        bridge_kind=bridge_kind,
+        bridge_library_path=bridge_library_path,
+        learning_seat=learning_seat,
+        large_loss_threshold=large_loss_threshold,
+        match_mode=match_mode,
+        chongci_starting_score=chongci_starting_score,
+        chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands,
+        max_steps_per_episode=max_steps_per_episode,
+    )
+
+
+def evaluate_duplicate_seats_policy(
+    policy_factory: Any,
+    seeds: Sequence[int],
+    seats: Iterable[int] = (0, 1, 2, 3),
+    bridge_kind: str = "go",
+    bridge_library_path: Optional[str] = None,
+    large_loss_threshold: Optional[float] = None,
+    match_mode: str = "classic",
+    chongci_starting_score: int = 2000,
+    chongci_bust_threshold: int = 0,
+    chongci_max_hands: int = 50,
+    max_steps_per_episode: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Evaluate a policy factory with the learning agent rotated through seats."""
+    normalized_match_mode = _normalize_match_mode(match_mode)
+    seat_list = list(seats)
+    seat_reports = []
+    all_rewards: list[float] = []
+    action_counts: Counter[str] = Counter()
+    outcome_counts: Counter[str] = Counter()
+    choice_source_counts: Counter[str] = Counter()
+    q_margins: list[float] = []
+    wins = 0
+    large_losses = 0
+    completed = 0
+
+    for seat in seat_list:
+        report = evaluate_policy_online(
+            policy=policy_factory(seat),
+            episodes=len(seeds),
+            seeds=list(seeds),
+            bridge_kind=bridge_kind,
+            bridge_library_path=bridge_library_path,
+            learning_seat=seat,
+            large_loss_threshold=large_loss_threshold,
+            match_mode=normalized_match_mode,
+            chongci_starting_score=chongci_starting_score,
+            chongci_bust_threshold=chongci_bust_threshold,
+            chongci_max_hands=chongci_max_hands,
+            max_steps_per_episode=max_steps_per_episode,
+        )
+        seat_reports.append(report)
+        all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+        action_counts.update(report["action_family_counts"])
+        outcome_counts.update(report.get("round_outcome_counts", {}))
+        choice_source_counts.update(report.get("policy_choice_counts", {}))
+        q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
+        wins += int(report["win_count"])
+        large_losses += int(report["large_loss_count"])
+        completed += int(report["episodes"])
+
+    rewards = reward_summary(all_rewards)
+    seat_summary = {
+        str(report["seat"]): {
+            "episodes": report["episodes"],
+            "mean_reward": report["mean_reward"],
+            "reward_sum": report["reward_sum"],
+            "win_rate": report["win_rate"],
+            "positive_reward_rate": report["positive_reward_rate"],
+            "negative_reward_rate": report["negative_reward_rate"],
+            "large_loss_rate": report["large_loss_rate"],
+            "action_family_rates": report["action_family_rates"],
+            "round_outcome_rates": report.get("round_outcome_rates", {}),
+            "policy_choice_rates": report.get("policy_choice_rates", {}),
+        }
+        for report in seat_reports
+    }
+    return {
+        "match_mode": normalized_match_mode,
+        "chongci_config": _chongci_report_config(
+            normalized_match_mode,
+            chongci_starting_score,
+            chongci_bust_threshold,
+            chongci_max_hands,
+        ),
+        "seeds": list(seeds),
+        "seats": seat_list,
+        "avg_reward": round(float(rewards["mean"]), 2),
+        "mean_reward": rewards["mean"],
+        "reward_sum": rewards["sum"],
+        "reward_summary": rewards,
+        "win_count": wins,
+        "win_rate": wins / completed if completed else 0.0,
+        "win_metric_note": (
+            "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
+            "not single-hand win rate."
+            if normalized_match_mode == "chongci"
+            else "Reward-positive single-round result."
+        ),
+        "positive_reward_count": int(rewards["positive_count"]),
+        "positive_reward_rate": rewards["positive_rate"],
+        "zero_reward_count": int(rewards["zero_count"]),
+        "zero_reward_rate": rewards["zero_rate"],
+        "negative_reward_count": int(rewards["negative_count"]),
+        "negative_reward_rate": rewards["negative_rate"],
+        "large_loss_count": large_losses,
+        "large_loss_rate": large_losses / completed if completed else 0.0,
+        "large_loss_threshold": seat_reports[0]["large_loss_threshold"] if seat_reports else None,
+        "episodes": completed,
+        "per_episode_rewards": all_rewards,
+        "action_family_counts": dict(sorted(action_counts.items())),
+        "action_family_rates": action_family_rates(action_counts),
+        "round_outcome_counts": dict(sorted(outcome_counts.items())),
+        "round_outcome_rates": outcome_rates(outcome_counts),
+        "policy_choice_counts": dict(sorted(choice_source_counts.items())),
+        "policy_choice_rates": action_family_rates(choice_source_counts),
+        "policy_q_margins": q_margins,
+        "policy_q_margin_summary": reward_summary(q_margins),
+        "seat_summary": seat_summary,
+        "seat_reports": seat_reports,
     }
 
 
