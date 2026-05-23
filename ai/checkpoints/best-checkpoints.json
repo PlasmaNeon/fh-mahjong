@@ -175,6 +175,155 @@
       "The previous 6-epoch 200-self-play run overfit after epoch 2; the promoted checkpoint uses a lower learning rate and 3 epochs."
     ]
   },
+  "rejected_candidates": [
+    {
+      "id": "chongci_selfplay400_fixed_mc_lowdrift_epoch002",
+      "method": "discrete_iql_mixed_selfplay",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/checkpoints/iql_selfplay400_fixed_mc_lowdrift_3ep/epoch_002.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-selfplay400-allcheckpoint-20260522-035306/data/selfplay-current-allseats-400-npz",
+        "/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/data/selfplay-current-allseats-400-fixed-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "selfplay_episodes": 400,
+        "selfplay_start_seed": 720000,
+        "selfplay_transitions": 817199,
+        "selfplay_checkpoint_seats": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "epochs": 3,
+        "selected_epoch": 2,
+        "batch_size": 4096,
+        "learning_rate": 0.00001,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "bc_weight": 2.0,
+        "cql_weight": 0.01,
+        "max_transitions_per_dataset": 400000,
+        "mlflow_run_id": "69c9bbb0ac064fa59c5d555408632c43"
+      },
+      "screening": [
+        {
+          "label": "duplicate_20_seed413000",
+          "seats": 80,
+          "start_seed": 413000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.175,
+          "mean_reward": 0.028512492775917053,
+          "promoted_positive_reward_rate": 0.525,
+          "promoted_large_loss_rate": 0.2125,
+          "promoted_mean_reward": 0.01487500686198473,
+          "report_path": "/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/reports/candidate_epoch_2_duplicate20_seed413000.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/reports/promoted_duplicate20_seed413000.json"
+        }
+      ],
+      "evaluation": [
+        {
+          "label": "combined_duplicate_60_seed414000_424000_434000",
+          "seats": 240,
+          "positive_reward_rate": 0.42083333333333334,
+          "large_loss_rate": 0.22083333333333333,
+          "mean_reward": -0.15446250326931477,
+          "promoted_positive_reward_rate": 0.475,
+          "promoted_large_loss_rate": 0.1625,
+          "promoted_mean_reward": -0.05398750305175781,
+          "report_path": "/root/fh-mahjong-runs/chongci-selfplay400-fixed-epoch2-gate-20260522-210926/reports",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-selfplay400-fixed-epoch2-gate-20260522-210926/reports"
+        }
+      ],
+      "rejection_reason": "Rejected because the wider duplicate-seat gate lost to the current Chongci promoted checkpoint on mean reward, positive-reward rate, and large-loss rate.",
+      "notes": [
+        "The quick seed 413000 screen looked promising on mean reward and large-loss rate, but the wider three-window gate reversed that signal.",
+        "Do not use this checkpoint for serving or as the next self-play policy source."
+      ]
+    },
+    {
+      "id": "chongci_safe_td_bc8_epoch002",
+      "method": "discrete_iql_mixed_selfplay",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-safe-anchor-sweep-20260522-220530/checkpoints/safe_td_bc8/epoch_002.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-selfplay400-allcheckpoint-20260522-035306/data/selfplay-current-allseats-400-npz",
+        "/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/data/selfplay-current-allseats-400-fixed-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 2,
+        "batch_size": 4096,
+        "learning_rate": 0.000005,
+        "gamma": 0.99,
+        "target_mode": "td",
+        "expectile": 0.7,
+        "temperature": 3.0,
+        "max_weight": 3.0,
+        "q_weight": 0.5,
+        "value_weight": 0.5,
+        "policy_weight": 0.1,
+        "bc_weight": 8.0,
+        "cql_weight": 0.02,
+        "max_transitions_per_dataset": 400000,
+        "mlflow_run_id": "a3648f0b6c2a4f34837a78bfe6c9601d"
+      },
+      "screening": [
+        {
+          "label": "duplicate_8_seed444000",
+          "seats": 32,
+          "start_seed": 444000,
+          "positive_reward_rate": 0.5625,
+          "large_loss_rate": 0.125,
+          "mean_reward": 0.12837500870227814,
+          "promoted_positive_reward_rate": 0.4375,
+          "promoted_large_loss_rate": 0.125,
+          "promoted_mean_reward": 0.011531263589859009,
+          "report_path": "/root/fh-mahjong-runs/chongci-safe-anchor-sweep-20260522-220530/reports/safe_td_bc8_duplicate8_seed444000.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-safe-anchor-sweep-20260522-220530/reports/promoted_duplicate8_seed444000.json"
+        }
+      ],
+      "evaluation": [
+        {
+          "label": "combined_duplicate_60_seed454000_464000_474000",
+          "seats": 240,
+          "positive_reward_rate": 0.425,
+          "large_loss_rate": 0.20833333333333334,
+          "mean_reward": -0.13557500888903937,
+          "promoted_positive_reward_rate": 0.45416666666666666,
+          "promoted_large_loss_rate": 0.12083333333333333,
+          "promoted_mean_reward": -0.0164624967922767,
+          "report_path": "/root/fh-mahjong-runs/chongci-safe-td-bc8-gate-20260522-221931/reports",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-safe-td-bc8-gate-20260522-221931/reports"
+        }
+      ],
+      "diagnostics": {
+        "report_path": "/root/fh-mahjong-runs/chongci-safe-td-bc8-gate-20260522-221931/diagnostics/promoted_vs_safe_td_bc8.json",
+        "offline_transitions": 200000,
+        "candidate_vs_promoted_disagreement_rate": 0.002655,
+        "candidate_vs_dataset_agreement_rate": 0.997345,
+        "promoted_vs_dataset_agreement_rate": 1.0,
+        "candidate_discard_danger_mean": 0.7201401591300964,
+        "promoted_discard_danger_mean": 0.7201546430587769,
+        "riskier_discard_rate_when_both_discard": 0.00048772145404333753
+      },
+      "rejection_reason": "Rejected because the wider duplicate-seat gate lost to the current Chongci promoted checkpoint on mean reward, positive-reward rate, and large-loss rate despite a promising quick screen.",
+      "notes": [
+        "The candidate is nearly identical to the promoted policy on offline rows generated by the promoted policy, but the small differences did not improve online duplicate evaluation.",
+        "The next useful work is higher-signal diagnostics or targeted feature/reward changes, not another blind low-drift IQL continuation."
+      ]
+    }
+  ],
   "fallbacks": [
     {
       "id": "bc20_lookahead_50k_epoch020",
