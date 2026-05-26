@@ -21,12 +21,34 @@ def write_evaluation_report(path: Path, report: dict[str, Any]) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def parse_seed_windows(values: list[str], episodes: int, start_seed: int) -> list[int]:
+    if not values:
+        return list(range(start_seed, start_seed + episodes))
+    seeds: list[int] = []
+    for value in values:
+        if ":" in value:
+            start_text, count_text = value.split(":", 1)
+            start = int(start_text)
+            count = int(count_text)
+        else:
+            start = int(value)
+            count = episodes
+        seeds.extend(range(start, start + count))
+    return seeds
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a trained model")
     parser.add_argument("--checkpoint", type=Path, required=True, help="Path to .pt checkpoint")
     parser.add_argument("--data", type=Path, default=None, help="JSONL data for offline eval")
     parser.add_argument("--online-episodes", type=int, default=0, help="Number of online episodes (0 = skip)")
     parser.add_argument("--start-seed", type=int, default=1000, help="Starting seed for online eval")
+    parser.add_argument(
+        "--seed-window",
+        action="append",
+        default=[],
+        help="Start seed or start:count. Repeat for non-contiguous online eval windows.",
+    )
     parser.add_argument("--duplicate-seats", action="store_true", help="Rotate the agent through all four seats")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
@@ -132,7 +154,7 @@ def main() -> None:
 
         if args.online_episodes > 0:
             print(f"\n--- Online Evaluation ({args.online_episodes} episodes) ---")
-            seeds = list(range(args.start_seed, args.start_seed + args.online_episodes))
+            seeds = parse_seed_windows(args.seed_window, args.online_episodes, args.start_seed)
             if args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
                     model=model,
