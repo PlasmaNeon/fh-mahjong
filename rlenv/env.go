@@ -16,6 +16,7 @@ type Env struct {
 	heuristic     bot.Policy
 	learningSeats map[uint32]bool
 	decisionCount uint64
+	baseSeed      uint64
 }
 
 func New(config *pb.EnvConfig) *Env {
@@ -44,6 +45,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, matchOptionsFromConfig(e.config))
 	e.game.SetWallSeed(core.SeedFromUint64(seed))
 	e.decisionCount = 0
+	e.baseSeed = seed
 	if err := e.game.Start(); err != nil {
 		return nil, err
 	}
@@ -254,11 +256,40 @@ func (e *Env) readyAllPlayersForNextRound() error {
 		if len(e.game.State.PlayerReady) > int(seat) && e.game.State.PlayerReady[seat] {
 			continue
 		}
+		if e.isFinalReadyBeforeNextRound(seat) {
+			nextHand := uint64(e.game.State.HandNum) + 1
+			e.game.SetWallSeed(core.SeedFromUint64(deriveHandSeed(e.baseSeed, nextHand)))
+		}
 		if err := e.game.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *Env) isFinalReadyBeforeNextRound(seat uint32) bool {
+	if e == nil || e.game == nil || e.game.State == nil {
+		return false
+	}
+	if e.game.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		return false
+	}
+	for other := uint32(0); other < 4; other++ {
+		if other == seat {
+			continue
+		}
+		if len(e.game.State.PlayerReady) <= int(other) || !e.game.State.PlayerReady[other] {
+			return false
+		}
+	}
+	return true
+}
+
+func deriveHandSeed(baseSeed uint64, handNum uint64) uint64 {
+	z := baseSeed + 0x9e3779b97f4a7c15*(handNum+1)
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb
+	return z ^ (z >> 31)
 }
 
 func (e *Env) currentLearningSeat() (uint32, bool) {

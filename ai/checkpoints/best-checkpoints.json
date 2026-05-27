@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-23",
+  "updated_at": "2026-05-26",
   "selection_policy": {
     "objective": "single-round Fenghua expected payout",
     "gate": "fixed-seed duplicate-seat evaluation",
@@ -394,6 +394,81 @@
       "notes": [
         "The failed seed-band gate showed useful direction from stronger CQL, BC anchoring, and downside shaping.",
         "Do not promote this checkpoint; use it only as evidence that downside-shaped direct policy training is worth further study with stronger independent validation."
+      ]
+    },
+    {
+      "id": "chongci_selfplay400k_current_lowdrift_epoch002",
+      "method": "discrete_iql_mixed_selfplay",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/checkpoints/iql_selfplay400k_current_lowdrift_2ep/epoch_002.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "source_generation": {
+          "source_run": "/root/fh-mahjong-runs/chongci-selfplay800-current-lowdrift-run-20260525-223354",
+          "selected_transitions": 400000,
+          "selected_shards": 8,
+          "start_seed": 860000,
+          "policy_source": "all seats controlled by current Chongci promoted checkpoint"
+        },
+        "epochs": 2,
+        "selected_epoch": 2,
+        "batch_size": 4096,
+        "learning_rate": 0.00001,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "q_weight": 1.0,
+        "value_weight": 1.0,
+        "policy_weight": 1.0,
+        "bc_weight": 1.0,
+        "cql_weight": 0.0,
+        "max_transitions_per_dataset": 400000,
+        "mlflow_run_id": "bb71fd1dacec4a939f51ef41d9c231ba"
+      },
+      "screening": [
+        {
+          "label": "combined_duplicate_40_seed514000_524000",
+          "seats": 160,
+          "positive_reward_rate": 0.48125,
+          "large_loss_rate": 0.16875,
+          "mean_reward": -0.03406250476837158,
+          "promoted_positive_reward_rate": 0.4125,
+          "promoted_large_loss_rate": 0.2,
+          "promoted_mean_reward": -0.10126248747110367,
+          "report_path": "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/reports/candidate_epoch002_duplicate40_seed514000_524000.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/reports/anchor_duplicate40_seed514000_524000.json",
+          "mlflow_run_id": "b479a34b42e04ac3b363b2bf522b6536",
+          "promoted_mlflow_run_id": "d48e42f465294c13a4a53ee0b75d54e6"
+        }
+      ],
+      "evaluation": [
+        {
+          "label": "combined_duplicate_60_seed534000_544000_554000",
+          "seats": 240,
+          "positive_reward_rate": 0.44166666666666665,
+          "large_loss_rate": 0.16666666666666666,
+          "mean_reward": -0.07072916626930237,
+          "promoted_positive_reward_rate": 0.43333333333333335,
+          "promoted_large_loss_rate": 0.20833333333333334,
+          "promoted_mean_reward": -0.05120834335684776,
+          "report_path": "/root/fh-mahjong-runs/chongci-capped400k-epoch002-independent-gate-20260525-234007/reports/candidate_epoch002_duplicate60_seed534000_544000_554000.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-capped400k-epoch002-independent-gate-20260525-234007/reports/anchor_duplicate60_seed534000_544000_554000.json",
+          "mlflow_run_id": "583b466982d3459ca8a2d220ebff9e7c",
+          "promoted_mlflow_run_id": "fd3b024bd58b441aa2ef9f9c13cc5f97"
+        }
+      ],
+      "rejection_reason": "Rejected because the candidate passed the quick screen but lost to the current Chongci promoted checkpoint on mean reward in the independent duplicate-seat gate.",
+      "notes": [
+        "The candidate improved positive-reward rate and large-loss rate on the independent gate, but expected value remains the primary promotion metric.",
+        "The useful signal is that capped current-policy self-play can reduce tail losses; the next attempt should preserve the downside improvement while recovering mean reward."
       ]
     }
   ],
