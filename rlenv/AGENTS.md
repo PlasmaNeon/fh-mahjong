@@ -21,6 +21,7 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 - Non-learning seats are automated through the shared Go heuristic bot when `auto_play_heuristics` is enabled.
 - `EnvConfig.match_mode = MATCH_MODE_CHONGCI` starts the core engine with Chongci options and treats `PHASE_MATCH_END` as the terminal RL state.
 - During Chongci generation/evaluation, `advanceToDecision()` auto-acks `ROUND_END` ready gates so an episode can span multiple hands until bust or hand cap.
+- Chongci `Reset(seed)` derives a deterministic wall seed for each later hand before the final ready ack starts the next round; same episode seed plus same policy must replay the same multi-hand match.
 - Chongci terminal rewards are final score net change divided by 1000, matching the scale of classic single-hand payout rewards.
 - `advanceToDecision()` only resolves WAIT_DISCARDS automatically after verifying every pending interrupt seat has already queued a response; otherwise it returns an error instead of silently skipping input.
 - `advanceToDecision()` must resolve an already-ready WAIT_DISCARDS window even when `AutoPlayHeuristics` is disabled, because all-four-seat heuristic trajectory export records each seat as a learning seat and can otherwise stall after queued interrupt responses.

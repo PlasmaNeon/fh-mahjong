@@ -325,6 +325,89 @@ func TestGenerateHeuristicTrajectoryChongciReachesMatchEnd(t *testing.T) {
 	}
 }
 
+func TestChongciResetDeterministicAcrossMultipleHands(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       4096,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 100000,
+			BustThreshold: 0,
+			MaxHands:      2,
+		},
+	}
+
+	envA := New(config)
+	envB := New(config)
+	responseA, err := envA.Reset(&pb.EnvResetRequest{Seed: 61, Config: config})
+	if err != nil {
+		t.Fatalf("envA reset failed: %v", err)
+	}
+	responseB, err := envB.Reset(&pb.EnvResetRequest{Seed: 61, Config: config})
+	if err != nil {
+		t.Fatalf("envB reset failed: %v", err)
+	}
+	assertResetResponseEqual(t, responseA, responseB)
+
+	maxHandNum := envA.game.State.HandNum
+	for step := 0; step < int(config.MaxDecisions); step++ {
+		if responseA.Terminated || responseA.Truncated {
+			break
+		}
+		if envA.game.State.HandNum != envB.game.State.HandNum {
+			t.Fatalf("hand number mismatch at step %d: %d vs %d", step, envA.game.State.HandNum, envB.game.State.HandNum)
+		}
+		if envA.game.State.WallSeed != envB.game.State.WallSeed {
+			t.Fatalf("wall seed mismatch at step %d", step)
+		}
+
+		seat := responseA.Observation.Seat
+		action := envA.heuristic.ChooseAction(envA.game.State, seat)
+		if action == nil {
+			t.Fatalf("heuristic returned nil action for seat %d at step %d", seat, step)
+		}
+		actionID, ok := encodeAction(envA.game.State, seat, action)
+		if !ok {
+			t.Fatalf("cannot encode heuristic action %v for seat %d at step %d", action.Type, seat, step)
+		}
+
+		stepA, err := envA.Step(&pb.EnvStepRequest{ActionId: uint32(actionID)})
+		if err != nil {
+			t.Fatalf("envA step %d failed: %v", step, err)
+		}
+		stepB, err := envB.Step(&pb.EnvStepRequest{ActionId: uint32(actionID)})
+		if err != nil {
+			t.Fatalf("envB step %d failed for shared action %d: %v", step, actionID, err)
+		}
+		assertStepResponseEqual(t, stepA, stepB)
+		if envA.game.State.HandNum > maxHandNum {
+			maxHandNum = envA.game.State.HandNum
+		}
+		responseA = &pb.EnvResetResponse{
+			Observation:  stepA.Observation,
+			Rewards:      stepA.Rewards,
+			Terminated:   stepA.Terminated,
+			Truncated:    stepA.Truncated,
+			RoundOutcome: stepA.RoundOutcome,
+		}
+		responseB = &pb.EnvResetResponse{
+			Observation:  stepB.Observation,
+			Rewards:      stepB.Rewards,
+			Terminated:   stepB.Terminated,
+			Truncated:    stepB.Truncated,
+			RoundOutcome: stepB.RoundOutcome,
+		}
+	}
+
+	if maxHandNum < 2 {
+		t.Fatalf("expected deterministic replay to cross into a later Chongci hand, max hand = %d", maxHandNum)
+	}
+	if !responseA.Terminated {
+		t.Fatalf("expected two-hand Chongci match to terminate, got terminated=%t truncated=%t", responseA.Terminated, responseA.Truncated)
+	}
+}
+
 func TestAdvanceToDecisionResolvesReadyInterruptWindowWithoutAutoplay(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
@@ -373,6 +456,30 @@ func firstLegalActionID(mask []byte) int {
 		}
 	}
 	return -1
+}
+
+func assertResetResponseEqual(t *testing.T, lhs *pb.EnvResetResponse, rhs *pb.EnvResetResponse) {
+	t.Helper()
+	assertObservationEqual(t, lhs.Observation, rhs.Observation)
+	assertFloatSliceEqual(t, lhs.Rewards, rhs.Rewards)
+	if lhs.Terminated != rhs.Terminated || lhs.Truncated != rhs.Truncated {
+		t.Fatalf("reset terminal mismatch: %#v vs %#v", lhs, rhs)
+	}
+	if !proto.Equal(lhs.RoundOutcome, rhs.RoundOutcome) {
+		t.Fatalf("reset round outcome mismatch: %#v vs %#v", lhs.RoundOutcome, rhs.RoundOutcome)
+	}
+}
+
+func assertStepResponseEqual(t *testing.T, lhs *pb.EnvStepResponse, rhs *pb.EnvStepResponse) {
+	t.Helper()
+	assertObservationEqual(t, lhs.Observation, rhs.Observation)
+	assertFloatSliceEqual(t, lhs.Rewards, rhs.Rewards)
+	if lhs.Terminated != rhs.Terminated || lhs.Truncated != rhs.Truncated {
+		t.Fatalf("step terminal mismatch: %#v vs %#v", lhs, rhs)
+	}
+	if !proto.Equal(lhs.RoundOutcome, rhs.RoundOutcome) {
+		t.Fatalf("step round outcome mismatch: %#v vs %#v", lhs.RoundOutcome, rhs.RoundOutcome)
+	}
 }
 
 func assertObservationEqual(t *testing.T, lhs *pb.SeatObservation, rhs *pb.SeatObservation) {

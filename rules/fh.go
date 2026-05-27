@@ -829,7 +829,11 @@ func (r *HometownRuleset) ResolveInterruptPriority(actions map[uint32]*pb.Player
 		pb.ActionType_ACTION_RON:  4,
 	}
 
-	for seat, action := range actions {
+	for seat := uint32(0); seat < 4; seat++ {
+		action := actions[seat]
+		if action == nil {
+			continue
+		}
 		w := weights[action.Type]
 		if w > highestWeight {
 			highestWeight = w

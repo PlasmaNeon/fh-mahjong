@@ -42,6 +42,24 @@ func TestHometownRuleset_Priority(t *testing.T) {
 	}
 }
 
+func TestHometownRuleset_PriorityTieBreaksBySeat(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	actions := map[uint32]*pb.PlayerAction{
+		3: {Type: pb.ActionType_ACTION_PON},
+		1: {Type: pb.ActionType_ACTION_PON},
+	}
+
+	for i := 0; i < 20; i++ {
+		winner, action := r.ResolveInterruptPriority(actions)
+		if winner != 1 {
+			t.Fatalf("expected same-priority interrupt to choose lowest seat 1, got %d", winner)
+		}
+		if action == nil || action.Type != pb.ActionType_ACTION_PON {
+			t.Fatalf("expected PON action to win, got %#v", action)
+		}
+	}
+}
+
 // --- Variant: Common Win (朋胡) ---
 // Standard 4 melds + 1 pair, no special patterns.
 // Scoring: Base(1) + WildBonus + Common(1) + [Tsumo(1)] + [SingleWait(1)]
@@ -53,18 +71,18 @@ func TestHometownRuleset_CommonWin(t *testing.T) {
 	// Win tile 3z is a single wait (单吊).
 	mkHand := func(wilds int) []*pb.Tile {
 		hand := []*pb.Tile{
-			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},  // 2s
-			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},  // 3s
-			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},  // 4s
-			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},  // 4p
-			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},  // 5p
-			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},  // 6p
-			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},  // 7m
-			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},  // 8m
-			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},  // 9m
-			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1}, // 1m
-			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 2}, // 2m
-			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 3}, // 3m
+			{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},    // 2s
+			{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},    // 3s
+			{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},    // 4s
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},    // 4p
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},    // 5p
+			{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},    // 6p
+			{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},    // 7m
+			{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},    // 8m
+			{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},    // 9m
+			{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1},   // 1m
+			{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 2},   // 2m
+			{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 3},   // 3m
 			{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 3}, // 3z (West) — single wait tile
 		}
 		// Wild = 9s (not naturally in hand). Replace 4th chii tiles to inject wilds.
@@ -669,11 +687,11 @@ func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
 	}
 
 	actions := r.GetValidActions(ws, 0)
-	
+
 	// Flower handling is now owned by the core state machine.
 	// GetValidActions should not expose FLOWER_REVEAL to the client, even when a
 	// non-wild flower is still present in this synthetic state.
-	
+
 	if len(actions) == 0 {
 		t.Fatalf("expected at least 1 action, got 0")
 	}

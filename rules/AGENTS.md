@@ -18,7 +18,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
   - `GetValidActions()` — Discard, Kan, Tsumo for active player. Non-wild flower handling is owned by `core.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
-  - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1)
+  - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1), with same-priority ties resolved by ascending seat for deterministic RL replay
   - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
 
 - **fh_test.go** — Extensive test suite covering all 35+ patterns:
@@ -26,7 +26,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
   - DragonPung, WindPung, OwnFlower, KongBonuses, WaitPatterns, PairCall
   - Wild tile injection (0/1/2/3 wilds), Tame Wild
   - FlowerBonus (4 flowers, 8 flowers)
-  - InterruptPriority resolution
+  - InterruptPriority resolution and deterministic same-priority tie-breaking
 
 - **shanten/** — Shared progress-analysis subpackage:
   - Route-by-route shanten breakdown (`standard`, `seven pairs`, `independence`)

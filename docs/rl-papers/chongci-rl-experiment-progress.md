@@ -1,0 +1,1194 @@
+# Chongci RL Experiment Progress Note
+
+Last updated: 2026-05-26
+
+This note is the running experiment notebook for the Fenghua Mahjong AI work,
+especially the Chongci reward-learning line. Update this file after every new
+data-generation run, training run, evaluation gate, promotion, rejection, or
+material design change.
+
+The style is intentionally closer to an interview or paper report than to a
+short changelog. It records the research question, design rationale,
+implementation path, experiment ledger, results, interpretation, and next
+hypotheses so future work does not repeat old branches blindly.
+
+## Abstract
+
+The project started from a broad question: how do we turn a Fenghua Mahjong
+rules engine into a useful AI agent, and how do we learn RL while building it?
+The current answer is a pragmatic, Mortal-style training stack:
+
+1. keep the Go engine as the authoritative simulator,
+2. encode only visible information into `SeatObservation`,
+3. collect operation-level transitions for every discard, pass, chii, pon, kan,
+   win, and haitei decision,
+4. warm-start policy quality with behavior cloning,
+5. train conservative reward learners with discrete IQL on fixed datasets and
+   mixed checkpoint self-play,
+6. promote checkpoints only through duplicate-seat evaluation, not training
+   loss, offline agreement, or raw win rate.
+
+The main promoted Chongci checkpoint remains:
+
+```text
+id: iql_lowlr_selfplay200_epoch003
+path: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+```
+
+The latest experiments show a recurring pattern: reward-learning candidates can
+reduce tail losses or look good on a quick screen, but independent gates often
+reverse the signal. The immediate research bottleneck is no longer just "train
+more"; it is evaluation stability, repeated-gate reliability, and separating
+mean-reward improvement from large-loss control.
+
+## Original Motivation And Learning Path
+
+The discussion began with paper-read reports and roadmap work. The first durable
+plan was to connect RL learning material directly to this repo instead of
+keeping study notes separate from code.
+
+The accepted learning and development direction became:
+
+```text
+simulator correctness
+-> heuristic trajectories
+-> behavior cloning
+-> duplicate evaluation
+-> conservative offline RL
+-> mixed checkpoint self-play
+-> live AI integration
+```
+
+Later, after reviewing Mortal and Suphx again, the direction was refined:
+
+```text
+Mortal-style operation-level Q/value learning first
+Suphx-style oracle/global reward auxiliaries later
+```
+
+The user also preferred articles and maintained documentation over old videos.
+The roadmap was updated accordingly in:
+
+```text
+docs/rl-papers/roadmap-and-development-plan.md
+```
+
+Key learning questions covered during the conversation:
+
+- Bellman equation: why current value depends on immediate reward plus next
+  value.
+- Monte Carlo return `G_t`: total discounted future reward from timestep `t`.
+- Episode: one complete rollout unit, which may mean one hand for classic mode
+  or one multi-hand Chongci match for Chongci mode.
+- Value: expected return from a state, not guaranteed reward.
+- Temporal difference target:
+
+```text
+G_t ~= R_{t+1} + gamma * V(S_{t+1})
+```
+
+- `R_{t+1}`: the reward observed after taking the action at time `t`.
+- `gamma`: the discount factor; it controls how much future reward matters.
+- Q-learning: the update mainly uses current state/action/reward/next state;
+  history only matters if it is encoded into the observation or model memory.
+- Policy-action value equation:
+
+```text
+Q^pi(s, a) = r + gamma * Q^pi(s', pi(s'))
+```
+
+- ReLU: neural-network activation that keeps positive values and clips negative
+  values to zero.
+- AdamW: Adam optimizer with decoupled weight decay; useful default for neural
+  network training.
+
+These Q&A sessions directly shaped the code explanation: every training row is
+an operation-level transition, and delayed match reward is backfilled to the
+decision states that caused it.
+
+## Design Commitments
+
+### Simulator Boundary
+
+Go remains the authority:
+
+- `core/` owns the game state machine.
+- `rules/` owns Fenghua scoring.
+- `rlenv/` wraps the simulator for deterministic reset/step and observation
+  encoding.
+- Python never mutates game state directly.
+- Python returns an `action_id`; Go still validates that action against legal
+  actions before applying it.
+
+This is important because an RL policy should not become a second unofficial
+rules implementation.
+
+### Observation Boundary
+
+The deployed policy receives visible information only.
+
+Current observation defaults:
+
+```text
+planes: 39 x 42 x 1
+scalars: 50
+action space: 204 discrete actions
+```
+
+Tile-face order follows the backend shanten order:
+
+```text
+man: 0-8
+pin: 9-17
+sou: 18-26
+jihai: 27-33
+flower: 34-41
+```
+
+Important scalar groups:
+
+- overall shanten,
+- route-specific shanten,
+- ukeire / useful tile counts,
+- discard look-ahead,
+- wild preservation,
+- visible score potential,
+- public danger,
+- Chongci mode and score-context features.
+
+Hidden opponent hands and wall order are not exposed to inference. Oracle-style
+auxiliary training remains a later direction, not a deployment input.
+
+### Action Space
+
+The fixed 204-action catalog is kept because it gives a stable bridge between
+Go, Python, and serving:
+
+- tile discards,
+- chii variants,
+- pon,
+- kan variants,
+- win actions,
+- pass,
+- haitei accept/refuse and related decision categories.
+
+The flat head is not perfect, but it is stable. Hierarchical action heads are a
+future optimization after the current reward loop is more reliable.
+
+### Model Architecture
+
+The default model is a no-pooling residual CNN over semantic tile planes plus a
+scalar encoder:
+
+- no adaptive pooling by default,
+- residual convolution blocks preserve tile-face positions,
+- dueling Q head separates state value from action advantage,
+- channel attention is available as an ablation,
+- transformer/history models are deferred.
+
+This is not a direct Mortal clone. It is a practical bridge: Mortal-style
+operation-level value learning with a repo-specific no-pooling tile-plane model.
+
+### Reward Design
+
+Classic Fenghua target:
+
+```text
+terminal single-hand payout for the acting seat
+```
+
+Chongci target:
+
+```text
+final match net score change / 1000
+```
+
+Discrete IQL default target:
+
+```text
+gamma ** steps_to_done * terminal_reward
+```
+
+This means reward learning starts from every operation, but the reward signal is
+still delayed. A discard, chii, pon, kan, pass, or win decision receives a target
+based on what eventually happened in that hand or match.
+
+Large-loss shaping and CQL penalties are explicit ablations. They are not
+promotion criteria by themselves.
+
+### Evaluation Policy
+
+For Chongci, raw win rate is not the main metric. Because four same-strength
+agents often play together, win rate can hover near 25 percent and miss EV or
+tail-risk improvements.
+
+Primary metrics:
+
+- mean reward / expected final net score,
+- positive-reward rate,
+- large-loss rate,
+- duplicate-seat comparison on fixed seed windows.
+
+Promotion rule:
+
+```text
+Promote only if mean reward improves on independent duplicate gates and
+large-loss rate does not regress materially.
+```
+
+Training loss, offline action agreement, and quick screens are not enough.
+
+## Implementation Milestones
+
+### Roadmap And Study Docs
+
+Durable documents:
+
+- `docs/rl-papers/roadmap-and-development-plan.md`
+- `docs/rl-papers/implementation-takeaways.md`
+- this file
+
+Important roadmap changes:
+
+- replaced stale/dead links,
+- removed video-first learning path,
+- made article/docs-first study stages,
+- moved from generic offline RL to Mortal-style operation-level Q/value
+  learning,
+- documented Suphx-style oracle training as later auxiliary work.
+
+### Behavior Cloning
+
+Behavior cloning was implemented as the first stable policy layer:
+
+- generate heuristic trajectories through the Go bridge,
+- train policy with cross-entropy over heuristic actions,
+- evaluate exact/top-3/action-family agreement,
+- use BC as a warm start and regularizer for reward learning.
+
+BC is not treated as the final intelligence. It is a way to put the policy into
+legal and plausible regions before reward-based learning.
+
+### Data Visualization
+
+Generated replay data was verified through the replay UI. This confirmed that
+the data path from Go simulator to serialized transition records was usable for
+inspection, not only training.
+
+### Python Environment And MLflow
+
+The project standard became:
+
+```bash
+uv run --project ai ...
+```
+
+Avoid pip, conda, and ad hoc virtualenv commands for this repo.
+
+MLflow was added for training/evaluation runs. Important MLflow behaviors:
+
+- training logs params and metrics,
+- evaluation logs online duplicate metrics,
+- artifacts are local to the AI package or remote run directory,
+- checkpoint binaries stay outside git.
+
+### Remote WSL Training
+
+Training moved to remote WSL because the remote machine has an RTX 4090.
+The Mac remains the coordination and git workspace; WSL owns large datasets,
+checkpoints, MLflow runs, and reports under:
+
+```text
+/root/fh-mahjong-runs/
+```
+
+## Current Promoted Chongci Checkpoint
+
+Current best:
+
+```text
+id: iql_lowlr_selfplay200_epoch003
+method: discrete_iql_mixed_selfplay
+checkpoint:
+/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+```
+
+Training configuration:
+
+```text
+init checkpoint:
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/checkpoints/iql_mixed_selfplay_50_4ep/epoch_004.pt
+
+self-play episodes: 200
+self-play start seed: 500000
+self-play transitions: 203539
+self-play checkpoint seats: 0, 2
+epochs: 3
+batch size: 4096
+learning rate: 3e-5
+gamma: 0.99
+target mode: mc
+expectile: 0.7
+temperature: 1.0
+max weight: 20.0
+BC weight: 1.0
+CQL weight: 0.0
+max transitions per dataset: 200000
+MLflow run id: 66bb53bf9b8d4d76882022369b823f3d
+```
+
+Promotion evidence:
+
+Screen:
+
+```text
+duplicate_20_seed368000
+seats: 80
+candidate mean_reward: 0.2010250092
+previous best mean_reward: 0.0398125127
+candidate positive_reward_rate: 56.25%
+previous best positive_reward_rate: 51.25%
+candidate large_loss_rate: 12.50%
+previous best large_loss_rate: 25.00%
+```
+
+Independent gates:
+
+```text
+duplicate_20_seed369000
+seats: 80
+candidate mean_reward: 0.0412124991
+previous best mean_reward: -0.2162124813
+candidate positive_reward_rate: 53.75%
+previous best positive_reward_rate: 35.00%
+candidate large_loss_rate: 23.75%
+previous best large_loss_rate: 21.25%
+
+duplicate_20_seed370000
+seats: 80
+candidate mean_reward: 0.0291249957
+previous best mean_reward: 0.0258874949
+candidate positive_reward_rate: 50.00%
+previous best positive_reward_rate: 50.00%
+candidate large_loss_rate: 18.75%
+previous best large_loss_rate: 15.00%
+```
+
+Combined promotion view:
+
+```text
+combined_duplicate_60_seed368000_369000_370000
+seats: 240
+candidate mean_reward: 0.0904541681
+previous best mean_reward: -0.0501708259
+candidate positive_reward_rate: 53.33%
+previous best positive_reward_rate: 45.42%
+candidate large_loss_rate: 18.33%
+previous best large_loss_rate: 20.42%
+```
+
+Interpretation:
+
+- promotion was justified by aggregate EV and positive-rate improvement,
+- one independent window had a large-loss regression,
+- the aggregate including screening supported promotion,
+- later experiments made us more cautious about single-window promotion.
+
+## Experiment Ledger
+
+### Baseline Direction: Heuristic To BC To Reward Learning
+
+The first pipeline was:
+
+1. generate deterministic heuristic trajectories,
+2. train BC,
+3. evaluate agreement and duplicate seats,
+4. move to AWBC/IQL reward learning.
+
+The key conclusion was that BC does not need to be perfect. It should make legal
+and plausible decisions, then reward learning should try to improve EV.
+
+### Classic Fenghua Reward Best
+
+Classic Fenghua has a promoted AWBC reward-trained checkpoint:
+
+```text
+id: awbc_temp1_maxw2_value025_lr1e5_epoch006
+path:
+/root/fh-mahjong-runs/reward-next-ev-20260519-003157/checkpoints/awbc_temp1_maxw2_value025_lr1e5_500k_6ep/epoch_006.pt
+```
+
+This remains separate from Chongci. Chongci uses match-level net score and a
+different evaluation mode.
+
+### Chongci Mode Introduction
+
+Chongci is a multi-hand score contest mode. It does not change Fenghua tile
+rules or per-hand scoring, but it changes the episode:
+
+```text
+episode = multi-hand match until bust threshold or hand cap
+reward = final net score change / 1000
+```
+
+This made the single-round policy still useful as a base, but not sufficient as
+the final objective. The model can reuse tile-play knowledge, action masks, and
+visible observations, but it needs match-context scalars and match-level reward.
+
+### Mixed Self-Play IQL
+
+Mixed self-play was added to move toward the Mortal way:
+
+- keep operation-level transitions,
+- let checkpoint seats generate data,
+- keep older datasets instead of discarding them,
+- train IQL over repeated `--data` inputs.
+
+The current best Chongci checkpoint came from this line.
+
+### Rejected Candidate: Self-Play 400 Fixed Engine
+
+```text
+id: chongci_selfplay400_fixed_mc_lowdrift_epoch002
+method: discrete_iql_mixed_selfplay
+checkpoint:
+/root/fh-mahjong-runs/chongci-selfplay400-fixed-engine-20260522-163043/checkpoints/iql_selfplay400_fixed_mc_lowdrift_3ep/epoch_002.pt
+```
+
+Quick screen:
+
+```text
+duplicate_20_seed413000
+seats: 80
+candidate mean_reward: 0.0285124928
+promoted mean_reward: 0.0148750069
+candidate positive_reward_rate: 43.75%
+promoted positive_reward_rate: 52.50%
+candidate large_loss_rate: 17.50%
+promoted large_loss_rate: 21.25%
+```
+
+Wider gate:
+
+```text
+combined_duplicate_60_seed414000_424000_434000
+seats: 240
+candidate mean_reward: -0.1544625033
+promoted mean_reward: -0.0539875031
+candidate positive_reward_rate: 42.08%
+promoted positive_reward_rate: 47.50%
+candidate large_loss_rate: 22.08%
+promoted large_loss_rate: 16.25%
+```
+
+Decision:
+
+```text
+rejected
+```
+
+Interpretation:
+
+- quick screen looked partially promising,
+- wider gate reversed the signal,
+- larger self-play alone did not guarantee improvement.
+
+### Rejected Candidate: Safe TD BC8
+
+```text
+id: chongci_safe_td_bc8_epoch002
+method: discrete_iql_mixed_selfplay
+checkpoint:
+/root/fh-mahjong-runs/chongci-safe-anchor-sweep-20260522-220530/checkpoints/safe_td_bc8/epoch_002.pt
+```
+
+Training intent:
+
+- use one-step TD targets,
+- reduce policy drift,
+- strong BC anchoring,
+- small CQL penalty.
+
+Quick screen:
+
+```text
+duplicate_8_seed444000
+seats: 32
+candidate mean_reward: 0.1283750087
+promoted mean_reward: 0.0115312636
+candidate positive_reward_rate: 56.25%
+promoted positive_reward_rate: 43.75%
+candidate large_loss_rate: 12.50%
+promoted large_loss_rate: 12.50%
+```
+
+Wider gate:
+
+```text
+combined_duplicate_60_seed454000_464000_474000
+seats: 240
+candidate mean_reward: -0.1355750089
+promoted mean_reward: -0.0164624968
+candidate positive_reward_rate: 42.50%
+promoted positive_reward_rate: 45.42%
+candidate large_loss_rate: 20.83%
+promoted large_loss_rate: 12.08%
+```
+
+Diagnostics:
+
+```text
+candidate_vs_promoted_disagreement_rate: 0.002655
+candidate_vs_dataset_agreement_rate: 0.997345
+promoted_vs_dataset_agreement_rate: 1.0
+```
+
+Decision:
+
+```text
+rejected
+```
+
+Interpretation:
+
+- candidate barely differed from the promoted policy offline,
+- small online differences were enough to hurt gate results,
+- one-step TD did not become the default.
+
+### Rejected Candidate: CQL + Downside Shaping
+
+```text
+id: chongci_cql02_bc12_ll05_epoch002
+method: discrete_iql_mixed_selfplay
+checkpoint:
+/root/fh-mahjong-runs/chongci-calibrated-cql-downside-run-20260523-062236/checkpoints/iql_cql02_bc12_ll05_2ep/epoch_002.pt
+```
+
+Training intent:
+
+- stronger CQL,
+- strong BC anchoring,
+- direct policy path,
+- downside shaping for large losses.
+
+Failed-band wide gate:
+
+```text
+combined_duplicate_60_seed454000_464000_474000
+seats: 240
+candidate mean_reward: -0.0345291607
+promoted mean_reward: -0.1980916709
+candidate positive_reward_rate: 42.50%
+promoted positive_reward_rate: 41.67%
+candidate large_loss_rate: 15.83%
+promoted large_loss_rate: 22.08%
+```
+
+Independent gate:
+
+```text
+combined_duplicate_60_seed484000_494000_504000
+seats: 240
+candidate mean_reward: -0.0853583515
+promoted mean_reward: -0.0579000078
+candidate positive_reward_rate: 42.08%
+promoted positive_reward_rate: 44.58%
+candidate large_loss_rate: 18.75%
+promoted large_loss_rate: 17.92%
+```
+
+Decision:
+
+```text
+rejected
+```
+
+Interpretation:
+
+- the method improved exactly the failed seed bands,
+- the improvement did not generalize,
+- Q-margin guarded policy overrides remained unsafe,
+- direct policy training stayed the only viable serving path.
+
+### Rejected Candidate: Broader Data CQL/Downside
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-broader-downside-cql-run-20260525-221704
+```
+
+Training intent:
+
+- reuse older Chongci datasets,
+- include fixed 400 self-play data,
+- try CQL/downside shaping with broader coverage.
+
+Training summary:
+
+```text
+epochs: 2
+batch size: 512
+learning rate: 5e-6
+target mode: mc
+expectile: 0.5
+temperature: 0.5
+max weight: 5
+policy weight: 0.25
+BC weight: 12.0
+CQL weight: 0.2
+large loss threshold: -1.0
+large loss penalty: 0.5
+```
+
+Failed-band screen:
+
+```text
+candidate seats: 120
+candidate mean_reward: -0.1660416573
+anchor mean_reward: -0.1216749996
+candidate positive_reward_rate: 35.83%
+anchor positive_reward_rate: 44.17%
+candidate large_loss_rate: 18.33%
+anchor large_loss_rate: 19.17%
+```
+
+Decision:
+
+```text
+stopped independent evaluation and rejected direction early
+```
+
+Interpretation:
+
+- large-loss rate improved slightly,
+- mean reward and positive rate regressed,
+- not worth a wider gate.
+
+### Rejected Candidate: Capped 400k Current-Policy Self-Play, Low-Drift IQL
+
+Recorded in PR #48:
+
+```text
+PR: https://github.com/PlasmaNeon/fh-mahjong/pull/48
+id: chongci_selfplay400k_current_lowdrift_epoch002
+checkpoint:
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/checkpoints/iql_selfplay400k_current_lowdrift_2ep/epoch_002.pt
+```
+
+Data:
+
+```text
+source oversized run:
+/root/fh-mahjong-runs/chongci-selfplay800-current-lowdrift-run-20260525-223354
+
+capped dataset:
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+
+selected transitions: 400000
+selected shards: 8
+policy source: all seats controlled by current Chongci promoted checkpoint
+start seed: 860000
+```
+
+Training:
+
+```text
+epochs: 2
+batch size: 4096
+learning rate: 1e-5
+target mode: mc
+expectile: 0.7
+temperature: 1.0
+max weight: 10
+policy weight: 1.0
+BC weight: 1.0
+CQL weight: 0.0
+MLflow run id: bb71fd1dacec4a939f51ef41d9c231ba
+```
+
+Quick screen:
+
+```text
+combined_duplicate_40_seed514000_524000
+seats: 160
+anchor mean_reward: -0.1012624875
+candidate epoch001 mean_reward: -0.2026062459
+candidate epoch002 mean_reward: -0.0340625048
+
+anchor positive_reward_rate: 41.25%
+candidate epoch001 positive_reward_rate: 40.00%
+candidate epoch002 positive_reward_rate: 48.12%
+
+anchor large_loss_rate: 20.00%
+candidate epoch001 large_loss_rate: 24.38%
+candidate epoch002 large_loss_rate: 16.88%
+```
+
+Independent gate:
+
+```text
+combined_duplicate_60_seed534000_544000_554000
+seats: 240
+anchor mean_reward: -0.0512083434
+candidate epoch002 mean_reward: -0.0707291663
+
+anchor positive_reward_rate: 43.33%
+candidate epoch002 positive_reward_rate: 44.17%
+
+anchor large_loss_rate: 20.83%
+candidate epoch002 large_loss_rate: 16.67%
+```
+
+Decision:
+
+```text
+rejected
+```
+
+Interpretation:
+
+- epoch 2 passed the quick screen on all three tracked metrics,
+- independent gate kept positive-rate and large-loss improvements,
+- mean reward regressed on the independent gate,
+- because expected value is primary, the checkpoint was not promoted.
+
+### Conservative Capped 400k Ablation
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-20260526-001923
+```
+
+Training intent:
+
+- reduce policy drift,
+- preserve mean reward,
+- keep some tail-loss benefit from capped current-policy self-play.
+
+Configuration:
+
+```text
+epochs: 2
+batch size: 4096
+learning rate: 5e-6
+target mode: mc
+expectile: 0.7
+temperature: 1.0
+max weight: 5
+q weight: 1.0
+value weight: 1.0
+policy weight: 0.5
+BC weight: 2.0
+CQL weight: 0.0
+MLflow run id: 0f4744a3a4ab4448938e29eebfb2f643
+```
+
+Quick screen:
+
+```text
+combined_duplicate_40_seed514000_524000
+seats: 160
+
+anchor:
+mean_reward: -0.1373062432
+positive_reward_rate: 44.38%
+large_loss_rate: 18.12%
+
+candidate epoch001:
+mean_reward: -0.0937437564
+positive_reward_rate: 40.00%
+large_loss_rate: 17.50%
+
+candidate epoch002:
+mean_reward: -0.1394562721
+positive_reward_rate: 43.12%
+large_loss_rate: 20.00%
+```
+
+Quick-screen interpretation:
+
+- epoch 1 improved mean reward and slightly improved large-loss rate,
+- epoch 1 regressed positive-reward rate,
+- epoch 2 was not useful,
+- epoch 1 deserved an independent gate.
+
+Independent gate:
+
+```text
+/root/fh-mahjong-runs/chongci-conservative-epoch001-independent-gate-20260526-010515
+
+combined_duplicate_60_seed534000_544000_554000
+seats: 240
+
+anchor:
+mean_reward: -0.1068208367
+positive_reward_rate: 42.08%
+large_loss_rate: 16.67%
+
+candidate epoch001:
+mean_reward: -0.0642041788
+positive_reward_rate: 44.58%
+large_loss_rate: 18.75%
+MLflow run id: f72806acfbf9469ba154fcc058192791
+```
+
+Decision:
+
+```text
+not promoted yet
+```
+
+Interpretation:
+
+- candidate epoch 1 improved mean reward and positive-reward rate,
+- candidate epoch 1 regressed large-loss rate,
+- repeated fixed-seed anchor evaluations varied materially across runs,
+- this candidate needs repeated independent gates or an evaluation-stability fix
+  before promotion.
+
+## Evaluation Stability Issue
+
+The strongest new finding from the latest work is that "fixed seed" evaluation
+is not as stable as expected. The same anchor checkpoint on the same nominal
+seed windows produced materially different metrics in repeated gates.
+
+Examples:
+
+Earlier independent anchor for:
+
+```text
+534000 / 544000 / 554000
+```
+
+reported:
+
+```text
+mean_reward: -0.0512083434
+positive_reward_rate: 43.33%
+large_loss_rate: 20.83%
+```
+
+Later independent anchor on the same nominal windows reported:
+
+```text
+mean_reward: -0.1068208367
+positive_reward_rate: 42.08%
+large_loss_rate: 16.67%
+```
+
+This should not be hand-waved. Possible causes:
+
+1. evaluation is not fully deterministic despite fixed wall seeds,
+2. checkpoint policy inference has nondeterministic tie-breaking or GPU behavior,
+3. Python/Go bridge order or reset behavior differs across runs,
+4. Chongci multi-hand episodes amplify small action differences,
+5. action selection may depend on unpinned runtime state,
+6. duplicate evaluation may not be fixing every source of randomness.
+
+Until this is understood, promotion should require stronger repeated evidence.
+
+### Determinism Audit Update, 2026-05-26
+
+Run directories:
+
+```text
+/root/fh-mahjong-runs/chongci-determinism-audit-patched-20260526-210542
+/root/fh-mahjong-runs/chongci-determinism-audit-patched-20260526-211132
+```
+
+Audit setup:
+
+```text
+checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+seed windows: 534000:1, 544000:1, 554000:1
+duplicate seats: true
+episodes per repeat: 12
+repeats: 3
+match mode: chongci
+chongci config: starting_score=2000, bust_threshold=0, max_hands=50
+max steps: 20000
+device: cuda
+```
+
+Fix 1:
+
+`rlenv.Env.Reset(seed)` previously seeded only the first hand. Chongci episodes
+can span many hands, and later `startNextRound()` calls consumed no RL seed, so
+`core.dealTiles()` fell back to `time.Now().UnixNano()`. The fix stores the
+episode seed in `Env` and derives a deterministic wall seed before the final
+ready ack starts each later Chongci hand.
+
+Verification:
+
+```text
+go test ./rlenv -run 'TestChongciResetDeterministicAcrossMultipleHands|TestGenerateHeuristicTrajectoryChongciReachesMatchEnd|TestDeterministicResetAndStep'
+go test ./core ./rlenv
+```
+
+Intermediate result:
+
+After fixing per-hand wall seeds, the audit still had one repeat drift:
+
+```text
+repeat 1: mean_reward=-0.1675833315 reward_digest=8aa75277b83d8252
+repeat 2: mean_reward=-0.1332499832 reward_digest=2f2aeb62418f9e2a
+repeat 3: mean_reward=-0.1675833315 reward_digest=8aa75277b83d8252
+```
+
+The only differing reward was one rotated seat/seed episode, which pointed to
+gameplay resolution rather than broad random reset failure.
+
+Fix 2:
+
+`rules.HometownRuleset.ResolveInterruptPriority()` iterated over a Go map.
+When two interrupt actions had the same priority, the winner could depend on
+randomized map iteration order. The fix scans seats `0..3` and resolves
+same-priority ties by ascending seat.
+
+Verification:
+
+```text
+go test ./rules ./rlenv
+```
+
+Final audit result:
+
+```text
+run: /root/fh-mahjong-runs/chongci-determinism-audit-patched-20260526-211132
+repeat 1: mean_reward=-0.1645833254 reward_sum=-1.9749999046 positive=41.67% large_loss=8.33% reward_digest=b7b031caf71aa6a1 online_digest=fc8afae414bf92b6
+repeat 2: mean_reward=-0.1645833254 reward_sum=-1.9749999046 positive=41.67% large_loss=8.33% reward_digest=b7b031caf71aa6a1 online_digest=fc8afae414bf92b6
+repeat 3: mean_reward=-0.1645833254 reward_sum=-1.9749999046 positive=41.67% large_loss=8.33% reward_digest=b7b031caf71aa6a1 online_digest=fc8afae414bf92b6
+decision: deterministic on the focused repeated audit
+```
+
+Follow-up gate:
+
+```text
+run: /root/fh-mahjong-runs/chongci-conservative-epoch001-repeated-gate-20260526-211552
+candidate: /root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-latest/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+anchor: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+seed windows per repeat: 534000:10, 544000:10, 554000:10
+duplicate seats: true
+episodes per checkpoint per repeat: 120
+repeats: 2
+status: complete
+```
+
+Results:
+
+| Policy | Repeat | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate | Reward Digest |
+|--------|--------|-------------|------------|---------------|-----------------|---------------|
+| Anchor | 1 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Anchor | 2 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Candidate epoch 1 | 1 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+| Candidate epoch 1 | 2 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+
+Decision:
+
+Do not promote yet. The result is now deterministic and candidate epoch 1 has
+better mean reward and positive-rate on this gate, but it still increases
+large-loss rate from `15.00%` to `17.50%`. Treat the checkpoint as a useful
+EV-improving candidate, not a serving checkpoint.
+
+Next interpretation:
+
+- The previous instability was evaluation nondeterminism, not just sampling
+  noise.
+- Conservative epoch 1 is directionally useful for EV.
+- Tail-risk remains the blocker.
+- The next training run should preserve the conservative setup but add a
+  smaller tail-risk penalty or stricter promotion guard, then evaluate on the
+  same deterministic repeated gate.
+
+## Current Conclusions
+
+1. The current promoted Chongci checkpoint remains the best serving candidate.
+2. More self-play data alone is not sufficient.
+3. Strong downside shaping can reduce large losses but can also hurt EV.
+4. Conservative anchoring can preserve or improve EV, but may trade off
+   large-loss rate.
+5. The last confirmed blocker was evaluation reliability; the focused audit is
+   deterministic after fixing per-hand wall seeds and same-priority interrupt
+   tie-breaking.
+6. The model architecture is adequate for the current pipeline; deeper models
+   should wait until gates are stable.
+7. Mean reward remains the primary metric; positive-rate and large-loss rate are
+   guardrails.
+8. Conservative epoch 1 passed deterministic repeated evaluation for EV, but
+   failed the tail-risk guardrail, so it should not be promoted yet.
+
+## Recommended Next Experiments
+
+### Step 1: Audit Evaluation Determinism
+
+Run the same checkpoint twice on the same seed windows and compare:
+
+```text
+checkpoint: current Chongci promoted checkpoint
+seed windows: 534000:20, 544000:20, 554000:20
+mode: duplicate seats
+```
+
+Expected:
+
+```text
+reports should be bitwise identical or very close with explained variance
+```
+
+If not, inspect:
+
+- Python policy action selection,
+- GPU deterministic settings,
+- Go bridge reset state,
+- wall seed handling,
+- duplicate seat rotation implementation,
+- any RNG use inside heuristic/autoplay or Chongci hand transitions.
+
+### Step 2: Repeat Conservative Epoch 1 Gate After Determinism Audit
+
+Candidate:
+
+```text
+/root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-20260526-001923/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+```
+
+Reason:
+
+- improved independent mean reward,
+- improved independent positive rate,
+- regressed large-loss rate.
+
+Promotion should require:
+
+- repeated mean-reward improvement,
+- no unacceptable large-loss regression,
+- stable anchor comparison.
+
+### Step 3: Explore Tail-Loss Without EV Regression
+
+Possible ablations:
+
+```text
+lr: 5e-6 or lower
+bc_weight: 2.0 to 4.0
+policy_weight: 0.25 to 0.5
+large_loss_penalty: small, only after determinism audit
+cql_weight: 0.0 to 0.02
+```
+
+Do not run a broad grid until evaluation noise is controlled.
+
+### Step 4: Improve Evaluation Reports
+
+Add report fields that help explain instability:
+
+- seed-by-seed reward,
+- seat-by-seat reward,
+- first divergence trace,
+- action-family frequency,
+- large-loss seed list,
+- exact checkpoint hash,
+- model config,
+- deterministic flags,
+- bridge build commit.
+
+### Step 5: Consider Stronger Match-Level Features
+
+Only after evaluation stability:
+
+- richer score-potential features,
+- placement/rank value auxiliary,
+- opponent pressure and bust-risk auxiliary,
+- history features for repeated hand context.
+
+## Maintenance Protocol For This Note
+
+When a new experiment starts, append:
+
+```text
+### Experiment: <short name>
+
+Run:
+<remote run dir>
+
+Question:
+<what hypothesis this tests>
+
+Data:
+<datasets and policy sources>
+
+Training:
+<important hyperparameters and MLflow run id>
+
+Evaluation:
+<seed windows, seats, reports>
+
+Result:
+<metrics table>
+
+Decision:
+promoted / rejected / inconclusive / still running
+
+Interpretation:
+<what we learned and what to avoid repeating>
+```
+
+When a checkpoint is promoted or rejected, also update:
+
+```text
+ai/checkpoints/best-checkpoints.json
+```
+
+If a result affects the general roadmap, also update:
+
+```text
+docs/rl-papers/implementation-takeaways.md
+docs/rl-papers/roadmap-and-development-plan.md
+```
+
+## Glossary
+
+BC:
+
+Behavior cloning. Supervised learning from heuristic or checkpoint actions.
+
+AWBC:
+
+Advantage-weighted behavior cloning. BC where high-return actions receive
+larger weights.
+
+IQL:
+
+Implicit Q-learning. Offline RL method that learns Q, value, and policy without
+naive max-Q exploitation over unsupported actions.
+
+CQL:
+
+Conservative Q-learning penalty. Penalizes high Q-values for many actions so
+offline RL does not overestimate actions not well covered by data.
+
+Duplicate-seat evaluation:
+
+Evaluate policies on the same wall seeds with rotated seats so seat and wall
+luck are less confounded.
+
+Large-loss rate:
+
+Fraction of evaluated seats whose final normalized reward crosses the large
+loss threshold. For Chongci this is a tail-risk metric, not the main objective.
+
+Positive-reward rate:
+
+Fraction of seats ending with positive final net reward in Chongci.
+
+Mean reward:
+
+Primary expected-value metric. For Chongci, this is final net score change
+divided by 1000.
+
+Oracle training:
+
+Training with privileged hidden-state auxiliary targets while keeping deployed
+inference inputs visible-only.
