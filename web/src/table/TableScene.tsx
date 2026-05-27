@@ -98,6 +98,7 @@ type TableBoardProps = {
   wildTiles?: TileLike[]
   hudChips?: HudChip[]
   actionBar?: ReactNode
+  cornerInfo?: ReactNode
   canDiscardSeat?: number | null
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
@@ -592,6 +593,7 @@ export function TableBoard({
   wildTiles = [],
   hudChips = [],
   actionBar = null,
+  cornerInfo = null,
   canDiscardSeat = null,
   onDiscard,
   isWildTile = () => false,
@@ -688,10 +690,13 @@ export function TableBoard({
     <div className="mahjong-table" ref={tableRef}>
       {wildTiles.length > 0 && (
         <div className="wild-tile-corner">
-          <div className="wild-tile-corner-label">Wild Tile</div>
-          <div className="wild-tile-corner-face">
-            <TileComponent tile={wildTiles[0]} noGlow />
+          <div className="wild-tile-corner-main">
+            <div className="wild-tile-corner-label">Wild Tile</div>
+            <div className="wild-tile-corner-face">
+              <TileComponent tile={wildTiles[0]} size="small" noGlow />
+            </div>
           </div>
+          {cornerInfo && <div className="wild-tile-corner-info">{cornerInfo}</div>}
         </div>
       )}
 
