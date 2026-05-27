@@ -1002,6 +1002,82 @@ Next interpretation:
   smaller tail-risk penalty or stricter promotion guard, then evaluate on the
   same deterministic repeated gate.
 
+### Tail-Risk Penalty 0.10 Follow-Up, 2026-05-26
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-conservative-epoch001-tailpenalty010-gate-20260526-222615
+```
+
+Question:
+
+Can a small utility penalty for very negative returns preserve the EV gain from
+conservative epoch 1 while reducing the large-loss regression?
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-conservative-epoch001-tailpenalty010-gate-20260526-222615/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_tail010_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as the conservative epoch-1 run
+epochs: 1
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.5
+bc_weight: 2.0
+cql_weight: 0.0
+max_transitions: 400000 per dataset
+large_loss_threshold: -1.0
+large_loss_penalty: 0.1
+mlflow training run: 466ebd83d72f41919d70c264737923eb
+```
+
+Evaluation:
+
+Same deterministic repeated gate:
+
+```text
+seed windows: 534000:10, 544000:10, 554000:10
+duplicate seats: true
+episodes per repeat: 120
+repeats: 2
+```
+
+Results:
+
+| Policy | Repeat | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate | Reward Digest |
+|--------|--------|-------------|------------|---------------|-----------------|---------------|
+| Anchor | 1 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Anchor | 2 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Tail010 candidate | 1 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+| Tail010 candidate | 2 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+
+Evaluation MLflow runs:
+
+```text
+82290dbbf0b647198108299f270e6d7d
+64c2695371d94fa28cbef97a286606cb
+```
+
+Decision:
+
+Do not promote. `large_loss_penalty=0.1` was too weak to change the policy
+outcome versus the no-penalty conservative epoch-1 candidate: the reward digest
+and headline metrics are identical. The candidate still improves EV and
+positive rate but worsens large-loss rate.
+
+Next interpretation:
+
+- The deterministic gate is working.
+- A very small downside utility penalty does not materially change this
+  checkpoint after one epoch.
+- Next try should either use a stronger but still moderate penalty, such as
+  `0.25`, or add a guarded policy-selection rule that rejects candidate
+  overrides in high-risk states.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1018,6 +1094,8 @@ Next interpretation:
    guardrails.
 8. Conservative epoch 1 passed deterministic repeated evaluation for EV, but
    failed the tail-risk guardrail, so it should not be promoted yet.
+9. A small tail-risk penalty (`large_loss_penalty=0.1`) did not change the
+   candidate behavior on the repeated gate.
 
 ## Recommended Next Experiments
 
