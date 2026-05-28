@@ -1078,6 +1078,85 @@ Next interpretation:
   `0.25`, or add a guarded policy-selection rule that rejects candidate
   overrides in high-risk states.
 
+### Tail-Risk Penalty 0.25 Follow-Up, 2026-05-27
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-conservative-epoch001-tailpenalty025-gate-20260527-215926
+```
+
+Question:
+
+Does a stronger but still moderate downside penalty change the conservative
+epoch-1 policy enough to keep the EV/positive-rate gain while restoring the
+large-loss guardrail?
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-conservative-epoch001-tailpenalty025-gate-20260527-215926/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_tail025_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as the conservative epoch-1 run
+epochs: 1
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.5
+bc_weight: 2.0
+cql_weight: 0.0
+max_transitions: 400000 per dataset
+large_loss_threshold: -1.0
+large_loss_penalty: 0.25
+mlflow training run: d84eb52b6f184df0a24646de6831b76e
+```
+
+Evaluation:
+
+Same deterministic repeated gate:
+
+```text
+seed windows: 534000:10, 544000:10, 554000:10
+duplicate seats: true
+episodes per repeat: 120
+repeats: 2
+```
+
+Results:
+
+| Policy | Repeat | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate | Reward Digest |
+|--------|--------|-------------|------------|---------------|-----------------|---------------|
+| Anchor | 1 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Anchor | 2 | -0.0557833426 | -6.6940011978 | 43.33% | 15.00% | `a736bf2ffdcde190` |
+| Tail025 candidate | 1 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+| Tail025 candidate | 2 | -0.0519666746 | -6.2360010147 | 45.00% | 17.50% | `237adc471625d510` |
+
+Evaluation MLflow runs:
+
+```text
+93d437b33943451d89f7bbed15eca591
+af396285381d4d69b17e33183df7a0fe
+```
+
+Decision:
+
+Do not promote. `large_loss_penalty=0.25` also produced the same reward digest
+and headline gate metrics as the no-penalty and `0.10` candidates. The penalty
+changed training loss slightly but did not change the deployed argmax policy on
+this deterministic gate.
+
+Next interpretation:
+
+- Utility-target shaping at `0.10` and `0.25` is too weak, too indirect, or
+  drowned out by BC regularization for this one-epoch setup.
+- Repeating larger utility penalties blindly is lower value unless we first
+  confirm that the learned logits/Q values change on high-risk states.
+- The next useful branch is diagnostic/guarded: inspect large-loss seeds and
+  candidate-vs-anchor first action divergences, then either add a risk-aware
+  guard at action-selection time or train with explicit high-risk-state
+  weighting.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1096,6 +1175,8 @@ Next interpretation:
    failed the tail-risk guardrail, so it should not be promoted yet.
 9. A small tail-risk penalty (`large_loss_penalty=0.1`) did not change the
    candidate behavior on the repeated gate.
+10. A moderate tail-risk penalty (`large_loss_penalty=0.25`) also did not change
+    the candidate behavior on the repeated gate.
 
 ## Recommended Next Experiments
 
