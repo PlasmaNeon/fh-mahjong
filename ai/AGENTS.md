@@ -22,7 +22,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value/Q network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
   - The Q path uses a Mortal-style dueling value/advantage head by default; channel attention is available as an explicit `ModelConfig(channel_attention=True)` ablation.
-- **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters.
+- **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters; guarded evaluation chooses anchor/candidate actions from policy logits and uses the candidate Q head only as a confidence margin.
 - **src/fh_mahjong_ai/serving.py** — Checkpoint-backed inference helpers and bridge smoke tests for serving actions while the Go bridge validates legality.
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, terminal-reward backfill (`backfill_returns`), and `steps_to_done` utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.

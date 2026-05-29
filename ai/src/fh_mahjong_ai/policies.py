@@ -47,7 +47,7 @@ class TorchGreedyPolicy:
 
 
 class GuardedQPolicy:
-    """Use a reward/Q candidate only when it clears a margin over an anchor policy."""
+    """Use a candidate policy only when its Q estimate clears the anchor action by a margin."""
 
     def __init__(
         self,
@@ -72,10 +72,11 @@ class GuardedQPolicy:
         action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(self.device)
 
         anchor_logits, anchor_value = self.anchor_model(planes, scalars, action_mask)
+        candidate_logits, candidate_policy_value = self.candidate_model(planes, scalars, action_mask)
         candidate_q_values, candidate_value = self.candidate_model.q_values(planes, scalars, action_mask)
 
         anchor_action = int(torch.argmax(anchor_logits, dim=1).item())
-        candidate_action = int(torch.argmax(candidate_q_values, dim=1).item())
+        candidate_action = int(torch.argmax(candidate_logits, dim=1).item())
         candidate_q = float(candidate_q_values[0, candidate_action].item())
         anchor_q = float(candidate_q_values[0, anchor_action].item())
         q_margin = candidate_q - anchor_q
@@ -104,6 +105,7 @@ class GuardedQPolicy:
                 "anchor_action_q": anchor_q,
                 "q_margin": q_margin,
                 "anchor_value": float(anchor_value.item()),
+                "candidate_policy_value": float(candidate_policy_value.item()),
                 "candidate_value": float(candidate_value.item()),
                 "min_q_margin": self.min_q_margin,
             },
