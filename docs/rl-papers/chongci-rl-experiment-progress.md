@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-Last updated: 2026-05-26
+Last updated: 2026-05-28
 
 This note is the running experiment notebook for the Fenghua Mahjong AI work,
 especially the Chongci reward-learning line. Update this file after every new
@@ -1157,6 +1157,256 @@ Next interpretation:
   guard at action-selection time or train with explicit high-risk-state
   weighting.
 
+### Policy-Head Guard Diagnostic, 2026-05-28
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-policy-guard-diagnostics-20260527-232537
+```
+
+Question:
+
+Can the conservative epoch-1 candidate be deployed behind a promoted anchor
+policy, using the candidate only when a Q-margin says the candidate's policy
+action is better than the anchor policy action?
+
+Before the valid diagnostic, an implementation issue was found in
+`GuardedQPolicy`: it selected the candidate action directly from the Q head.
+That does not match normal checkpoint evaluation, where the deployed action
+comes from the policy/logit head. The invalid Q-head-only sweep produced a
+catastrophic selected-window result (`mean=-2.0541`, `large_loss=100%`) and was
+stopped. The policy adapter was corrected so:
+
+```text
+anchor action    = argmax(anchor policy logits)
+candidate action = argmax(candidate policy logits)
+guard score      = candidate_q(candidate action) - candidate_q(anchor action)
+chosen action    = candidate action only if guard score >= q_margin
+```
+
+Validation:
+
+```text
+uv run --project ai python -m pytest ai/tests/test_policies.py ai/tests/test_evaluate.py
+remote: /root/.local/bin/uv run --project ai python -m pytest ai/tests/test_policies.py ai/tests/test_evaluate.py
+```
+
+Both local and remote focused tests passed: `14 passed`.
+
+Selected-window setup:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes per policy: 44
+large_loss_threshold: -1.0
+anchor: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate: /root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-latest/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+```
+
+Baseline results on the same selected windows:
+
+| Policy | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|--------|-------------|------------|---------------|-----------------|
+| Anchor | -0.1427727342 | -6.2820005417 | 40.91% | 20.45% |
+| Candidate | -0.1820000112 | -8.0080003738 | 43.18% | 27.27% |
+
+Corrected policy-head guard sweep:
+
+| Q Margin | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate | Choice Rates |
+|----------|-------------|------------|---------------|-----------------|--------------|
+| 0.000 | -0.1694772840 | -7.4570007324 | 40.91% | 25.00% | same 99.749%, candidate 0.132%, anchor 0.119% |
+| 0.005 | -0.1694772840 | -7.4570007324 | 40.91% | 25.00% | same 99.749%, candidate 0.132%, anchor 0.119% |
+| 0.020 | -0.1693409383 | -7.4510011673 | 40.91% | 25.00% | same 99.749%, candidate 0.123%, anchor 0.128% |
+
+Decision:
+
+Do not run a full promotion gate for this guard. On the selected risk windows,
+the corrected guard improves over the raw candidate but remains worse than the
+anchor on both mean reward and large-loss rate. It also changes too few
+decisions to be a strong serving strategy. This suggests the current
+candidate's policy head is already very close to the anchor on most decisions,
+and the harmful difference is concentrated in a small number of policy-action
+divergences rather than broad Q confidence.
+
+Next interpretation:
+
+- A pure deployment-time Q-margin guard is not enough for this candidate.
+- Tail penalties at `0.10` and `0.25` did not alter the deterministic gate.
+- The next reward-learning branch should change the training distribution or
+  target weighting directly: oversample/regress high-risk divergence states,
+  add explicit large-loss transition weighting, or train a new candidate with
+  stronger rank/bust-risk features instead of relying on a post-hoc guard.
+
+### High-Risk Transition Weight 3.0 Quick Screen, 2026-05-29
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-highrisk-weight3-20260529-134310
+```
+
+Question:
+
+Can direct loss weighting for large-loss transitions change the conservative
+epoch-1 policy where target utility penalties and post-hoc guards did not?
+
+Implementation:
+
+`train_iql.py` now accepts:
+
+```text
+--large-loss-weight <float>
+```
+
+When paired with `--large-loss-threshold`, the trainer upweights all IQL loss
+terms for transitions whose terminal return is at or below the threshold. This
+is different from `--large-loss-penalty`: the penalty changes the target
+utility, while the weight changes how strongly those samples train the Q,
+value, policy, BC, and CQL losses. Weighted losses are normalized by the sum of
+sample weights so the batch learning-rate scale is not multiplied blindly.
+
+Validation:
+
+```text
+local:  uv run --project ai python -m pytest ai/tests/test_iql.py ai/tests/test_policies.py ai/tests/test_evaluate.py
+remote: /root/.local/bin/uv run --project ai python -m pytest ai/tests/test_iql.py ai/tests/test_policies.py ai/tests/test_evaluate.py
+```
+
+Both focused test runs passed: `25 passed`.
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-highrisk-weight3-20260529-134310/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_llw3_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as conservative epoch 1
+epochs: 1
+batch size: 4096
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.5
+bc_weight: 2.0
+cql_weight: 0.0
+large_loss_threshold: -1.0
+large_loss_weight: 3.0
+mlflow training run: dc78069ff34d4d4a8adabb99202669f2
+```
+
+The logged sample weights showed the weighting path was active:
+
+```text
+step 100 sample_weight=1.327
+step 200 sample_weight=1.331
+```
+
+Selected high-risk quick screen:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+mlflow eval run: fbdd407efe7540789c5e0fd8748a9a4d
+```
+
+| Policy | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|--------|-------------|------------|---------------|-----------------|
+| Anchor | -0.1427727342 | -6.2820005417 | 40.91% | 20.45% |
+| Raw conservative candidate | -0.1820000112 | -8.0080003738 | 43.18% | 27.27% |
+| High-risk weight 3.0 | -0.1629772782 | -7.1710004807 | 45.45% | 27.27% |
+
+Decision:
+
+Do not run the full deterministic repeated gate for this candidate. The
+training-side weighting did move the policy: mean reward and positive rate
+improved versus the raw candidate on the selected windows. However, the
+large-loss rate did not improve and remains materially worse than the anchor.
+
+Next interpretation:
+
+- Direct high-risk weighting works mechanically and changes the policy.
+- Weight `3.0` is not enough to fix the tail-risk regression.
+- The next run should either use stronger weighting (`4.0` to `6.0`) with even
+  lower policy drift, or filter/oversample the exact first-divergence states
+  instead of weighting every large-loss transition equally.
+
+### High-Risk Weight 5.0 With Lower Policy Drift, 2026-05-30
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-highrisk-weight5-bc3-pw025-20260530-005605
+```
+
+Question:
+
+Does stronger high-risk weighting reduce large-loss rate if policy drift is
+constrained harder with lower policy improvement weight and higher BC
+regularization?
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-highrisk-weight5-bc3-pw025-20260530-005605/checkpoints/iql_selfplay400k_lr5e6_bc3_pw025_llw5_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as conservative epoch 1
+epochs: 1
+batch size: 4096
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.25
+bc_weight: 3.0
+cql_weight: 0.0
+large_loss_threshold: -1.0
+large_loss_weight: 5.0
+mlflow training run: 01519955e154456da9beac53f54c2d11
+```
+
+The logged sample weights showed the stronger weighting path was active:
+
+```text
+step 100 sample_weight=1.654
+step 200 sample_weight=1.662
+```
+
+Selected high-risk quick screen:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+mlflow eval run: 408277b6ecd846d39df902c8812b0e37
+```
+
+| Policy | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|--------|-------------|------------|---------------|-----------------|
+| Anchor | -0.1427727342 | -6.2820005417 | 40.91% | 20.45% |
+| Raw conservative candidate | -0.1820000112 | -8.0080003738 | 43.18% | 27.27% |
+| High-risk weight 3.0 | -0.1629772782 | -7.1710004807 | 45.45% | 27.27% |
+| High-risk weight 5.0, BC 3.0, policy 0.25 | -0.1738409400 | -7.6490011215 | 43.18% | 25.00% |
+
+Decision:
+
+Do not run the full deterministic repeated gate. This candidate reduces
+large-loss rate versus the raw and weight-3 candidates, but it still trails the
+anchor on tail risk and trails weight 3.0 on mean reward and positive rate.
+
+Next interpretation:
+
+- Broad high-risk weighting has a real effect, but the tradeoff is not clean:
+  stronger weighting reduces tail rate slightly while damaging EV.
+- The next useful path is not simply a larger global weight. It should target
+  the exact action-divergence states, especially `pass->pon` / `discard`
+  divergence cases identified by paired traces.
+- Add first-divergence reports directly to evaluation output or create a
+  high-risk dataset/filter so the trainer can emphasize those states without
+  reweighting every large-loss trajectory.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1177,53 +1427,44 @@ Next interpretation:
    candidate behavior on the repeated gate.
 10. A moderate tail-risk penalty (`large_loss_penalty=0.25`) also did not change
     the candidate behavior on the repeated gate.
+11. A corrected policy-head Q-margin guard improves over the raw candidate on
+    selected risk windows but still trails the anchor, so it is not worth a full
+    promotion gate yet.
+12. High-risk transition weighting is implemented and active, but weight `3.0`
+    improved selected-window EV/positive rate without reducing large-loss rate.
+13. Stronger high-risk weighting (`5.0`) with lower policy drift reduced the
+    selected-window large-loss rate from `27.27%` to `25.00%`, but still trailed
+    the anchor and regressed EV versus weight `3.0`.
 
 ## Recommended Next Experiments
 
-### Step 1: Audit Evaluation Determinism
+### Step 1: Target The Exact Divergence States
 
-Run the same checkpoint twice on the same seed windows and compare:
-
-```text
-checkpoint: current Chongci promoted checkpoint
-seed windows: 534000:20, 544000:20, 554000:20
-mode: duplicate seats
-```
-
-Expected:
+Use the paired-trace large-loss and worst-delta seeds to create targeted
+high-risk-state weighting instead of weighting every large-loss transition
+equally. The next implementation should be more selective:
 
 ```text
-reports should be bitwise identical or very close with explained variance
+first-divergence seed/seat filtering
+large-loss transition weight: 4x to 6x only for selected high-risk groups
+bc_weight: keep high, 3.0 to 4.0
+policy_weight: lower, 0.25
+lr: 5e-6 or lower
 ```
 
-If not, inspect:
+Promotion still requires the deterministic repeated gate.
 
-- Python policy action selection,
-- GPU deterministic settings,
-- Go bridge reset state,
-- wall seed handling,
-- duplicate seat rotation implementation,
-- any RNG use inside heuristic/autoplay or Chongci hand transitions.
+### Step 2: Add Risk Diagnostics To Evaluation Reports
 
-### Step 2: Repeat Conservative Epoch 1 Gate After Determinism Audit
+Add report fields that help explain candidate failures without manual JSON
+inspection:
 
-Candidate:
-
-```text
-/root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-20260526-001923/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
-```
-
-Reason:
-
-- improved independent mean reward,
-- improved independent positive rate,
-- regressed large-loss rate.
-
-Promotion should require:
-
-- repeated mean-reward improvement,
-- no unacceptable large-loss regression,
-- stable anchor comparison.
+- large-loss seed list,
+- worst reward deltas,
+- first divergence action labels,
+- first divergence scalar snapshot,
+- policy-choice source rates for guarded policies,
+- exact checkpoint path and model config.
 
 ### Step 3: Explore Tail-Loss Without EV Regression
 
@@ -1239,21 +1480,7 @@ cql_weight: 0.0 to 0.02
 
 Do not run a broad grid until evaluation noise is controlled.
 
-### Step 4: Improve Evaluation Reports
-
-Add report fields that help explain instability:
-
-- seed-by-seed reward,
-- seat-by-seat reward,
-- first divergence trace,
-- action-family frequency,
-- large-loss seed list,
-- exact checkpoint hash,
-- model config,
-- deterministic flags,
-- bridge build commit.
-
-### Step 5: Consider Stronger Match-Level Features
+### Step 4: Consider Stronger Match-Level Features
 
 Only after evaluation stability:
 

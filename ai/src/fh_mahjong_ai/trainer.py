@@ -60,6 +60,8 @@ class DiscreteIQLMetrics:
     avg_advantage: float
     avg_weight: float
     max_weight: float
+    avg_sample_weight: float
+    max_sample_weight: float
 
 
 def collect_episode(env: MahjongEnv, policy: PolicyLike, seed: Optional[int] = None) -> List[Transition]:
@@ -299,6 +301,11 @@ class DiscreteIQLTrainer:
             self.iql_config.large_loss_threshold,
             self.iql_config.large_loss_penalty,
         )
+        sample_weights = large_loss_sample_weights(
+            returns,
+            self.iql_config.large_loss_threshold,
+            self.iql_config.large_loss_weight,
+        )
 
         policy_logits, values = self.model(planes, scalars, action_mask)
         q_values, _ = self.model.q_values(planes, scalars, action_mask)
@@ -314,16 +321,23 @@ class DiscreteIQLTrainer:
         else:
             raise ValueError(f"unsupported discrete IQL target_mode={self.iql_config.target_mode!r}")
 
-        q_loss = nn.functional.smooth_l1_loss(dataset_q, target_q)
-        value_loss = expectile_loss(dataset_q.detach() - values, self.iql_config.expectile)
-        cql_loss = torch.logsumexp(q_values, dim=1).mean() - dataset_q.mean()
+        q_loss = weighted_mean(
+            nn.functional.smooth_l1_loss(dataset_q, target_q, reduction="none"),
+            sample_weights,
+        )
+        value_loss = expectile_loss(
+            dataset_q.detach() - values,
+            self.iql_config.expectile,
+            sample_weights=sample_weights,
+        )
+        cql_loss = weighted_mean(torch.logsumexp(q_values, dim=1) - dataset_q, sample_weights)
 
         advantages = dataset_q.detach() - values.detach()
-        weights = torch.exp(advantages / max(self.iql_config.temperature, 1e-6))
-        weights = torch.clamp(weights, max=self.iql_config.max_weight)
+        advantage_weights = torch.exp(advantages / max(self.iql_config.temperature, 1e-6))
+        advantage_weights = torch.clamp(advantage_weights, max=self.iql_config.max_weight)
         per_sample_policy_loss = nn.functional.cross_entropy(policy_logits, action_ids, reduction="none")
-        policy_loss = (weights * per_sample_policy_loss).mean()
-        bc_loss = per_sample_policy_loss.mean()
+        policy_loss = weighted_mean(advantage_weights * per_sample_policy_loss, sample_weights)
+        bc_loss = weighted_mean(per_sample_policy_loss, sample_weights)
 
         loss = (
             self.iql_config.q_weight * q_loss
@@ -349,8 +363,10 @@ class DiscreteIQLTrainer:
             avg_v=float(values.mean().item()),
             avg_target_q=float(target_q.mean().item()),
             avg_advantage=float(advantages.mean().item()),
-            avg_weight=float(weights.mean().item()),
-            max_weight=float(weights.max().item()),
+            avg_weight=float(advantage_weights.mean().item()),
+            max_weight=float(advantage_weights.max().item()),
+            avg_sample_weight=float(sample_weights.mean().item()),
+            max_sample_weight=float(sample_weights.max().item()),
         )
 
     def update_target_network(self) -> None:
@@ -361,10 +377,22 @@ class DiscreteIQLTrainer:
                 target_param.data.add_(source_param.data, alpha=tau)
 
 
-def expectile_loss(diff: torch.Tensor, expectile: float) -> torch.Tensor:
+def expectile_loss(
+    diff: torch.Tensor,
+    expectile: float,
+    sample_weights: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     tau = min(0.999, max(0.001, expectile))
     weights = torch.where(diff > 0, tau, 1.0 - tau)
-    return (weights * diff.pow(2)).mean()
+    losses = weights * diff.pow(2)
+    if sample_weights is not None:
+        return weighted_mean(losses, sample_weights)
+    return losses.mean()
+
+
+def weighted_mean(values: torch.Tensor, sample_weights: torch.Tensor) -> torch.Tensor:
+    weights = sample_weights.to(dtype=values.dtype, device=values.device)
+    return (values * weights).sum() / torch.clamp(weights.sum(), min=1e-6)
 
 
 def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tensor, gamma: float) -> torch.Tensor:
@@ -387,6 +415,17 @@ def large_loss_adjusted_rewards(
         min=0.0,
     )
     return rewards - float(penalty) * downside
+
+
+def large_loss_sample_weights(
+    rewards: torch.Tensor,
+    threshold: Optional[float],
+    weight: float,
+) -> torch.Tensor:
+    if threshold is None or weight <= 1.0:
+        return torch.ones_like(rewards)
+    threshold_tensor = torch.as_tensor(threshold, dtype=rewards.dtype, device=rewards.device)
+    return torch.where(rewards <= threshold_tensor, torch.full_like(rewards, float(weight)), torch.ones_like(rewards))
 
 
 def fill_buffer_from_episodes(replay_buffer: ReplayBuffer, episodes: Iterable[List[Transition]]) -> None:

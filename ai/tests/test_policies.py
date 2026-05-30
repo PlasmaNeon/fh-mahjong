@@ -33,6 +33,7 @@ def _observation() -> Observation:
     mask = np.zeros(204, dtype=np.int8)
     mask[5] = 1
     mask[6] = 1
+    mask[7] = 1
     return Observation(
         seat=0,
         planes=np.zeros((39, 42, 1), dtype=np.float32),
@@ -43,7 +44,7 @@ def _observation() -> Observation:
 
 def test_guarded_q_policy_uses_candidate_when_margin_clears_threshold() -> None:
     anchor = FixedHeadsModel(logits={5: 10.0, 6: 0.0}, q_values={})
-    candidate = FixedHeadsModel(logits={}, q_values={5: 1.0, 6: 1.8})
+    candidate = FixedHeadsModel(logits={6: 10.0, 7: 0.0}, q_values={5: 1.0, 6: 1.8, 7: 9.0})
     policy = GuardedQPolicy(anchor, candidate, min_q_margin=0.5)
 
     choice = policy.choose(_observation())
@@ -57,7 +58,7 @@ def test_guarded_q_policy_uses_candidate_when_margin_clears_threshold() -> None:
 
 def test_guarded_q_policy_falls_back_to_anchor_below_threshold() -> None:
     anchor = FixedHeadsModel(logits={5: 10.0, 6: 0.0}, q_values={})
-    candidate = FixedHeadsModel(logits={}, q_values={5: 1.0, 6: 1.4})
+    candidate = FixedHeadsModel(logits={6: 10.0}, q_values={5: 1.0, 6: 1.4})
     policy = GuardedQPolicy(anchor, candidate, min_q_margin=0.5)
 
     choice = policy.choose(_observation())

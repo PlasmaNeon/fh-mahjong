@@ -10,7 +10,12 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_iql import train_iql
 from fh_mahjong_ai.storage import load_compatible_checkpoint, write_transitions_jsonl, write_transitions_npz_shards
-from fh_mahjong_ai.trainer import DiscreteIQLTrainer, discounted_terminal_returns, large_loss_adjusted_rewards
+from fh_mahjong_ai.trainer import (
+    DiscreteIQLTrainer,
+    discounted_terminal_returns,
+    large_loss_adjusted_rewards,
+    large_loss_sample_weights,
+)
 from fh_mahjong_ai.types import Observation, Transition
 
 
@@ -79,6 +84,8 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert np.isfinite(metrics.cql_loss)
     assert 0.0 <= metrics.avg_weight <= 5.0
     assert 0.0 <= metrics.max_weight <= 5.0
+    assert metrics.avg_sample_weight == 1.0
+    assert metrics.max_sample_weight == 1.0
 
 
 def test_discounted_terminal_returns_use_steps_to_done() -> None:
@@ -105,6 +112,16 @@ def test_large_loss_adjusted_rewards_is_default_noop() -> None:
     torch.testing.assert_close(large_loss_adjusted_rewards(rewards, threshold=-1.0, penalty=0.0), rewards)
 
 
+def test_large_loss_sample_weights_upweights_threshold_and_below() -> None:
+    rewards = torch.tensor([1.0, -0.5, -1.0, -1.5])
+
+    weights = large_loss_sample_weights(rewards, threshold=-1.0, weight=3.0)
+
+    torch.testing.assert_close(weights, torch.tensor([1.0, 1.0, 3.0, 3.0]))
+    torch.testing.assert_close(large_loss_sample_weights(rewards, threshold=None, weight=3.0), torch.ones_like(rewards))
+    torch.testing.assert_close(large_loss_sample_weights(rewards, threshold=-1.0, weight=1.0), torch.ones_like(rewards))
+
+
 def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
     env_config = EnvConfig()
     data_path = tmp_path / "data.jsonl"
@@ -122,6 +139,7 @@ def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
         max_weight=5.0,
         large_loss_threshold=-1.0,
         large_loss_penalty=0.1,
+        large_loss_weight=2.0,
         device="cpu",
         log_interval=1,
     )

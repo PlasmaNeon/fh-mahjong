@@ -61,6 +61,7 @@ def train_iql(
     target_tau: float = 0.005,
     large_loss_threshold: Optional[float] = None,
     large_loss_penalty: float = 0.0,
+    large_loss_weight: float = 1.0,
     max_transitions: Optional[int] = None,
     device: str = "cpu",
     log_interval: int = 10,
@@ -134,6 +135,7 @@ def train_iql(
         target_tau=target_tau,
         large_loss_threshold=large_loss_threshold,
         large_loss_penalty=large_loss_penalty,
+        large_loss_weight=large_loss_weight,
     )
     trainer = DiscreteIQLTrainer(model, target_model, optimizer, train_config, iql_config)
 
@@ -173,6 +175,7 @@ def train_iql(
                     "target_tau": target_tau,
                     "large_loss_threshold": large_loss_threshold,
                     "large_loss_penalty": large_loss_penalty,
+                    "large_loss_weight": large_loss_weight,
                     "max_transitions": max_transitions,
                     "device": device,
                     "transitions": transition_count,
@@ -206,7 +209,7 @@ def train_iql(
                         f"value={metrics.value_loss:.4f}  policy={metrics.policy_loss:.4f}  "
                         f"bc={metrics.bc_loss:.4f}  cql={metrics.cql_loss:.4f}  "
                         f"adv={metrics.avg_advantage:.4f}  "
-                        f"weight={metrics.avg_weight:.3f}"
+                        f"weight={metrics.avg_weight:.3f}  sample_weight={metrics.avg_sample_weight:.3f}"
                     )
 
             trainer.update_target_network()
@@ -233,6 +236,8 @@ def train_iql(
                             "last_avg_advantage": latest_metrics.avg_advantage,
                             "last_avg_weight": latest_metrics.avg_weight,
                             "last_max_weight": latest_metrics.max_weight,
+                            "last_avg_sample_weight": latest_metrics.avg_sample_weight,
+                            "last_max_sample_weight": latest_metrics.max_sample_weight,
                         }
                     },
                     step=epoch,
@@ -331,6 +336,12 @@ def main() -> None:
         help="Extra utility penalty multiplier for returns below --large-loss-threshold.",
     )
     parser.add_argument(
+        "--large-loss-weight",
+        type=float,
+        default=1.0,
+        help="Loss multiplier for transitions with returns at or below --large-loss-threshold.",
+    )
+    parser.add_argument(
         "--max-transitions",
         type=int,
         default=None,
@@ -380,6 +391,7 @@ def main() -> None:
         target_tau=args.target_tau,
         large_loss_threshold=args.large_loss_threshold,
         large_loss_penalty=args.large_loss_penalty,
+        large_loss_weight=args.large_loss_weight,
         max_transitions=args.max_transitions,
         device=args.device,
         log_interval=args.log_interval,

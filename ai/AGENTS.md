@@ -22,7 +22,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value/Q network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
   - The Q path uses a Mortal-style dueling value/advantage head by default; channel attention is available as an explicit `ModelConfig(channel_attention=True)` ablation.
-- **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters.
+- **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters; guarded evaluation chooses anchor/candidate actions from policy logits and uses the candidate Q head only as a confidence margin.
 - **src/fh_mahjong_ai/serving.py** — Checkpoint-backed inference helpers and bridge smoke tests for serving actions while the Go bridge validates legality.
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, terminal-reward backfill (`backfill_returns`), and `steps_to_done` utilities for trajectory post-processing.
 - **src/fh_mahjong_ai/evaluate.py** — Offline action-agreement scoring with action-family breakdowns, duplicate-seat evaluation, and online live-play evaluation against the heuristic baseline.
@@ -54,6 +54,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/train_awbc.py** — CLI: advantage-weighted behavior cloning, intended as the first conservative offline RL improvement over a BC warm-start.
 - **src/fh_mahjong_ai/scripts/train_iql.py** — CLI: discrete implicit Q-learning style offline RL with MC terminal-return targets by default, optional TD Q targets, expectile value learning, advantage-weighted policy updates, optional CQL penalty, BC regularization, and optional transition limiting for memory control.
   - Repeat `--data` to train from multiple datasets, for example existing heuristic shards plus new mixed self-play shards. The trainer samples across datasets through a composite replay buffer without rewriting the source datasets.
+  - `--large-loss-weight` upweights losses for transitions whose terminal return is at or below `--large-loss-threshold`; use it for explicit Chongci high-risk-state ablations.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
@@ -107,6 +108,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Sharded NumPy datasets use array-backed replay for BC/AWBC/IQL/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC and AWBC training load only current-observation/action/return arrays to keep 50k+ datasets within WSL memory; IQL/offline-Q need next-state arrays and may use transition limits for memory control.
 - IQL can mix repeated `--data` inputs directly; this is the preferred way to reuse older heuristic datasets alongside newer mixed self-play datasets.
 - IQL supports default-off large-loss utility shaping through `--large-loss-threshold` plus `--large-loss-penalty`. Use it only as an explicit Chongci reward-learning ablation and keep promotion decisions based on duplicate-seat EV/positive-rate/large-loss gates, not training loss.
+- IQL also supports default-off high-risk transition weighting through `--large-loss-weight`; it reweights Q/value/policy/BC/CQL losses without changing the sampled dataset or deployed policy rule.
 - IQL/evaluation CLIs expose model-size flags such as `--model-channels`, `--model-residual-blocks`, and `--model-channel-attention` for controlled architecture ablations. `--partial-init-checkpoint` may be used for explicit ablations that add compatible layers, such as more residual blocks with the same channel width. Record these flags in MLflow and report outputs whenever a non-default checkpoint is trained.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.
