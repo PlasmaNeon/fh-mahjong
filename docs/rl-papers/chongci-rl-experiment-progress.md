@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-Last updated: 2026-05-28
+Last updated: 2026-05-30
 
 This note is the running experiment notebook for the Fenghua Mahjong AI work,
 especially the Chongci reward-learning line. Update this file after every new
@@ -1553,6 +1553,119 @@ Next interpretation:
   checkpoint-pool self-play to create more rows around those exact decision
   states.
 
+### Experiment: Risk-Trace Candidate V1
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357
+/root/fh-mahjong-runs/chongci-risktrace-candidate-v1-latest
+```
+
+Question:
+
+Can exact first-divergence risk weighting improve the previously rejected
+conservative reward learner on the selected high-risk windows without hurting
+the promoted anchor's tail-risk behavior?
+
+Data:
+
+The training run reused the four main historical datasets:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-latest/data/selfplay-current-capped400k-npz
+```
+
+It also added the all-current risk-aligned smoke shards and new all-raw-candidate
+risk-aligned shards for the selected seed windows:
+
+| Policy Source | Seed Window | Episodes | Transitions |
+|---------------|-------------|----------|-------------|
+| promoted anchor | 534000 | 6 | 11,670 |
+| promoted anchor | 544001 | 4 | 8,486 |
+| promoted anchor | 554001 | 1 | 1,440 |
+| raw conservative candidate | 534000 | 6 | 12,416 |
+| raw conservative candidate | 544001 | 4 | 8,327 |
+| raw conservative candidate | 554001 | 1 | 1,440 |
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357/checkpoints/iql_risktrace_v1/epoch_001.pt
+epochs: 1
+lr: 5e-6
+max_transitions: 400000
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_weight: 1.0
+risk_trace_weight: 6.0
+risk_trace_worst_delta_count: 8
+MLflow train run: c427a6312b7e425ba4b175c367654b1a
+```
+
+Risk trace matching was non-zero but sparse:
+
+```text
+current-policy shards matched: 5 cases, 4 weighted transitions
+raw-candidate shards matched: 4 cases, 4 weighted transitions
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357/reports/candidate_risktrace_v1_selected_risk_windows.json
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+MLflow eval run: 98439cb470dd41b0902510bf6a21b617
+```
+
+Result:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.1428 | -6.2820 | 40.91% | 20.45% |
+| raw conservative candidate | -0.1820 | -8.0080 | 43.18% | 27.27% |
+| high-risk weight 3 | -0.1630 | -7.1710 | 45.45% | 27.27% |
+| high-risk weight 5 | -0.1738 | -7.6490 | 43.18% | 25.00% |
+| risk-trace candidate v1 | -0.1466 | -6.4520 | 43.18% | 20.45% |
+
+Large-loss cases for the risk-trace candidate:
+
+```text
+534001 seat 0 reward -1.930
+534003 seat 0 reward -2.095
+544003 seat 0 reward -1.463
+534000 seat 1 reward -1.154
+544001 seat 2 reward -1.009
+544003 seat 2 reward -1.282
+554001 seat 2 reward -1.364
+534001 seat 3 reward -1.249
+544004 seat 3 reward -1.116
+```
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate for this
+checkpoint.
+
+Interpretation:
+
+The risk-trace weighting direction is materially better than the raw
+conservative candidate and the broader high-risk weighting variants on the
+selected risk windows. However, it still does not beat the promoted anchor on
+mean reward, and it only matches the anchor's large-loss rate instead of
+improving it. The sparse match count also means the training signal is too thin
+to justify promotion work. The next branch should either create denser exact
+divergence-state coverage or add features that let the model generalize the
+risk state rather than merely upweighting a handful of matched rows.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1587,6 +1700,9 @@ Next interpretation:
 15. A remote smoke run confirmed that `--risk-trace-report` produces non-zero
     exact `seed + seat + decision_index` matches on new shards, so targeted
     divergence-state training is now testable.
+16. Risk-trace candidate v1 improved strongly over the raw conservative
+    candidate but still failed to beat the promoted anchor on selected risk
+    windows, so it is rejected before the full repeated gate.
 
 ## Recommended Next Experiments
 
@@ -1605,6 +1721,12 @@ lr: 5e-6 or lower
 ```
 
 Promotion still requires the deterministic repeated gate.
+
+After risk-trace candidate v1, the priority is not another identical weighting
+run. The next version should increase exact-match density before training, for
+example by tracing more anchor/candidate windows, adding all first-divergence
+cases rather than only the worst deltas, or generating repeated shards from the
+same seed/seat decision neighborhoods.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 
