@@ -230,6 +230,9 @@ class TestEvaluateOnline:
         assert report["action_family_rates"] == {}
         assert report["round_outcome_counts"] == {"ron_win": 1}
         assert report["round_outcome_rates"] == {"ron_win": 1.0}
+        assert report["episode_summaries"][0]["seed"] == 200010
+        assert report["episode_summaries"][0]["seat"] == 1
+        assert report["large_loss_episodes"] == []
 
     def test_forwards_chongci_eval_config(self, monkeypatch) -> None:
         captured: dict[str, EnvConfig] = {}
@@ -307,6 +310,8 @@ class TestEvaluateOnline:
         assert report["seats"] == [0, 1]
         assert len(report["seat_reports"]) == 2
         assert set(report["seat_summary"]) == {"0", "1"}
+        assert "episode_summaries" in report
+        assert "large_loss_episodes" in report
         assert "reward_summary" in report
         assert "positive_reward_rate" in report
         assert "action_family_rates" in report

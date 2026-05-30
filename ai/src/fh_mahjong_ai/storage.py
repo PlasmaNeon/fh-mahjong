@@ -201,18 +201,20 @@ def is_sharded_transition_dataset(path: Path) -> bool:
 def read_transition_arrays(
     path: Path,
     keys: Optional[Iterable[str]] = None,
+    optional_keys: Optional[Iterable[str]] = None,
     limit: Optional[int] = None,
 ) -> dict[str, np.ndarray]:
     """Read transitions as contiguous arrays for array-backed replay buffers."""
     if is_sharded_transition_dataset(path):
         directory = path.parent if path.name == SHARDED_TRANSITIONS_MANIFEST else path
-        return _read_npz_transition_arrays(directory, keys=keys, limit=limit)
+        return _read_npz_transition_arrays(directory, keys=keys, optional_keys=optional_keys, limit=limit)
     arrays = _transitions_to_arrays(read_transitions_jsonl(path))
     if limit is not None:
         arrays = {key: value[: max(0, int(limit))] for key, value in arrays.items()}
-    if keys is None:
+    if keys is None and optional_keys is None:
         return arrays
-    selected = set(keys)
+    selected = set(keys or arrays.keys())
+    selected.update(optional_keys or ())
     return {key: value for key, value in arrays.items() if key in selected}
 
 
@@ -274,6 +276,7 @@ def _iter_npz_observation_action_batches(directory: Path, batch_size: int) -> It
 def _read_npz_transition_arrays(
     directory: Path,
     keys: Optional[Iterable[str]] = None,
+    optional_keys: Optional[Iterable[str]] = None,
     limit: Optional[int] = None,
 ) -> dict[str, np.ndarray]:
     manifest_path = directory / SHARDED_TRANSITIONS_MANIFEST
@@ -291,7 +294,9 @@ def _read_npz_transition_arrays(
     first_path = directory / str(shards[0]["path"])
     with np.load(first_path, allow_pickle=False) as first:
         selected_keys = list(first.files if keys is None else keys)
-        missing = sorted(set(selected_keys) - set(first.files))
+        optional = [key for key in (optional_keys or ()) if key in first.files and key not in selected_keys]
+        selected_keys.extend(optional)
+        missing = sorted(set(keys or []) - set(first.files))
         if missing:
             raise KeyError(f"sharded transition dataset is missing arrays: {', '.join(missing)}")
         arrays = {
@@ -392,6 +397,10 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         "scalars": np.stack([t.observation.scalars for t in transitions]).astype(np.float32),
         "action_mask": np.stack([t.observation.action_mask for t in transitions]).astype(np.int8),
         "action_ids": np.asarray([t.action_id for t in transitions], dtype=np.int64),
+        "decision_indices": np.asarray(
+            [int(t.observation.metadata.get("decision_index", -1)) for t in transitions],
+            dtype=np.int64,
+        ),
         "rewards": np.stack([t.rewards for t in transitions]).astype(np.float32),
         "next_seats": np.asarray([t.next_observation.seat for t in transitions], dtype=np.int16),
         "next_planes": np.stack([t.next_observation.planes for t in transitions]).astype(np.float32),
@@ -403,6 +412,7 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         "steps_to_done": steps_to_done,
         "policy_source_ids": np.asarray([int(t.info.get("policy_source_id", -1)) for t in transitions], dtype=np.int16),
         "policy_values": np.asarray([float(t.info.get("policy_value", np.nan)) for t in transitions], dtype=np.float32),
+        "sample_weights": np.asarray([float(t.info.get("sample_weight", 1.0)) for t in transitions], dtype=np.float32),
         "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
         "terminal_is_draw": np.asarray([bool(o.get("is_draw", False)) for o in outcomes], dtype=np.bool_),
         "terminal_winner_seat": np.asarray([int(o.get("winner_seat", -1)) for o in outcomes], dtype=np.int16),
@@ -421,7 +431,12 @@ def _read_transition_shard(path: Path) -> list[Transition]:
                 seat=int(arrays["seats"][index]),
                 planes=np.asarray(arrays["planes"][index], dtype=np.float32),
                 scalars=np.asarray(arrays["scalars"][index], dtype=np.float32),
-                action_mask=np.asarray(arrays["action_mask"][index], dtype=np.int8),
+                    action_mask=np.asarray(arrays["action_mask"][index], dtype=np.int8),
+                    metadata={
+                        "decision_index": int(arrays["decision_indices"][index])
+                        if "decision_indices" in arrays.files
+                        else 0,
+                    },
             )
             next_observation = Observation(
                 seat=int(arrays["next_seats"][index]),
@@ -441,6 +456,7 @@ def _read_transition_shard(path: Path) -> list[Transition]:
                         "episode_index": int(arrays["episode_index"][index]),
                         "steps_to_done": int(arrays["steps_to_done"][index]) if "steps_to_done" in arrays.files else 0,
                         "terminal_rewards": np.asarray(arrays["terminal_rewards"][index], dtype=np.float32),
+                        "sample_weight": float(arrays["sample_weights"][index]) if "sample_weights" in arrays.files else 1.0,
                         **_policy_source_info(arrays, index),
                         **_terminal_outcome_info(arrays, index),
                     },

@@ -56,3 +56,4 @@ class TrainBatch:
     next_action_mask: IntArray
     rewards: FloatArray
     dones: FloatArray
+    sample_weights: FloatArray

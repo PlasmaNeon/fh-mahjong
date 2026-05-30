@@ -291,6 +291,7 @@ class DiscreteIQLTrainer:
         dones = torch.from_numpy(batch.dones).to(self.train_config.device)
         returns = torch.from_numpy(batch.returns).to(self.train_config.device)
         steps_to_done = torch.from_numpy(batch.steps_to_done).to(self.train_config.device)
+        external_sample_weights = torch.from_numpy(batch.sample_weights).to(self.train_config.device)
         utility_returns = large_loss_adjusted_rewards(
             returns,
             self.iql_config.large_loss_threshold,
@@ -301,7 +302,7 @@ class DiscreteIQLTrainer:
             self.iql_config.large_loss_threshold,
             self.iql_config.large_loss_penalty,
         )
-        sample_weights = large_loss_sample_weights(
+        sample_weights = external_sample_weights * large_loss_sample_weights(
             returns,
             self.iql_config.large_loss_threshold,
             self.iql_config.large_loss_weight,

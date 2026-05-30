@@ -13,6 +13,12 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.risk_filter import (
+    RiskCase,
+    RiskWeightReport,
+    apply_risk_case_weights,
+    load_risk_cases_from_paired_trace_reports,
+)
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import (
     is_sharded_transition_dataset,
@@ -39,6 +45,7 @@ IQL_ARRAY_KEYS = (
     "episode_index",
     "terminal_rewards",
 )
+OPTIONAL_IQL_ARRAY_KEYS = ("decision_indices", "sample_weights")
 
 
 def train_iql(
@@ -62,6 +69,10 @@ def train_iql(
     large_loss_threshold: Optional[float] = None,
     large_loss_penalty: float = 0.0,
     large_loss_weight: float = 1.0,
+    risk_trace_reports: Optional[Sequence[Path]] = None,
+    risk_trace_weight: float = 1.0,
+    risk_trace_dataset_start_seeds: Optional[Sequence[int]] = None,
+    risk_trace_worst_delta_count: int = 0,
     max_transitions: Optional[int] = None,
     device: str = "cpu",
     log_interval: int = 10,
@@ -77,9 +88,17 @@ def train_iql(
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
     data_paths = normalize_data_paths(data_path)
+    risk_cases = load_risk_cases_from_paired_trace_reports(
+        list(risk_trace_reports or []),
+        large_loss_threshold=large_loss_threshold,
+        worst_delta_count=risk_trace_worst_delta_count,
+    )
     buf, transition_count, dataset_transition_counts = load_iql_replay_buffer(
         data_paths,
         max_transitions=max_transitions,
+        risk_cases=risk_cases,
+        risk_weight=risk_trace_weight,
+        risk_dataset_start_seeds=risk_trace_dataset_start_seeds,
     )
     if transition_count <= 0:
         raise ValueError(f"no transitions loaded from {data_paths}")
@@ -176,6 +195,11 @@ def train_iql(
                     "large_loss_threshold": large_loss_threshold,
                     "large_loss_penalty": large_loss_penalty,
                     "large_loss_weight": large_loss_weight,
+                    "risk_trace_reports": ",".join(str(path) for path in (risk_trace_reports or [])),
+                    "risk_trace_weight": risk_trace_weight,
+                    "risk_trace_dataset_start_seeds": ",".join(str(seed) for seed in (risk_trace_dataset_start_seeds or [])),
+                    "risk_trace_worst_delta_count": risk_trace_worst_delta_count,
+                    "risk_trace_cases": len(risk_cases),
                     "max_transitions": max_transitions,
                     "device": device,
                     "transitions": transition_count,
@@ -262,17 +286,37 @@ def normalize_data_paths(data_path: Path | Sequence[Path]) -> list[Path]:
 def load_iql_replay_buffer(
     data_paths: Sequence[Path],
     max_transitions: Optional[int] = None,
+    risk_cases: Sequence[RiskCase] = (),
+    risk_weight: float = 1.0,
+    risk_dataset_start_seeds: Optional[Sequence[int]] = None,
 ) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
     buffers: list[ReplayBuffer | ArrayReplayBuffer] = []
     counts: list[int] = []
+    risk_reports: list[RiskWeightReport] = []
+    start_seeds = list(risk_dataset_start_seeds or [])
 
-    for path in data_paths:
+    for path_index, path in enumerate(data_paths):
+        dataset_start_seed = start_seeds[path_index] if path_index < len(start_seeds) else None
         if is_sharded_transition_dataset(path):
-            arrays = read_transition_arrays(path, keys=IQL_ARRAY_KEYS, limit=max_transitions)
+            arrays = read_transition_arrays(
+                path,
+                keys=IQL_ARRAY_KEYS,
+                optional_keys=OPTIONAL_IQL_ARRAY_KEYS,
+                limit=max_transitions,
+            )
             if "steps_to_done" not in arrays:
                 arrays["steps_to_done"] = compute_steps_to_done(
                     arrays["episode_index"],
                     np.logical_or(arrays["terminated"], arrays["truncated"]),
+                )
+            if risk_cases and risk_weight > 1.0:
+                risk_reports.append(
+                    apply_risk_case_weights(
+                        arrays,
+                        risk_cases,
+                        weight=risk_weight,
+                        dataset_start_seed=dataset_start_seed,
+                    )
                 )
             buffer = ArrayReplayBuffer(
                 arrays=arrays,
@@ -284,6 +328,21 @@ def load_iql_replay_buffer(
                 transitions = transitions[: max(0, int(max_transitions))]
             backfill_returns(transitions)
             backfill_steps_to_done(transitions)
+            if risk_cases and risk_weight > 1.0:
+                arrays = read_transition_arrays(
+                    path,
+                    optional_keys=OPTIONAL_IQL_ARRAY_KEYS,
+                    limit=max_transitions,
+                )
+                risk_report = apply_risk_case_weights(
+                    arrays,
+                    risk_cases,
+                    weight=risk_weight,
+                    dataset_start_seed=dataset_start_seed,
+                )
+                risk_reports.append(risk_report)
+                for transition, sample_weight in zip(transitions, arrays["sample_weights"].tolist()):
+                    transition.info["sample_weight"] = float(sample_weight)
             buffer = ReplayBuffer(capacity=len(transitions))
             buffer.extend(transitions)
 
@@ -293,6 +352,12 @@ def load_iql_replay_buffer(
     transition_count = int(sum(counts))
     if transition_count <= 0:
         raise ValueError(f"no transitions loaded from {data_paths}")
+    for index, report in enumerate(risk_reports):
+        print(
+            "risk trace weighting "
+            f"dataset={index} cases={report.cases} matched_cases={report.matched_cases} "
+            f"weighted_transitions={report.weighted_transitions} matched_by={report.matched_by}"
+        )
     if len(buffers) == 1:
         return buffers[0], transition_count, counts
     return CompositeReplayBuffer(buffers), transition_count, counts
@@ -340,6 +405,32 @@ def main() -> None:
         type=float,
         default=1.0,
         help="Loss multiplier for transitions with returns at or below --large-loss-threshold.",
+    )
+    parser.add_argument(
+        "--risk-trace-report",
+        type=Path,
+        action="append",
+        default=[],
+        help="Paired trace report whose first-divergence high-risk cases should receive extra sample weight.",
+    )
+    parser.add_argument(
+        "--risk-trace-weight",
+        type=float,
+        default=1.0,
+        help="Sample-weight multiplier for transitions matching --risk-trace-report cases.",
+    )
+    parser.add_argument(
+        "--risk-trace-dataset-start-seed",
+        type=int,
+        action="append",
+        default=[],
+        help="Dataset start seed for each --data path, used to map risk report seeds to episode_index.",
+    )
+    parser.add_argument(
+        "--risk-trace-worst-delta-count",
+        type=int,
+        default=0,
+        help="Also include this many worst reward-delta first-divergence cases per trace report.",
     )
     parser.add_argument(
         "--max-transitions",
@@ -392,6 +483,10 @@ def main() -> None:
         large_loss_threshold=args.large_loss_threshold,
         large_loss_penalty=args.large_loss_penalty,
         large_loss_weight=args.large_loss_weight,
+        risk_trace_reports=args.risk_trace_report,
+        risk_trace_weight=args.risk_trace_weight,
+        risk_trace_dataset_start_seeds=args.risk_trace_dataset_start_seed,
+        risk_trace_worst_delta_count=args.risk_trace_worst_delta_count,
         max_transitions=args.max_transitions,
         device=args.device,
         log_interval=args.log_interval,

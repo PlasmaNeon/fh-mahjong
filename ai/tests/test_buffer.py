@@ -67,6 +67,25 @@ def test_sample_includes_next_observation_and_td_fields() -> None:
     assert batch.next_action_mask.shape == (1, 204)
     assert batch.rewards[0] == 3.0
     assert batch.dones[0] == 1.0
+    assert batch.sample_weights[0] == 1.0
+
+
+def test_sample_includes_transition_sample_weight() -> None:
+    buf = ReplayBuffer(capacity=1)
+    buf.append(
+        Transition(
+            observation=_obs(seat=0),
+            action_id=5,
+            rewards=np.zeros(4, dtype=np.float32),
+            next_observation=_obs(seat=0),
+            terminated=False,
+            info={"sample_weight": 3.0},
+        )
+    )
+
+    batch = buf.sample(1, seed=1)
+
+    assert batch.sample_weights[0] == 3.0
     assert batch.steps_to_done[0] == 0
 
 

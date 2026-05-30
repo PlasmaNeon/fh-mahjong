@@ -132,6 +132,22 @@ def summarize_policy_episode_outcomes(episode_summaries: Sequence[dict[str, Any]
     }
 
 
+def summarize_large_loss_episodes(
+    episode_summaries: Sequence[dict[str, Any]],
+    large_loss_threshold: float,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "seed": int(summary["seed"]),
+            "seat": int(summary["seat"]),
+            "reward": float(summary["reward"]),
+            "large_loss_threshold": float(large_loss_threshold),
+        }
+        for summary in episode_summaries
+        if bool(summary.get("large_loss", False))
+    ]
+
+
 def outcome_rates(outcome_counts: Counter[str]) -> Dict[str, float]:
     total = sum(outcome_counts.values())
     if total == 0:
@@ -367,6 +383,7 @@ def evaluate_policy_online(
     choice_source_counts: Counter[str] = Counter()
     q_margins: list[float] = []
     policy_episode_summaries: list[dict[str, Any]] = []
+    episode_summaries: list[dict[str, Any]] = []
     wins = 0
     large_losses = 0
 
@@ -396,10 +413,22 @@ def evaluate_policy_online(
                 "seed": int(seed),
                 "seat": int(learning_seat),
                 "reward": reward,
+                "large_loss": reward <= resolved_large_loss_threshold,
                 "truncated": bool(truncated),
             }
         )
         policy_episode_summaries.append(policy_summary)
+        episode_summaries.append(
+            {
+                "seed": int(seed),
+                "seat": int(learning_seat),
+                "reward": reward,
+                "large_loss": reward <= resolved_large_loss_threshold,
+                "action_family_counts": dict(sorted(Counter(action_family(t.action_id) for t in episode).items())),
+                "decision_count": len(episode),
+                "truncated": bool(truncated),
+            }
+        )
 
     try:
         for i in range(episodes):
@@ -507,6 +536,8 @@ def evaluate_policy_online(
         "policy_q_margin_summary": reward_summary(q_margins),
         "policy_episode_summaries": policy_episode_summaries,
         "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
+        "episode_summaries": episode_summaries,
+        "large_loss_episodes": summarize_large_loss_episodes(episode_summaries, resolved_large_loss_threshold),
     }
 
 
@@ -566,6 +597,7 @@ def evaluate_duplicate_seats_policy(
     choice_source_counts: Counter[str] = Counter()
     q_margins: list[float] = []
     policy_episode_summaries: list[dict[str, Any]] = []
+    episode_summaries: list[dict[str, Any]] = []
     wins = 0
     large_losses = 0
     completed = 0
@@ -592,6 +624,7 @@ def evaluate_duplicate_seats_policy(
         choice_source_counts.update(report.get("policy_choice_counts", {}))
         q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
         policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
+        episode_summaries.extend(report.get("episode_summaries", []))
         wins += int(report["win_count"])
         large_losses += int(report["large_loss_count"])
         completed += int(report["episodes"])
@@ -655,6 +688,11 @@ def evaluate_duplicate_seats_policy(
         "policy_q_margin_summary": reward_summary(q_margins),
         "policy_episode_summaries": policy_episode_summaries,
         "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
+        "episode_summaries": episode_summaries,
+        "large_loss_episodes": summarize_large_loss_episodes(
+            episode_summaries,
+            seat_reports[0]["large_loss_threshold"] if seat_reports else _default_large_loss_threshold(normalized_match_mode),
+        ),
         "seat_summary": seat_summary,
         "seat_reports": seat_reports,
     }
@@ -684,6 +722,7 @@ def evaluate_duplicate_seats(
     wins = 0
     large_losses = 0
     completed = 0
+    episode_summaries: list[dict[str, Any]] = []
 
     for seat in seat_list:
         report = evaluate_online(
@@ -705,6 +744,7 @@ def evaluate_duplicate_seats(
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
         action_counts.update(report["action_family_counts"])
         outcome_counts.update(report.get("round_outcome_counts", {}))
+        episode_summaries.extend(report.get("episode_summaries", []))
         wins += int(report["win_count"])
         large_losses += int(report["large_loss_count"])
         completed += int(report["episodes"])
@@ -761,6 +801,11 @@ def evaluate_duplicate_seats(
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
         "round_outcome_rates": outcome_rates(outcome_counts),
+        "episode_summaries": episode_summaries,
+        "large_loss_episodes": summarize_large_loss_episodes(
+            episode_summaries,
+            seat_reports[0]["large_loss_threshold"] if seat_reports else _default_large_loss_threshold(normalized_match_mode),
+        ),
         "seat_summary": seat_summary,
         "seat_reports": seat_reports,
     }

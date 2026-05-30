@@ -62,6 +62,10 @@ class ReplayBuffer:
             [float(item.terminated or item.truncated) for item in items],
             dtype=np.float32,
         )
+        sample_weights = np.asarray(
+            [float(item.info.get("sample_weight", 1.0)) for item in items],
+            dtype=np.float32,
+        )
         return TrainBatch(
             planes=planes,
             scalars=scalars,
@@ -74,6 +78,7 @@ class ReplayBuffer:
             next_action_mask=next_action_mask,
             rewards=rewards,
             dones=dones,
+            sample_weights=sample_weights,
         )
 
 
@@ -118,6 +123,11 @@ class ArrayReplayBuffer:
             if "terminated" in self.arrays and "truncated" in self.arrays
             else np.zeros(batch_size, dtype=np.float32)
         )
+        sample_weights = (
+            self.arrays["sample_weights"][indices].astype(np.float32, copy=False)
+            if "sample_weights" in self.arrays
+            else np.ones(batch_size, dtype=np.float32)
+        )
 
         return TrainBatch(
             planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
@@ -137,6 +147,7 @@ class ArrayReplayBuffer:
             else np.empty((batch_size, 0), dtype=np.int8),
             rewards=rewards,
             dones=dones,
+            sample_weights=sample_weights,
         )
 
 
@@ -191,6 +202,7 @@ def concatenate_train_batches(batches: Sequence[TrainBatch]) -> TrainBatch:
         next_action_mask=_concat_with_padding([batch.next_action_mask for batch in batches]),
         rewards=np.concatenate([batch.rewards for batch in batches]).astype(np.float32, copy=False),
         dones=np.concatenate([batch.dones for batch in batches]).astype(np.float32, copy=False),
+        sample_weights=np.concatenate([batch.sample_weights for batch in batches]).astype(np.float32, copy=False),
     )
 
 

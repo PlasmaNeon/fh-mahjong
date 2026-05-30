@@ -65,3 +65,38 @@ def test_summarize_trace_pairs_handles_terminal_length_divergence() -> None:
     )
 
     assert report["summary"]["divergence_action_family_pairs"] == {"discard->missing": 1}
+
+
+def test_summarize_trace_pairs_reports_high_risk_cases() -> None:
+    report = summarize_trace_pairs(
+        [
+            {
+                "seed": 534005,
+                "seat": 0,
+                "anchor_reward": -0.9,
+                "candidate_reward": -1.4,
+                "reward_delta": -0.5,
+                "first_divergence_index": 12,
+                "first_divergence": {
+                    "left": {"action_id": 0, "action_label": "pass", "action_family": "pass"},
+                    "right": {
+                        "action_id": 47,
+                        "action_label": "pon 1m",
+                        "action_family": "pon",
+                        "decision_index": 173,
+                        "observation": {"scalars": {"rank_score": 0.5}},
+                    },
+                },
+            }
+        ],
+        left_label="anchor",
+        right_label="candidate",
+        large_loss_threshold=-1.0,
+    )
+
+    summary = report["summary"]
+    assert len(summary["candidate_large_loss_cases"]) == 1
+    assert len(summary["new_candidate_large_loss_cases"]) == 1
+    assert summary["candidate_large_loss_cases"][0]["candidate_action_label"] == "pon 1m"
+    assert summary["candidate_large_loss_cases"][0]["decision_index"] == 173
+    assert summary["worst_reward_delta_cases"][0]["seed"] == 534005

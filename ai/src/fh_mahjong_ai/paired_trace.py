@@ -166,6 +166,8 @@ def compare_policy_traces(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: int = 20000,
+    large_loss_threshold: Optional[float] = None,
+    worst_delta_count: int = 8,
     progress_callback: Optional[Callable[[int, int, int, int], None]] = None,
 ) -> dict[str, Any]:
     pairs = []
@@ -204,7 +206,13 @@ def compare_policy_traces(
             if progress_callback is not None:
                 progress_callback(completed_pairs, total_pairs, int(seed), int(seat))
 
-    return summarize_trace_pairs(pairs, left_label=left_label, right_label=right_label)
+    return summarize_trace_pairs(
+        pairs,
+        left_label=left_label,
+        right_label=right_label,
+        large_loss_threshold=large_loss_threshold,
+        worst_delta_count=worst_delta_count,
+    )
 
 
 def compare_episode_trace(
@@ -237,6 +245,8 @@ def summarize_trace_pairs(
     pairs: Sequence[dict[str, Any]],
     left_label: str = "left",
     right_label: str = "right",
+    large_loss_threshold: Optional[float] = None,
+    worst_delta_count: int = 8,
 ) -> dict[str, Any]:
     left_rewards = [float(pair[f"{left_label}_reward"]) for pair in pairs]
     right_rewards = [float(pair[f"{right_label}_reward"]) for pair in pairs]
@@ -266,6 +276,13 @@ def summarize_trace_pairs(
         scalars = context_step.get("observation", {}).get("scalars", {})
         for name in divergence_contexts:
             divergence_contexts[name][bucket_scalar(name, scalars.get(name))] += 1
+    high_risk = summarize_high_risk_trace_pairs(
+        pairs,
+        left_label=left_label,
+        right_label=right_label,
+        large_loss_threshold=large_loss_threshold,
+        worst_delta_count=worst_delta_count,
+    )
 
     return {
         "schema_version": 1,
@@ -298,7 +315,63 @@ def summarize_trace_pairs(
                 name: dict(sorted(counter.items()))
                 for name, counter in divergence_contexts.items()
             },
+            **high_risk,
         },
+    }
+
+
+def summarize_high_risk_trace_pairs(
+    pairs: Sequence[dict[str, Any]],
+    left_label: str = "left",
+    right_label: str = "right",
+    large_loss_threshold: Optional[float] = None,
+    worst_delta_count: int = 8,
+) -> dict[str, Any]:
+    right_large_losses = []
+    new_right_large_losses = []
+    if large_loss_threshold is not None:
+        for pair in pairs:
+            left_reward = float(pair[f"{left_label}_reward"])
+            right_reward = float(pair[f"{right_label}_reward"])
+            if right_reward <= large_loss_threshold:
+                right_large_losses.append(high_risk_pair_payload(pair, left_label, right_label))
+                if left_reward > large_loss_threshold:
+                    new_right_large_losses.append(high_risk_pair_payload(pair, left_label, right_label))
+
+    worst_pairs = sorted(pairs, key=lambda pair: float(pair["reward_delta"]))[: max(0, int(worst_delta_count))]
+    return {
+        f"{right_label}_large_loss_cases": right_large_losses,
+        f"new_{right_label}_large_loss_cases": new_right_large_losses,
+        "worst_reward_delta_cases": [
+            high_risk_pair_payload(pair, left_label, right_label)
+            for pair in worst_pairs
+            if float(pair["reward_delta"]) < 0
+        ],
+    }
+
+
+def high_risk_pair_payload(
+    pair: dict[str, Any],
+    left_label: str,
+    right_label: str,
+) -> dict[str, Any]:
+    divergence = pair.get("first_divergence") or {}
+    left_step = divergence.get("left") or divergence.get(left_label) or {}
+    right_step = divergence.get("right") or divergence.get(right_label) or {}
+    context_step = right_step or left_step
+    return {
+        "seed": int(pair["seed"]),
+        "seat": int(pair["seat"]),
+        f"{left_label}_reward": float(pair[f"{left_label}_reward"]),
+        f"{right_label}_reward": float(pair[f"{right_label}_reward"]),
+        "reward_delta": float(pair["reward_delta"]),
+        "first_divergence_index": pair.get("first_divergence_index"),
+        f"{left_label}_action_id": left_step.get("action_id"),
+        f"{left_label}_action_label": left_step.get("action_label"),
+        f"{right_label}_action_id": right_step.get("action_id"),
+        f"{right_label}_action_label": right_step.get("action_label"),
+        "decision_index": context_step.get("decision_index"),
+        "scalars": (context_step.get("observation") or {}).get("scalars", {}),
     }
 
 

@@ -30,6 +30,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Online/duplicate evaluation accepts `match_mode="chongci"` plus Chongci score/hand-cap config; Chongci reports `positive_reward_rate` as the final-match net-positive metric while keeping `win_rate` as a backward-compatible reward-positive alias.
   - `evaluate_policy_online()` / `evaluate_duplicate_seats_policy()` support non-model policy adapters such as Q-margin guards while preserving the same duplicate-seat metrics.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
+- **src/fh_mahjong_ai/risk_filter.py** — Utilities for extracting high-risk first-divergence cases from paired trace reports and applying per-transition sample weights.
 - **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
@@ -55,6 +56,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/scripts/train_iql.py** — CLI: discrete implicit Q-learning style offline RL with MC terminal-return targets by default, optional TD Q targets, expectile value learning, advantage-weighted policy updates, optional CQL penalty, BC regularization, and optional transition limiting for memory control.
   - Repeat `--data` to train from multiple datasets, for example existing heuristic shards plus new mixed self-play shards. The trainer samples across datasets through a composite replay buffer without rewriting the source datasets.
   - `--large-loss-weight` upweights losses for transitions whose terminal return is at or below `--large-loss-threshold`; use it for explicit Chongci high-risk-state ablations.
+  - `--risk-trace-report` upweights transitions matching paired-trace first-divergence risk cases when dataset start seeds are supplied through `--risk-trace-dataset-start-seed`.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
@@ -106,9 +108,11 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Large generated datasets should prefer `fh-mj-generate-data --format npz-shards` so the pipeline avoids a huge temporary JSONL file.
 - Large training datasets can be converted with `fh-mj-convert-data` to sharded NumPy storage; training/evaluation CLIs accept the shard directory as `--data`.
 - Sharded NumPy datasets use array-backed replay for BC/AWBC/IQL/offline-Q and streaming batches for offline evaluation to avoid materializing every row as a Python object. BC and AWBC training load only current-observation/action/return arrays to keep 50k+ datasets within WSL memory; IQL/offline-Q need next-state arrays and may use transition limits for memory control.
+- New sharded datasets preserve `decision_indices` and `sample_weights` so paired-trace first-divergence cases can map back into training rows; older shards without decision indices fall back to seed/seat/action matching when risk filtering is explicitly requested.
 - IQL can mix repeated `--data` inputs directly; this is the preferred way to reuse older heuristic datasets alongside newer mixed self-play datasets.
 - IQL supports default-off large-loss utility shaping through `--large-loss-threshold` plus `--large-loss-penalty`. Use it only as an explicit Chongci reward-learning ablation and keep promotion decisions based on duplicate-seat EV/positive-rate/large-loss gates, not training loss.
 - IQL also supports default-off high-risk transition weighting through `--large-loss-weight`; it reweights Q/value/policy/BC/CQL losses without changing the sampled dataset or deployed policy rule.
+- IQL risk-trace weighting consumes paired trace reports, maps report seeds to dataset `episode_index` using provided dataset start seeds, and applies per-transition `sample_weights`.
 - IQL/evaluation CLIs expose model-size flags such as `--model-channels`, `--model-residual-blocks`, and `--model-channel-attention` for controlled architecture ablations. `--partial-init-checkpoint` may be used for explicit ablations that add compatible layers, such as more residual blocks with the same channel width. Record these flags in MLflow and report outputs whenever a non-default checkpoint is trained.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.

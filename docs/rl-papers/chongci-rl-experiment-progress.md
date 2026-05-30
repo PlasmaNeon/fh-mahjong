@@ -1407,6 +1407,84 @@ Next interpretation:
   high-risk dataset/filter so the trainer can emphasize those states without
   reweighting every large-loss trajectory.
 
+### First-Divergence Risk Filtering Implementation, 2026-05-30
+
+Implementation branch:
+
+```text
+codex/chongci-divergence-risk-reports
+```
+
+Question:
+
+Can the training and evaluation stack expose exact high-risk cases directly,
+so future experiments do not rely on manual JSON inspection or broad
+large-loss weighting?
+
+Implemented:
+
+- Evaluation reports now include `episode_summaries` and `large_loss_episodes`
+  at both single-seat and duplicate-seat levels.
+- Paired trace reports now include:
+  - candidate/right large-loss first-divergence cases,
+  - new candidate/right large-loss cases where the anchor avoided the large
+    loss,
+  - worst reward-delta first-divergence cases,
+  - action labels, action ids, decision index, seed, seat, rewards, and scalar
+    snapshots for those cases.
+- New sharded datasets preserve `decision_indices` and `sample_weights`.
+- IQL training can consume paired trace reports:
+
+```text
+--risk-trace-report <paired_trace.json>
+--risk-trace-weight <float>
+--risk-trace-dataset-start-seed <seed per --data path>
+--risk-trace-worst-delta-count <n>
+```
+
+The risk filter maps paired-trace seeds to dataset `episode_index` by subtracting
+the provided dataset start seed. For new shards it matches:
+
+```text
+episode_index + seat + decision_index
+```
+
+For older shards that do not have `decision_indices`, it falls back to:
+
+```text
+episode_index + seat + action_id
+```
+
+This is intentionally explicit: current historical datasets do not always carry
+enough metadata for true decision-index matching, so future targeted runs should
+generate new shards with `decision_indices` preserved.
+
+Validation:
+
+```text
+uv run --project ai python -m pytest \
+  ai/tests/test_buffer.py \
+  ai/tests/test_iql.py \
+  ai/tests/test_evaluate.py \
+  ai/tests/test_paired_trace.py \
+  ai/tests/test_risk_filter.py \
+  ai/tests/test_storage.py
+```
+
+Result:
+
+```text
+43 passed
+```
+
+Next interpretation:
+
+- We now have the plumbing required for exact divergence-state training.
+- The next experiment should regenerate or collect a small dataset over the
+  same seed range as the risky paired-trace cases, then train with
+  `--risk-trace-report` and verify that the matched transition count is
+  non-zero before evaluating.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1435,6 +1513,9 @@ Next interpretation:
 13. Stronger high-risk weighting (`5.0`) with lower policy drift reduced the
     selected-window large-loss rate from `27.27%` to `25.00%`, but still trailed
     the anchor and regressed EV versus weight `3.0`.
+14. The stack now records large-loss seed lists and first-divergence risk cases
+    directly, and IQL can consume paired trace reports for targeted sample
+    weighting when datasets preserve or can map the relevant seed metadata.
 
 ## Recommended Next Experiments
 
