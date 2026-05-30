@@ -1666,6 +1666,122 @@ to justify promotion work. The next branch should either create denser exact
 divergence-state coverage or add features that let the model generalize the
 risk state rather than merely upweighting a handful of matched rows.
 
+### Experiment: Risk-Trace Dense V2
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516
+/root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest
+```
+
+Question:
+
+V1 had too few exact risk-case matches. Does a broader paired trace over the
+full deterministic gate seed windows produce enough risk cases to improve the
+candidate beyond the promoted anchor?
+
+Trace:
+
+```text
+anchor: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate source: /root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-latest/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+report: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+seed windows: 534000:10, 544000:10, 554000:10
+seats: 0, 1, 2, 3
+pairs: 120
+divergence rate: 65.83%
+raw candidate better rate: 20.00%
+raw candidate mean delta vs anchor: +0.0038
+```
+
+The broader trace produced 61 unique risk cases:
+
+```text
+worst_delta: 40
+candidate_large_loss: 21
+new_candidate_large_loss: 3
+unique seeds covered: 27
+```
+
+Data:
+
+Dense v2 generated six risk-aligned shards, three from all-anchor self-play and
+three from all-raw-candidate self-play:
+
+| Policy Source | Seed Window | Episodes | Transitions |
+|---------------|-------------|----------|-------------|
+| promoted anchor | 534000 | 10 | 19,593 |
+| promoted anchor | 544000 | 10 | 21,292 |
+| promoted anchor | 554000 | 10 | 20,379 |
+| raw conservative candidate | 534000 | 10 | 20,362 |
+| raw conservative candidate | 544000 | 10 | 21,523 |
+| raw conservative candidate | 554000 | 10 | 20,520 |
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/checkpoints/iql_risktrace_dense_v2/epoch_001.pt
+epochs: 1
+lr: 5e-6
+max_transitions: 400000
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_weight: 1.0
+risk_trace_weight: 6.0
+risk_trace_worst_delta_count: 40
+MLflow train run: 9c6d5b64116c4824bf7b3343e6a11643
+```
+
+Risk trace matching was materially denser than v1:
+
+```text
+anchor shards matched: 14 cases, 12 weighted transitions
+raw-candidate shards matched: 14 cases, 13 weighted transitions
+total matched: 28 cases, 25 weighted transitions
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/reports/candidate_risktrace_dense_v2_gate_windows.json
+seed windows: 534000:10, 544000:10, 554000:10
+duplicate seats: true
+episodes: 120
+MLflow eval run: 9de488f3b67047609350d9e7cadcf338
+```
+
+Result:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor on paired trace | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| raw conservative candidate on paired trace | -0.0520 | -6.2360 | 45.00% | 17.50% |
+| risk-trace dense v2 | -0.0578 | -6.9390 | 43.33% | 16.67% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate for this
+checkpoint.
+
+Interpretation:
+
+Dense v2 fixed the data-density problem from v1, but the learned checkpoint
+still did not beat the promoted anchor. The raw conservative candidate continues
+to show the familiar tradeoff on these windows: slightly better EV and positive
+rate, worse large-loss rate. Risk-trace dense v2 softened the tail-risk
+regression versus the raw candidate, but gave up enough EV that it landed just
+behind the anchor on both main promotion dimensions.
+
+This suggests the next useful work is not more replay weighting with the same
+features. The learner needs either stronger risk features, a better target for
+match-level placement/tail risk, or a paired-action objective that can directly
+prefer the anchor action over the candidate action at known harmful
+divergences.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1703,6 +1819,9 @@ risk state rather than merely upweighting a handful of matched rows.
 16. Risk-trace candidate v1 improved strongly over the raw conservative
     candidate but still failed to beat the promoted anchor on selected risk
     windows, so it is rejected before the full repeated gate.
+17. Dense risk-trace coverage increased exact matched cases from single digits
+    to 28 cases, but still did not beat the promoted anchor; the bottleneck is
+    now feature/target quality more than risk-case sampling density.
 
 ## Recommended Next Experiments
 
@@ -1727,6 +1846,11 @@ run. The next version should increase exact-match density before training, for
 example by tracing more anchor/candidate windows, adding all first-divergence
 cases rather than only the worst deltas, or generating repeated shards from the
 same seed/seat decision neighborhoods.
+
+Dense v2 completed this density test and did not promote. Further experiments
+should avoid repeating the same `risk_trace_weight=6.0` approach unless another
+change is introduced, such as richer risk features, direct pairwise divergence
+loss, or a match-level tail-value auxiliary.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 
