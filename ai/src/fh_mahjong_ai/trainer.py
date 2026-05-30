@@ -55,6 +55,7 @@ class DiscreteIQLMetrics:
     bc_loss: float
     cql_loss: float
     pairwise_loss: float
+    pairwise_q_loss: float
     avg_q: float
     avg_v: float
     avg_target_q: float
@@ -352,6 +353,14 @@ class DiscreteIQLTrainer:
             pairwise_weights,
             margin=self.iql_config.pairwise_margin,
         )
+        pairwise_q_loss, pairwise_q_count = pairwise_margin_loss(
+            q_values,
+            action_mask,
+            pairwise_preferred_action_ids,
+            pairwise_avoided_action_ids,
+            pairwise_weights,
+            margin=self.iql_config.pairwise_q_margin,
+        )
 
         loss = (
             self.iql_config.q_weight * q_loss
@@ -360,6 +369,7 @@ class DiscreteIQLTrainer:
             + self.iql_config.bc_weight * bc_loss
             + self.iql_config.cql_weight * cql_loss
             + self.iql_config.pairwise_weight * pairwise_loss
+            + self.iql_config.pairwise_q_weight * pairwise_q_loss
         )
 
         self.optimizer.zero_grad(set_to_none=True)
@@ -375,6 +385,7 @@ class DiscreteIQLTrainer:
             bc_loss=float(bc_loss.item()),
             cql_loss=float(cql_loss.item()),
             pairwise_loss=float(pairwise_loss.item()),
+            pairwise_q_loss=float(pairwise_q_loss.item()),
             avg_q=float(dataset_q.mean().item()),
             avg_v=float(values.mean().item()),
             avg_target_q=float(target_q.mean().item()),
@@ -383,7 +394,7 @@ class DiscreteIQLTrainer:
             max_weight=float(advantage_weights.max().item()),
             avg_sample_weight=float(sample_weights.mean().item()),
             max_sample_weight=float(sample_weights.max().item()),
-            pairwise_count=pairwise_count,
+            pairwise_count=max(pairwise_count, pairwise_q_count),
         )
 
     def update_target_network(self) -> None:

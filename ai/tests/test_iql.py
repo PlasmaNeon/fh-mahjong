@@ -85,6 +85,7 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert np.isfinite(metrics.bc_loss)
     assert np.isfinite(metrics.cql_loss)
     assert np.isfinite(metrics.pairwise_loss)
+    assert np.isfinite(metrics.pairwise_q_loss)
     assert 0.0 <= metrics.avg_weight <= 5.0
     assert 0.0 <= metrics.max_weight <= 5.0
     assert metrics.avg_sample_weight == 1.0
@@ -103,6 +104,49 @@ def test_pairwise_margin_loss_prefers_anchor_action() -> None:
 
     assert count == 1
     torch.testing.assert_close(loss, torch.tensor(0.75))
+
+
+def test_discrete_iql_trainer_runs_q_pairwise_loss() -> None:
+    env_config = EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    target_model = PolicyValueNet(env_config, model_config)
+    target_model.load_state_dict(model.state_dict())
+
+    transitions = _transitions(8, env_config)
+    for transition in transitions:
+        transition.info["pairwise_preferred_action_id"] = 1
+        transition.info["pairwise_avoided_action_id"] = 2
+        transition.info["pairwise_weight"] = 1.0
+    buf = ReplayBuffer(capacity=8)
+    buf.extend(transitions)
+
+    trainer = DiscreteIQLTrainer(
+        model=model,
+        target_model=target_model,
+        optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3),
+        train_config=TrainConfig(batch_size=4),
+        iql_config=DiscreteIQLConfig(
+            target_update_interval=1,
+            target_tau=1.0,
+            max_weight=5.0,
+            pairwise_q_weight=0.5,
+            pairwise_q_margin=0.25,
+        ),
+    )
+
+    metrics = trainer.train_step(buf)
+
+    assert np.isfinite(metrics.loss)
+    assert np.isfinite(metrics.pairwise_q_loss)
+    assert metrics.pairwise_count > 0
 
 
 def test_pairwise_margin_loss_empty_batch_stays_finite_with_masked_logits() -> None:

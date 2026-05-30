@@ -1945,6 +1945,97 @@ should not spend another run on the same preference target. More useful options:
    actions in the critic rather than only policy logits.
 3. Add a match-level tail-value auxiliary for bust risk and score-pressure.
 
+### Experiment: Pairwise Q Preference V1
+
+Implementation:
+
+The pairwise divergence machinery now supports an independent critic-side
+margin loss:
+
+```text
+--pairwise-q-weight <float>
+--pairwise-q-margin <float>
+```
+
+This reuses the same paired-trace labels as the policy-margin loss:
+
+```text
+preferred action: anchor / left action
+avoided action: candidate / right action
+```
+
+But it applies the margin to Q values instead of policy logits:
+
+```text
+max(0, margin - (Q(preferred) - Q(avoided)))
+```
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-q-v1-20260530-145835
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.0
+pairwise_q_weight: 0.5
+pairwise_q_margin: 0.25
+pairwise_replay_multiplier: 256
+MLflow train run: 63ac6b6db06442f587b170b77ddb48eb
+```
+
+Signal check:
+
+```text
+pairwise replay expanded rows: 6,400
+logged pairwise_count: 3 to 8 on sampled batches
+logged pairwise_q_loss: nonzero early, then 0.0000 after the critic fit the margin
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-q-v1-20260530-145835/reports/candidate_pairwise_q_v1_gate_windows.json
+episodes: 120
+mean_reward: -0.0801
+reward_sum: -9.6080
+positive_reward_rate: 42.50%
+large_loss_rate: 17.50%
+MLflow eval run: 2c9bccbd6e254418941a9c246317389b
+```
+
+Comparison on the same 120-seat gate-window screen:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| pairwise v2 policy-margin | -0.0891 | -10.6920 | 42.50% | 15.83% |
+| pairwise Q v1 | -0.0801 | -9.6080 | 42.50% | 17.50% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate.
+
+Interpretation:
+
+The Q-side preference loss is mechanically active and trainable, unlike the
+policy-margin loss that was already satisfied. However, fitting this critic
+margin did not improve deployed policy behavior. It likely perturbed the
+critic/policy update enough to hurt EV while still failing to solve tail risk.
+
+This closes the current paired-trace preference branch. The next useful branch
+should be feature-side or target-side:
+
+1. Add explicit score-pressure / bust-risk context to the observation.
+2. Add a match-level tail-value auxiliary that predicts probability or severity
+   of crossing the large-loss threshold.
+3. Revisit pairwise losses only after those richer risk signals exist.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1989,6 +2080,10 @@ should not spend another run on the same preference target. More useful options:
     pairwise runs showed that the promoted-anchor-initialized policy already
     ranks anchor actions over candidate actions on the sampled divergence rows;
     this did not improve promotion metrics.
+19. Pairwise Q-margin training is also implemented and validated, but the first
+    Q-side run worsened EV and large-loss rate, so paired-trace preference
+    losses should pause until stronger risk-context features or target signals
+    are added.
 
 ## Recommended Next Experiments
 
@@ -2022,6 +2117,10 @@ loss, or a match-level tail-value auxiliary.
 Pairwise policy-margin loss has now been tested as that direct divergence loss.
 The useful next step is a critic-side or feature-side change, not another
 policy-margin run with the same trace.
+
+Pairwise Q-margin loss has now also been tested and rejected. The next branch
+should be feature-side or target-side, especially score-pressure and bust-risk
+features or a large-loss probability/severity auxiliary.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 

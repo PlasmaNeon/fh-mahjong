@@ -57,7 +57,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Repeat `--data` to train from multiple datasets, for example existing heuristic shards plus new mixed self-play shards. The trainer samples across datasets through a composite replay buffer without rewriting the source datasets.
   - `--large-loss-weight` upweights losses for transitions whose terminal return is at or below `--large-loss-threshold`; use it for explicit Chongci high-risk-state ablations.
   - `--risk-trace-report` upweights transitions matching paired-trace first-divergence risk cases when dataset start seeds are supplied through `--risk-trace-dataset-start-seed`.
-  - `--pairwise-weight` adds a direct margin loss that prefers the paired-trace anchor action over the candidate action on matched high-risk first-divergence rows; `--pairwise-replay-multiplier` repeats those sparse rows into an auxiliary replay source.
+  - `--pairwise-weight` adds a direct policy-logit margin loss that prefers the paired-trace anchor action over the candidate action on matched high-risk first-divergence rows; `--pairwise-q-weight` applies the same preference to the Q head; `--pairwise-replay-multiplier` repeats those sparse rows into an auxiliary replay source.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.

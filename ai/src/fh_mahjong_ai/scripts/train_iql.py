@@ -77,6 +77,8 @@ def train_iql(
     large_loss_weight: float = 1.0,
     pairwise_weight: float = 0.0,
     pairwise_margin: float = 0.0,
+    pairwise_q_weight: float = 0.0,
+    pairwise_q_margin: float = 0.0,
     pairwise_replay_multiplier: int = 0,
     risk_trace_reports: Optional[Sequence[Path]] = None,
     risk_trace_weight: float = 1.0,
@@ -108,7 +110,8 @@ def train_iql(
         risk_cases=risk_cases,
         risk_weight=risk_trace_weight,
         risk_dataset_start_seeds=risk_trace_dataset_start_seeds,
-        apply_risk_cases=bool(risk_cases) and (risk_trace_weight > 1.0 or pairwise_weight > 0.0),
+        apply_risk_cases=bool(risk_cases)
+        and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
         pairwise_replay_multiplier=pairwise_replay_multiplier,
     )
     if transition_count <= 0:
@@ -168,6 +171,8 @@ def train_iql(
         large_loss_weight=large_loss_weight,
         pairwise_weight=pairwise_weight,
         pairwise_margin=pairwise_margin,
+        pairwise_q_weight=pairwise_q_weight,
+        pairwise_q_margin=pairwise_q_margin,
     )
     trainer = DiscreteIQLTrainer(model, target_model, optimizer, train_config, iql_config)
 
@@ -210,6 +215,8 @@ def train_iql(
                     "large_loss_weight": large_loss_weight,
                     "pairwise_weight": pairwise_weight,
                     "pairwise_margin": pairwise_margin,
+                    "pairwise_q_weight": pairwise_q_weight,
+                    "pairwise_q_margin": pairwise_q_margin,
                     "pairwise_replay_multiplier": pairwise_replay_multiplier,
                     "risk_trace_reports": ",".join(str(path) for path in (risk_trace_reports or [])),
                     "risk_trace_weight": risk_trace_weight,
@@ -249,6 +256,7 @@ def train_iql(
                         f"value={metrics.value_loss:.4f}  policy={metrics.policy_loss:.4f}  "
                         f"bc={metrics.bc_loss:.4f}  cql={metrics.cql_loss:.4f}  "
                         f"pairwise={metrics.pairwise_loss:.4f}/{metrics.pairwise_count}  "
+                        f"pairwise_q={metrics.pairwise_q_loss:.4f}  "
                         f"adv={metrics.avg_advantage:.4f}  "
                         f"weight={metrics.avg_weight:.3f}  sample_weight={metrics.avg_sample_weight:.3f}"
                     )
@@ -272,6 +280,7 @@ def train_iql(
                             "last_bc_loss": latest_metrics.bc_loss,
                             "last_cql_loss": latest_metrics.cql_loss,
                             "last_pairwise_loss": latest_metrics.pairwise_loss,
+                            "last_pairwise_q_loss": latest_metrics.pairwise_q_loss,
                             "last_avg_q": latest_metrics.avg_q,
                             "last_avg_v": latest_metrics.avg_v,
                             "last_avg_target_q": latest_metrics.avg_target_q,
@@ -453,6 +462,18 @@ def main() -> None:
         help="Required policy-logit margin for preferred trace action over avoided trace action.",
     )
     parser.add_argument(
+        "--pairwise-q-weight",
+        type=float,
+        default=0.0,
+        help="Loss multiplier for paired trace Q-value preference margin loss.",
+    )
+    parser.add_argument(
+        "--pairwise-q-margin",
+        type=float,
+        default=0.0,
+        help="Required Q-value margin for preferred trace action over avoided trace action.",
+    )
+    parser.add_argument(
         "--pairwise-replay-multiplier",
         type=int,
         default=0,
@@ -537,6 +558,8 @@ def main() -> None:
         large_loss_weight=args.large_loss_weight,
         pairwise_weight=args.pairwise_weight,
         pairwise_margin=args.pairwise_margin,
+        pairwise_q_weight=args.pairwise_q_weight,
+        pairwise_q_margin=args.pairwise_q_margin,
         pairwise_replay_multiplier=args.pairwise_replay_multiplier,
         risk_trace_reports=args.risk_trace_report,
         risk_trace_weight=args.risk_trace_weight,
