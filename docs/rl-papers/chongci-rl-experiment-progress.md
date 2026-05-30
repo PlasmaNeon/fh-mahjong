@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-Last updated: 2026-05-28
+Last updated: 2026-05-30
 
 This note is the running experiment notebook for the Fenghua Mahjong AI work,
 especially the Chongci reward-learning line. Update this file after every new
@@ -1407,6 +1407,635 @@ Next interpretation:
   high-risk dataset/filter so the trainer can emphasize those states without
   reweighting every large-loss trajectory.
 
+### First-Divergence Risk Filtering Implementation, 2026-05-30
+
+Implementation branch:
+
+```text
+codex/chongci-divergence-risk-reports
+```
+
+Question:
+
+Can the training and evaluation stack expose exact high-risk cases directly,
+so future experiments do not rely on manual JSON inspection or broad
+large-loss weighting?
+
+Implemented:
+
+- Evaluation reports now include `episode_summaries` and `large_loss_episodes`
+  at both single-seat and duplicate-seat levels.
+- Paired trace reports now include:
+  - candidate/right large-loss first-divergence cases,
+  - new candidate/right large-loss cases where the anchor avoided the large
+    loss,
+  - worst reward-delta first-divergence cases,
+  - action labels, action ids, decision index, seed, seat, rewards, and scalar
+    snapshots for those cases.
+- New sharded datasets preserve `decision_indices` and `sample_weights`.
+- IQL training can consume paired trace reports:
+
+```text
+--risk-trace-report <paired_trace.json>
+--risk-trace-weight <float>
+--risk-trace-dataset-start-seed <seed per --data path>
+--risk-trace-worst-delta-count <n>
+```
+
+The risk filter maps paired-trace seeds to dataset `episode_index` by subtracting
+the provided dataset start seed. For new shards it matches:
+
+```text
+episode_index + seat + decision_index
+```
+
+For older shards that do not have `decision_indices`, it falls back to:
+
+```text
+episode_index + seat + action_id
+```
+
+This is intentionally explicit: current historical datasets do not always carry
+enough metadata for true decision-index matching, so future targeted runs should
+generate new shards with `decision_indices` preserved.
+
+Validation:
+
+```text
+uv run --project ai python -m pytest \
+  ai/tests/test_buffer.py \
+  ai/tests/test_iql.py \
+  ai/tests/test_evaluate.py \
+  ai/tests/test_paired_trace.py \
+  ai/tests/test_risk_filter.py \
+  ai/tests/test_storage.py
+```
+
+Result:
+
+```text
+43 passed
+```
+
+Next interpretation:
+
+- We now have the plumbing required for exact divergence-state training.
+- The next experiment should regenerate or collect a small dataset over the
+  same seed range as the risky paired-trace cases, then train with
+  `--risk-trace-report` and verify that the matched transition count is
+  non-zero before evaluating.
+
+### Risk-Trace Matching Smoke, 2026-05-30
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825
+```
+
+Question:
+
+Does the new `--risk-trace-report` path actually map paired-trace first
+divergences back to training rows when the generated shards preserve
+`decision_indices`?
+
+Dataset generation:
+
+Generated three all-checkpoint Chongci self-play shard sets with the promoted
+current checkpoint controlling all four seats:
+
+```text
+current checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace report: /root/fh-mahjong-runs/chongci-risk-diagnostics-20260527-231007/reports/anchor_vs_candidate_selected_trace.json
+```
+
+| Start Seed | Episodes | Transitions | Output |
+|------------|----------|-------------|--------|
+| 534000 | 6 | 11,670 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-534000-n6-npz` |
+| 544001 | 4 | 8,486 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-544001-n4-npz` |
+| 554001 | 1 | 1,440 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-554001-n1-npz` |
+
+Training smoke:
+
+```text
+--risk-trace-report /root/fh-mahjong-runs/chongci-risk-diagnostics-20260527-231007/reports/anchor_vs_candidate_selected_trace.json
+--risk-trace-weight 6.0
+--risk-trace-dataset-start-seed 534000
+--risk-trace-dataset-start-seed 544001
+--risk-trace-dataset-start-seed 554001
+--risk-trace-worst-delta-count 8
+```
+
+Matching result:
+
+```text
+dataset=0 cases=20 matched_cases=4 weighted_transitions=3 matched_by={'seed_seat_decision': 4}
+dataset=1 cases=20 matched_cases=1 weighted_transitions=1 matched_by={'seed_seat_decision': 1}
+dataset=2 cases=20 matched_cases=0 weighted_transitions=0 matched_by={}
+```
+
+Decision:
+
+The targeted risk-trace path works. It can map paired trace first-divergence
+cases into generated training rows by exact `episode_index + seat +
+decision_index`, and the smoke produced non-zero matched cases. This validates
+the plumbing; it is not yet a promoted checkpoint experiment because the
+dataset is intentionally tiny and used only to verify matching.
+
+Next interpretation:
+
+- The next real experiment should generate a larger risk-aligned dataset around
+  the selected risky seed windows, train with `--risk-trace-report`, and
+  quick-screen the result against the anchor/raw candidate selected-window
+  baselines before any full repeated gate.
+- Because only a few transitions matched, the next dataset should include all
+  risky windows from the paired trace report and possibly use repeated
+  checkpoint-pool self-play to create more rows around those exact decision
+  states.
+
+### Experiment: Risk-Trace Candidate V1
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357
+/root/fh-mahjong-runs/chongci-risktrace-candidate-v1-latest
+```
+
+Question:
+
+Can exact first-divergence risk weighting improve the previously rejected
+conservative reward learner on the selected high-risk windows without hurting
+the promoted anchor's tail-risk behavior?
+
+Data:
+
+The training run reused the four main historical datasets:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-latest/data/selfplay-current-capped400k-npz
+```
+
+It also added the all-current risk-aligned smoke shards and new all-raw-candidate
+risk-aligned shards for the selected seed windows:
+
+| Policy Source | Seed Window | Episodes | Transitions |
+|---------------|-------------|----------|-------------|
+| promoted anchor | 534000 | 6 | 11,670 |
+| promoted anchor | 544001 | 4 | 8,486 |
+| promoted anchor | 554001 | 1 | 1,440 |
+| raw conservative candidate | 534000 | 6 | 12,416 |
+| raw conservative candidate | 544001 | 4 | 8,327 |
+| raw conservative candidate | 554001 | 1 | 1,440 |
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357/checkpoints/iql_risktrace_v1/epoch_001.pt
+epochs: 1
+lr: 5e-6
+max_transitions: 400000
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_weight: 1.0
+risk_trace_weight: 6.0
+risk_trace_worst_delta_count: 8
+MLflow train run: c427a6312b7e425ba4b175c367654b1a
+```
+
+Risk trace matching was non-zero but sparse:
+
+```text
+current-policy shards matched: 5 cases, 4 weighted transitions
+raw-candidate shards matched: 4 cases, 4 weighted transitions
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-risktrace-candidate-v1-20260530-013357/reports/candidate_risktrace_v1_selected_risk_windows.json
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+MLflow eval run: 98439cb470dd41b0902510bf6a21b617
+```
+
+Result:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.1428 | -6.2820 | 40.91% | 20.45% |
+| raw conservative candidate | -0.1820 | -8.0080 | 43.18% | 27.27% |
+| high-risk weight 3 | -0.1630 | -7.1710 | 45.45% | 27.27% |
+| high-risk weight 5 | -0.1738 | -7.6490 | 43.18% | 25.00% |
+| risk-trace candidate v1 | -0.1466 | -6.4520 | 43.18% | 20.45% |
+
+Large-loss cases for the risk-trace candidate:
+
+```text
+534001 seat 0 reward -1.930
+534003 seat 0 reward -2.095
+544003 seat 0 reward -1.463
+534000 seat 1 reward -1.154
+544001 seat 2 reward -1.009
+544003 seat 2 reward -1.282
+554001 seat 2 reward -1.364
+534001 seat 3 reward -1.249
+544004 seat 3 reward -1.116
+```
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate for this
+checkpoint.
+
+Interpretation:
+
+The risk-trace weighting direction is materially better than the raw
+conservative candidate and the broader high-risk weighting variants on the
+selected risk windows. However, it still does not beat the promoted anchor on
+mean reward, and it only matches the anchor's large-loss rate instead of
+improving it. The sparse match count also means the training signal is too thin
+to justify promotion work. The next branch should either create denser exact
+divergence-state coverage or add features that let the model generalize the
+risk state rather than merely upweighting a handful of matched rows.
+
+### Experiment: Risk-Trace Dense V2
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516
+/root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest
+```
+
+Question:
+
+V1 had too few exact risk-case matches. Does a broader paired trace over the
+full deterministic gate seed windows produce enough risk cases to improve the
+candidate beyond the promoted anchor?
+
+Trace:
+
+```text
+anchor: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate source: /root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-latest/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+report: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+seed windows: 534000:10, 544000:10, 554000:10
+seats: 0, 1, 2, 3
+pairs: 120
+divergence rate: 65.83%
+raw candidate better rate: 20.00%
+raw candidate mean delta vs anchor: +0.0038
+```
+
+The broader trace produced 61 unique risk cases:
+
+```text
+worst_delta: 40
+candidate_large_loss: 21
+new_candidate_large_loss: 3
+unique seeds covered: 27
+```
+
+Data:
+
+Dense v2 generated six risk-aligned shards, three from all-anchor self-play and
+three from all-raw-candidate self-play:
+
+| Policy Source | Seed Window | Episodes | Transitions |
+|---------------|-------------|----------|-------------|
+| promoted anchor | 534000 | 10 | 19,593 |
+| promoted anchor | 544000 | 10 | 21,292 |
+| promoted anchor | 554000 | 10 | 20,379 |
+| raw conservative candidate | 534000 | 10 | 20,362 |
+| raw conservative candidate | 544000 | 10 | 21,523 |
+| raw conservative candidate | 554000 | 10 | 20,520 |
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/checkpoints/iql_risktrace_dense_v2/epoch_001.pt
+epochs: 1
+lr: 5e-6
+max_transitions: 400000
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_weight: 1.0
+risk_trace_weight: 6.0
+risk_trace_worst_delta_count: 40
+MLflow train run: 9c6d5b64116c4824bf7b3343e6a11643
+```
+
+Risk trace matching was materially denser than v1:
+
+```text
+anchor shards matched: 14 cases, 12 weighted transitions
+raw-candidate shards matched: 14 cases, 13 weighted transitions
+total matched: 28 cases, 25 weighted transitions
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/reports/candidate_risktrace_dense_v2_gate_windows.json
+seed windows: 534000:10, 544000:10, 554000:10
+duplicate seats: true
+episodes: 120
+MLflow eval run: 9de488f3b67047609350d9e7cadcf338
+```
+
+Result:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor on paired trace | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| raw conservative candidate on paired trace | -0.0520 | -6.2360 | 45.00% | 17.50% |
+| risk-trace dense v2 | -0.0578 | -6.9390 | 43.33% | 16.67% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate for this
+checkpoint.
+
+Interpretation:
+
+Dense v2 fixed the data-density problem from v1, but the learned checkpoint
+still did not beat the promoted anchor. The raw conservative candidate continues
+to show the familiar tradeoff on these windows: slightly better EV and positive
+rate, worse large-loss rate. Risk-trace dense v2 softened the tail-risk
+regression versus the raw candidate, but gave up enough EV that it landed just
+behind the anchor on both main promotion dimensions.
+
+This suggests the next useful work is not more replay weighting with the same
+features. The learner needs either stronger risk features, a better target for
+match-level placement/tail risk, or a paired-action objective that can directly
+prefer the anchor action over the candidate action at known harmful
+divergences.
+
+### Experiment: Pairwise Divergence Preference V1/V2
+
+Implementation:
+
+The IQL trainer now supports a direct paired-trace preference signal:
+
+```text
+--pairwise-weight <float>
+--pairwise-margin <float>
+--pairwise-replay-multiplier <int>
+```
+
+Risk cases loaded from paired traces now preserve both actions at the first
+divergence:
+
+```text
+preferred action: anchor / left action
+avoided action: candidate / right action
+```
+
+Matched training rows receive:
+
+```text
+pairwise_preferred_action_ids
+pairwise_avoided_action_ids
+pairwise_weights
+```
+
+The trainer applies a margin loss on policy logits:
+
+```text
+max(0, margin - (logit(preferred) - logit(avoided)))
+```
+
+The first implementation exposed an important bug: empty pairwise batches used
+`logits.sum() * 0` as a zero loss. Because masked logits can contain `-inf`,
+this produced `nan`. The fix returns a true scalar zero tensor when no valid
+pairwise rows are present.
+
+#### V1: Sparse Pairwise Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-divergence-v1b-20260530-024913
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.5
+pairwise_margin: 0.25
+pairwise_replay_multiplier: 0
+MLflow train run: 5f0735f577cd4914bdc327e3892921ec
+```
+
+Signal check:
+
+```text
+matched pairwise cases: 28
+matched pairwise transitions: 25
+logged pairwise_count: 0 on sampled batches
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-divergence-v1b-20260530-024913/reports/candidate_pairwise_v1b_gate_windows.json
+episodes: 120
+mean_reward: -0.0564
+reward_sum: -6.7720
+positive_reward_rate: 43.33%
+large_loss_rate: 17.50%
+MLflow eval run: de12e6f2896b4a0cb5293dec482452e0
+```
+
+Decision:
+
+Rejected at quick-screen. The pairwise rows were too sparse under uniform
+sampling to affect training reliably.
+
+#### V2: Oversampled Pairwise Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-divergence-v2-20260530-030337
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.5
+pairwise_margin: 0.25
+pairwise_replay_multiplier: 256
+MLflow train run: cca4cf60e69b4b9d91e553c57fccf286
+```
+
+Signal check:
+
+```text
+pairwise replay expanded rows: 6,400
+logged pairwise_count: 3 to 8 on sampled batches
+logged pairwise_loss: 0.0000
+```
+
+The zero pairwise loss is meaningful: the promoted-anchor-initialized policy
+already ranked the anchor action above the raw-candidate action by the requested
+margin on those sampled divergence rows. Therefore this auxiliary did not add a
+strong corrective gradient.
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-divergence-v2-20260530-030337/reports/candidate_pairwise_v2_gate_windows.json
+episodes: 120
+mean_reward: -0.0891
+reward_sum: -10.6920
+positive_reward_rate: 42.50%
+large_loss_rate: 15.83%
+MLflow eval run: db85d09131164abea61691718620dca4
+```
+
+Comparison on the same 120-seat gate-window screen:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| risk-trace dense v2 | -0.0578 | -6.9390 | 43.33% | 16.67% |
+| pairwise v1b | -0.0564 | -6.7720 | 43.33% | 17.50% |
+| pairwise v2 | -0.0891 | -10.6920 | 42.50% | 15.83% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate.
+
+Interpretation:
+
+The pairwise machinery is useful infrastructure, but this specific preference
+target is mostly redundant when training starts from the promoted anchor. The
+policy already prefers the anchor actions at those first-divergence states, so
+the bad outcomes are likely coming from value/Q learning, later trajectory
+distribution shift, or missing risk context rather than the policy head failing
+to rank the anchor action above the candidate action at the recorded first
+divergence.
+
+Next direction:
+
+Pairwise policy-margin loss should remain available, but the next experiment
+should not spend another run on the same preference target. More useful options:
+
+1. Add risk-context features that explain why the raw candidate's higher-EV
+   choices create tail losses.
+2. Add a Q/value-side pairwise target, comparing the anchor and candidate
+   actions in the critic rather than only policy logits.
+3. Add a match-level tail-value auxiliary for bust risk and score-pressure.
+
+### Experiment: Pairwise Q Preference V1
+
+Implementation:
+
+The pairwise divergence machinery now supports an independent critic-side
+margin loss:
+
+```text
+--pairwise-q-weight <float>
+--pairwise-q-margin <float>
+```
+
+This reuses the same paired-trace labels as the policy-margin loss:
+
+```text
+preferred action: anchor / left action
+avoided action: candidate / right action
+```
+
+But it applies the margin to Q values instead of policy logits:
+
+```text
+max(0, margin - (Q(preferred) - Q(avoided)))
+```
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-q-v1-20260530-145835
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.0
+pairwise_q_weight: 0.5
+pairwise_q_margin: 0.25
+pairwise_replay_multiplier: 256
+MLflow train run: 63ac6b6db06442f587b170b77ddb48eb
+```
+
+Signal check:
+
+```text
+pairwise replay expanded rows: 6,400
+logged pairwise_count: 3 to 8 on sampled batches
+logged pairwise_q_loss: nonzero early, then 0.0000 after the critic fit the margin
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-q-v1-20260530-145835/reports/candidate_pairwise_q_v1_gate_windows.json
+episodes: 120
+mean_reward: -0.0801
+reward_sum: -9.6080
+positive_reward_rate: 42.50%
+large_loss_rate: 17.50%
+MLflow eval run: 2c9bccbd6e254418941a9c246317389b
+```
+
+Comparison on the same 120-seat gate-window screen:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| pairwise v2 policy-margin | -0.0891 | -10.6920 | 42.50% | 15.83% |
+| pairwise Q v1 | -0.0801 | -9.6080 | 42.50% | 17.50% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate.
+
+Interpretation:
+
+The Q-side preference loss is mechanically active and trainable, unlike the
+policy-margin loss that was already satisfied. However, fitting this critic
+margin did not improve deployed policy behavior. It likely perturbed the
+critic/policy update enough to hurt EV while still failing to solve tail risk.
+
+This closes the current paired-trace preference branch. The next useful branch
+should be feature-side or target-side:
+
+1. Add explicit score-pressure / bust-risk context to the observation.
+2. Add a match-level tail-value auxiliary that predicts probability or severity
+   of crossing the large-loss threshold.
+3. Revisit pairwise losses only after those richer risk signals exist.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1435,6 +2064,26 @@ Next interpretation:
 13. Stronger high-risk weighting (`5.0`) with lower policy drift reduced the
     selected-window large-loss rate from `27.27%` to `25.00%`, but still trailed
     the anchor and regressed EV versus weight `3.0`.
+14. The stack now records large-loss seed lists and first-divergence risk cases
+    directly, and IQL can consume paired trace reports for targeted sample
+    weighting when datasets preserve or can map the relevant seed metadata.
+15. A remote smoke run confirmed that `--risk-trace-report` produces non-zero
+    exact `seed + seat + decision_index` matches on new shards, so targeted
+    divergence-state training is now testable.
+16. Risk-trace candidate v1 improved strongly over the raw conservative
+    candidate but still failed to beat the promoted anchor on selected risk
+    windows, so it is rejected before the full repeated gate.
+17. Dense risk-trace coverage increased exact matched cases from single digits
+    to 28 cases, but still did not beat the promoted anchor; the bottleneck is
+    now feature/target quality more than risk-case sampling density.
+18. Pairwise policy-margin training is implemented and validated, but the first
+    pairwise runs showed that the promoted-anchor-initialized policy already
+    ranks anchor actions over candidate actions on the sampled divergence rows;
+    this did not improve promotion metrics.
+19. Pairwise Q-margin training is also implemented and validated, but the first
+    Q-side run worsened EV and large-loss rate, so paired-trace preference
+    losses should pause until stronger risk-context features or target signals
+    are added.
 
 ## Recommended Next Experiments
 
@@ -1453,6 +2102,25 @@ lr: 5e-6 or lower
 ```
 
 Promotion still requires the deterministic repeated gate.
+
+After risk-trace candidate v1, the priority is not another identical weighting
+run. The next version should increase exact-match density before training, for
+example by tracing more anchor/candidate windows, adding all first-divergence
+cases rather than only the worst deltas, or generating repeated shards from the
+same seed/seat decision neighborhoods.
+
+Dense v2 completed this density test and did not promote. Further experiments
+should avoid repeating the same `risk_trace_weight=6.0` approach unless another
+change is introduced, such as richer risk features, direct pairwise divergence
+loss, or a match-level tail-value auxiliary.
+
+Pairwise policy-margin loss has now been tested as that direct divergence loss.
+The useful next step is a critic-side or feature-side change, not another
+policy-margin run with the same trace.
+
+Pairwise Q-margin loss has now also been tested and rejected. The next branch
+should be feature-side or target-side, especially score-pressure and bust-risk
+features or a large-loss probability/severity auxiliary.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 

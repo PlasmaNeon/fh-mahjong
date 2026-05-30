@@ -62,6 +62,22 @@ class ReplayBuffer:
             [float(item.terminated or item.truncated) for item in items],
             dtype=np.float32,
         )
+        sample_weights = np.asarray(
+            [float(item.info.get("sample_weight", 1.0)) for item in items],
+            dtype=np.float32,
+        )
+        pairwise_preferred_action_ids = np.asarray(
+            [int(item.info.get("pairwise_preferred_action_id", -1)) for item in items],
+            dtype=np.int64,
+        )
+        pairwise_avoided_action_ids = np.asarray(
+            [int(item.info.get("pairwise_avoided_action_id", -1)) for item in items],
+            dtype=np.int64,
+        )
+        pairwise_weights = np.asarray(
+            [float(item.info.get("pairwise_weight", 0.0)) for item in items],
+            dtype=np.float32,
+        )
         return TrainBatch(
             planes=planes,
             scalars=scalars,
@@ -74,6 +90,10 @@ class ReplayBuffer:
             next_action_mask=next_action_mask,
             rewards=rewards,
             dones=dones,
+            sample_weights=sample_weights,
+            pairwise_preferred_action_ids=pairwise_preferred_action_ids,
+            pairwise_avoided_action_ids=pairwise_avoided_action_ids,
+            pairwise_weights=pairwise_weights,
         )
 
 
@@ -118,6 +138,26 @@ class ArrayReplayBuffer:
             if "terminated" in self.arrays and "truncated" in self.arrays
             else np.zeros(batch_size, dtype=np.float32)
         )
+        sample_weights = (
+            self.arrays["sample_weights"][indices].astype(np.float32, copy=False)
+            if "sample_weights" in self.arrays
+            else np.ones(batch_size, dtype=np.float32)
+        )
+        pairwise_preferred_action_ids = (
+            self.arrays["pairwise_preferred_action_ids"][indices].astype(np.int64, copy=False)
+            if "pairwise_preferred_action_ids" in self.arrays
+            else np.full(batch_size, -1, dtype=np.int64)
+        )
+        pairwise_avoided_action_ids = (
+            self.arrays["pairwise_avoided_action_ids"][indices].astype(np.int64, copy=False)
+            if "pairwise_avoided_action_ids" in self.arrays
+            else np.full(batch_size, -1, dtype=np.int64)
+        )
+        pairwise_weights = (
+            self.arrays["pairwise_weights"][indices].astype(np.float32, copy=False)
+            if "pairwise_weights" in self.arrays
+            else np.zeros(batch_size, dtype=np.float32)
+        )
 
         return TrainBatch(
             planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
@@ -137,6 +177,10 @@ class ArrayReplayBuffer:
             else np.empty((batch_size, 0), dtype=np.int8),
             rewards=rewards,
             dones=dones,
+            sample_weights=sample_weights,
+            pairwise_preferred_action_ids=pairwise_preferred_action_ids,
+            pairwise_avoided_action_ids=pairwise_avoided_action_ids,
+            pairwise_weights=pairwise_weights,
         )
 
 
@@ -191,6 +235,15 @@ def concatenate_train_batches(batches: Sequence[TrainBatch]) -> TrainBatch:
         next_action_mask=_concat_with_padding([batch.next_action_mask for batch in batches]),
         rewards=np.concatenate([batch.rewards for batch in batches]).astype(np.float32, copy=False),
         dones=np.concatenate([batch.dones for batch in batches]).astype(np.float32, copy=False),
+        sample_weights=np.concatenate([batch.sample_weights for batch in batches]).astype(np.float32, copy=False),
+        pairwise_preferred_action_ids=np.concatenate(
+            [batch.pairwise_preferred_action_ids for batch in batches]
+        ).astype(np.int64, copy=False),
+        pairwise_avoided_action_ids=np.concatenate([batch.pairwise_avoided_action_ids for batch in batches]).astype(
+            np.int64,
+            copy=False,
+        ),
+        pairwise_weights=np.concatenate([batch.pairwise_weights for batch in batches]).astype(np.float32, copy=False),
     )
 
 

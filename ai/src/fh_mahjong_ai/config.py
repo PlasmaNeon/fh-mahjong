@@ -74,6 +74,10 @@ class DiscreteIQLConfig:
     large_loss_threshold: Optional[float] = None
     large_loss_penalty: float = 0.0
     large_loss_weight: float = 1.0
+    pairwise_weight: float = 0.0
+    pairwise_margin: float = 0.0
+    pairwise_q_weight: float = 0.0
+    pairwise_q_margin: float = 0.0
 
 
 @dataclass

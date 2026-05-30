@@ -57,6 +57,8 @@ def main() -> None:
     parser.add_argument("--chongci-bust-threshold", type=int, default=0)
     parser.add_argument("--chongci-max-hands", type=int, default=50)
     parser.add_argument("--max-steps-per-episode", type=int, default=20000)
+    parser.add_argument("--large-loss-threshold", type=float, default=None)
+    parser.add_argument("--worst-delta-count", type=int, default=8)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--progress-interval", type=int, default=8)
     parser.add_argument("--report-output", type=Path, required=True)
@@ -88,6 +90,8 @@ def main() -> None:
         chongci_bust_threshold=args.chongci_bust_threshold,
         chongci_max_hands=args.chongci_max_hands,
         max_steps_per_episode=args.max_steps_per_episode,
+        large_loss_threshold=args.large_loss_threshold,
+        worst_delta_count=args.worst_delta_count,
         progress_callback=progress,
     )
     report["left_checkpoint"] = str(args.left_checkpoint)
