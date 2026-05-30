@@ -1239,6 +1239,100 @@ Next interpretation:
   add explicit large-loss transition weighting, or train a new candidate with
   stronger rank/bust-risk features instead of relying on a post-hoc guard.
 
+### High-Risk Transition Weight 3.0 Quick Screen, 2026-05-29
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-highrisk-weight3-20260529-134310
+```
+
+Question:
+
+Can direct loss weighting for large-loss transitions change the conservative
+epoch-1 policy where target utility penalties and post-hoc guards did not?
+
+Implementation:
+
+`train_iql.py` now accepts:
+
+```text
+--large-loss-weight <float>
+```
+
+When paired with `--large-loss-threshold`, the trainer upweights all IQL loss
+terms for transitions whose terminal return is at or below the threshold. This
+is different from `--large-loss-penalty`: the penalty changes the target
+utility, while the weight changes how strongly those samples train the Q,
+value, policy, BC, and CQL losses. Weighted losses are normalized by the sum of
+sample weights so the batch learning-rate scale is not multiplied blindly.
+
+Validation:
+
+```text
+local:  uv run --project ai python -m pytest ai/tests/test_iql.py ai/tests/test_policies.py ai/tests/test_evaluate.py
+remote: /root/.local/bin/uv run --project ai python -m pytest ai/tests/test_iql.py ai/tests/test_policies.py ai/tests/test_evaluate.py
+```
+
+Both focused test runs passed: `25 passed`.
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-highrisk-weight3-20260529-134310/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_llw3_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as conservative epoch 1
+epochs: 1
+batch size: 4096
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.5
+bc_weight: 2.0
+cql_weight: 0.0
+large_loss_threshold: -1.0
+large_loss_weight: 3.0
+mlflow training run: dc78069ff34d4d4a8adabb99202669f2
+```
+
+The logged sample weights showed the weighting path was active:
+
+```text
+step 100 sample_weight=1.327
+step 200 sample_weight=1.331
+```
+
+Selected high-risk quick screen:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+mlflow eval run: fbdd407efe7540789c5e0fd8748a9a4d
+```
+
+| Policy | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|--------|-------------|------------|---------------|-----------------|
+| Anchor | -0.1427727342 | -6.2820005417 | 40.91% | 20.45% |
+| Raw conservative candidate | -0.1820000112 | -8.0080003738 | 43.18% | 27.27% |
+| High-risk weight 3.0 | -0.1629772782 | -7.1710004807 | 45.45% | 27.27% |
+
+Decision:
+
+Do not run the full deterministic repeated gate for this candidate. The
+training-side weighting did move the policy: mean reward and positive rate
+improved versus the raw candidate on the selected windows. However, the
+large-loss rate did not improve and remains materially worse than the anchor.
+
+Next interpretation:
+
+- Direct high-risk weighting works mechanically and changes the policy.
+- Weight `3.0` is not enough to fix the tail-risk regression.
+- The next run should either use stronger weighting (`4.0` to `6.0`) with even
+  lower policy drift, or filter/oversample the exact first-divergence states
+  instead of weighting every large-loss transition equally.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1262,20 +1356,22 @@ Next interpretation:
 11. A corrected policy-head Q-margin guard improves over the raw candidate on
     selected risk windows but still trails the anchor, so it is not worth a full
     promotion gate yet.
+12. High-risk transition weighting is implemented and active, but weight `3.0`
+    improved selected-window EV/positive rate without reducing large-loss rate.
 
 ## Recommended Next Experiments
 
-### Step 1: Train With Direct High-Risk Weighting
+### Step 1: Target The Exact Divergence States
 
-Use the paired-trace large-loss and worst-delta seeds to create an explicit
-high-risk-state weighting path instead of relying on post-hoc Q-margin serving.
-The first implementation should be conservative:
+Use the paired-trace large-loss and worst-delta seeds to create targeted
+high-risk-state weighting instead of weighting every large-loss transition
+equally. The next implementation should be more selective:
 
 ```text
-large-loss transition weight: 2x to 4x
-worst-delta seed oversampling: selected windows only, not the whole gate
-bc_weight: keep high, 2.0 to 4.0
-policy_weight: keep low, 0.25 to 0.5
+first-divergence seed/seat filtering
+large-loss transition weight: 4x to 6x only for selected high-risk groups
+bc_weight: keep high, 3.0 to 4.0
+policy_weight: lower, 0.25
 lr: 5e-6 or lower
 ```
 

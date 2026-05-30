@@ -73,6 +73,7 @@ class DiscreteIQLConfig:
     target_tau: float = 0.005
     large_loss_threshold: Optional[float] = None
     large_loss_penalty: float = 0.0
+    large_loss_weight: float = 1.0
 
 
 @dataclass
