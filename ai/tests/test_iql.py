@@ -8,13 +8,15 @@ import torch
 from fh_mahjong_ai.buffer import ReplayBuffer
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.scripts.train_iql import train_iql
+from fh_mahjong_ai.risk_filter import RiskCase
+from fh_mahjong_ai.scripts.train_iql import load_iql_replay_buffer, train_iql
 from fh_mahjong_ai.storage import load_compatible_checkpoint, write_transitions_jsonl, write_transitions_npz_shards
 from fh_mahjong_ai.trainer import (
     DiscreteIQLTrainer,
     discounted_terminal_returns,
     large_loss_adjusted_rewards,
     large_loss_sample_weights,
+    pairwise_margin_loss,
 )
 from fh_mahjong_ai.types import Observation, Transition
 
@@ -82,10 +84,38 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert np.isfinite(metrics.policy_loss)
     assert np.isfinite(metrics.bc_loss)
     assert np.isfinite(metrics.cql_loss)
+    assert np.isfinite(metrics.pairwise_loss)
     assert 0.0 <= metrics.avg_weight <= 5.0
     assert 0.0 <= metrics.max_weight <= 5.0
     assert metrics.avg_sample_weight == 1.0
     assert metrics.max_sample_weight == 1.0
+    assert metrics.pairwise_count == 0
+
+
+def test_pairwise_margin_loss_prefers_anchor_action() -> None:
+    logits = torch.tensor([[0.2, 0.7, 0.4], [0.8, 0.1, 0.3]])
+    action_mask = torch.ones((2, 3), dtype=torch.int8)
+    preferred = torch.tensor([0, -1])
+    avoided = torch.tensor([1, -1])
+    weights = torch.tensor([2.0, 0.0])
+
+    loss, count = pairwise_margin_loss(logits, action_mask, preferred, avoided, weights, margin=0.25)
+
+    assert count == 1
+    torch.testing.assert_close(loss, torch.tensor(0.75))
+
+
+def test_pairwise_margin_loss_empty_batch_stays_finite_with_masked_logits() -> None:
+    logits = torch.tensor([[0.2, float("-inf"), 0.4]])
+    action_mask = torch.tensor([[1, 0, 1]], dtype=torch.int8)
+    preferred = torch.tensor([-1])
+    avoided = torch.tensor([-1])
+    weights = torch.tensor([0.0])
+
+    loss, count = pairwise_margin_loss(logits, action_mask, preferred, avoided, weights, margin=0.25)
+
+    assert count == 0
+    torch.testing.assert_close(loss, torch.tensor(0.0))
 
 
 def test_discounted_terminal_returns_use_steps_to_done() -> None:
@@ -170,6 +200,31 @@ def test_train_iql_runs_from_npz_shards_with_limit(tmp_path: Path) -> None:
 
     assert len(metrics) > 0
     assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_load_iql_replay_buffer_can_add_pairwise_auxiliary_rows(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    write_transitions_npz_shards(shard_dir, _transitions(8, env_config), shard_size=8)
+
+    _, transition_count, counts = load_iql_replay_buffer(
+        [shard_dir],
+        risk_cases=[
+            RiskCase(
+                seed=100,
+                seat=0,
+                action_id=0,
+                baseline_action_id=1,
+            )
+        ],
+        risk_weight=1.0,
+        risk_dataset_start_seeds=[100],
+        apply_risk_cases=True,
+        pairwise_replay_multiplier=5,
+    )
+
+    assert transition_count == 13
+    assert counts == [5, 8]
 
 
 def test_train_iql_runs_from_multiple_npz_shards_with_mixed_scalar_shapes(tmp_path: Path) -> None:

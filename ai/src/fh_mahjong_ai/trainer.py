@@ -54,6 +54,7 @@ class DiscreteIQLMetrics:
     policy_loss: float
     bc_loss: float
     cql_loss: float
+    pairwise_loss: float
     avg_q: float
     avg_v: float
     avg_target_q: float
@@ -62,6 +63,7 @@ class DiscreteIQLMetrics:
     max_weight: float
     avg_sample_weight: float
     max_sample_weight: float
+    pairwise_count: int
 
 
 def collect_episode(env: MahjongEnv, policy: PolicyLike, seed: Optional[int] = None) -> List[Transition]:
@@ -292,6 +294,9 @@ class DiscreteIQLTrainer:
         returns = torch.from_numpy(batch.returns).to(self.train_config.device)
         steps_to_done = torch.from_numpy(batch.steps_to_done).to(self.train_config.device)
         external_sample_weights = torch.from_numpy(batch.sample_weights).to(self.train_config.device)
+        pairwise_preferred_action_ids = torch.from_numpy(batch.pairwise_preferred_action_ids).to(self.train_config.device)
+        pairwise_avoided_action_ids = torch.from_numpy(batch.pairwise_avoided_action_ids).to(self.train_config.device)
+        pairwise_weights = torch.from_numpy(batch.pairwise_weights).to(self.train_config.device)
         utility_returns = large_loss_adjusted_rewards(
             returns,
             self.iql_config.large_loss_threshold,
@@ -339,6 +344,14 @@ class DiscreteIQLTrainer:
         per_sample_policy_loss = nn.functional.cross_entropy(policy_logits, action_ids, reduction="none")
         policy_loss = weighted_mean(advantage_weights * per_sample_policy_loss, sample_weights)
         bc_loss = weighted_mean(per_sample_policy_loss, sample_weights)
+        pairwise_loss, pairwise_count = pairwise_margin_loss(
+            policy_logits,
+            action_mask,
+            pairwise_preferred_action_ids,
+            pairwise_avoided_action_ids,
+            pairwise_weights,
+            margin=self.iql_config.pairwise_margin,
+        )
 
         loss = (
             self.iql_config.q_weight * q_loss
@@ -346,6 +359,7 @@ class DiscreteIQLTrainer:
             + self.iql_config.policy_weight * policy_loss
             + self.iql_config.bc_weight * bc_loss
             + self.iql_config.cql_weight * cql_loss
+            + self.iql_config.pairwise_weight * pairwise_loss
         )
 
         self.optimizer.zero_grad(set_to_none=True)
@@ -360,6 +374,7 @@ class DiscreteIQLTrainer:
             policy_loss=float(policy_loss.item()),
             bc_loss=float(bc_loss.item()),
             cql_loss=float(cql_loss.item()),
+            pairwise_loss=float(pairwise_loss.item()),
             avg_q=float(dataset_q.mean().item()),
             avg_v=float(values.mean().item()),
             avg_target_q=float(target_q.mean().item()),
@@ -368,6 +383,7 @@ class DiscreteIQLTrainer:
             max_weight=float(advantage_weights.max().item()),
             avg_sample_weight=float(sample_weights.mean().item()),
             max_sample_weight=float(sample_weights.max().item()),
+            pairwise_count=pairwise_count,
         )
 
     def update_target_network(self) -> None:
@@ -394,6 +410,43 @@ def expectile_loss(
 def weighted_mean(values: torch.Tensor, sample_weights: torch.Tensor) -> torch.Tensor:
     weights = sample_weights.to(dtype=values.dtype, device=values.device)
     return (values * weights).sum() / torch.clamp(weights.sum(), min=1e-6)
+
+
+def pairwise_margin_loss(
+    logits: torch.Tensor,
+    action_mask: torch.Tensor,
+    preferred_action_ids: torch.Tensor,
+    avoided_action_ids: torch.Tensor,
+    pairwise_weights: torch.Tensor,
+    margin: float = 0.0,
+) -> tuple[torch.Tensor, int]:
+    valid = (
+        (pairwise_weights > 0.0)
+        & (preferred_action_ids >= 0)
+        & (avoided_action_ids >= 0)
+        & (preferred_action_ids != avoided_action_ids)
+    )
+    action_count = logits.shape[1]
+    valid &= preferred_action_ids < action_count
+    valid &= avoided_action_ids < action_count
+    if action_mask.numel() > 0:
+        rows = torch.arange(logits.shape[0], device=logits.device)
+        preferred_legal = action_mask[rows, torch.clamp(preferred_action_ids, min=0, max=action_count - 1)] > 0
+        avoided_legal = action_mask[rows, torch.clamp(avoided_action_ids, min=0, max=action_count - 1)] > 0
+        valid &= preferred_legal & avoided_legal
+
+    count = int(valid.sum().item())
+    if count == 0:
+        return logits.new_zeros(()), 0
+
+    selected_logits = logits[valid]
+    selected_preferred = preferred_action_ids[valid]
+    selected_avoided = avoided_action_ids[valid]
+    selected_weights = pairwise_weights[valid].to(dtype=logits.dtype, device=logits.device)
+    preferred_logits = selected_logits.gather(1, selected_preferred.unsqueeze(1)).squeeze(1)
+    avoided_logits = selected_logits.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
+    losses = torch.relu(float(margin) - (preferred_logits - avoided_logits))
+    return weighted_mean(losses, selected_weights), count
 
 
 def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tensor, gamma: float) -> torch.Tensor:

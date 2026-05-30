@@ -1782,6 +1782,169 @@ match-level placement/tail risk, or a paired-action objective that can directly
 prefer the anchor action over the candidate action at known harmful
 divergences.
 
+### Experiment: Pairwise Divergence Preference V1/V2
+
+Implementation:
+
+The IQL trainer now supports a direct paired-trace preference signal:
+
+```text
+--pairwise-weight <float>
+--pairwise-margin <float>
+--pairwise-replay-multiplier <int>
+```
+
+Risk cases loaded from paired traces now preserve both actions at the first
+divergence:
+
+```text
+preferred action: anchor / left action
+avoided action: candidate / right action
+```
+
+Matched training rows receive:
+
+```text
+pairwise_preferred_action_ids
+pairwise_avoided_action_ids
+pairwise_weights
+```
+
+The trainer applies a margin loss on policy logits:
+
+```text
+max(0, margin - (logit(preferred) - logit(avoided)))
+```
+
+The first implementation exposed an important bug: empty pairwise batches used
+`logits.sum() * 0` as a zero loss. Because masked logits can contain `-inf`,
+this produced `nan`. The fix returns a true scalar zero tensor when no valid
+pairwise rows are present.
+
+#### V1: Sparse Pairwise Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-divergence-v1b-20260530-024913
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.5
+pairwise_margin: 0.25
+pairwise_replay_multiplier: 0
+MLflow train run: 5f0735f577cd4914bdc327e3892921ec
+```
+
+Signal check:
+
+```text
+matched pairwise cases: 28
+matched pairwise transitions: 25
+logged pairwise_count: 0 on sampled batches
+```
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-divergence-v1b-20260530-024913/reports/candidate_pairwise_v1b_gate_windows.json
+episodes: 120
+mean_reward: -0.0564
+reward_sum: -6.7720
+positive_reward_rate: 43.33%
+large_loss_rate: 17.50%
+MLflow eval run: de12e6f2896b4a0cb5293dec482452e0
+```
+
+Decision:
+
+Rejected at quick-screen. The pairwise rows were too sparse under uniform
+sampling to affect training reliably.
+
+#### V2: Oversampled Pairwise Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-pairwise-divergence-v2-20260530-030337
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+risk_trace_weight: 3.0
+pairwise_weight: 0.5
+pairwise_margin: 0.25
+pairwise_replay_multiplier: 256
+MLflow train run: cca4cf60e69b4b9d91e553c57fccf286
+```
+
+Signal check:
+
+```text
+pairwise replay expanded rows: 6,400
+logged pairwise_count: 3 to 8 on sampled batches
+logged pairwise_loss: 0.0000
+```
+
+The zero pairwise loss is meaningful: the promoted-anchor-initialized policy
+already ranked the anchor action above the raw-candidate action by the requested
+margin on those sampled divergence rows. Therefore this auxiliary did not add a
+strong corrective gradient.
+
+Evaluation:
+
+```text
+report: /root/fh-mahjong-runs/chongci-pairwise-divergence-v2-20260530-030337/reports/candidate_pairwise_v2_gate_windows.json
+episodes: 120
+mean_reward: -0.0891
+reward_sum: -10.6920
+positive_reward_rate: 42.50%
+large_loss_rate: 15.83%
+MLflow eval run: db85d09131164abea61691718620dca4
+```
+
+Comparison on the same 120-seat gate-window screen:
+
+| Checkpoint | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|------------|-------------|------------|---------------|-----------------|
+| promoted anchor | -0.0558 | -6.6940 | 43.33% | 15.00% |
+| risk-trace dense v2 | -0.0578 | -6.9390 | 43.33% | 16.67% |
+| pairwise v1b | -0.0564 | -6.7720 | 43.33% | 17.50% |
+| pairwise v2 | -0.0891 | -10.6920 | 42.50% | 15.83% |
+
+Decision:
+
+Rejected at quick-screen. Do not run the full repeated promotion gate.
+
+Interpretation:
+
+The pairwise machinery is useful infrastructure, but this specific preference
+target is mostly redundant when training starts from the promoted anchor. The
+policy already prefers the anchor actions at those first-divergence states, so
+the bad outcomes are likely coming from value/Q learning, later trajectory
+distribution shift, or missing risk context rather than the policy head failing
+to rank the anchor action above the candidate action at the recorded first
+divergence.
+
+Next direction:
+
+Pairwise policy-margin loss should remain available, but the next experiment
+should not spend another run on the same preference target. More useful options:
+
+1. Add risk-context features that explain why the raw candidate's higher-EV
+   choices create tail losses.
+2. Add a Q/value-side pairwise target, comparing the anchor and candidate
+   actions in the critic rather than only policy logits.
+3. Add a match-level tail-value auxiliary for bust risk and score-pressure.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1822,6 +1985,10 @@ divergences.
 17. Dense risk-trace coverage increased exact matched cases from single digits
     to 28 cases, but still did not beat the promoted anchor; the bottleneck is
     now feature/target quality more than risk-case sampling density.
+18. Pairwise policy-margin training is implemented and validated, but the first
+    pairwise runs showed that the promoted-anchor-initialized policy already
+    ranks anchor actions over candidate actions on the sampled divergence rows;
+    this did not improve promotion metrics.
 
 ## Recommended Next Experiments
 
@@ -1851,6 +2018,10 @@ Dense v2 completed this density test and did not promote. Further experiments
 should avoid repeating the same `risk_trace_weight=6.0` approach unless another
 change is introduced, such as richer risk features, direct pairwise divergence
 loss, or a match-level tail-value auxiliary.
+
+Pairwise policy-margin loss has now been tested as that direct divergence loss.
+The useful next step is a critic-side or feature-side change, not another
+policy-margin run with the same trace.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 
