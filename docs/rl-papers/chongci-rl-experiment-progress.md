@@ -1485,6 +1485,74 @@ Next interpretation:
   `--risk-trace-report` and verify that the matched transition count is
   non-zero before evaluating.
 
+### Risk-Trace Matching Smoke, 2026-05-30
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825
+```
+
+Question:
+
+Does the new `--risk-trace-report` path actually map paired-trace first
+divergences back to training rows when the generated shards preserve
+`decision_indices`?
+
+Dataset generation:
+
+Generated three all-checkpoint Chongci self-play shard sets with the promoted
+current checkpoint controlling all four seats:
+
+```text
+current checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+trace report: /root/fh-mahjong-runs/chongci-risk-diagnostics-20260527-231007/reports/anchor_vs_candidate_selected_trace.json
+```
+
+| Start Seed | Episodes | Transitions | Output |
+|------------|----------|-------------|--------|
+| 534000 | 6 | 11,670 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-534000-n6-npz` |
+| 544001 | 4 | 8,486 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-544001-n4-npz` |
+| 554001 | 1 | 1,440 | `/root/fh-mahjong-runs/chongci-risktrace-smoke-20260530-012825/data/risk-seed-554001-n1-npz` |
+
+Training smoke:
+
+```text
+--risk-trace-report /root/fh-mahjong-runs/chongci-risk-diagnostics-20260527-231007/reports/anchor_vs_candidate_selected_trace.json
+--risk-trace-weight 6.0
+--risk-trace-dataset-start-seed 534000
+--risk-trace-dataset-start-seed 544001
+--risk-trace-dataset-start-seed 554001
+--risk-trace-worst-delta-count 8
+```
+
+Matching result:
+
+```text
+dataset=0 cases=20 matched_cases=4 weighted_transitions=3 matched_by={'seed_seat_decision': 4}
+dataset=1 cases=20 matched_cases=1 weighted_transitions=1 matched_by={'seed_seat_decision': 1}
+dataset=2 cases=20 matched_cases=0 weighted_transitions=0 matched_by={}
+```
+
+Decision:
+
+The targeted risk-trace path works. It can map paired trace first-divergence
+cases into generated training rows by exact `episode_index + seat +
+decision_index`, and the smoke produced non-zero matched cases. This validates
+the plumbing; it is not yet a promoted checkpoint experiment because the
+dataset is intentionally tiny and used only to verify matching.
+
+Next interpretation:
+
+- The next real experiment should generate a larger risk-aligned dataset around
+  the selected risky seed windows, train with `--risk-trace-report`, and
+  quick-screen the result against the anchor/raw candidate selected-window
+  baselines before any full repeated gate.
+- Because only a few transitions matched, the next dataset should include all
+  risky windows from the paired trace report and possibly use repeated
+  checkpoint-pool self-play to create more rows around those exact decision
+  states.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1516,6 +1584,9 @@ Next interpretation:
 14. The stack now records large-loss seed lists and first-divergence risk cases
     directly, and IQL can consume paired trace reports for targeted sample
     weighting when datasets preserve or can map the relevant seed metadata.
+15. A remote smoke run confirmed that `--risk-trace-report` produces non-zero
+    exact `seed + seat + decision_index` matches on new shards, so targeted
+    divergence-state training is now testable.
 
 ## Recommended Next Experiments
 
