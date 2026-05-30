@@ -1333,6 +1333,80 @@ Next interpretation:
   lower policy drift, or filter/oversample the exact first-divergence states
   instead of weighting every large-loss transition equally.
 
+### High-Risk Weight 5.0 With Lower Policy Drift, 2026-05-30
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-highrisk-weight5-bc3-pw025-20260530-005605
+```
+
+Question:
+
+Does stronger high-risk weighting reduce large-loss rate if policy drift is
+constrained harder with lower policy improvement weight and higher BC
+regularization?
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-highrisk-weight5-bc3-pw025-20260530-005605/checkpoints/iql_selfplay400k_lr5e6_bc3_pw025_llw5_1ep/epoch_001.pt
+data: same four-dataset capped400k mix as conservative epoch 1
+epochs: 1
+batch size: 4096
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+max_weight: 5
+policy_weight: 0.25
+bc_weight: 3.0
+cql_weight: 0.0
+large_loss_threshold: -1.0
+large_loss_weight: 5.0
+mlflow training run: 01519955e154456da9beac53f54c2d11
+```
+
+The logged sample weights showed the stronger weighting path was active:
+
+```text
+step 100 sample_weight=1.654
+step 200 sample_weight=1.662
+```
+
+Selected high-risk quick screen:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+mlflow eval run: 408277b6ecd846d39df902c8812b0e37
+```
+
+| Policy | Mean Reward | Reward Sum | Positive Rate | Large-Loss Rate |
+|--------|-------------|------------|---------------|-----------------|
+| Anchor | -0.1427727342 | -6.2820005417 | 40.91% | 20.45% |
+| Raw conservative candidate | -0.1820000112 | -8.0080003738 | 43.18% | 27.27% |
+| High-risk weight 3.0 | -0.1629772782 | -7.1710004807 | 45.45% | 27.27% |
+| High-risk weight 5.0, BC 3.0, policy 0.25 | -0.1738409400 | -7.6490011215 | 43.18% | 25.00% |
+
+Decision:
+
+Do not run the full deterministic repeated gate. This candidate reduces
+large-loss rate versus the raw and weight-3 candidates, but it still trails the
+anchor on tail risk and trails weight 3.0 on mean reward and positive rate.
+
+Next interpretation:
+
+- Broad high-risk weighting has a real effect, but the tradeoff is not clean:
+  stronger weighting reduces tail rate slightly while damaging EV.
+- The next useful path is not simply a larger global weight. It should target
+  the exact action-divergence states, especially `pass->pon` / `discard`
+  divergence cases identified by paired traces.
+- Add first-divergence reports directly to evaluation output or create a
+  high-risk dataset/filter so the trainer can emphasize those states without
+  reweighting every large-loss trajectory.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -1358,6 +1432,9 @@ Next interpretation:
     promotion gate yet.
 12. High-risk transition weighting is implemented and active, but weight `3.0`
     improved selected-window EV/positive rate without reducing large-loss rate.
+13. Stronger high-risk weighting (`5.0`) with lower policy drift reduced the
+    selected-window large-loss rate from `27.27%` to `25.00%`, but still trailed
+    the anchor and regressed EV versus weight `3.0`.
 
 ## Recommended Next Experiments
 
