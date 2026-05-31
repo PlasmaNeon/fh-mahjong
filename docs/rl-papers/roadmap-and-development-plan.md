@@ -219,6 +219,7 @@ Mahjong exercise:
 - For paired first-divergence replay, require a stronger objective before spending full evaluation budget; sparse filtered replay and sparse-row oversampling did not improve the first Chongci risk-context candidates.
 - Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
 - Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
+- Before using a risk head for serving, require calibration evidence: AUC above random, monotonic risk bands, and acceptable severity error. The first Chongci large-loss heads failed this check.
 
 ## Stage 6: Rewards And Credit Assignment
 

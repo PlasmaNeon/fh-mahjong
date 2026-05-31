@@ -3050,6 +3050,78 @@ Lowering the auxiliary coefficients did not change the selected-window behavior.
 The shared-gradient large-loss auxiliary is not a useful next promotion path in
 its current form.
 
+### Large-Loss Auxiliary Calibration
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-risk-calibration-terminal-20260531-164248
+```
+
+Question:
+
+Can the trained large-loss auxiliary head be used as a risk guard even though
+the policy checkpoint did not promote?
+
+Implementation:
+
+`fh-mj-reward-calibration --large-loss-threshold` now reports large-loss
+probability/severity calibration. Q/value calibration still uses discounted
+targets, but large-loss calibration uses the undiscounted terminal return,
+matching how the auxiliary head was trained.
+
+Validation:
+
+```text
+uv run --project ai pytest ai/tests/test_reward_calibration.py ai/tests/test_model.py
+result: 13 passed
+
+uv run --project ai python -m py_compile ai/src/fh_mahjong_ai/reward_calibration.py ai/src/fh_mahjong_ai/scripts/reward_calibration.py
+result: passed
+
+remote: /root/.local/bin/uv run --project ai --extra dev pytest ai/tests/test_reward_calibration.py
+result: 3 passed
+```
+
+Reports:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+threshold: -1.0 terminal return
+aux report: /root/fh-mahjong-runs/chongci-risk-calibration-terminal-20260531-164248/reports/aux_allanchor_current64.json
+auxlow report: /root/fh-mahjong-runs/chongci-risk-calibration-terminal-20260531-164248/reports/auxlow_allanchor_current64.json
+```
+
+| Checkpoint | Large-Loss Rate | Brier | AUC | Avg P(LL) | Positive Mean P(LL) | Negative Mean P(LL) | Severity MAE |
+|------------|-----------------|-------|-----|-----------|---------------------|---------------------|--------------|
+| all-anchor auxiliary | 15.69% | 0.1511 | 0.5021 | 0.2265 | 0.2274 | 0.2263 | 0.3294 |
+| lower-weight all-anchor auxiliary | 15.69% | 0.2541 | 0.4936 | 0.4827 | 0.4803 | 0.4831 | 0.4534 |
+
+Risk bands:
+
+For the all-anchor auxiliary checkpoint, the large-loss rate was effectively
+flat across predicted probability bands:
+
+```text
+0.00-0.25: 15.63%
+0.25-0.50: 15.77%
+0.50-0.75: 15.60%
+0.75-1.00: 0.00% over only 2 samples
+```
+
+Decision:
+
+Do not use the current large-loss auxiliary head as a serving-time risk guard.
+
+Interpretation:
+
+The auxiliary head is not ranking large-loss states. It learned a probability
+scale, but that probability does not separate large-loss and non-large-loss
+transitions. This explains why the target-side auxiliary runs did not improve
+the policy. The next useful direction should change the target definition or
+the input/history available to the risk head, not simply adjust auxiliary
+coefficients.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -3113,6 +3185,8 @@ its current form.
     version is also rejected.
 24. Lowering the large-loss auxiliary coefficients reproduced the same rejected
     selected-window result.
+25. Large-loss auxiliary calibration shows near-random AUC and flat risk bands,
+    so the current auxiliary head should not be used as a guard.
 
 ## Recommended Next Experiments
 
