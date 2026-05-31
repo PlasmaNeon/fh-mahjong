@@ -2778,6 +2778,86 @@ needs either more exact matched risk rows from generated data, or a stronger
 action-level objective on those rows. Simply adding the sparse rows with sample
 weighting is not enough.
 
+### All-Anchor Filtered First-Divergence Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447
+```
+
+Question:
+
+Does covering every seed from the dense paired trace improve filtered replay
+enough to beat the promoted anchor? The previous filtered run used only 17
+targeted anchor seed shards and kept 11 risk-context rows. This run generated
+the 13 missing anchor shards and trained against all 30 trace seeds.
+
+Additional data generation:
+
+```text
+generated missing anchor seeds:
+534004 534006 534007
+544000 544002 544005 544006
+554000 554002 554003 554004 554008 554009
+new generated shards: 13
+```
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/checkpoints/iql_allanchor_filtered/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+risk_trace_filter_datasets: true
+risk_trace_context_radius: 2
+training MLflow run: c15f54ac3a7c46deb2cb02aefde03de5
+final loss: 0.1312
+```
+
+Risk matching:
+
+```text
+base current64 dataset: 0 exact matches
+all-anchor filtered rows kept: 16 total
+matching mode: seed_seat_decision
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max steps per episode: 8192
+Chongci config: default starting_score=2000, bust_threshold=0, max_hands=50
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/reports/candidate_selected_windows.json
+candidate MLflow run: fb34b342b1894457b752334a59af47f2
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| anchor-only filtered replay, 17 seeds | -0.1700 | 40.91% | 20.45% |
+| all-anchor filtered replay, 30 seeds | -0.1800 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Increasing seed coverage from 17 to 30 only
+raised filtered rows from 11 to 16 and slightly worsened EV.
+
+Interpretation:
+
+This closes the simple "more trace seeds" version of filtered replay. The
+limiting factor is not only unique seed coverage; it is that exact decision
+matches remain too rare and the objective remains too weak when sampled through
+the normal replay distribution. The next experiment should not spend more time
+on the same filtered replay recipe. Use a stronger objective on exact rows,
+change target-side risk learning, or collect repeated data specifically around
+the exact matched decision states.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -2830,6 +2910,9 @@ weighting is not enough.
     anchor-only filtered run kept only 11 extra risk-context rows, matched the
     scalar-only current64 candidate, and still missed the promoted anchor; the
     bottleneck is now exact-match volume or a stronger objective on those rows.
+21. Expanding filtered replay to all 30 dense-trace seeds kept only 16 rows and
+    worsened EV to `-0.18`; do not repeat this filtered replay recipe without a
+    stronger sampling or objective change.
 
 ## Recommended Next Experiments
 
