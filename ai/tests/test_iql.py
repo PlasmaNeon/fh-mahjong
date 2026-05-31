@@ -9,11 +9,12 @@ from fh_mahjong_ai.buffer import ReplayBuffer
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import RiskCase
-from fh_mahjong_ai.scripts.train_iql import load_iql_replay_buffer, train_iql
+from fh_mahjong_ai.scripts.train_iql import load_iql_replay_buffer, risk_context_indices, train_iql
 from fh_mahjong_ai.storage import load_compatible_checkpoint, write_transitions_jsonl, write_transitions_npz_shards
 from fh_mahjong_ai.trainer import (
     DiscreteIQLTrainer,
     discounted_terminal_returns,
+    large_loss_auxiliary_losses,
     large_loss_adjusted_rewards,
     large_loss_sample_weights,
     pairwise_margin_loss,
@@ -86,6 +87,9 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert np.isfinite(metrics.cql_loss)
     assert np.isfinite(metrics.pairwise_loss)
     assert np.isfinite(metrics.pairwise_q_loss)
+    assert np.isfinite(metrics.large_loss_aux_loss)
+    assert np.isfinite(metrics.large_loss_severity_loss)
+    assert metrics.large_loss_target_rate == 0.0
     assert 0.0 <= metrics.avg_weight <= 5.0
     assert 0.0 <= metrics.max_weight <= 5.0
     assert metrics.avg_sample_weight == 1.0
@@ -162,6 +166,41 @@ def test_pairwise_margin_loss_empty_batch_stays_finite_with_masked_logits() -> N
     torch.testing.assert_close(loss, torch.tensor(0.0))
 
 
+def test_large_loss_auxiliary_losses_train_probability_and_severity_targets() -> None:
+    env_config = EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    planes = torch.randn((4, *env_config.plane_shape))
+    scalars = torch.randn((4, env_config.scalar_features))
+    returns = torch.tensor([0.5, -1.0, -1.5, -2.0])
+    sample_weights = torch.ones(4)
+
+    aux_loss, severity_loss, diagnostics = large_loss_auxiliary_losses(
+        model,
+        planes,
+        scalars,
+        returns,
+        sample_weights,
+        threshold=-1.0,
+        aux_weight=0.25,
+        severity_weight=0.1,
+        detach_features=True,
+    )
+
+    assert torch.isfinite(aux_loss)
+    assert torch.isfinite(severity_loss)
+    assert diagnostics["target_rate"] == 0.75
+    assert 0.0 <= diagnostics["avg_probability"] <= 1.0
+    assert diagnostics["avg_severity"] >= 0.0
+
+
 def test_discounted_terminal_returns_use_steps_to_done() -> None:
     returns = torch.tensor([1.0, 1.0, -2.0])
     steps_to_done = torch.tensor([0, 1, 2])
@@ -214,6 +253,9 @@ def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
         large_loss_threshold=-1.0,
         large_loss_penalty=0.1,
         large_loss_weight=2.0,
+        large_loss_aux_weight=0.25,
+        large_loss_severity_weight=0.1,
+        large_loss_aux_detach=True,
         device="cpu",
         log_interval=1,
     )
@@ -269,6 +311,54 @@ def test_load_iql_replay_buffer_can_add_pairwise_auxiliary_rows(tmp_path: Path) 
 
     assert transition_count == 13
     assert counts == [5, 8]
+
+
+def test_risk_context_indices_keeps_exact_matches_and_same_seat_context() -> None:
+    arrays = {
+        "action_ids": np.arange(6, dtype=np.int64),
+        "episode_index": np.asarray([0, 0, 0, 0, 1, 0], dtype=np.int64),
+        "seats": np.asarray([0, 0, 0, 1, 0, 0], dtype=np.int64),
+        "decision_indices": np.asarray([9, 10, 11, 10, 10, 14], dtype=np.int64),
+        "risk_case_matches": np.asarray([False, True, False, False, False, False], dtype=np.bool_),
+    }
+
+    indices = risk_context_indices(arrays, radius=1)
+
+    assert indices.tolist() == [0, 1, 2]
+
+
+def test_load_iql_replay_buffer_can_filter_secondary_risk_datasets(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    base_dir = tmp_path / "base-shards"
+    risk_dir = tmp_path / "risk-shards"
+    base_transitions = _transitions(8, env_config)
+    risk_transitions = _transitions(8, env_config)
+    for index, transition in enumerate(risk_transitions):
+        transition.observation.metadata["decision_index"] = index
+
+    write_transitions_npz_shards(base_dir, base_transitions, shard_size=8)
+    write_transitions_npz_shards(risk_dir, risk_transitions, shard_size=8)
+
+    _, transition_count, counts = load_iql_replay_buffer(
+        [base_dir, risk_dir],
+        risk_cases=[
+            RiskCase(
+                seed=201,
+                seat=0,
+                decision_index=5,
+                action_id=5,
+                baseline_action_id=4,
+            )
+        ],
+        risk_weight=3.0,
+        risk_dataset_start_seeds=[1000, 200],
+        apply_risk_cases=True,
+        risk_filter_datasets=True,
+        risk_context_radius=1,
+    )
+
+    assert transition_count == 11
+    assert counts == [8, 3]
 
 
 def test_train_iql_runs_from_multiple_npz_shards_with_mixed_scalar_shapes(tmp_path: Path) -> None:

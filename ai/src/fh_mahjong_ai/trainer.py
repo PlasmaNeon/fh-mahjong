@@ -56,6 +56,11 @@ class DiscreteIQLMetrics:
     cql_loss: float
     pairwise_loss: float
     pairwise_q_loss: float
+    large_loss_aux_loss: float
+    large_loss_severity_loss: float
+    large_loss_target_rate: float
+    avg_large_loss_probability: float
+    avg_large_loss_severity: float
     avg_q: float
     avg_v: float
     avg_target_q: float
@@ -361,6 +366,17 @@ class DiscreteIQLTrainer:
             pairwise_weights,
             margin=self.iql_config.pairwise_q_margin,
         )
+        large_loss_aux_loss, large_loss_severity_loss, large_loss_diagnostics = large_loss_auxiliary_losses(
+            self.model,
+            planes,
+            scalars,
+            returns,
+            sample_weights,
+            threshold=self.iql_config.large_loss_threshold,
+            aux_weight=self.iql_config.large_loss_aux_weight,
+            severity_weight=self.iql_config.large_loss_severity_weight,
+            detach_features=self.iql_config.large_loss_aux_detach,
+        )
 
         loss = (
             self.iql_config.q_weight * q_loss
@@ -370,6 +386,8 @@ class DiscreteIQLTrainer:
             + self.iql_config.cql_weight * cql_loss
             + self.iql_config.pairwise_weight * pairwise_loss
             + self.iql_config.pairwise_q_weight * pairwise_q_loss
+            + self.iql_config.large_loss_aux_weight * large_loss_aux_loss
+            + self.iql_config.large_loss_severity_weight * large_loss_severity_loss
         )
 
         self.optimizer.zero_grad(set_to_none=True)
@@ -386,6 +404,11 @@ class DiscreteIQLTrainer:
             cql_loss=float(cql_loss.item()),
             pairwise_loss=float(pairwise_loss.item()),
             pairwise_q_loss=float(pairwise_q_loss.item()),
+            large_loss_aux_loss=float(large_loss_aux_loss.item()),
+            large_loss_severity_loss=float(large_loss_severity_loss.item()),
+            large_loss_target_rate=large_loss_diagnostics["target_rate"],
+            avg_large_loss_probability=large_loss_diagnostics["avg_probability"],
+            avg_large_loss_severity=large_loss_diagnostics["avg_severity"],
             avg_q=float(dataset_q.mean().item()),
             avg_v=float(values.mean().item()),
             avg_target_q=float(target_q.mean().item()),
@@ -458,6 +481,48 @@ def pairwise_margin_loss(
     avoided_logits = selected_logits.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
     losses = torch.relu(float(margin) - (preferred_logits - avoided_logits))
     return weighted_mean(losses, selected_weights), count
+
+
+def large_loss_auxiliary_losses(
+    model: nn.Module,
+    planes: torch.Tensor,
+    scalars: torch.Tensor,
+    returns: torch.Tensor,
+    sample_weights: torch.Tensor,
+    threshold: Optional[float],
+    aux_weight: float,
+    severity_weight: float,
+    detach_features: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+    zero = returns.new_zeros(())
+    diagnostics = {
+        "target_rate": 0.0,
+        "avg_probability": 0.0,
+        "avg_severity": 0.0,
+    }
+    if threshold is None or (aux_weight <= 0.0 and severity_weight <= 0.0):
+        return zero, zero, diagnostics
+    if not hasattr(model, "large_loss_predictions"):
+        return zero, zero, diagnostics
+
+    logits, severity = model.large_loss_predictions(planes, scalars, detach_features=detach_features)
+    targets = (returns <= float(threshold)).to(dtype=returns.dtype)
+    severity_targets = torch.clamp(float(threshold) - returns, min=0.0)
+    classification_loss = weighted_mean(
+        nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none"),
+        sample_weights,
+    )
+    severity_loss = weighted_mean(
+        nn.functional.smooth_l1_loss(severity, severity_targets, reduction="none"),
+        sample_weights,
+    )
+    with torch.no_grad():
+        diagnostics = {
+            "target_rate": float(targets.mean().item()),
+            "avg_probability": float(torch.sigmoid(logits).mean().item()),
+            "avg_severity": float(severity.mean().item()),
+        }
+    return classification_loss, severity_loss, diagnostics
 
 
 def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tensor, gamma: float) -> torch.Tensor:

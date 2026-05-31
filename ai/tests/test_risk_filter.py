@@ -80,6 +80,7 @@ def test_apply_risk_case_weights_matches_seed_seat_decision_action() -> None:
     assert report.matched_cases == 1
     assert report.weighted_transitions == 1
     assert report.matched_by == {"seed_seat_decision": 1}
+    assert arrays["risk_case_matches"].tolist() == [False, False, True, False]
     assert arrays["pairwise_weights"].tolist() == [0.0, 0.0, 0.0, 0.0]
 
 
@@ -118,5 +119,6 @@ def test_apply_risk_case_weights_adds_pairwise_preference_labels() -> None:
     assert arrays["pairwise_preferred_action_ids"].tolist() == [-1, 46, -1]
     assert arrays["pairwise_avoided_action_ids"].tolist() == [-1, 47, -1]
     assert arrays["pairwise_weights"].tolist() == [0.0, 1.0, 0.0]
+    assert arrays["risk_case_matches"].tolist() == [False, True, False]
     assert report.pairwise_cases == 1
     assert report.pairwise_transitions == 1

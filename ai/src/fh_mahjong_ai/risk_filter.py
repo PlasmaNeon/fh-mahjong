@@ -153,6 +153,10 @@ def apply_risk_case_weights(
         arrays.get("pairwise_weights", np.zeros(arrays["action_ids"].shape[0], dtype=np.float32)),
         dtype=np.float32,
     ).copy()
+    risk_case_matches = np.asarray(
+        arrays.get("risk_case_matches", np.zeros(arrays["action_ids"].shape[0], dtype=np.bool_)),
+        dtype=np.bool_,
+    ).copy()
     episode_indices = np.asarray(arrays["episode_index"], dtype=np.int64)
     seats = np.asarray(arrays["seats"], dtype=np.int64)
     action_ids = np.asarray(arrays["action_ids"], dtype=np.int64)
@@ -182,6 +186,7 @@ def apply_risk_case_weights(
         count = int(np.count_nonzero(mask))
         if count <= 0:
             continue
+        risk_case_matches[mask] = True
         if weight > 1.0:
             sample_weights[mask] = np.maximum(sample_weights[mask], float(weight))
         if (
@@ -200,6 +205,7 @@ def apply_risk_case_weights(
     arrays["pairwise_preferred_action_ids"] = pairwise_preferred_action_ids
     arrays["pairwise_avoided_action_ids"] = pairwise_avoided_action_ids
     arrays["pairwise_weights"] = pairwise_weights
+    arrays["risk_case_matches"] = risk_case_matches
     return RiskWeightReport(
         cases=len(cases),
         matched_cases=matched_cases,

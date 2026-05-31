@@ -78,6 +78,9 @@ class DiscreteIQLConfig:
     pairwise_margin: float = 0.0
     pairwise_q_weight: float = 0.0
     pairwise_q_margin: float = 0.0
+    large_loss_aux_weight: float = 0.0
+    large_loss_severity_weight: float = 0.0
+    large_loss_aux_detach: bool = False
 
 
 @dataclass

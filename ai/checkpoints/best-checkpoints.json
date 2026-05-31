@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-26",
+  "updated_at": "2026-05-31",
   "selection_policy": {
     "objective": "single-round Fenghua expected payout",
     "gate": "fixed-seed duplicate-seat evaluation",
@@ -176,6 +176,57 @@
     ]
   },
   "rejected_candidates": [
+    {
+      "id": "chongci_riskcontext_riskseed_anchor_filtered_epoch001",
+      "method": "discrete_iql_risk_trace_filtered_replay",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-filtered-20260531-035442/checkpoints/iql_riskseed_anchor_filtered/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/data/anchor-seed-*-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 2048,
+        "learning_rate": 0.000005,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "policy_weight": 0.25,
+        "bc_weight": 3.0,
+        "cql_weight": 0.0,
+        "risk_trace_weight": 3.0,
+        "risk_trace_worst_delta_count": 40,
+        "risk_trace_filter_datasets": true,
+        "risk_trace_context_radius": 2,
+        "filtered_risk_context_rows": 11,
+        "mlflow_run_id": "44791c3621184dcbb18ec87baae27ecc"
+      },
+      "screening": [
+        {
+          "label": "selected_windows_534000_544001_554001",
+          "seats": 44,
+          "seed_windows": [
+            "534000:6",
+            "544001:4",
+            "554001:1"
+          ],
+          "positive_reward_rate": 0.4091,
+          "large_loss_rate": 0.2045,
+          "mean_reward": -0.17,
+          "promoted_positive_reward_rate": 0.4091,
+          "promoted_large_loss_rate": 0.2045,
+          "promoted_mean_reward": -0.14,
+          "report_path": "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-filtered-20260531-035442/reports/candidate_selected_windows_default_config.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/anchor_selected_windows.json",
+          "mlflow_run_id": "f5ad40fcfcd646b0b62bd7f92e9e51a0"
+        }
+      ],
+      "decision": "rejected_selected_window_screen",
+      "reason": "Filtered first-divergence replay matched the scalar-only current64 candidate and still trailed the promoted anchor on mean reward; only 11 risk-context rows survived filtering."
+    },
     {
       "id": "chongci_selfplay400_fixed_mc_lowdrift_epoch002",
       "method": "discrete_iql_mixed_selfplay",

@@ -79,11 +79,16 @@ def train_iql(
     pairwise_margin: float = 0.0,
     pairwise_q_weight: float = 0.0,
     pairwise_q_margin: float = 0.0,
+    large_loss_aux_weight: float = 0.0,
+    large_loss_severity_weight: float = 0.0,
+    large_loss_aux_detach: bool = False,
     pairwise_replay_multiplier: int = 0,
     risk_trace_reports: Optional[Sequence[Path]] = None,
     risk_trace_weight: float = 1.0,
     risk_trace_dataset_start_seeds: Optional[Sequence[int]] = None,
     risk_trace_worst_delta_count: int = 0,
+    risk_trace_filter_datasets: bool = False,
+    risk_trace_context_radius: int = 0,
     max_transitions: Optional[int] = None,
     device: str = "cpu",
     log_interval: int = 10,
@@ -113,6 +118,8 @@ def train_iql(
         apply_risk_cases=bool(risk_cases)
         and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
         pairwise_replay_multiplier=pairwise_replay_multiplier,
+        risk_filter_datasets=risk_trace_filter_datasets,
+        risk_context_radius=risk_trace_context_radius,
     )
     if transition_count <= 0:
         raise ValueError(f"no transitions loaded from {data_paths}")
@@ -173,6 +180,9 @@ def train_iql(
         pairwise_margin=pairwise_margin,
         pairwise_q_weight=pairwise_q_weight,
         pairwise_q_margin=pairwise_q_margin,
+        large_loss_aux_weight=large_loss_aux_weight,
+        large_loss_severity_weight=large_loss_severity_weight,
+        large_loss_aux_detach=large_loss_aux_detach,
     )
     trainer = DiscreteIQLTrainer(model, target_model, optimizer, train_config, iql_config)
 
@@ -217,11 +227,16 @@ def train_iql(
                     "pairwise_margin": pairwise_margin,
                     "pairwise_q_weight": pairwise_q_weight,
                     "pairwise_q_margin": pairwise_q_margin,
+                    "large_loss_aux_weight": large_loss_aux_weight,
+                    "large_loss_severity_weight": large_loss_severity_weight,
+                    "large_loss_aux_detach": large_loss_aux_detach,
                     "pairwise_replay_multiplier": pairwise_replay_multiplier,
                     "risk_trace_reports": ",".join(str(path) for path in (risk_trace_reports or [])),
                     "risk_trace_weight": risk_trace_weight,
                     "risk_trace_dataset_start_seeds": ",".join(str(seed) for seed in (risk_trace_dataset_start_seeds or [])),
                     "risk_trace_worst_delta_count": risk_trace_worst_delta_count,
+                    "risk_trace_filter_datasets": risk_trace_filter_datasets,
+                    "risk_trace_context_radius": risk_trace_context_radius,
                     "risk_trace_cases": len(risk_cases),
                     "max_transitions": max_transitions,
                     "device": device,
@@ -257,6 +272,8 @@ def train_iql(
                         f"bc={metrics.bc_loss:.4f}  cql={metrics.cql_loss:.4f}  "
                         f"pairwise={metrics.pairwise_loss:.4f}/{metrics.pairwise_count}  "
                         f"pairwise_q={metrics.pairwise_q_loss:.4f}  "
+                        f"ll_aux={metrics.large_loss_aux_loss:.4f}  "
+                        f"ll_sev={metrics.large_loss_severity_loss:.4f}  "
                         f"adv={metrics.avg_advantage:.4f}  "
                         f"weight={metrics.avg_weight:.3f}  sample_weight={metrics.avg_sample_weight:.3f}"
                     )
@@ -281,6 +298,11 @@ def train_iql(
                             "last_cql_loss": latest_metrics.cql_loss,
                             "last_pairwise_loss": latest_metrics.pairwise_loss,
                             "last_pairwise_q_loss": latest_metrics.pairwise_q_loss,
+                            "last_large_loss_aux_loss": latest_metrics.large_loss_aux_loss,
+                            "last_large_loss_severity_loss": latest_metrics.large_loss_severity_loss,
+                            "last_large_loss_target_rate": latest_metrics.large_loss_target_rate,
+                            "last_avg_large_loss_probability": latest_metrics.avg_large_loss_probability,
+                            "last_avg_large_loss_severity": latest_metrics.avg_large_loss_severity,
                             "last_avg_q": latest_metrics.avg_q,
                             "last_avg_v": latest_metrics.avg_v,
                             "last_avg_target_q": latest_metrics.avg_target_q,
@@ -319,6 +341,8 @@ def load_iql_replay_buffer(
     risk_dataset_start_seeds: Optional[Sequence[int]] = None,
     apply_risk_cases: bool = False,
     pairwise_replay_multiplier: int = 0,
+    risk_filter_datasets: bool = False,
+    risk_context_radius: int = 0,
 ) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
     buffers: list[ReplayBuffer | ArrayReplayBuffer] = []
     counts: list[int] = []
@@ -348,9 +372,16 @@ def load_iql_replay_buffer(
                         dataset_start_seed=dataset_start_seed,
                     )
                 )
+            indices = np.arange(arrays["action_ids"].shape[0], dtype=np.int64)
+            if risk_filter_datasets and path_index > 0 and apply_risk_cases:
+                indices = risk_context_indices(arrays, radius=risk_context_radius)
+                if indices.size == 0:
+                    print(f"risk trace filtered replay source={path} rows=0 skipped")
+                    continue
+                print(f"risk trace filtered replay source={path} rows={indices.size} radius={risk_context_radius}")
             buffer = ArrayReplayBuffer(
                 arrays=arrays,
-                indices=np.arange(arrays["action_ids"].shape[0], dtype=np.int64),
+                indices=indices,
             )
             if pairwise_replay_multiplier > 0 and "pairwise_weights" in arrays:
                 pairwise_indices = np.flatnonzero(np.asarray(arrays["pairwise_weights"]) > 0.0).astype(np.int64)
@@ -384,6 +415,13 @@ def load_iql_replay_buffer(
                 risk_reports.append(risk_report)
                 for transition, sample_weight in zip(transitions, arrays["sample_weights"].tolist()):
                     transition.info["sample_weight"] = float(sample_weight)
+                if risk_filter_datasets and path_index > 0:
+                    keep_indices = set(int(index) for index in risk_context_indices(arrays, radius=risk_context_radius).tolist())
+                    transitions = [transition for index, transition in enumerate(transitions) if index in keep_indices]
+                    if not transitions:
+                        print(f"risk trace filtered replay source={path} rows=0 skipped")
+                        continue
+                    print(f"risk trace filtered replay source={path} rows={len(transitions)} radius={risk_context_radius}")
             buffer = ReplayBuffer(capacity=len(transitions))
             buffer.extend(transitions)
 
@@ -404,6 +442,28 @@ def load_iql_replay_buffer(
     if len(buffers) == 1:
         return buffers[0], transition_count, counts
     return CompositeReplayBuffer(buffers), transition_count, counts
+
+
+def risk_context_indices(arrays: dict[str, np.ndarray], radius: int = 0) -> np.ndarray:
+    matches = np.asarray(arrays.get("risk_case_matches", np.zeros(arrays["action_ids"].shape[0], dtype=np.bool_)))
+    if not np.any(matches):
+        return np.asarray([], dtype=np.int64)
+    matched_indices = np.flatnonzero(matches).astype(np.int64)
+    radius = max(0, int(radius))
+    if radius == 0 or "decision_indices" not in arrays:
+        return matched_indices
+
+    episode_indices = np.asarray(arrays["episode_index"], dtype=np.int64)
+    seats = np.asarray(arrays["seats"], dtype=np.int64)
+    decision_indices = np.asarray(arrays["decision_indices"], dtype=np.int64)
+    keep = matches.copy()
+    for index in matched_indices.tolist():
+        keep |= (
+            (episode_indices == episode_indices[index])
+            & (seats == seats[index])
+            & (np.abs(decision_indices - decision_indices[index]) <= radius)
+        )
+    return np.flatnonzero(keep).astype(np.int64)
 
 
 def main() -> None:
@@ -474,6 +534,23 @@ def main() -> None:
         help="Required Q-value margin for preferred trace action over avoided trace action.",
     )
     parser.add_argument(
+        "--large-loss-aux-weight",
+        type=float,
+        default=0.0,
+        help="Loss multiplier for the auxiliary large-loss probability head.",
+    )
+    parser.add_argument(
+        "--large-loss-severity-weight",
+        type=float,
+        default=0.0,
+        help="Loss multiplier for the auxiliary large-loss severity head.",
+    )
+    parser.add_argument(
+        "--large-loss-aux-detach",
+        action="store_true",
+        help="Train large-loss auxiliary heads from detached trunk features so they do not shape policy/Q features.",
+    )
+    parser.add_argument(
         "--pairwise-replay-multiplier",
         type=int,
         default=0,
@@ -504,6 +581,17 @@ def main() -> None:
         type=int,
         default=0,
         help="Also include this many worst reward-delta first-divergence cases per trace report.",
+    )
+    parser.add_argument(
+        "--risk-trace-filter-datasets",
+        action="store_true",
+        help="For data paths after the first input, train only on exact risk-trace matches plus optional local context.",
+    )
+    parser.add_argument(
+        "--risk-trace-context-radius",
+        type=int,
+        default=0,
+        help="Decision-index radius to keep around exact risk-trace matches when --risk-trace-filter-datasets is set.",
     )
     parser.add_argument(
         "--max-transitions",
@@ -560,11 +648,16 @@ def main() -> None:
         pairwise_margin=args.pairwise_margin,
         pairwise_q_weight=args.pairwise_q_weight,
         pairwise_q_margin=args.pairwise_q_margin,
+        large_loss_aux_weight=args.large_loss_aux_weight,
+        large_loss_severity_weight=args.large_loss_severity_weight,
+        large_loss_aux_detach=args.large_loss_aux_detach,
         pairwise_replay_multiplier=args.pairwise_replay_multiplier,
         risk_trace_reports=args.risk_trace_report,
         risk_trace_weight=args.risk_trace_weight,
         risk_trace_dataset_start_seeds=args.risk_trace_dataset_start_seed,
         risk_trace_worst_delta_count=args.risk_trace_worst_delta_count,
+        risk_trace_filter_datasets=args.risk_trace_filter_datasets,
+        risk_trace_context_radius=args.risk_trace_context_radius,
         max_transitions=args.max_transitions,
         device=args.device,
         log_interval=args.log_interval,
