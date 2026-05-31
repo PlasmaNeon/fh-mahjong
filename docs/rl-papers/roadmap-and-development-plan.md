@@ -217,6 +217,8 @@ Mahjong exercise:
 - Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
 - Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
 - For paired first-divergence replay, require a stronger objective before spending full evaluation budget; sparse filtered replay and sparse-row oversampling did not improve the first Chongci risk-context candidates.
+- Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
+- Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
 
 ## Stage 6: Rewards And Credit Assignment
 
