@@ -177,6 +177,58 @@
   },
   "rejected_candidates": [
     {
+      "id": "chongci_riskcontext_allanchor_filtered_replayx_epoch001",
+      "method": "discrete_iql_risk_trace_filtered_replay",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/checkpoints/iql_allanchor_filtered_replayx/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/data/anchor-seed-*-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/data/anchor-seed-*-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 2048,
+        "learning_rate": 0.000005,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "policy_weight": 0.25,
+        "bc_weight": 3.0,
+        "cql_weight": 0.0,
+        "risk_trace_weight": 3.0,
+        "risk_trace_worst_delta_count": 40,
+        "risk_trace_filter_datasets": true,
+        "risk_trace_context_radius": 2,
+        "pairwise_replay_multiplier": 256,
+        "mlflow_run_id": "b1c58e84cafd43a9817b5962c1d9c6ad"
+      },
+      "screening": [
+        {
+          "label": "selected_windows_534000_544001_554001",
+          "seats": 44,
+          "seed_windows": [
+            "534000:6",
+            "544001:4",
+            "554001:1"
+          ],
+          "positive_reward_rate": 0.4091,
+          "large_loss_rate": 0.2045,
+          "mean_reward": -0.18,
+          "promoted_positive_reward_rate": 0.4091,
+          "promoted_large_loss_rate": 0.2045,
+          "promoted_mean_reward": -0.14,
+          "report_path": "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/reports/candidate_selected_windows.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/anchor_selected_windows.json",
+          "mlflow_run_id": "36aa6cb011a5479a8cdaa5eac8470059"
+        }
+      ],
+      "decision": "rejected_selected_window_screen",
+      "reason": "Sparse-row oversampling exposed matched rows during training but did not improve mean reward, positive rate, or large-loss rate versus the all-anchor filtered run."
+    },
+    {
       "id": "chongci_riskcontext_allanchor_filtered_epoch001",
       "method": "discrete_iql_risk_trace_filtered_replay",
       "match_mode": "chongci",

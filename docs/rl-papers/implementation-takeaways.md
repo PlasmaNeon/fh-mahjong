@@ -59,7 +59,7 @@ Near term:
 - prefer discounted Monte Carlo terminal-return targets for the first offline reward learner: `gamma ** steps_to_done * terminal_round_payout`
 - keep one-step TD as an explicit experiment after value calibration improves
 - add a conservative Q penalty as an explicit offline-RL ablation, following Mortal's preference for conservative offline Q estimates
-- do not repeat sparse first-divergence replay weighting unless the dataset has materially more exact matched rows or a stronger paired/action-level objective; the first filtered Chongci run kept only 11 added risk-context rows and did not beat the scalar-only candidate
+- do not repeat sparse first-divergence replay weighting unless the objective changes; filtered Chongci runs kept only 11 to 16 added risk-context rows, and explicit sparse-row oversampling still did not improve the selected-window gate
 
 Later:
 

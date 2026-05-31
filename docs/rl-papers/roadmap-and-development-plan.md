@@ -216,7 +216,7 @@ Mahjong exercise:
 - Compare IQL checkpoints against behavior cloning and heuristic baselines on the same duplicate-seat seeds.
 - Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
 - Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
-- For paired first-divergence replay, require enough exact matched rows before spending full evaluation budget; sparse filtered replay alone did not improve the first Chongci risk-context candidate.
+- For paired first-divergence replay, require a stronger objective before spending full evaluation budget; sparse filtered replay and sparse-row oversampling did not improve the first Chongci risk-context candidates.
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -319,7 +319,7 @@ Mahjong exercise:
    - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
    - Use final hand or Chongci match reward as the delayed target.
    - Keep behavior-cloning regularization.
-   - Treat first-divergence weighting as a targeted ablation; increase exact-match coverage or pair it with a stronger objective before repeating it.
+   - Treat first-divergence weighting as a targeted ablation; pair it with a stronger objective before repeating it.
    - Promote only if duplicate evaluation improves over BC and heuristic baselines.
 8. Add mixed self-play:
    - Generate random wall seeds and let checkpoint agents play through full matches.

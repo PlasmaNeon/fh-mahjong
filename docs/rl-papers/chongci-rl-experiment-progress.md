@@ -2858,6 +2858,76 @@ on the same filtered replay recipe. Use a stronger objective on exact rows,
 change target-side risk learning, or collect repeated data specifically around
 the exact matched decision states.
 
+### All-Anchor Filtered Replay With Sparse-Row Oversampling
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817
+```
+
+Question:
+
+Was the all-anchor filtered run failing because the exact matched rows were too
+rarely sampled? This run reused the same 30 all-anchor risk-seed inputs, kept the
+same filtered replay setup, and added `--pairwise-replay-multiplier 256` so the
+sparse exact rows were repeated into an auxiliary replay source. No pairwise loss
+was enabled; the multiplier was used as a sampling intervention for the matched
+rows and their sample weights.
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/checkpoints/iql_allanchor_filtered_replayx/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+risk_trace_filter_datasets: true
+risk_trace_context_radius: 2
+pairwise_replay_multiplier: 256
+training MLflow run: b1c58e84cafd43a9817b5962c1d9c6ad
+final loss: 0.1492
+```
+
+Sampling check:
+
+The stronger-sampling setup worked mechanically. Training batches now exposed
+the sparse rows:
+
+```text
+step 20: pairwise_count=8,  sample_weight=1.039
+step 40: pairwise_count=19, sample_weight=1.050
+step 60: pairwise_count=15, sample_weight=1.048
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/reports/candidate_selected_windows.json
+candidate MLflow run: 36aa6cb011a5479a8cdaa5eac8470059
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| all-anchor filtered replay | -0.1800 | 40.91% | 20.45% |
+| all-anchor filtered replay + sparse-row oversampling | -0.1800 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen.
+
+Interpretation:
+
+This distinguishes two failure modes. The previous run under-sampled exact rows;
+this run fixed row exposure but still did not improve the policy. The filtered
+replay target is not strong enough in this form. Stop this replay-only line and
+move to target-side learning or a better state/action objective.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -2913,6 +2983,9 @@ the exact matched decision states.
 21. Expanding filtered replay to all 30 dense-trace seeds kept only 16 rows and
     worsened EV to `-0.18`; do not repeat this filtered replay recipe without a
     stronger sampling or objective change.
+22. Sparse-row oversampling made exact rows visible in training batches but did
+    not improve selected-window reward, so the filtered replay objective itself
+    is exhausted for now.
 
 ## Recommended Next Experiments
 
