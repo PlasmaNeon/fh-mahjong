@@ -36,10 +36,10 @@ SCALAR_NAMES = {
     43: "hand_progress",
     44: "hands_remaining",
     45: "rank_score",
-    46: "leader_gap_score",
-    47: "lowest_other_delta",
+    46: "leader_pressure",
+    47: "large_loss_margin",
     48: "self_bust_margin",
-    49: "opponent_bust_pressure",
+    49: "opponent_large_loss_pressure",
 }
 
 
@@ -259,7 +259,10 @@ def summarize_trace_pairs(
     divergence_pairs = Counter()
     divergence_contexts: dict[str, Counter[str]] = {
         "rank_score": Counter(),
+        "leader_pressure": Counter(),
+        "large_loss_margin": Counter(),
         "self_bust_margin": Counter(),
+        "opponent_large_loss_pressure": Counter(),
         "discard_danger_range": Counter(),
         "overall_shanten": Counter(),
     }
@@ -434,7 +437,15 @@ def summarize_observation(observation: Observation) -> dict[str, Any]:
 def bucket_scalar(name: str, value: Optional[float]) -> str:
     if value is None:
         return "missing"
-    if name in {"rank_score", "self_bust_margin", "discard_danger_range", "overall_shanten"}:
+    if name in {
+        "rank_score",
+        "leader_pressure",
+        "large_loss_margin",
+        "self_bust_margin",
+        "opponent_large_loss_pressure",
+        "discard_danger_range",
+        "overall_shanten",
+    }:
         if value < 0.25:
             return "0.00-0.25"
         if value < 0.50:

@@ -68,6 +68,11 @@ class PolicyValueNet(nn.Module):
             nn.Linear(model_config.value_hidden_dim, 1),
             nn.Tanh(),
         )
+        self.large_loss_head = nn.Sequential(
+            nn.Linear(model_config.trunk_hidden_dim, model_config.value_hidden_dim),
+            nn.GELU(),
+            nn.Linear(model_config.value_hidden_dim, 2),
+        )
 
     def forward(self, planes: Tensor, scalars: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
         features = self.encode(planes, scalars)
@@ -97,6 +102,15 @@ class PolicyValueNet(nn.Module):
         masked_q_values = q_values.masked_fill(action_mask <= 0, torch.finfo(q_values.dtype).min)
         value = self.value_head(features).squeeze(-1)
         return masked_q_values, value
+
+    def large_loss_predictions(self, planes: Tensor, scalars: Tensor, detach_features: bool = False) -> tuple[Tensor, Tensor]:
+        features = self.encode(planes, scalars)
+        if detach_features:
+            features = features.detach()
+        risk_outputs = self.large_loss_head(features)
+        probability_logits = risk_outputs[:, 0]
+        severity = torch.nn.functional.softplus(risk_outputs[:, 1])
+        return probability_logits, severity
 
     def initialize_q_head_from_policy(self) -> None:
         """Warm-start the critic head from a BC policy checkpoint."""

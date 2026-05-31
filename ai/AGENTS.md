@@ -22,6 +22,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/env.py** — Thin environment wrapper around the bridge.
 - **src/fh_mahjong_ai/model.py** — PyTorch policy/value/Q network for masked-action Mahjong decisions, defaulting to a Suphx-style no-pooling residual tile-plane encoder with an optional pooled ablation.
   - The Q path uses a Mortal-style dueling value/advantage head by default; channel attention is available as an explicit `ModelConfig(channel_attention=True)` ablation.
+  - The shared trunk also exposes default-off large-loss probability/severity auxiliary heads for Chongci tail-risk experiments; serving still selects actions from the masked policy logits.
 - **src/fh_mahjong_ai/policies.py** — Random, torch-backed, and Q-margin guarded policy adapters; guarded evaluation chooses anchor/candidate actions from policy logits and uses the candidate Q head only as a confidence margin.
 - **src/fh_mahjong_ai/serving.py** — Checkpoint-backed inference helpers and bridge smoke tests for serving actions while the Go bridge validates legality.
 - **src/fh_mahjong_ai/data.py** — Episode grouping (`split_episodes`), episode-safe train/validation splitting, terminal-reward backfill (`backfill_returns`), and `steps_to_done` utilities for trajectory post-processing.
@@ -32,6 +33,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
 - **src/fh_mahjong_ai/risk_filter.py** — Utilities for extracting high-risk first-divergence cases from paired trace reports and applying per-transition sample weights plus optional pairwise preferred/avoided action labels.
 - **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
+  - Observation summaries name Chongci score-pressure scalars for risk reports: leader pressure, large-loss safety margin, own bust safety, and opponent large-loss pressure.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
@@ -57,7 +59,9 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Repeat `--data` to train from multiple datasets, for example existing heuristic shards plus new mixed self-play shards. The trainer samples across datasets through a composite replay buffer without rewriting the source datasets.
   - `--large-loss-weight` upweights losses for transitions whose terminal return is at or below `--large-loss-threshold`; use it for explicit Chongci high-risk-state ablations.
   - `--risk-trace-report` upweights transitions matching paired-trace first-divergence risk cases when dataset start seeds are supplied through `--risk-trace-dataset-start-seed`.
+  - `--risk-trace-filter-datasets` keeps the first `--data` input as the normal anchor/base replay source, then filters later risk-trace datasets down to exact matched first-divergence rows plus `--risk-trace-context-radius` same-episode/same-seat decision-index context.
   - `--pairwise-weight` adds a direct policy-logit margin loss that prefers the paired-trace anchor action over the candidate action on matched high-risk first-divergence rows; `--pairwise-q-weight` applies the same preference to the Q head; `--pairwise-replay-multiplier` repeats those sparse rows into an auxiliary replay source.
+  - `--large-loss-aux-weight` and `--large-loss-severity-weight` train target-side tail-risk heads from terminal returns without changing deployed action selection; `--large-loss-aux-detach` trains them from detached trunk features for diagnostic/no-policy-gradient ablations.
 - **src/fh_mahjong_ai/scripts/train_offline_q.py** — CLI: conservative masked-action offline Q-learning with optional BC warm-start.
 - **src/fh_mahjong_ai/scripts/evaluate.py** — CLI: evaluate a checkpoint offline (action agreement) and/or online (live play).
   - Offline action-agreement inference is batched; tune `--offline-batch-size` for GPU memory/throughput.
@@ -114,6 +118,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - IQL supports default-off large-loss utility shaping through `--large-loss-threshold` plus `--large-loss-penalty`. Use it only as an explicit Chongci reward-learning ablation and keep promotion decisions based on duplicate-seat EV/positive-rate/large-loss gates, not training loss.
 - IQL also supports default-off high-risk transition weighting through `--large-loss-weight`; it reweights Q/value/policy/BC/CQL losses without changing the sampled dataset or deployed policy rule.
 - IQL risk-trace weighting consumes paired trace reports, maps report seeds to dataset `episode_index` using provided dataset start seeds, applies per-transition `sample_weights`, and can attach pairwise preferred/avoided action ids for the optional divergence preference loss.
+- IQL large-loss auxiliary training predicts both probability of crossing `--large-loss-threshold` and severity beyond that threshold from the shared trunk; keep both weights default-off and treat shared-gradient variants as representation-shaping ablations unless duplicate-seat evaluation improves. Use `--large-loss-aux-detach` when the goal is calibration/diagnostics without changing trunk gradients.
 - IQL/evaluation CLIs expose model-size flags such as `--model-channels`, `--model-residual-blocks`, and `--model-channel-attention` for controlled architecture ablations. `--partial-init-checkpoint` may be used for explicit ablations that add compatible layers, such as more residual blocks with the same channel width. Record these flags in MLflow and report outputs whenever a non-default checkpoint is trained.
 - BC training writes a JSON report with train/validation transition counts, per-epoch losses, validation exact agreement, top-3 agreement, and action-family agreement.
 - MLflow tracking is opt-in through `--mlflow` on training and inference/evaluation CLIs; default local tracking storage is `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both ignored by git.

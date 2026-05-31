@@ -216,6 +216,7 @@ Mahjong exercise:
 - Compare IQL checkpoints against behavior cloning and heuristic baselines on the same duplicate-seat seeds.
 - Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
 - Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
+- For paired first-divergence replay, require a stronger objective before spending full evaluation budget; sparse filtered replay and sparse-row oversampling did not improve the first Chongci risk-context candidates.
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -309,14 +310,16 @@ Mahjong exercise:
    - Use the same wall seeds with rotated seats against the heuristic baseline.
    - Track EV, win rate, large-loss rate, and action frequencies.
 6. Add visible look-ahead features:
-   - Implemented in the 42-scalar observation schema.
+   - Implemented in the 50-scalar observation schema.
    - Keep `overall shanten` at scalar index 25.
    - Route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics now occupy scalar indices 29-41.
+   - Chongci match/risk context now occupies scalar indices 42-49.
 7. Add Mortal-style operation-level Q/value learning:
    - Use discrete IQL as the default reward learner.
    - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
    - Use final hand or Chongci match reward as the delayed target.
    - Keep behavior-cloning regularization.
+   - Treat first-divergence weighting as a targeted ablation; pair it with a stronger objective before repeating it.
    - Promote only if duplicate evaluation improves over BC and heuristic baselines.
 8. Add mixed self-play:
    - Generate random wall seeds and let checkpoint agents play through full matches.

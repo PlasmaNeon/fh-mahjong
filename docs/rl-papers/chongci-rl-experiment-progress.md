@@ -2036,6 +2036,898 @@ should be feature-side or target-side:
    of crossing the large-loss threshold.
 3. Revisit pairwise losses only after those richer risk signals exist.
 
+## Risk-Context Feature Branch
+
+Date: 2026-05-30
+
+Branch:
+
+```text
+codex/chongci-risk-context-features
+```
+
+Question:
+
+Can visible match-score context make the learner distinguish high-EV decisions
+from decisions that increase large-loss exposure, instead of relying only on
+post-hoc transition weighting?
+
+Implementation:
+
+The observation scalar count stays at `50` to avoid a model-shape migration.
+The Chongci tail scalars keep the existing visible-only inputs and replace the
+weakest score-context slots with risk-aligned fields:
+
+| Scalar | Meaning |
+|--------|---------|
+| 42 | Chongci mode flag |
+| 43 | hand progress |
+| 44 | remaining hand fraction |
+| 45 | rank strength |
+| 46 | leader pressure |
+| 47 | own large-loss safety margin |
+| 48 | own bust safety margin |
+| 49 | opponent large-loss pressure |
+
+The large-loss score threshold is derived from the current reward scale:
+`starting_score - 1000`, clamped not to fall below the bust threshold. This
+matches the default Chongci large-loss metric of final normalized reward
+`<= -1.0` while using only visible score/config fields.
+
+Expected caveat:
+
+This changes scalar semantics for indices `46`, `47`, and `49`. Existing
+checkpoints can still load, but comparisons after this branch should use
+freshly generated observations/datasets or be treated as a feature-ablation
+run, not a direct continuation of the previous scalar contract.
+
+Next experiment:
+
+1. Rebuild the Go bridge on the remote 4090 machine.
+2. Generate a small Chongci mixed self-play smoke shard with the new scalar
+   semantics.
+3. Train one conservative IQL epoch from the promoted Chongci anchor.
+4. Run the selected-window quick screen before any repeated promotion gate.
+
+Smoke result:
+
+```text
+remote worktree: /root/fh-mahjong-risk-context
+run: /root/fh-mahjong-runs/chongci-riskcontext-smoke-20260530-152708
+dataset: /root/fh-mahjong-runs/chongci-riskcontext-smoke-20260530-152708/data/selfplay-current-riskcontext-n8-npz
+transitions: 15,983 from 8 all-anchor Chongci self-play episodes
+checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-smoke-20260530-152708/checkpoints/iql_riskcontext_smoke/epoch_001.pt
+training MLflow run: d56a4cd94a40440189c096e314764f51
+```
+
+Validation:
+
+```text
+local: go test ./rules ./rlenv
+local: uv run --project ai pytest ai/tests/test_paired_trace.py
+remote: go test ./rules ./rlenv
+remote: uv run --project ai --extra dev pytest ai/tests/test_paired_trace.py
+remote bridge: go build -buildmode=c-shared -o build/libfh_mahjong_bridge.so ./cmd/rlbridge
+```
+
+Tiny duplicate-seat screen:
+
+```text
+seed windows: 534000:2, 544001:2, 554001:1
+online episodes: 20 duplicate seats
+max steps per episode: 8192
+anchor report: /root/fh-mahjong-runs/chongci-riskcontext-smoke-20260530-152708/reports/anchor_riskcontext_smoke_screen.json
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-smoke-20260530-152708/reports/candidate_riskcontext_smoke_screen.json
+anchor MLflow run: 06494788b2934bb39ea885b886a6ca5b
+candidate MLflow run: d29ff2c676f6482f80107562a7e6f372
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1600 | 35.00% | 25.00% |
+| risk-context smoke epoch 1 | -0.1600 | 35.00% | 25.00% |
+
+Decision:
+
+Smoke passed but is not promotable. The candidate only matched the anchor on a
+tiny selected-window screen, and it trained from just 15,983 transitions.
+
+Interpretation:
+
+The feature-side path is mechanically valid: the Go encoder, Python
+diagnostics, bridge build, self-play generation, IQL training, MLflow logging,
+and duplicate evaluation all work with the new visible risk scalars. The next
+useful run should regenerate a larger all-current or mixed-current dataset
+under the new scalar semantics before training a real conservative IQL
+candidate. Do not mix old scalar-semantics datasets into that main feature
+ablation unless the run is explicitly marked as a compatibility experiment.
+
+### Current64 Risk-Context Follow-Up
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534
+```
+
+Question:
+
+Does a larger fresh-scalar all-anchor self-play dataset make the risk-context
+feature branch improve selected-window reward behavior after one conservative
+IQL epoch?
+
+Data:
+
+```text
+dataset: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+episodes: 64 all-anchor Chongci self-play episodes
+start seed: 606000
+transitions: 131,842
+shards: 50,000 / 50,000 / 31,842
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/checkpoints/iql_riskcontext_current64/epoch_001.pt
+epochs: 1
+batch size: 2048
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+cql_weight: 0.0
+training MLflow run: ab1c41e7b2d54bcfbd7b9b83d52a675a
+final loss: 0.1579
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max steps per episode: 8192
+anchor report: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/anchor_selected_windows.json
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/candidate_selected_windows.json
+anchor MLflow run: 56b021fa11d3415b84df5aa01bcdd6b9
+candidate MLflow run: beb8ec53ae66460c9454d546764a56f6
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| risk-context current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Do not run a repeated promotion gate for
+this checkpoint.
+
+Interpretation:
+
+The larger fresh-scalar run remained mechanically healthy, but the candidate
+lost expected value while leaving positive-rate and large-loss guardrails
+unchanged. This says the visible score-pressure scalars alone are not enough at
+this data scale and hyperparameter setting. The next useful branch should add a
+target-side signal, especially a match-level large-loss probability/severity
+auxiliary, rather than scaling this exact current64 recipe.
+
+## Large-Loss Auxiliary Target Branch
+
+Date: 2026-05-30
+
+Branch:
+
+```text
+codex/chongci-risk-context-features
+```
+
+Question:
+
+Can a target-side auxiliary objective make the shared representation understand
+large-loss states before the policy update tries to act on them?
+
+Implementation:
+
+The model keeps normal serving behavior unchanged: inference still selects from
+masked policy logits. The shared trunk now also has default-off auxiliary heads:
+
+| Head | Target |
+|------|--------|
+| large-loss probability | `terminal_return <= large_loss_threshold` |
+| large-loss severity | `max(large_loss_threshold - terminal_return, 0)` |
+
+Training flags:
+
+```text
+--large-loss-aux-weight
+--large-loss-severity-weight
+```
+
+Both default to `0.0`, so existing IQL behavior is unchanged unless an
+experiment explicitly enables them. Old checkpoints can still load; the new
+auxiliary head starts from random weights when absent from the checkpoint.
+
+Next experiment:
+
+Use the fresh-scalar current64 dataset as a smoke test first:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.25
+large_loss_severity_weight: 0.10
+```
+
+Only run a selected-window screen first. If it loses EV or leaves large-loss
+unchanged, reject and tune the auxiliary weights or data mix before any
+promotion gate.
+
+### Current64 Auxiliary Smoke
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-aux-current64-20260530-232602
+```
+
+Question:
+
+Does adding large-loss probability/severity auxiliary targets to the fresh
+current64 scalar dataset improve selected-window tail behavior?
+
+Data:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+transitions: 131,842
+```
+
+Training:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-aux-current64-20260530-232602/checkpoints/iql_riskcontext_aux_current64/epoch_001.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.25
+large_loss_severity_weight: 0.10
+epochs: 1
+batch size: 2048
+lr: 5e-6
+target_mode: mc
+expectile: 0.7
+policy_weight: 0.25
+bc_weight: 3.0
+cql_weight: 0.0
+training MLflow run: 3d8faf2b071c4ebbace96796d6501bdb
+final loss: 0.3298
+```
+
+Training diagnostics:
+
+```text
+step 20: ll_aux=0.6923 ll_sev=0.2345
+step 40: ll_aux=0.6488 ll_sev=0.2214
+step 60: ll_aux=0.5999 ll_sev=0.1939
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max steps per episode: 8192
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-aux-current64-20260530-232602/reports/candidate_selected_windows.json
+candidate MLflow run: f50021375b9f40bcaaa409da612f38c3
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| scalar-only current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+| auxiliary current64 epoch 1 | -0.1900 | 40.91% | 25.00% |
+
+Decision:
+
+Rejected at selected-window screen. Do not run a repeated promotion gate for
+this checkpoint.
+
+Interpretation:
+
+The auxiliary heads learned measurable losses, but this weight setting worsened
+both expected value and large-loss rate. The likely issue is not plumbing; it is
+that the auxiliary target shaped the shared trunk too strongly or too late
+without giving the policy a better supported action distribution. Next target
+ablation should reduce auxiliary weights sharply, freeze or detach the policy
+path from the auxiliary gradient, or train the auxiliary only as a diagnostic
+head before allowing it to influence the shared trunk.
+
+### Current64 Small Auxiliary Smoke
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-auxsmall-current64-20260530-233411
+```
+
+Question:
+
+Does a much smaller large-loss auxiliary weight avoid the regression from the
+first auxiliary setting?
+
+Training:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-auxsmall-current64-20260530-233411/checkpoints/iql_riskcontext_auxsmall_current64/epoch_001.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.05
+large_loss_severity_weight: 0.02
+training MLflow run: 65064772fa7946b8afe09d3e0747f4b8
+final loss: 0.2039
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-auxsmall-current64-20260530-233411/reports/candidate_selected_windows.json
+candidate MLflow run: 6845d7aa619d42e7b89dec461199bf09
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| scalar-only current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+| auxiliary 0.25 / 0.10 | -0.1900 | 40.91% | 25.00% |
+| auxiliary 0.05 / 0.02 | -0.1600 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Do not run a repeated promotion gate for
+this checkpoint.
+
+Interpretation:
+
+Reducing the auxiliary weights removed the large-loss regression and improved
+EV relative to the scalar-only candidate, but it still did not beat the anchor.
+The useful next ablation is not a larger version of the same shared-gradient
+auxiliary. Instead, test a detached auxiliary head so the risk labels can be
+logged and calibrated without changing the shared trunk/policy update.
+
+## Detached Large-Loss Auxiliary Branch
+
+Date: 2026-05-31
+
+Implementation:
+
+Added a `--large-loss-aux-detach` IQL flag. When enabled, the large-loss
+probability/severity heads are trained from detached trunk features. This keeps
+the auxiliary diagnostics and checkpoint tensors, but blocks auxiliary gradients
+from changing the shared tile/scalar trunk used by policy, Q, and value heads.
+
+Question:
+
+Does the large-loss auxiliary become harmless as a diagnostic/calibration head
+when it cannot perturb the policy/Q representation?
+
+Next experiment:
+
+Use the same current64 dataset and selected-window screen:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.25
+large_loss_severity_weight: 0.10
+large_loss_aux_detach: true
+```
+
+### Current64 Detached Auxiliary Smoke
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-auxdetach-current64-20260531-012539
+```
+
+Question:
+
+Does detaching the auxiliary gradient prevent the policy/Q regression observed
+in shared-gradient large-loss auxiliary runs?
+
+Training:
+
+```text
+data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-auxdetach-current64-20260531-012539/checkpoints/iql_riskcontext_auxdetach_current64/epoch_001.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.25
+large_loss_severity_weight: 0.10
+large_loss_aux_detach: true
+training MLflow run: 27cec93b47af409296dbd1265798ad58
+final loss: 0.3793
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-auxdetach-current64-20260531-012539/reports/candidate_selected_windows.json
+candidate MLflow run: 7a12feca2a8142ebb3e01e857af31119
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| scalar-only current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+| auxiliary 0.25 / 0.10 | -0.1900 | 40.91% | 25.00% |
+| auxiliary 0.05 / 0.02 | -0.1600 | 40.91% | 20.45% |
+| detached auxiliary 0.25 / 0.10 | -0.1700 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Do not run a repeated promotion gate for
+this checkpoint.
+
+Interpretation:
+
+Detaching the auxiliary path removed the large-loss regression, confirming that
+the bad 0.25 / 0.10 run was caused by shared-trunk perturbation rather than a
+serving/evaluation bug. However, detached auxiliary training also reverted to
+the scalar-only candidate behavior and did not improve the policy. This closes
+the current64 same-data auxiliary sweep. The next useful experiment needs a new
+ingredient: richer/generated risk states, a direct risk-aware action objective,
+or a larger fresh-scalar dataset with mixed risk cases, not another auxiliary
+weight tweak on the same current64 data.
+
+## Fresh Risk-Seed Data Branch
+
+Date: 2026-05-31
+
+Question:
+
+Can fresh-scalar data generated directly on known first-divergence / large-loss
+seeds improve the selected-window tail-risk screen?
+
+Risk seeds:
+
+The seed list came from:
+
+```text
+/root/fh-mahjong-runs/chongci-risktrace-dense-v2-latest/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+```
+
+Seeds:
+
+```text
+534000 534001 534002 534003 534005 534008 534009
+544001 544003 544004 544007 544008 544009
+554001 554005 554006 554007
+```
+
+Data generation:
+
+```text
+run: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743
+anchor policy: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+raw candidate policy: /root/fh-mahjong-runs/chongci-capped400k-conservative-ablation-latest/checkpoints/iql_selfplay400k_lr5e6_bc2_pw05_2ep/epoch_001.pt
+generated datasets: 34 one-episode shards
+generated transitions: 69,148
+```
+
+### Risk-Seed Mix With Exact Risk Weighting
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743
+```
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 17 anchor shards + 17 raw-candidate shards
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/checkpoints/iql_riskseed_mix/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+training MLflow run: 14bc5f6ec6eb40129db3a63b1750a19c
+final loss: 0.1387
+```
+
+Risk matching:
+
+The fresh shards produced non-zero exact matches from the paired trace report.
+The base current64 dataset had no exact matches; selected risk-seed shards had
+`seed_seat_decision` matches and weighted transitions.
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/reports/candidate_selected_windows.json
+candidate MLflow run: 7e20df1b86e24012b030d8a4012dd9e1
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| scalar-only current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+| risk-seed mix + risk weight | -0.1400 | 40.91% | 22.73% |
+
+Decision:
+
+Rejected at selected-window screen. EV matched the anchor, but large-loss rate
+regressed.
+
+### Risk-Seed Mix Without Risk Weighting
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-nowt-20260531-021528
+```
+
+Training:
+
+```text
+base data: current64 fresh-scalar data
+risk data: 17 anchor shards + 17 raw-candidate shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-nowt-20260531-021528/checkpoints/iql_riskseed_mix_nowt/epoch_001.pt
+risk_trace_weight: disabled
+training MLflow run: 5af744bcb839462fae38a2c8dbd1aba2
+final loss: 0.1354
+```
+
+Evaluation:
+
+```text
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-nowt-20260531-021528/reports/candidate_selected_windows.json
+candidate MLflow run: c4f9de1774c3409ca33ca519b11d775e
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| risk-seed mix, no risk weight | -0.1800 | 40.91% | 22.73% |
+
+Decision:
+
+Rejected. Adding raw-candidate risk-seed data without exact risk weighting
+hurt EV and tail risk.
+
+### Anchor-Only Risk-Seed Data
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-anchoronly-20260531-022041
+```
+
+Training:
+
+```text
+base data: current64 fresh-scalar data
+risk data: 17 anchor-only shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-anchoronly-20260531-022041/checkpoints/iql_riskseed_anchoronly/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+training MLflow run: 30468004787842779a199fed5fe8fe6c
+final loss: 0.1394
+```
+
+Evaluation:
+
+```text
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-anchoronly-20260531-022041/reports/candidate_selected_windows.json
+candidate MLflow run: fd24298097a24b119fabb9e526529fde
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| anchor-only risk seeds | -0.1600 | 43.18% | 22.73% |
+
+Decision:
+
+Rejected. Positive rate improved by one seat, but EV and large-loss rate both
+missed the anchor.
+
+Interpretation:
+
+Fresh risk-seed data is useful mechanically because it produced exact
+risk-trace matches, but the current recipe still moves the policy into worse
+tail outcomes. Raw-candidate shards appear especially unsafe; anchor-only data
+is safer but still not enough. The next useful direction should avoid simply
+mixing whole risk-seed episodes. Instead, create an action-level objective that
+uses first-divergence rows directly, or filter training to only the exact
+matched risk decisions plus their short local context.
+
+### Anchor-Only Filtered First-Divergence Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-filtered-20260531-035442
+```
+
+Question:
+
+Can we avoid the whole-risk-episode regression by keeping the normal current64
+anchor replay source intact, then adding only exact first-divergence rows from
+the anchor risk-seed shards plus a very small same-seat local context window?
+
+Implementation:
+
+- `apply_risk_case_weights` now marks exact matches in `risk_case_matches`.
+- `fh-mj-train-iql --risk-trace-filter-datasets` keeps the first `--data`
+  source as the base replay dataset and filters later sources.
+- `--risk-trace-context-radius N` keeps same-episode, same-seat rows whose
+  `decision_index` is within `N` decisions of an exact match.
+- Unit coverage checks exact context selection and the multi-dataset loader
+  behavior.
+
+Local validation:
+
+```text
+uv run --project ai pytest ai/tests/test_risk_filter.py ai/tests/test_iql.py ai/tests/test_model.py
+result: 32 passed
+
+uv run --project ai pytest ai/tests/test_model.py ai/tests/test_iql.py ai/tests/test_storage.py ai/tests/test_serving.py ai/tests/test_policies.py ai/tests/test_evaluate.py ai/tests/test_risk_filter.py ai/tests/test_paired_trace.py
+result: 62 passed
+
+uv run --project ai python -m py_compile ai/src/fh_mahjong_ai/scripts/train_iql.py ai/src/fh_mahjong_ai/risk_filter.py ai/src/fh_mahjong_ai/trainer.py ai/src/fh_mahjong_ai/model.py
+result: passed
+
+go test ./rules ./rlenv
+result: passed
+```
+
+Remote validation:
+
+```text
+cd /root/fh-mahjong-risk-context
+/root/.local/bin/uv run --project ai --extra dev pytest ai/tests/test_risk_filter.py ai/tests/test_iql.py ai/tests/test_model.py
+result: 32 passed
+```
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 17 anchor-only one-seed shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-filtered-20260531-035442/checkpoints/iql_riskseed_anchor_filtered/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+risk_trace_filter_datasets: true
+risk_trace_context_radius: 2
+training MLflow run: 44791c3621184dcbb18ec87baae27ecc
+final loss: 0.1313
+```
+
+Risk matching:
+
+```text
+base current64 dataset: 0 exact matches
+anchor risk-seed filtered rows kept: 11 total
+non-empty filtered shards: 8 of 17
+matching mode: seed_seat_decision
+```
+
+The non-empty risk shards were:
+
+```text
+534000: 3 rows
+534001: 1 row
+534002: 2 rows
+544003: 1 row
+544004: 1 row
+544008: 1 row
+544009: 1 row
+```
+
+An initial evaluation was accidentally run with the short score config
+`starting_score=2`, `bust_threshold=-2`, `max_hands=8`; that report is not
+comparable to the historical selected-window gate and should not be used for a
+promotion decision.
+
+Comparable evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max steps per episode: 8192
+Chongci config: default starting_score=2000, bust_threshold=0, max_hands=50
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-riskseeds-filtered-20260531-035442/reports/candidate_selected_windows_default_config.json
+candidate MLflow run: f5ad40fcfcd646b0b62bd7f92e9e51a0
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| scalar-only current64 epoch 1 | -0.1700 | 40.91% | 20.45% |
+| anchor-only filtered first-divergence replay | -0.1700 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Exact filtered replay avoided the previous
+anchor-only risk-seed large-loss regression, but it did not improve over the
+scalar-only current64 checkpoint and still missed the promoted anchor by EV.
+
+Interpretation:
+
+This confirms the loader-level filtered replay plumbing works, but the signal is
+too sparse: only 11 extra risk-context rows survived filtering. The next branch
+needs either more exact matched risk rows from generated data, or a stronger
+action-level objective on those rows. Simply adding the sparse rows with sample
+weighting is not enough.
+
+### All-Anchor Filtered First-Divergence Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447
+```
+
+Question:
+
+Does covering every seed from the dense paired trace improve filtered replay
+enough to beat the promoted anchor? The previous filtered run used only 17
+targeted anchor seed shards and kept 11 risk-context rows. This run generated
+the 13 missing anchor shards and trained against all 30 trace seeds.
+
+Additional data generation:
+
+```text
+generated missing anchor seeds:
+534004 534006 534007
+544000 544002 544005 544006
+554000 554002 554003 554004 554008 554009
+new generated shards: 13
+```
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/checkpoints/iql_allanchor_filtered/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+risk_trace_filter_datasets: true
+risk_trace_context_radius: 2
+training MLflow run: c15f54ac3a7c46deb2cb02aefde03de5
+final loss: 0.1312
+```
+
+Risk matching:
+
+```text
+base current64 dataset: 0 exact matches
+all-anchor filtered rows kept: 16 total
+matching mode: seed_seat_decision
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max steps per episode: 8192
+Chongci config: default starting_score=2000, bust_threshold=0, max_hands=50
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/reports/candidate_selected_windows.json
+candidate MLflow run: fb34b342b1894457b752334a59af47f2
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| anchor-only filtered replay, 17 seeds | -0.1700 | 40.91% | 20.45% |
+| all-anchor filtered replay, 30 seeds | -0.1800 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen. Increasing seed coverage from 17 to 30 only
+raised filtered rows from 11 to 16 and slightly worsened EV.
+
+Interpretation:
+
+This closes the simple "more trace seeds" version of filtered replay. The
+limiting factor is not only unique seed coverage; it is that exact decision
+matches remain too rare and the objective remains too weak when sampled through
+the normal replay distribution. The next experiment should not spend more time
+on the same filtered replay recipe. Use a stronger objective on exact rows,
+change target-side risk learning, or collect repeated data specifically around
+the exact matched decision states.
+
+### All-Anchor Filtered Replay With Sparse-Row Oversampling
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817
+```
+
+Question:
+
+Was the all-anchor filtered run failing because the exact matched rows were too
+rarely sampled? This run reused the same 30 all-anchor risk-seed inputs, kept the
+same filtered replay setup, and added `--pairwise-replay-multiplier 256` so the
+sparse exact rows were repeated into an auxiliary replay source. No pairwise loss
+was enabled; the multiplier was used as a sampling intervention for the matched
+rows and their sample weights.
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards
+output checkpoint: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/checkpoints/iql_allanchor_filtered_replayx/epoch_001.pt
+risk_trace_weight: 3.0
+risk_trace_worst_delta_count: 40
+risk_trace_filter_datasets: true
+risk_trace_context_radius: 2
+pairwise_replay_multiplier: 256
+training MLflow run: b1c58e84cafd43a9817b5962c1d9c6ad
+final loss: 0.1492
+```
+
+Sampling check:
+
+The stronger-sampling setup worked mechanically. Training batches now exposed
+the sparse rows:
+
+```text
+step 20: pairwise_count=8,  sample_weight=1.039
+step 40: pairwise_count=19, sample_weight=1.050
+step 60: pairwise_count=15, sample_weight=1.048
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-replayx-20260531-151817/reports/candidate_selected_windows.json
+candidate MLflow run: 36aa6cb011a5479a8cdaa5eac8470059
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| all-anchor filtered replay | -0.1800 | 40.91% | 20.45% |
+| all-anchor filtered replay + sparse-row oversampling | -0.1800 | 40.91% | 20.45% |
+
+Decision:
+
+Rejected at selected-window screen.
+
+Interpretation:
+
+This distinguishes two failure modes. The previous run under-sampled exact rows;
+this run fixed row exposure but still did not improve the policy. The filtered
+replay target is not strong enough in this form. Stop this replay-only line and
+move to target-side learning or a better state/action objective.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -2084,6 +2976,16 @@ should be feature-side or target-side:
     Q-side run worsened EV and large-loss rate, so paired-trace preference
     losses should pause until stronger risk-context features or target signals
     are added.
+20. Filtered first-divergence replay is implemented and validated. The first
+    anchor-only filtered run kept only 11 extra risk-context rows, matched the
+    scalar-only current64 candidate, and still missed the promoted anchor; the
+    bottleneck is now exact-match volume or a stronger objective on those rows.
+21. Expanding filtered replay to all 30 dense-trace seeds kept only 16 rows and
+    worsened EV to `-0.18`; do not repeat this filtered replay recipe without a
+    stronger sampling or objective change.
+22. Sparse-row oversampling made exact rows visible in training batches but did
+    not improve selected-window reward, so the filtered replay objective itself
+    is exhausted for now.
 
 ## Recommended Next Experiments
 
@@ -2118,9 +3020,10 @@ Pairwise policy-margin loss has now been tested as that direct divergence loss.
 The useful next step is a critic-side or feature-side change, not another
 policy-margin run with the same trace.
 
-Pairwise Q-margin loss has now also been tested and rejected. The next branch
-should be feature-side or target-side, especially score-pressure and bust-risk
-features or a large-loss probability/severity auxiliary.
+Pairwise Q-margin loss and sparse filtered first-divergence replay have now also
+been tested and rejected. The next branch should either increase exact-match
+volume substantially or move feature-side / target-side, especially score-
+pressure, bust-risk features, or a large-loss probability/severity auxiliary.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 

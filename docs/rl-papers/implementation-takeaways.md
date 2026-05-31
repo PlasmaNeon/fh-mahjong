@@ -59,6 +59,7 @@ Near term:
 - prefer discounted Monte Carlo terminal-return targets for the first offline reward learner: `gamma ** steps_to_done * terminal_round_payout`
 - keep one-step TD as an explicit experiment after value calibration improves
 - add a conservative Q penalty as an explicit offline-RL ablation, following Mortal's preference for conservative offline Q estimates
+- do not repeat sparse first-divergence replay weighting unless the objective changes; filtered Chongci runs kept only 11 to 16 added risk-context rows, and explicit sparse-row oversampling still did not improve the selected-window gate
 
 Later:
 
@@ -78,7 +79,7 @@ The reading strongly supports adding rule-engine look-ahead features, especially
 - wild-preservation signals (implemented in scalar indices 36-37)
 - estimated score potential (implemented in scalar index 38)
 - public danger heuristics (implemented in scalar indices 39-41)
-- Chongci match context: mode flag, hand progress, rank strength, score gaps, and bust pressure (implemented in scalar indices 42-49)
+- Chongci match context: mode flag, hand progress, rank strength, leader pressure, large-loss safety, own bust safety, and opponent large-loss pressure (implemented in scalar indices 42-49)
 
 These features are compatible with the current Go heuristic analysis and should help both BC and RL.
 

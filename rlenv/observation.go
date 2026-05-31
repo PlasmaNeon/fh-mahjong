@@ -13,6 +13,7 @@ const (
 	ObservationPlaneWidth    = 1
 	ObservationScalarCount   = 50
 	maxInt32                 = int32(^uint32(0) >> 1)
+	chongciLargeLossPoints   = int32(1000)
 )
 
 func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
@@ -207,19 +208,19 @@ func setMatchContextScalars(scalars []float32, state *pb.GameState, seat uint32)
 	}
 
 	self := state.Players[seat]
-	selfRank, leaderScore, lowestOtherScore, minOpponentScore := rankAndScoreContext(state, seat)
+	selfRank, leaderScore, minOpponentScore := rankAndScoreContext(state, seat)
+	largeLossThreshold := largeLossScoreThreshold(startingScore, bustThreshold)
 	scalars[45] = 1.0 - float32(selfRank-1)/3.0
-	scalars[46] = 1.0 - normalizePositiveScoreDelta(leaderScore-self.Score, startingScore)
-	scalars[47] = normalizeSignedScoreDelta(self.Score-lowestOtherScore, startingScore)
+	scalars[46] = normalizePositiveScoreDelta(leaderScore-self.Score, startingScore)
+	scalars[47] = normalizePositiveScoreDelta(self.Score-largeLossThreshold, startingScore)
 	scalars[48] = normalizePositiveScoreDelta(self.Score-bustThreshold, startingScore)
-	scalars[49] = 1.0 - normalizePositiveScoreDelta(minOpponentScore-bustThreshold, startingScore)
+	scalars[49] = 1.0 - normalizePositiveScoreDelta(minOpponentScore-largeLossThreshold, startingScore)
 }
 
-func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32, int32) {
+func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32) {
 	selfScore := state.Players[seat].Score
 	rank := uint32(1)
 	leaderScore := selfScore
-	lowestOtherScore := selfScore
 	minOpponentScore := maxInt32
 	for _, player := range state.Players {
 		if player == nil {
@@ -234,9 +235,6 @@ func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32
 		if player.Seat == seat {
 			continue
 		}
-		if player.Score < lowestOtherScore {
-			lowestOtherScore = player.Score
-		}
 		if player.Score < minOpponentScore {
 			minOpponentScore = player.Score
 		}
@@ -244,7 +242,15 @@ func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32
 	if minOpponentScore == maxInt32 {
 		minOpponentScore = selfScore
 	}
-	return rank, leaderScore, lowestOtherScore, minOpponentScore
+	return rank, leaderScore, minOpponentScore
+}
+
+func largeLossScoreThreshold(startingScore int32, bustThreshold int32) int32 {
+	threshold := startingScore - chongciLargeLossPoints
+	if threshold < bustThreshold {
+		return bustThreshold
+	}
+	return threshold
 }
 
 func normalizePositiveScoreDelta(delta int32, scale int32) float32 {
@@ -252,20 +258,6 @@ func normalizePositiveScoreDelta(delta int32, scale int32) float32 {
 		scale = 1
 	}
 	value := float32(delta) / float32(scale)
-	if value < 0 {
-		return 0
-	}
-	if value > 1 {
-		return 1
-	}
-	return value
-}
-
-func normalizeSignedScoreDelta(delta int32, scale int32) float32 {
-	if scale <= 0 {
-		scale = 1
-	}
-	value := 0.5 + float32(delta)/(2.0*float32(scale))
 	if value < 0 {
 		return 0
 	}

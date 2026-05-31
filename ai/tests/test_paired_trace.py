@@ -22,6 +22,7 @@ def test_summarize_observation_reports_legal_family_rates_and_scalars() -> None:
     mask[47] = 1
     scalars = np.zeros(50, dtype=np.float32)
     scalars[25] = 0.5
+    scalars[47] = 0.75
     scalars[48] = 0.25
     observation = Observation(
         seat=2,
@@ -41,6 +42,7 @@ def test_summarize_observation_reports_legal_family_rates_and_scalars() -> None:
         "pon": 1 / 3,
     }
     assert summary["scalars"]["overall_shanten"] == 0.5
+    assert summary["scalars"]["large_loss_margin"] == 0.75
     assert summary["scalars"]["self_bust_margin"] == 0.25
 
 

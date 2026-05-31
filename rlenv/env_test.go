@@ -195,7 +195,7 @@ func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 		0.8,
 		2.0 / 3.0,
 		0.5,
-		0.9,
+		0.25,
 		0.75,
 		1.0,
 	}
