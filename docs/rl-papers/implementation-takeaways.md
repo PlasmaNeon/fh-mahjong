@@ -60,6 +60,8 @@ Near term:
 - keep one-step TD as an explicit experiment after value calibration improves
 - add a conservative Q penalty as an explicit offline-RL ablation, following Mortal's preference for conservative offline Q estimates
 - do not repeat sparse first-divergence replay weighting unless the objective changes; filtered Chongci runs kept only 11 to 16 added risk-context rows, and explicit sparse-row oversampling still did not improve the selected-window gate
+- shared-gradient large-loss auxiliary training is not automatically safer: the first all-anchor target-side run was active, improved EV versus replay-only all-anchor runs, but regressed selected-window large-loss rate
+- lowering those auxiliary coefficients reproduced the same rejected selected-window behavior, so further coefficient sweeps are lower value than changing the objective or serving-time use of risk estimates
 
 Later:
 

@@ -2928,6 +2928,128 @@ this run fixed row exposure but still did not improve the policy. The filtered
 replay target is not strong enough in this form. Stop this replay-only line and
 move to target-side learning or a better state/action objective.
 
+### Target-Side Large-Loss Auxiliary On All-Anchor Data
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-targetrisk-aux-allanchor-20260531-162926
+```
+
+Question:
+
+Can a target-side large-loss probability/severity auxiliary improve the policy
+where replay-only first-divergence weighting failed? This run used the base
+current64 dataset plus all 30 anchor risk-seed shards without risk filtering.
+The auxiliary heads shared trunk gradients, so this was representation shaping,
+not a detached diagnostic.
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards, unfiltered
+output checkpoint: /root/fh-mahjong-runs/chongci-targetrisk-aux-allanchor-20260531-162926/checkpoints/iql_aux_allanchor/epoch_001.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.05
+large_loss_severity_weight: 0.02
+large_loss_aux_detach: false
+training MLflow run: 1222eb29180b4a5484808eceb07c462a
+final loss: 0.1624
+```
+
+Training check:
+
+The auxiliary losses were active:
+
+```text
+step 20: ll_aux=0.5458, ll_sev=0.1169
+step 40: ll_aux=0.5084, ll_sev=0.1057
+step 80: ll_aux=0.5076, ll_sev=0.0804
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-targetrisk-aux-allanchor-20260531-162926/reports/candidate_selected_windows.json
+candidate MLflow run: db51c58f0f0343f5a2d19598e9ded404
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| all-anchor filtered replay + oversampling | -0.1800 | 40.91% | 20.45% |
+| all-anchor large-loss auxiliary | -0.1700 | 40.91% | 22.73% |
+
+Decision:
+
+Rejected at selected-window screen.
+
+Interpretation:
+
+The auxiliary target moved the policy differently from replay-only weighting,
+but not in the right direction: EV improved versus the replay-only all-anchor
+runs, while large-loss rate regressed. This suggests the current auxiliary
+form is not enough as a promotion candidate. A lower-weight auxiliary or a
+critic-side risk score may be worth testing, but the direct shared-gradient
+all-anchor auxiliary is rejected.
+
+### Lower-Weight Target-Side Large-Loss Auxiliary
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-targetrisk-auxlow-allanchor-20260531-163427
+```
+
+Question:
+
+Was the target-side auxiliary tail regression caused by excessive auxiliary
+weight? This repeats the all-anchor auxiliary setup with lower coefficients.
+
+Training:
+
+```text
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards, unfiltered
+output checkpoint: /root/fh-mahjong-runs/chongci-targetrisk-auxlow-allanchor-20260531-163427/checkpoints/iql_auxlow_allanchor/epoch_001.pt
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.02
+large_loss_severity_weight: 0.005
+large_loss_aux_detach: false
+training MLflow run: b1bfc92969f440199300ae7ab48372ca
+final loss: 0.1493
+```
+
+Evaluation:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+candidate report: /root/fh-mahjong-runs/chongci-targetrisk-auxlow-allanchor-20260531-163427/reports/candidate_selected_windows.json
+candidate MLflow run: 58cf08c0a0624fae9736260a9eb50b80
+```
+
+| Policy | Avg Reward | Positive Rate | Large-Loss Rate |
+|--------|------------|---------------|-----------------|
+| promoted anchor under new scalars | -0.1400 | 40.91% | 20.45% |
+| all-anchor large-loss auxiliary | -0.1700 | 40.91% | 22.73% |
+| lower-weight all-anchor large-loss auxiliary | -0.1700 | 40.91% | 22.73% |
+
+Decision:
+
+Rejected at selected-window screen.
+
+Interpretation:
+
+Lowering the auxiliary coefficients did not change the selected-window behavior.
+The shared-gradient large-loss auxiliary is not a useful next promotion path in
+its current form.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -2986,6 +3108,11 @@ move to target-side learning or a better state/action objective.
 22. Sparse-row oversampling made exact rows visible in training batches but did
     not improve selected-window reward, so the filtered replay objective itself
     is exhausted for now.
+23. Shared-gradient large-loss auxiliary training on all-anchor data was active
+    but regressed selected-window large-loss rate, so the first target-side
+    version is also rejected.
+24. Lowering the large-loss auxiliary coefficients reproduced the same rejected
+    selected-window result.
 
 ## Recommended Next Experiments
 

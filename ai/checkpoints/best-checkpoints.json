@@ -177,6 +177,108 @@
   },
   "rejected_candidates": [
     {
+      "id": "chongci_targetrisk_auxlow_allanchor_epoch001",
+      "method": "discrete_iql_large_loss_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-targetrisk-auxlow-allanchor-20260531-163427/checkpoints/iql_auxlow_allanchor/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/data/anchor-seed-*-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/data/anchor-seed-*-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 2048,
+        "learning_rate": 0.000005,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "policy_weight": 0.25,
+        "bc_weight": 3.0,
+        "cql_weight": 0.0,
+        "large_loss_threshold": -1.0,
+        "large_loss_aux_weight": 0.02,
+        "large_loss_severity_weight": 0.005,
+        "large_loss_aux_detach": false,
+        "mlflow_run_id": "b1bfc92969f440199300ae7ab48372ca"
+      },
+      "screening": [
+        {
+          "label": "selected_windows_534000_544001_554001",
+          "seats": 44,
+          "seed_windows": [
+            "534000:6",
+            "544001:4",
+            "554001:1"
+          ],
+          "positive_reward_rate": 0.4091,
+          "large_loss_rate": 0.2273,
+          "mean_reward": -0.17,
+          "promoted_positive_reward_rate": 0.4091,
+          "promoted_large_loss_rate": 0.2045,
+          "promoted_mean_reward": -0.14,
+          "report_path": "/root/fh-mahjong-runs/chongci-targetrisk-auxlow-allanchor-20260531-163427/reports/candidate_selected_windows.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/anchor_selected_windows.json",
+          "mlflow_run_id": "58cf08c0a0624fae9736260a9eb50b80"
+        }
+      ],
+      "decision": "rejected_selected_window_screen",
+      "reason": "Lower auxiliary coefficients reproduced the previous all-anchor auxiliary result and still regressed large-loss rate versus the promoted anchor."
+    },
+    {
+      "id": "chongci_targetrisk_aux_allanchor_epoch001",
+      "method": "discrete_iql_large_loss_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-targetrisk-aux-allanchor-20260531-162926/checkpoints/iql_aux_allanchor/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/data/anchor-seed-*-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/data/anchor-seed-*-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 2048,
+        "learning_rate": 0.000005,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "policy_weight": 0.25,
+        "bc_weight": 3.0,
+        "cql_weight": 0.0,
+        "large_loss_threshold": -1.0,
+        "large_loss_aux_weight": 0.05,
+        "large_loss_severity_weight": 0.02,
+        "large_loss_aux_detach": false,
+        "mlflow_run_id": "1222eb29180b4a5484808eceb07c462a"
+      },
+      "screening": [
+        {
+          "label": "selected_windows_534000_544001_554001",
+          "seats": 44,
+          "seed_windows": [
+            "534000:6",
+            "544001:4",
+            "554001:1"
+          ],
+          "positive_reward_rate": 0.4091,
+          "large_loss_rate": 0.2273,
+          "mean_reward": -0.17,
+          "promoted_positive_reward_rate": 0.4091,
+          "promoted_large_loss_rate": 0.2045,
+          "promoted_mean_reward": -0.14,
+          "report_path": "/root/fh-mahjong-runs/chongci-targetrisk-aux-allanchor-20260531-162926/reports/candidate_selected_windows.json",
+          "promoted_report_path": "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/reports/anchor_selected_windows.json",
+          "mlflow_run_id": "db51c58f0f0343f5a2d19598e9ded404"
+        }
+      ],
+      "decision": "rejected_selected_window_screen",
+      "reason": "Large-loss auxiliary training was active and improved EV versus replay-only all-anchor runs, but it regressed large-loss rate versus the promoted anchor."
+    },
+    {
       "id": "chongci_riskcontext_allanchor_filtered_replayx_epoch001",
       "method": "discrete_iql_risk_trace_filtered_replay",
       "match_mode": "chongci",
