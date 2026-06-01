@@ -23,7 +23,7 @@ type SeatConfig struct {
 	Difficulty pb.Difficulty `json:"difficulty,omitempty"` // bot
 }
 
-// PrivateTable holds the configuration of a /table/:tableId waiting room
+// PrivateTable holds the configuration of a /room/:roomId waiting room
 // before the actual match Room is constructed.
 type PrivateTable struct {
 	mu sync.Mutex

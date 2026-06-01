@@ -118,7 +118,7 @@ export default function Lobby() {
                         </div>
 
                         <div className="mt-8 rounded-[24px] border border-amber-300/18 bg-amber-950/24 px-5 py-5 text-sm leading-7 text-amber-100/92">
-                            `/table/:tableId` is already the real waiting room route. `/create-room` just gives you a clean way to share it.
+                            `/room/:roomId` is the real waiting-room route. `/room/new` just gives you a clean way to generate and share one.
                         </div>
 
                         <div className="mt-8">
