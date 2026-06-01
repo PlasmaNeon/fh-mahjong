@@ -220,6 +220,7 @@ Mahjong exercise:
 - Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
 - Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
 - Before using a risk head for serving, require calibration evidence: AUC above random, monotonic risk bands, and acceptable severity error. The first Chongci large-loss heads failed this check.
+- Next risk-learning design: add visible match-history inputs and an action-conditioned risk critic over legal actions; train on observed actions first and calibrate before any guarded serving/evaluation.
 
 ## Stage 6: Rewards And Credit Assignment
 

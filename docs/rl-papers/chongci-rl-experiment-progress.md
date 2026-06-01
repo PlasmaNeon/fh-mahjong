@@ -3187,44 +3187,35 @@ coefficients.
     selected-window result.
 25. Large-loss auxiliary calibration shows near-random AUC and flat risk bands,
     so the current auxiliary head should not be used as a guard.
+26. The next risk-learning direction is documented in
+    `docs/rl-papers/chongci-risk-target-design.md`: add visible match-history
+    inputs and train an action-conditioned critic-side risk head before trying
+    any serving-time guard.
 
 ## Recommended Next Experiments
 
-### Step 1: Target The Exact Divergence States
+### Step 1: Build Action-Conditioned Risk Critic Inputs
 
-Use the paired-trace large-loss and worst-delta seeds to create targeted
-high-risk-state weighting instead of weighting every large-loss transition
-equally. The next implementation should be more selective:
+Use the design in [Chongci Risk Target And Input Design](./chongci-risk-target-design.md).
+
+The next implementation should not repeat first-divergence replay weighting or
+large-loss auxiliary coefficient sweeps. The next useful target is:
 
 ```text
-first-divergence seed/seat filtering
-large-loss transition weight: 4x to 6x only for selected high-risk groups
-bc_weight: keep high, 3.0 to 4.0
-policy_weight: lower, 0.25
-lr: 5e-6 or lower
+risk_logit(s, a)    = P(terminal_match_return <= threshold | visible state, action)
+risk_severity(s, a) = E[max(threshold - terminal_match_return, 0) | visible state, action]
 ```
 
-Promotion still requires the deterministic repeated gate.
+Train it only on observed dataset actions first, and require offline calibration
+before any guarded online evaluation.
 
-After risk-trace candidate v1, the priority is not another identical weighting
-run. The next version should increase exact-match density before training, for
-example by tracing more anchor/candidate windows, adding all first-divergence
-cases rather than only the worst deltas, or generating repeated shards from the
-same seed/seat decision neighborhoods.
+Immediate work:
 
-Dense v2 completed this density test and did not promote. Further experiments
-should avoid repeating the same `risk_trace_weight=6.0` approach unless another
-change is introduced, such as richer risk features, direct pairwise divergence
-loss, or a match-level tail-value auxiliary.
-
-Pairwise policy-margin loss has now been tested as that direct divergence loss.
-The useful next step is a critic-side or feature-side change, not another
-policy-margin run with the same trace.
-
-Pairwise Q-margin loss and sparse filtered first-divergence replay have now also
-been tested and rejected. The next branch should either increase exact-match
-volume substantially or move feature-side / target-side, especially score-
-pressure, bust-risk features, or a large-loss probability/severity auxiliary.
+- add visible Chongci match-history scalars,
+- add action-conditioned risk probability/severity heads over the 204-action
+  catalog,
+- calibrate the risk head before using it for serving,
+- only then test a top-policy-candidate risk guard.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 

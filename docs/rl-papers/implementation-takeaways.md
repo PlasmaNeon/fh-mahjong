@@ -63,6 +63,7 @@ Near term:
 - shared-gradient large-loss auxiliary training is not automatically safer: the first all-anchor target-side run was active, improved EV versus replay-only all-anchor runs, but regressed selected-window large-loss rate
 - lowering those auxiliary coefficients reproduced the same rejected selected-window behavior, so further coefficient sweeps are lower value than changing the objective or serving-time use of risk estimates
 - the first calibrated large-loss auxiliary heads should not be used as serving guards: probability AUC was near random and predicted risk bands had nearly flat realized large-loss rates
+- next Chongci risk-learning design should be action-conditioned and critic-side: predict tail probability/severity for each legal action using visible match-history inputs, then calibrate before any serving-time guard
 
 Later:
 
