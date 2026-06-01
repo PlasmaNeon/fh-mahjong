@@ -210,11 +210,11 @@ func (s *Server) broadcastPrivateTable(table *PrivateTable) {
 	}
 	envelope := struct {
 		Type  string          `json:"type"`
-		Table string          `json:"table"`
+		Room  string          `json:"room"`
 		State json.RawMessage `json:"state"`
 	}{
 		Type:  "lobby_update",
-		Table: table.TableID,
+		Room:  table.TableID,
 		State: stateJSON,
 	}
 	payload, err := json.Marshal(envelope)
@@ -227,7 +227,7 @@ func (s *Server) broadcastPrivateTable(table *PrivateTable) {
 func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	username, _ := c.Get("username")
-	tableID := c.Param("tableId")
+	tableID := c.Param("roomId")
 	if tableID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tableId is required"})
 		return
@@ -240,10 +240,10 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 
 	if activeTable, isActive, isParticipant := s.Matchmaker.IsPrivateTableParticipant(tableID, userID.(uint)); isActive {
 		if isParticipant {
-			c.JSON(http.StatusOK, gin.H{"status": "active", "table": tableID, "matchId": activeTable.MatchID})
+			c.JSON(http.StatusOK, gin.H{"status": "active", "room": tableID, "matchId": activeTable.MatchID})
 			return
 		}
-		c.JSON(http.StatusConflict, gin.H{"error": "This private table is already in an active game", "status": "active", "table": tableID, "matchId": activeTable.MatchID})
+		c.JSON(http.StatusConflict, gin.H{"error": "This private table is already in an active game", "status": "active", "room": tableID, "matchId": activeTable.MatchID})
 		return
 	}
 
@@ -258,7 +258,7 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 }
 
 func (s *Server) handlePrivateTableGet(c *gin.Context) {
-	tableID := c.Param("tableId")
+	tableID := c.Param("roomId")
 	if s.Matchmaker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
 		return
@@ -273,7 +273,7 @@ func (s *Server) handlePrivateTableGet(c *gin.Context) {
 
 func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 	userID, _ := c.Get("userID")
-	tableID := c.Param("tableId")
+	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
@@ -322,7 +322,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 
 func (s *Server) handlePrivateTableMode(c *gin.Context) {
 	userID, _ := c.Get("userID")
-	tableID := c.Param("tableId")
+	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
@@ -382,7 +382,7 @@ func (s *Server) handlePrivateTableMode(c *gin.Context) {
 
 func (s *Server) handlePrivateTableStart(c *gin.Context) {
 	userID, _ := c.Get("userID")
-	tableID := c.Param("tableId")
+	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})

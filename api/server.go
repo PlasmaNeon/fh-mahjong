@@ -60,10 +60,10 @@ func (s *Server) setupRoutes() {
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
 		v1.POST("/auth/guest", authHandler.GuestLogin)
-		v1.POST("/calc", s.handleCalc)
-		v1.POST("/shanten", s.handleShanten)
-		v1.GET("/paipu/:matchId", s.handleGetPaipu)
-		v1.POST("/paipu/:matchId", s.handleUploadPaipu)
+		v1.POST("/tools/calc", s.handleCalc)
+		v1.POST("/tools/shanten", s.handleShanten)
+		v1.GET("/replays/:matchId", s.handleGetPaipu)
+		v1.POST("/replays/:matchId", s.handleUploadPaipu)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, c) })
 
 		// Protected routes
@@ -73,11 +73,11 @@ func (s *Server) setupRoutes() {
 			protected.GET("/users/me", s.handleGetMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
 
-			protected.GET("/private-tables/:tableId", s.handlePrivateTableGet)
-			protected.POST("/private-tables/:tableId/join", s.handlePrivateTableJoin)
-			protected.POST("/private-tables/:tableId/seat", s.handlePrivateTableSeat)
-			protected.POST("/private-tables/:tableId/start", s.handlePrivateTableStart)
-			protected.POST("/private-tables/:tableId/mode", s.handlePrivateTableMode)
+			protected.GET("/rooms/:roomId", s.handlePrivateTableGet)
+			protected.POST("/rooms/:roomId/join", s.handlePrivateTableJoin)
+			protected.POST("/rooms/:roomId/seat", s.handlePrivateTableSeat)
+			protected.POST("/rooms/:roomId/start", s.handlePrivateTableStart)
+			protected.POST("/rooms/:roomId/mode", s.handlePrivateTableMode)
 		}
 	}
 
