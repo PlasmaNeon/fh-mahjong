@@ -18,13 +18,13 @@ export default function Lobby() {
         }
 
         if (gameState && gameState.matchId) {
-            navigate(`/game/${gameState.matchId}`);
+            navigate(`/match/${gameState.matchId}`);
         }
     }, [isConnected, gameState, navigate, connect]);
 
     const joinQueue = async (ruleset: 'hometown' | 'chongci-fh' = 'hometown') => {
         const token = localStorage.getItem('fh_token');
-        if (!token) return navigate('/');
+        if (!token) return navigate('/login');
 
         setError('');
         setIsQueuing(true);
@@ -99,7 +99,7 @@ export default function Lobby() {
                                     Quick Match — Chongci
                                 </button>
                                 <Link
-                                    to="/create-room"
+                                    to="/room/new"
                                     className="rounded-[24px] border border-cyan-300/20 bg-cyan-950/60 px-7 py-4 text-sm font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:-translate-y-0.5 hover:bg-cyan-900/70"
                                 >
                                     Private Room
@@ -123,7 +123,7 @@ export default function Lobby() {
 
                         <div className="mt-8">
                             <Link
-                                to="/"
+                                to="/login"
                                 className="inline-flex rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-100 transition hover:bg-white/10"
                             >
                                 Back To Login

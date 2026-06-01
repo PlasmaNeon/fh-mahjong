@@ -341,7 +341,7 @@ export default function Shanten() {
         wildTile: currentWild,
         openMelds: currentMelds,
       }
-      const resp = await fetch(getApiUrl('/api/v1/shanten'), {
+      const resp = await fetch(getApiUrl('/api/v1/tools/shanten'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -442,7 +442,7 @@ export default function Shanten() {
               <p className="mt-2 max-w-3xl text-sm text-slate-300">{text.subtitle}</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <a href="/calc" className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800">
+              <a href="/tools/calc" className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800">
                 {lang === 'en' ? 'Scoring Calc' : '算分器'}
               </a>
               <button type="button" onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')}

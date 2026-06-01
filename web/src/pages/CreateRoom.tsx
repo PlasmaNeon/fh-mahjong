@@ -18,7 +18,7 @@ export default function CreateRoom() {
             return '';
         }
 
-        return `${window.location.origin}/table/${roomId}`;
+        return `${window.location.origin}/room/${roomId}`;
     }, [roomId]);
 
     const handleCreateRoom = () => {
@@ -58,7 +58,7 @@ export default function CreateRoom() {
                             </button>
                             {roomUrl && (
                                 <Link
-                                    to={`/table/${roomId}`}
+                                    to={`/room/${roomId}`}
                                     className="rounded-2xl border border-cyan-300/25 bg-cyan-950/70 px-6 py-3 text-sm font-black uppercase tracking-[0.18em] text-cyan-100 transition-transform hover:-translate-y-0.5 hover:bg-cyan-900/80"
                                 >
                                     Open Room
@@ -116,13 +116,13 @@ export default function CreateRoom() {
 
                         <div className="mt-8 flex flex-wrap gap-3">
                             <Link
-                                to="/"
+                                to="/login"
                                 className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-100 transition hover:bg-white/10"
                             >
                                 Back To Login
                             </Link>
                             <Link
-                                to="/lobby"
+                                to="/play"
                                 className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-100 transition hover:bg-white/10"
                             >
                                 Matchmaking

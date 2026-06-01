@@ -708,7 +708,7 @@ export default function Calc() {
     setServerErrors([])
 
     try {
-      const response = await fetch(getApiUrl('/api/v1/calc'), {
+      const response = await fetch(getApiUrl('/api/v1/tools/calc'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

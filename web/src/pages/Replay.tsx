@@ -41,7 +41,7 @@ export default function Replay() {
       setLoading(false)
       return
     }
-    fetch(getApiUrl(`/api/v1/paipu/${matchId}`))
+    fetch(getApiUrl(`/api/v1/replays/${matchId}`))
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
