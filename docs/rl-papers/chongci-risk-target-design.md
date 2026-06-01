@@ -1,7 +1,9 @@
 # Chongci Risk Target And Input Design
 
-Status: proposed next design after rejected replay-only and large-loss auxiliary
-experiments.
+Status: first implementation calibrated and rejected. The model/trainer now
+support action-conditioned risk heads over the 204-action catalog, but the first
+calibration-only run on the existing input shape produced near-random large-loss
+AUC. Visible match-history inputs and guarded evaluation remain future work.
 
 ## Problem
 
@@ -19,6 +21,8 @@ This did not work well enough:
 - shared-gradient large-loss auxiliary training regressed the tail guardrail,
 - lower auxiliary weights reproduced the same rejected behavior,
 - calibration showed near-random large-loss AUC and flat risk bands.
+- action-conditioned risk heads without richer visible history also failed the
+  calibration gate.
 
 The failure mode is not just coefficient tuning. The target and input are too
 weak for the question we need answered.
@@ -256,14 +260,21 @@ override rate is explainable and not broad policy drift
    - probability logits over 204 actions,
    - severity values over 204 actions,
    - gathered dataset-action losses.
+   - Status: implemented in `PolicyValueNet.action_risk_predictions()` and the
+     IQL large-loss auxiliary loss.
 4. Add risk calibration report:
    - AUC/Brier/risk bands by action family,
    - severity baseline comparison,
    - top-risk action-family diagnostics.
+   - Status: action-conditioned calibration is supported through
+     `fh-mj-reward-calibration --large-loss-risk-mode action`.
 5. Train calibration-only risk critic:
    - start from promoted anchor,
    - use current64 plus all-anchor risk-seed data,
    - no serving changes.
+   - Status: first run completed and rejected at calibration gate
+     (`large-loss AUC 0.4998`, Brier `0.3329`). Add visible history and
+     score-pressure inputs before retraining.
 6. If calibration passes, add guarded evaluator:
    - top-policy-candidate risk guard,
    - selected-window quick screen,

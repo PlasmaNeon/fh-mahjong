@@ -73,6 +73,8 @@ class PolicyValueNet(nn.Module):
             nn.GELU(),
             nn.Linear(model_config.value_hidden_dim, 2),
         )
+        self.action_risk_probability_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
+        self.action_risk_severity_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
 
     def forward(self, planes: Tensor, scalars: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
         features = self.encode(planes, scalars)
@@ -111,6 +113,25 @@ class PolicyValueNet(nn.Module):
         probability_logits = risk_outputs[:, 0]
         severity = torch.nn.functional.softplus(risk_outputs[:, 1])
         return probability_logits, severity
+
+    def action_risk_predictions(
+        self,
+        planes: Tensor,
+        scalars: Tensor,
+        action_mask: Tensor,
+        detach_features: bool = False,
+    ) -> tuple[Tensor, Tensor]:
+        features = self.encode(planes, scalars)
+        if detach_features:
+            features = features.detach()
+        probability_logits = self.action_risk_probability_head(features)
+        severity = torch.nn.functional.softplus(self.action_risk_severity_head(features))
+        masked_probability_logits = probability_logits.masked_fill(
+            action_mask <= 0,
+            torch.finfo(probability_logits.dtype).min,
+        )
+        masked_severity = severity.masked_fill(action_mask <= 0, 0.0)
+        return masked_probability_logits, masked_severity
 
     def initialize_q_head_from_policy(self) -> None:
         """Warm-start the critic head from a BC policy checkpoint."""

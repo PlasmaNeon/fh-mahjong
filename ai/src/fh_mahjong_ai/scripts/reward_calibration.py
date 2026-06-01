@@ -20,6 +20,7 @@ def reward_calibration_report(
     data_path: Path,
     gamma: float = 0.99,
     large_loss_threshold: Optional[float] = None,
+    large_loss_risk_mode: str = "auto",
     max_transitions: Optional[int] = None,
     batch_size: int = 4096,
     device: str = "cpu",
@@ -41,6 +42,7 @@ def reward_calibration_report(
         "data": str(data_path),
         "gamma": gamma,
         "large_loss_threshold": large_loss_threshold,
+        "large_loss_risk_mode": large_loss_risk_mode,
         "max_transitions": max_transitions,
         "device": device,
         "calibration": compute_reward_calibration(
@@ -50,6 +52,7 @@ def reward_calibration_report(
             batch_size=batch_size,
             device=device,
             large_loss_threshold=large_loss_threshold,
+            large_loss_risk_mode=large_loss_risk_mode,
         ),
     }
 
@@ -68,6 +71,7 @@ def reward_calibration_report(
                     "data": data_path,
                     "gamma": gamma,
                     "large_loss_threshold": large_loss_threshold,
+                    "large_loss_risk_mode": large_loss_risk_mode,
                     "max_transitions": max_transitions,
                     "batch_size": batch_size,
                     "device": device,
@@ -107,6 +111,12 @@ def main() -> None:
         default=None,
         help="Optional target threshold for large-loss probability/severity head calibration.",
     )
+    parser.add_argument(
+        "--large-loss-risk-mode",
+        choices=("auto", "action", "state"),
+        default="auto",
+        help="Use action-conditioned risk heads, legacy state-only risk head, or auto-detect for large-loss calibration.",
+    )
     parser.add_argument("--max-transitions", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--device", type=str, default="cpu")
@@ -122,6 +132,7 @@ def main() -> None:
         data_path=args.data,
         gamma=args.gamma,
         large_loss_threshold=args.large_loss_threshold,
+        large_loss_risk_mode=args.large_loss_risk_mode,
         max_transitions=args.max_transitions,
         batch_size=args.batch_size,
         device=args.device,

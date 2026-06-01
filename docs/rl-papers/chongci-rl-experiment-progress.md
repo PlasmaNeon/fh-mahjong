@@ -3122,6 +3122,90 @@ the policy. The next useful direction should change the target definition or
 the input/history available to the risk head, not simply adjust auxiliary
 coefficients.
 
+## Action-Conditioned Risk Critic V1 Calibration
+
+Date: 2026-05-31
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-actionrisk-critic-allanchor-20260531-211136
+```
+
+Question:
+
+Does changing the large-loss auxiliary from a state-only head to a 204-action
+risk critic produce a calibrated offline risk signal before adding new visible
+match-history inputs?
+
+Implementation:
+
+- `PolicyValueNet.action_risk_predictions()` predicts one large-loss logit and
+  one severity value per catalog action.
+- IQL gathers the risk prediction at the observed dataset `action_id`.
+- Calibration can force the action-conditioned path with
+  `fh-mj-reward-calibration --large-loss-risk-mode action`.
+- The deployed policy path is unchanged.
+
+Training:
+
+```text
+checkpoint: /root/fh-mahjong-runs/chongci-actionrisk-critic-allanchor-20260531-211136/checkpoints/iql_actionrisk_allanchor/epoch_001.pt
+base data: /root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz
+risk data: 30 all-anchor one-seed shards
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+epochs: 1
+batch_size: 2048
+learning_rate: 0.000005
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.05
+large_loss_severity_weight: 0.02
+mlflow training run: 67359bf189a145abbe90720c6783b613
+```
+
+Training logs confirmed the action-risk losses were active:
+
+```text
+step 20: ll_aux=1.8510 ll_sev=0.5253
+step 40: ll_aux=1.7142 ll_sev=0.5086
+step 60: ll_aux=1.8007 ll_sev=0.4799
+step 80: ll_aux=1.7854 ll_sev=0.4338
+final loss: 0.2320
+```
+
+Calibration:
+
+```text
+report: /root/fh-mahjong-runs/chongci-actionrisk-critic-allanchor-20260531-211136/reports/actionrisk_current64_calibration.json
+mlflow calibration run: 08a09e16ee8d4dea86ed1c84aa2fb4d1
+transitions: 131842
+Q MAE: 0.1290
+Q RMSE: 0.2032
+Q bias: -0.0035
+Q corr: 0.0055
+value MAE: 0.0743
+large-loss rate: 15.69%
+large-loss Brier: 0.3329
+large-loss AUC: 0.4998
+large-loss severity MAE: 0.7600
+```
+
+Decision:
+
+Reject at calibration gate. Do not run selected-window online evaluation or a
+serving-time guard from this checkpoint.
+
+Interpretation:
+
+The action-conditioned plumbing is mechanically correct and the auxiliary loss
+is active, but the learned risk scores are still near-random without richer
+visible context. This confirms the next change should be input/target quality:
+add visible Chongci match-history and score-pressure features before retraining
+the action-risk critic. More coefficient sweeps on the current input shape are
+low-value.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -3191,6 +3275,13 @@ coefficients.
     `docs/rl-papers/chongci-risk-target-design.md`: add visible match-history
     inputs and train an action-conditioned critic-side risk head before trying
     any serving-time guard.
+27. Action-conditioned risk heads are now implemented in the Python model and
+    IQL auxiliary loss path. The next required evidence is calibration, not
+    online serving.
+28. The first action-conditioned calibration-only run was active but failed the
+    calibration gate (`large-loss AUC 0.4998`, Brier `0.3329`), so it should
+    not be evaluated online. The next required change is visible match-history
+    and score-pressure input, not another auxiliary coefficient sweep.
 
 ## Recommended Next Experiments
 
@@ -3211,11 +3302,10 @@ before any guarded online evaluation.
 
 Immediate work:
 
-- add visible Chongci match-history scalars,
-- add action-conditioned risk probability/severity heads over the 204-action
-  catalog,
-- calibrate the risk head before using it for serving,
-- only then test a top-policy-candidate risk guard.
+- add visible Chongci match-history and score-pressure scalars,
+- retrain and recalibrate the action-conditioned risk heads on the richer input
+  shape,
+- only test a top-policy-candidate risk guard if offline calibration passes.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports
 

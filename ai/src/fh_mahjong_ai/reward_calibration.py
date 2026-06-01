@@ -45,6 +45,7 @@ def compute_reward_calibration(
     batch_size: int = 4096,
     device: str = "cpu",
     large_loss_threshold: float | None = None,
+    large_loss_risk_mode: str = "auto",
 ) -> dict[str, Any]:
     """Compare critic/value predictions against discounted terminal round payout."""
     arrays = add_steps_to_done_if_missing(arrays)
@@ -82,8 +83,15 @@ def compute_reward_calibration(
             q_values, _ = model.q_values(planes, scalars, mask)
             dataset_q = q_values.gather(1, action_tensor.unsqueeze(1)).squeeze(1)
             target = discounted_terminal_returns(return_tensor, steps_tensor, gamma)
-            if large_loss_threshold is not None and hasattr(model, "large_loss_predictions"):
-                risk_logits, severity = model.large_loss_predictions(planes, scalars)
+            if large_loss_threshold is not None and _supports_risk_mode(model, large_loss_risk_mode):
+                risk_logits, severity = _risk_predictions_for_mode(
+                    model,
+                    planes,
+                    scalars,
+                    mask,
+                    action_tensor,
+                    large_loss_risk_mode,
+                )
                 risk_probabilities.append(torch.sigmoid(risk_logits).cpu().numpy())
                 risk_severities.append(severity.cpu().numpy())
 
@@ -127,7 +135,46 @@ def compute_reward_calibration(
             severity_array,
             threshold=float(large_loss_threshold),
         )
+        report["large_loss_calibration"]["risk_mode"] = _resolved_risk_mode(model, large_loss_risk_mode)
     return report
+
+
+def _supports_risk_mode(model: nn.Module, mode: str) -> bool:
+    resolved = _resolved_risk_mode(model, mode)
+    if resolved == "action":
+        return hasattr(model, "action_risk_predictions")
+    if resolved == "state":
+        return hasattr(model, "large_loss_predictions")
+    return False
+
+
+def _resolved_risk_mode(model: nn.Module, mode: str) -> str:
+    normalized = mode.lower()
+    if normalized not in {"auto", "action", "state"}:
+        raise ValueError(f"unsupported large loss risk mode: {mode!r}")
+    if normalized == "auto":
+        return "action" if hasattr(model, "action_risk_predictions") else "state"
+    return normalized
+
+
+def _risk_predictions_for_mode(
+    model: nn.Module,
+    planes: torch.Tensor,
+    scalars: torch.Tensor,
+    action_mask: torch.Tensor,
+    action_ids: torch.Tensor,
+    mode: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    resolved = _resolved_risk_mode(model, mode)
+    if resolved == "action":
+        risk_logits, severity = model.action_risk_predictions(planes, scalars, action_mask)
+        return (
+            risk_logits.gather(1, action_ids.unsqueeze(1)).squeeze(1),
+            severity.gather(1, action_ids.unsqueeze(1)).squeeze(1),
+        )
+    if resolved == "state":
+        return model.large_loss_predictions(planes, scalars)
+    raise ValueError(f"unsupported large loss risk mode: {mode!r}")
 
 
 def _large_loss_report(
