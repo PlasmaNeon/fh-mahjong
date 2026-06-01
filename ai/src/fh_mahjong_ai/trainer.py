@@ -370,6 +370,8 @@ class DiscreteIQLTrainer:
             self.model,
             planes,
             scalars,
+            action_mask,
+            action_ids,
             returns,
             sample_weights,
             threshold=self.iql_config.large_loss_threshold,
@@ -487,6 +489,8 @@ def large_loss_auxiliary_losses(
     model: nn.Module,
     planes: torch.Tensor,
     scalars: torch.Tensor,
+    action_mask: torch.Tensor,
+    action_ids: torch.Tensor,
     returns: torch.Tensor,
     sample_weights: torch.Tensor,
     threshold: Optional[float],
@@ -502,14 +506,27 @@ def large_loss_auxiliary_losses(
     }
     if threshold is None or (aux_weight <= 0.0 and severity_weight <= 0.0):
         return zero, zero, diagnostics
-    if not hasattr(model, "large_loss_predictions"):
+    if not hasattr(model, "action_risk_predictions") and not hasattr(model, "large_loss_predictions"):
         return zero, zero, diagnostics
 
-    logits, severity = model.large_loss_predictions(planes, scalars, detach_features=detach_features)
+    if hasattr(model, "action_risk_predictions"):
+        risk_logits, risk_severity = model.action_risk_predictions(
+            planes,
+            scalars,
+            action_mask,
+            detach_features=detach_features,
+        )
+        logits = risk_logits.gather(1, action_ids.unsqueeze(1)).squeeze(1)
+        severity = risk_severity.gather(1, action_ids.unsqueeze(1)).squeeze(1)
+    else:
+        logits, severity = model.large_loss_predictions(planes, scalars, detach_features=detach_features)
     targets = (returns <= float(threshold)).to(dtype=returns.dtype)
     severity_targets = torch.clamp(float(threshold) - returns, min=0.0)
+    positive_count = torch.clamp(targets.sum(), min=1.0)
+    negative_count = torch.clamp(targets.numel() - targets.sum(), min=1.0)
+    positive_weight = torch.clamp(negative_count / positive_count, max=10.0)
     classification_loss = weighted_mean(
-        nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none"),
+        nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none", pos_weight=positive_weight),
         sample_weights,
     )
     severity_loss = weighted_mean(

@@ -177,6 +177,55 @@
   },
   "rejected_candidates": [
     {
+      "id": "chongci_actionrisk_critic_allanchor_epoch001",
+      "method": "discrete_iql_action_conditioned_large_loss_risk",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-actionrisk-critic-allanchor-20260531-211136/checkpoints/iql_actionrisk_allanchor/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-riskcontext-current64-20260530-153534/data/selfplay-current-riskcontext-n64-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-riskseeds-20260531-015743/data/anchor-seed-*-npz",
+        "/root/fh-mahjong-runs/chongci-riskcontext-allanchor-filtered-20260531-150447/data/anchor-seed-*-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 2048,
+        "learning_rate": 0.000005,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "policy_weight": 0.25,
+        "bc_weight": 3.0,
+        "cql_weight": 0.0,
+        "large_loss_threshold": -1.0,
+        "large_loss_aux_weight": 0.05,
+        "large_loss_severity_weight": 0.02,
+        "large_loss_aux_detach": false,
+        "risk_mode": "action",
+        "mlflow_run_id": "67359bf189a145abbe90720c6783b613"
+      },
+      "screening": [
+        {
+          "label": "offline_action_risk_calibration_current64",
+          "transitions": 131842,
+          "large_loss_rate": 0.1569,
+          "large_loss_auc": 0.4998,
+          "large_loss_brier": 0.3329,
+          "large_loss_severity_mae": 0.7600,
+          "q_mae": 0.1290,
+          "q_rmse": 0.2032,
+          "q_bias": -0.0035,
+          "q_corr": 0.0055,
+          "value_mae": 0.0743,
+          "report_path": "/root/fh-mahjong-runs/chongci-actionrisk-critic-allanchor-20260531-211136/reports/actionrisk_current64_calibration.json",
+          "mlflow_run_id": "08a09e16ee8d4dea86ed1c84aa2fb4d1"
+        }
+      ],
+      "decision": "rejected_calibration_gate",
+      "reason": "The first action-conditioned risk critic was mechanically active, but offline large-loss calibration remained near random, so no guarded online evaluation was run."
+    },
+    {
       "id": "chongci_targetrisk_auxlow_allanchor_epoch001",
       "method": "discrete_iql_large_loss_auxiliary",
       "match_mode": "chongci",

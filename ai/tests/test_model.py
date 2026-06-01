@@ -80,6 +80,24 @@ def test_policy_value_net_large_loss_head_outputs_probability_logit_and_severity
     assert (detached_severity >= 0).all()
 
 
+def test_policy_value_net_action_risk_head_outputs_masked_action_scores() -> None:
+    env_config = EnvConfig()
+    model = PolicyValueNet(env_config, ModelConfig())
+    planes = torch.randn((2, *env_config.plane_shape))
+    scalars = torch.randn((2, env_config.scalar_features))
+    action_mask = torch.zeros((2, env_config.action_space_size), dtype=torch.int8)
+    action_mask[:, 5:10] = 1
+
+    logits, severity = model.action_risk_predictions(planes, scalars, action_mask)
+
+    assert logits.shape == (2, env_config.action_space_size)
+    assert severity.shape == (2, env_config.action_space_size)
+    assert torch.isfinite(logits[:, 5:10]).all()
+    assert (logits[:, :5] == torch.finfo(logits.dtype).min).all()
+    assert (severity[:, :5] == 0.0).all()
+    assert (severity[:, 5:10] >= 0.0).all()
+
+
 def test_policy_value_net_supports_channel_attention_ablation() -> None:
     model = PolicyValueNet(EnvConfig(), ModelConfig(channel_attention=True))
 
@@ -91,7 +109,7 @@ def test_policy_value_net_can_load_old_checkpoint_without_optional_heads(tmp_pat
     old_state = {
         key: value
         for key, value in model.state_dict().items()
-        if not key.startswith(("q_head.", "large_loss_head."))
+        if not key.startswith(("q_head.", "large_loss_head.", "action_risk_probability_head.", "action_risk_severity_head."))
     }
     checkpoint = tmp_path / "old.pt"
     torch.save({"model": old_state, "step": 3}, checkpoint)

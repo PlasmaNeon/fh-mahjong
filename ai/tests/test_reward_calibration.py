@@ -78,6 +78,7 @@ def test_compute_reward_calibration_reports_errors(tmp_path: Path) -> None:
     assert "discard" in report["by_action_family"]
     assert np.isfinite(report["q_error"]["mae"])
     assert report["large_loss_calibration"]["positive_count"] > 0
+    assert report["large_loss_calibration"]["risk_mode"] == "action"
     assert 0.0 <= report["large_loss_calibration"]["probability"]["auc"] <= 1.0
     assert np.isfinite(report["large_loss_calibration"]["severity"]["mae"])
 
@@ -103,4 +104,5 @@ def test_reward_calibration_script_writes_report(tmp_path: Path) -> None:
     assert report["checkpoint_step"] == 2
     assert report["calibration"]["total_transitions"] == 5
     assert "large_loss_calibration" in report["calibration"]
+    assert report["calibration"]["large_loss_calibration"]["risk_mode"] == "action"
     assert report_path.exists()

@@ -186,6 +186,8 @@ def test_large_loss_auxiliary_losses_train_probability_and_severity_targets() ->
         model,
         planes,
         scalars,
+        torch.ones((4, env_config.action_space_size), dtype=torch.int8),
+        torch.tensor([0, 1, 2, 3]),
         returns,
         sample_weights,
         threshold=-1.0,
@@ -199,6 +201,42 @@ def test_large_loss_auxiliary_losses_train_probability_and_severity_targets() ->
     assert diagnostics["target_rate"] == 0.75
     assert 0.0 <= diagnostics["avg_probability"] <= 1.0
     assert diagnostics["avg_severity"] >= 0.0
+
+
+def test_large_loss_auxiliary_losses_gather_dataset_action_risk() -> None:
+    env_config = EnvConfig(action_space_size=4, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    planes = torch.randn((3, *env_config.plane_shape))
+    scalars = torch.randn((3, env_config.scalar_features))
+    action_mask = torch.ones((3, env_config.action_space_size), dtype=torch.int8)
+    action_ids = torch.tensor([0, 2, 3])
+    returns = torch.tensor([0.5, -1.5, -2.0])
+    sample_weights = torch.ones(3)
+
+    aux_loss, severity_loss, diagnostics = large_loss_auxiliary_losses(
+        model,
+        planes,
+        scalars,
+        action_mask,
+        action_ids,
+        returns,
+        sample_weights,
+        threshold=-1.0,
+        aux_weight=0.25,
+        severity_weight=0.1,
+    )
+
+    assert torch.isfinite(aux_loss)
+    assert torch.isfinite(severity_loss)
+    assert np.isclose(diagnostics["target_rate"], 2 / 3)
 
 
 def test_discounted_terminal_returns_use_steps_to_done() -> None:

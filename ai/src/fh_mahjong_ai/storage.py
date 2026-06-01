@@ -100,7 +100,7 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     payload = torch.load(path, map_location="cpu")
     checkpoint_state = _adapt_checkpoint_state(payload["model"], model.state_dict())
     missing, unexpected = model.load_state_dict(checkpoint_state, strict=False)
-    compatible_optional_prefixes = ("q_head.", "large_loss_head.")
+    compatible_optional_prefixes = ("q_head.", "large_loss_head.", "action_risk_probability_head.", "action_risk_severity_head.")
     missing_bad = [key for key in missing if not key.startswith(compatible_optional_prefixes)]
     unexpected_bad = [key for key in unexpected if not key.startswith(compatible_optional_prefixes)]
     if missing_bad or unexpected_bad:
