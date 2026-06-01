@@ -57,15 +57,22 @@ Notes:
 ### New Home page (`Home.tsx`)
 
 Lightweight landing that replaces login-at-root. Reuses the existing
-emerald/glass styling language. Contents:
-- **Play** card → `/play` (public matchmaking)
-- **Private room** card → `/room/new` (generate + share a room link)
-- **Tools** card → links to `/tools/calc` and `/tools/shanten`
-- **Account** affordance → `/login` (or shows the logged-in username if a token
-  is present in `localStorage`)
+emerald/glass styling language. Every feature is reachable with one click via a
+clearly labeled navigation button. Contents:
 
-No new global nav/header; discoverability comes from the Home cards plus the
-inter-page links listed in section C.
+- **Play / Find Match** button → `/play` (public matchmaking)
+- **Create Private Room** button → `/room/new` (generate + share a room link)
+- **Scoring Calculator** button → `/tools/calc`
+- **Shanten Calculator** button → `/tools/shanten`
+- **Login / Account** button → `/login` when logged out; shows the logged-in
+  username (from the `fh_token` in `localStorage`) when present
+
+Each button is a React Router `<Link>` styled as a button (same
+`rounded`/uppercase/emerald button language used across Login/Lobby) so the
+whole card is keyboard- and screen-reader-navigable. Buttons are grouped under
+short section headings ("Play", "Tools", "Account") but every feature has its
+own distinct button — no nested menus. This is the primary discoverability
+mechanism; section C covers the remaining inter-page links.
 
 ## B. API path mapping (hard cut)
 
