@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import PageShell from '../components/PageShell'
 import { getApiUrl } from '../config'
 import { getTileName, getTileSvgName } from '../utils/tileUtils'
 import {
@@ -131,7 +132,7 @@ function ShantenTile({
       type="button"
       onClick={onClick}
       disabled={dimmed && !selected}
-      className={`mahjong-tile ${size === 'small' ? 'small' : ''} rounded-md transition ${selected ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950' : ''} ${dimmed ? 'opacity-30 cursor-not-allowed' : ''}`}
+      className={`mahjong-tile ${size === 'small' ? 'small' : ''} rounded-md transition ${selected ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-slate-950' : ''} ${dimmed ? 'opacity-30 cursor-not-allowed' : ''}`}
       style={{
         padding: 0,
         border: 'none',
@@ -223,14 +224,14 @@ function DiscardAnalysisTable({ options, lang }: {
   return (
     <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
       <div className="mb-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.discardAnalysis}</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.discardAnalysis}</h3>
         <p className="text-xs text-slate-400">{text.discardHelp}</p>
       </div>
       <div className="space-y-3">
         {options.map((opt) => {
           const discardKey = `${opt.discard.suit}-${opt.discard.value}`
           const shantenColor =
-            opt.shanten === 0 ? 'text-amber-300' : 'text-slate-300'
+            opt.shanten === 0 ? 'text-emerald-300' : 'text-slate-300'
           const shantenText =
             opt.shanten === 0 ? (lang === 'zh' ? '听牌' : 'Tenpai') :
             `${opt.shanten}${text.shantenAway}`
@@ -424,21 +425,20 @@ export default function Shanten() {
 
   const shantenLabel = useMemo(() => {
     if (!result) return null
-    if (result.shanten === 0) return { label: text.tenpai, color: 'text-amber-300', bg: 'bg-amber-400/15 border-amber-400/40' }
+    if (result.shanten === 0) return { label: text.tenpai, color: 'text-emerald-300', bg: 'bg-emerald-400/15 border-emerald-400/40' }
     return { label: `${result.shanten}${text.shantenAway}`, color: 'text-slate-200', bg: 'bg-slate-800 border-slate-700' }
   }, [result, text])
 
   const modeLabel = `${hand.length}/${baseSize}–${maxSize} ${text.tiles}`
 
   return (
-    <div className="w-full bg-slate-950 text-slate-100 min-h-screen">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-8">
+    <PageShell maxWidth="max-w-7xl" className="gap-6">
 
         {/* Header */}
         <section className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-6 shadow-2xl">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h1 className="text-3xl font-black tracking-tight text-amber-300">{text.title}</h1>
+              <h1 className="text-3xl font-black tracking-tight text-emerald-300">{text.title}</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-300">{text.subtitle}</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -446,7 +446,7 @@ export default function Shanten() {
                 {lang === 'en' ? 'Scoring Calc' : '算分器'}
               </a>
               <button type="button" onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')}
-                className="rounded-full border border-amber-400/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-amber-200 transition hover:bg-slate-800">
+                className="rounded-full border border-emerald-400/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-slate-800">
                 {text.language}
               </button>
             </div>
@@ -454,7 +454,7 @@ export default function Shanten() {
         </section>
 
         {/* Hand builder */}
-        <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+        <section className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-bold text-slate-100">{text.closedHand}</h2>
@@ -478,7 +478,7 @@ export default function Shanten() {
             <input value={handInput} onChange={e => setHandInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && applyHandInput()}
               placeholder="11234455666792p"
-              className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-amber-400" />
+              className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400" />
             <button type="button" onClick={applyHandInput}
               className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
               {text.apply}
@@ -489,7 +489,7 @@ export default function Shanten() {
 
           <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
             <div className="mb-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.tilePalette}</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.tilePalette}</h3>
               <p className="text-xs text-slate-400">{text.paletteHelp}</p>
             </div>
             <PaletteGrid onTileClick={addTile} usedCounts={usedCounts} />
@@ -499,7 +499,7 @@ export default function Shanten() {
         {/* Options row: Wild tile + Open melds */}
         <section className="grid gap-6 lg:grid-cols-2">
           {/* Wild tile */}
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-xl font-bold text-slate-100">{text.wildTile}</h2>
@@ -524,7 +524,7 @@ export default function Shanten() {
                 <div className="mt-4 flex gap-3">
                   <input value={wildInput} onChange={e => setWildInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && applyWildInput()} placeholder="9s"
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-amber-400" />
+                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400" />
                   <button type="button" onClick={applyWildInput}
                     className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
                     {text.apply}
@@ -538,7 +538,7 @@ export default function Shanten() {
           </div>
 
           {/* Open melds count */}
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
             <div className="mb-4">
               <h2 className="text-xl font-bold text-slate-100">{text.openMeldsLabel}</h2>
               <p className="text-sm text-slate-400">{text.openMeldsHelp}</p>
@@ -552,7 +552,7 @@ export default function Shanten() {
                     if (hand.length > newMax) setHand(prev => prev.slice(0, newMax))
                   }}
                   className={`flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold transition ${
-                    openMelds === n ? 'bg-amber-400 text-slate-950' : 'border border-slate-700 bg-slate-950/60 text-slate-300 hover:bg-slate-800'
+                    openMelds === n ? 'bg-emerald-400 text-slate-950' : 'border border-slate-700 bg-slate-950/60 text-slate-300 hover:bg-slate-800'
                   }`}>
                   {n}
                 </button>
@@ -588,7 +588,7 @@ export default function Shanten() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-slate-400">{lang === 'en' ? 'Shanten Number' : '向听数'}</span>
                   <span className={`text-4xl font-black ${
-                    result.shanten === 0 ? 'text-amber-300' : 'text-slate-100'
+                    result.shanten === 0 ? 'text-emerald-300' : 'text-slate-100'
                   }`}>
                     {result.shanten}
                   </span>
@@ -616,7 +616,6 @@ export default function Shanten() {
             </div>
           )}
         </section>
-      </div>
-    </div>
+    </PageShell>
   )
 }

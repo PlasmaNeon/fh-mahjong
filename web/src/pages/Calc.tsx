@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import PageShell from '../components/PageShell'
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../config'
 import { ActionType, MeldDirection } from '../proto/game.ts'
 import { getTileName, getTileSvgName } from '../utils/tileUtils'
@@ -238,7 +239,7 @@ function CalcTile({
     <button
       type="button"
       onClick={onClick}
-      className={`mahjong-tile ${size === 'small' ? 'small' : ''} rounded-md transition ${selected ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-950' : ''} ${dimmed ? 'opacity-50' : ''}`}
+      className={`mahjong-tile ${size === 'small' ? 'small' : ''} rounded-md transition ${selected ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-slate-950' : ''} ${dimmed ? 'opacity-50' : ''}`}
       style={{
         padding: 0,
         border: 'none',
@@ -746,12 +747,11 @@ export default function Calc() {
   const text = UI_TEXT[lang]
 
   return (
-    <div className="w-full bg-slate-950 text-slate-100">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-8">
-        <section className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-6 shadow-2xl">
+    <PageShell maxWidth="max-w-7xl" className="gap-6">
+        <section className="rounded-3xl border border-white/10 bg-slate-950/62 p-6 shadow-2xl backdrop-blur-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <h1 className="text-3xl font-black tracking-tight text-amber-300">{text.title}</h1>
+              <h1 className="text-3xl font-black tracking-tight text-emerald-300">{text.title}</h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-300">
                 {text.subtitle}
               </p>
@@ -760,7 +760,7 @@ export default function Calc() {
               <button
                 type="button"
                 onClick={() => setLang((current) => (current === 'en' ? 'zh' : 'en'))}
-                className="rounded-full border border-amber-400/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-amber-200 transition hover:bg-slate-800"
+                className="rounded-full border border-emerald-400/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-slate-800"
               >
                 {text.language}
               </button>
@@ -770,7 +770,7 @@ export default function Calc() {
 
         <section className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-100">{text.closedHand}</h2>
@@ -794,7 +794,7 @@ export default function Calc() {
                     value={closedHandInput}
                     onChange={(event) => setClosedHandInput(event.target.value)}
                     placeholder="1m2m3m 4p5p6p 7s8s9s 3z"
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-amber-400"
+                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400"
                   />
                   <button type="button" onClick={applyClosedHandInput} className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
                     {text.apply}
@@ -805,7 +805,7 @@ export default function Calc() {
               {!collapsedSections.closedHand && (
                 <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
                   <div className="mb-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.tilePalette}</h3>
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.tilePalette}</h3>
                     <p className="text-xs text-slate-400">{text.closedHandPaletteHelp}</p>
                   </div>
                   <PaletteGrid onTileClick={addTileToClosedHand} />
@@ -814,7 +814,7 @@ export default function Calc() {
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-bold text-slate-100">{text.winTile}</h2>
@@ -843,7 +843,7 @@ export default function Calc() {
                       value={winTileInput}
                       onChange={(event) => setWinTileInput(event.target.value)}
                       placeholder="3z"
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-amber-400"
+                      className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400"
                     />
                     <button type="button" onClick={applyWinTileInput} className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
                       {text.apply}
@@ -862,7 +862,7 @@ export default function Calc() {
                 {!collapsedSections.winTile && (
                   <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
                     <div className="mb-3">
-                      <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.tilePalette}</h3>
+                      <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.tilePalette}</h3>
                       <p className="text-xs text-slate-400">{text.winTilePaletteHelp}</p>
                     </div>
                     <PaletteGrid
@@ -876,7 +876,7 @@ export default function Calc() {
                 )}
               </div>
 
-              <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-bold text-slate-100">{text.wildTile}</h2>
@@ -905,7 +905,7 @@ export default function Calc() {
                       value={wildTileInput}
                       onChange={(event) => setWildTileInput(event.target.value)}
                       placeholder="9s"
-                      className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-amber-400"
+                      className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400"
                     />
                     <button type="button" onClick={applyWildTileInput} className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
                       {text.apply}
@@ -924,7 +924,7 @@ export default function Calc() {
                 {!collapsedSections.wildTile && (
                   <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
                     <div className="mb-3">
-                      <h3 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.tilePalette}</h3>
+                      <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.tilePalette}</h3>
                       <p className="text-xs text-slate-400">{text.wildTilePaletteHelp}</p>
                     </div>
                     <PaletteGrid
@@ -940,7 +940,7 @@ export default function Calc() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
               <div className="mb-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-100">{text.openMeldsTitle}</h2>
@@ -958,7 +958,7 @@ export default function Calc() {
                     const meldError = validateMeldShape(meld)
                     const isActiveTarget = highlightedMeldId === meld.id
                     return (
-                      <div key={meld.id} className={`rounded-2xl border p-4 ${isActiveTarget ? 'border-amber-400 bg-amber-400/5' : 'border-slate-700 bg-slate-950/60'}`}>
+                      <div key={meld.id} className={`rounded-2xl border p-4 ${isActiveTarget ? 'border-emerald-400 bg-emerald-400/5' : 'border-slate-700 bg-slate-950/60'}`}>
                         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <h3 className="text-lg font-bold text-slate-100">{text.openMeld} {index + 1}</h3>
@@ -967,7 +967,7 @@ export default function Calc() {
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => setActiveMeldId(meld.id)} className={`rounded-full px-3 py-2 text-sm font-semibold ${isActiveTarget ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-100 hover:bg-slate-700'}`}>
+                            <button type="button" onClick={() => setActiveMeldId(meld.id)} className={`rounded-full px-3 py-2 text-sm font-semibold ${isActiveTarget ? 'bg-emerald-400 text-slate-950' : 'bg-slate-800 text-slate-100 hover:bg-slate-700'}`}>
                               {text.usePalette}
                             </button>
                             <button type="button" onClick={() => clearMeld(meld.id)} className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
@@ -985,7 +985,7 @@ export default function Calc() {
                             <select
                               value={meld.type}
                               onChange={(event) => updateMeldType(meld.id, Number(event.target.value) as ActionType)}
-                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
+                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
                             >
                               {MELD_TYPE_OPTIONS.map((option) => (
                                 <option key={option.value} value={option.value}>
@@ -1000,7 +1000,7 @@ export default function Calc() {
                             <select
                               value={meld.calledDirection}
                               onChange={(event) => updateMeldDirection(meld.id, Number(event.target.value) as MeldDirection)}
-                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400 disabled:opacity-40"
+                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400 disabled:opacity-40"
                               disabled={meld.type === ActionType.ACTION_CHII || (meld.type === ActionType.ACTION_KAN && (meld.kongContext === 'hasBuddingClosedKong' || meld.kongContext === 'hasBloomingClosedKong'))}
                             >
                               {MELD_DIRECTION_OPTIONS.map((option) => (
@@ -1016,7 +1016,7 @@ export default function Calc() {
                             <select
                               value={meld.calledTileIndex}
                               onChange={(event) => updateMeldCalledTileIndex(meld.id, Number(event.target.value))}
-                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
+                              className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
                               disabled={meld.tiles.length === 0}
                             >
                               {meld.tiles.length === 0 ? (
@@ -1035,9 +1035,9 @@ export default function Calc() {
                         <TileRow tiles={meld.tiles} emptyLabel={text.meldEmpty} onTileClick={(tileId) => removeMeldTile(meld.id, tileId)} />
 
                         {isActiveTarget && (
-                          <div className="mt-4 rounded-2xl border border-amber-400/30 bg-slate-900/80 p-4">
+                          <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-slate-900/80 p-4">
                             <div className="mb-3">
-                              <h4 className="text-sm font-semibold uppercase tracking-wide text-amber-200">{text.activeMeldPalette}</h4>
+                              <h4 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.activeMeldPalette}</h4>
                               <p className="text-xs text-slate-400">{text.activeMeldPaletteHelp}</p>
                             </div>
                             <PaletteGrid onTileClick={(tile) => addTileToMeld(meld.id, tile)} />
@@ -1051,7 +1051,7 @@ export default function Calc() {
                               <select
                                 value={meld.kongContext}
                                 onChange={(event) => updateMeldKongContext(meld.id, event.target.value as CalcKongContextKey)}
-                                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
+                                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
                               >
                                 <option value="">{text.noKanContext}</option>
                                 {KONG_FLAG_OPTIONS.map((option) => (
@@ -1083,7 +1083,7 @@ export default function Calc() {
           </div>
 
           <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
               <h2 className="mb-4 text-xl font-bold text-slate-100">{text.roundContext}</h2>
               <div className="grid gap-4">
                 <label className="flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm text-slate-200">
@@ -1099,7 +1099,7 @@ export default function Calc() {
                     <select
                       value={seatWind}
                       onChange={(event) => { setSeatWind(Number(event.target.value)); clearServerState() }}
-                      className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
+                      className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
                     >
                       {WIND_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -1114,7 +1114,7 @@ export default function Calc() {
                     <select
                       value={prevailingWind}
                       onChange={(event) => { setPrevailingWind(Number(event.target.value)); clearServerState() }}
-                      className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-amber-400"
+                      className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-400"
                     >
                       {WIND_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -1140,7 +1140,7 @@ export default function Calc() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
               <div className="mb-4">
                 <h2 className="text-xl font-bold text-slate-100">{text.flowerMelds}</h2>
                 <p className="text-sm text-slate-400">{text.flowerHelp}</p>
@@ -1162,7 +1162,7 @@ export default function Calc() {
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-100">{text.validation}</h2>
@@ -1172,7 +1172,7 @@ export default function Calc() {
                   type="button"
                   onClick={handleCalculate}
                   disabled={isSubmitting}
-                  className="rounded-full bg-amber-400 px-5 py-3 text-sm font-black uppercase tracking-wide text-slate-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
+                  className="rounded-full bg-emerald-400 px-5 py-3 text-sm font-black uppercase tracking-wide text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
                 >
                   {isSubmitting ? text.calculating : text.calculatePoints}
                 </button>
@@ -1210,7 +1210,7 @@ export default function Calc() {
                 <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-400">{text.totalScore}</span>
-                    <span className="text-3xl font-black text-amber-300">{result.score}</span>
+                    <span className="text-3xl font-black text-emerald-300">{result.score}</span>
                   </div>
                 </div>
 
@@ -1237,7 +1237,7 @@ export default function Calc() {
             )}
           </div>
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
             <div className="mb-4">
               <h2 className="text-xl font-bold text-slate-100">{text.normalizedSummary}</h2>
               <p className="text-sm text-slate-400">{text.normalizedHelp}</p>
@@ -1349,7 +1349,6 @@ export default function Calc() {
             )}
           </div>
         </section>
-      </div>
-    </div>
+    </PageShell>
   )
 }
