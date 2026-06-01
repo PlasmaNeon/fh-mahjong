@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Fenghua — Theme Preview (simple, light + dark)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light dark" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  /* ---------- Light defaults ---------- */
+  :root {
+    --page:        #fafaf8;
+    --surface:     #ffffff;
+    --surface-2:   #f4f3ef;
+    --ink:         #171615;
+    --ink-2:       #3c3a36;
+    --ink-3:       #6b6863;
+    --ink-4:       #a09c95;
+    --rule:        #e3e1dc;
+    --rule-soft:   #ededea;
+    --accent:      #1b6d5a;
+    --accent-soft: #e7f0ed;
+    --danger:      #b03a2e;
+    --danger-soft: #fbeae8;
+
+    --btn-bg:        var(--page);
+    --btn-bg-hover:  #f0efeb;
+
+    --tile-face:     #ffffff;
+    --tile-shadow:   0 0 0 1px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.08);
+    --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.08), 0 3px 6px rgba(0,0,0,0.10);
+
+    --font:        "IBM Plex Sans", "IBM Plex Sans SC", system-ui, sans-serif;
+    --mono:        "IBM Plex Mono", ui-monospace, monospace;
+
+    --col:         680px;
+    --gutter:      clamp(1.25rem, 4vw, 2rem);
+    --space:       2.25rem;
+  }
+
+  /* ---------- Dark defaults (auto from OS) ---------- */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      --page:        #121110;
+      --surface:     #1b1a18;
+      --surface-2:   #232220;
+      --ink:         #eae7e0;
+      --ink-2:       #c8c4bd;
+      --ink-3:       #8c8881;
+      --ink-4:       #5e5b56;
+      --rule:        #2b2926;
+      --rule-soft:   #232220;
+      --accent:      #5fbb9f;
+      --accent-soft: #1a2a25;
+      --danger:      #e5685c;
+      --danger-soft: #2a1816;
+
+      --btn-bg:        var(--surface);
+      --btn-bg-hover:  #2c2a27;
+
+      --tile-face:     #f3efe6;
+      --tile-shadow:   0 0 0 1px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.45);
+      --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.6),  0 5px 10px rgba(0,0,0,0.5);
+    }
+  }
+
+  /* ---------- Manual overrides (toggle) ---------- */
+  :root[data-theme="dark"] {
+    --page:        #121110;
+    --surface:     #1b1a18;
+    --surface-2:   #232220;
+    --ink:         #eae7e0;
+    --ink-2:       #c8c4bd;
+    --ink-3:       #8c8881;
+    --ink-4:       #5e5b56;
+    --rule:        #2b2926;
+    --rule-soft:   #232220;
+    --accent:      #5fbb9f;
+    --accent-soft: #1a2a25;
+    --danger:      #e5685c;
+    --danger-soft: #2a1816;
+
+    --btn-bg:        var(--surface);
+    --btn-bg-hover:  #2c2a27;
+
+    --tile-face:     #f3efe6;
+    --tile-shadow:   0 0 0 1px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.45);
+    --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.6),  0 5px 10px rgba(0,0,0,0.5);
+  }
+  :root[data-theme="light"] {
+    --page:        #fafaf8;
+    --surface:     #ffffff;
+    --surface-2:   #f4f3ef;
+    --ink:         #171615;
+    --ink-2:       #3c3a36;
+    --ink-3:       #6b6863;
+    --ink-4:       #a09c95;
+    --rule:        #e3e1dc;
+    --rule-soft:   #ededea;
+    --accent:      #1b6d5a;
+    --accent-soft: #e7f0ed;
+    --danger:      #b03a2e;
+    --danger-soft: #fbeae8;
+
+    --btn-bg:        var(--page);
+    --btn-bg-hover:  #f0efeb;
+
+    --tile-face:     #ffffff;
+    --tile-shadow:   0 0 0 1px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.08);
+    --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.08), 0 3px 6px rgba(0,0,0,0.10);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--page);
+    color: var(--ink);
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+  body {
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .shell { max-width: 1000px; margin: 0 auto; padding: 4rem var(--gutter) 6rem; }
+
+  /* ---------- Mode toggle ---------- */
+  .mode-toggle {
+    position: sticky;
+    top: 1rem;
+    z-index: 10;
+    display: inline-flex;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--surface);
+    overflow: hidden;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .mode-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--ink-3);
+    padding: 0.4rem 0.85rem;
+    cursor: pointer;
+    border-right: 1px solid var(--rule);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    transition: background 120ms, color 120ms;
+  }
+  .mode-toggle button:last-child { border-right: none; }
+  .mode-toggle button:hover { color: var(--ink); }
+  .mode-toggle button.is-active {
+    background: var(--ink);
+    color: var(--surface);
+  }
+
+  /* ---------- Header ---------- */
+  .preview-eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+    margin-bottom: 0.5rem;
+  }
+  .preview-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin: 0 0 3rem;
+    letter-spacing: -0.01em;
+  }
+  .preview-section-h {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    margin: 3rem 0 1.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .preview-section-h:first-of-type { margin-top: 0; }
+
+  /* ---------- Palette ---------- */
+  .palette-pair {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  @media (min-width: 900px) { .palette-pair { grid-template-columns: 1fr 1fr; } }
+  .palette-pair__label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.6rem;
+  }
+  .swatch {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .swatch-chip { height: 56px; border-bottom: 1px solid var(--rule); }
+  .swatch-meta { padding: 0.5rem 0.6rem 0.55rem; }
+  .swatch-name { display: block; font-size: 12px; font-weight: 500; color: var(--ink); }
+  .swatch-hex  { display: block; font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+
+  /* ---------- Typography specimens ---------- */
+  .specimen {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 1rem 2rem;
+    align-items: baseline;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .specimen:last-of-type { border: none; }
+  .specimen-label { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .specimen-label small { display: block; color: var(--ink-4); font-size: 11px; margin-top: 2px; }
+
+  /* ---------- Page mockup ---------- */
+  .page {
+    max-width: var(--col);
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 2.5rem clamp(1.25rem, 4vw, 2.25rem) 3rem;
+    transition: background-color 200ms ease, border-color 200ms ease;
+  }
+  .page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .page-head__title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .page-head__title small {
+    display: block;
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: var(--ink-3);
+    margin-top: 0.2rem;
+  }
+  .page-head__nav { display: flex; gap: 1rem; align-items: center; font-size: 0.85rem; }
+  .text-link {
+    color: var(--ink-2);
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1px;
+    cursor: pointer;
+    transition: color 120ms, border-color 120ms;
+  }
+  .text-link:hover { color: var(--ink); border-bottom-color: var(--ink-3); }
+
+  /* ---------- Sections ---------- */
+  .section { margin-top: var(--space); }
+  .section-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.85rem;
+  }
+  .section-title { font-size: 0.95rem; font-weight: 500; color: var(--ink); margin: 0; }
+  .section-title small {
+    display: block;
+    color: var(--ink-3);
+    font-weight: 400;
+    font-size: 0.82rem;
+    margin-top: 1px;
+  }
+  .section-meta { font-family: var(--mono); font-size: 0.85rem; color: var(--ink-3); }
+
+  /* ---------- Tile ---------- */
+  .tile-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; }
+  .tile {
+    display: inline-block;
+    width: 42px;
+    height: 58px;
+    background-image: url('/Regular_shortnames/Front.svg');
+    background-size: 100% 100%;
+    background-color: var(--tile-face);
+    border-radius: 4px;
+    box-shadow: var(--tile-shadow);
+    position: relative;
+    cursor: pointer;
+    transition: transform 120ms, box-shadow 120ms;
+  }
+  .tile img {
+    width: 86%; height: 86%;
+    position: absolute; top: 7%; left: 7%;
+    pointer-events: none; user-select: none;
+  }
+  .tile:hover { transform: translateY(-2px); box-shadow: var(--tile-shadow-h); }
+  .tile--small { width: 28px; height: 39px; }
+  .tile--selected {
+    box-shadow: 0 0 0 1.5px var(--accent), 0 1px 2px rgba(0,0,0,0.20);
+  }
+
+  /* ---------- Inputs & buttons ---------- */
+  .input-row { display: flex; gap: 0.5rem; margin-top: 0.85rem; }
+  .input {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    color: var(--ink);
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.55rem 0.75rem;
+    outline: none;
+    transition: border-color 120ms, background-color 120ms;
+  }
+  .input:focus { border-color: var(--accent); }
+  .btn {
+    font-family: var(--font);
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--ink);
+    background: var(--btn-bg);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 0.55rem 0.95rem;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+  }
+  .btn:hover { background: var(--btn-bg-hover); }
+  .btn--primary {
+    background: var(--ink);
+    color: var(--surface);
+    border-color: var(--ink);
+  }
+  .btn--primary:hover { background: var(--ink-2); border-color: var(--ink-2); }
+
+  .tools-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; justify-content: flex-end; }
+
+  /* ---------- Chooser ---------- */
+  .chooser {
+    display: inline-flex;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .chooser button {
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: none;
+    border-right: 1px solid var(--rule);
+    padding: 0.5rem 0.95rem;
+    cursor: pointer;
+    transition: background 120ms, color 120ms;
+  }
+  .chooser button:last-child { border-right: none; }
+  .chooser button:hover { background: var(--surface-2); }
+  .chooser button.is-active { background: var(--ink); color: var(--surface); }
+
+  /* ---------- Notes ---------- */
+  .note { font-size: 0.85rem; color: var(--ink-3); margin-top: 0.6rem; }
+  .note--error { color: var(--danger); }
+
+  /* ---------- Result block ---------- */
+  .result { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
+  .result-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 1rem;
+  }
+  .result-label {
+    font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink-3);
+  }
+  .result-status { font-size: 0.95rem; color: var(--ink); }
+  .result-status--ok  { color: var(--accent); }
+  .result-status--err { color: var(--danger); }
+
+  .big-stat {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 1.5rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .big-stat__label { font-size: 0.95rem; color: var(--ink-2); }
+  .big-stat__value {
+    font-family: var(--mono);
+    font-size: 3rem; font-weight: 500;
+    line-height: 1;
+    color: var(--ink);
+    letter-spacing: -0.02em;
+  }
+  .big-stat__value--accent { color: var(--accent); }
+
+  .breakdown { list-style: none; margin: 1rem 0 0; padding: 0; }
+  .breakdown li {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+    font-size: 0.92rem;
+  }
+  .breakdown li:last-child { border-bottom: none; }
+  .breakdown__name { color: var(--ink); }
+  .breakdown__points { font-family: var(--mono); color: var(--ink); font-weight: 500; }
+
+  /* ---------- Discard analysis ---------- */
+  .discard-row {
+    display: grid;
+    grid-template-columns: auto 70px 1fr auto;
+    gap: 0.85rem;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .discard-row:last-child { border-bottom: none; }
+  .discard-row__shanten { font-family: var(--mono); font-size: 0.82rem; color: var(--ink-3); }
+  .discard-row__draws { display: flex; gap: 3px; flex-wrap: wrap; }
+  .discard-row__count { font-family: var(--mono); font-size: 0.85rem; color: var(--ink); }
+  .discard-row__tag {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    margin-right: 0.4rem;
+  }
+
+  /* ---------- Toggle (Tsumo / Ron) ---------- */
+  .toggle {
+    display: inline-flex;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .toggle button {
+    font-family: var(--font);
+    font-size: 0.85rem;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+  .toggle button.is-active { background: var(--ink); color: var(--surface); }
+
+  /* ---------- Footnote ---------- */
+  .footnote {
+    margin-top: 2.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+  }
+  .footnote__toggle {
+    background: transparent; border: none; padding: 0;
+    cursor: pointer;
+    font-family: var(--font);
+    font-size: 0.85rem;
+    color: var(--ink-3);
+  }
+  .footnote__toggle:hover { color: var(--ink); }
+
+  /* ---------- State panels ---------- */
+  .panel-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 1.5rem;
+  }
+  .panel-h {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-4);
+    margin: 0 0 1rem;
+  }
+  @media (min-width: 800px) { .panel-row { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+
+<main class="shell">
+
+  <div class="mode-toggle" role="tablist" aria-label="Color mode">
+    <button data-mode="auto"  class="is-active">Auto</button>
+    <button data-mode="light">Light</button>
+    <button data-mode="dark">Dark</button>
+  </div>
+
+  <div class="preview-eyebrow">THEME PREVIEW · v3 (simple, light + dark)</div>
+  <h1 class="preview-title">Fenghua — Shanten + Calc</h1>
+
+  <!-- ===== Palette ===== -->
+  <h2 class="preview-section-h">Palette</h2>
+
+  <div class="palette-pair">
+    <div>
+      <div class="palette-pair__label">Light</div>
+      <div class="swatch-grid">
+        <div class="swatch"><div class="swatch-chip" style="background:#fafaf8"></div>
+          <div class="swatch-meta"><span class="swatch-name">Page</span><span class="swatch-hex">#fafaf8</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#ffffff"></div>
+          <div class="swatch-meta"><span class="swatch-name">Surface</span><span class="swatch-hex">#ffffff</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#f4f3ef"></div>
+          <div class="swatch-meta"><span class="swatch-name">Surface 2</span><span class="swatch-hex">#f4f3ef</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#171615"></div>
+          <div class="swatch-meta"><span class="swatch-name">Ink</span><span class="swatch-hex">#171615</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#6b6863"></div>
+          <div class="swatch-meta"><span class="swatch-name">Ink 3</span><span class="swatch-hex">#6b6863</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#e3e1dc"></div>
+          <div class="swatch-meta"><span class="swatch-name">Rule</span><span class="swatch-hex">#e3e1dc</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#1b6d5a"></div>
+          <div class="swatch-meta"><span class="swatch-name">Accent</span><span class="swatch-hex">#1b6d5a</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#b03a2e"></div>
+          <div class="swatch-meta"><span class="swatch-name">Danger</span><span class="swatch-hex">#b03a2e</span></div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="palette-pair__label">Dark</div>
+      <div class="swatch-grid">
+        <div class="swatch"><div class="swatch-chip" style="background:#121110"></div>
+          <div class="swatch-meta"><span class="swatch-name">Page</span><span class="swatch-hex">#121110</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#1b1a18"></div>
+          <div class="swatch-meta"><span class="swatch-name">Surface</span><span class="swatch-hex">#1b1a18</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#232220"></div>
+          <div class="swatch-meta"><span class="swatch-name">Surface 2</span><span class="swatch-hex">#232220</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#eae7e0"></div>
+          <div class="swatch-meta"><span class="swatch-name">Ink</span><span class="swatch-hex">#eae7e0</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#8c8881"></div>
+          <div class="swatch-meta"><span class="swatch-name">Ink 3</span><span class="swatch-hex">#8c8881</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#2b2926"></div>
+          <div class="swatch-meta"><span class="swatch-name">Rule</span><span class="swatch-hex">#2b2926</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#5fbb9f"></div>
+          <div class="swatch-meta"><span class="swatch-name">Accent</span><span class="swatch-hex">#5fbb9f</span></div></div>
+        <div class="swatch"><div class="swatch-chip" style="background:#e5685c"></div>
+          <div class="swatch-meta"><span class="swatch-name">Danger</span><span class="swatch-hex">#e5685c</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Type ===== -->
+  <h2 class="preview-section-h">Type</h2>
+  <div class="specimen">
+    <div class="specimen-label">Title<small>IBM Plex Sans / 600</small></div>
+    <div style="font-size:2rem; font-weight:600; letter-spacing:-0.01em;">Fenghua Calculator</div>
+  </div>
+  <div class="specimen">
+    <div class="specimen-label">Section heading<small>IBM Plex Sans / 500</small></div>
+    <div style="font-size:1.1rem; font-weight:500;">Closed hand <small style="font-weight:400; color:var(--ink-3); display:block;">tiles in concealed position</small></div>
+  </div>
+  <div class="specimen">
+    <div class="specimen-label">Chinese<small>IBM Plex Sans SC / 500</small></div>
+    <div style="font-size:1.4rem; font-weight:500;">奉化算分器</div>
+  </div>
+  <div class="specimen">
+    <div class="specimen-label">Body<small>IBM Plex Sans / 400</small></div>
+    <div>For each discard, the page shows which draws improve the hand and how many of each remain.</div>
+  </div>
+  <div class="specimen">
+    <div class="specimen-label">Mono / numeric<small>IBM Plex Mono / 500</small></div>
+    <div style="font-family:var(--mono); font-size:1.4rem; font-weight:500;">42 · 13/14 · 11 枚</div>
+  </div>
+
+  <!-- ===== Shanten mockup ===== -->
+  <h2 class="preview-section-h">Shanten — sample page</h2>
+
+  <article class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-head__title">Shanten<small>奉化向听</small></h1>
+      </div>
+      <div class="page-head__nav">
+        <a class="text-link">中文</a>
+        <a class="text-link">Calculator →</a>
+      </div>
+    </div>
+
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-title">Closed hand<small>build 13 or 14 tiles</small></h2>
+        <div class="section-meta">14 / 13–14</div>
+      </div>
+      <div class="tile-row">
+        <span class="tile"><img src="/Regular_shortnames/1p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/1p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/3p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/4p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/4p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/5p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/5p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/6p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/6p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/6p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/7p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/9p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2p.svg" alt=""></span>
+      </div>
+      <div class="input-row">
+        <input class="input" value="11234455666792p" />
+        <button class="btn">Apply</button>
+      </div>
+      <div class="tools-row">
+        <button class="btn">+ Add tiles</button>
+        <button class="btn">Sort</button>
+        <button class="btn">Clear</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-title">Wild tile<small>round 搭 tile, optional</small></h2>
+        <div class="section-meta">9s</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:1rem;">
+        <span class="tile tile--selected"><img src="/Regular_shortnames/9s.svg" alt=""></span>
+        <a class="text-link">Edit</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-title">Open melds<small>chii / pon / kan declared</small></h2>
+        <div class="section-meta">0</div>
+      </div>
+      <div class="chooser">
+        <button class="is-active">0</button>
+        <button>1</button>
+        <button>2</button>
+        <button>3</button>
+        <button>4</button>
+      </div>
+    </section>
+
+    <section class="result">
+      <div class="result-row">
+        <div class="result-label">Result</div>
+        <div class="result-status result-status--ok">Tenpai</div>
+      </div>
+      <div class="big-stat">
+        <div class="big-stat__label">Shanten</div>
+        <div class="big-stat__value big-stat__value--accent">0</div>
+      </div>
+      <div class="note" style="margin-top:1rem;">
+        Drawn tile
+        <span style="display:inline-flex; vertical-align:middle; margin: 0 0.25rem;">
+          <span class="tile tile--small"><img src="/Regular_shortnames/2p.svg" alt=""></span>
+        </span>
+        · <a class="text-link">Redraw</a>
+      </div>
+
+      <div style="margin-top:2rem;">
+        <div class="result-row" style="margin-bottom:0.75rem;">
+          <div class="result-label">Discard analysis</div>
+        </div>
+
+        <div class="discard-row">
+          <span><span class="discard-row__tag">disc</span><span class="tile tile--small"><img src="/Regular_shortnames/9p.svg" alt=""></span></span>
+          <span class="discard-row__shanten">tenpai</span>
+          <span class="discard-row__draws">
+            <span class="tile tile--small"><img src="/Regular_shortnames/1p.svg" alt=""></span>
+            <span class="tile tile--small"><img src="/Regular_shortnames/4p.svg" alt=""></span>
+            <span class="tile tile--small"><img src="/Regular_shortnames/7p.svg" alt=""></span>
+          </span>
+          <span class="discard-row__count">11</span>
+        </div>
+
+        <div class="discard-row">
+          <span><span class="discard-row__tag">disc</span><span class="tile tile--small"><img src="/Regular_shortnames/2p.svg" alt=""></span></span>
+          <span class="discard-row__shanten">1-shanten</span>
+          <span class="discard-row__draws">
+            <span class="tile tile--small"><img src="/Regular_shortnames/4p.svg" alt=""></span>
+            <span class="tile tile--small"><img src="/Regular_shortnames/5p.svg" alt=""></span>
+          </span>
+          <span class="discard-row__count">6</span>
+        </div>
+
+        <div class="discard-row">
+          <span><span class="discard-row__tag">disc</span><span class="tile tile--small"><img src="/Regular_shortnames/7p.svg" alt=""></span></span>
+          <span class="discard-row__shanten">1-shanten</span>
+          <span class="discard-row__draws">
+            <span class="tile tile--small"><img src="/Regular_shortnames/8p.svg" alt=""></span>
+          </span>
+          <span class="discard-row__count">3</span>
+        </div>
+      </div>
+    </section>
+  </article>
+
+  <!-- ===== Calc mockup ===== -->
+  <h2 class="preview-section-h">Calc — sample page (result)</h2>
+
+  <article class="page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-head__title">Calculator<small>奉化算分器</small></h1>
+      </div>
+      <div class="page-head__nav">
+        <a class="text-link">中文</a>
+        <a class="text-link">Shanten →</a>
+      </div>
+    </div>
+
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-title">Closed hand</h2>
+        <div class="section-meta">14 / 14</div>
+      </div>
+      <div class="tile-row">
+        <span class="tile"><img src="/Regular_shortnames/1m.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/1m.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/3p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/3p.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/5s.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/5s.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/7s.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/7s.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2z.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/2z.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/3z.svg" alt=""></span>
+        <span class="tile"><img src="/Regular_shortnames/3z.svg" alt=""></span>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-row">
+        <h2 class="section-title">Round context</h2>
+        <div class="section-meta">Tsumo · E / E</div>
+      </div>
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:center;">
+        <div class="toggle">
+          <button class="is-active">Tsumo</button>
+          <button>Ron</button>
+        </div>
+        <span class="note">Self-drawn winning tile after revealing flower 4.</span>
+      </div>
+    </section>
+
+    <section class="result">
+      <div class="result-row">
+        <div class="result-label">Result</div>
+        <div class="result-status result-status--ok">Valid hand</div>
+      </div>
+      <div class="big-stat">
+        <div class="big-stat__label">Total score</div>
+        <div class="big-stat__value">42</div>
+      </div>
+      <ul class="breakdown">
+        <li><span class="breakdown__name">Seven pairs</span><span class="breakdown__points">+24</span></li>
+        <li><span class="breakdown__name">All concealed</span><span class="breakdown__points">+4</span></li>
+        <li><span class="breakdown__name">Self-draw</span><span class="breakdown__points">+2</span></li>
+        <li><span class="breakdown__name">Flower-kong bonus</span><span class="breakdown__points">+12</span></li>
+      </ul>
+    </section>
+
+    <div class="footnote">
+      <button class="footnote__toggle">▾  Show normalized request</button>
+    </div>
+  </article>
+
+  <!-- ===== States ===== -->
+  <h2 class="preview-section-h">States</h2>
+  <div class="panel-row">
+    <div class="panel">
+      <div class="panel-h">Validation error</div>
+      <div class="section-row">
+        <h2 class="section-title">Win tile</h2>
+        <div class="section-meta">—</div>
+      </div>
+      <div class="input-row">
+        <input class="input" value="3zz" />
+        <button class="btn">Apply</button>
+      </div>
+      <div class="note note--error">Invalid tile: 3zz — wind tiles are 1z – 4z.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h">Empty state</div>
+      <div class="section-row">
+        <h2 class="section-title">Open melds</h2>
+        <div class="section-meta">0</div>
+      </div>
+      <div class="note">No melds declared.</div>
+      <div class="tools-row" style="justify-content:flex-start; margin-top:0.85rem;">
+        <button class="btn">+ Chii</button>
+        <button class="btn">+ Pon</button>
+        <button class="btn">+ Kan</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h">Invalid hand</div>
+      <div class="result-row">
+        <div class="result-label">Result</div>
+        <div class="result-status result-status--err">Invalid hand</div>
+      </div>
+      <div class="big-stat" style="border-bottom:none; padding-bottom:0;">
+        <div class="big-stat__label">Total score</div>
+        <div class="big-stat__value" style="color:var(--ink-4);">0</div>
+      </div>
+      <div class="note note--error" style="margin-top:0.75rem;">No valid winning shape with current tiles.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h">Primary action</div>
+      <div class="note" style="margin-bottom:1rem;">Calculate is the only filled button on the page.</div>
+      <button class="btn btn--primary">Calculate</button>
+      &nbsp;
+      <button class="btn">Reset</button>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  (function(){
+    var key = 'ledger-preview-mode';
+    var root = document.documentElement;
+    var buttons = document.querySelectorAll('.mode-toggle button');
+
+    function apply(mode){
+      if (mode === 'auto') root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', mode);
+      buttons.forEach(function(b){
+        b.classList.toggle('is-active', b.dataset.mode === mode);
+      });
+      try { localStorage.setItem(key, mode); } catch (e) {}
+    }
+
+    var saved = 'auto';
+    try { saved = localStorage.getItem(key) || 'auto'; } catch (e) {}
+    apply(saved);
+
+    buttons.forEach(function(b){
+      b.addEventListener('click', function(){ apply(b.dataset.mode); });
+    });
+  })();
+</script>
+
+</body>
+</html>

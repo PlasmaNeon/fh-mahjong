@@ -4,29 +4,30 @@
 
 ## Overview
 
-Contains the top-level page components rendered by React Router. Each page represents a distinct screen in the user flow: authentication → lobby → pre-game table → live game. The Calc page is a standalone scoring calculator tool.
+Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. The game-flow pages (Home/Login/Lobby/CreateRoom/Table) share the "Tabletop Glass" theme via the primitives in `web/src/components/`; the live game/replay board uses the in-game theme; and the two tool pages (Calc/Shanten) use the dedicated "ledger" theme in `ledger-theme.css` (IBM Plex, light/dark via `prefers-color-scheme`) — see `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
 
 ## Key Files
 
-- **Login.tsx** — Registration and login form. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage.
-  - Includes a direct entry link to `/create-room` for private-table sharing without matchmaking.
-  - Uses the same emerald/deep-green glass styling language as the live game and pre-game table pages instead of the old plain auth card
+- **Home.tsx** — Landing page at `/`. One-click feature buttons (Play, Create Private Room, Scoring Calculator, Shanten Calculator, Login/Account). Reads the JWT from `localStorage` to show signed-in state. Built from the shared `PageShell`/`GlassCard`/`Eyebrow`/`PageHeading`/`ButtonLink` primitives.
 
-- **Lobby.tsx** — Game lobby. Shows matchmaking queue, lets players create/join rooms via runtime-configured API URLs.
-  - Restyled to match the live table theme and clearly split public matchmaking from private-room entry
+- **Login.tsx** — Registration and login form at `/login`. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage. On login, navigates to `/play`.
+  - Includes a direct entry link to `/room/new` for private-room sharing without matchmaking.
+  - Uses the emerald/deep-green glass styling language shared across non-game pages.
 
-- **CreateRoom.tsx** — Public private-room generator page for `/create-room`:
-  - Generates a random `tableId` client-side and builds a shareable `/table/:tableId` URL
-  - Lets the user copy the link or open/join the generated table immediately
-  - Acts purely as a link generator; the seat-configuration flow happens on `/table/:tableId`
-  - Shares the same tabletop/glass visual language as the waiting room and game pages
+- **Lobby.tsx** — Matchmaking page at `/play`. Shows the matchmaking queue and links to the private-room flow.
+  - On match found, navigates to `/match/:matchId`.
 
-- **Table.tsx** — Private-table seat configuration screen for `/table/:tableId`:
-  - Reads/POSTs `/api/v1/private-tables/:tableId/...` for join, get, seat mutation, and start
+- **CreateRoom.tsx** — Private-room link generator page for `/room/new`:
+  - Generates a random room id client-side and builds a shareable `/room/:roomId` URL
+  - Lets the user copy the link or open/join the generated room immediately
+  - Acts purely as a link generator; the seat-configuration flow happens on `/room/:roomId`
+
+- **Table.tsx** — Private-room waiting/seat-configuration screen for `/room/:roomId` (route param `roomId`):
+  - Reads/POSTs `/api/v1/rooms/:roomId/...` for join, get, seat mutation, mode, and start
   - Renders four `SeatCard` components; the host (first joiner) sees per-empty-seat AI controls and a "Start Match" button enabled when all seats are filled
-  - Subscribes to `lobby_update` envelopes carrying the full `PrivateTableState` JSON and re-renders on every broadcast
-  - On `state === 'started'`, redirects everyone to `/game/:matchId`
-  - Uses tab-scoped private-room session storage for guest-token reconnects (unchanged)
+  - Subscribes to `lobby_update` envelopes (`room` key + full `PrivateTableState` JSON) and re-renders on every broadcast
+  - On `state === 'started'`, redirects everyone to `/match/:matchId`
+  - Uses tab-scoped private-room session storage for guest-token reconnects (the storage record still keys on `tableId` internally)
 
 - **SeatCard.tsx** — Single seat-card component. Renders waiting/human/bot states; if `canEdit` is true, shows "Add AI · Heuristic" buttons for empty seats and a "Remove AI" button for bot seats. Pure presentation; all mutations bubble up to `Table.tsx`.
 
@@ -49,7 +50,8 @@ Contains the top-level page components rendered by React Router. Each page repre
   - The table shell lives in a flex row beside a fixed-width side panel, so it must override the default `width: 100%` shell behavior with `flex: 1 1 0%`, `width: auto`, and `min-width: 0`; replay also renders a loading screen before the real shell exists, so the stage-layout hook must tolerate the shell mounting after its first render
   - Reuses the same fixed-stage scaling system as live play so replay seat lanes and discard lanes match the live board exactly
 
-- **Calc.tsx** — Typed Fenghua rules debugger for `/calc`:
+- **Calc.tsx** — Typed Fenghua rules debugger for `/tools/calc`:
+  - Posts to `/api/v1/tools/calc`; uses the dedicated "ledger" theme (`import './ledger-theme.css'`, IBM Plex, single teal accent, hairline rules, light/dark via OS preference). Cross-links to `/tools/shanten`.
   - Header language toggle switches the calculator UI between English and Chinese
   - Hybrid editor: canonical notation fields plus local tile palettes embedded directly into the closed-hand, win-tile, and wild-tile sections
   - Calculator palette tiles are intentionally larger and more widely spaced than normal hand tiles to reduce misclicks during hand composition
@@ -64,7 +66,7 @@ Contains the top-level page components rendered by React Router. Each page repre
   - Calculator network handling validates response content type before parsing JSON and surfaces a clear backend-configuration error on Vercel when `VITE_API_BASE_URL` is missing
   - Result panel for total score / breakdown and a normalized backend debug summary
 
-- **MatchEndOverlay.tsx** — Chongci final-standings modal rendered when `gameState.phase === PHASE_MATCH_END`.
+- **MatchEndOverlay.tsx** — Chongci final-standings modal rendered when `gameState.phase === PHASE_MATCH_END`. Offers "Watch Replay" (→ `/replay/:matchId`, when a `matchId` prop is passed) and "Leave" (→ `/play`).
 
 - **calcHelpers.ts** — Calculator-only helpers:
   - Typed draft models for tiles and melds

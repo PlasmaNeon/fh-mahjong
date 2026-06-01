@@ -371,6 +371,7 @@ export default function Game() {
                 <MatchEndOverlay
                     state={gameState}
                     seatNames={[null, null, null, null]}
+                    matchId={matchId}
                 />
             )}
             <div className="game-stage-frame" style={stageFrameStyle}>

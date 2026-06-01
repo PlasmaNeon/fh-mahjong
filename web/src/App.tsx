@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { SocketProvider } from './contexts/SocketContext'
 import { GameProvider } from './contexts/GameContext'
+import Home from './pages/Home'
 import Login from './pages/Login'
 import Lobby from './pages/Lobby'
 import Table from './pages/Table'
@@ -17,14 +18,15 @@ function App() {
                 <BrowserRouter>
                     <div className="min-h-screen bg-gray-900 text-white font-sans w-full">
                         <Routes>
-                            <Route path="/" element={<Login />} />
-                            <Route path="/lobby" element={<Lobby />} />
-                            <Route path="/create-room" element={<CreateRoom />} />
-                            <Route path="/calc" element={<Calc />} />
-                            <Route path="/shanten" element={<Shanten />} />
-                            <Route path="/table/:tableId" element={<Table />} />
-                            <Route path="/game/:matchId" element={<Game />} />
+                            <Route path="/" element={<Home />} />
+                            <Route path="/login" element={<Login />} />
+                            <Route path="/play" element={<Lobby />} />
+                            <Route path="/room/new" element={<CreateRoom />} />
+                            <Route path="/room/:roomId" element={<Table />} />
+                            <Route path="/match/:matchId" element={<Game />} />
                             <Route path="/replay/:matchId" element={<Replay />} />
+                            <Route path="/tools/calc" element={<Calc />} />
+                            <Route path="/tools/shanten" element={<Shanten />} />
                             <Route path="*" element={<Navigate to="/" />} />
                         </Routes>
                     </div>

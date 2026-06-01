@@ -67,7 +67,7 @@ func newPrivateTableTestServer() *Server {
 func TestPrivateTableJoinAssignsHost(t *testing.T) {
 	server := newPrivateTableTestServer()
 
-	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
@@ -87,9 +87,9 @@ func TestPrivateTableJoinAssignsHost(t *testing.T) {
 
 func TestPrivateTableSecondJoinClaimsNextSeat(t *testing.T) {
 	server := newPrivateTableTestServer()
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 
-	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 102, "bob"), map[string]any{})
+	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 102, "bob"), map[string]any{})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", recorder.Code)
 	}
@@ -102,9 +102,9 @@ func TestPrivateTableSecondJoinClaimsNextSeat(t *testing.T) {
 
 func TestPrivateTableHostSetsBotSeat(t *testing.T) {
 	server := newPrivateTableTestServer()
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 
-	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/seat", privateTableAuthToken(t, 101, "alice"), map[string]any{
+	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/seat", privateTableAuthToken(t, 101, "alice"), map[string]any{
 		"seat":       1,
 		"kind":       "bot",
 		"difficulty": int(pb.Difficulty_DIFFICULTY_HEURISTIC),
@@ -121,10 +121,10 @@ func TestPrivateTableHostSetsBotSeat(t *testing.T) {
 
 func TestPrivateTableNonHostCannotMutateSeat(t *testing.T) {
 	server := newPrivateTableTestServer()
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 102, "bob"), map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 102, "bob"), map[string]any{})
 
-	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/seat", privateTableAuthToken(t, 102, "bob"), map[string]any{
+	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/seat", privateTableAuthToken(t, 102, "bob"), map[string]any{
 		"seat":       2,
 		"kind":       "bot",
 		"difficulty": int(pb.Difficulty_DIFFICULTY_HEURISTIC),
@@ -136,9 +136,9 @@ func TestPrivateTableNonHostCannotMutateSeat(t *testing.T) {
 
 func TestPrivateTableStartRejectsEmptySeats(t *testing.T) {
 	server := newPrivateTableTestServer()
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 
-	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/start", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/start", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 when seats not full, got %d", recorder.Code)
 	}
@@ -147,10 +147,10 @@ func TestPrivateTableStartRejectsEmptySeats(t *testing.T) {
 func TestPrivateTableStartWithThreeBots(t *testing.T) {
 	server := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 101, "alice")
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", hostToken, map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", hostToken, map[string]any{})
 
 	for _, seat := range []uint32{1, 2, 3} {
-		recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/seat", hostToken, map[string]any{
+		recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/seat", hostToken, map[string]any{
 			"seat":       seat,
 			"kind":       "bot",
 			"difficulty": int(pb.Difficulty_DIFFICULTY_HEURISTIC),
@@ -160,7 +160,7 @@ func TestPrivateTableStartWithThreeBots(t *testing.T) {
 		}
 	}
 
-	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/start", hostToken, map[string]any{})
+	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/start", hostToken, map[string]any{})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -188,17 +188,17 @@ func TestPrivateTableStartRejectsNonHost(t *testing.T) {
 	server := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 101, "alice")
 	otherToken := privateTableAuthToken(t, 102, "bob")
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", hostToken, map[string]any{})
-	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", otherToken, map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", hostToken, map[string]any{})
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", otherToken, map[string]any{})
 	for _, seat := range []uint32{2, 3} {
-		doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/seat", hostToken, map[string]any{
+		doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/seat", hostToken, map[string]any{
 			"seat":       seat,
 			"kind":       "bot",
 			"difficulty": int(pb.Difficulty_DIFFICULTY_HEURISTIC),
 		})
 	}
 
-	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/start", otherToken, map[string]any{})
+	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/start", otherToken, map[string]any{})
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for non-host start, got %d", recorder.Code)
 	}
@@ -208,7 +208,7 @@ func TestPrivateTableJoinReturnsActiveForExistingParticipant(t *testing.T) {
 	server := newPrivateTableTestServer()
 	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104}, nil)
 
-	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
+	recorder, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", recorder.Code)
 	}
@@ -221,7 +221,7 @@ func TestPrivateTableJoinRejectsOutsiderForActiveTable(t *testing.T) {
 	server := newPrivateTableTestServer()
 	server.Matchmaker.registerActivePrivateTable("test-room", "match-123", []uint{101, 102, 103, 104}, nil)
 
-	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/private-tables/test-room/join", privateTableAuthToken(t, 999, "eve"), map[string]any{})
+	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/test-room/join", privateTableAuthToken(t, 999, "eve"), map[string]any{})
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", recorder.Code)
 	}
@@ -315,7 +315,7 @@ func TestHandlePrivateTableMode_HostSuccess(t *testing.T) {
 	s := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 100, "Host")
 
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-1/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-1/join", hostToken, nil)
 
 	body := map[string]any{
 		"mode": "chongci",
@@ -325,7 +325,7 @@ func TestHandlePrivateTableMode_HostSuccess(t *testing.T) {
 			"max_hands":      50,
 		},
 	}
-	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-1/mode", hostToken, body)
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-1/mode", hostToken, body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
@@ -344,10 +344,10 @@ func TestHandlePrivateTableMode_NonHostForbidden(t *testing.T) {
 	hostToken := privateTableAuthToken(t, 100, "Host")
 	otherToken := privateTableAuthToken(t, 200, "Other")
 
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/join", hostToken, nil)
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/join", otherToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-2/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-2/join", otherToken, nil)
 
-	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-2/mode", otherToken, map[string]any{"mode": "classic"})
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-2/mode", otherToken, map[string]any{"mode": "classic"})
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
 	}
@@ -356,13 +356,13 @@ func TestHandlePrivateTableMode_NonHostForbidden(t *testing.T) {
 func TestHandlePrivateTableMode_InvalidConfig(t *testing.T) {
 	s := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 100, "Host")
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-3/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-3/join", hostToken, nil)
 
 	body := map[string]any{
 		"mode":           "chongci",
 		"chongci_config": map[string]any{"starting_score": 50, "bust_threshold": 0, "max_hands": 50},
 	}
-	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-3/mode", hostToken, body)
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-3/mode", hostToken, body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
 	}
@@ -371,15 +371,15 @@ func TestHandlePrivateTableMode_InvalidConfig(t *testing.T) {
 func TestHandlePrivateTableMode_AfterStartLocked(t *testing.T) {
 	s := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 100, "Host")
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-4/join", hostToken, nil)
 	for seat := 1; seat <= 3; seat++ {
-		doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/seat", hostToken, map[string]any{
+		doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-4/seat", hostToken, map[string]any{
 			"seat": seat, "kind": "bot", "difficulty": 1,
 		})
 	}
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/start", hostToken, map[string]any{})
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-4/start", hostToken, map[string]any{})
 
-	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-mode-4/mode", hostToken, map[string]any{
+	w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-mode-4/mode", hostToken, map[string]any{
 		"mode":           "chongci",
 		"chongci_config": map[string]any{"starting_score": 2000, "bust_threshold": 0, "max_hands": 50},
 	})
@@ -393,9 +393,9 @@ func TestHandlePrivateTableMode_AfterStartLocked(t *testing.T) {
 func TestStartPrivateTable_ChongciThreaded(t *testing.T) {
 	s := newPrivateTableTestServer()
 	hostToken := privateTableAuthToken(t, 100, "Host")
-	doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/join", hostToken, nil)
+	doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-chongci-1/join", hostToken, nil)
 
-	w1, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/mode", hostToken, map[string]any{
+	w1, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-chongci-1/mode", hostToken, map[string]any{
 		"mode":           "chongci",
 		"chongci_config": map[string]any{"starting_score": 2000, "bust_threshold": 0, "max_hands": 50},
 	})
@@ -404,7 +404,7 @@ func TestStartPrivateTable_ChongciThreaded(t *testing.T) {
 	}
 
 	for seat := 1; seat <= 3; seat++ {
-		w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/seat", hostToken, map[string]any{
+		w, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-chongci-1/seat", hostToken, map[string]any{
 			"seat": seat, "kind": "bot", "difficulty": 1,
 		})
 		if w.Code != http.StatusOK {
@@ -412,7 +412,7 @@ func TestStartPrivateTable_ChongciThreaded(t *testing.T) {
 		}
 	}
 
-	w2, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/private-tables/table-chongci-1/start", hostToken, map[string]any{})
+	w2, _ := doPrivateTableRequest(t, s, "POST", "/api/v1/rooms/table-chongci-1/start", hostToken, map[string]any{})
 	if w2.Code != http.StatusOK {
 		t.Fatalf("start: %d body=%s", w2.Code, w2.Body.String())
 	}

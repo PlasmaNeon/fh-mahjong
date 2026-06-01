@@ -29,7 +29,7 @@ export default function Login() {
 
             localStorage.setItem('fh_token', data.token);
             connect(data.token);
-            navigate('/lobby');
+            navigate('/play');
         } catch (err: any) {
             setError(err.message);
         }
@@ -59,7 +59,7 @@ export default function Login() {
 
                         <div className="mt-8 flex flex-wrap gap-3">
                             <Link
-                                to="/create-room"
+                                to="/room/new"
                                 className="rounded-[24px] border border-cyan-300/20 bg-cyan-950/60 px-6 py-3 text-xs font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:-translate-y-0.5 hover:bg-cyan-900/70"
                             >
                                 Create Private Room

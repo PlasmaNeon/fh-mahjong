@@ -28,7 +28,7 @@ func newCalcRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	server := &Server{}
 	router := gin.New()
-	router.POST("/api/v1/calc", server.handleCalc)
+	router.POST("/api/v1/tools/calc", server.handleCalc)
 	return router
 }
 
@@ -41,7 +41,7 @@ func performCalcRequest(t *testing.T, router http.Handler, req CalcRequest) *htt
 	}
 
 	recorder := httptest.NewRecorder()
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/calc", bytes.NewReader(body))
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/tools/calc", bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(recorder, httpReq)
 	return recorder

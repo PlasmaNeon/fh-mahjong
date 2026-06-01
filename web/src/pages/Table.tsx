@@ -12,8 +12,8 @@ type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
 
 export default function Table() {
-    const { tableId } = useParams();
-    const [username, setUsername] = useState(() => loadPrivateRoomSession(tableId)?.username ?? '');
+    const { roomId } = useParams();
+    const [username, setUsername] = useState(() => loadPrivateRoomSession(roomId)?.username ?? '');
     const [guestToken, setGuestToken] = useState('');
     const [joining, setJoining] = useState(false);
     const [error, setError] = useState('');
@@ -28,30 +28,30 @@ export default function Table() {
 
     useEffect(() => {
         if (gameState && gameState.matchId) {
-            navigate(`/game/${gameState.matchId}`);
+            navigate(`/match/${gameState.matchId}`);
         }
     }, [gameState, navigate]);
 
     useEffect(() => {
-        const stored = loadPrivateRoomSession(tableId);
+        const stored = loadPrivateRoomSession(roomId);
         if (stored && !isConnected) {
             setGuestToken(stored.token);
             setUsername(stored.username);
             connect(stored.token);
         }
-    }, [connect, isConnected, tableId]);
+    }, [connect, isConnected, roomId]);
 
     const handleAuthFailure = useCallback(() => {
-        clearPrivateRoomSession(tableId);
+        clearPrivateRoomSession(roomId);
         setGuestToken('');
         setTableState(null);
         setError('Your private room session expired. Enter your name again.');
-    }, [tableId]);
+    }, [roomId]);
 
     const fetchTableState = useCallback(async () => {
-        if (!tableId || !guestToken) return;
+        if (!roomId || !guestToken) return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}`), {
+            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}`), {
                 headers: { Authorization: `Bearer ${guestToken}` },
             });
             if (res.status === 401) {
@@ -64,7 +64,7 @@ export default function Table() {
         } catch (err) {
             console.error('fetch table state failed', err);
         }
-    }, [guestToken, tableId, handleAuthFailure]);
+    }, [guestToken, roomId, handleAuthFailure]);
 
     useEffect(() => { fetchTableState(); }, [fetchTableState]);
 
@@ -75,10 +75,10 @@ export default function Table() {
             if (typeof e.data !== 'string') return;
             try {
                 const data = JSON.parse(e.data);
-                if (data.type === 'lobby_update' && data.table === tableId && data.state) {
+                if (data.type === 'lobby_update' && data.room === roomId && data.state) {
                     setTableState(data.state as PrivateTableState);
                     if (data.state.state === 'started' && data.state.matchId) {
-                        navigate(`/game/${data.state.matchId}`);
+                        navigate(`/match/${data.state.matchId}`);
                     }
                 }
             } catch (err) {
@@ -88,12 +88,12 @@ export default function Table() {
 
         socket.addEventListener('message', handle);
         return () => socket.removeEventListener('message', handle);
-    }, [socket, isConnected, tableId, navigate]);
+    }, [socket, isConnected, roomId, navigate]);
 
     const performJoin = useCallback(async (token: string) => {
-        if (!tableId) return;
+        if (!roomId) return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}/join`), {
+            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/join`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({}),
@@ -112,17 +112,17 @@ export default function Table() {
                 return;
             }
             if (data.status === 'active' && data.matchId) {
-                navigate(`/game/${data.matchId}`);
+                navigate(`/match/${data.matchId}`);
                 return;
             }
             setTableState(data as PrivateTableState);
         } catch (err: any) {
             setError(err.message || 'Failed to join private table');
         }
-    }, [navigate, tableId, handleAuthFailure]);
+    }, [navigate, roomId, handleAuthFailure]);
 
     const handleGuestJoin = async () => {
-        if (!username.trim() || !tableId) return;
+        if (!username.trim() || !roomId) return;
         setError('');
         setJoining(true);
         try {
@@ -136,7 +136,7 @@ export default function Table() {
 
             setGuestToken(authData.token);
             savePrivateRoomSession({
-                tableId,
+                tableId: roomId,
                 token: authData.token,
                 username: authData.user?.username || username.trim(),
             });
@@ -150,9 +150,9 @@ export default function Table() {
     };
 
     const mutateSeat = useCallback(async (seat: number, kind: 'bot' | 'empty', difficulty?: Difficulty) => {
-        if (!tableId || !guestToken) return;
+        if (!roomId || !guestToken) return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}/seat`), {
+            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/seat`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
                 body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED }),
@@ -168,12 +168,12 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to update seat');
         }
-    }, [guestToken, tableId, handleAuthFailure]);
+    }, [guestToken, roomId, handleAuthFailure]);
 
     const setMatchMode = useCallback(async (mode: 'classic' | 'chongci', cfg?: { starting_score: number; bust_threshold: number; max_hands: number }) => {
-        if (!tableId || !guestToken) return;
+        if (!roomId || !guestToken) return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}/mode`), {
+            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/mode`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
                 body: JSON.stringify({ mode, chongci_config: cfg }),
@@ -189,7 +189,7 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to update match mode');
         }
-    }, [guestToken, tableId, handleAuthFailure]);
+    }, [guestToken, roomId, handleAuthFailure]);
 
     useEffect(() => {
         const cfg = tableState?.chongciConfig;
@@ -203,9 +203,9 @@ export default function Table() {
     }, [tableState?.chongciConfig]);
 
     const handleStart = async () => {
-        if (!tableId || !guestToken) return;
+        if (!roomId || !guestToken) return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/private-tables/${tableId}/start`), {
+            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/start`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
                 body: JSON.stringify({}),
@@ -228,8 +228,8 @@ export default function Table() {
             <div className="min-h-screen bg-[radial-gradient(circle_at_50%_18%,_rgba(16,185,129,0.18),_transparent_22%),linear-gradient(180deg,_#03111a_0%,_#06352d_58%,_#041019_100%)] text-white">
                 <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center px-6 py-10">
                     <div className="w-full rounded-[28px] border border-emerald-300/20 bg-slate-950/70 p-8 shadow-[0_22px_70px_rgba(0,0,0,0.3)]">
-                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Table</p>
-                        <h1 className="mt-2 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Join Table {tableId}</h1>
+                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Room</p>
+                        <h1 className="mt-2 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Join Room {roomId}</h1>
                         <p className="mt-4 text-sm leading-7 text-slate-300">Pick a display name to enter as a guest.</p>
                         <input
                             value={username}
@@ -261,8 +261,8 @@ export default function Table() {
             <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-6 py-10">
                 <header className="mb-6 flex items-center justify-between">
                     <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Table</p>
-                        <h1 className="mt-1 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Table {tableId}</h1>
+                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Room</p>
+                        <h1 className="mt-1 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Room {roomId}</h1>
                     </div>
                     {iAmHost && (
                         <button

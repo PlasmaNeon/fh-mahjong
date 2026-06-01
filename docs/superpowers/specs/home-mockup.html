@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Home page mockup — Fenghua Mahjong</title>
+<style>
+  :root { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: #fff;
+    background:
+      radial-gradient(circle at 50% 18%, rgba(16,185,129,0.20), transparent 24%),
+      linear-gradient(180deg, #04111a 0%, #07382f 58%, #031018 100%);
+  }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 3.5rem 1.5rem; }
+  .eyebrow { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.34em; color: rgba(110,231,183,0.8); }
+  h1 { margin: .75rem 0 0; font-size: clamp(2.4rem, 5vw, 3.4rem); font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; color: #d1fae5; }
+  .sub { margin-top: 1rem; max-width: 38rem; font-size: 0.95rem; line-height: 1.9; color: #cbd5e1; }
+
+  /* top account bar */
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; }
+  .brand { font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.3em; color: rgba(110,231,183,0.85); }
+  .account-btn {
+    border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.05);
+    color: #e2e8f0; padding: .6rem 1.1rem; border-radius: 18px; font-size: 11px;
+    font-weight: 900; text-transform: uppercase; letter-spacing: 0.16em; cursor: pointer; text-decoration: none;
+  }
+  .account-btn:hover { background: rgba(255,255,255,0.1); }
+
+  .grid { display: grid; gap: 1.25rem; margin-top: 2.5rem; grid-template-columns: 1fr; }
+  @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+
+  .card {
+    border-radius: 28px; padding: 1.75rem; backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.1); background: rgba(2,6,23,0.62);
+    box-shadow: 0 22px 70px rgba(0,0,0,0.3);
+  }
+  .card.feature { display: flex; flex-direction: column; }
+  .card h2 { margin: 0; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.28em; }
+  .card p { margin: .9rem 0 1.4rem; font-size: 0.9rem; line-height: 1.7; color: #cbd5e1; flex: 1; }
+
+  .btn {
+    display: inline-block; text-align: center; text-decoration: none;
+    padding: .85rem 1.4rem; border-radius: 22px; font-size: 13px; font-weight: 900;
+    text-transform: uppercase; letter-spacing: 0.16em; cursor: pointer; transition: transform .1s ease;
+  }
+  .btn:hover { transform: translateY(-2px); }
+  .btn-emerald { border: 1px solid rgba(110,231,183,0.24); background: #059669; color: #fff; box-shadow: 0 18px 36px rgba(5,150,105,0.32); }
+  .btn-cyan { border: 1px solid rgba(103,232,249,0.2); background: rgba(8,51,68,0.6); color: #cffafe; }
+  .btn-slate { border: 1px solid rgba(255,255,255,0.1); background: rgba(30,41,59,0.85); color: #e2e8f0; }
+
+  .accent-emerald { color: rgba(110,231,183,0.88); }
+  .accent-cyan { color: #cffafe; }
+  .accent-amber { color: #fcd34d; }
+
+  .tools-row { display: flex; gap: .75rem; flex-wrap: wrap; }
+  .tools-row .btn { flex: 1; min-width: 9rem; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <span class="brand">Fenghua Mahjong</span>
+      <!-- Logged out: shows Login. Logged in: would show the username instead -->
+      <a class="account-btn" href="#login">Login / Register</a>
+    </div>
+
+    <p class="eyebrow">Welcome</p>
+    <h1>Fenghua Mahjong</h1>
+    <p class="sub">
+      Jump into a live public match, spin up a private room for friends, or open the
+      scoring and shanten tools. Everything below is one click away.
+    </p>
+
+    <div class="grid">
+      <!-- PLAY -->
+      <section class="card feature">
+        <h2 class="accent-emerald">Play</h2>
+        <p>Queue into the live hometown-rules pool and get dropped straight into a match when four players are ready.</p>
+        <a class="btn btn-emerald" href="#play">Find Match →</a>
+      </section>
+
+      <!-- PRIVATE ROOM -->
+      <section class="card feature">
+        <h2 class="accent-cyan">Private Room</h2>
+        <p>Generate a shareable room link, send it to friends, fill empty seats with AI, and start when ready.</p>
+        <a class="btn btn-cyan" href="#room-new">Create Private Room →</a>
+      </section>
+
+      <!-- TOOLS -->
+      <section class="card feature">
+        <h2 class="accent-amber">Tools</h2>
+        <p>Standalone calculators — no login needed.</p>
+        <div class="tools-row">
+          <a class="btn btn-slate" href="#tools-calc">Scoring Calculator</a>
+          <a class="btn btn-slate" href="#tools-shanten">Shanten Calculator</a>
+        </div>
+      </section>
+
+      <!-- ACCOUNT -->
+      <section class="card feature">
+        <h2 class="accent-emerald">Account</h2>
+        <p>Login to keep your matchmaking profile, or play instantly as a guest from any private room link.</p>
+        <a class="btn btn-slate" href="#login">Login / Register →</a>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

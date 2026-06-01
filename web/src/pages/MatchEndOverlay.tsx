@@ -5,6 +5,7 @@ import { game } from '../proto/game';
 type Props = {
     state: game.IGameState;
     seatNames: (string | null)[];   // length 4; null for AI seats
+    matchId?: string;               // enables the "Watch Replay" action
 };
 
 const reasonLabel = (reason?: string | null) => {
@@ -22,7 +23,7 @@ const rankLabel = (rank: number) => {
     return `${rank}th`;
 };
 
-export default function MatchEndOverlay({ state, seatNames }: Props) {
+export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
     const navigate = useNavigate();
     const result = state.matchEndResult;
     if (!result || !result.standings) return null;
@@ -66,12 +67,22 @@ export default function MatchEndOverlay({ state, seatNames }: Props) {
                     </table>
                 </div>
 
-                <button
-                    onClick={() => navigate('/lobby')}
-                    className="mt-6 w-full rounded-2xl border border-emerald-300/30 bg-emerald-600 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_18px_38px_rgba(5,150,105,0.32)] hover:bg-emerald-500"
-                >
-                    Leave
-                </button>
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                    {matchId && (
+                        <button
+                            onClick={() => navigate(`/replay/${matchId}`)}
+                            className="w-full rounded-2xl border border-cyan-300/30 bg-cyan-950/60 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-900/70"
+                        >
+                            Watch Replay
+                        </button>
+                    )}
+                    <button
+                        onClick={() => navigate('/play')}
+                        className="w-full rounded-2xl border border-emerald-300/30 bg-emerald-600 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_18px_38px_rgba(5,150,105,0.32)] hover:bg-emerald-500"
+                    >
+                        Leave
+                    </button>
+                </div>
             </div>
         </div>
     );
