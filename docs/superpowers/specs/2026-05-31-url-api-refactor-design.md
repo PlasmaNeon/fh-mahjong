@@ -17,8 +17,10 @@ and `/calc`, `/shanten`, `/replay` have no navigation links at all.
 - **Hard cut, no aliases.** The frontend is the only API client and is updated
   in lockstep. Old routes/paths are deleted, not redirected.
 - **Not a full IA overhaul:** no persistent global header/nav bar, no
-  replay-history list page, no auth changes, no visual redesign of existing
-  pages.
+  replay-history list page, no auth changes.
+- **Theme unification (in scope):** all non-game pages share one visual theme
+  (section F). This extracts shared style primitives and re-skins the two
+  divergent tool pages; it is not a from-scratch redesign of page layouts.
 
 ## Decisions (from brainstorming)
 
@@ -162,10 +164,81 @@ Frontend: there is no existing component test harness for pages (the repo has no
 verification is by `npm run build` (type-check + bundle) succeeding, since route
 and param renames are type-checked through `useParams`/`getApiUrl` usage.
 
+## F. Unified theme system ("Tabletop Glass")
+
+Every non-game page must share one visual language: the existing emerald /
+deep-green "tabletop glass" aesthetic (layered radial emerald glow over a deep
+teal→navy gradient, dark glass cards, black-weight uppercase eyebrow labels,
+emerald primary buttons). Today this is copy-pasted inline (the background
+gradient string is duplicated 5× across Login/Lobby/CreateRoom/Table) and two
+pages diverge entirely (Calc and Shanten use a flat `bg-slate-950` background
+with amber accents and `rounded-full`/`border-slate-800` cards).
+
+**Typography:** keep the existing `Inter`/system body font. No new webfont. This
+is a structural (color/surface/layout) unification only.
+
+### F.1 Extract shared primitives (single source of truth)
+
+New directory `web/src/components/` with small, focused, presentational
+components (TailwindCSS, no business logic). Visual values are taken verbatim
+from the current Login/Lobby pages so existing pages render unchanged.
+
+- **`PageShell.tsx`** — full-height layered background + centered max-width
+  container. Background:
+  `bg-[radial-gradient(circle_at_50%_18%,_rgba(16,185,129,0.18),_transparent_22%),linear-gradient(180deg,_#03111a_0%,_#06352d_58%,_#041019_100%)] text-white min-h-screen`.
+  Accepts a `maxWidth` prop (default `max-w-6xl`) and `children`.
+- **`GlassCard.tsx`** — `rounded-[28px] border border-white/10 bg-slate-950/62
+  p-8 shadow-[0_22px_70px_rgba(0,0,0,0.3)] backdrop-blur-sm`; accepts
+  `className` for per-use overrides (e.g. accent border tint) and `children`.
+- **`Eyebrow.tsx`** — `text-[11px] font-black uppercase tracking-[0.34em]
+  text-emerald-300/78`; accepts `children`.
+- **`PageHeading.tsx`** — `text-4xl font-black uppercase tracking-[0.12em]
+  text-emerald-100 sm:text-5xl`; accepts `children`.
+- **`Button.tsx`** — `<Link>`/`<button>` styled with a `variant` prop:
+  - `primary`: `border border-emerald-300/24 bg-emerald-600 ... shadow-[0_20px_40px_rgba(5,150,105,0.32)] hover:bg-emerald-500` (emerald glow)
+  - `secondary`: `border border-cyan-300/20 bg-cyan-950/60 text-cyan-100 hover:bg-cyan-900/70`
+  - `ghost`: `border border-white/10 bg-white/5 hover:bg-white/10`
+  All variants share `rounded-[24px] px-7 py-3 text-sm font-black uppercase
+  tracking-[0.18em]`.
+
+These components have one clear responsibility each and a well-defined prop
+interface; pages compose them instead of repeating Tailwind strings.
+
+### F.2 Pages that adopt the primitives (visual result unchanged)
+
+`Login`, `Lobby` (`/play`), `CreateRoom` (`/room/new`), `Table` (`/room/:id`
+waiting room), `MatchEndOverlay`, and the new `Home` are refactored to use
+`PageShell` / `GlassCard` / `Eyebrow` / `PageHeading` / `Button`. They already
+match the theme, so this is a DRY refactor — pixels stay the same.
+
+### F.3 Pages that are re-skinned (visual change)
+
+`Calc` (`/tools/calc`) and `Shanten` (`/tools/shanten`) are migrated off their
+slate/amber theme onto Tabletop Glass:
+- Page wrapper `<div className="w-full bg-slate-950 ...">` → `<PageShell maxWidth="max-w-7xl">`.
+- Section cards `rounded-3xl border border-slate-800 bg-slate-900/70` → `GlassCard`.
+- Amber accents (`border-amber-400/40`, `text-amber-200`, the `rounded-full`
+  language-toggle / cross-tool buttons) → emerald/cyan `Button` variants and
+  `Eyebrow`/`PageHeading` for the header.
+- Their dense inner controls (notation inputs, tile palettes, result tables)
+  keep their current structure; only outer chrome, card surfaces, and accent
+  colors change. The amber highlight currently used for "active/important"
+  affordances becomes emerald to stay on-palette.
+
+### F.4 Excluded (in-game theme, untouched)
+
+`Game.tsx` live play, the shared `TableScene` / `.mahjong-table` board styles in
+`index.css`, and the **board area** of `Replay.tsx`. Replay's side-panel chrome
+(transport controls, perspective selector container) may wrap in `GlassCard`/
+`Button` so it doesn't clash, but the table board keeps the in-game theme.
+
 ## E. Documentation & config touch points
 
 - `web/src/pages/AGENTS.md` — update route descriptions (`/calc`, `/shanten`,
-  `/table`, `/create-room`, `/game`) to the new paths; add the new `Home.tsx`.
+  `/table`, `/create-room`, `/game`) to the new paths; add the new `Home.tsx`;
+  note Calc/Shanten now use the shared Tabletop Glass theme.
+- `web/src/components/AGENTS.md` — new file documenting the shared theme
+  primitives (`PageShell`, `GlassCard`, `Eyebrow`, `PageHeading`, `Button`).
 - `web/AGENTS.md` — fix the stale `vercel.json` reference (the file does not
   currently exist at `web/vercel.json`) and the `/calc`, `/table/:tableId`
   examples.
@@ -183,6 +256,8 @@ and param renames are type-checked through `useParams`/`getApiUrl` usage.
 - Replay history list page.
 - Auth flow changes.
 - Backend route aliases or redirects (hard cut).
-- Visual redesign of existing pages beyond the new Home landing.
+- New display webfont / typography change (keeping Inter — section F).
+- From-scratch layout redesign of existing pages (theme unification only).
+- Re-theming the in-game board (`Game`, `TableScene`, Replay board area).
 - Renaming internal Go identifiers (`tableID`, `TableID`) — only URL segments,
   route param names, and the JSON envelope field change.
