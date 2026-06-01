@@ -1,9 +1,12 @@
 # Chongci Risk Target And Input Design
 
-Status: first implementation calibrated and rejected. The model/trainer now
-support action-conditioned risk heads over the 204-action catalog, but the first
-calibration-only run on the existing input shape produced near-random large-loss
-AUC. Visible match-history inputs and guarded evaluation remain future work.
+Status: richer visible inputs implemented and first calibration rejected. The model/trainer now support
+action-conditioned risk heads over the 204-action catalog, but the first
+calibration-only run on the old 50-scalar input shape produced near-random
+large-loss AUC. The observation schema now adds visible Chongci match-history
+and score-pressure scalars, but the first 58-scalar action-risk run still
+failed calibration (`large-loss AUC 0.5096`). Guarded evaluation remains future
+work until the richer-input critic passes calibration.
 
 ## Problem
 
@@ -253,6 +256,9 @@ override rate is explainable and not broad policy drift
    - update `rlenv` scalar count,
    - encode visible previous-hand and rolling score history,
    - add Go tests proving values are visible-only and deterministic.
+   - Status: implemented as the 58-scalar visible Chongci context. It includes
+     cumulative score/rank history from public match scores plus current-hand
+     public threat signals.
 2. Add sharded storage for new scalar shape:
    - keep old checkpoint compatibility padding,
    - update AI docs and tests.
@@ -273,8 +279,10 @@ override rate is explainable and not broad policy drift
    - use current64 plus all-anchor risk-seed data,
    - no serving changes.
    - Status: first run completed and rejected at calibration gate
-     (`large-loss AUC 0.4998`, Brier `0.3329`). Add visible history and
-     score-pressure inputs before retraining.
+     (`large-loss AUC 0.4998`, Brier `0.3329`). A first 58-scalar rerun also
+     failed (`large-loss AUC 0.5096`, Brier `0.3114`). The next retrain should
+     improve risk-label coverage or use a balanced risk-only objective before
+     trying guarded serving.
 6. If calibration passes, add guarded evaluator:
    - top-policy-candidate risk guard,
    - selected-window quick screen,

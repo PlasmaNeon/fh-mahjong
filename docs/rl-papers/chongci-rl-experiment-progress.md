@@ -2054,7 +2054,9 @@ post-hoc transition weighting?
 
 Implementation:
 
-The observation scalar count stays at `50` to avoid a model-shape migration.
+At this May 30 branch stage, the observation scalar count stayed at `50` to
+avoid a model-shape migration. This was later superseded by the May 31
+58-scalar visible-context branch.
 The Chongci tail scalars keep the existing visible-only inputs and replace the
 weakest score-context slots with risk-aligned fields:
 
@@ -3206,6 +3208,144 @@ add visible Chongci match-history and score-pressure features before retraining
 the action-risk critic. More coefficient sweeps on the current input shape are
 low-value.
 
+## Visible 58-Scalar Action-Risk Critic Calibration
+
+Date: 2026-05-31
+
+Branch:
+
+```text
+codex/chongci-visible-risk-scalars
+```
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255
+```
+
+Question:
+
+Does adding visible Chongci match-history and score-pressure scalars improve
+the action-conditioned large-loss risk critic enough to pass offline
+calibration?
+
+Implementation:
+
+The observation scalar count increased from `50` to `58`. The new scalars are
+visible-only and are derived from public scores, hand number, public discards,
+open melds, flowers, and the Chongci config:
+
+| Scalar | Meaning |
+|--------|---------|
+| 50 | self score ratio versus starting score |
+| 51 | signed net score progress versus starting score |
+| 52 | signed score gap versus right opponent |
+| 53 | signed score gap versus across opponent |
+| 54 | signed score gap versus left opponent |
+| 55 | next-rank pressure, score needed to catch the nearest higher player |
+| 56 | lower-rank cushion, margin over the nearest lower player |
+| 57 | max opponent public current-hand threat |
+
+Old checkpoints still load because the scalar encoder weight migration pads
+missing scalar columns with zero initialization. Older 42/50-scalar datasets can
+still be sampled with the model path because scalar inputs are padded at
+inference/training time, but this experiment generated fresh 58-scalar shards.
+
+Validation:
+
+```text
+local: go test ./rlenv ./rules
+local: uv run --project ai pytest ai/tests/test_model.py ai/tests/test_iql.py ai/tests/test_storage.py ai/tests/test_serving.py ai/tests/test_policies.py ai/tests/test_paired_trace.py ai/tests/test_reward_calibration.py
+remote: go test ./rlenv ./rules
+remote: uv run --project ai --extra dev pytest ai/tests/test_model.py ai/tests/test_iql.py ai/tests/test_storage.py ai/tests/test_serving.py ai/tests/test_paired_trace.py ai/tests/test_reward_calibration.py
+remote: go build -buildmode=c-shared -o build/libfh_mahjong_bridge.so ./cmd/rlbridge
+```
+
+Remote data:
+
+```text
+train data: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz
+train episodes: 64
+train transitions: 131612
+train seeds: 640000-640063
+calibration data: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-calib16-npz
+calibration episodes: 16
+calibration transitions: 31448
+calibration seeds: 650000-650015
+scalar shape: 58
+policy source: promoted Chongci anchor on all four seats
+```
+
+Training:
+
+```text
+checkpoint: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/checkpoints/iql_visible58_actionrisk/epoch_001.pt
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+epochs: 1
+batch_size: 2048
+learning_rate: 0.000005
+policy_weight: 0.25
+bc_weight: 3.0
+large_loss_threshold: -1.0
+large_loss_aux_weight: 0.05
+large_loss_severity_weight: 0.02
+mlflow training run: a1d4cea1992d4ebaa8ce2be5ebca4bfa
+```
+
+Training logs confirmed the action-risk loss remained active:
+
+```text
+step 20: ll_aux=1.7417 ll_sev=0.8766
+step 40: ll_aux=1.7591 ll_sev=0.8336
+step 60: ll_aux=1.8483 ll_sev=0.8490
+final loss: 0.2638
+```
+
+Independent calibration:
+
+```text
+report: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/reports/visible58_actionrisk_calib16.json
+mlflow calibration run: a5c60c88e2374282a3b71bc190f6ad20
+transitions: 31448
+Q MAE: 0.1345
+Q RMSE: 0.2170
+Q bias: -0.0021
+Q corr: 0.0043
+value MAE: 0.0787
+large-loss rate: 14.54%
+large-loss Brier: 0.3114
+large-loss AUC: 0.5096
+large-loss positive mean probability: 0.4693
+large-loss negative mean probability: 0.4596
+large-loss severity MAE: 1.1919
+```
+
+Risk bands:
+
+```text
+0.00-0.25: 13.79% large-loss rate over 9723 samples
+0.25-0.50: 14.78% large-loss rate over 7485 samples
+0.50-0.75: 15.12% large-loss rate over 7268 samples
+0.75-1.00: 14.73% large-loss rate over 6972 samples
+```
+
+Decision:
+
+Reject at calibration gate. Do not run selected-window online evaluation or a
+serving-time guard from this checkpoint.
+
+Interpretation:
+
+The new visible score-pressure scalars slightly improved probability Brier
+versus the no-history action-risk run (`0.3114` vs `0.3329`), and the middle
+risk bands are weakly ordered. However, AUC is still effectively random and the
+positive/negative mean probability gap is only about `0.0097`, far below the
+`0.05` calibration target. The next experiment needs a stronger risk-learning
+setup, not guarded serving: larger and more diverse large-loss coverage,
+balanced risk-only training, or a critic-side target that predicts score-delta
+tail value more directly.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -3282,6 +3422,10 @@ low-value.
     calibration gate (`large-loss AUC 0.4998`, Brier `0.3329`), so it should
     not be evaluated online. The next required change is visible match-history
     and score-pressure input, not another auxiliary coefficient sweep.
+29. The 58-scalar visible match-history/action-risk run also failed calibration
+    (`large-loss AUC 0.5096`, Brier `0.3114`). The added public context helped
+    Brier slightly but did not make risk rankings reliable enough for guarded
+    serving.
 
 ## Recommended Next Experiments
 
@@ -3302,9 +3446,9 @@ before any guarded online evaluation.
 
 Immediate work:
 
-- add visible Chongci match-history and score-pressure scalars,
-- retrain and recalibrate the action-conditioned risk heads on the richer input
-  shape,
+- keep the 58-scalar visible Chongci context,
+- train a stronger risk critic setup with larger/diverse large-loss coverage or
+  a risk-only balanced objective,
 - only test a top-policy-candidate risk guard if offline calibration passes.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports

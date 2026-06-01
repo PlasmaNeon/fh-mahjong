@@ -61,7 +61,9 @@ def observation_from_json(payload: dict) -> Observation:
     planes = np.asarray(payload["planes"], dtype=np.float32).reshape(env_config.plane_shape)
     scalars = np.asarray(payload["scalars"], dtype=np.float32)
     action_mask = np.asarray(payload["action_mask"], dtype=np.int8)
-    if scalars.shape == (42,):
+    if scalars.ndim != 1:
+        raise ValueError(f"expected one-dimensional scalars, got shape {scalars.shape}")
+    if scalars.shape[0] < env_config.scalar_features:
         scalars = np.pad(scalars, (0, env_config.scalar_features - scalars.shape[0]))
     if scalars.shape != (env_config.scalar_features,):
         raise ValueError(f"expected {env_config.scalar_features} scalars, got shape {scalars.shape}")

@@ -132,7 +132,7 @@ def test_policy_value_net_pads_legacy_scalar_encoder_checkpoint(tmp_path) -> Non
     assert step == 5
     first_layer = loaded_model.scalar_encoder[0]
     assert isinstance(first_layer, nn.Linear)
-    assert first_layer.weight.shape[1] == 50
+    assert first_layer.weight.shape[1] == EnvConfig().scalar_features
     assert torch.count_nonzero(first_layer.weight[:, 42:]) == 0
 
 

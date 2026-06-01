@@ -63,7 +63,7 @@ Near term:
 - shared-gradient large-loss auxiliary training is not automatically safer: the first all-anchor target-side run was active, improved EV versus replay-only all-anchor runs, but regressed selected-window large-loss rate
 - lowering those auxiliary coefficients reproduced the same rejected selected-window behavior, so further coefficient sweeps are lower value than changing the objective or serving-time use of risk estimates
 - the first calibrated large-loss auxiliary heads should not be used as serving guards: probability AUC was near random and predicted risk bands had nearly flat realized large-loss rates
-- next Chongci risk-learning design is action-conditioned and critic-side: predict tail probability/severity for each legal action using visible match-history inputs, then calibrate before any serving-time guard. The action-conditioned heads and gathered dataset-action loss are implemented, but the first calibration-only run without richer history failed (`large-loss AUC 0.4998`); visible match-history and score-pressure inputs remain next.
+- next Chongci risk-learning design is action-conditioned and critic-side: predict tail probability/severity for each legal action using visible match-history inputs, then calibrate before any serving-time guard. The action-conditioned heads and gathered dataset-action loss are implemented, but the first calibration-only run without richer history failed (`large-loss AUC 0.4998`) and the first 58-scalar visible-context rerun still failed (`large-loss AUC 0.5096`); the next attempt needs better large-loss coverage or a balanced risk-only objective, not guarded serving.
 
 Later:
 
@@ -83,7 +83,7 @@ The reading strongly supports adding rule-engine look-ahead features, especially
 - wild-preservation signals (implemented in scalar indices 36-37)
 - estimated score potential (implemented in scalar index 38)
 - public danger heuristics (implemented in scalar indices 39-41)
-- Chongci match context: mode flag, hand progress, rank strength, leader pressure, large-loss safety, own bust safety, and opponent large-loss pressure (implemented in scalar indices 42-49)
+- Chongci match context: mode flag, hand progress, rank strength, leader pressure, large-loss safety, own bust safety, opponent large-loss pressure, normalized score/net progress, relative score gaps, next-rank pressure, lower-rank cushion, and public current-hand threat (implemented in scalar indices 42-57)
 
 These features are compatible with the current Go heuristic analysis and should help both BC and RL.
 
