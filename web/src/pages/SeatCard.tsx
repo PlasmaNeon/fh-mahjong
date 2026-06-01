@@ -26,26 +26,29 @@ export default function SeatCard(props: SeatCardProps) {
     const isHumanHost = seat.kind === 'human' && Number(seat.userId ?? 0) === hostUserId;
 
     return (
-        <div className="rounded-2xl border border-emerald-300/16 bg-slate-950/70 p-5">
-            <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-emerald-200/70">
-                <span>Seat {seatIndex + 1} · {SEAT_LABEL[seatIndex]}</span>
-                {isHumanHost && <span className="rounded-full border border-amber-300/40 px-2 py-0.5 text-amber-200">Host</span>}
-            </div>
-
-            <div className="mt-3 text-base font-semibold text-emerald-100">
-                {seat.kind === 'human' && <>{seat.username || `Player ${seat.userId ?? ''}`}</>}
-                {seat.kind === 'bot' && <>AI · Heuristic</>}
-                {(seat.kind === 'empty' || !seat.kind) && <span className="text-slate-400">Waiting for player…</span>}
+        <div className="ldg-meld">
+            <div className="ldg-meld__head">
+                <div>
+                    <div className="ldg-meld__meta">Seat {seatIndex + 1} · {SEAT_LABEL[seatIndex]}</div>
+                    <div className="ldg-meld__title" style={{ marginTop: 4 }}>
+                        {seat.kind === 'human' && <>{seat.username || `Player ${seat.userId ?? ''}`}</>}
+                        {seat.kind === 'bot' && <>AI · Heuristic</>}
+                        {(seat.kind === 'empty' || !seat.kind) && (
+                            <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>Waiting for player…</span>
+                        )}
+                    </div>
+                </div>
+                {isHumanHost && <span className="ldg-chip ldg-chip--active">Host</span>}
             </div>
 
             {canEdit && (seat.kind === 'empty' || !seat.kind) && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="ldg-meld__actions">
                     {DIFFICULTY_OPTIONS.map(opt => (
                         <button
                             key={opt.value}
                             type="button"
+                            className="ldg-btn"
                             onClick={() => onAssignBot(seatIndex, opt.value)}
-                            className="rounded-full border border-cyan-300/30 bg-cyan-900/40 px-3 py-1 text-xs uppercase tracking-[0.16em] text-cyan-100 hover:bg-cyan-800/50"
                         >
                             Add AI · {opt.label}
                         </button>
@@ -54,11 +57,11 @@ export default function SeatCard(props: SeatCardProps) {
             )}
 
             {canEdit && seat.kind === 'bot' && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="ldg-meld__actions">
                     <button
                         type="button"
+                        className="ldg-btn ldg-btn--danger"
                         onClick={() => onClearSeat(seatIndex)}
-                        className="rounded-full border border-rose-300/30 bg-rose-900/40 px-3 py-1 text-xs uppercase tracking-[0.16em] text-rose-100 hover:bg-rose-800/50"
                     >
                         Remove AI
                     </button>
@@ -66,7 +69,7 @@ export default function SeatCard(props: SeatCardProps) {
             )}
 
             {isHost && !canEdit && (
-                <div className="mt-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">Only the host can change seats.</div>
+                <p className="ldg-note" style={{ marginTop: '0.6rem' }}>Only the host can change seats.</p>
             )}
         </div>
     );
