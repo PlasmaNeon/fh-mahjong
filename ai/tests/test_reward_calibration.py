@@ -72,11 +72,14 @@ def test_compute_reward_calibration_reports_errors(tmp_path: Path) -> None:
     write_transitions_jsonl(tmp, transitions)
     arrays = read_transition_arrays(tmp)
 
-    report = compute_reward_calibration(model, arrays, gamma=0.99, batch_size=3)
+    report = compute_reward_calibration(model, arrays, gamma=0.99, batch_size=3, large_loss_threshold=-0.1)
 
     assert report["total_transitions"] == 6
     assert "discard" in report["by_action_family"]
     assert np.isfinite(report["q_error"]["mae"])
+    assert report["large_loss_calibration"]["positive_count"] > 0
+    assert 0.0 <= report["large_loss_calibration"]["probability"]["auc"] <= 1.0
+    assert np.isfinite(report["large_loss_calibration"]["severity"]["mae"])
 
 
 def test_reward_calibration_script_writes_report(tmp_path: Path) -> None:
@@ -91,6 +94,7 @@ def test_reward_calibration_script_writes_report(tmp_path: Path) -> None:
     report = reward_calibration_report(
         checkpoint=checkpoint,
         data_path=data_path,
+        large_loss_threshold=-0.1,
         max_transitions=5,
         batch_size=2,
         report_output=report_path,
@@ -98,4 +102,5 @@ def test_reward_calibration_script_writes_report(tmp_path: Path) -> None:
 
     assert report["checkpoint_step"] == 2
     assert report["calibration"]["total_transitions"] == 5
+    assert "large_loss_calibration" in report["calibration"]
     assert report_path.exists()

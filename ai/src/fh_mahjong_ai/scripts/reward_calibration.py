@@ -19,6 +19,7 @@ def reward_calibration_report(
     checkpoint: Path,
     data_path: Path,
     gamma: float = 0.99,
+    large_loss_threshold: Optional[float] = None,
     max_transitions: Optional[int] = None,
     batch_size: int = 4096,
     device: str = "cpu",
@@ -39,6 +40,7 @@ def reward_calibration_report(
         "checkpoint_step": step,
         "data": str(data_path),
         "gamma": gamma,
+        "large_loss_threshold": large_loss_threshold,
         "max_transitions": max_transitions,
         "device": device,
         "calibration": compute_reward_calibration(
@@ -47,6 +49,7 @@ def reward_calibration_report(
             gamma=gamma,
             batch_size=batch_size,
             device=device,
+            large_loss_threshold=large_loss_threshold,
         ),
     }
 
@@ -64,6 +67,7 @@ def reward_calibration_report(
                     "checkpoint_step": step,
                     "data": data_path,
                     "gamma": gamma,
+                    "large_loss_threshold": large_loss_threshold,
                     "max_transitions": max_transitions,
                     "batch_size": batch_size,
                     "device": device,
@@ -97,6 +101,12 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument(
+        "--large-loss-threshold",
+        type=float,
+        default=None,
+        help="Optional target threshold for large-loss probability/severity head calibration.",
+    )
     parser.add_argument("--max-transitions", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--device", type=str, default="cpu")
@@ -111,6 +121,7 @@ def main() -> None:
         checkpoint=args.checkpoint,
         data_path=args.data,
         gamma=args.gamma,
+        large_loss_threshold=args.large_loss_threshold,
         max_transitions=args.max_transitions,
         batch_size=args.batch_size,
         device=args.device,
@@ -127,6 +138,12 @@ def main() -> None:
     print(f"Q Bias:      {calibration['q_error']['bias']:.4f}")
     print(f"Q Corr:      {calibration['q_error']['correlation']:.4f}")
     print(f"Value MAE:   {calibration['value_error']['mae']:.4f}")
+    if "large_loss_calibration" in calibration:
+        large_loss = calibration["large_loss_calibration"]
+        print(f"LL Rate:     {large_loss['positive_rate']:.4f}")
+        print(f"LL Brier:    {large_loss['probability']['brier']:.4f}")
+        print(f"LL AUC:      {large_loss['probability']['auc']:.4f}")
+        print(f"LL Sev MAE:  {large_loss['severity']['mae']:.4f}")
     if args.report_output is not None:
         print(f"Report saved to {args.report_output}")
 

@@ -44,6 +44,7 @@ def compute_reward_calibration(
     gamma: float = 0.99,
     batch_size: int = 4096,
     device: str = "cpu",
+    large_loss_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Compare critic/value predictions against discounted terminal round payout."""
     arrays = add_steps_to_done_if_missing(arrays)
@@ -52,11 +53,14 @@ def compute_reward_calibration(
     model.eval()
 
     targets: list[np.ndarray] = []
+    terminal_returns: list[np.ndarray] = []
     q_predictions: list[np.ndarray] = []
     value_predictions: list[np.ndarray] = []
     policy_predictions: list[np.ndarray] = []
     q_predictions_argmax: list[np.ndarray] = []
     action_ids_all: list[np.ndarray] = []
+    risk_probabilities: list[np.ndarray] = []
+    risk_severities: list[np.ndarray] = []
 
     with torch.inference_mode():
         for start in range(0, total, effective_batch_size):
@@ -78,8 +82,13 @@ def compute_reward_calibration(
             q_values, _ = model.q_values(planes, scalars, mask)
             dataset_q = q_values.gather(1, action_tensor.unsqueeze(1)).squeeze(1)
             target = discounted_terminal_returns(return_tensor, steps_tensor, gamma)
+            if large_loss_threshold is not None and hasattr(model, "large_loss_predictions"):
+                risk_logits, severity = model.large_loss_predictions(planes, scalars)
+                risk_probabilities.append(torch.sigmoid(risk_logits).cpu().numpy())
+                risk_severities.append(severity.cpu().numpy())
 
             targets.append(target.cpu().numpy())
+            terminal_returns.append(returns.copy())
             q_predictions.append(dataset_q.cpu().numpy())
             value_predictions.append(values.cpu().numpy())
             policy_predictions.append(torch.argmax(logits, dim=1).cpu().numpy())
@@ -87,6 +96,7 @@ def compute_reward_calibration(
             action_ids_all.append(action_ids.copy())
 
     target_array = np.concatenate(targets).astype(np.float32)
+    terminal_return_array = np.concatenate(terminal_returns).astype(np.float32)
     q_array = np.concatenate(q_predictions).astype(np.float32)
     value_array = np.concatenate(value_predictions).astype(np.float32)
     policy_actions = np.concatenate(policy_predictions).astype(np.int64)
@@ -108,6 +118,109 @@ def compute_reward_calibration(
         "by_action_family": _family_report(action_ids, target_array, q_array, value_array, policy_actions, q_actions),
         "by_target_sign": _target_sign_report(target_array, q_array, value_array),
     }
+    if large_loss_threshold is not None and risk_probabilities:
+        probability_array = np.concatenate(risk_probabilities).astype(np.float32)
+        severity_array = np.concatenate(risk_severities).astype(np.float32)
+        report["large_loss_calibration"] = _large_loss_report(
+            terminal_return_array,
+            probability_array,
+            severity_array,
+            threshold=float(large_loss_threshold),
+        )
+    return report
+
+
+def _large_loss_report(
+    target: np.ndarray,
+    probability: np.ndarray,
+    severity_prediction: np.ndarray,
+    threshold: float,
+) -> dict[str, Any]:
+    labels = target <= float(threshold)
+    label_float = labels.astype(np.float32)
+    severity_target = np.maximum(float(threshold) - target, 0.0).astype(np.float32)
+    probability = np.clip(probability.astype(np.float32), 1e-6, 1.0 - 1e-6)
+    severity_prediction = severity_prediction.astype(np.float32)
+    severity_error = severity_prediction - severity_target
+    report = {
+        "threshold": float(threshold),
+        "count": int(target.size),
+        "positive_count": int(np.count_nonzero(labels)),
+        "positive_rate": float(np.mean(label_float)) if target.size else 0.0,
+        "probability": {
+            "mean": float(np.mean(probability)) if probability.size else 0.0,
+            "positive_mean": _masked_mean(probability, labels),
+            "negative_mean": _masked_mean(probability, ~labels),
+            "brier": float(np.mean(np.square(probability - label_float))) if probability.size else 0.0,
+            "binary_cross_entropy": float(
+                -np.mean(label_float * np.log(probability) + (1.0 - label_float) * np.log(1.0 - probability))
+            )
+            if probability.size
+            else 0.0,
+            "auc": _binary_auc(label_float, probability),
+        },
+        "severity": {
+            "target_mean": float(np.mean(severity_target)) if severity_target.size else 0.0,
+            "prediction_mean": float(np.mean(severity_prediction)) if severity_prediction.size else 0.0,
+            "mae": float(np.mean(np.abs(severity_error))) if severity_error.size else 0.0,
+            "rmse": float(np.sqrt(np.mean(np.square(severity_error)))) if severity_error.size else 0.0,
+            "bias": float(np.mean(severity_error)) if severity_error.size else 0.0,
+        },
+        "risk_bands": _risk_band_report(label_float, probability, severity_target),
+    }
+    return report
+
+
+def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float:
+    if int(np.count_nonzero(mask)) == 0:
+        return 0.0
+    return float(np.mean(values[mask]))
+
+
+def _binary_auc(labels: np.ndarray, scores: np.ndarray) -> float:
+    positive_count = int(np.count_nonzero(labels > 0.5))
+    negative_count = int(labels.size - positive_count)
+    if positive_count == 0 or negative_count == 0:
+        return 0.0
+    order = np.argsort(scores, kind="mergesort")
+    ranks = np.empty_like(order, dtype=np.float64)
+    ranks[order] = np.arange(1, scores.size + 1, dtype=np.float64)
+
+    sorted_scores = scores[order]
+    start = 0
+    while start < scores.size:
+        end = start + 1
+        while end < scores.size and sorted_scores[end] == sorted_scores[start]:
+            end += 1
+        if end - start > 1:
+            average_rank = float(np.mean(ranks[order[start:end]]))
+            ranks[order[start:end]] = average_rank
+        start = end
+
+    positive_rank_sum = float(np.sum(ranks[labels > 0.5]))
+    return float((positive_rank_sum - positive_count * (positive_count + 1) / 2.0) / (positive_count * negative_count))
+
+
+def _risk_band_report(labels: np.ndarray, probability: np.ndarray, severity_target: np.ndarray) -> dict[str, dict[str, float]]:
+    bands = {
+        "0.00-0.25": (0.0, 0.25),
+        "0.25-0.50": (0.25, 0.50),
+        "0.50-0.75": (0.50, 0.75),
+        "0.75-1.00": (0.75, 1.000001),
+    }
+    report: dict[str, dict[str, float]] = {}
+    for name, (low, high) in bands.items():
+        mask = (probability >= low) & (probability < high)
+        count = int(np.count_nonzero(mask))
+        if count == 0:
+            report[name] = {"count": 0, "large_loss_rate": 0.0, "avg_probability": 0.0, "avg_severity": 0.0}
+            continue
+        report[name] = {
+            "count": count,
+            "large_loss_rate": float(np.mean(labels[mask])),
+            "avg_probability": float(np.mean(probability[mask])),
+            "avg_severity": float(np.mean(severity_target[mask])),
+        }
     return report
 
 

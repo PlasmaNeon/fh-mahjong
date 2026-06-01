@@ -7,6 +7,7 @@
 - `docs/rl-papers/roadmap-and-development-plan.md` is the durable study path and development plan tying the reports to repo work.
 - `docs/rl-papers/implementation-takeaways.md` records repo-specific RL design defaults, with Mortal-style operation-level Q/value learning as the primary path and Suphx-style oracle/global-reward ideas as later auxiliaries.
 - `docs/rl-papers/chongci-rl-experiment-progress.md` is the running experiment notebook for Chongci reward-learning work. Update it after new remote data-generation, training, evaluation, promotion, or rejection runs.
+- `docs/rl-papers/chongci-risk-target-design.md` is the current design note for the next Chongci risk-learning direction: visible history inputs plus action-conditioned critic-side risk.
 
 ## Update Rules
 

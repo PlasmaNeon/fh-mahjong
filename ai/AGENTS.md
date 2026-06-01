@@ -31,6 +31,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Online/duplicate evaluation accepts `match_mode="chongci"` plus Chongci score/hand-cap config; Chongci reports `positive_reward_rate` as the final-match net-positive metric while keeping `win_rate` as a backward-compatible reward-positive alias.
   - `evaluate_policy_online()` / `evaluate_duplicate_seats_policy()` support non-model policy adapters such as Q-margin guards while preserving the same duplicate-seat metrics.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
+  - When `--large-loss-threshold` is supplied, reward calibration also reports large-loss probability/severity head calibration for target-side risk experiments.
 - **src/fh_mahjong_ai/risk_filter.py** — Utilities for extracting high-risk first-divergence cases from paired trace reports and applying per-transition sample weights plus optional pairwise preferred/avoided action labels.
 - **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
   - Observation summaries name Chongci score-pressure scalars for risk reports: leader pressure, large-loss safety margin, own bust safety, and opponent large-loss pressure.
@@ -68,6 +69,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `--match-mode chongci` forwards Chongci settings into online and duplicate-seat evaluation.
 - **src/fh_mahjong_ai/scripts/evaluate_guarded.py** — CLI: evaluate a candidate reward/Q checkpoint behind a promoted anchor policy, sweeping one or more minimum Q-margin thresholds.
 - **src/fh_mahjong_ai/scripts/reward_calibration.py** — CLI: report Q/value calibration against discounted terminal payout targets before promoting reward-trained checkpoints.
+  - `--large-loss-threshold` enables auxiliary large-loss calibration metrics, including probability Brier/AUC and severity error.
 - **src/fh_mahjong_ai/scripts/paired_trace.py** — CLI: run paired checkpoint traces over duplicate seed windows and save reward-delta, divergence, and context-bucket diagnostics.
 - **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
 - **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
