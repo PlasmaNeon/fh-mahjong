@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import PageShell from '../components/PageShell'
 import { getApiUrl } from '../config'
 import { getTileName, getTileSvgName } from '../utils/tileUtils'
 import {
@@ -20,70 +19,60 @@ import {
   TileValue,
   tileKey,
 } from './shantenHelpers'
+import './ledger-theme.css'
 
 type Lang = 'en' | 'zh'
 
 const TEXT = {
   en: {
     language: '中文',
-    title: 'Shanten Calculator',
-    subtitle: 'Build a hand (13 or 14 tiles). For 13 tiles, a random tile is drawn. Then discard analysis shows the best options.',
-    closedHand: 'Closed Hand',
+    title: 'Shanten',
+    closedHand: 'Closed hand',
     tiles: 'tiles',
     openMelds: 'open melds',
     apply: 'Apply',
     tilePalette: 'Tile palette',
-    paletteHelp: 'Click to add. Click tiles in hand to remove.',
     noTiles: 'Click tiles below to build your hand.',
-    wildTile: 'Wild Tile (搭)',
-    wildHelp: 'The round\'s wild tile type, if any.',
+    wildTile: 'Wild tile (搭)',
     noWild: 'None set',
-    openMeldsLabel: 'Open Melds',
-    openMeldsHelp: 'Number of open melds (chii/pon/kan).',
+    openMeldsLabel: 'Open melds',
     result: 'Result',
     complete: 'Complete',
     tenpai: 'Tenpai',
     shantenAway: '-shanten',
-    usefulTiles: 'Useful Tiles',
-    usefulHelp: 'Draws that reduce shanten by 1.',
+    usefulTiles: 'Useful tiles',
     noUseful: 'No useful tiles.',
     totalRemaining: 'tiles remaining',
     clear: 'Clear',
     sort: 'Sort',
     redraw: 'Redraw',
-    drawnTileLabel: 'Drawn Tile',
+    drawnTileLabel: 'Drawn tile',
     waiting13: 'Add tiles to build a hand.',
     error: 'Error',
-    discard: 'Discard',
-    draw: 'Draw',
-    discardAnalysis: 'Discard Analysis',
-    discardHelp: 'For each discard, shows which draws improve the hand.',
+    discard: 'disc',
+    draw: 'draw',
+    discardAnalysis: 'Discard analysis',
     count: 'count',
     edit: 'Edit',
     expected: 'Expected',
   },
   zh: {
     language: 'EN',
-    title: '向听计算器',
-    subtitle: '构建手牌（13或14张）。13张时随机摸牌，然后进行打牌分析。',
+    title: '向听',
     closedHand: '手牌',
     tiles: '张',
     openMelds: '副露',
     apply: '确认',
     tilePalette: '选牌',
-    paletteHelp: '点击添加。点击手牌中的牌可移除。',
     noTiles: '点击下方的牌来构建手牌。',
     wildTile: '搭牌（百搭）',
-    wildHelp: '本轮的百搭牌种类。',
     noWild: '未设置',
     openMeldsLabel: '副露数',
-    openMeldsHelp: '已有副露数量（吃/碰/杠）。',
     result: '结果',
     complete: '和了',
     tenpai: '听牌',
     shantenAway: '向听',
     usefulTiles: '有效牌',
-    usefulHelp: '能减少向听数的牌。',
     noUseful: '无有效牌。',
     totalRemaining: '张可用',
     clear: '清空',
@@ -95,14 +84,13 @@ const TEXT = {
     discard: '打',
     draw: '摸',
     discardAnalysis: '打牌分析',
-    discardHelp: '对于每张可打的牌，显示哪些摸牌能改善手牌。',
     count: '枚',
     edit: '编辑',
     expected: '需要',
   },
 } as const
 
-// ─── Tile Components ───
+// ─── Tile component ───
 
 function ShantenTile({
   tile,
@@ -120,49 +108,30 @@ function ShantenTile({
   badge?: string
 }) {
   const svgName = getTileSvgName(tile)
-  const sizeStyle =
-    size === 'palette'
-      ? { width: 'clamp(2.9rem, 4.6vw, 3.6rem)', height: 'clamp(4.2rem, 6.5vw, 5.2rem)', minWidth: '46px', minHeight: '66px' }
-      : size === 'small'
-        ? { width: '1.8vw', height: '2.5vw', minWidth: '22px', minHeight: '30px' }
-        : undefined
+  const cls = [
+    'ldg-tile',
+    size === 'small' ? 'ldg-tile--sm' : '',
+    size === 'palette' ? 'ldg-tile--pal' : '',
+    selected ? 'ldg-tile--sel' : '',
+    dimmed ? 'ldg-tile--dim' : '',
+    !onClick ? 'ldg-tile--static' : '',
+  ].filter(Boolean).join(' ')
 
   return (
     <button
       type="button"
+      className={cls}
       onClick={onClick}
       disabled={dimmed && !selected}
-      className={`mahjong-tile ${size === 'small' ? 'small' : ''} rounded-md transition ${selected ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-slate-950' : ''} ${dimmed ? 'opacity-30 cursor-not-allowed' : ''}`}
-      style={{
-        padding: 0,
-        border: 'none',
-        backgroundColor: 'transparent',
-        boxShadow: selected ? '0 0 14px rgba(251,191,36,0.7)' : '1px 1px 3px rgba(0,0,0,0.45)',
-        position: 'relative',
-        cursor: onClick && !dimmed ? 'pointer' : dimmed ? 'not-allowed' : 'default',
-        ...sizeStyle,
-      }}
       title={getTileName(tile)}
     >
-      <img
-        src={`/Regular_shortnames/${svgName}`}
-        alt={getTileName(tile)}
-        draggable="false"
-        style={{ width: '85%', height: '85%', display: 'block', position: 'absolute', top: '7.5%', left: '7.5%', zIndex: 2 }}
-      />
-      {badge && (
-        <span style={{
-          position: 'absolute', bottom: '-6px', right: '-6px', zIndex: 10,
-          fontSize: '0.65rem', fontWeight: 700, lineHeight: 1, padding: '2px 5px',
-          borderRadius: '9999px', backgroundColor: 'rgb(30 41 59)',
-          border: '1px solid rgb(51 65 85)', color: 'rgb(148 163 184)',
-        }}>
-          {badge}
-        </span>
-      )}
+      <img src={`/Regular_shortnames/${svgName}`} alt={getTileName(tile)} draggable="false" />
+      {badge && <span className="ldg-tile__badge">{badge}</span>}
     </button>
   )
 }
+
+// ─── Hand row ───
 
 function HandRow({ tiles, emptyLabel, onTileClick }: {
   tiles: TileDraft[]
@@ -171,19 +140,21 @@ function HandRow({ tiles, emptyLabel, onTileClick }: {
 }) {
   if (tiles.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-5 text-sm text-slate-400">
-        {emptyLabel}
+      <div className="ldg-tile-row ldg-tile-row--empty">
+        <span className="ldg-note" style={{ marginTop: 0 }}>{emptyLabel}</span>
       </div>
     )
   }
   return (
-    <div className="flex flex-wrap gap-2 rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+    <div className="ldg-tile-row">
       {tiles.map((tile) => (
         <ShantenTile key={tile.id} tile={tile} onClick={() => onTileClick(tile.id)} />
       ))}
     </div>
   )
 }
+
+// ─── Palette grid ───
 
 function PaletteGrid({ onTileClick, usedCounts, selectedTile = null, dimSelected = false }: {
   onTileClick: (tile: TileValue) => void
@@ -192,7 +163,7 @@ function PaletteGrid({ onTileClick, usedCounts, selectedTile = null, dimSelected
   dimSelected?: boolean
 }) {
   return (
-    <div className="flex flex-wrap gap-3 md:gap-4">
+    <div className="ldg-palette-grid">
       {TILE_LIBRARY.map((tile) => {
         const key = tileKey(tile)
         const remaining = 4 - (usedCounts.get(key) ?? 0)
@@ -214,71 +185,7 @@ function PaletteGrid({ onTileClick, usedCounts, selectedTile = null, dimSelected
   )
 }
 
-// ─── Discard analysis table ───
-
-function DiscardAnalysisTable({ options, lang }: {
-  options: DiscardOption[]
-  lang: Lang
-}) {
-  const text = TEXT[lang]
-  return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-      <div className="mb-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.discardAnalysis}</h3>
-        <p className="text-xs text-slate-400">{text.discardHelp}</p>
-      </div>
-      <div className="space-y-3">
-        {options.map((opt) => {
-          const discardKey = `${opt.discard.suit}-${opt.discard.value}`
-          const shantenColor =
-            opt.shanten === 0 ? 'text-emerald-300' : 'text-slate-300'
-          const shantenText =
-            opt.shanten === 0 ? (lang === 'zh' ? '听牌' : 'Tenpai') :
-            `${opt.shanten}${text.shantenAway}`
-          return (
-            <div key={discardKey} className="rounded-xl border border-slate-700 bg-slate-900/60 p-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* Discard tile */}
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-bold uppercase text-rose-300">{text.discard}</span>
-                  <ShantenTile tile={opt.discard} size="small" />
-                </div>
-
-                {/* Separator */}
-                <div className="h-8 w-px bg-slate-700 shrink-0 hidden sm:block" />
-
-                {/* Shanten badge */}
-                <span className={`text-xs font-bold shrink-0 ${shantenColor}`}>
-                  {shantenText}
-                </span>
-
-                {/* Separator */}
-                <div className="h-8 w-px bg-slate-700 shrink-0 hidden sm:block" />
-
-                {/* Draw label */}
-                <span className="text-xs font-bold uppercase text-emerald-300 shrink-0">{text.draw}</span>
-
-                {/* Useful tiles row */}
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {(opt.usefulTiles ?? []).map((t) => (
-                    <ShantenTile key={`${t.suit}-${t.value}`} tile={{ suit: t.suit, value: t.value }} size="small" />
-                  ))}
-                </div>
-
-                {/* Total count */}
-                <span className="ml-auto text-sm font-bold text-slate-300 shrink-0">
-                  {opt.totalUseful}{lang === 'zh' ? '枚' : ' tiles'}
-                </span>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ─── Main Page ───
+// ─── Main page ───
 
 export default function Shanten() {
   const [lang, setLang] = useState<Lang>('en')
@@ -295,7 +202,6 @@ export default function Shanten() {
   const baseSize = 13 - 3 * openMelds
   const text = TEXT[lang]
 
-  // Initialize from URL on mount (run once)
   useEffect(() => {
     if (initializedRef.current) return
     initializedRef.current = true
@@ -314,7 +220,6 @@ export default function Shanten() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Update URL when state changes (use replaceState to avoid re-renders)
   useEffect(() => {
     if (!initializedRef.current) return
     const tiles = hand.map(t => ({ suit: t.suit, value: t.value }))
@@ -327,7 +232,6 @@ export default function Shanten() {
 
   const usedCounts = useMemo(() => countTiles(hand.map(t => ({ suit: t.suit, value: t.value }))), [hand])
 
-  // Auto-calculate when hand is baseSize or baseSize+1 tiles
   const calculate = useCallback(async (currentHand: TileDraft[], currentWild: TileValue | null, currentMelds: number) => {
     const expected = 13 - 3 * currentMelds
     if (currentHand.length !== expected && currentHand.length !== expected + 1) {
@@ -335,7 +239,6 @@ export default function Shanten() {
       setError(null)
       return
     }
-
     try {
       const body = {
         closedHand: currentHand.map(t => ({ suit: t.suit, value: t.value })),
@@ -404,7 +307,7 @@ export default function Shanten() {
     }
     setHand(tiles.map(createDraft))
     setError(null)
-  }, [handInput, baseSize])
+  }, [handInput, baseSize, maxSize])
 
   const applyWildInput = useCallback(() => {
     const trimmed = wildInput.trim()
@@ -423,199 +326,242 @@ export default function Shanten() {
     setShowWildPalette(false)
   }, [wildTile])
 
-  const shantenLabel = useMemo(() => {
+  const shantenStatusLabel = useMemo(() => {
     if (!result) return null
-    if (result.shanten === 0) return { label: text.tenpai, color: 'text-emerald-300', bg: 'bg-emerald-400/15 border-emerald-400/40' }
-    return { label: `${result.shanten}${text.shantenAway}`, color: 'text-slate-200', bg: 'bg-slate-800 border-slate-700' }
+    if (result.shanten === -1) return { label: text.complete, ok: true }
+    if (result.shanten === 0) return { label: text.tenpai, ok: true }
+    return { label: `${result.shanten}${text.shantenAway}`, ok: false }
   }, [result, text])
 
-  const modeLabel = `${hand.length}/${baseSize}–${maxSize} ${text.tiles}`
-
   return (
-    <PageShell maxWidth="max-w-7xl" className="gap-6">
+    <div className="ledger-page">
+      <div className="ledger-shell">
+        <article className="ldg-page">
 
-        {/* Header */}
-        <section className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-6 shadow-2xl">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          {/* Header */}
+          <div className="ldg-page-head">
             <div>
-              <h1 className="text-3xl font-black tracking-tight text-emerald-300">{text.title}</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-300">{text.subtitle}</p>
+              <h1 className="ldg-page-head__title">
+                {text.title}
+                <small>{lang === 'en' ? '奉化向听' : 'Shanten Calculator'}</small>
+              </h1>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <a href="/tools/calc" className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800">
-                {lang === 'en' ? 'Scoring Calc' : '算分器'}
-              </a>
-              <button type="button" onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')}
-                className="rounded-full border border-emerald-400/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-slate-800">
+            <div className="ldg-page-head__nav">
+              <button
+                type="button"
+                className="ldg-link"
+                onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')}
+              >
                 {text.language}
               </button>
+              <a href="/tools/calc" className="ldg-link">
+                {lang === 'en' ? 'Calculator →' : '算分器 →'}
+              </a>
             </div>
           </div>
-        </section>
 
-        {/* Hand builder */}
-        <section className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-bold text-slate-100">{text.closedHand}</h2>
-              <p className="text-sm text-slate-400">
-                {modeLabel} • {openMelds} {text.openMelds}
-              </p>
+          {/* Closed hand */}
+          <section className="ldg-section">
+            <div className="ldg-section-row">
+              <h2 className="ldg-section-title">
+                {text.closedHand}
+                <small>{baseSize}–{maxSize} {text.tiles}</small>
+              </h2>
+              <span className="ldg-section-meta">{hand.length} / {baseSize}–{maxSize}</span>
             </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={doSort}
-                className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
-                {text.sort}
+
+            <HandRow tiles={hand} emptyLabel={text.noTiles} onTileClick={removeTile} />
+
+            <div className="ldg-input-row">
+              <input
+                className="ldg-input"
+                value={handInput}
+                onChange={e => setHandInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && applyHandInput()}
+                placeholder="11234455666792p"
+              />
+              <button type="button" className="ldg-btn" onClick={applyHandInput}>
+                {text.apply}
               </button>
-              <button type="button" onClick={clearHand}
-                className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
-                {text.clear}
-              </button>
             </div>
-          </div>
 
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row">
-            <input value={handInput} onChange={e => setHandInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && applyHandInput()}
-              placeholder="11234455666792p"
-              className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400" />
-            <button type="button" onClick={applyHandInput}
-              className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
-              {text.apply}
-            </button>
-          </div>
-
-          <HandRow tiles={hand} emptyLabel={text.noTiles} onTileClick={removeTile} />
-
-          <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-            <div className="mb-3">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-200">{text.tilePalette}</h3>
-              <p className="text-xs text-slate-400">{text.paletteHelp}</p>
+            <div className="ldg-tools-row ldg-tools-row--end">
+              <button type="button" className="ldg-btn" onClick={doSort}>{text.sort}</button>
+              <button type="button" className="ldg-btn" onClick={clearHand}>{text.clear}</button>
             </div>
-            <PaletteGrid onTileClick={addTile} usedCounts={usedCounts} />
-          </div>
-        </section>
 
-        {/* Options row: Wild tile + Open melds */}
-        <section className="grid gap-6 lg:grid-cols-2">
+            <div className="ldg-palette-drawer">
+              <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
+              <PaletteGrid onTileClick={addTile} usedCounts={usedCounts} />
+            </div>
+          </section>
+
           {/* Wild tile */}
-          <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-bold text-slate-100">{text.wildTile}</h2>
-                <p className="text-sm text-slate-400">{text.wildHelp}</p>
-              </div>
-              {!showWildPalette && (
-                <button type="button" onClick={() => setShowWildPalette(true)}
-                  className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
-                  {text.edit}
-                </button>
-              )}
+          <section className="ldg-section">
+            <div className="ldg-section-row">
+              <h2 className="ldg-section-title">{text.wildTile}</h2>
+              <span className="ldg-section-meta">{wildTile ? formatTile(wildTile) : '—'}</span>
             </div>
-            <div className="flex min-h-16 items-center justify-center rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
               {wildTile ? (
-                <ShantenTile tile={wildTile} onClick={() => { setWildTile(null); setWildInput('') }} selected />
+                <ShantenTile
+                  tile={wildTile}
+                  onClick={() => { setWildTile(null); setWildInput('') }}
+                  selected
+                />
               ) : (
-                <span className="text-sm text-slate-400">{text.noWild}</span>
+                <span className="ldg-note" style={{ marginTop: 0 }}>{text.noWild}</span>
               )}
+              <button
+                type="button"
+                className="ldg-link"
+                onClick={() => setShowWildPalette(v => !v)}
+              >
+                {text.edit}
+              </button>
             </div>
+
             {showWildPalette && (
               <>
-                <div className="mt-4 flex gap-3">
-                  <input value={wildInput} onChange={e => setWildInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && applyWildInput()} placeholder="9s"
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald-400" />
-                  <button type="button" onClick={applyWildInput}
-                    className="rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">
+                <div className="ldg-input-row">
+                  <input
+                    className="ldg-input"
+                    value={wildInput}
+                    onChange={e => setWildInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && applyWildInput()}
+                    placeholder="9s"
+                  />
+                  <button type="button" className="ldg-btn" onClick={applyWildInput}>
                     {text.apply}
                   </button>
                 </div>
-                <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-                  <PaletteGrid onTileClick={selectWild} usedCounts={new Map()} selectedTile={wildTile} dimSelected />
+                <div className="ldg-palette-drawer">
+                  <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
+                  <PaletteGrid
+                    onTileClick={selectWild}
+                    usedCounts={new Map()}
+                    selectedTile={wildTile}
+                    dimSelected
+                  />
                 </div>
               </>
             )}
-          </div>
+          </section>
 
-          {/* Open melds count */}
-          <div className="rounded-3xl border border-white/10 bg-slate-950/62 backdrop-blur-sm p-5 shadow-xl">
-            <div className="mb-4">
-              <h2 className="text-xl font-bold text-slate-100">{text.openMeldsLabel}</h2>
-              <p className="text-sm text-slate-400">{text.openMeldsHelp}</p>
+          {/* Open melds */}
+          <section className="ldg-section">
+            <div className="ldg-section-row">
+              <h2 className="ldg-section-title">{text.openMeldsLabel}</h2>
+              <span className="ldg-section-meta">{openMelds}</span>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="ldg-chooser">
               {[0, 1, 2, 3, 4].map(n => (
-                <button key={n} type="button"
+                <button
+                  key={n}
+                  type="button"
+                  className={`ldg-chooser__btn${openMelds === n ? ' is-active' : ''}`}
                   onClick={() => {
                     setOpenMelds(n)
                     const newMax = 13 - 3 * n + 1
                     if (hand.length > newMax) setHand(prev => prev.slice(0, newMax))
                   }}
-                  className={`flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold transition ${
-                    openMelds === n ? 'bg-emerald-400 text-slate-950' : 'border border-slate-700 bg-slate-950/60 text-slate-300 hover:bg-slate-800'
-                  }`}>
+                >
                   {n}
                 </button>
               ))}
             </div>
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="ldg-note">
               {text.expected}: {baseSize}–{baseSize + 1} {text.tiles}
             </p>
-          </div>
-        </section>
+          </section>
 
-        {/* Result section */}
-        <section className={`rounded-3xl border p-5 shadow-xl ${shantenLabel?.bg ?? 'border-slate-800 bg-slate-900/70'}`}>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-bold text-slate-100">{text.result}</h2>
-            {shantenLabel && (
-              <span className={`rounded-full px-4 py-2 text-lg font-black ${shantenLabel.color}`}>
-                {shantenLabel.label}
-              </span>
-            )}
-          </div>
-
-          {error && (
-            <div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
-              {text.error}: {error}
-            </div>
-          )}
-
-          {result ? (
-            <div className="space-y-4">
-              {/* Shanten number + drawn tile */}
-              <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">{lang === 'en' ? 'Shanten Number' : '向听数'}</span>
-                  <span className={`text-4xl font-black ${
-                    result.shanten === 0 ? 'text-emerald-300' : 'text-slate-100'
-                  }`}>
-                    {result.shanten}
-                  </span>
+          {/* Result */}
+          <section className="ldg-result">
+            <div className="ldg-result-row">
+              <div className="ldg-result-label">{text.result}</div>
+              {shantenStatusLabel && (
+                <div className={`ldg-result-status${shantenStatusLabel.ok ? ' ldg-result-status--ok' : ''}`}>
+                  {shantenStatusLabel.label}
                 </div>
-                {result.drawnTile && (
-                  <div className="mt-3 flex items-center gap-3 border-t border-slate-700 pt-3">
-                    <span className="text-sm text-slate-400">{text.drawnTileLabel}:</span>
-                    <ShantenTile tile={result.drawnTile} size="small" />
-                    <button type="button" onClick={() => calculate(hand, wildTile, openMelds)}
-                      className="ml-auto rounded-full bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-slate-700">
-                      {text.redraw}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Discard analysis table */}
-              {result.discardOptions && result.discardOptions.length > 0 && (
-                <DiscardAnalysisTable options={result.discardOptions} lang={lang} />
               )}
             </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-8 text-center text-sm text-slate-400">
-              {hand.length === 0 ? text.waiting13 : text.waiting13}
-            </div>
-          )}
-        </section>
-    </PageShell>
+
+            {error && (
+              <p className="ldg-note ldg-note--err">{text.error}: {error}</p>
+            )}
+
+            {result ? (
+              <>
+                <div className="ldg-big-stat">
+                  <div className="ldg-big-stat__label">
+                    {lang === 'en' ? 'Shanten' : '向听数'}
+                  </div>
+                  <div className={`ldg-big-stat__value${result.shanten <= 0 ? ' ldg-big-stat__value--accent' : ''}`}>
+                    {result.shanten}
+                  </div>
+                </div>
+
+                {result.drawnTile && (
+                  <p className="ldg-note" style={{ marginTop: '1rem' }}>
+                    {text.drawnTileLabel}
+                    {' '}
+                    <span style={{ display: 'inline-flex', verticalAlign: 'middle', margin: '0 0.2rem' }}>
+                      <ShantenTile tile={result.drawnTile} size="small" />
+                    </span>
+                    {' · '}
+                    <button
+                      type="button"
+                      className="ldg-link"
+                      onClick={() => calculate(hand, wildTile, openMelds)}
+                    >
+                      {text.redraw}
+                    </button>
+                  </p>
+                )}
+
+                {result.discardOptions && result.discardOptions.length > 0 && (
+                  <div style={{ marginTop: '2rem' }}>
+                    <div className="ldg-result-row" style={{ marginBottom: '0.75rem' }}>
+                      <div className="ldg-result-label">{text.discardAnalysis}</div>
+                    </div>
+                    {result.discardOptions.map((opt: DiscardOption) => {
+                      const discardKey = `${opt.discard.suit}-${opt.discard.value}`
+                      const shantenText = opt.shanten === 0
+                        ? (lang === 'zh' ? '听牌' : 'tenpai')
+                        : `${opt.shanten}${text.shantenAway}`
+                      return (
+                        <div key={discardKey} className="ldg-discard-row">
+                          <span>
+                            <span className="ldg-discard-row__tag">{text.discard}</span>
+                            <ShantenTile tile={opt.discard} size="small" />
+                          </span>
+                          <span className="ldg-discard-row__shanten">{shantenText}</span>
+                          <span className="ldg-discard-row__draws">
+                            {(opt.usefulTiles ?? []).map(t => (
+                              <ShantenTile
+                                key={`${t.suit}-${t.value}`}
+                                tile={{ suit: t.suit, value: t.value }}
+                                size="small"
+                              />
+                            ))}
+                          </span>
+                          <span className="ldg-discard-row__count">
+                            {opt.totalUseful}{lang === 'zh' ? '枚' : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            ) : (
+              !error && <p className="ldg-note">{text.waiting13}</p>
+            )}
+          </section>
+
+        </article>
+      </div>
+    </div>
   )
 }

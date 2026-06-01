@@ -4,7 +4,7 @@
 
 ## Overview
 
-Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. Every non-game page shares the "Tabletop Glass" theme via the primitives in `web/src/components/`; only the live game/replay board uses the in-game theme.
+Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. The game-flow pages (Home/Login/Lobby/CreateRoom/Table) share the "Tabletop Glass" theme via the primitives in `web/src/components/`; the live game/replay board uses the in-game theme; and the two tool pages (Calc/Shanten) use the dedicated "ledger" theme in `ledger-theme.css` (IBM Plex, light/dark via `prefers-color-scheme`) — see `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
 
 ## Key Files
 
@@ -51,7 +51,7 @@ Contains the top-level page components rendered by React Router. Routes: `/` Hom
   - Reuses the same fixed-stage scaling system as live play so replay seat lanes and discard lanes match the live board exactly
 
 - **Calc.tsx** — Typed Fenghua rules debugger for `/tools/calc`:
-  - Posts to `/api/v1/tools/calc`; uses the shared Tabletop Glass theme (`PageShell` + glass cards, emerald accents)
+  - Posts to `/api/v1/tools/calc`; uses the dedicated "ledger" theme (`import './ledger-theme.css'`, IBM Plex, single teal accent, hairline rules, light/dark via OS preference). Cross-links to `/tools/shanten`.
   - Header language toggle switches the calculator UI between English and Chinese
   - Hybrid editor: canonical notation fields plus local tile palettes embedded directly into the closed-hand, win-tile, and wild-tile sections
   - Calculator palette tiles are intentionally larger and more widely spaced than normal hand tiles to reduce misclicks during hand composition

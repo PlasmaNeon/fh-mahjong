@@ -213,6 +213,13 @@ match the theme, so this is a DRY refactor — pixels stay the same.
 
 ### F.3 Pages that are re-skinned (visual change)
 
+> **Superseded:** Calc and Shanten were briefly re-skinned onto Tabletop Glass,
+> but they have a dedicated "ledger" theme design
+> (`docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`,
+> `web/src/pages/ledger-theme.css`) which is what they now use instead. The
+> two tool pages intentionally do **not** use Tabletop Glass. The rest of this
+> subsection is retained for historical context only.
+
 `Calc` (`/tools/calc`) and `Shanten` (`/tools/shanten`) are migrated off their
 slate/amber theme onto Tabletop Glass:
 - Page wrapper `<div className="w-full bg-slate-950 ...">` → `<PageShell maxWidth="max-w-7xl">`.
