@@ -220,7 +220,7 @@ Mahjong exercise:
 - Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
 - Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
 - Before using a risk head for serving, require calibration evidence: AUC above random, monotonic risk bands, and acceptable severity error. The first Chongci large-loss heads failed this check.
-- Next risk-learning design: keep the implemented 58-scalar visible Chongci context, but improve risk-label coverage or use a balanced risk-only objective before trying guarded serving. The first no-history action-risk run failed (`large-loss AUC 0.4998`) and the first 58-scalar rerun also failed (`large-loss AUC 0.5096`).
+- Next risk-learning design: keep the implemented 58-scalar visible Chongci context, but replace plain terminal large-loss labels with stronger supervision before trying guarded serving. The first no-history action-risk run failed (`large-loss AUC 0.4998`), the first 58-scalar rerun also failed (`large-loss AUC 0.5096`), and balanced risk-only training still failed ranking (`large-loss AUC 0.4990`).
 
 ## Stage 6: Rewards And Credit Assignment
 

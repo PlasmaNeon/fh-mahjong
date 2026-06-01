@@ -3346,6 +3346,106 @@ setup, not guarded serving: larger and more diverse large-loss coverage,
 balanced risk-only training, or a critic-side target that predicts score-delta
 tail value more directly.
 
+## Balanced Action-Risk Critic Calibration
+
+Date: 2026-05-31
+
+Branch:
+
+```text
+codex/chongci-balanced-risk-critic
+```
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-balanced-actionrisk-20260531-221155
+```
+
+Question:
+
+Does a direct balanced positive/negative action-risk objective learn a better
+large-loss ranking than the IQL side-loss objective?
+
+Implementation:
+
+Added `fh-mj-train-action-risk`, a calibration-only trainer for the
+action-conditioned risk heads. It samples balanced batches from saved transition
+shards:
+
+```text
+positive rows: terminal match return <= -1.0 for the acting seat
+negative rows: terminal match return > -1.0 for the acting seat
+loss: BCE(risk_logit(s, dataset_action), label)
+      + severity_weight * SmoothL1(risk_severity(s, dataset_action), severity)
+```
+
+This path does not promote a serving policy. It exists to learn and calibrate
+`P(large loss | visible state, action)` before any guard is allowed.
+
+Training:
+
+```text
+data: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz
+checkpoint: /root/fh-mahjong-runs/chongci-balanced-actionrisk-20260531-221155/checkpoints/action_risk_balanced/epoch_003.pt
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+epochs: 3
+batch_size: 2048
+learning_rate: 0.00002
+positive_fraction: 0.5
+severity_weight: 0.05
+threshold: -1.0
+mlflow training run: d5fe0317e0ae4d6d850c2d3dcc02aad4
+```
+
+Training logs showed the balanced objective was active and the severity error
+improved:
+
+```text
+epoch 1 step 1:  loss=1.1460 prob=1.1110 sev=0.7010 p_pos=0.546 p_neg=0.547
+epoch 2 step 64: loss=0.8054 prob=0.7914 sev=0.2800 p_pos=0.528 p_neg=0.517
+epoch 3 step 64: loss=0.7820 prob=0.7706 sev=0.2267 p_pos=0.512 p_neg=0.506
+```
+
+Independent calibration:
+
+```text
+report: /root/fh-mahjong-runs/chongci-balanced-actionrisk-20260531-221155/reports/balanced_visible58_actionrisk_calib16.json
+calibration data: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-calib16-npz
+transitions: 31448
+large-loss rate: 14.54%
+large-loss Brier: 0.2876
+large-loss AUC: 0.4990
+large-loss positive mean probability: 0.5051
+large-loss negative mean probability: 0.5059
+large-loss severity MAE: 0.5698
+```
+
+Risk bands:
+
+```text
+0.00-0.25: 14.28% large-loss rate over 2816 samples
+0.25-0.50: 14.52% large-loss rate over 12359 samples
+0.50-0.75: 14.91% large-loss rate over 13337 samples
+0.75-1.00: 13.25% large-loss rate over 2936 samples
+```
+
+Decision:
+
+Reject at calibration gate. Do not run selected-window online evaluation or a
+serving-time guard from this checkpoint.
+
+Interpretation:
+
+Balanced training improved probability scale and severity error versus the IQL
+auxiliary run, but it did not improve ranking. The positive and negative mean
+probabilities are effectively identical, and AUC is still random. This means
+the current observed-action terminal large-loss label is too weak/noisy for
+ranking dangerous decisions by itself. The next useful direction is not another
+balanced BCE sweep; it should add better supervision, such as paired
+counterfactual/divergence labels, per-action score-delta targets, or explicit
+large-loss-enriched data generated around the known failing seed windows.
+
 ## Current Conclusions
 
 1. The current promoted Chongci checkpoint remains the best serving candidate.
@@ -3426,6 +3526,10 @@ tail value more directly.
     (`large-loss AUC 0.5096`, Brier `0.3114`). The added public context helped
     Brier slightly but did not make risk rankings reliable enough for guarded
     serving.
+30. Balanced action-risk training improved scale/severity (`Brier 0.2876`,
+    `severity MAE 0.5698`) but still failed ranking (`large-loss AUC 0.4990`).
+    Do not repeat balanced BCE alone; the next risk target needs stronger
+    supervision or large-loss-enriched/counterfactual data.
 
 ## Recommended Next Experiments
 
@@ -3447,8 +3551,8 @@ before any guarded online evaluation.
 Immediate work:
 
 - keep the 58-scalar visible Chongci context,
-- train a stronger risk critic setup with larger/diverse large-loss coverage or
-  a risk-only balanced objective,
+- add stronger risk supervision: paired counterfactual labels, per-action
+  score-delta targets, or large-loss-enriched data from known failing windows,
 - only test a top-policy-candidate risk guard if offline calibration passes.
 
 ### Step 2: Add Risk Diagnostics To Evaluation Reports

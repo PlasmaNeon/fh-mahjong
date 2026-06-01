@@ -1,12 +1,11 @@
 # Chongci Risk Target And Input Design
 
-Status: richer visible inputs implemented and first calibration rejected. The model/trainer now support
-action-conditioned risk heads over the 204-action catalog, but the first
-calibration-only run on the old 50-scalar input shape produced near-random
-large-loss AUC. The observation schema now adds visible Chongci match-history
-and score-pressure scalars, but the first 58-scalar action-risk run still
-failed calibration (`large-loss AUC 0.5096`). Guarded evaluation remains future
-work until the richer-input critic passes calibration.
+Status: richer visible inputs and balanced risk-only training implemented, but
+calibration is still rejected. The model/trainer support action-conditioned risk
+heads over the 204-action catalog. The old 50-scalar input run, the first
+58-scalar run, and the balanced positive/negative risk-only run all failed
+large-loss ranking (`AUC 0.4998`, `0.5096`, and `0.4990`). Guarded evaluation
+remains future work until the risk critic passes calibration.
 
 ## Problem
 
@@ -280,9 +279,10 @@ override rate is explainable and not broad policy drift
    - no serving changes.
    - Status: first run completed and rejected at calibration gate
      (`large-loss AUC 0.4998`, Brier `0.3329`). A first 58-scalar rerun also
-     failed (`large-loss AUC 0.5096`, Brier `0.3114`). The next retrain should
-     improve risk-label coverage or use a balanced risk-only objective before
-     trying guarded serving.
+     failed (`large-loss AUC 0.5096`, Brier `0.3114`). A balanced risk-only
+     run improved Brier/severity but still failed ranking (`large-loss AUC
+     0.4990`). The next target should use stronger supervision, such as paired
+     counterfactual labels or per-action score-delta targets.
 6. If calibration passes, add guarded evaluator:
    - top-policy-candidate risk guard,
    - selected-window quick screen,
