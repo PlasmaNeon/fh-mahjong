@@ -7,6 +7,7 @@ import { getApiUrl } from '../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import SeatCard from './SeatCard';
 import { game } from '../proto/game';
+import './ledger-theme.css';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
@@ -225,27 +226,46 @@ export default function Table() {
 
     if (!guestToken) {
         return (
-            <div className="min-h-screen bg-[radial-gradient(circle_at_50%_18%,_rgba(16,185,129,0.18),_transparent_22%),linear-gradient(180deg,_#03111a_0%,_#06352d_58%,_#041019_100%)] text-white">
-                <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center px-6 py-10">
-                    <div className="w-full rounded-[28px] border border-emerald-300/20 bg-slate-950/70 p-8 shadow-[0_22px_70px_rgba(0,0,0,0.3)]">
-                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Room</p>
-                        <h1 className="mt-2 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Join Room {roomId}</h1>
-                        <p className="mt-4 text-sm leading-7 text-slate-300">Pick a display name to enter as a guest.</p>
-                        <input
-                            value={username}
-                            onChange={e => setUsername(e.target.value)}
-                            placeholder="Your name"
-                            className="mt-6 w-full rounded-2xl border border-emerald-300/20 bg-slate-900/60 px-4 py-3 text-sm text-emerald-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-400/40"
-                        />
-                        {error && <div className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-950/30 px-4 py-3 text-sm text-rose-100">{error}</div>}
-                        <button
-                            onClick={handleGuestJoin}
-                            disabled={joining || !username.trim()}
-                            className="mt-6 w-full rounded-2xl border border-emerald-300/30 bg-emerald-600 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_18px_38px_rgba(5,150,105,0.32)] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                            {joining ? 'Joining…' : 'Join Table'}
-                        </button>
-                    </div>
+            <div className="ledger-page">
+                <div className="ledger-shell">
+                    <article className="ldg-page">
+                        <div className="ldg-page-head">
+                            <div>
+                                <h1 className="ldg-page-head__title">
+                                    Join Room
+                                    <small>{roomId}</small>
+                                </h1>
+                            </div>
+                        </div>
+
+                        <section className="ldg-section">
+                            <div className="ldg-section-row">
+                                <h2 className="ldg-section-title">
+                                    Enter as guest
+                                    <small>Pick a display name to join this private room.</small>
+                                </h2>
+                            </div>
+                            <div className="ldg-field">
+                                <label className="ldg-field__label">Display name</label>
+                                <input
+                                    className="ldg-input"
+                                    value={username}
+                                    onChange={e => setUsername(e.target.value)}
+                                    placeholder="Your name"
+                                />
+                            </div>
+                            {error && <p className="ldg-note ldg-note--err">{error}</p>}
+                            <div className="ldg-tools-row" style={{ marginTop: '1rem' }}>
+                                <button
+                                    className="ldg-btn ldg-btn--primary"
+                                    onClick={handleGuestJoin}
+                                    disabled={joining || !username.trim()}
+                                >
+                                    {joining ? 'Joining…' : 'Join Room'}
+                                </button>
+                            </div>
+                        </section>
+                    </article>
                 </div>
             </div>
         );
@@ -256,100 +276,113 @@ export default function Table() {
     const iAmHost = myUserId !== null && myUserId === hostUserId;
     const allSeatsFilled = seats.length === 4 && seats.every(s => s.kind === 'human' || s.kind === 'bot');
 
+    const filledCount = seats.filter(s => s.kind === 'human' || s.kind === 'bot').length;
+    const currentMode = tableState?.matchMode ?? 1; // 1 = CLASSIC
+    const isChongci = currentMode === 2;
+    const modeLocked = !iAmHost || tableState?.state === 'started';
+
     return (
-        <div className="min-h-screen bg-[radial-gradient(circle_at_50%_18%,_rgba(16,185,129,0.18),_transparent_22%),linear-gradient(180deg,_#03111a_0%,_#06352d_58%,_#041019_100%)] text-white">
-            <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-6 py-10">
-                <header className="mb-6 flex items-center justify-between">
-                    <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Private Room</p>
-                        <h1 className="mt-1 text-3xl font-black uppercase tracking-[0.12em] text-emerald-100">Room {roomId}</h1>
+        <div className="ledger-page">
+            <div className="ledger-shell ledger-shell--wide">
+                <article className="ldg-page">
+                    <div className="ldg-page-head">
+                        <div>
+                            <h1 className="ldg-page-head__title">
+                                Room
+                                <small>{roomId}</small>
+                            </h1>
+                        </div>
+                        <div className="ldg-page-head__nav">
+                            {iAmHost && (
+                                <button
+                                    className="ldg-btn ldg-btn--primary"
+                                    onClick={handleStart}
+                                    disabled={!allSeatsFilled}
+                                >
+                                    Start Match
+                                </button>
+                            )}
+                        </div>
                     </div>
-                    {iAmHost && (
-                        <button
-                            onClick={handleStart}
-                            disabled={!allSeatsFilled}
-                            className="rounded-2xl border border-emerald-300/30 bg-emerald-600 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_18px_38px_rgba(5,150,105,0.32)] hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                            Start Match
-                        </button>
-                    )}
-                </header>
 
-                {error && <div className="mb-4 rounded-2xl border border-rose-400/30 bg-rose-950/30 px-4 py-3 text-sm text-rose-100">{error}</div>}
+                    {error && <p className="ldg-note ldg-note--err">{error}</p>}
 
-                {(() => {
-                    const currentMode = tableState?.matchMode ?? 1; // 1 = CLASSIC
-                    const isChongci = currentMode === 2;
-                    return (
-                        <section className="mb-6 rounded-3xl border border-emerald-300/15 bg-slate-950/55 p-6">
-                            <h2 className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Match Mode</h2>
-                            <div className="mt-4 flex gap-3">
-                                <button
-                                    disabled={!iAmHost || tableState?.state === 'started'}
-                                    onClick={() => setMatchMode('classic')}
-                                    className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.18em] ${!isChongci ? 'border-emerald-300/40 bg-emerald-600/30 text-emerald-100' : 'border-slate-700 bg-slate-900/60 text-slate-400'} disabled:cursor-not-allowed disabled:opacity-50`}
-                                >
-                                    Classic
-                                </button>
-                                <button
-                                    disabled={!iAmHost || tableState?.state === 'started'}
-                                    onClick={() => setMatchMode('chongci', chongciDraft)}
-                                    className={`flex-1 rounded-2xl border px-4 py-3 text-sm font-black uppercase tracking-[0.18em] ${isChongci ? 'border-emerald-300/40 bg-emerald-600/30 text-emerald-100' : 'border-slate-700 bg-slate-900/60 text-slate-400'} disabled:cursor-not-allowed disabled:opacity-50`}
-                                >
-                                    Chongci
-                                </button>
+                    <section className="ldg-section">
+                        <div className="ldg-section-row">
+                            <h2 className="ldg-section-title">Match mode</h2>
+                        </div>
+                        <div className="ldg-toggle">
+                            <button
+                                className={`ldg-toggle__btn ${!isChongci ? 'is-active' : ''}`}
+                                disabled={modeLocked}
+                                onClick={() => setMatchMode('classic')}
+                            >
+                                Classic
+                            </button>
+                            <button
+                                className={`ldg-toggle__btn ${isChongci ? 'is-active' : ''}`}
+                                disabled={modeLocked}
+                                onClick={() => setMatchMode('chongci', chongciDraft)}
+                            >
+                                Chongci
+                            </button>
+                        </div>
+                        {isChongci && (
+                            <div className="ldg-grid-3" style={{ marginTop: '0.85rem' }}>
+                                {[
+                                    { key: 'starting_score', label: 'Starting points', min: 100, max: 1_000_000 },
+                                    { key: 'bust_threshold', label: 'Bust threshold', min: -1_000_000, max: 0 },
+                                    { key: 'max_hands', label: 'Max hands (0=∞)', min: 0, max: 200 },
+                                ].map(({ key, label, min, max }) => (
+                                    <div className="ldg-field" key={key}>
+                                        <label className="ldg-field__label">{label}</label>
+                                        <input
+                                            type="number"
+                                            className="ldg-input"
+                                            min={min}
+                                            max={max}
+                                            value={(chongciDraft as any)[key]}
+                                            disabled={modeLocked}
+                                            onChange={e => setChongciDraft(d => ({ ...d, [key]: Number(e.target.value) }))}
+                                            onBlur={() => iAmHost && setMatchMode('chongci', chongciDraft)}
+                                        />
+                                    </div>
+                                ))}
                             </div>
-                            {isChongci && (
-                                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                                    {[
-                                        { key: 'starting_score', label: 'Starting points', min: 100, max: 1_000_000 },
-                                        { key: 'bust_threshold', label: 'Bust threshold', min: -1_000_000, max: 0 },
-                                        { key: 'max_hands', label: 'Max hands (0=∞)', min: 0, max: 200 },
-                                    ].map(({ key, label, min, max }) => (
-                                        <label key={key} className="block text-xs uppercase tracking-[0.18em] text-emerald-200/70">
-                                            {label}
-                                            <input
-                                                type="number"
-                                                min={min}
-                                                max={max}
-                                                value={(chongciDraft as any)[key]}
-                                                disabled={!iAmHost || tableState?.state === 'started'}
-                                                onChange={e => setChongciDraft(d => ({ ...d, [key]: Number(e.target.value) }))}
-                                                onBlur={() => iAmHost && setMatchMode('chongci', chongciDraft)}
-                                                className="mt-2 w-full rounded-2xl border border-emerald-300/20 bg-slate-900/60 px-3 py-2 text-sm text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 disabled:opacity-50"
-                                            />
-                                        </label>
-                                    ))}
-                                </div>
-                            )}
-                            {!iAmHost && (
-                                <p className="mt-3 text-xs text-slate-400">Only the host can change match settings.</p>
-                            )}
-                        </section>
-                    );
-                })()}
+                        )}
+                        {!iAmHost && (
+                            <p className="ldg-note">Only the host can change match settings.</p>
+                        )}
+                    </section>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {seats.map((seat, i) => (
-                        <SeatCard
-                            key={i}
-                            seatIndex={i}
-                            seat={seat}
-                            isHost={iAmHost}
-                            canEdit={iAmHost && seat.kind !== 'human'}
-                            hostUserId={hostUserId}
-                            onAssignBot={(s, d) => mutateSeat(s, 'bot', d)}
-                            onClearSeat={s => mutateSeat(s, 'empty')}
-                        />
-                    ))}
-                </div>
+                    <section className="ldg-section">
+                        <div className="ldg-section-row">
+                            <h2 className="ldg-section-title">Seats</h2>
+                            <span className="ldg-section-meta">{filledCount} / 4</span>
+                        </div>
+                        <div className="ldg-grid-2">
+                            {seats.map((seat, i) => (
+                                <SeatCard
+                                    key={i}
+                                    seatIndex={i}
+                                    seat={seat}
+                                    isHost={iAmHost}
+                                    canEdit={iAmHost && seat.kind !== 'human'}
+                                    hostUserId={hostUserId}
+                                    onAssignBot={(s, d) => mutateSeat(s, 'bot', d)}
+                                    onClearSeat={s => mutateSeat(s, 'empty')}
+                                />
+                            ))}
+                        </div>
 
-                {iAmHost && !allSeatsFilled && (
-                    <p className="mt-6 text-sm text-slate-300">Fill every seat with a player or AI before starting.</p>
-                )}
-                {!iAmHost && (
-                    <p className="mt-6 text-sm text-slate-300">The host configures the table. You'll join automatically when the match begins.</p>
-                )}
+                        {iAmHost && !allSeatsFilled && (
+                            <p className="ldg-note">Fill every seat with a player or AI before starting.</p>
+                        )}
+                        {!iAmHost && (
+                            <p className="ldg-note">The host configures the table. You'll join automatically when the match begins.</p>
+                        )}
+                    </section>
+                </article>
             </div>
         </div>
     );

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. The game-flow pages (Home/Login/Lobby/CreateRoom/Table) share the "Tabletop Glass" theme via the primitives in `web/src/components/`; the live game/replay board uses the in-game theme; and the two tool pages (Calc/Shanten) use the dedicated "ledger" theme in `ledger-theme.css` (IBM Plex, light/dark via `prefers-color-scheme`) — see `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
+Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. Every non-game page (Home, Login, Lobby, CreateRoom, Table, Calc, Shanten) uses the shared "ledger" theme in `ledger-theme.css` (IBM Plex, off-white/ink surfaces, single teal accent, hairline rules, light/dark via `prefers-color-scheme`) — they `import './ledger-theme.css'` and compose the `.ledger-page` / `.ledger-shell` / `.ldg-page` / `.ldg-section` / `.ldg-btn` / `.ldg-input` class vocabulary. Only the live game/replay board (`Game.tsx`, `Replay.tsx` board, `MatchEndOverlay`) keeps the dark in-game theme. See `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
 
 ## Key Files
 
