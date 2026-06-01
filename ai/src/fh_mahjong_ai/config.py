@@ -9,7 +9,7 @@ from typing import Optional
 class EnvConfig:
     action_space_size: int = 204
     plane_shape: tuple[int, int, int] = (39, 42, 1)
-    scalar_features: int = 50
+    scalar_features: int = 58
     max_steps_per_episode: int = 256
     bridge_kind: str = "go"
     seed: int = 1

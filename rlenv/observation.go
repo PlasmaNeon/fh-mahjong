@@ -11,7 +11,7 @@ const (
 	ObservationPlaneChannels = 39
 	ObservationPlaneHeight   = 42
 	ObservationPlaneWidth    = 1
-	ObservationScalarCount   = 50
+	ObservationScalarCount   = 58
 	maxInt32                 = int32(^uint32(0) >> 1)
 	chongciLargeLossPoints   = int32(1000)
 )
@@ -215,6 +215,14 @@ func setMatchContextScalars(scalars []float32, state *pb.GameState, seat uint32)
 	scalars[47] = normalizePositiveScoreDelta(self.Score-largeLossThreshold, startingScore)
 	scalars[48] = normalizePositiveScoreDelta(self.Score-bustThreshold, startingScore)
 	scalars[49] = 1.0 - normalizePositiveScoreDelta(minOpponentScore-largeLossThreshold, startingScore)
+	scalars[50] = normalizePositiveScoreDelta(self.Score, startingScore)
+	scalars[51] = normalizeSignedScoreDelta(self.Score-startingScore, startingScore)
+	scalars[52] = normalizeSignedScoreDelta(self.Score-playerScore(state, (seat+1)%4), startingScore)
+	scalars[53] = normalizeSignedScoreDelta(self.Score-playerScore(state, (seat+2)%4), startingScore)
+	scalars[54] = normalizeSignedScoreDelta(self.Score-playerScore(state, (seat+3)%4), startingScore)
+	scalars[55] = normalizePositiveScoreDelta(nextHigherScoreGap(state, seat), startingScore)
+	scalars[56] = normalizePositiveScoreDelta(nextLowerScoreGap(state, seat), startingScore)
+	scalars[57] = maxOpponentPublicThreat(state, seat, startingScore, largeLossThreshold)
 }
 
 func rankAndScoreContext(state *pb.GameState, seat uint32) (uint32, int32, int32) {
@@ -265,6 +273,93 @@ func normalizePositiveScoreDelta(delta int32, scale int32) float32 {
 		return 1
 	}
 	return value
+}
+
+func normalizeSignedScoreDelta(delta int32, scale int32) float32 {
+	if scale <= 0 {
+		scale = 1
+	}
+	value := 0.5 + float32(delta)/(2.0*float32(scale))
+	return clamp01(value)
+}
+
+func playerScore(state *pb.GameState, seat uint32) int32 {
+	if state == nil || int(seat) >= len(state.Players) || state.Players[seat] == nil {
+		return 0
+	}
+	return state.Players[seat].Score
+}
+
+func nextHigherScoreGap(state *pb.GameState, seat uint32) int32 {
+	if state == nil || int(seat) >= len(state.Players) || state.Players[seat] == nil {
+		return 0
+	}
+	selfScore := state.Players[seat].Score
+	bestGap := maxInt32
+	for _, player := range state.Players {
+		if player == nil || player.Seat == seat || player.Score <= selfScore {
+			continue
+		}
+		gap := player.Score - selfScore
+		if gap < bestGap {
+			bestGap = gap
+		}
+	}
+	if bestGap == maxInt32 {
+		return 0
+	}
+	return bestGap
+}
+
+func nextLowerScoreGap(state *pb.GameState, seat uint32) int32 {
+	if state == nil || int(seat) >= len(state.Players) || state.Players[seat] == nil {
+		return 0
+	}
+	selfScore := state.Players[seat].Score
+	bestGap := maxInt32
+	for _, player := range state.Players {
+		if player == nil || player.Seat == seat || player.Score >= selfScore {
+			continue
+		}
+		gap := selfScore - player.Score
+		if gap < bestGap {
+			bestGap = gap
+		}
+	}
+	if bestGap == maxInt32 {
+		return 0
+	}
+	return bestGap
+}
+
+func maxOpponentPublicThreat(state *pb.GameState, seat uint32, startingScore int32, largeLossThreshold int32) float32 {
+	if state == nil || int(seat) >= len(state.Players) {
+		return 0
+	}
+
+	threat := float32(0)
+	for offset := uint32(1); offset < 4; offset++ {
+		opponentSeat := (seat + offset) % 4
+		if int(opponentSeat) >= len(state.Players) {
+			continue
+		}
+		opponent := state.Players[opponentSeat]
+		if opponent == nil {
+			continue
+		}
+		opponentThreat := float32(0)
+		opponentThreat += clamp01(float32(len(opponent.OpenMelds)) / 4.0 * 0.35)
+		opponentThreat += clamp01(float32(len(opponent.FlowerMelds)) / 8.0 * 0.15)
+		opponentThreat += clamp01(float32(len(opponent.Discards)) / 24.0 * 0.20)
+		if opponent.HandSize <= 4 {
+			opponentThreat += 0.10
+		}
+		opponentThreat += normalizePositiveScoreDelta(opponent.Score-largeLossThreshold, startingScore) * 0.20
+		if opponentThreat > threat {
+			threat = opponentThreat
+		}
+	}
+	return clamp01(threat)
 }
 
 func faceCountsFromTile(tile *pb.Tile) [42]int {

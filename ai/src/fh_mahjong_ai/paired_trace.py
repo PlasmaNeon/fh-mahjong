@@ -40,6 +40,14 @@ SCALAR_NAMES = {
     47: "large_loss_margin",
     48: "self_bust_margin",
     49: "opponent_large_loss_pressure",
+    50: "score_ratio",
+    51: "net_score_progress",
+    52: "score_gap_right",
+    53: "score_gap_across",
+    54: "score_gap_left",
+    55: "next_rank_pressure",
+    56: "lower_rank_cushion",
+    57: "public_threat",
 }
 
 

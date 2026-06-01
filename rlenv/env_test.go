@@ -180,6 +180,12 @@ func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 	env.game.State.Players[1].Score = 2500
 	env.game.State.Players[2].Score = 1000
 	env.game.State.Players[3].Score = -100
+	for _, player := range env.game.State.Players {
+		player.OpenMelds = nil
+		player.FlowerMelds = nil
+		player.Discards = nil
+		player.HandSize = 13
+	}
 	observation, err := encodeObservation(env.game.State, 0, 0)
 	if err != nil {
 		t.Fatalf("encode observation failed: %v", err)
@@ -198,9 +204,17 @@ func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 		0.25,
 		0.75,
 		1.0,
+		0.75,
+		0.375,
+		0.25,
+		0.625,
+		0.9,
+		0.5,
+		0.25,
+		0.15,
 	}
-	if !almostEqualSlices(scalars[42:50], expected) {
-		t.Fatalf("chongci scalar tail = %v, want %v", scalars[42:50], expected)
+	if !almostEqualSlices(scalars[42:58], expected) {
+		t.Fatalf("chongci scalar tail = %v, want %v", scalars[42:58], expected)
 	}
 }
 

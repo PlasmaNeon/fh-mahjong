@@ -104,7 +104,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - Avoid non-uv package or environment commands in this repo.
 - `ai/.python-version` pins the uv-managed Python interpreter used by this package.
 - Python support is pinned to uv-managed CPython 3.12 for the AI package.
-- `EnvConfig` defaults now match the real Go bridge (`39 x 42 x 1` observations, 50 scalars, 204 discrete actions).
+- `EnvConfig` defaults now match the real Go bridge (`39 x 42 x 1` observations, 58 scalars, 204 discrete actions).
 - Legacy 42-scalar checkpoints are padded in `storage.load_checkpoint()` so old policy weights can load while new Chongci match-context scalar weights start at zero.
 - `EnvConfig.match_mode` can be `classic` or `chongci`; Chongci adds starting-score, bust-threshold, and max-hands fields passed through to protobuf.
 - `MockMahjongBridge` remains available for smoke tests, but `bridge_kind="go"` is now the default for real bridge work.

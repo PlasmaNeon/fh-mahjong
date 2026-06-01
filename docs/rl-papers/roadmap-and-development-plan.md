@@ -220,7 +220,7 @@ Mahjong exercise:
 - Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
 - Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
 - Before using a risk head for serving, require calibration evidence: AUC above random, monotonic risk bands, and acceptable severity error. The first Chongci large-loss heads failed this check.
-- Next risk-learning design: add visible match-history and score-pressure inputs before retraining the implemented action-conditioned risk critic. The first no-history calibration-only run failed (`large-loss AUC 0.4998`), so do not test guarded serving/evaluation until the richer-input critic passes offline calibration.
+- Next risk-learning design: keep the implemented 58-scalar visible Chongci context, but improve risk-label coverage or use a balanced risk-only objective before trying guarded serving. The first no-history action-risk run failed (`large-loss AUC 0.4998`) and the first 58-scalar rerun also failed (`large-loss AUC 0.5096`).
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -314,10 +314,10 @@ Mahjong exercise:
    - Use the same wall seeds with rotated seats against the heuristic baseline.
    - Track EV, win rate, large-loss rate, and action frequencies.
 6. Add visible look-ahead features:
-   - Implemented in the 50-scalar observation schema.
+   - Implemented in the 58-scalar observation schema.
    - Keep `overall shanten` at scalar index 25.
    - Route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics now occupy scalar indices 29-41.
-   - Chongci match/risk context now occupies scalar indices 42-49.
+   - Chongci match/risk context now occupies scalar indices 42-57.
 7. Add Mortal-style operation-level Q/value learning:
    - Use discrete IQL as the default reward learner.
    - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
