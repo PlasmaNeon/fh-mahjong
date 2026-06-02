@@ -3765,7 +3765,7 @@ The remote script will:
 
 Decision:
 
-Still running.
+Rejected for guarded serving/evaluation.
 
 Interpretation:
 
@@ -3773,6 +3773,92 @@ This branch deliberately changes the risk target instead of repeating another
 pairwise-margin or replay-weighting sweep. Promotion is not allowed from this
 run alone; the first pass only decides whether the risk critic has usable
 independent calibration.
+
+Result:
+
+```text
+data:
+  564000:50 anchor shard: 100,781 transitions
+  574000:50 anchor shard: 102,028 transitions
+  584000:50 anchor shard: 102,456 transitions
+
+paired trace:
+  pairs: 600
+  divergence_rate: 71.83%
+  candidate_better_rate: 21.33%
+  mean_delta: +0.0050
+
+match check:
+  risk_cases: 292
+  exact matched cases: 60
+  paired training transitions: 28
+  max pairwise reward delta: 0.7180
+
+training final:
+  loss: 0.6208
+  probability_loss: 0.5953
+  severity_loss: 0.1279
+  paired_margin_loss: 0.0000
+  paired_delta_mae: 0.00403
+
+independent calib16:
+  AUC: 0.5040
+  Brier: 0.2753
+  positive_mean: 0.4950
+  negative_mean: 0.4926
+  severity_MAE: 0.4212
+```
+
+The larger matched dataset improved over the previous paired-delta critic
+(`AUC 0.4983`, `Brier 0.2809`, `severity_MAE 0.4369`), but still did not beat
+the older plain visible58 action-risk ranker (`AUC 0.5096`). Do not use this
+critic for a serving guard. A small score-pressure threshold/weight sweep is
+allowed because it reuses the already-generated 600-pair data; do not generate
+more paired data until the target itself proves useful.
+
+### Experiment: Score-Pressure Target Sweep
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-scorepressure-sweep-20260602-010025`
+
+Question:
+
+Can threshold/weight tuning of the score-pressure action-risk target beat the
+plain visible58 action-risk critic on independent large-loss ranking?
+
+Data:
+
+Reused the larger counterfactual run:
+
+```text
+/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427
+```
+
+No new paired data was generated.
+
+Result:
+
+```text
+variant              AUC     Brier   pos_mean  neg_mean  severity_MAE
+scorep_t050_w050     0.5027  0.2767  0.4971    0.4956    0.4023
+scorep_t060_w100     0.5081  0.2728  0.4924    0.4879    0.4441
+scorep_t070_w050     0.4977  0.2706  0.4839    0.4863    0.4628
+```
+
+Decision:
+
+Rejected for guarded serving/evaluation.
+
+Interpretation:
+
+The best sweep result, `scorep_t060_w100`, improved over the untuned
+score-pressure run (`AUC 0.5040`) but still did not beat the older plain
+visible58 action-risk critic (`AUC 0.5096`). This closes simple scalar
+score-pressure target tuning for now. The next risk target should not be another
+threshold/weight sweep; it needs either action-family-specific calibration,
+later-trajectory labels, or a separate dataset split designed for tail-risk
+ranking rather than reusing the same anchor-only calibration shard.
 
 ## Maintenance Protocol For This Note
 
