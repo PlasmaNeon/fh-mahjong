@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import './ledger-theme.css';
 
 function makeRoomId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import './ledger-theme.css'
 
 // Decode the username from the stored JWT, if present, so the account link
 // reflects logged-in state without a network call.

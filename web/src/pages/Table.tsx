@@ -7,7 +7,6 @@ import { getApiUrl } from '../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import SeatCard from './SeatCard';
 import { game } from '../proto/game';
-import './ledger-theme.css';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { getApiUrl } from '../config';
-import './ledger-theme.css';
 
 export default function Login() {
     const [username, setUsername] = useState('');

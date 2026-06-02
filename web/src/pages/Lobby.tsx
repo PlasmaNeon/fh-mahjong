@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { getApiUrl } from '../config';
-import './ledger-theme.css';
 
 export default function Lobby() {
     const [isQueuing, setIsQueuing] = useState(false);
