@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { getSuitOrder, getTileName, getTileSvgName } from '../utils/tileUtils'
+import { CenterHud, type CenterHudSeat } from './CenterHud'
 
 export type SeatLaneDirection = 'bottom' | 'right' | 'top' | 'left'
 
@@ -701,32 +702,19 @@ export function TableBoard({
         </div>
       )}
 
-      <div className="center-info text-white text-center">
-        {POSITIONS.map((direction, idx) => {
-          const seat = players.find((player) => getSeatDirection(player.seat, viewSeat) === POSITIONS[idx])
+      <CenterHud
+        hudChips={hudChips}
+        seats={POSITIONS.map((direction) => {
+          const seat = players.find((player) => getSeatDirection(player.seat, viewSeat) === direction)
           if (!seat) return null
-          const wind = seat.seatWind ?? 0
-          const isActive = seat.seat === activeSeat
-
-          return (
-            <div key={direction} className={`center-wind center-wind-${direction} ${isActive ? 'center-wind-active' : ''}`}>
-              {WIND_KANJI[wind] || ''}
-            </div>
-          )
-        })}
-
-        <div className="center-info-stats">
-          {hudChips.map((chip, index) => (
-            <span
-              key={`${chip.label}-${index}`}
-              className="center-info-chip"
-              style={chip.tone === 'danger' ? { color: '#ff6b6b' } : undefined}
-            >
-              {chip.label}
-            </span>
-          ))}
-        </div>
-      </div>
+          return {
+            direction,
+            windKanji: WIND_KANJI[seat.seatWind ?? 0] || '',
+            score: seat.score ?? 0,
+            isActive: seat.seat === activeSeat,
+          }
+        }).filter((seat): seat is CenterHudSeat => seat !== null)}
+      />
 
       {actionBar}
 
