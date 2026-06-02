@@ -7,6 +7,7 @@ import { getApiUrl } from '../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import SeatCard from './SeatCard';
 import { game } from '../proto/game';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../theme';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
@@ -225,48 +226,27 @@ export default function Table() {
 
     if (!guestToken) {
         return (
-            <div className="ledger-page">
-                <div className="ledger-shell">
-                    <article className="ldg-page">
-                        <div className="ldg-page-head">
-                            <div>
-                                <h1 className="ldg-page-head__title">
-                                    Join Room
-                                    <small>{roomId}</small>
-                                </h1>
-                            </div>
-                        </div>
-
-                        <section className="ldg-section">
-                            <div className="ldg-section-row">
-                                <h2 className="ldg-section-title">
-                                    Enter as guest
-                                    <small>Pick a display name to join this private room.</small>
-                                </h2>
-                            </div>
-                            <div className="ldg-field">
-                                <label className="ldg-field__label">Display name</label>
-                                <input
-                                    className="ldg-input"
-                                    value={username}
-                                    onChange={e => setUsername(e.target.value)}
-                                    placeholder="Your name"
-                                />
-                            </div>
-                            {error && <p className="ldg-note ldg-note--err">{error}</p>}
-                            <div className="ldg-tools-row" style={{ marginTop: '1rem' }}>
-                                <button
-                                    className="ldg-btn ldg-btn--primary"
-                                    onClick={handleGuestJoin}
-                                    disabled={joining || !username.trim()}
-                                >
+            <Page>
+                <Shell>
+                    <Card>
+                        <PageHeader title="Join Room" subtitle={roomId} />
+                        <Section title="Enter as guest" subtitle="Pick a display name to join this private room.">
+                            <Field
+                                label="Display name"
+                                value={username}
+                                onChange={e => setUsername(e.target.value)}
+                                placeholder="Your name"
+                            />
+                            {error && <Note tone="error">{error}</Note>}
+                            <ToolsRow>
+                                <Button variant="primary" onClick={handleGuestJoin} disabled={joining || !username.trim()}>
                                     {joining ? 'Joining…' : 'Join Room'}
-                                </button>
-                            </div>
-                        </section>
-                    </article>
-                </div>
-            </div>
+                                </Button>
+                            </ToolsRow>
+                        </Section>
+                    </Card>
+                </Shell>
+            </Page>
         );
     }
 
@@ -281,51 +261,31 @@ export default function Table() {
     const modeLocked = !iAmHost || tableState?.state === 'started';
 
     return (
-        <div className="ledger-page">
-            <div className="ledger-shell ledger-shell--wide">
-                <article className="ldg-page">
-                    <div className="ldg-page-head">
-                        <div>
-                            <h1 className="ldg-page-head__title">
-                                Room
-                                <small>{roomId}</small>
-                            </h1>
-                        </div>
-                        <div className="ldg-page-head__nav">
-                            {iAmHost && (
-                                <button
-                                    className="ldg-btn ldg-btn--primary"
-                                    onClick={handleStart}
-                                    disabled={!allSeatsFilled}
-                                >
-                                    Start Match
-                                </button>
-                            )}
-                        </div>
-                    </div>
+        <Page>
+            <Shell wide>
+                <Card>
+                    <PageHeader
+                        title="Room"
+                        subtitle={roomId}
+                        nav={iAmHost && (
+                            <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled}>
+                                Start Match
+                            </Button>
+                        )}
+                    />
 
-                    {error && <p className="ldg-note ldg-note--err">{error}</p>}
+                    {error && <Note tone="error">{error}</Note>}
 
-                    <section className="ldg-section">
-                        <div className="ldg-section-row">
-                            <h2 className="ldg-section-title">Match mode</h2>
-                        </div>
-                        <div className="ldg-toggle">
-                            <button
-                                className={`ldg-toggle__btn ${!isChongci ? 'is-active' : ''}`}
-                                disabled={modeLocked}
-                                onClick={() => setMatchMode('classic')}
-                            >
-                                Classic
-                            </button>
-                            <button
-                                className={`ldg-toggle__btn ${isChongci ? 'is-active' : ''}`}
-                                disabled={modeLocked}
-                                onClick={() => setMatchMode('chongci', chongciDraft)}
-                            >
-                                Chongci
-                            </button>
-                        </div>
+                    <Section title="Match mode">
+                        <Toggle
+                            value={isChongci ? 'chongci' : 'classic'}
+                            disabled={modeLocked}
+                            onChange={(mode) => mode === 'chongci' ? setMatchMode('chongci', chongciDraft) : setMatchMode('classic')}
+                            options={[
+                                { value: 'classic', label: 'Classic' },
+                                { value: 'chongci', label: 'Chongci' },
+                            ]}
+                        />
                         {isChongci && (
                             <div className="ldg-grid-3" style={{ marginTop: '0.85rem' }}>
                                 {[
@@ -333,32 +293,24 @@ export default function Table() {
                                     { key: 'bust_threshold', label: 'Bust threshold', min: -1_000_000, max: 0 },
                                     { key: 'max_hands', label: 'Max hands (0=∞)', min: 0, max: 200 },
                                 ].map(({ key, label, min, max }) => (
-                                    <div className="ldg-field" key={key}>
-                                        <label className="ldg-field__label">{label}</label>
-                                        <input
-                                            type="number"
-                                            className="ldg-input"
-                                            min={min}
-                                            max={max}
-                                            value={(chongciDraft as any)[key]}
-                                            disabled={modeLocked}
-                                            onChange={e => setChongciDraft(d => ({ ...d, [key]: Number(e.target.value) }))}
-                                            onBlur={() => iAmHost && setMatchMode('chongci', chongciDraft)}
-                                        />
-                                    </div>
+                                    <Field
+                                        key={key}
+                                        label={label}
+                                        type="number"
+                                        min={min}
+                                        max={max}
+                                        value={(chongciDraft as any)[key]}
+                                        disabled={modeLocked}
+                                        onChange={e => setChongciDraft(d => ({ ...d, [key]: Number(e.target.value) }))}
+                                        onBlur={() => iAmHost && setMatchMode('chongci', chongciDraft)}
+                                    />
                                 ))}
                             </div>
                         )}
-                        {!iAmHost && (
-                            <p className="ldg-note">Only the host can change match settings.</p>
-                        )}
-                    </section>
+                        {!iAmHost && <Note>Only the host can change match settings.</Note>}
+                    </Section>
 
-                    <section className="ldg-section">
-                        <div className="ldg-section-row">
-                            <h2 className="ldg-section-title">Seats</h2>
-                            <span className="ldg-section-meta">{filledCount} / 4</span>
-                        </div>
+                    <Section title="Seats" meta={`${filledCount} / 4`}>
                         <div className="ldg-grid-2">
                             {seats.map((seat, i) => (
                                 <SeatCard
@@ -374,16 +326,12 @@ export default function Table() {
                             ))}
                         </div>
 
-                        {iAmHost && !allSeatsFilled && (
-                            <p className="ldg-note">Fill every seat with a player or AI before starting.</p>
-                        )}
-                        {!iAmHost && (
-                            <p className="ldg-note">The host configures the table. You'll join automatically when the match begins.</p>
-                        )}
-                    </section>
-                </article>
-            </div>
-        </div>
+                        {iAmHost && !allSeatsFilled && <Note>Fill every seat with a player or AI before starting.</Note>}
+                        {!iAmHost && <Note>The host configures the table. You'll join automatically when the match begins.</Note>}
+                    </Section>
+                </Card>
+            </Shell>
+        </Page>
     );
 }
 
