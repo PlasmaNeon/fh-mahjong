@@ -24,6 +24,7 @@ COPY core/ core/
 COPY models/ models/
 COPY proto/ proto/
 COPY rules/ rules/
+COPY rlenv/ rlenv/
 COPY web/ web/
 
 # Build the Go binary
