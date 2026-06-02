@@ -177,6 +177,50 @@
   },
   "rejected_candidates": [
     {
+      "id": "chongci_balanced_actionrisk_visible58_epoch003",
+      "method": "balanced_action_conditioned_large_loss_risk",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-balanced-actionrisk-20260531-221155/checkpoints/action_risk_balanced/epoch_003.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 3,
+        "batch_size": 2048,
+        "learning_rate": 0.00002,
+        "large_loss_threshold": -1.0,
+        "positive_fraction": 0.5,
+        "severity_weight": 0.05,
+        "risk_mode": "action",
+        "scalar_features": 58,
+        "train_transitions": 131612,
+        "train_seed_range": "640000-640063",
+        "mlflow_run_id": "d5fe0317e0ae4d6d850c2d3dcc02aad4"
+      },
+      "screening": [
+        {
+          "label": "offline_balanced_action_risk_calibration_visible58_calib16",
+          "transitions": 31448,
+          "calibration_seed_range": "650000-650015",
+          "large_loss_rate": 0.1454,
+          "large_loss_auc": 0.4990,
+          "large_loss_brier": 0.2876,
+          "large_loss_positive_mean_probability": 0.5051,
+          "large_loss_negative_mean_probability": 0.5059,
+          "large_loss_severity_mae": 0.5698,
+          "q_mae": 0.1129,
+          "q_rmse": 0.1989,
+          "q_bias": 0.0062,
+          "q_corr": 0.0091,
+          "value_mae": 0.0721,
+          "report_path": "/root/fh-mahjong-runs/chongci-balanced-actionrisk-20260531-221155/reports/balanced_visible58_actionrisk_calib16.json"
+        }
+      ],
+      "decision": "rejected_calibration_gate",
+      "reason": "Balanced positive/negative risk training improved probability scale and severity error but large-loss AUC remained random, so no guarded online evaluation was run."
+    },
+    {
       "id": "chongci_visible58_actionrisk_epoch001",
       "method": "discrete_iql_action_conditioned_large_loss_risk",
       "match_mode": "chongci",
