@@ -21,6 +21,7 @@ export type MeldLike = {
 export type PlayerTableView = {
   seat: number
   seatWind?: number
+  score?: number
   closedHand?: TileLike[]
   handBackCount?: number
   showClosedHand?: boolean
