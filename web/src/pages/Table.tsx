@@ -17,6 +17,7 @@ export default function Table() {
     const [username, setUsername] = useState(() => loadPrivateRoomSession(roomId)?.username ?? '');
     const [guestToken, setGuestToken] = useState('');
     const [joining, setJoining] = useState(false);
+    const [starting, setStarting] = useState(false);
     const [error, setError] = useState('');
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
@@ -204,7 +205,12 @@ export default function Table() {
     }, [tableState?.chongciConfig]);
 
     const handleStart = async () => {
-        if (!roomId || !guestToken) return;
+        // Guard re-entry: once a start is in flight the table flips to
+        // "started" and is removed from the configuring registry, so a second
+        // request would 409/404 ("table not found"). One click only.
+        if (!roomId || !guestToken || starting) return;
+        setStarting(true);
+        setError('');
         try {
             const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/start`), {
                 method: 'POST',
@@ -213,14 +219,28 @@ export default function Table() {
             });
             if (res.status === 401) {
                 handleAuthFailure();
+                setStarting(false);
                 return;
             }
+            const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
                 setError(data.error || 'Failed to start match');
+                setStarting(false);
+                return;
             }
+            // The success body already carries the started state + matchId, so
+            // navigate immediately rather than waiting for the lobby_update
+            // WebSocket broadcast. Keep `starting` true through the redirect.
+            if (data.matchId) {
+                navigate(`/match/${data.matchId}`);
+                return;
+            }
+            // No matchId in the response (unexpected): fall back to the
+            // broadcast-driven redirect, but re-enable the button.
+            setStarting(false);
         } catch (err: any) {
             setError(err.message || 'Failed to start match');
+            setStarting(false);
         }
     };
 
@@ -268,8 +288,8 @@ export default function Table() {
                         title="Room"
                         subtitle={roomId}
                         nav={iAmHost && (
-                            <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled}>
-                                Start Match
+                            <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled || starting}>
+                                {starting ? 'Starting…' : 'Start Match'}
                             </Button>
                         )}
                     />
