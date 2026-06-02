@@ -119,6 +119,31 @@ def test_apply_risk_case_weights_adds_pairwise_preference_labels() -> None:
     assert arrays["pairwise_preferred_action_ids"].tolist() == [-1, 46, -1]
     assert arrays["pairwise_avoided_action_ids"].tolist() == [-1, 47, -1]
     assert arrays["pairwise_weights"].tolist() == [0.0, 1.0, 0.0]
+    assert arrays["pairwise_reward_delta_targets"].tolist() == [0.0, 0.0, 0.0]
     assert arrays["risk_case_matches"].tolist() == [False, True, False]
     assert report.pairwise_cases == 1
     assert report.pairwise_transitions == 1
+
+
+def test_apply_risk_case_weights_adds_pairwise_reward_delta_targets() -> None:
+    arrays = {
+        "episode_index": np.asarray([5], dtype=np.int64),
+        "seats": np.asarray([2], dtype=np.int16),
+        "decision_indices": np.asarray([77], dtype=np.int64),
+        "action_ids": np.asarray([47], dtype=np.int64),
+    }
+    case = RiskCase(
+        seed=105,
+        seat=2,
+        decision_index=77,
+        action_id=47,
+        baseline_action_id=46,
+        reward=-1.25,
+        baseline_reward=-0.5,
+    )
+
+    report = apply_risk_case_weights(arrays, [case], weight=1.0, dataset_start_seed=100)
+
+    assert arrays["pairwise_reward_delta_targets"].tolist() == [0.75]
+    assert report.pairwise_delta_mean == 0.75
+    assert report.pairwise_delta_max == 0.75

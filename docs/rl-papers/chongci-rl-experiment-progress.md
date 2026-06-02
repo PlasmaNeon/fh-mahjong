@@ -3590,6 +3590,113 @@ Only after evaluation stability:
 - opponent pressure and bust-risk auxiliary,
 - history features for repeated hand context.
 
+### Experiment: Paired Action-Risk Delta Supervision
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-paired-actionrisk-delta-20260601-224151`
+
+Question:
+
+Can a separate action-conditioned risk critic learn more useful Chongci tail-risk
+signals from paired first-divergence reports than from plain terminal large-loss
+BCE alone?
+
+Data:
+
+Use visible 58-scalar Chongci transition shards plus paired trace reports whose
+seed windows match the dataset `episode_index` mapping through
+`--paired-dataset-start-seed`. The paired trace contributes anchor-preferred and
+candidate-avoided action ids at the exact first divergence row.
+
+Training:
+
+`train_action_risk.py` now supports `--paired-trace-report`, reward-delta
+targets, `--paired-margin-weight`, and `--paired-severity-weight`. The observed
+action still trains large-loss probability/severity; paired rows additionally
+force the worse candidate action to rank riskier than the anchor action and fit
+the score-gap severity target.
+
+First run:
+
+```text
+init checkpoint: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+general data: /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz
+paired data:
+  /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/data/anchor-risk-seed-534000-n10-npz
+  /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/data/anchor-risk-seed-544000-n10-npz
+  /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/data/anchor-risk-seed-554000-n10-npz
+trace report: /root/fh-mahjong-runs/chongci-risktrace-dense-v2-20260530-014516/reports/anchor_vs_raw_candidate_gate_windows_trace.json
+epochs: 1
+steps_per_epoch: 100
+batch_size: 2048
+lr: 5e-5
+paired_margin_weight: 0.5
+paired_severity_weight: 0.25
+paired_batch_fraction: 0.25
+MLflow training run: ff981d1bf5fd428abdf24a39cc376177
+MLflow calibration run: 5c6e3538a3394f2181ad436d7c5fd479
+```
+
+Evaluation:
+
+First run offline action-risk calibration. Required diagnostics: nonzero
+`matched_cases`, nonzero `paired_transitions`, probability Brier/AUC, severity
+error, and paired margin/severity losses in the training report. Do not use this
+critic for guarded serving or duplicate evaluation until calibration improves
+over the plain action-risk critic.
+
+Result:
+
+```text
+matched cases:
+  start_seed 534000: 7 matched, 5 paired transitions, max reward-delta 0.5500
+  start_seed 544000: 6 matched, 4 paired transitions, max reward-delta 0.1280
+  start_seed 554000: 1 matched, 1 paired transition, max reward-delta 0.0920
+total paired transitions: 10
+
+training final:
+  loss: 0.6008
+  probability_loss: 0.5774
+  severity_loss: 0.1169
+  paired_margin_loss: 0.0000
+  paired_severity_loss: 0.000025
+  paired_delta_mae: 0.00649
+
+independent calib16:
+  large_loss_rate: 0.1454
+  AUC: 0.4983
+  Brier: 0.2809
+  positive_mean: 0.4949
+  negative_mean: 0.4957
+  severity_MAE: 0.4369
+
+previous plain visible58 action-risk calibration:
+  AUC: 0.5096
+  Brier: 0.3114
+  positive_mean: 0.4693
+  negative_mean: 0.4596
+  severity_MAE: 1.1919
+```
+
+Decision:
+
+Rejected for guarded serving/evaluation. The paired target improved severity
+scale but did not improve risk ranking; AUC fell below the plain visible58
+action-risk run and positive examples scored slightly lower than negatives.
+
+Interpretation:
+
+This is the next stronger supervision ingredient after plain large-loss BCE,
+dense risk-trace replay weighting, and policy/Q pairwise margin losses failed to
+reduce tail risk reliably. It targets the risk critic directly rather than
+changing the deployed policy head during training. The result suggests the
+available first-divergence paired labels are too sparse for a reliable
+action-risk ranker by themselves. The next attempt needs either substantially
+more matched counterfactual rows or a different target, such as explicit
+history-aware state risk and match-score trajectory features, before any serving
+guard should be retried.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
