@@ -14,6 +14,12 @@ from torch import nn
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.risk_filter import (
+    RiskCase,
+    RiskWeightReport,
+    apply_risk_case_weights,
+    load_risk_cases_from_paired_trace_reports,
+)
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import load_checkpoint, read_transition_arrays, save_checkpoint
 
@@ -25,6 +31,23 @@ RISK_ARRAY_KEYS = (
     "action_mask",
     "action_ids",
     "terminal_rewards",
+    "episode_index",
+)
+
+OPTIONAL_RISK_ARRAY_KEYS = (
+    "decision_indices",
+    "sample_weights",
+    "pairwise_preferred_action_ids",
+    "pairwise_avoided_action_ids",
+    "pairwise_weights",
+    "pairwise_reward_delta_targets",
+)
+
+PAIRWISE_ARRAY_KEYS = (
+    "pairwise_preferred_action_ids",
+    "pairwise_avoided_action_ids",
+    "pairwise_weights",
+    "pairwise_reward_delta_targets",
 )
 
 
@@ -38,6 +61,12 @@ class RiskTrainingConfig:
     steps_per_epoch: Optional[int] = None
     positive_fraction: float = 0.5
     severity_weight: float = 0.2
+    paired_margin_weight: float = 0.0
+    paired_severity_weight: float = 0.0
+    paired_margin: float = 0.1
+    paired_delta_scale: float = 1.0
+    paired_delta_clip: float = 5.0
+    paired_batch_fraction: float = 0.25
     train_encoder: bool = True
     seed: int = 0
     device: str = "cpu"
@@ -50,10 +79,14 @@ class RiskTrainingMetrics:
     loss: float
     probability_loss: float
     severity_loss: float
+    paired_margin_loss: float
+    paired_severity_loss: float
     batch_positive_rate: float
     positive_probability: float
     negative_probability: float
     severity_mae: float
+    paired_count: int
+    paired_delta_mae: float
 
 
 def train_action_risk(
@@ -64,13 +97,22 @@ def train_action_risk(
     env_config: Optional[EnvConfig] = None,
     model_config: Optional[ModelConfig] = None,
     max_transitions: Optional[int] = None,
+    risk_cases: Sequence[RiskCase] = (),
+    risk_case_weight: float = 1.0,
+    risk_dataset_start_seeds: Optional[Sequence[int]] = None,
     mlflow_enabled: bool = False,
     mlflow_tracking_uri: Optional[str] = None,
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
     report_output: Optional[Path] = None,
 ) -> list[RiskTrainingMetrics]:
-    arrays = load_risk_arrays(data_paths, max_transitions=max_transitions)
+    arrays, risk_reports = load_risk_arrays(
+        data_paths,
+        max_transitions=max_transitions,
+        risk_cases=risk_cases,
+        risk_case_weight=risk_case_weight,
+        risk_dataset_start_seeds=risk_dataset_start_seeds,
+    )
     labels, severities = risk_targets(arrays, threshold=config.threshold)
     positive_indices = np.flatnonzero(labels > 0.5).astype(np.int64)
     negative_indices = np.flatnonzero(labels <= 0.5).astype(np.int64)
@@ -79,6 +121,8 @@ def train_action_risk(
             "balanced action-risk training needs both positive and negative large-loss rows; "
             f"positives={positive_indices.size} negatives={negative_indices.size}"
         )
+
+    paired_indices = np.flatnonzero(np.asarray(arrays.get("pairwise_weights", []), dtype=np.float32) > 0.0).astype(np.int64)
 
     env_config = env_config or infer_env_config(arrays)
     model = PolicyValueNet(env_config, model_config or ModelConfig()).to(config.device)
@@ -114,6 +158,9 @@ def train_action_risk(
                     "positive_transitions": int(positive_indices.size),
                     "negative_transitions": int(negative_indices.size),
                     "positive_rate": float(np.mean(labels)),
+                    "risk_trace_cases": int(sum(report.cases for report in risk_reports)),
+                    "risk_trace_matched_cases": int(sum(report.matched_cases for report in risk_reports)),
+                    "paired_transitions": int(paired_indices.size),
                     "max_transitions": max_transitions,
                     **asdict(config),
                     **model_config_params(model_config or ModelConfig()),
@@ -126,10 +173,11 @@ def train_action_risk(
                 batch_indices = balanced_batch_indices(
                     positive_indices,
                     negative_indices,
-                    batch_size=effective_batch,
+                    batch_size=paired_balanced_batch_size(effective_batch, paired_indices, config),
                     positive_fraction=config.positive_fraction,
                     rng=rng,
                 )
+                batch_indices = append_paired_batch_indices(batch_indices, paired_indices, effective_batch, config, rng)
                 metric = train_risk_step(model, optimizer, arrays, labels, severities, batch_indices, config)
                 latest = RiskTrainingMetrics(epoch=epoch, step=step, **metric)
                 metrics.append(latest)
@@ -141,7 +189,7 @@ def train_action_risk(
                         f"loss={latest.loss:.4f} prob={latest.probability_loss:.4f} "
                         f"sev={latest.severity_loss:.4f} pos={latest.batch_positive_rate:.3f} "
                         f"p_pos={latest.positive_probability:.3f} p_neg={latest.negative_probability:.3f} "
-                        f"sev_mae={latest.severity_mae:.4f}",
+                        f"sev_mae={latest.severity_mae:.4f} paired={latest.paired_margin_loss:.4f}/{latest.paired_count}",
                         flush=True,
                     )
 
@@ -164,6 +212,8 @@ def train_action_risk(
             "positive_transitions": int(positive_indices.size),
             "negative_transitions": int(negative_indices.size),
             "positive_rate": float(np.mean(labels)),
+            "risk_reports": [asdict(report) for report in risk_reports],
+            "paired_transitions": int(paired_indices.size),
             "config": asdict(config),
             "metrics": [asdict(metric) for metric in metrics],
         }
@@ -171,16 +221,55 @@ def train_action_risk(
     return metrics
 
 
-def load_risk_arrays(data_paths: Sequence[Path], max_transitions: Optional[int] = None) -> dict[str, np.ndarray]:
-    loaded = [read_transition_arrays(path, keys=RISK_ARRAY_KEYS, limit=max_transitions) for path in data_paths]
+def load_risk_arrays(
+    data_paths: Sequence[Path],
+    max_transitions: Optional[int] = None,
+    risk_cases: Sequence[RiskCase] = (),
+    risk_case_weight: float = 1.0,
+    risk_dataset_start_seeds: Optional[Sequence[int]] = None,
+) -> tuple[dict[str, np.ndarray], list[RiskWeightReport]]:
+    start_seeds = list(risk_dataset_start_seeds or [])
+    loaded = []
+    risk_reports: list[RiskWeightReport] = []
+    for path_index, path in enumerate(data_paths):
+        arrays = read_transition_arrays(
+            path,
+            keys=RISK_ARRAY_KEYS,
+            optional_keys=OPTIONAL_RISK_ARRAY_KEYS,
+            limit=max_transitions,
+        )
+        ensure_pairwise_arrays(arrays)
+        if risk_cases:
+            dataset_start_seed = start_seeds[path_index] if path_index < len(start_seeds) else None
+            risk_reports.append(
+                apply_risk_case_weights(
+                    arrays,
+                    risk_cases,
+                    weight=risk_case_weight,
+                    dataset_start_seed=dataset_start_seed,
+                )
+            )
+        loaded.append(arrays)
     if not loaded:
         raise ValueError("at least one data path is required")
     if len(loaded) == 1:
-        return loaded[0]
-    return {
+        return loaded[0], risk_reports
+    common_keys = set.intersection(*(set(arrays.keys()) for arrays in loaded))
+    merge_keys = set(RISK_ARRAY_KEYS).union(PAIRWISE_ARRAY_KEYS).union(common_keys.intersection(OPTIONAL_RISK_ARRAY_KEYS))
+    merged = {
         key: _concat_with_padding([arrays[key] for arrays in loaded])
-        for key in RISK_ARRAY_KEYS
+        for key in sorted(merge_keys)
     }
+    ensure_pairwise_arrays(merged)
+    return merged, risk_reports
+
+
+def ensure_pairwise_arrays(arrays: dict[str, np.ndarray]) -> None:
+    rows = int(arrays["action_ids"].shape[0])
+    arrays.setdefault("pairwise_preferred_action_ids", np.full(rows, -1, dtype=np.int64))
+    arrays.setdefault("pairwise_avoided_action_ids", np.full(rows, -1, dtype=np.int64))
+    arrays.setdefault("pairwise_weights", np.zeros(rows, dtype=np.float32))
+    arrays.setdefault("pairwise_reward_delta_targets", np.zeros(rows, dtype=np.float32))
 
 
 def infer_env_config(arrays: dict[str, np.ndarray]) -> EnvConfig:
@@ -219,6 +308,33 @@ def balanced_batch_indices(
     return batch
 
 
+def paired_balanced_batch_size(
+    batch_size: int,
+    paired_indices: np.ndarray,
+    config: RiskTrainingConfig,
+) -> int:
+    if paired_indices.size == 0 or (config.paired_margin_weight <= 0.0 and config.paired_severity_weight <= 0.0):
+        return batch_size
+    paired_count = int(round(max(0.0, min(1.0, config.paired_batch_fraction)) * batch_size))
+    return max(2, batch_size - max(0, paired_count))
+
+
+def append_paired_batch_indices(
+    batch_indices: np.ndarray,
+    paired_indices: np.ndarray,
+    batch_size: int,
+    config: RiskTrainingConfig,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    if paired_indices.size == 0 or (config.paired_margin_weight <= 0.0 and config.paired_severity_weight <= 0.0):
+        return batch_indices
+    paired_count = max(1, batch_size - int(batch_indices.shape[0]))
+    paired = rng.choice(paired_indices, size=paired_count, replace=paired_indices.size < paired_count)
+    combined = np.concatenate([batch_indices, paired.astype(np.int64, copy=False)]).astype(np.int64, copy=False)
+    rng.shuffle(combined)
+    return combined
+
+
 def configure_trainable_parameters(model: nn.Module, train_encoder: bool) -> None:
     for param in model.parameters():
         param.requires_grad = False
@@ -254,7 +370,20 @@ def train_risk_step(
     severity = risk_severities.gather(1, action_ids.unsqueeze(1)).squeeze(1)
     probability_loss = nn.functional.binary_cross_entropy_with_logits(logits, target_labels)
     severity_loss = nn.functional.smooth_l1_loss(severity, target_severities)
-    loss = probability_loss + float(config.severity_weight) * severity_loss
+    paired_margin_loss, paired_severity_loss, paired_count, paired_delta_mae = pairwise_risk_losses(
+        risk_logits,
+        risk_severities,
+        action_mask,
+        arrays,
+        indices,
+        config,
+    )
+    loss = (
+        probability_loss
+        + float(config.severity_weight) * severity_loss
+        + float(config.paired_margin_weight) * paired_margin_loss
+        + float(config.paired_severity_weight) * paired_severity_loss
+    )
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
@@ -272,11 +401,85 @@ def train_risk_step(
         "loss": float(loss.item()),
         "probability_loss": float(probability_loss.item()),
         "severity_loss": float(severity_loss.item()),
+        "paired_margin_loss": float(paired_margin_loss.item()),
+        "paired_severity_loss": float(paired_severity_loss.item()),
         "batch_positive_rate": float(target_labels.mean().item()),
         "positive_probability": float(positive_probability.item()),
         "negative_probability": float(negative_probability.item()),
         "severity_mae": float(severity_mae.item()),
+        "paired_count": paired_count,
+        "paired_delta_mae": paired_delta_mae,
     }
+
+
+def pairwise_risk_losses(
+    risk_logits: torch.Tensor,
+    risk_severities: torch.Tensor,
+    action_mask: torch.Tensor,
+    arrays: dict[str, np.ndarray],
+    indices: np.ndarray,
+    config: RiskTrainingConfig,
+) -> tuple[torch.Tensor, torch.Tensor, int, float]:
+    zero = risk_logits.new_zeros(())
+    preferred_action_ids = torch.from_numpy(
+        arrays["pairwise_preferred_action_ids"][indices].astype(np.int64, copy=False)
+    ).to(config.device)
+    avoided_action_ids = torch.from_numpy(arrays["pairwise_avoided_action_ids"][indices].astype(np.int64, copy=False)).to(
+        config.device
+    )
+    pairwise_weights = torch.from_numpy(arrays["pairwise_weights"][indices].astype(np.float32, copy=False)).to(config.device)
+    reward_deltas = torch.from_numpy(
+        arrays["pairwise_reward_delta_targets"][indices].astype(np.float32, copy=False)
+    ).to(config.device)
+
+    valid = (
+        (pairwise_weights > 0.0)
+        & (preferred_action_ids >= 0)
+        & (avoided_action_ids >= 0)
+        & (preferred_action_ids != avoided_action_ids)
+    )
+    action_count = risk_logits.shape[1]
+    valid &= preferred_action_ids < action_count
+    valid &= avoided_action_ids < action_count
+    if action_mask.numel() > 0:
+        rows = torch.arange(risk_logits.shape[0], device=risk_logits.device)
+        preferred_legal = action_mask[rows, torch.clamp(preferred_action_ids, min=0, max=action_count - 1)] > 0
+        avoided_legal = action_mask[rows, torch.clamp(avoided_action_ids, min=0, max=action_count - 1)] > 0
+        valid &= preferred_legal & avoided_legal
+
+    count = int(valid.sum().item())
+    if count == 0:
+        return zero, zero, 0, 0.0
+
+    selected_logits = risk_logits[valid]
+    selected_severities = risk_severities[valid]
+    selected_preferred = preferred_action_ids[valid]
+    selected_avoided = avoided_action_ids[valid]
+    selected_weights = pairwise_weights[valid].to(dtype=risk_logits.dtype, device=risk_logits.device)
+    scale = max(float(config.paired_delta_scale), 1e-6)
+    delta_targets = torch.clamp(reward_deltas[valid] / scale, min=0.0, max=float(config.paired_delta_clip))
+
+    preferred_logits = selected_logits.gather(1, selected_preferred.unsqueeze(1)).squeeze(1)
+    avoided_logits = selected_logits.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
+    risk_gap = avoided_logits - preferred_logits
+    margin_targets = float(config.paired_margin) + delta_targets
+    margin_losses = torch.relu(margin_targets - risk_gap)
+
+    preferred_severity = selected_severities.gather(1, selected_preferred.unsqueeze(1)).squeeze(1)
+    avoided_severity = selected_severities.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
+    severity_gap = avoided_severity - preferred_severity
+    severity_losses = nn.functional.smooth_l1_loss(severity_gap, delta_targets, reduction="none")
+
+    margin_loss = weighted_mean(margin_losses, selected_weights)
+    severity_loss = weighted_mean(severity_losses, selected_weights)
+    with torch.inference_mode():
+        paired_delta_mae = torch.mean(torch.abs(severity_gap - delta_targets))
+    return margin_loss, severity_loss, count, float(paired_delta_mae.item())
+
+
+def weighted_mean(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    weights = weights.to(dtype=values.dtype, device=values.device)
+    return torch.sum(values * weights) / torch.clamp(torch.sum(weights), min=1e-6)
 
 
 def _concat_with_padding(arrays: Sequence[np.ndarray]) -> np.ndarray:
@@ -313,6 +516,24 @@ def main() -> None:
     parser.add_argument("--threshold", type=float, default=-1.0)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
     parser.add_argument("--severity-weight", type=float, default=0.2)
+    parser.add_argument("--paired-trace-report", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--paired-dataset-start-seed",
+        action="append",
+        type=int,
+        default=[],
+        help="Dataset start seed for each --data path, used to map paired trace seeds to episode_index.",
+    )
+    parser.add_argument("--paired-trace-right-label", type=str, default="candidate")
+    parser.add_argument("--paired-trace-left-label", type=str, default="anchor")
+    parser.add_argument("--paired-trace-weight", type=float, default=1.0)
+    parser.add_argument("--paired-trace-worst-delta-count", type=int, default=0)
+    parser.add_argument("--paired-margin-weight", type=float, default=0.0)
+    parser.add_argument("--paired-severity-weight", type=float, default=0.0)
+    parser.add_argument("--paired-margin", type=float, default=0.1)
+    parser.add_argument("--paired-delta-scale", type=float, default=1.0)
+    parser.add_argument("--paired-delta-clip", type=float, default=5.0)
+    parser.add_argument("--paired-batch-fraction", type=float, default=0.25)
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--max-transitions", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -323,6 +544,13 @@ def main() -> None:
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
+    risk_cases = load_risk_cases_from_paired_trace_reports(
+        args.paired_trace_report,
+        right_label=args.paired_trace_right_label,
+        left_label=args.paired_trace_left_label,
+        large_loss_threshold=args.threshold,
+        worst_delta_count=args.paired_trace_worst_delta_count,
+    ) if args.paired_trace_report else []
 
     train_action_risk(
         data_paths=parse_data_paths(args.data),
@@ -337,12 +565,21 @@ def main() -> None:
             steps_per_epoch=args.steps_per_epoch,
             positive_fraction=args.positive_fraction,
             severity_weight=args.severity_weight,
+            paired_margin_weight=args.paired_margin_weight,
+            paired_severity_weight=args.paired_severity_weight,
+            paired_margin=args.paired_margin,
+            paired_delta_scale=args.paired_delta_scale,
+            paired_delta_clip=args.paired_delta_clip,
+            paired_batch_fraction=args.paired_batch_fraction,
             train_encoder=not args.freeze_encoder,
             seed=args.seed,
             device=args.device,
         ),
         model_config=model_config_from_args(args),
         max_transitions=args.max_transitions,
+        risk_cases=risk_cases,
+        risk_case_weight=args.paired_trace_weight,
+        risk_dataset_start_seeds=args.paired_dataset_start_seed,
         mlflow_enabled=args.mlflow,
         mlflow_tracking_uri=args.mlflow_tracking_uri,
         mlflow_experiment=args.mlflow_experiment,

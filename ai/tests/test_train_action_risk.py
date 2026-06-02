@@ -6,6 +6,7 @@ import numpy as np
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.risk_filter import RiskCase
 from fh_mahjong_ai.scripts.train_action_risk import (
     RiskTrainingConfig,
     balanced_batch_indices,
@@ -112,13 +113,29 @@ def test_train_action_risk_writes_checkpoint_and_report(tmp_path: Path) -> None:
             learning_rate=1e-3,
             epochs=1,
             steps_per_epoch=2,
+            paired_margin_weight=0.5,
+            paired_severity_weight=0.25,
+            paired_batch_fraction=0.5,
             device="cpu",
         ),
         env_config=env_config,
         model_config=model_config,
+        risk_cases=[
+            RiskCase(
+                seed=101,
+                seat=2,
+                decision_index=2,
+                action_id=2,
+                baseline_action_id=1,
+                reward=-1.5,
+                baseline_reward=0.25,
+            )
+        ],
+        risk_dataset_start_seeds=[100],
         report_output=report_output,
     )
 
     assert len(metrics) == 2
+    assert max(metric.paired_count for metric in metrics) > 0
     assert (checkpoint_dir / "epoch_001.pt").exists()
     assert report_output.exists()

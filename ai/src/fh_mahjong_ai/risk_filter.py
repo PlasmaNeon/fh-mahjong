@@ -34,6 +34,8 @@ class RiskWeightReport:
     matched_by: dict[str, int]
     pairwise_cases: int = 0
     pairwise_transitions: int = 0
+    pairwise_delta_mean: float = 0.0
+    pairwise_delta_max: float = 0.0
 
 
 def load_risk_cases_from_paired_trace_reports(
@@ -153,6 +155,10 @@ def apply_risk_case_weights(
         arrays.get("pairwise_weights", np.zeros(arrays["action_ids"].shape[0], dtype=np.float32)),
         dtype=np.float32,
     ).copy()
+    pairwise_reward_delta_targets = np.asarray(
+        arrays.get("pairwise_reward_delta_targets", np.zeros(arrays["action_ids"].shape[0], dtype=np.float32)),
+        dtype=np.float32,
+    ).copy()
     risk_case_matches = np.asarray(
         arrays.get("risk_case_matches", np.zeros(arrays["action_ids"].shape[0], dtype=np.bool_)),
         dtype=np.bool_,
@@ -194,9 +200,15 @@ def apply_risk_case_weights(
             and case.action_id is not None
             and int(case.baseline_action_id) != int(case.action_id)
         ):
+            delta_target = _pairwise_reward_delta_target(case)
+            if delta_target is not None and delta_target <= 0.0:
+                matched_cases += 1
+                matched_by[mode] = matched_by.get(mode, 0) + count
+                continue
             pairwise_preferred_action_ids[mask] = int(case.baseline_action_id)
             pairwise_avoided_action_ids[mask] = int(case.action_id)
             pairwise_weights[mask] = np.maximum(pairwise_weights[mask], 1.0)
+            pairwise_reward_delta_targets[mask] = np.maximum(pairwise_reward_delta_targets[mask], delta_target or 0.0)
             pairwise_cases += 1
         matched_cases += 1
         matched_by[mode] = matched_by.get(mode, 0) + count
@@ -205,7 +217,9 @@ def apply_risk_case_weights(
     arrays["pairwise_preferred_action_ids"] = pairwise_preferred_action_ids
     arrays["pairwise_avoided_action_ids"] = pairwise_avoided_action_ids
     arrays["pairwise_weights"] = pairwise_weights
+    arrays["pairwise_reward_delta_targets"] = pairwise_reward_delta_targets
     arrays["risk_case_matches"] = risk_case_matches
+    positive_deltas = pairwise_reward_delta_targets[pairwise_weights > 0.0]
     return RiskWeightReport(
         cases=len(cases),
         matched_cases=matched_cases,
@@ -215,6 +229,8 @@ def apply_risk_case_weights(
         matched_by=dict(sorted(matched_by.items())),
         pairwise_cases=pairwise_cases,
         pairwise_transitions=int(np.count_nonzero(pairwise_weights > 0.0)),
+        pairwise_delta_mean=float(np.mean(positive_deltas)) if positive_deltas.size > 0 else 0.0,
+        pairwise_delta_max=float(np.max(positive_deltas)) if positive_deltas.size > 0 else 0.0,
     )
 
 
@@ -229,6 +245,14 @@ def _episode_index_for_case(case: RiskCase, dataset_start_seed: Optional[int]) -
 
 def _case_key(case: RiskCase) -> tuple[int, int, Optional[int], Optional[int], str]:
     return (case.seed, case.seat, case.decision_index, case.action_id, ",".join(case.tags))
+
+
+def _pairwise_reward_delta_target(case: RiskCase) -> Optional[float]:
+    if case.reward is not None and case.baseline_reward is not None:
+        return max(0.0, float(case.baseline_reward) - float(case.reward))
+    if case.reward_delta is not None:
+        return max(0.0, -float(case.reward_delta))
+    return None
 
 
 def _int_or_none(value: Any) -> Optional[int]:
