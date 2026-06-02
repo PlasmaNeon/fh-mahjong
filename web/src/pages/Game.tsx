@@ -284,6 +284,7 @@ export default function Game() {
     const playerViews = useMemo(() => gameState.players.map((player: any) => ({
         seat: player.seat,
         seatWind: player.seatWind,
+        score: player.score ?? 0,
         closedHand: player.closedHand || [],
         handBackCount: player.handSize,
         showClosedHand: player.seat === mySeatId || (player.closedHand?.length ?? 0) > 0,
