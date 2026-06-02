@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import './ledger-theme.css';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../theme';
 
 function makeRoomId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -38,36 +37,31 @@ export default function CreateRoom() {
         }
     };
 
+    const meta =
+        copyState === 'copied' ? <span style={{ color: 'var(--accent)' }}>copied</span>
+        : copyState === 'failed' ? <span style={{ color: 'var(--danger)' }}>copy failed</span>
+        : undefined;
+
     return (
-        <div className="ledger-page">
-            <div className="ledger-shell">
-                <article className="ldg-page">
-                    <div className="ldg-page-head">
-                        <div>
-                            <h1 className="ldg-page-head__title">
-                                Private Room
-                                <small>生成房间链接</small>
-                            </h1>
-                        </div>
-                        <div className="ldg-page-head__nav">
-                            <Link to="/" className="ldg-link">Home</Link>
-                            <Link to="/play" className="ldg-link">Matchmaking →</Link>
-                        </div>
-                    </div>
+        <Page>
+            <Shell>
+                <Card>
+                    <PageHeader
+                        title="Private Room"
+                        subtitle="生成房间链接"
+                        nav={<>
+                            <TextLink to="/">Home</TextLink>
+                            <TextLink to="/play">Matchmaking →</TextLink>
+                        </>}
+                    />
 
-                    <section className="ldg-section">
-                        <div className="ldg-section-row">
-                            <h2 className="ldg-section-title">Share link</h2>
-                            {copyState === 'copied' && <span className="ldg-section-meta" style={{ color: 'var(--accent)' }}>copied</span>}
-                            {copyState === 'failed' && <span className="ldg-section-meta" style={{ color: 'var(--danger)' }}>copy failed</span>}
-                        </div>
-
-                        <div className="ldg-tools-row">
-                            <button className="ldg-btn ldg-btn--primary" onClick={handleCreateRoom}>
+                    <Section title="Share link" meta={meta}>
+                        <ToolsRow>
+                            <Button variant="primary" onClick={handleCreateRoom}>
                                 {roomId ? 'Create another link' : 'Generate link'}
-                            </button>
-                            {roomUrl && <Link to={`/room/${roomId}`} className="ldg-btn">Open Room →</Link>}
-                        </div>
+                            </Button>
+                            {roomUrl && <ButtonLink to={`/room/${roomId}`}>Open Room →</ButtonLink>}
+                        </ToolsRow>
 
                         <div className="ldg-input-row">
                             <input
@@ -76,16 +70,16 @@ export default function CreateRoom() {
                                 value={roomUrl}
                                 placeholder="Generate a room link first, then copy or open it."
                             />
-                            <button className="ldg-btn" onClick={handleCopy} disabled={!roomUrl}>Copy</button>
+                            <Button onClick={handleCopy} disabled={!roomUrl}>Copy</Button>
                         </div>
 
-                        <p className="ldg-note">
+                        <Note>
                             Send the link to friends. Everyone opens the same /room/… link and enters a name;
                             the host (first joiner) fills any empty seats with AI and starts when ready.
-                        </p>
-                    </section>
-                </article>
-            </div>
-        </div>
+                        </Note>
+                    </Section>
+                </Card>
+            </Shell>
+        </Page>
     );
 }

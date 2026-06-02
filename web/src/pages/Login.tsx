@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { getApiUrl } from '../config';
-import './ledger-theme.css';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Field, Note } from '../theme';
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -37,59 +37,31 @@ export default function Login() {
     };
 
     return (
-        <div className="ledger-page">
-            <div className="ledger-shell">
-                <article className="ldg-page">
-                    <div className="ldg-page-head">
-                        <div>
-                            <h1 className="ldg-page-head__title">
-                                Login
-                                <small>登录 · 奉化麻将</small>
-                            </h1>
-                        </div>
-                        <div className="ldg-page-head__nav">
-                            <Link to="/" className="ldg-link">Home</Link>
-                            <Link to="/room/new" className="ldg-link">Private room →</Link>
-                        </div>
-                    </div>
+        <Page>
+            <Shell>
+                <Card>
+                    <PageHeader
+                        title="Login"
+                        subtitle="登录 · 奉化麻将"
+                        nav={<>
+                            <TextLink to="/">Home</TextLink>
+                            <TextLink to="/room/new">Private room →</TextLink>
+                        </>}
+                    />
 
-                    <section className="ldg-section">
-                        <div className="ldg-section-row">
-                            <h2 className="ldg-section-title">
-                                Account access
-                                <small>Login for matchmaking, or register a new account.</small>
-                            </h2>
-                        </div>
+                    <Section title="Account access" subtitle="Login for matchmaking, or register a new account.">
+                        <Field label="Username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" />
+                        <Field label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" style={{ marginTop: '0.85rem' }} />
 
-                        <div className="ldg-field">
-                            <label className="ldg-field__label">Username</label>
-                            <input
-                                className="ldg-input"
-                                value={username}
-                                onChange={e => setUsername(e.target.value)}
-                                autoComplete="username"
-                            />
-                        </div>
-                        <div className="ldg-field" style={{ marginTop: '0.85rem' }}>
-                            <label className="ldg-field__label">Password</label>
-                            <input
-                                type="password"
-                                className="ldg-input"
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                                autoComplete="current-password"
-                            />
-                        </div>
+                        {error && <Note tone="error">{error}</Note>}
 
-                        {error && <p className="ldg-note ldg-note--err">{error}</p>}
-
-                        <div className="ldg-tools-row" style={{ marginTop: '1.1rem' }}>
-                            <button className="ldg-btn ldg-btn--primary" onClick={() => handleAuth(true)}>Login</button>
-                            <button className="ldg-btn" onClick={() => handleAuth(false)}>Register</button>
-                        </div>
-                    </section>
-                </article>
-            </div>
-        </div>
+                        <ToolsRow>
+                            <Button variant="primary" onClick={() => handleAuth(true)}>Login</Button>
+                            <Button onClick={() => handleAuth(false)}>Register</Button>
+                        </ToolsRow>
+                    </Section>
+                </Card>
+            </Shell>
+        </Page>
     );
 }

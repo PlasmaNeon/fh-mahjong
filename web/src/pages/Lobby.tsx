@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { getApiUrl } from '../config';
-import './ledger-theme.css';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../theme';
 
 export default function Lobby() {
     const [isQueuing, setIsQueuing] = useState(false);
@@ -50,57 +50,36 @@ export default function Lobby() {
     };
 
     return (
-        <div className="ledger-page">
-            <div className="ledger-shell">
-                <article className="ldg-page">
-                    <div className="ldg-page-head">
-                        <div>
-                            <h1 className="ldg-page-head__title">
-                                Play
-                                <small>实时匹配 · Hometown rules</small>
-                            </h1>
-                        </div>
-                        <div className="ldg-page-head__nav">
-                            <Link to="/" className="ldg-link">Home</Link>
-                            <Link to="/room/new" className="ldg-link">Private room →</Link>
-                        </div>
-                    </div>
+        <Page>
+            <Shell>
+                <Card>
+                    <PageHeader
+                        title="Play"
+                        subtitle="实时匹配 · Hometown rules"
+                        nav={<>
+                            <TextLink to="/">Home</TextLink>
+                            <TextLink to="/room/new">Private room →</TextLink>
+                        </>}
+                    />
 
-                    <section className="ldg-section">
-                        <div className="ldg-section-row">
-                            <h2 className="ldg-section-title">Matchmaking</h2>
-                            <span className="ldg-section-meta">{isConnected ? 'socket ready' : 'socket offline'}</span>
-                        </div>
-
-                        {error && <p className="ldg-note ldg-note--err">{error}</p>}
+                    <Section title="Matchmaking" meta={isConnected ? 'socket ready' : 'socket offline'}>
+                        {error && <Note tone="error">{error}</Note>}
 
                         {isQueuing ? (
-                            <p className="ldg-note">
+                            <Note>
                                 Searching for players… stay on this page; you'll jump into the match
                                 automatically once the room is ready.
-                            </p>
+                            </Note>
                         ) : (
-                            <div className="ldg-tools-row">
-                                <button
-                                    className="ldg-btn ldg-btn--primary"
-                                    disabled={!isConnected}
-                                    onClick={() => joinQueue('hometown')}
-                                >
-                                    Find Match
-                                </button>
-                                <button
-                                    className="ldg-btn"
-                                    disabled={!isConnected}
-                                    onClick={() => joinQueue('chongci-fh')}
-                                >
-                                    Quick Match · Chongci
-                                </button>
-                                <Link to="/room/new" className="ldg-btn">Private Room</Link>
-                            </div>
+                            <ToolsRow>
+                                <Button variant="primary" disabled={!isConnected} onClick={() => joinQueue('hometown')}>Find Match</Button>
+                                <Button disabled={!isConnected} onClick={() => joinQueue('chongci-fh')}>Quick Match · Chongci</Button>
+                                <ButtonLink to="/room/new">Private Room</ButtonLink>
+                            </ToolsRow>
                         )}
-                    </section>
-                </article>
-            </div>
-        </div>
+                    </Section>
+                </Card>
+            </Shell>
+        </Page>
     );
 }

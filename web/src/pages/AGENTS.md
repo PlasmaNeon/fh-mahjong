@@ -4,7 +4,7 @@
 
 ## Overview
 
-Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. Every non-game page (Home, Login, Lobby, CreateRoom, Table, Calc, Shanten) uses the shared "ledger" theme in `ledger-theme.css` (IBM Plex, off-white/ink surfaces, single teal accent, hairline rules, light/dark via `prefers-color-scheme`) — they `import './ledger-theme.css'` and compose the `.ledger-page` / `.ledger-shell` / `.ldg-page` / `.ldg-section` / `.ldg-btn` / `.ldg-input` class vocabulary. Only the live game/replay board (`Game.tsx`, `Replay.tsx` board, `MatchEndOverlay`) keeps the dark in-game theme. See `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
+Contains the top-level page components rendered by React Router. Routes: `/` Home, `/login`, `/play` matchmaking, `/room/new` link generator, `/room/:roomId` waiting room, `/match/:matchId` live game, `/replay/:matchId`, `/tools/calc`, `/tools/shanten`. Every non-game page uses the shared "ledger" theme from the `web/src/theme/` module (IBM Plex, off-white/ink, single teal accent, hairline rules, light/dark via `prefers-color-scheme`); the theme CSS is imported once globally in `main.tsx`. Menu pages (Home, Login, Lobby, CreateRoom, Table) compose the typed primitives exported from `../theme` (`Page`, `Card`, `Section`, `Button`, `Field`, …); Calc/Shanten use the theme's utility classes directly for their dense tool layouts. Only the live game/replay board (`Game.tsx`, `Replay.tsx` board, `MatchEndOverlay`) keeps the dark in-game theme. See `web/src/theme/AGENTS.md` and `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
 
 ## Key Files
 
@@ -51,7 +51,7 @@ Contains the top-level page components rendered by React Router. Routes: `/` Hom
   - Reuses the same fixed-stage scaling system as live play so replay seat lanes and discard lanes match the live board exactly
 
 - **Calc.tsx** — Typed Fenghua rules debugger for `/tools/calc`:
-  - Posts to `/api/v1/tools/calc`; uses the dedicated "ledger" theme (`import './ledger-theme.css'`, IBM Plex, single teal accent, hairline rules, light/dark via OS preference). Cross-links to `/tools/shanten`.
+  - Posts to `/api/v1/tools/calc`; uses the shared ledger theme via utility classes from `web/src/theme/` (imported globally). Cross-links to `/tools/shanten`.
   - Header language toggle switches the calculator UI between English and Chinese
   - Hybrid editor: canonical notation fields plus local tile palettes embedded directly into the closed-hand, win-tile, and wild-tile sections
   - Calculator palette tiles are intentionally larger and more widely spaced than normal hand tiles to reduce misclicks during hand composition
