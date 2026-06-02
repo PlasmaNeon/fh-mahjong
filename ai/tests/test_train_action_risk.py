@@ -10,6 +10,7 @@ from fh_mahjong_ai.risk_filter import RiskCase
 from fh_mahjong_ai.scripts.train_action_risk import (
     RiskTrainingConfig,
     balanced_batch_indices,
+    chongci_score_pressure,
     risk_targets,
     train_action_risk,
 )
@@ -65,6 +66,49 @@ def test_risk_targets_use_acting_seat_terminal_reward() -> None:
 
     assert labels.tolist() == [1.0, 0.0, 1.0]
     assert np.allclose(severities, [0.5, 0.0, 1.25])
+
+
+def test_score_pressure_risk_targets_use_visible_chongci_context() -> None:
+    scalars = np.zeros((3, 58), dtype=np.float32)
+    scalars[:, 42] = 1.0
+    scalars[0, 43] = 0.8
+    scalars[0, 46] = 0.7
+    scalars[0, 47] = 0.1
+    scalars[0, 48] = 0.2
+    scalars[0, 49] = 0.6
+    scalars[0, 57] = 0.5
+    scalars[1, 47] = 1.0
+    scalars[1, 48] = 1.0
+    scalars[2, 42] = 0.0
+    arrays = {
+        "seats": np.asarray([0, 0, 0], dtype=np.int16),
+        "scalars": scalars,
+        "action_ids": np.asarray([1, 1, 1], dtype=np.int64),
+        "terminal_rewards": np.asarray(
+            [
+                [-0.25, 0.0, 0.0, 0.0],
+                [-0.25, 0.0, 0.0, 0.0],
+                [-1.25, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+    }
+
+    pressure = chongci_score_pressure(arrays)
+    labels, severities = risk_targets(
+        arrays,
+        threshold=-1.0,
+        target_mode="score_pressure",
+        score_pressure_threshold=0.6,
+        score_pressure_weight=0.5,
+    )
+
+    assert pressure[0] > 0.6
+    assert pressure[1] < 0.6
+    assert labels.tolist() == [1.0, 0.0, 1.0]
+    assert severities[0] > 0.0
+    assert severities[1] == 0.0
+    assert severities[2] == 0.25
 
 
 def test_balanced_batch_indices_samples_both_classes() -> None:
