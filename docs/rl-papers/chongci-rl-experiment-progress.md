@@ -3697,6 +3697,83 @@ more matched counterfactual rows or a different target, such as explicit
 history-aware state risk and match-score trajectory features, before any serving
 guard should be retried.
 
+### Experiment: Larger Counterfactual Rows Plus Score-Pressure Risk Target
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427`
+
+Question:
+
+Can a larger paired-trace/data window plus a visible match-pressure risk target
+produce a better action-risk critic than terminal large-loss BCE or sparse
+paired reward-delta labels?
+
+Data:
+
+The remote job is generating fresh anchor transition shards for three new
+50-seed windows:
+
+```text
+564000:50
+574000:50
+584000:50
+```
+
+It also runs a paired trace over the same windows and all four seats, for
+`150 seeds x 4 seats = 600` paired episodes. This should produce substantially
+more exact `seed/seat/decision_index` matches than the previous 30-seed /
+120-pair trace.
+
+Training:
+
+`train_action_risk.py` now has:
+
+```text
+--target-mode terminal
+--target-mode score_pressure
+--score-pressure-threshold
+--score-pressure-weight
+```
+
+`score_pressure` keeps terminal large-loss positives, but also marks visible
+Chongci pressure states as risky when final reward is non-positive and the
+visible match-pressure score is high. The pressure score uses only deployed
+visible scalars:
+
+```text
+hand_progress
+leader_pressure
+large_loss_margin
+self_bust_margin
+opponent_large_loss_pressure
+public_threat
+```
+
+This is a risk-critic diagnostic target, not a policy-promotion objective.
+
+Evaluation:
+
+The remote script will:
+
+1. rebuild `build/libfh_mahjong_bridge.so`,
+2. generate the three matched anchor shards,
+3. run the 600-pair trace,
+4. write `reports/match_check.json`,
+5. train one score-pressure action-risk critic,
+6. calibrate it on the independent visible58 `calib16` shard.
+
+Decision:
+
+Still running.
+
+Interpretation:
+
+This branch deliberately changes the risk target instead of repeating another
+pairwise-margin or replay-weighting sweep. Promotion is not allowed from this
+run alone; the first pass only decides whether the risk critic has usable
+independent calibration.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:

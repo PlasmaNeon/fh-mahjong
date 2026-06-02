@@ -54,6 +54,9 @@ PAIRWISE_ARRAY_KEYS = (
 @dataclass(frozen=True)
 class RiskTrainingConfig:
     threshold: float = -1.0
+    target_mode: str = "terminal"
+    score_pressure_threshold: float = 0.6
+    score_pressure_weight: float = 0.5
     batch_size: int = 2048
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
@@ -113,7 +116,13 @@ def train_action_risk(
         risk_case_weight=risk_case_weight,
         risk_dataset_start_seeds=risk_dataset_start_seeds,
     )
-    labels, severities = risk_targets(arrays, threshold=config.threshold)
+    labels, severities = risk_targets(
+        arrays,
+        threshold=config.threshold,
+        target_mode=config.target_mode,
+        score_pressure_threshold=config.score_pressure_threshold,
+        score_pressure_weight=config.score_pressure_weight,
+    )
     positive_indices = np.flatnonzero(labels > 0.5).astype(np.int64)
     negative_indices = np.flatnonzero(labels <= 0.5).astype(np.int64)
     if positive_indices.size == 0 or negative_indices.size == 0:
@@ -282,12 +291,54 @@ def infer_env_config(arrays: dict[str, np.ndarray]) -> EnvConfig:
     )
 
 
-def risk_targets(arrays: dict[str, np.ndarray], threshold: float) -> tuple[np.ndarray, np.ndarray]:
+def risk_targets(
+    arrays: dict[str, np.ndarray],
+    threshold: float,
+    target_mode: str = "terminal",
+    score_pressure_threshold: float = 0.6,
+    score_pressure_weight: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
     seats = arrays["seats"].astype(np.int64, copy=False)
     row_indices = np.arange(seats.shape[0])
     returns = arrays["terminal_rewards"][row_indices, seats].astype(np.float32, copy=False)
-    labels = (returns <= float(threshold)).astype(np.float32)
+    terminal_labels = returns <= float(threshold)
     severities = np.maximum(float(threshold) - returns, 0.0).astype(np.float32)
+    normalized_mode = target_mode.lower()
+    if normalized_mode == "terminal":
+        labels = terminal_labels.astype(np.float32)
+        return labels, severities
+    if normalized_mode == "score_pressure":
+        pressure = chongci_score_pressure(arrays)
+        pressured_loss = (returns <= 0.0) & (pressure >= float(score_pressure_threshold))
+        labels = (terminal_labels | pressured_loss).astype(np.float32)
+        pressure_severity = np.maximum(-returns, 0.0).astype(np.float32) * pressure.astype(np.float32)
+        severities = severities + float(score_pressure_weight) * pressure_severity
+        return labels, severities.astype(np.float32, copy=False)
+    raise ValueError(f"unsupported action-risk target_mode={target_mode!r}")
+
+
+def chongci_score_pressure(arrays: dict[str, np.ndarray]) -> np.ndarray:
+    scalars = arrays.get("scalars")
+    rows = int(arrays["action_ids"].shape[0])
+    if scalars is None or scalars.ndim != 2 or scalars.shape[1] <= 57:
+        return np.zeros(rows, dtype=np.float32)
+    is_chongci = scalars[:, 42].astype(np.float32, copy=False)
+    hand_progress = scalars[:, 43].astype(np.float32, copy=False)
+    leader_pressure = scalars[:, 46].astype(np.float32, copy=False)
+    low_large_loss_margin = 1.0 - scalars[:, 47].astype(np.float32, copy=False)
+    low_bust_margin = 1.0 - scalars[:, 48].astype(np.float32, copy=False)
+    opponent_large_loss_pressure = scalars[:, 49].astype(np.float32, copy=False)
+    public_threat = scalars[:, 57].astype(np.float32, copy=False)
+    pressure = (
+        0.35 * low_large_loss_margin
+        + 0.20 * low_bust_margin
+        + 0.15 * leader_pressure
+        + 0.15 * opponent_large_loss_pressure
+        + 0.10 * public_threat
+        + 0.05 * hand_progress
+    )
+    pressure = np.clip(pressure, 0.0, 1.0)
+    return (pressure * np.clip(is_chongci, 0.0, 1.0)).astype(np.float32, copy=False)
     return labels, severities
 
 
@@ -514,6 +565,14 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--threshold", type=float, default=-1.0)
+    parser.add_argument(
+        "--target-mode",
+        choices=("terminal", "score_pressure"),
+        default="terminal",
+        help="Risk target definition. score_pressure adds visible Chongci match-pressure positives.",
+    )
+    parser.add_argument("--score-pressure-threshold", type=float, default=0.6)
+    parser.add_argument("--score-pressure-weight", type=float, default=0.5)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
     parser.add_argument("--severity-weight", type=float, default=0.2)
     parser.add_argument("--paired-trace-report", action="append", type=Path, default=[])
@@ -558,6 +617,9 @@ def main() -> None:
         init_checkpoint=args.init_checkpoint,
         config=RiskTrainingConfig(
             threshold=args.threshold,
+            target_mode=args.target_mode,
+            score_pressure_threshold=args.score_pressure_threshold,
+            score_pressure_weight=args.score_pressure_weight,
             batch_size=args.batch_size,
             learning_rate=args.lr,
             weight_decay=args.weight_decay,
