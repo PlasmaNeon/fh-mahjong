@@ -31,7 +31,6 @@ import {
   validateMeldShape,
   WIND_OPTIONS,
 } from './calcHelpers'
-import './ledger-theme.css'
 
 type InputErrors = {
   closedHand: string[]

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { game } from '../proto/game';
+import { Button, Note } from '../theme';
 
 type SeatConfig = game.ISeatConfig;
 type Difficulty = game.Difficulty;
@@ -44,32 +45,21 @@ export default function SeatCard(props: SeatCardProps) {
             {canEdit && (seat.kind === 'empty' || !seat.kind) && (
                 <div className="ldg-meld__actions">
                     {DIFFICULTY_OPTIONS.map(opt => (
-                        <button
-                            key={opt.value}
-                            type="button"
-                            className="ldg-btn"
-                            onClick={() => onAssignBot(seatIndex, opt.value)}
-                        >
+                        <Button key={opt.value} onClick={() => onAssignBot(seatIndex, opt.value)}>
                             Add AI · {opt.label}
-                        </button>
+                        </Button>
                     ))}
                 </div>
             )}
 
             {canEdit && seat.kind === 'bot' && (
                 <div className="ldg-meld__actions">
-                    <button
-                        type="button"
-                        className="ldg-btn ldg-btn--danger"
-                        onClick={() => onClearSeat(seatIndex)}
-                    >
-                        Remove AI
-                    </button>
+                    <Button variant="danger" onClick={() => onClearSeat(seatIndex)}>Remove AI</Button>
                 </div>
             )}
 
             {isHost && !canEdit && (
-                <p className="ldg-note" style={{ marginTop: '0.6rem' }}>Only the host can change seats.</p>
+                <Note style={{ marginTop: '0.6rem' }}>Only the host can change seats.</Note>
             )}
         </div>
     );

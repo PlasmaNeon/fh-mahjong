@@ -134,6 +134,7 @@ def compute_reward_calibration(
             probability_array,
             severity_array,
             threshold=float(large_loss_threshold),
+            action_ids=action_ids,
         )
         report["large_loss_calibration"]["risk_mode"] = _resolved_risk_mode(model, large_loss_risk_mode)
     return report
@@ -182,6 +183,7 @@ def _large_loss_report(
     probability: np.ndarray,
     severity_prediction: np.ndarray,
     threshold: float,
+    action_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
     labels = target <= float(threshold)
     label_float = labels.astype(np.float32)
@@ -215,6 +217,15 @@ def _large_loss_report(
         },
         "risk_bands": _risk_band_report(label_float, probability, severity_target),
     }
+    if action_ids is not None:
+        report["by_action_family"] = _large_loss_family_report(
+            action_ids,
+            labels,
+            label_float,
+            probability,
+            severity_target,
+            severity_prediction,
+        )
     return report
 
 
@@ -267,6 +278,48 @@ def _risk_band_report(labels: np.ndarray, probability: np.ndarray, severity_targ
             "large_loss_rate": float(np.mean(labels[mask])),
             "avg_probability": float(np.mean(probability[mask])),
             "avg_severity": float(np.mean(severity_target[mask])),
+        }
+    return report
+
+
+def _large_loss_family_report(
+    action_ids: np.ndarray,
+    labels: np.ndarray,
+    label_float: np.ndarray,
+    probability: np.ndarray,
+    severity_target: np.ndarray,
+    severity_prediction: np.ndarray,
+) -> dict[str, dict[str, Any]]:
+    buckets: dict[str, list[int]] = defaultdict(list)
+    for index, action_id in enumerate(action_ids.tolist()):
+        buckets[action_family(int(action_id))].append(index)
+
+    report: dict[str, dict[str, Any]] = {}
+    for family, indices in sorted(buckets.items()):
+        idx = np.asarray(indices, dtype=np.int64)
+        family_labels = labels[idx]
+        family_label_float = label_float[idx]
+        family_probability = probability[idx]
+        family_severity_target = severity_target[idx]
+        family_severity_prediction = severity_prediction[idx]
+        severity_error = family_severity_prediction - family_severity_target
+        report[family] = {
+            "count": int(idx.size),
+            "positive_count": int(np.count_nonzero(family_labels)),
+            "positive_rate": float(np.mean(family_label_float)) if idx.size else 0.0,
+            "probability": {
+                "mean": float(np.mean(family_probability)) if idx.size else 0.0,
+                "positive_mean": _masked_mean(family_probability, family_labels),
+                "negative_mean": _masked_mean(family_probability, ~family_labels),
+                "brier": float(np.mean(np.square(family_probability - family_label_float))) if idx.size else 0.0,
+                "auc": _binary_auc(family_label_float, family_probability),
+            },
+            "severity": {
+                "target_mean": float(np.mean(family_severity_target)) if idx.size else 0.0,
+                "prediction_mean": float(np.mean(family_severity_prediction)) if idx.size else 0.0,
+                "mae": float(np.mean(np.abs(severity_error))) if idx.size else 0.0,
+                "bias": float(np.mean(severity_error)) if idx.size else 0.0,
+            },
         }
     return report
 

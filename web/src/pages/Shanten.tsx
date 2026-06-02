@@ -19,7 +19,6 @@ import {
   TileValue,
   tileKey,
 } from './shantenHelpers'
-import './ledger-theme.css'
 
 type Lang = 'en' | 'zh'
 

@@ -32,6 +32,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `evaluate_policy_online()` / `evaluate_duplicate_seats_policy()` support non-model policy adapters such as Q-margin guards while preserving the same duplicate-seat metrics.
 - **src/fh_mahjong_ai/reward_calibration.py** — Offline Q/value calibration diagnostics against discounted terminal round payout targets, with action-family and target-sign breakdowns.
   - When `--large-loss-threshold` is supplied, reward calibration also reports large-loss probability/severity calibration for target-side risk experiments. It defaults to action-conditioned risk heads when available.
+  - Large-loss calibration includes per-action-family probability/severity diagnostics so tail-risk failures can be separated for discard, chii, pon, kan, win, pass, haitei, and unknown action ids.
 - **src/fh_mahjong_ai/risk_filter.py** — Utilities for extracting high-risk first-divergence cases from paired trace reports and applying per-transition sample weights plus optional pairwise preferred/avoided action labels and reward-delta targets.
 - **src/fh_mahjong_ai/paired_trace.py** — Paired online trace diagnostics for comparing two checkpoints on the same seed/seat schedule and recording first action-divergence contexts.
   - Observation summaries name Chongci score-pressure scalars for risk reports: leader pressure, large-loss safety margin, own bust safety, and opponent large-loss pressure.

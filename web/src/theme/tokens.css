@@ -1,0 +1,53 @@
+/* ---------- Font import ---------- */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap');
+
+/* ---------- Light defaults ---------- */
+:root {
+  --page:        #fafaf8;
+  --surface:     #ffffff;
+  --surface-2:   #f4f3ef;
+  --ink:         #171615;
+  --ink-2:       #3c3a36;
+  --ink-3:       #6b6863;
+  --ink-4:       #a09c95;
+  --rule:        #e3e1dc;
+  --rule-soft:   #ededea;
+  --accent:      #1b6d5a;
+  --accent-soft: #e7f0ed;
+  --danger:      #b03a2e;
+  --danger-soft: #fbeae8;
+  --btn-bg:        var(--page);
+  --btn-bg-hover:  #f0efeb;
+  --tile-face:     #ffffff;
+  --tile-shadow:   0 0 0 1px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.08);
+  --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.08), 0 3px 6px rgba(0,0,0,0.10);
+  --font:   "IBM Plex Sans", "IBM Plex Sans SC", system-ui, sans-serif;
+  --mono:   "IBM Plex Mono", ui-monospace, monospace;
+  --col:    680px;
+  --gutter: clamp(1.25rem, 4vw, 2rem);
+  --space:  2.25rem;
+}
+
+/* ---------- Dark mode (auto OS) ---------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page:        #121110;
+    --surface:     #1b1a18;
+    --surface-2:   #232220;
+    --ink:         #eae7e0;
+    --ink-2:       #c8c4bd;
+    --ink-3:       #8c8881;
+    --ink-4:       #5e5b56;
+    --rule:        #2b2926;
+    --rule-soft:   #232220;
+    --accent:      #5fbb9f;
+    --accent-soft: #1a2a25;
+    --danger:      #e5685c;
+    --danger-soft: #2a1816;
+    --btn-bg:        var(--surface);
+    --btn-bg-hover:  #2c2a27;
+    --tile-face:     #f3efe6;
+    --tile-shadow:   0 0 0 1px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.45);
+    --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.6),  0 5px 10px rgba(0,0,0,0.5);
+  }
+}

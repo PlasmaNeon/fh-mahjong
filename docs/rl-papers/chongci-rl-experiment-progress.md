@@ -3860,6 +3860,51 @@ threshold/weight sweep; it needs either action-family-specific calibration,
 later-trajectory labels, or a separate dataset split designed for tail-risk
 ranking rather than reusing the same anchor-only calibration shard.
 
+### Experiment: Action-Family Large-Loss Calibration Breakdown
+
+Run:
+
+Used the best score-pressure sweep checkpoint:
+
+```text
+/root/fh-mahjong-runs/chongci-scorepressure-sweep-20260602-010025/checkpoints/scorep_t060_w100/epoch_001.pt
+```
+
+Question:
+
+Is poor action-risk calibration global, or concentrated in specific decision
+families?
+
+Implementation:
+
+`reward_calibration.py` now includes
+`large_loss_calibration.by_action_family`, with per-family count, positive
+count, large-loss rate, probability AUC/Brier, and severity error.
+
+Result:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.5124  0.2650  0.6344
+discard 24,775  3,622 0.1462  0.5052  0.2772  0.4371
+kan      108     18    0.1667  0.5636  0.2785  0.8630
+pass     3,620   538   0.1486  0.5159  0.2551  0.4076
+pon      936     118   0.1261  0.5174  0.2578  0.5324
+win      759     76    0.1001  0.5316  0.2448  0.3667
+```
+
+Decision:
+
+Keep the reporting change. Do not promote or guard from this checkpoint.
+
+Interpretation:
+
+The calibration weakness is mainly a discard-scale problem because discard rows
+dominate the dataset and still have only `AUC 0.5052`. Smaller action families
+look somewhat better, but their sample counts are too small to justify a serving
+guard. The next target should focus on discard-specific later-trajectory labels
+or a more balanced calibration split, not global scalar pressure tuning.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:

@@ -81,6 +81,12 @@ def test_compute_reward_calibration_reports_errors(tmp_path: Path) -> None:
     assert report["large_loss_calibration"]["risk_mode"] == "action"
     assert 0.0 <= report["large_loss_calibration"]["probability"]["auc"] <= 1.0
     assert np.isfinite(report["large_loss_calibration"]["severity"]["mae"])
+    family_report = report["large_loss_calibration"]["by_action_family"]["discard"]
+    assert family_report["count"] == 6
+    assert family_report["positive_count"] > 0
+    assert 0.0 <= family_report["probability"]["auc"] <= 1.0
+    assert np.isfinite(family_report["probability"]["brier"])
+    assert np.isfinite(family_report["severity"]["mae"])
 
 
 def test_reward_calibration_script_writes_report(tmp_path: Path) -> None:
