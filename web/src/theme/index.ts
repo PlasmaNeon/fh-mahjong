@@ -1,6 +1,7 @@
 import './index.css'
 
 export { default as Page } from './components/Page'
+export { default as LoadingScreen } from './components/LoadingScreen'
 export { default as Shell } from './components/Shell'
 export { default as Card } from './components/Card'
 export { default as PageHeader } from './components/PageHeader'
