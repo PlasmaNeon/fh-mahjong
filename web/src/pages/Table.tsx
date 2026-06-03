@@ -71,21 +71,30 @@ export default function Table() {
 
     useEffect(() => { fetchTableState(); }, [fetchTableState]);
 
-    // Whether the server can route a seat to a trained RL agent. Best-effort:
-    // on failure we leave it hidden so the host only ever sees Heuristic.
+    // Whether the server can route a seat to a trained RL agent. Polled every
+    // 10s (the backend health check caches ~5s) so the option appears or
+    // disappears as the model server comes up or goes down, without a page
+    // refresh. Best-effort: on a transient error we keep the last known value.
     useEffect(() => {
         let cancelled = false;
-        (async () => {
+
+        const probe = async () => {
             try {
                 const res = await fetch(getApiUrl('/api/v1/config'));
                 if (!res.ok) return;
                 const data = await res.json();
                 if (!cancelled) setRlAgentAvailable(Boolean(data?.rlAgentAvailable));
             } catch {
-                // capability probe is optional; default keeps RL hidden
+                // capability probe is optional; keep the last known value
             }
-        })();
-        return () => { cancelled = true; };
+        };
+
+        probe();
+        const timer = window.setInterval(probe, 10000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
     }, []);
 
     useEffect(() => {
