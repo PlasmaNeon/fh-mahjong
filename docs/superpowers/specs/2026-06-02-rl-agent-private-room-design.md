@@ -188,6 +188,30 @@ frontend whether to enable or disable the option.
     `rlAgentAvailable` is false.
   - Seat label renders the correct text per difficulty.
 
+### 6. Backend — autostart the policy server (`cmd/server/policy_autostart.go`)
+
+So the RL agent connects on boot without a separate manual step, the Go server
+launches the Python policy server as a managed child process when it is using
+the local default endpoint:
+
+- `maybeStartPolicyServer(url)` runs `uv run --project ai fh-mj-serve-policy`
+  (overridable via `RL_AGENT_SERVE_CMD`), appending `--host`/`--port` derived
+  from the RL endpoint URL and `--checkpoint-id` from `RL_AGENT_CHECKPOINT_ID`
+  when set. The child runs in its own process group.
+- It is best-effort: disabled when `RL_AGENT_AUTOSTART=0`, skipped when the
+  launcher binary (`uv`) is absent or `AI_BOT_POLICY_URL` is set (operator runs
+  their own server), and never fatal. On any failure the RL option just stays
+  disabled, governed by the health check.
+- `installSignalCleanup` terminates the child process group on SIGINT/SIGTERM so
+  a Ctrl-C never orphans uv/python.
+- The existing health check + 10s frontend poll flip the option to enabled a few
+  seconds after the model finishes loading.
+
+**Caveat:** autostart targets local/dev runs where `uv` and the `ai/` project
+are present. The production Docker image is Go-only (no Python), so the child
+won't launch there — deploy the policy server separately and point
+`AI_BOT_POLICY_URL` at it.
+
 ## Out of Scope
 
 - A separate trained endpoint for the private room (reuses `AI_BOT_POLICY_URL`).
@@ -195,3 +219,5 @@ frontend whether to enable or disable the option.
 - Choosing among multiple checkpoints from the UI (the served checkpoint is set
   when `serve_policy.py` starts).
 - Standing up new serving infrastructure (already exists).
+- In-process (Go-native) inference; the model still runs as a Python process,
+  now supervised by the Go server in local/dev runs.

@@ -105,6 +105,14 @@ func main() {
 	rlHealth := remote.NewHealthChecker(rlPolicyURL)
 	matchmaker.RLAgentAvailable = rlHealth.Healthy
 	log.Printf("Private-room RL agent endpoint: %s (offered when reachable)", rlPolicyURL)
+
+	// When using the local default endpoint, bring the policy server up as a
+	// managed child process so the RL agent connects automatically on boot.
+	// Skipped when the operator points AI_BOT_POLICY_URL at their own server.
+	if explicitPolicyURL == "" {
+		installSignalCleanup(maybeStartPolicyServer(rlPolicyURL))
+	}
+
 	go matchmaker.StartQueueWatcher("hometown")
 	go matchmaker.StartQueueWatcher("chongci-fh")
 
