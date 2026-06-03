@@ -36,11 +36,21 @@ way to pick the trained agent per seat.
 
 - **Name:** UI label **"RL Agent"**, proto enum `DIFFICULTY_RL`.
 - **Availability:** **Hide unless available.** The option is only offered (and
-  only accepted by the seat endpoint) when the server has a trained endpoint
-  configured. Availability is a server-wide capability, not per-room.
-- **Endpoint reuse:** Reuse the existing `AI_BOT_POLICY_URL` as the single
-  switch. The RL seat and matchmaking bots point at the same trained endpoint;
-  no separate private-room endpoint.
+  only accepted by the seat endpoint) when the trained policy endpoint is
+  actually reachable. Availability is a server-wide capability, not per-room.
+- **Default endpoint + health check (enabled by default):** The RL endpoint
+  defaults to `http://127.0.0.1:8765/act` (serve_policy.py's default) when
+  `AI_BOT_POLICY_URL` is unset, so the option works out of the box in local
+  dev. Availability is determined by a cached probe of the endpoint's
+  `GET /healthz`, so defaulting the URL is safe even when no model server is
+  running — the option simply stays hidden until one is up.
+- **Matchmaking unchanged:** The local default applies **only** to the
+  private-room RL agent. Room-wide matchmaking bots (`BotPolicyFactory`) remain
+  gated on an explicit `AI_BOT_POLICY_URL` and are unaffected.
+- **Graceful start:** Match start builds the RL seat's remote policy
+  unconditionally (it falls back to heuristic per-decision). The health gate
+  applies to UI visibility and seat assignment, not to starting a match, so a
+  transient outage never blocks an already-configured match.
 
 ## Design
 
@@ -69,8 +79,8 @@ Add to `Matchmaker`:
 
 - `SeatPolicyResolver func(pb.Difficulty) (bot.Policy, error)` — when nil,
   defaults to `bot.NewPolicy` (heuristic-only).
-- A way to report whether RL is available (e.g. `RLAgentAvailable() bool`),
-  true iff a trained endpoint is configured.
+- `RLAgentAvailable func() bool` — a health-checked probe (nil = unavailable)
+  consulted through the nil-safe `rlAgentAvailable()` helper.
 
 Provide a single internal helper the matchmaker uses everywhere a seat policy is
 built or validated:
@@ -84,27 +94,34 @@ func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty) (bot.Policy, error) {
 }
 ```
 
-In `cmd/server/main.go`, when `AI_BOT_POLICY_URL` is set, install a resolver:
+In `cmd/server/main.go`, the RL endpoint is `AI_BOT_POLICY_URL` if set, else the
+local default `http://127.0.0.1:8765/act`. A resolver is always installed:
 
 - `DIFFICULTY_RL` → `remote.NewHTTPPolicy(url)` (heuristic fallback built in).
 - everything else → `bot.NewPolicy(d)`.
 
-and mark RL as available. When the env var is unset, leave `SeatPolicyResolver`
-nil (heuristic-only) and RL unavailable. This mirrors the existing
-`BotPolicyFactory` injection pattern and keeps `bot.NewPolicy` pure.
+`RLAgentAvailable` is wired to `remote.NewHealthChecker(url).Healthy`, a cached
+probe of `GET /healthz`. The room-wide `BotPolicyFactory` (matchmaking bots)
+stays gated on an explicit `AI_BOT_POLICY_URL` and is left nil otherwise.
+
+### 2a. Backend — health checker (`bot/remote/health.go`)
+
+`HealthChecker` derives the `/healthz` URL from the `/act` endpoint, probes it
+with a short timeout, and caches the result for a few seconds. `Healthy()` is
+nil-safe and concurrency-safe. A connection-refused result is immediate, so the
+default endpoint costs nothing when no model server is running.
 
 ### 3. Backend — wire the resolver into the private-room paths
 
-- **Start loop** (`api/matchmaker.go`, currently `bot.NewPolicy(s.Difficulty)`):
-  use `m.resolveSeatPolicy(s.Difficulty)`. A seat asking for RL is wired to the
-  remote policy when configured, errors otherwise.
-- **Seat validation** (`api/private_tables.go handlePrivateTableSeat`, currently
-  `bot.NewPolicy(req.Difficulty)`): use `s.Matchmaker.resolveSeatPolicy(...)`.
-  An RL seat is accepted only when RL is available; otherwise the handler
-  returns 400.
+- **Start loop** (`api/matchmaker.go`): use `m.resolveSeatPolicy(s.Difficulty)`.
+  An RL seat is built unconditionally (graceful — the remote policy falls back
+  per-decision), so a transient outage never blocks match start.
+- **Seat validation** (`api/private_tables.go handlePrivateTableSeat`): an RL
+  seat is rejected with 400 (`errRLAgentUnavailable`) unless
+  `rlAgentAvailable()` is currently true; other difficulties are validated via
+  `resolveSeatPolicy`.
 
-Existing matchmaking behavior (room-wide `BotPolicyFactory` from
-`AI_BOT_POLICY_URL`) is unchanged.
+Existing matchmaking behavior (room-wide `BotPolicyFactory`) is unchanged.
 
 ### 4. Backend — capabilities endpoint
 
@@ -114,9 +131,9 @@ New public route `GET /api/v1/config` returning:
 { "rlAgentAvailable": true }
 ```
 
-sourced from the matchmaker's RL-available signal. Public (no auth), alongside
-the other public `/api/v1` routes. This is what lets the frontend hide the
-option when no endpoint is configured.
+sourced from the matchmaker's health-checked `rlAgentAvailable()`. Public (no
+auth), alongside the other public `/api/v1` routes. This is what lets the
+frontend hide the option when the endpoint is not reachable.
 
 ### 5. Frontend — surface the option and label seats correctly
 
@@ -137,8 +154,8 @@ option when no endpoint is configured.
 2. `SeatCard` shows "Add AI · Heuristic" always; "Add AI · RL Agent" only when
    available.
 3. Host clicks "Add AI · RL Agent" → `POST /rooms/:id/seat` with
-   `difficulty = DIFFICULTY_RL` → server validates via `resolveSeatPolicy` (ok
-   because RL available) → seat stored as a bot with that difficulty.
+   `difficulty = DIFFICULTY_RL` → server confirms `rlAgentAvailable()` and
+   stores the seat as a bot with that difficulty.
 4. Host hits Start → matchmaker builds that seat's policy via
    `resolveSeatPolicy(DIFFICULTY_RL)` → remote HTTP policy → trained checkpoint,
    with heuristic fallback if a call fails.
@@ -147,8 +164,12 @@ option when no endpoint is configured.
 
 - RL requested while unavailable → `/seat` returns 400. (The button is not shown
   in that case anyway.)
-- Trained endpoint down mid-match → existing per-decision heuristic fallback in
+- Endpoint down at start → the seat is still built; the remote policy plays
+  heuristic per-decision. Start is never blocked.
+- Endpoint down mid-match → existing per-decision heuristic fallback in
   `bot/remote/http_policy.go` takes over; the match never stalls.
+- Model server starts after the host opened the room → the frontend fetches
+  `/api/v1/config` on mount, so a refresh surfaces the now-available option.
 
 ## Testing
 

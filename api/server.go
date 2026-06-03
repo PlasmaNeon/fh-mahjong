@@ -89,8 +89,7 @@ func (s *Server) setupRoutes() {
 // rendering. rlAgentAvailable controls whether the private room offers the
 // trained RL agent as a seat option.
 func (s *Server) handleConfig(c *gin.Context) {
-	rlAgentAvailable := s.Matchmaker != nil && s.Matchmaker.RLAgentAvailable
-	c.JSON(http.StatusOK, gin.H{"rlAgentAvailable": rlAgentAvailable})
+	c.JSON(http.StatusOK, gin.H{"rlAgentAvailable": s.Matchmaker.rlAgentAvailable()})
 }
 
 // StorePaipu saves paipu JSON to the in-memory store and DB (if available).

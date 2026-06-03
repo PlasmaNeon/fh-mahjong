@@ -60,7 +60,7 @@ func TestPrivateTableSeat_RLRejectedWhenUnavailable(t *testing.T) {
 func TestPrivateTableSeat_RLAcceptedWhenAvailable(t *testing.T) {
 	server := newPrivateTableTestServer()
 	server.Matchmaker.SeatPolicyResolver = rlTestResolver
-	server.Matchmaker.RLAgentAvailable = true
+	server.Matchmaker.RLAgentAvailable = func() bool { return true }
 
 	hostToken := privateTableAuthToken(t, 101, "alice")
 	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/rl-on/join", hostToken, map[string]any{})
@@ -83,6 +83,27 @@ func TestPrivateTableSeat_RLAcceptedWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestPrivateTableSeat_RLRejectedWhenUnhealthy(t *testing.T) {
+	// Resolver is installed (so the policy is buildable), but the health probe
+	// reports the endpoint down. The seat assignment must still be rejected so
+	// the host can't pick an agent that isn't actually reachable.
+	server := newPrivateTableTestServer()
+	server.Matchmaker.SeatPolicyResolver = rlTestResolver
+	server.Matchmaker.RLAgentAvailable = func() bool { return false }
+
+	hostToken := privateTableAuthToken(t, 101, "alice")
+	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/rl-down/join", hostToken, map[string]any{})
+
+	recorder, _ := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/rl-down/seat", hostToken, map[string]any{
+		"seat":       1,
+		"kind":       "bot",
+		"difficulty": int(pb.Difficulty_DIFFICULTY_RL),
+	})
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 assigning RL seat while unhealthy, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestHandleConfig_DefaultUnavailable(t *testing.T) {
 	server := newPrivateTableTestServer()
 
@@ -97,7 +118,7 @@ func TestHandleConfig_DefaultUnavailable(t *testing.T) {
 
 func TestHandleConfig_Available(t *testing.T) {
 	server := newPrivateTableTestServer()
-	server.Matchmaker.RLAgentAvailable = true
+	server.Matchmaker.RLAgentAvailable = func() bool { return true }
 
 	recorder, body := doPrivateTableRequest(t, server, http.MethodGet, "/api/v1/config", "", nil)
 	if recorder.Code != http.StatusOK {
