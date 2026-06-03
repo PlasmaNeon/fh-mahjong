@@ -24,6 +24,30 @@ func TestHostPortFromURL(t *testing.T) {
 	}
 }
 
+func TestRLEndpointURL(t *testing.T) {
+	cases := []struct {
+		name          string
+		rlOverride    string
+		botPolicyURL  string
+		wantEndpoint  string
+		wantLocalDflt bool
+	}{
+		{"local default", "", "", defaultRLPolicyURL, true},
+		{"follows bot policy url", "", "http://bot:9/act", "http://bot:9/act", false},
+		{"rl override wins", "http://policy:8765/act", "http://bot:9/act", "http://policy:8765/act", false},
+		{"rl override without bot url", "http://policy:8765/act", "", "http://policy:8765/act", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ep, local := rlEndpointURL(c.rlOverride, c.botPolicyURL)
+			if ep != c.wantEndpoint || local != c.wantLocalDflt {
+				t.Fatalf("rlEndpointURL(%q,%q) = (%q,%v), want (%q,%v)",
+					c.rlOverride, c.botPolicyURL, ep, local, c.wantEndpoint, c.wantLocalDflt)
+			}
+		})
+	}
+}
+
 func TestEnvBool(t *testing.T) {
 	cases := map[string]bool{
 		"":      true, // unset -> fallback(true)

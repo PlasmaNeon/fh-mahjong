@@ -15,6 +15,20 @@ import (
 // when RL_AGENT_CHECKPOINT_ID is set, --checkpoint-id.
 const defaultPolicyServeCmd = "uv run --project ai fh-mj-serve-policy"
 
+// rlEndpointURL picks the private-room RL endpoint and reports whether it is the
+// local default (the only case eligible for child-process autostart). An
+// explicit RL override (RL_AGENT_POLICY_URL) wins, then AI_BOT_POLICY_URL, then
+// the local default.
+func rlEndpointURL(rlOverride, botPolicyURL string) (endpoint string, isLocalDefault bool) {
+	if rlOverride != "" {
+		return rlOverride, false
+	}
+	if botPolicyURL != "" {
+		return botPolicyURL, false
+	}
+	return defaultRLPolicyURL, true
+}
+
 // maybeStartPolicyServer launches the Python policy server as a managed child
 // process so the private-room RL agent is available without a separate manual
 // step. It returns a cleanup func (terminate the child) or nil when nothing was

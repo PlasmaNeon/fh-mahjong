@@ -1,0 +1,22 @@
+# Keep build contexts lean and free of host-only artifacts.
+.git
+.gitignore
+
+# Node deps (the frontend image runs `npm install`). Do NOT ignore web/dist:
+# the Go backend embeds it via //go:embed dist/*, so it must stay in context.
+**/node_modules
+
+# Python virtualenvs, caches, and local ML tracking
+**/.venv
+**/__pycache__
+**/*.pyc
+ai/mlruns
+ai/mlartifacts
+ai/mlflow.db
+
+# Local binaries / scratch
+/server
+*.output
+
+# Docs and specs are not needed at build time
+docs

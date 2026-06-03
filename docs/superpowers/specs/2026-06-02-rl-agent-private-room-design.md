@@ -209,8 +209,30 @@ the local default endpoint:
 
 **Caveat:** autostart targets local/dev runs where `uv` and the `ai/` project
 are present. The production Docker image is Go-only (no Python), so the child
-won't launch there — deploy the policy server separately and point
-`AI_BOT_POLICY_URL` at it.
+won't launch there — use the containerized policy service below instead.
+
+### 7. Containerized full stack (`ai/Dockerfile`, `docker-compose.yml`)
+
+For a fully wired container stack, a `policy` service runs the Python policy
+server and the Go `server` service is pointed at it:
+
+- `ai/Dockerfile` — `python:3.12-slim` + `uv sync --frozen` from `ai/uv.lock`;
+  entrypoint `fh-mj-serve-policy --host 0.0.0.0 --port 8765`. The checkpoint is
+  **not** baked in (the repo only ships the manifest, which references
+  training-box paths); compose mounts a host checkpoint dir and passes
+  `--manifest`/`--checkpoint`.
+- `docker-compose.yml` — `policy` (profile `rl`/`full`) mounts
+  `${RL_CHECKPOINT_DIR}` → `/checkpoints:ro`, has a `/healthz` healthcheck, and
+  publishes 8765. `server` (profile `full`) builds the Go image and sets
+  `RL_AGENT_POLICY_URL=http://policy:8765/act` + `RL_AGENT_AUTOSTART=0`. The
+  default `docker compose up` is unchanged (db + redis only);
+  `docker compose --profile full up` brings up the wired stack.
+- A new env var **`RL_AGENT_POLICY_URL`** points only the RL path at a dedicated
+  policy server, independent of `AI_BOT_POLICY_URL` — so matchmaking-bot behavior
+  stays unchanged. Endpoint precedence: `RL_AGENT_POLICY_URL` →
+  `AI_BOT_POLICY_URL` → local default (the only case that autostarts).
+- `.dockerignore` keeps build contexts lean (excludes `node_modules`, venvs,
+  mlflow runs) while preserving `web/dist` for the Go `//go:embed`.
 
 ## Out of Scope
 

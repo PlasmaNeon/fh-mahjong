@@ -88,10 +88,12 @@ func main() {
 		}
 	}
 
-	rlPolicyURL := explicitPolicyURL
-	if rlPolicyURL == "" {
-		rlPolicyURL = defaultRLPolicyURL
-	}
+	// RL endpoint for the private-room agent. RL_AGENT_POLICY_URL points it at a
+	// dedicated policy server (e.g. the docker-compose `policy` service) without
+	// routing matchmaking bots through it; otherwise it follows AI_BOT_POLICY_URL,
+	// and finally the local default that the Go server can autostart.
+	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
+	rlPolicyURL, rlIsLocalDefault := rlEndpointURL(rlOverride, explicitPolicyURL)
 	// Let private-room hosts assign a trained RL agent per seat. The remote
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
@@ -108,8 +110,9 @@ func main() {
 
 	// When using the local default endpoint, bring the policy server up as a
 	// managed child process so the RL agent connects automatically on boot.
-	// Skipped when the operator points AI_BOT_POLICY_URL at their own server.
-	if explicitPolicyURL == "" {
+	// Skipped when an external endpoint is configured (AI_BOT_POLICY_URL or
+	// RL_AGENT_POLICY_URL) — e.g. the docker-compose `policy` service.
+	if rlIsLocalDefault {
 		installSignalCleanup(maybeStartPolicyServer(rlPolicyURL))
 	}
 
