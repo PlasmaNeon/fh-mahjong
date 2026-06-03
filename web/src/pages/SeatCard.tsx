@@ -25,17 +25,15 @@ function difficultyLabel(difficulty: Difficulty | number | null | undefined): st
     return DIFFICULTY_LABELS[Number(difficulty ?? 0)] ?? 'Heuristic';
 }
 
-// The RL Agent option is only offered when the server has a trained policy
-// endpoint configured (surfaced via GET /api/v1/config). Heuristic is always
-// available.
-function difficultyOptions(rlAgentAvailable: boolean): Array<{ value: Difficulty; label: string }> {
-    const options: Array<{ value: Difficulty; label: string }> = [
-        { value: game.Difficulty.DIFFICULTY_HEURISTIC, label: 'Heuristic' },
+// Heuristic is always available. The RL Agent option is always shown so hosts
+// know it exists, but it stays disabled until the trained policy endpoint is
+// reachable (surfaced via GET /api/v1/config, polled by the room page so it
+// enables/disables live as the model server comes up or goes down).
+function difficultyOptions(rlAgentAvailable: boolean): Array<{ value: Difficulty; label: string; disabled: boolean }> {
+    return [
+        { value: game.Difficulty.DIFFICULTY_HEURISTIC, label: 'Heuristic', disabled: false },
+        { value: game.Difficulty.DIFFICULTY_RL, label: 'RL Agent', disabled: !rlAgentAvailable },
     ];
-    if (rlAgentAvailable) {
-        options.push({ value: game.Difficulty.DIFFICULTY_RL, label: 'RL Agent' });
-    }
-    return options;
 }
 
 const SEAT_LABEL = ['East', 'South', 'West', 'North'];
@@ -64,7 +62,12 @@ export default function SeatCard(props: SeatCardProps) {
             {canEdit && (seat.kind === 'empty' || !seat.kind) && (
                 <div className="ldg-meld__actions">
                     {difficultyOptions(rlAgentAvailable).map(opt => (
-                        <Button key={opt.value} onClick={() => onAssignBot(seatIndex, opt.value)}>
+                        <Button
+                            key={opt.value}
+                            disabled={opt.disabled}
+                            title={opt.disabled ? 'RL agent offline — start the model server to enable' : undefined}
+                            onClick={() => onAssignBot(seatIndex, opt.value)}
+                        >
                             Add AI · {opt.label}
                         </Button>
                     ))}

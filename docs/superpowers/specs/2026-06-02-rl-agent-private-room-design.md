@@ -6,8 +6,8 @@
 ## Goal
 
 Let a private-room host assign a **trained RL agent** to a seat, alongside the
-existing rule-based **Heuristic** bot. The option appears only when the server
-is configured with a trained-policy endpoint.
+existing rule-based **Heuristic** bot. The option is always shown so hosts know
+it exists, but it is **disabled** until the trained-policy endpoint is reachable.
 
 ## Background
 
@@ -35,9 +35,11 @@ way to pick the trained agent per seat.
 ## Decisions
 
 - **Name:** UI label **"RL Agent"**, proto enum `DIFFICULTY_RL`.
-- **Availability:** **Hide unless available.** The option is only offered (and
-  only accepted by the seat endpoint) when the trained policy endpoint is
-  actually reachable. Availability is a server-wide capability, not per-room.
+- **Availability:** **Always shown, disabled when unavailable.** The "Add AI ·
+  RL Agent" button always appears (so hosts know the option exists) but is
+  greyed out and unclickable until the trained policy endpoint is reachable; the
+  seat endpoint still rejects RL assignment while unavailable. Availability is a
+  server-wide capability, not per-room.
 - **Default endpoint + health check (enabled by default):** The RL endpoint
   defaults to `http://127.0.0.1:8765/act` (serve_policy.py's default) when
   `AI_BOT_POLICY_URL` is unset, so the option works out of the box in local
@@ -132,28 +134,29 @@ New public route `GET /api/v1/config` returning:
 ```
 
 sourced from the matchmaker's health-checked `rlAgentAvailable()`. Public (no
-auth), alongside the other public `/api/v1` routes. This is what lets the
-frontend hide the option when the endpoint is not reachable.
+auth), alongside the other public `/api/v1` routes. This is what tells the
+frontend whether to enable or disable the option.
 
 ### 5. Frontend — surface the option and label seats correctly
 
-- `web/src/pages/Table.tsx`: fetch `/api/v1/config` once on mount, hold
-  `rlAgentAvailable` in state, pass it down to each `SeatCard`.
+- `web/src/pages/Table.tsx`: poll `/api/v1/config` every 10s, hold
+  `rlAgentAvailable` in state, pass it down to each `SeatCard`. Polling means the
+  option enables/disables live as the model server comes up or goes down.
 - `web/src/pages/SeatCard.tsx`:
-  - `DIFFICULTY_OPTIONS` always includes `{ value: HEURISTIC, label: 'Heuristic' }`;
-    includes `{ value: DIFFICULTY_RL, label: 'RL Agent' }` only when
-    `rlAgentAvailable`. The existing map renders an "Add AI · RL Agent" button
-    next to "Add AI · Heuristic".
+  - `difficultyOptions` always includes both `Heuristic` and `RL Agent`; the
+    `RL Agent` entry carries `disabled: !rlAgentAvailable`. The map renders an
+    "Add AI · RL Agent" button next to "Add AI · Heuristic", greyed out with an
+    explanatory tooltip while unavailable.
   - Fix the seat display, which currently hardcodes `AI · Heuristic`, to show
     the seat's actual difficulty (`AI · Heuristic` / `AI · RL Agent`).
 
 ## Data Flow
 
-1. Host opens room → `Table.tsx` fetches `/api/v1/config` → learns
+1. Host opens room → `Table.tsx` polls `/api/v1/config` → learns
    `rlAgentAvailable`.
-2. `SeatCard` shows "Add AI · Heuristic" always; "Add AI · RL Agent" only when
-   available.
-3. Host clicks "Add AI · RL Agent" → `POST /rooms/:id/seat` with
+2. `SeatCard` shows "Add AI · Heuristic" always; "Add AI · RL Agent" always, but
+   disabled while unavailable (enables/disables live via polling).
+3. Host clicks the enabled "Add AI · RL Agent" → `POST /rooms/:id/seat` with
    `difficulty = DIFFICULTY_RL` → server confirms `rlAgentAvailable()` and
    stores the seat as a bot with that difficulty.
 4. Host hits Start → matchmaker builds that seat's policy via
@@ -162,14 +165,14 @@ frontend hide the option when the endpoint is not reachable.
 
 ## Error Handling
 
-- RL requested while unavailable → `/seat` returns 400. (The button is not shown
+- RL requested while unavailable → `/seat` returns 400. (The button is disabled
   in that case anyway.)
 - Endpoint down at start → the seat is still built; the remote policy plays
   heuristic per-decision. Start is never blocked.
 - Endpoint down mid-match → existing per-decision heuristic fallback in
   `bot/remote/http_policy.go` takes over; the match never stalls.
-- Model server starts after the host opened the room → the frontend fetches
-  `/api/v1/config` on mount, so a refresh surfaces the now-available option.
+- Model server comes up or goes down while the host is in the room → the 10s
+  `/api/v1/config` poll enables/disables the option live, no refresh needed.
 
 ## Testing
 
@@ -181,7 +184,8 @@ frontend hide the option when the endpoint is not reachable.
   - `GET /api/v1/config` reflects the RL-available flag in both states.
   - Existing `bot.NewPolicy` / heuristic tests unchanged.
 - **Frontend**
-  - `SeatCard` renders the "RL Agent" button only when `rlAgentAvailable`.
+  - `SeatCard` always renders the "RL Agent" button, disabled when
+    `rlAgentAvailable` is false.
   - Seat label renders the correct text per difficulty.
 
 ## Out of Scope
