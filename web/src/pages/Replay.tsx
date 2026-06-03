@@ -8,6 +8,7 @@ import type { Paipu } from './replayTypes'
 import { tileObjectFromId } from './replayTypes'
 import { ReplayEngine, ReplayState } from './replayEngine'
 import { TableBoard, TableRoundResultOverlay } from '../table/TableScene'
+import { LoadingScreen } from '../theme'
 
 /**
  * Compute calledDirection from seat layout:
@@ -100,11 +101,7 @@ export default function Replay() {
   }, [playing, engine])
 
   if (loading) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center">
-        <h2 className="text-2xl text-green-400 animate-pulse">Loading Replay...</h2>
-      </div>
-    )
+    return <LoadingScreen label="Loading replay" />
   }
 
   if (error || !engine || !paipu) {

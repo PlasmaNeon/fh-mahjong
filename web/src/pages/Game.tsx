@@ -9,6 +9,7 @@ import { getPrivateRoomToken } from './privateRoomSession';
 import { preloadAllTileSvgs } from '../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
+import { LoadingScreen } from '../theme';
 
 export default function Game() {
     const { matchId } = useParams();
@@ -45,19 +46,11 @@ export default function Game() {
     }, [gameState?.phase]);
 
     if (!gameState) {
-        return (
-            <div className="flex h-screen w-full items-center justify-center">
-                <h2 className="text-2xl text-green-400 animate-pulse">Waiting for Server to Deal...</h2>
-            </div>
-        );
+        return <LoadingScreen label="Waiting for server to deal" />;
     }
 
     if (mySeatId === null) {
-        return (
-            <div className="flex h-screen w-full items-center justify-center">
-                <h2 className="text-2xl text-blue-400 animate-pulse">Assigning Seat...</h2>
-            </div>
-        );
+        return <LoadingScreen label="Assigning seat" />;
     }
 
     // Identify who we are playing as

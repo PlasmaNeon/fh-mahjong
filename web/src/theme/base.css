@@ -9,6 +9,39 @@
   min-height: 100vh;
 }
 
+/* ---------- Loading screen ---------- */
+.ldg-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ldg-loading__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+.ldg-loading__spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--rule);
+  border-top-color: var(--accent);
+  animation: ldg-spin 0.9s linear infinite;
+}
+.ldg-loading__label {
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+@keyframes ldg-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ldg-loading__spinner { animation-duration: 2.4s; }
+}
+
 /* ---------- Shell ---------- */
 .ledger-shell {
   max-width: var(--col);
