@@ -320,6 +320,7 @@ message TrajectoryDataset {
 enum Difficulty {
   DIFFICULTY_UNSPECIFIED = 0;
   DIFFICULTY_HEURISTIC = 1;
+  DIFFICULTY_RL = 2; // trained reinforcement-learning agent, served via remote HTTP policy
 }
 
 message SeatConfig {

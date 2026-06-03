@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/plasma/fh-mahjong/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -298,7 +297,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 			return ErrPrivateTableAlreadyStarted
 		}
 		if req.Kind == "bot" {
-			if _, perr := bot.NewPolicy(req.Difficulty); perr != nil {
+			if _, perr := s.Matchmaker.resolveSeatPolicy(req.Difficulty); perr != nil {
 				return perr
 			}
 		}

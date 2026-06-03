@@ -10,6 +10,7 @@ import (
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/bot/remote"
 	"github.com/plasma/fh-mahjong/models"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -74,6 +75,15 @@ func main() {
 		matchmaker.BotPolicyFactory = func() bot.Policy {
 			return remote.NewHTTPPolicy(remotePolicyURL)
 		}
+		// Let private-room hosts assign a trained RL agent per seat. The
+		// remote HTTP policy already falls back to heuristic per-decision.
+		matchmaker.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) {
+			if d == pb.Difficulty_DIFFICULTY_RL {
+				return remote.NewHTTPPolicy(remotePolicyURL), nil
+			}
+			return bot.NewPolicy(d)
+		}
+		matchmaker.RLAgentAvailable = true
 	}
 	go matchmaker.StartQueueWatcher("hometown")
 	go matchmaker.StartQueueWatcher("chongci-fh")
