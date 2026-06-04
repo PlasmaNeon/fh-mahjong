@@ -1,9 +1,9 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { memo, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { getSuitOrder, getTileName, getTileSvgName } from '../utils/tileUtils'
 import { CenterHud, type CenterHudSeat } from './CenterHud'
+import { tileIdsEqual, useTileFlight } from './tileFlight'
 
 export type SeatLaneDirection = 'bottom' | 'right' | 'top' | 'left'
 
@@ -106,30 +106,6 @@ type TableBoardProps = {
   isWildTile?: (tile: TileLike) => boolean
   animateDiscardTileIds?: Set<number>
   callableDiscard?: { seat: number; tileId: number } | null
-}
-
-type TileMotionRole = 'hand' | 'drawn' | 'discard'
-
-type TileMotionDescriptor = {
-  tile: TileLike
-  direction: SeatLaneDirection
-  role: TileMotionRole
-}
-
-type TileRect = {
-  left: number
-  top: number
-  width: number
-  height: number
-}
-
-type FlyingTileAnimation = {
-  key: number
-  tile: TileLike
-  direction: SeatLaneDirection
-  fromRect: TileRect
-  toRect: TileRect
-  isWild: boolean
 }
 
 const WIND_KANJI = ['', '東', '南', '西', '北']
@@ -257,39 +233,11 @@ function computeStableDisplayOrder(
   return newOrder
 }
 
-function tileIdsEqual(left: unknown, right: unknown) {
-  if (left == null || right == null) return false
-  return String(left) === String(right)
-}
-
 function getDrawAnimationOffset(direction: SeatLaneDirection) {
   if (direction === 'bottom') return { x: 0, y: -30 }
   if (direction === 'top') return { x: 0, y: 30 }
   if (direction === 'left') return { x: 30, y: 0 }
   return { x: -30, y: 0 }
-}
-
-function getTileRotation(direction: SeatLaneDirection) {
-  if (direction === 'right') return -90
-  if (direction === 'top') return 180
-  if (direction === 'left') return 90
-  return 0
-}
-
-function toTileRect(rect: DOMRect): TileRect {
-  return {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-  }
-}
-
-function shouldAnimateTileTransfer(previousRole: TileMotionRole, currentRole: TileMotionRole) {
-  return (
-    ((previousRole === 'hand' || previousRole === 'drawn') && currentRole === 'discard') ||
-    (previousRole === 'drawn' && currentRole === 'hand')
-  )
 }
 
 function reorderMeldTiles(meld: MeldLike) {
@@ -312,82 +260,6 @@ function getOrderedOpenMelds(direction: SeatLaneDirection, melds: MeldLike[]) {
   // Preserve the pre-refactor side-seat rail flow from main: right/left rely on
   // their flex direction, while the bottom rail still needs newest melds nearest the hand.
   return direction === 'bottom' ? [...melds].reverse() : [...melds]
-}
-
-function FloatingTile({
-  animation,
-  onComplete,
-}: {
-  animation: FlyingTileAnimation
-  onComplete: () => void
-}) {
-  const svgName = getTileSvgName(animation.tile)
-  const rotation = getTileRotation(animation.direction)
-
-  return createPortal(
-    <motion.div
-      initial={{
-        left: animation.fromRect.left,
-        top: animation.fromRect.top,
-        width: animation.fromRect.width,
-        height: animation.fromRect.height,
-      }}
-      animate={{
-        left: animation.toRect.left,
-        top: animation.toRect.top,
-        width: animation.toRect.width,
-        height: animation.toRect.height,
-      }}
-      transition={{ duration: 0.22, ease: 'easeInOut' }}
-      onAnimationComplete={onComplete}
-      style={{
-        position: 'fixed',
-        pointerEvents: 'none',
-        zIndex: 500,
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <div style={{ width: '100%', height: '100%', transform: `rotate(${rotation}deg)` }}>
-          <div
-            className={`mahjong-tile ${animation.isWild ? 'wild-tile' : ''}`}
-            style={{
-              width: '100%',
-              height: '100%',
-              padding: 0,
-              border: 'none',
-              backgroundColor: 'transparent',
-              boxShadow: animation.isWild ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
-              position: 'relative',
-            }}
-          >
-            <img
-              src={`/Regular_shortnames/${svgName}`}
-              alt={getTileName(animation.tile)}
-              style={{
-                width: '85%',
-                height: '85%',
-                display: 'block',
-                position: 'absolute',
-                top: '7.5%',
-                left: '7.5%',
-                zIndex: 2,
-              }}
-              draggable="false"
-            />
-          </div>
-        </div>
-      </div>
-    </motion.div>,
-    document.body
-  )
 }
 
 function DiscardLane({
@@ -517,7 +389,10 @@ function SeatLane({
       <div className={`seat-lane seat-lane--${direction}`}>
         <div className={`seat-lane__closed seat-lane__closed--${direction} ${isBottomSeat ? 'seat-lane__closed--self' : ''}`}>
           <div className={`seat-hand seat-hand--${direction}`}>
-            <div className={`seat-hand__tiles seat-hand__tiles--${direction}`}>
+            <div
+              className={`seat-hand__tiles seat-hand__tiles--${direction}`}
+              data-seat-hand-origin={direction}
+            >
               {showClosedHand ? (
                 sortedBaseTiles.map((tile) => renderHandTile(tile))
               ) : (
@@ -603,90 +478,13 @@ export function TableBoard({
   callableDiscard = null,
 }: TableBoardProps) {
   const tableRef = useRef<HTMLDivElement | null>(null)
-  const previousTileMotionRef = useRef<{
-    locations: Map<number, TileMotionDescriptor>
-    rects: Map<number, TileRect>
-  } | null>(null)
-  const animationKeyRef = useRef(0)
-  const [flyingTiles, setFlyingTiles] = useState<FlyingTileAnimation[]>([])
 
   const seatViews = useMemo(() => players.map((player) => ({
     player,
     direction: getSeatDirection(player.seat, viewSeat),
   })), [players, viewSeat])
 
-  useLayoutEffect(() => {
-    const currentLocations = new Map<number, TileMotionDescriptor>()
-
-    seatViews.forEach(({ player, direction }) => {
-      const showClosedHand = player.showClosedHand !== false
-      if (showClosedHand) {
-        (player.closedHand || []).forEach((tile) => {
-          currentLocations.set(tile.id, {
-            tile,
-            direction,
-            role: tileIdsEqual(tile.id, player.drawnTileId) ? 'drawn' : 'hand',
-          })
-        })
-      }
-
-      (player.discards || []).forEach((tile) => {
-        currentLocations.set(tile.id, {
-          tile,
-          direction,
-          role: 'discard',
-        })
-      })
-    })
-
-    const currentRects = new Map<number, TileRect>()
-    tableRef.current?.querySelectorAll<HTMLElement>('[data-board-tile-id]').forEach((element) => {
-      const tileId = Number(element.dataset.boardTileId)
-      if (!Number.isNaN(tileId)) {
-        currentRects.set(tileId, toTileRect(element.getBoundingClientRect()))
-      }
-    })
-
-    const previousSnapshot = previousTileMotionRef.current
-    if (previousSnapshot) {
-      const nextAnimations: FlyingTileAnimation[] = []
-
-      currentLocations.forEach((currentTile, tileId) => {
-        const previousTile = previousSnapshot.locations.get(tileId)
-        if (!previousTile) return
-        if (previousTile.direction !== currentTile.direction) return
-        if (!shouldAnimateTileTransfer(previousTile.role, currentTile.role)) return
-
-        const fromRect = previousSnapshot.rects.get(tileId)
-        const toRect = currentRects.get(tileId)
-        if (!fromRect || !toRect) return
-
-        const travelDistance = Math.hypot(toRect.left - fromRect.left, toRect.top - fromRect.top)
-        if (travelDistance < 4) return
-
-        animationKeyRef.current += 1
-        nextAnimations.push({
-          key: animationKeyRef.current,
-          tile: currentTile.tile,
-          direction: currentTile.direction,
-          fromRect,
-          toRect,
-          isWild: isWildTile(currentTile.tile),
-        })
-      })
-
-      if (nextAnimations.length > 0) {
-        setFlyingTiles((existing) => [...existing, ...nextAnimations])
-      }
-    }
-
-    previousTileMotionRef.current = {
-      locations: currentLocations,
-      rects: currentRects,
-    }
-  }, [isWildTile, seatViews])
-
-  const hiddenTileIds = new Set(flyingTiles.map((animation) => animation.tile.id))
+  const { hiddenTileIds, flights } = useTileFlight({ seatViews, isWildTile, tableRef })
 
   return (
     <div className="mahjong-table" ref={tableRef}>
@@ -742,15 +540,7 @@ export function TableBoard({
         />
       ))}
 
-      {flyingTiles.map((animation) => (
-        <FloatingTile
-          key={animation.key}
-          animation={animation}
-          onComplete={() => {
-            setFlyingTiles((existing) => existing.filter((item) => item.key !== animation.key))
-          }}
-        />
-      ))}
+      {flights}
     </div>
   )
 }
