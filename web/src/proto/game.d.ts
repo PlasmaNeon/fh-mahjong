@@ -2385,7 +2385,8 @@ export namespace game {
     /** Difficulty enum. */
     enum Difficulty {
         DIFFICULTY_UNSPECIFIED = 0,
-        DIFFICULTY_HEURISTIC = 1
+        DIFFICULTY_HEURISTIC = 1,
+        DIFFICULTY_RL = 2
     }
 
     /** Properties of a SeatConfig. */

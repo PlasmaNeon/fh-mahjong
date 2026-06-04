@@ -60,6 +60,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
 		v1.POST("/auth/guest", authHandler.GuestLogin)
+		v1.GET("/config", s.handleConfig)
 		v1.POST("/tools/calc", s.handleCalc)
 		v1.POST("/tools/shanten", s.handleShanten)
 		v1.GET("/replays/:matchId", s.handleGetPaipu)
@@ -82,6 +83,13 @@ func (s *Server) setupRoutes() {
 	}
 
 	s.setupFrontendRoutes()
+}
+
+// handleConfig exposes server-wide capability flags the frontend needs before
+// rendering. rlAgentAvailable controls whether the private room offers the
+// trained RL agent as a seat option.
+func (s *Server) handleConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"rlAgentAvailable": s.Matchmaker.rlAgentAvailable()})
 }
 
 // StorePaipu saves paipu JSON to the in-memory store and DB (if available).

@@ -55,6 +55,35 @@ go test ./...
 protoc --go_out=. --go_opt=paths=source_relative proto/game.proto
 ```
 
+### Private-room RL agent
+
+The private room offers a trained **RL Agent** seat alongside the heuristic bot.
+Running `go run ./cmd/server` autostarts the local policy server
+(`uv run --project ai fh-mj-serve-policy`); the option enables itself once the
+model is healthy. Set `RL_AGENT_AUTOSTART=0` to opt out.
+
+For the full containerized stack, provide a checkpoint and use the `full`
+profile:
+```bash
+RL_CHECKPOINT_DIR=/abs/path/to/checkpoints RL_CHECKPOINT_FILE=epoch_006.pt \
+  docker compose --profile full up
+```
+The model checkpoint is not in the repo — point `RL_CHECKPOINT_DIR` at a host
+directory containing your `.pt` file (see `.env.example`).
+
+**Switch models without restarting.** The policy server hot-swaps its checkpoint
+at runtime — no restart of the server or the Go backend. Use the CLI:
+```bash
+# show the model currently being served
+uv run --project ai fh-mj-reload-policy --status
+
+# switch to a different checkpoint
+uv run --project ai fh-mj-reload-policy --checkpoint /path/to/other.pt
+```
+(or `POST /reload {"checkpoint": "/path.pt"}` directly). A failed load — bad path
+or weights incompatible with the current model architecture — returns an error
+and keeps the current model serving.
+
 ## Rules Reference
 - [official_rules.md](official_rules.md) — Raw source (Fenghua blog transcription)
 - [rules.md](rules.md) — Synthesized scoring reference + Go implementation notes

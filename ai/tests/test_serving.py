@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.scripts.serve_policy import observation_from_json
+from fh_mahjong_ai.scripts.serve_policy import PolicyHolder, observation_from_json
 from fh_mahjong_ai.serving import CheckpointPolicy, run_bridge_serving_smoke
 from fh_mahjong_ai.storage import save_checkpoint
 from fh_mahjong_ai.types import Observation
@@ -58,6 +58,40 @@ def test_serving_smoke_uses_bridge_validation(tmp_path: Path) -> None:
 
     assert report["episodes"] == 2
     assert report["decisions"] > 0
+
+
+def test_policy_holder_hot_swaps_checkpoint(tmp_path: Path) -> None:
+    first = tmp_path / "a.pt"
+    second = tmp_path / "b.pt"
+    save_checkpoint(first, PolicyValueNet(EnvConfig(), ModelConfig()), step=1)
+    save_checkpoint(second, PolicyValueNet(EnvConfig(), ModelConfig()), step=2)
+
+    holder = PolicyHolder(
+        CheckpointPolicy.from_checkpoint(first),
+        manifest_path=tmp_path / "manifest.json",
+    )
+    assert holder.policy.checkpoint_step == 1
+
+    holder.reload(checkpoint=str(second))
+    assert holder.policy.checkpoint_step == 2
+    assert holder.policy.checkpoint_path == second
+
+
+def test_policy_holder_failed_reload_keeps_previous(tmp_path: Path) -> None:
+    good = tmp_path / "good.pt"
+    save_checkpoint(good, PolicyValueNet(EnvConfig(), ModelConfig()), step=5)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(good), manifest_path=tmp_path / "m.json")
+
+    try:
+        holder.reload(checkpoint=str(tmp_path / "does_not_exist.pt"))
+    except Exception:
+        pass
+    else:
+        raise AssertionError("expected reload of a missing checkpoint to fail")
+
+    # The previous model is still serving.
+    assert holder.policy.checkpoint_step == 5
+    assert holder.policy.checkpoint_path == good
 
 
 def test_observation_from_json_validates_shapes() -> None:

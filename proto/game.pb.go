@@ -280,6 +280,7 @@ type Difficulty int32
 const (
 	Difficulty_DIFFICULTY_UNSPECIFIED Difficulty = 0
 	Difficulty_DIFFICULTY_HEURISTIC   Difficulty = 1
+	Difficulty_DIFFICULTY_RL          Difficulty = 2 // trained reinforcement-learning agent, served via remote HTTP policy
 )
 
 // Enum value maps for Difficulty.
@@ -287,10 +288,12 @@ var (
 	Difficulty_name = map[int32]string{
 		0: "DIFFICULTY_UNSPECIFIED",
 		1: "DIFFICULTY_HEURISTIC",
+		2: "DIFFICULTY_RL",
 	}
 	Difficulty_value = map[string]int32{
 		"DIFFICULTY_UNSPECIFIED": 0,
 		"DIFFICULTY_HEURISTIC":   1,
+		"DIFFICULTY_RL":          2,
 	}
 )
 
@@ -2592,11 +2595,12 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x11PHASE_PLAYER_TURN\x10\x02\x12\x17\n" +
 	"\x13PHASE_WAIT_DISCARDS\x10\x03\x12\x13\n" +
 	"\x0fPHASE_ROUND_END\x10\x04\x12\x13\n" +
-	"\x0fPHASE_MATCH_END\x10\x05*B\n" +
+	"\x0fPHASE_MATCH_END\x10\x05*U\n" +
 	"\n" +
 	"Difficulty\x12\x1a\n" +
 	"\x16DIFFICULTY_UNSPECIFIED\x10\x00\x12\x18\n" +
-	"\x14DIFFICULTY_HEURISTIC\x10\x01*W\n" +
+	"\x14DIFFICULTY_HEURISTIC\x10\x01\x12\x11\n" +
+	"\rDIFFICULTY_RL\x10\x02*W\n" +
 	"\tMatchMode\x12\x1a\n" +
 	"\x16MATCH_MODE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12MATCH_MODE_CLASSIC\x10\x01\x12\x16\n" +
