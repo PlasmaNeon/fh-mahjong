@@ -17,12 +17,6 @@ export default function Game() {
     const { isConnected, socket, connect } = useSocket();
     const { gameState, mySeatId } = useGameState();
 
-    const previousDiscardIdsRef = useRef<Record<number, number[]>>({});
-    const autoFlowerRevealKeyRef = useRef<string>('');
-    const [isReady, setIsReady] = useState(false);
-    const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
-    const stageLayout = useGameStageLayout();
-
     useEffect(() => {
         if (!isConnected || !socket) {
             const storedToken = getPrivateRoomToken();
@@ -35,6 +29,37 @@ export default function Game() {
         }
     }, [isConnected, socket, navigate, connect]);
 
+    if (!gameState) {
+        return <LoadingScreen label="Waiting for server to deal" />;
+    }
+
+    if (mySeatId === null) {
+        return <LoadingScreen label="Assigning seat" />;
+    }
+
+    // Game data is present and our seat is assigned. Render the table in a
+    // dedicated component so its data-dependent hooks always run in the same
+    // order. Calling those hooks below these early returns (as before) violates
+    // the Rules of Hooks once gameState arrives — React throws "Rendered more
+    // hooks than during the previous render" and the whole page goes black.
+    return (
+        <GameTable
+            matchId={matchId}
+            navigate={navigate}
+            socket={socket}
+            gameState={gameState}
+            mySeatId={mySeatId}
+        />
+    );
+}
+
+function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
+    const previousDiscardIdsRef = useRef<Record<number, number[]>>({});
+    const autoFlowerRevealKeyRef = useRef<string>('');
+    const [isReady, setIsReady] = useState(false);
+    const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
+    const stageLayout = useGameStageLayout();
+
     // Reset ready state when a new round starts
     useEffect(() => {
         if (gameState?.phase !== 4) {
@@ -44,14 +69,6 @@ export default function Game() {
             setHasSubmittedInterrupt(false);
         }
     }, [gameState?.phase]);
-
-    if (!gameState) {
-        return <LoadingScreen label="Waiting for server to deal" />;
-    }
-
-    if (mySeatId === null) {
-        return <LoadingScreen label="Assigning seat" />;
-    }
 
     // Identify who we are playing as
     const myPlayer = gameState.players.find((p: any) => p.seat === mySeatId);
