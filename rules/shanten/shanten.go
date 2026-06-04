@@ -12,6 +12,17 @@ func ensureTables() {
 	once.Do(generateTables)
 }
 
+// Prewarm builds the shanten lookup tables if they have not been built yet.
+// The first table build is expensive (it enumerates every suit/honor hand
+// shape), so callers on a latency-sensitive path — notably the room's initial
+// BroadcastState — would otherwise pay the full cost inline, leaving the client
+// stuck on "Waiting for server to deal" until it finishes. Servers should call
+// this once at startup (off the request path) so the first real game is fast.
+// It is safe to call from multiple goroutines and is a no-op once warmed.
+func Prewarm() {
+	ensureTables()
+}
+
 func min8(a, b uint8) uint8 {
 	if a < b {
 		return a

@@ -10,6 +10,7 @@ import (
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/bot/remote"
 	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/rules/shanten"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -17,6 +18,16 @@ import (
 
 func main() {
 	log.Println("Booting Mahjong Server...")
+
+	// Build the shanten lookup tables off the critical path. The first call is
+	// slow (it enumerates every hand shape); doing it here at boot means the
+	// first game's initial BroadcastState doesn't block for ~15s, which would
+	// otherwise leave the client stuck on "Waiting for server to deal".
+	go func() {
+		start := time.Now()
+		shanten.Prewarm()
+		log.Printf("Shanten lookup tables ready in %v", time.Since(start))
+	}()
 
 	// Open DB connection: use DATABASE_URL if set, otherwise try local docker-compose defaults
 	var db *gorm.DB
