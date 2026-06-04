@@ -72,14 +72,17 @@ The model checkpoint is not in the repo — point `RL_CHECKPOINT_DIR` at a host
 directory containing your `.pt` file (see `.env.example`).
 
 **Switch models without restarting.** The policy server hot-swaps its checkpoint
-at runtime, so you don't restart the server (or the backend) to change models:
+at runtime — no restart of the server or the Go backend. Use the CLI:
 ```bash
-curl -X POST http://127.0.0.1:8765/reload \
-  -H 'Content-Type: application/json' \
-  -d '{"checkpoint": "/path/to/other.pt"}'
+# show the model currently being served
+uv run --project ai fh-mj-reload-policy --status
+
+# switch to a different checkpoint
+uv run --project ai fh-mj-reload-policy --checkpoint /path/to/other.pt
 ```
-A failed load (bad path or weights incompatible with the current model
-architecture) returns 400 and keeps the current model serving.
+(or `POST /reload {"checkpoint": "/path.pt"}` directly). A failed load — bad path
+or weights incompatible with the current model architecture — returns an error
+and keeps the current model serving.
 
 ## Rules Reference
 - [official_rules.md](official_rules.md) — Raw source (Fenghua blog transcription)

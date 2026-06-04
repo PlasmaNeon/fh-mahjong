@@ -244,6 +244,10 @@ the new policy after it loads successfully, so a bad path or architecture
 mismatch returns 400 and leaves the previous model serving. `/healthz` reports
 the active checkpoint and step.
 
+A thin CLI client, `fh-mj-reload-policy` (`scripts/reload_policy.py`, stdlib-only,
+no torch), wraps this: `--status` shows the active model and `--checkpoint`/
+`--checkpoint-id` swap it via `/reload`.
+
 ## Out of Scope
 
 - A separate trained endpoint for the private room (reuses `AI_BOT_POLICY_URL`).
