@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/models"
 	"github.com/plasma/fh-mahjong/web"
@@ -152,14 +153,24 @@ func (s *Server) setupFrontendRoutes() {
 	}
 	log.Printf("serving frontend SPA from %s", source)
 
+	// Compress text-based static assets (SVG tiles, JS/CSS bundles, wasm) on the
+	// way out. Applied ONLY to these static routes — never globally — so it can
+	// never interfere with the WebSocket upgrade (/api/v1/ws) or the binary
+	// protobuf API responses. The tile SVGs are ~3x smaller gzipped.
+	gz := gzip.Gzip(gzip.DefaultCompression)
+
 	// Register static asset directories as explicit Gin routes.
 	// These get correct MIME types and never fall through to NoRoute.
 	httpFS := http.FS(distFS)
 	if assetsFS, err := fs.Sub(distFS, "assets"); err == nil {
-		s.serveStaticSubdir("/assets", http.FS(assetsFS))
+		// Vite emits content-hashed filenames here, so they can be cached
+		// forever and treated as immutable.
+		s.serveStaticSubdir("/assets", http.FS(assetsFS), "public, max-age=31536000, immutable", gz)
 	}
 	if tileFacesFS, err := fs.Sub(distFS, "Regular_shortnames"); err == nil {
-		s.serveStaticSubdir("/Regular_shortnames", http.FS(tileFacesFS))
+		// Tile faces have stable (non-hashed) names, so cache for 30 days rather
+		// than forever; bump the path or filenames if the artwork changes.
+		s.serveStaticSubdir("/Regular_shortnames", http.FS(tileFacesFS), "public, max-age=2592000", gz)
 	}
 
 	// Serve individual root-level static files
@@ -167,7 +178,7 @@ func (s *Server) setupFrontendRoutes() {
 	for _, name := range rootFiles {
 		if _, err := fs.Stat(distFS, name); err == nil {
 			name := name // capture
-			s.Router.GET("/"+name, func(c *gin.Context) {
+			s.Router.GET("/"+name, gz, func(c *gin.Context) {
 				c.FileFromFS(name, httpFS)
 			})
 		}
@@ -192,26 +203,28 @@ func (s *Server) setupFrontendRoutes() {
 	})
 }
 
-func (s *Server) serveStaticSubdir(routePrefix string, fileSystem http.FileSystem) {
-	s.Router.GET(routePrefix+"/*filepath", func(c *gin.Context) {
+func (s *Server) serveStaticSubdir(routePrefix string, fileSystem http.FileSystem, cacheControl string, middleware ...gin.HandlerFunc) {
+	serve := func(c *gin.Context) {
 		relativePath := strings.TrimPrefix(c.Param("filepath"), "/")
 		if relativePath == "" {
 			c.Status(http.StatusNotFound)
 			return
 		}
 
-		c.FileFromFS(relativePath, fileSystem)
-	})
-
-	s.Router.HEAD(routePrefix+"/*filepath", func(c *gin.Context) {
-		relativePath := strings.TrimPrefix(c.Param("filepath"), "/")
-		if relativePath == "" {
-			c.Status(http.StatusNotFound)
-			return
+		// Long-lived caching so static assets (hashed JS/CSS bundles, tile face
+		// SVGs) are fetched once and then served from the browser cache instead
+		// of being re-downloaded on every page load / SPA navigation. Without
+		// this the ~48 tile SVGs (~1MB) are re-requested each time, which is
+		// noticeably slow from a distant deploy region.
+		if cacheControl != "" {
+			c.Header("Cache-Control", cacheControl)
 		}
-
 		c.FileFromFS(relativePath, fileSystem)
-	})
+	}
+
+	handlers := append(append([]gin.HandlerFunc{}, middleware...), serve)
+	s.Router.GET(routePrefix+"/*filepath", handlers...)
+	s.Router.HEAD(routePrefix+"/*filepath", handlers...)
 }
 
 func loadTrustedProxies() []string {
