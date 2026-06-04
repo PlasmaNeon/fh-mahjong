@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -105,12 +106,17 @@ func main() {
 	// and finally the local default that the Go server can autostart.
 	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
 	rlPolicyURL, rlIsLocalDefault := rlEndpointURL(rlOverride, explicitPolicyURL)
+	// Share one HTTP client (and its connection pool) across every RL seat the
+	// resolver creates, rather than letting each NewHTTPPolicy spin up its own.
+	// Reusing connections avoids socket churn/exhaustion when many RL seats or
+	// rooms start. 750ms matches the remote package's default per-call timeout.
+	rlHTTPClient := &http.Client{Timeout: 750 * time.Millisecond}
 	// Let private-room hosts assign a trained RL agent per seat. The remote
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
 	matchmaker.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
-			return remote.NewHTTPPolicy(rlPolicyURL), nil
+			return remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient)), nil
 		}
 		return bot.NewPolicy(d)
 	}
