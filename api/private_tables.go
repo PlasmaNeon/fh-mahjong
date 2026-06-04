@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
-	"github.com/plasma/fh-mahjong/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -298,7 +297,10 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 			return ErrPrivateTableAlreadyStarted
 		}
 		if req.Kind == "bot" {
-			if _, perr := bot.NewPolicy(req.Difficulty); perr != nil {
+			if req.Difficulty == pb.Difficulty_DIFFICULTY_RL && !s.Matchmaker.rlAgentAvailable() {
+				return errRLAgentUnavailable
+			}
+			if _, perr := s.Matchmaker.resolveSeatPolicy(req.Difficulty); perr != nil {
 				return perr
 			}
 		}
@@ -411,6 +413,7 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 }
 
 var errHostOnly = errors.New("only the host can modify seats")
+var errRLAgentUnavailable = errors.New("RL agent is not currently available")
 
 var ErrChongciConfigInvalid = errors.New("chongci config invalid")
 var ErrModeLocked = errors.New("cannot change mode after match has started")

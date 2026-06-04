@@ -111,6 +111,18 @@ type Matchmaker struct {
 	BotPolicyFactory func() bot.Policy
 	PaipuStore       func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 
+	// SeatPolicyResolver builds the bot.Policy for a private-room seat of the
+	// given difficulty. When nil, resolveSeatPolicy falls back to
+	// bot.NewPolicy (heuristic-only). cmd/server installs a resolver that maps
+	// DIFFICULTY_RL to the remote HTTP policy.
+	SeatPolicyResolver func(pb.Difficulty) (bot.Policy, error)
+
+	// RLAgentAvailable reports whether the trained RL agent can currently be
+	// offered as a seat option. cmd/server wires this to a health-checked
+	// probe of the policy endpoint, so the option only appears when a model
+	// server is actually reachable. Nil means unavailable.
+	RLAgentAvailable func() bool
+
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
 
@@ -133,6 +145,26 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		activePrivateTables: make(map[string]ActivePrivateTable),
 		configuringTables:   make(map[string]*PrivateTable),
 	}
+}
+
+// resolveSeatPolicy builds the bot.Policy for a private-room seat of the given
+// difficulty. It uses the injected SeatPolicyResolver when present (so a
+// DIFFICULTY_RL seat can route to the trained endpoint) and otherwise the
+// heuristic-only bot.NewPolicy. It is the single point used by both seat
+// validation and the match-start loop, so an unsupported difficulty (e.g.
+// DIFFICULTY_RL when no resolver is installed) is rejected consistently.
+func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty) (bot.Policy, error) {
+	if m.SeatPolicyResolver != nil {
+		return m.SeatPolicyResolver(d)
+	}
+	return bot.NewPolicy(d)
+}
+
+// rlAgentAvailable reports whether the trained RL agent can currently be
+// offered. It is nil-safe (both for the receiver and the probe) and consults
+// the health-checked RLAgentAvailable function installed by cmd/server.
+func (m *Matchmaker) rlAgentAvailable() bool {
+	return m != nil && m.RLAgentAvailable != nil && m.RLAgentAvailable()
 }
 
 // JoinQueue adds a user to the matchmaking queue
@@ -386,7 +418,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			case "human":
 				humanSeats[seat] = s.UserID
 			case "bot":
-				policy, perr := bot.NewPolicy(s.Difficulty)
+				policy, perr := m.resolveSeatPolicy(s.Difficulty)
 				if perr != nil {
 					return fmt.Errorf("seat %d: %w", i, perr)
 				}

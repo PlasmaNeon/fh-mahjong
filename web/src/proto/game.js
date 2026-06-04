@@ -7252,11 +7252,13 @@ export const game = $root.game = (() => {
      * @enum {number}
      * @property {number} DIFFICULTY_UNSPECIFIED=0 DIFFICULTY_UNSPECIFIED value
      * @property {number} DIFFICULTY_HEURISTIC=1 DIFFICULTY_HEURISTIC value
+     * @property {number} DIFFICULTY_RL=2 DIFFICULTY_RL value
      */
     game.Difficulty = (function() {
         const valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "DIFFICULTY_UNSPECIFIED"] = 0;
         values[valuesById[1] = "DIFFICULTY_HEURISTIC"] = 1;
+        values[valuesById[2] = "DIFFICULTY_RL"] = 2;
         return values;
     })();
 
@@ -7453,6 +7455,7 @@ export const game = $root.game = (() => {
                     return "difficulty: enum value expected";
                 case 0:
                 case 1:
+                case 2:
                     break;
                 }
             return null;
@@ -7490,6 +7493,10 @@ export const game = $root.game = (() => {
             case "DIFFICULTY_HEURISTIC":
             case 1:
                 message.difficulty = 1;
+                break;
+            case "DIFFICULTY_RL":
+            case 2:
+                message.difficulty = 2;
                 break;
             }
             return message;

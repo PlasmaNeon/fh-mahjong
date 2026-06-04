@@ -21,6 +21,7 @@ export default function Table() {
     const [error, setError] = useState('');
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
+    const [rlAgentAvailable, setRlAgentAvailable] = useState(false);
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
@@ -69,6 +70,32 @@ export default function Table() {
     }, [guestToken, roomId, handleAuthFailure]);
 
     useEffect(() => { fetchTableState(); }, [fetchTableState]);
+
+    // Whether the server can route a seat to a trained RL agent. Polled every
+    // 10s (the backend health check caches ~5s) so the option appears or
+    // disappears as the model server comes up or goes down, without a page
+    // refresh. Best-effort: on a transient error we keep the last known value.
+    useEffect(() => {
+        let cancelled = false;
+
+        const probe = async () => {
+            try {
+                const res = await fetch(getApiUrl('/api/v1/config'));
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) setRlAgentAvailable(Boolean(data?.rlAgentAvailable));
+            } catch {
+                // capability probe is optional; keep the last known value
+            }
+        };
+
+        probe();
+        const timer = window.setInterval(probe, 10000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, []);
 
     useEffect(() => {
         if (!socket || !isConnected) return;
@@ -340,6 +367,7 @@ export default function Table() {
                                     isHost={iAmHost}
                                     canEdit={iAmHost && seat.kind !== 'human'}
                                     hostUserId={hostUserId}
+                                    rlAgentAvailable={rlAgentAvailable}
                                     onAssignBot={(s, d) => mutateSeat(s, 'bot', d)}
                                     onClearSeat={s => mutateSeat(s, 'empty')}
                                 />
