@@ -234,6 +234,16 @@ server and the Go `server` service is pointed at it:
 - `.dockerignore` keeps build contexts lean (excludes `node_modules`, venvs,
   mlflow runs) while preserving `web/dist` for the Go `//go:embed`.
 
+### 8. Model hot-reload (`serve_policy.py`)
+
+The policy server holds the active policy in a thread-safe `PolicyHolder` and
+exposes `POST /reload` (`{"checkpoint": "/path.pt"}` or `{"checkpoint_id": ...}`)
+to swap the served model at runtime — no process or backend restart. Readers
+(`/act`, `/healthz`) take the current reference lock-free; a reload only swaps in
+the new policy after it loads successfully, so a bad path or architecture
+mismatch returns 400 and leaves the previous model serving. `/healthz` reports
+the active checkpoint and step.
+
 ## Out of Scope
 
 - A separate trained endpoint for the private room (reuses `AI_BOT_POLICY_URL`).

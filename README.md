@@ -71,6 +71,16 @@ RL_CHECKPOINT_DIR=/abs/path/to/checkpoints RL_CHECKPOINT_FILE=epoch_006.pt \
 The model checkpoint is not in the repo — point `RL_CHECKPOINT_DIR` at a host
 directory containing your `.pt` file (see `.env.example`).
 
+**Switch models without restarting.** The policy server hot-swaps its checkpoint
+at runtime, so you don't restart the server (or the backend) to change models:
+```bash
+curl -X POST http://127.0.0.1:8765/reload \
+  -H 'Content-Type: application/json' \
+  -d '{"checkpoint": "/path/to/other.pt"}'
+```
+A failed load (bad path or weights incompatible with the current model
+architecture) returns 400 and keeps the current model serving.
+
 ## Rules Reference
 - [official_rules.md](official_rules.md) — Raw source (Fenghua blog transcription)
 - [rules.md](rules.md) — Synthesized scoring reference + Go implementation notes
