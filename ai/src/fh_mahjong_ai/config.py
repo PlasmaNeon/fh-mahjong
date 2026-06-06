@@ -78,9 +78,17 @@ class DiscreteIQLConfig:
     pairwise_margin: float = 0.0
     pairwise_q_weight: float = 0.0
     pairwise_q_margin: float = 0.0
+    pairwise_reward_delta_weight: float = 0.0
+    pairwise_reward_delta_margin_scale: float = 0.0
+    pairwise_reward_delta_clip: float = 2.0
     large_loss_aux_weight: float = 0.0
     large_loss_severity_weight: float = 0.0
     large_loss_aux_detach: bool = False
+    large_loss_bc_weight: float = 0.0
+    external_risk_policy_weight: float = 0.0
+    external_risk_policy_threshold: float = 0.6
+    external_risk_policy_family: str = "all"
+    external_risk_policy_severity_weight: float = 0.0
 
 
 @dataclass

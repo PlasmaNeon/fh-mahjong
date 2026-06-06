@@ -15,6 +15,7 @@ from fh_mahjong_ai.evaluate import (
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import ActionChoice
 from fh_mahjong_ai.scripts.evaluate import parse_seed_windows
+from fh_mahjong_ai.scripts.evaluate_tail_constrained import parse_family_risk_increases
 from fh_mahjong_ai.types import Observation, StepResult, Transition
 
 
@@ -116,6 +117,13 @@ def test_parse_seed_windows_supports_non_contiguous_eval_windows() -> None:
     assert parse_seed_windows(["100:2", "200"], episodes=3, start_seed=10) == [100, 101, 200, 201, 202]
 
 
+def test_parse_family_risk_increases() -> None:
+    assert parse_family_risk_increases(["discard=0.02", "chii=0.01"]) == {
+        "discard": 0.02,
+        "chii": 0.01,
+    }
+
+
 class TestEvaluateOnline:
     def test_runs_with_mock_bridge(self) -> None:
         model = PolicyValueNet(EnvConfig(), ModelConfig())
@@ -171,8 +179,47 @@ class TestEvaluateOnline:
         assert report["policy_q_margin_summary"]["mean"] == 0.25
         assert len(report["policy_episode_summaries"]) == 2
         assert report["policy_episode_summaries"][0]["candidate_override_count"] > 0
+        assert report["policy_episode_summaries"][0]["intervention_count"] > 0
+        assert report["policy_episode_summaries"][0]["intervention_source_counts"]["candidate"] > 0
         assert report["policy_episode_summaries"][0]["first_candidate_override"]["q_margin"] == 0.25
+        assert report["policy_episode_summaries"][0]["first_intervention"]["source"] == "candidate"
         assert report["policy_episode_outcome_summary"]["candidate_override_reward"]["count"] == 2
+        assert report["policy_episode_outcome_summary"]["intervention_reward"]["count"] == 2
+
+    def test_policy_episode_summary_reports_risk_guard_interventions(self) -> None:
+        class RiskGuardPolicy:
+            def choose(self, observation: Observation) -> ActionChoice:
+                chosen = observation.legal_actions[0]
+                return ActionChoice(
+                    action_id=chosen,
+                    info={
+                        "source": "risk_guard",
+                        "anchor_action_id": 5,
+                        "anchor_action_label": "discard 1m",
+                        "chosen_action_id": chosen,
+                        "chosen_action_label": "discard 2m",
+                        "anchor_risk": 0.72,
+                        "chosen_risk": 0.31,
+                        "risk_reduction": 0.41,
+                    },
+                )
+
+        report = evaluate_policy_online(
+            policy=RiskGuardPolicy(),
+            episodes=1,
+            seeds=[1],
+            bridge_kind="mock",
+        )
+
+        summary = report["policy_episode_summaries"][0]
+        assert summary["candidate_override_count"] == 0
+        assert summary["intervention_count"] > 0
+        assert summary["intervention_source_counts"]["risk_guard"] > 0
+        assert summary["intervention_anchor_family_counts"]["discard"] > 0
+        assert summary["intervention_chosen_family_counts"]
+        assert summary["first_intervention"]["source"] == "risk_guard"
+        assert summary["first_intervention"]["anchor_risk"] == 0.72
+        assert report["policy_episode_outcome_summary"]["intervention_reward"]["count"] == 1
 
     def test_counts_terminal_reset_without_policy_action(self, monkeypatch) -> None:
         class TerminalResetBridge:

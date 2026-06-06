@@ -67,12 +67,18 @@ def action_family_rates(action_counts: Counter[str]) -> Dict[str, float]:
 
 def summarize_policy_choices(choice_infos: Sequence[dict[str, Any]]) -> Dict[str, Any]:
     source_counts: Counter[str] = Counter()
+    intervention_source_counts: Counter[str] = Counter()
+    intervention_anchor_family_counts: Counter[str] = Counter()
+    intervention_chosen_family_counts: Counter[str] = Counter()
     q_margins: list[float] = []
     first_candidate: Optional[dict[str, Any]] = None
+    first_intervention: Optional[dict[str, Any]] = None
     for info in choice_infos:
         source = info.get("source")
         if source is not None:
             source_counts[str(source)] += 1
+        source_text = str(source) if source is not None else ""
+        is_intervention = source_text not in {"", "anchor", "same"}
         q_margin = info.get("q_margin")
         if q_margin is not None:
             q_margins.append(float(q_margin))
@@ -87,22 +93,62 @@ def summarize_policy_choices(choice_infos: Sequence[dict[str, Any]]) -> Dict[str
                 "candidate_q": info.get("candidate_q"),
                 "anchor_action_q": info.get("anchor_action_q"),
             }
+        if is_intervention:
+            intervention_source_counts[source_text] += 1
+            anchor_action_id = info.get("anchor_action_id")
+            chosen_action_id = info.get("chosen_action_id", info.get("candidate_action_id"))
+            if anchor_action_id is not None:
+                intervention_anchor_family_counts[action_family(int(anchor_action_id))] += 1
+            if chosen_action_id is not None:
+                intervention_chosen_family_counts[action_family(int(chosen_action_id))] += 1
+            if first_intervention is None:
+                first_intervention = {
+                    "source": source_text,
+                    "anchor_action_id": anchor_action_id,
+                    "anchor_action_label": info.get("anchor_action_label"),
+                    "chosen_action_id": chosen_action_id,
+                    "chosen_action_label": info.get("chosen_action_label", info.get("candidate_action_label")),
+                    "q_margin": float(q_margin) if q_margin is not None else None,
+                    "anchor_risk": info.get("anchor_risk"),
+                    "chosen_risk": info.get("chosen_risk"),
+                    "risk_reduction": info.get("risk_reduction"),
+                    "anchor_severity": info.get("anchor_severity"),
+                    "chosen_severity": info.get("chosen_severity"),
+                }
     candidate_count = int(source_counts.get("candidate", 0))
+    intervention_count = int(sum(intervention_source_counts.values()))
     return {
         "decision_count": len(choice_infos),
         "source_counts": dict(sorted(source_counts.items())),
         "source_rates": action_family_rates(source_counts),
         "candidate_override_count": candidate_count,
         "candidate_override_rate": candidate_count / len(choice_infos) if choice_infos else 0.0,
+        "intervention_count": intervention_count,
+        "intervention_rate": intervention_count / len(choice_infos) if choice_infos else 0.0,
+        "intervention_source_counts": dict(sorted(intervention_source_counts.items())),
+        "intervention_source_rates": action_family_rates(intervention_source_counts),
+        "intervention_anchor_family_counts": dict(sorted(intervention_anchor_family_counts.items())),
+        "intervention_anchor_family_rates": action_family_rates(intervention_anchor_family_counts),
+        "intervention_chosen_family_counts": dict(sorted(intervention_chosen_family_counts.items())),
+        "intervention_chosen_family_rates": action_family_rates(intervention_chosen_family_counts),
         "q_margin_summary": reward_summary(q_margins),
         "first_candidate_override": first_candidate,
+        "first_intervention": first_intervention,
     }
 
 
 def summarize_policy_episode_outcomes(episode_summaries: Sequence[dict[str, Any]]) -> Dict[str, Any]:
     no_candidate_rewards: list[float] = []
     candidate_rewards: list[float] = []
-    override_bucket_rewards: dict[str, list[float]] = {
+    no_intervention_rewards: list[float] = []
+    intervention_rewards: list[float] = []
+    candidate_bucket_rewards: dict[str, list[float]] = {
+        "0": [],
+        "1": [],
+        "2-4": [],
+        "5+": [],
+    }
+    intervention_bucket_rewards: dict[str, list[float]] = {
         "0": [],
         "1": [],
         "2-4": [],
@@ -111,23 +157,41 @@ def summarize_policy_episode_outcomes(episode_summaries: Sequence[dict[str, Any]
     for summary in episode_summaries:
         reward = float(summary["reward"])
         count = int(summary.get("candidate_override_count", 0))
+        intervention_count = int(summary.get("intervention_count", count))
         if count == 0:
             no_candidate_rewards.append(reward)
-            override_bucket_rewards["0"].append(reward)
+            candidate_bucket_rewards["0"].append(reward)
         else:
             candidate_rewards.append(reward)
             if count == 1:
-                override_bucket_rewards["1"].append(reward)
+                candidate_bucket_rewards["1"].append(reward)
             elif count <= 4:
-                override_bucket_rewards["2-4"].append(reward)
+                candidate_bucket_rewards["2-4"].append(reward)
             else:
-                override_bucket_rewards["5+"].append(reward)
+                candidate_bucket_rewards["5+"].append(reward)
+        if intervention_count == 0:
+            no_intervention_rewards.append(reward)
+            intervention_bucket_rewards["0"].append(reward)
+        else:
+            intervention_rewards.append(reward)
+            if intervention_count == 1:
+                intervention_bucket_rewards["1"].append(reward)
+            elif intervention_count <= 4:
+                intervention_bucket_rewards["2-4"].append(reward)
+            else:
+                intervention_bucket_rewards["5+"].append(reward)
     return {
         "no_candidate_override_reward": reward_summary(no_candidate_rewards),
         "candidate_override_reward": reward_summary(candidate_rewards),
+        "no_intervention_reward": reward_summary(no_intervention_rewards),
+        "intervention_reward": reward_summary(intervention_rewards),
+        "by_intervention_count": {
+            bucket: reward_summary(rewards)
+            for bucket, rewards in intervention_bucket_rewards.items()
+        },
         "by_candidate_override_count": {
             bucket: reward_summary(rewards)
-            for bucket, rewards in override_bucket_rewards.items()
+            for bucket, rewards in candidate_bucket_rewards.items()
         },
     }
 

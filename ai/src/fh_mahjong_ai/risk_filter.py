@@ -7,6 +7,8 @@ from typing import Any, Iterable, Optional, Sequence
 
 import numpy as np
 
+from fh_mahjong_ai.paired_trace import counterfactual_label_from_pair
+
 
 @dataclass(frozen=True)
 class RiskCase:
@@ -46,6 +48,8 @@ def load_risk_cases_from_paired_trace_reports(
     include_large_losses: bool = True,
     include_new_large_losses: bool = True,
     worst_delta_count: int = 0,
+    include_counterfactual_labels: bool = False,
+    min_counterfactual_reward_gap: float = 0.0,
 ) -> list[RiskCase]:
     """Load high-risk first-divergence cases from paired trace reports.
 
@@ -56,10 +60,12 @@ def load_risk_cases_from_paired_trace_reports(
     cases: dict[tuple[int, int, Optional[int], Optional[int], str], RiskCase] = {}
     for path in paths:
         report = json.loads(Path(path).read_text(encoding="utf-8"))
+        report_left_label = str(report.get("left_label") or left_label)
+        report_right_label = str(report.get("right_label") or right_label)
         pairs = list(report.get("pairs", []))
         for pair in pairs:
-            right_reward = _float_or_none(pair.get(f"{right_label}_reward"))
-            left_reward = _float_or_none(pair.get(f"{left_label}_reward"))
+            right_reward = _float_or_none(pair.get(f"{report_right_label}_reward"))
+            left_reward = _float_or_none(pair.get(f"{report_left_label}_reward"))
             reward_delta = _float_or_none(pair.get("reward_delta"))
             tags: list[str] = []
             if (
@@ -79,7 +85,12 @@ def load_risk_cases_from_paired_trace_reports(
             ):
                 tags.append("new_right_large_loss")
             if tags:
-                case = risk_case_from_pair(pair, right_label=right_label, left_label=left_label, tags=tags)
+                case = risk_case_from_pair(
+                    pair,
+                    right_label=report_right_label,
+                    left_label=report_left_label,
+                    tags=tags,
+                )
                 cases[_case_key(case)] = case
 
         if worst_delta_count > 0:
@@ -87,12 +98,43 @@ def load_risk_cases_from_paired_trace_reports(
             for pair in worst_pairs:
                 case = risk_case_from_pair(
                     pair,
-                    right_label=right_label,
-                    left_label=left_label,
+                    right_label=report_right_label,
+                    left_label=report_left_label,
                     tags=("worst_delta",),
                 )
                 cases[_case_key(case)] = case
+        if include_counterfactual_labels:
+            for pair in pairs:
+                label = counterfactual_label_from_pair(
+                    pair,
+                    left_label=report_left_label,
+                    right_label=report_right_label,
+                    large_loss_threshold=large_loss_threshold,
+                )
+                if label is None:
+                    continue
+                if float(label["reward_gap"]) < float(min_counterfactual_reward_gap):
+                    continue
+                case = risk_case_from_counterfactual_label(label)
+                cases[_case_key(case)] = case
     return list(cases.values())
+
+
+def risk_case_from_counterfactual_label(label: dict[str, Any]) -> RiskCase:
+    return RiskCase(
+        seed=int(label["seed"]),
+        seat=int(label["seat"]),
+        decision_index=_int_or_none(label.get("decision_index", label.get("first_divergence_index"))),
+        action_id=_int_or_none(label.get("avoided_action_id")),
+        action_label=str(label["avoided_action_label"]) if label.get("avoided_action_label") is not None else None,
+        baseline_action_id=_int_or_none(label.get("preferred_action_id")),
+        baseline_action_label=str(label["preferred_action_label"]) if label.get("preferred_action_label") is not None else None,
+        reward=_float_or_none(label.get("avoided_reward")),
+        baseline_reward=_float_or_none(label.get("preferred_reward")),
+        reward_delta=-_float_or_none(label.get("reward_gap")) if label.get("reward_gap") is not None else None,
+        source="paired_trace_counterfactual",
+        tags=tuple(sorted({"counterfactual", *(str(tag) for tag in label.get("tags", []))})),
+    )
 
 
 def risk_case_from_pair(

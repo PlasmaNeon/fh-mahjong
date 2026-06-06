@@ -51,6 +51,16 @@ OPTIONAL_IQL_ARRAY_KEYS = (
     "pairwise_preferred_action_ids",
     "pairwise_avoided_action_ids",
     "pairwise_weights",
+    "pairwise_reward_delta_targets",
+)
+PAIRWISE_ARRAY_KEYS = (
+    "seats",
+    "planes",
+    "scalars",
+    "action_mask",
+    "action_ids",
+    "episode_index",
+    "terminal_rewards",
 )
 
 
@@ -79,14 +89,26 @@ def train_iql(
     pairwise_margin: float = 0.0,
     pairwise_q_weight: float = 0.0,
     pairwise_q_margin: float = 0.0,
+    pairwise_reward_delta_weight: float = 0.0,
+    pairwise_reward_delta_margin_scale: float = 0.0,
+    pairwise_reward_delta_clip: float = 2.0,
     large_loss_aux_weight: float = 0.0,
     large_loss_severity_weight: float = 0.0,
     large_loss_aux_detach: bool = False,
+    large_loss_bc_weight: float = 0.0,
+    external_risk_checkpoint: Optional[Path] = None,
+    external_risk_policy_weight: float = 0.0,
+    external_risk_policy_threshold: float = 0.6,
+    external_risk_policy_family: str = "all",
+    external_risk_policy_severity_weight: float = 0.0,
     pairwise_replay_multiplier: int = 0,
+    pairwise_data_paths: Optional[Sequence[Path]] = None,
     risk_trace_reports: Optional[Sequence[Path]] = None,
     risk_trace_weight: float = 1.0,
     risk_trace_dataset_start_seeds: Optional[Sequence[int]] = None,
     risk_trace_worst_delta_count: int = 0,
+    risk_trace_counterfactual_labels: bool = False,
+    risk_trace_min_counterfactual_reward_gap: float = 0.0,
     risk_trace_filter_datasets: bool = False,
     risk_trace_context_radius: int = 0,
     max_transitions: Optional[int] = None,
@@ -104,10 +126,15 @@ def train_iql(
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
     data_paths = normalize_data_paths(data_path)
+    pairwise_paths = [Path(path) for path in (pairwise_data_paths or [])]
+    if pairwise_paths and target_mode.lower() != "mc":
+        raise ValueError("--pairwise-data is only supported with MC targets because it omits next-state TD fields")
     risk_cases = load_risk_cases_from_paired_trace_reports(
         list(risk_trace_reports or []),
         large_loss_threshold=large_loss_threshold,
         worst_delta_count=risk_trace_worst_delta_count,
+        include_counterfactual_labels=risk_trace_counterfactual_labels,
+        min_counterfactual_reward_gap=risk_trace_min_counterfactual_reward_gap,
     )
     buf, transition_count, dataset_transition_counts = load_iql_replay_buffer(
         data_paths,
@@ -118,6 +145,7 @@ def train_iql(
         apply_risk_cases=bool(risk_cases)
         and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
         pairwise_replay_multiplier=pairwise_replay_multiplier,
+        pairwise_data_paths=pairwise_paths,
         risk_filter_datasets=risk_trace_filter_datasets,
         risk_context_radius=risk_trace_context_radius,
     )
@@ -128,6 +156,7 @@ def train_iql(
     model_config = model_config or ModelConfig()
     model = PolicyValueNet(env_config, model_config).to(device)
     target_model = PolicyValueNet(env_config, model_config).to(device)
+    external_risk_model: Optional[PolicyValueNet] = None
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
     start_epoch = 0
@@ -154,6 +183,12 @@ def train_iql(
 
     target_model.load_state_dict(model.state_dict())
     target_model.eval()
+    if external_risk_checkpoint is not None:
+        external_risk_model = PolicyValueNet(env_config, model_config).to(device)
+        load_checkpoint(external_risk_checkpoint, external_risk_model)
+        external_risk_model.eval()
+        for param in external_risk_model.parameters():
+            param.requires_grad_(False)
 
     train_config = TrainConfig(
         batch_size=min(batch_size, len(buf)),
@@ -180,11 +215,26 @@ def train_iql(
         pairwise_margin=pairwise_margin,
         pairwise_q_weight=pairwise_q_weight,
         pairwise_q_margin=pairwise_q_margin,
+        pairwise_reward_delta_weight=pairwise_reward_delta_weight,
+        pairwise_reward_delta_margin_scale=pairwise_reward_delta_margin_scale,
+        pairwise_reward_delta_clip=pairwise_reward_delta_clip,
         large_loss_aux_weight=large_loss_aux_weight,
         large_loss_severity_weight=large_loss_severity_weight,
         large_loss_aux_detach=large_loss_aux_detach,
+        large_loss_bc_weight=large_loss_bc_weight,
+        external_risk_policy_weight=external_risk_policy_weight,
+        external_risk_policy_threshold=external_risk_policy_threshold,
+        external_risk_policy_family=external_risk_policy_family,
+        external_risk_policy_severity_weight=external_risk_policy_severity_weight,
     )
-    trainer = DiscreteIQLTrainer(model, target_model, optimizer, train_config, iql_config)
+    trainer = DiscreteIQLTrainer(
+        model,
+        target_model,
+        optimizer,
+        train_config,
+        iql_config,
+        external_risk_model=external_risk_model,
+    )
 
     steps_per_epoch = max(1, len(buf) // batch_size)
     all_metrics: List[DiscreteIQLMetrics] = []
@@ -227,14 +277,26 @@ def train_iql(
                     "pairwise_margin": pairwise_margin,
                     "pairwise_q_weight": pairwise_q_weight,
                     "pairwise_q_margin": pairwise_q_margin,
+                    "pairwise_reward_delta_weight": pairwise_reward_delta_weight,
+                    "pairwise_reward_delta_margin_scale": pairwise_reward_delta_margin_scale,
+                    "pairwise_reward_delta_clip": pairwise_reward_delta_clip,
                     "large_loss_aux_weight": large_loss_aux_weight,
                     "large_loss_severity_weight": large_loss_severity_weight,
                     "large_loss_aux_detach": large_loss_aux_detach,
+                    "large_loss_bc_weight": large_loss_bc_weight,
+                    "external_risk_checkpoint": external_risk_checkpoint,
+                    "external_risk_policy_weight": external_risk_policy_weight,
+                    "external_risk_policy_threshold": external_risk_policy_threshold,
+                    "external_risk_policy_family": external_risk_policy_family,
+                    "external_risk_policy_severity_weight": external_risk_policy_severity_weight,
                     "pairwise_replay_multiplier": pairwise_replay_multiplier,
+                    "pairwise_data_paths": ",".join(str(path) for path in pairwise_paths),
                     "risk_trace_reports": ",".join(str(path) for path in (risk_trace_reports or [])),
                     "risk_trace_weight": risk_trace_weight,
                     "risk_trace_dataset_start_seeds": ",".join(str(seed) for seed in (risk_trace_dataset_start_seeds or [])),
                     "risk_trace_worst_delta_count": risk_trace_worst_delta_count,
+                    "risk_trace_counterfactual_labels": risk_trace_counterfactual_labels,
+                    "risk_trace_min_counterfactual_reward_gap": risk_trace_min_counterfactual_reward_gap,
                     "risk_trace_filter_datasets": risk_trace_filter_datasets,
                     "risk_trace_context_radius": risk_trace_context_radius,
                     "risk_trace_cases": len(risk_cases),
@@ -274,6 +336,8 @@ def train_iql(
                         f"pairwise_q={metrics.pairwise_q_loss:.4f}  "
                         f"ll_aux={metrics.large_loss_aux_loss:.4f}  "
                         f"ll_sev={metrics.large_loss_severity_loss:.4f}  "
+                        f"ll_bc={metrics.large_loss_bc_loss:.4f}/{metrics.large_loss_bc_count}  "
+                        f"ext_risk={metrics.external_risk_policy_loss:.4f}  "
                         f"adv={metrics.avg_advantage:.4f}  "
                         f"weight={metrics.avg_weight:.3f}  sample_weight={metrics.avg_sample_weight:.3f}"
                     )
@@ -300,6 +364,11 @@ def train_iql(
                             "last_pairwise_q_loss": latest_metrics.pairwise_q_loss,
                             "last_large_loss_aux_loss": latest_metrics.large_loss_aux_loss,
                             "last_large_loss_severity_loss": latest_metrics.large_loss_severity_loss,
+                            "last_large_loss_bc_loss": latest_metrics.large_loss_bc_loss,
+                            "last_large_loss_bc_count": latest_metrics.large_loss_bc_count,
+                            "last_external_risk_policy_loss": latest_metrics.external_risk_policy_loss,
+                            "last_external_risk_policy_probability": latest_metrics.external_risk_policy_probability,
+                            "last_external_risk_policy_mass": latest_metrics.external_risk_policy_mass,
                             "last_large_loss_target_rate": latest_metrics.large_loss_target_rate,
                             "last_avg_large_loss_probability": latest_metrics.avg_large_loss_probability,
                             "last_avg_large_loss_severity": latest_metrics.avg_large_loss_severity,
@@ -341,6 +410,7 @@ def load_iql_replay_buffer(
     risk_dataset_start_seeds: Optional[Sequence[int]] = None,
     apply_risk_cases: bool = False,
     pairwise_replay_multiplier: int = 0,
+    pairwise_data_paths: Optional[Sequence[Path]] = None,
     risk_filter_datasets: bool = False,
     risk_context_radius: int = 0,
 ) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
@@ -427,6 +497,34 @@ def load_iql_replay_buffer(
 
         buffers.append(buffer)
         counts.append(len(buffer))
+
+    for path in pairwise_data_paths or []:
+        arrays = read_transition_arrays(
+            path,
+            keys=PAIRWISE_ARRAY_KEYS,
+            optional_keys=OPTIONAL_IQL_ARRAY_KEYS,
+            limit=max_transitions,
+        )
+        if "pairwise_weights" not in arrays:
+            print(f"pairwise auxiliary replay source={path} rows=0 skipped")
+            continue
+        row_count = arrays["action_ids"].shape[0]
+        arrays["sample_weights"] = np.zeros(arrays["action_ids"].shape[0], dtype=np.float32)
+        arrays.setdefault("steps_to_done", np.zeros(row_count, dtype=np.int32))
+        arrays.setdefault("rewards", np.zeros((row_count, 4), dtype=np.float32))
+        arrays.setdefault("next_planes", arrays["planes"].copy())
+        arrays.setdefault("next_scalars", arrays["scalars"].copy())
+        arrays.setdefault("next_action_mask", arrays["action_mask"].copy())
+        arrays.setdefault("terminated", np.zeros(row_count, dtype=np.bool_))
+        arrays.setdefault("truncated", np.zeros(row_count, dtype=np.bool_))
+        pairwise_indices = np.flatnonzero(np.asarray(arrays["pairwise_weights"]) > 0.0).astype(np.int64)
+        if pairwise_indices.size == 0:
+            print(f"pairwise auxiliary replay source={path} rows=0 skipped")
+            continue
+        buffer = ArrayReplayBuffer(arrays=arrays, indices=pairwise_indices)
+        buffers.append(buffer)
+        counts.append(len(buffer))
+        print(f"pairwise auxiliary replay source={path} rows={len(buffer)}")
 
     transition_count = int(sum(counts))
     if transition_count <= 0:
@@ -534,6 +632,24 @@ def main() -> None:
         help="Required Q-value margin for preferred trace action over avoided trace action.",
     )
     parser.add_argument(
+        "--pairwise-reward-delta-weight",
+        type=float,
+        default=0.0,
+        help="Scale pairwise row weights by 1 + this value * clipped reward-gap target.",
+    )
+    parser.add_argument(
+        "--pairwise-reward-delta-margin-scale",
+        type=float,
+        default=0.0,
+        help="Add this value * clipped reward-gap target to pairwise policy/Q margins.",
+    )
+    parser.add_argument(
+        "--pairwise-reward-delta-clip",
+        type=float,
+        default=2.0,
+        help="Maximum reward-gap target used by pairwise reward-delta weighting and margin scaling.",
+    )
+    parser.add_argument(
         "--large-loss-aux-weight",
         type=float,
         default=0.0,
@@ -551,10 +667,56 @@ def main() -> None:
         help="Train large-loss auxiliary heads from detached trunk features so they do not shape policy/Q features.",
     )
     parser.add_argument(
+        "--large-loss-bc-weight",
+        type=float,
+        default=0.0,
+        help="Extra behavior-cloning loss weight applied only to transitions at or below --large-loss-threshold.",
+    )
+    parser.add_argument(
+        "--external-risk-checkpoint",
+        type=Path,
+        default=None,
+        help="Frozen action-risk checkpoint used as a training-side policy regularizer.",
+    )
+    parser.add_argument(
+        "--external-risk-policy-weight",
+        type=float,
+        default=0.0,
+        help="Weight for penalizing policy probability on actions the frozen risk critic marks risky.",
+    )
+    parser.add_argument(
+        "--external-risk-policy-threshold",
+        type=float,
+        default=0.6,
+        help="Risk probability threshold above which legal actions contribute to the external-risk policy loss.",
+    )
+    parser.add_argument(
+        "--external-risk-policy-family",
+        type=str,
+        default="all",
+        help="Action family to regularize with the frozen risk critic, for example all or discard.",
+    )
+    parser.add_argument(
+        "--external-risk-policy-severity-weight",
+        type=float,
+        default=0.0,
+        help="Optional severity contribution in the external-risk policy loss.",
+    )
+    parser.add_argument(
         "--pairwise-replay-multiplier",
         type=int,
         default=0,
         help="Repeat matched pairwise preference rows into an auxiliary replay source this many times.",
+    )
+    parser.add_argument(
+        "--pairwise-data",
+        type=Path,
+        action="append",
+        default=[],
+        help=(
+            "Direct pairwise auxiliary NPZ shard. Rows contribute pairwise preferred/avoided "
+            "margin losses only; normal IQL sample weights are zeroed."
+        ),
     )
     parser.add_argument(
         "--risk-trace-report",
@@ -581,6 +743,17 @@ def main() -> None:
         type=int,
         default=0,
         help="Also include this many worst reward-delta first-divergence cases per trace report.",
+    )
+    parser.add_argument(
+        "--risk-trace-counterfactual-labels",
+        action="store_true",
+        help="Also load paired-trace counterfactual preferred/avoided first-divergence labels.",
+    )
+    parser.add_argument(
+        "--risk-trace-min-counterfactual-reward-gap",
+        type=float,
+        default=0.0,
+        help="Minimum absolute reward gap required for --risk-trace-counterfactual-labels.",
     )
     parser.add_argument(
         "--risk-trace-filter-datasets",
@@ -648,14 +821,26 @@ def main() -> None:
         pairwise_margin=args.pairwise_margin,
         pairwise_q_weight=args.pairwise_q_weight,
         pairwise_q_margin=args.pairwise_q_margin,
+        pairwise_reward_delta_weight=args.pairwise_reward_delta_weight,
+        pairwise_reward_delta_margin_scale=args.pairwise_reward_delta_margin_scale,
+        pairwise_reward_delta_clip=args.pairwise_reward_delta_clip,
         large_loss_aux_weight=args.large_loss_aux_weight,
         large_loss_severity_weight=args.large_loss_severity_weight,
         large_loss_aux_detach=args.large_loss_aux_detach,
+        large_loss_bc_weight=args.large_loss_bc_weight,
+        external_risk_checkpoint=args.external_risk_checkpoint,
+        external_risk_policy_weight=args.external_risk_policy_weight,
+        external_risk_policy_threshold=args.external_risk_policy_threshold,
+        external_risk_policy_family=args.external_risk_policy_family,
+        external_risk_policy_severity_weight=args.external_risk_policy_severity_weight,
         pairwise_replay_multiplier=args.pairwise_replay_multiplier,
+        pairwise_data_paths=args.pairwise_data,
         risk_trace_reports=args.risk_trace_report,
         risk_trace_weight=args.risk_trace_weight,
         risk_trace_dataset_start_seeds=args.risk_trace_dataset_start_seed,
         risk_trace_worst_delta_count=args.risk_trace_worst_delta_count,
+        risk_trace_counterfactual_labels=args.risk_trace_counterfactual_labels,
+        risk_trace_min_counterfactual_reward_gap=args.risk_trace_min_counterfactual_reward_gap,
         risk_trace_filter_datasets=args.risk_trace_filter_datasets,
         risk_trace_context_radius=args.risk_trace_context_radius,
         max_transitions=args.max_transitions,

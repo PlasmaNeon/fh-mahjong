@@ -85,6 +85,7 @@ def run_policy_trace(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: int = 20000,
+    include_observation_arrays: bool = False,
 ) -> EpisodeTrace:
     """Run one deterministic seed/seat episode and record every learned-policy decision."""
     config = EnvConfig(
@@ -135,7 +136,7 @@ def run_policy_trace(
                     action_family=action_family(int(choice.action_id)),
                     action_label=action_label(int(choice.action_id)),
                     value=choice.value,
-                    observation=summarize_observation(observation),
+                    observation=summarize_observation(observation, include_arrays=include_observation_arrays),
                 )
             )
             result = env.step(int(choice.action_id))
@@ -176,15 +177,22 @@ def compare_policy_traces(
     max_steps_per_episode: int = 20000,
     large_loss_threshold: Optional[float] = None,
     worst_delta_count: int = 8,
+    include_observation_arrays: bool = False,
     progress_callback: Optional[Callable[[int, int, int, int], None]] = None,
+    pair_callback: Optional[Callable[[dict[str, Any], int, int, int, int], None]] = None,
+    existing_pairs: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
-    pairs = []
+    pairs = deduplicate_trace_pairs(existing_pairs)
+    completed_keys = {(int(pair["seed"]), int(pair["seat"])) for pair in pairs}
     seat_list = [int(seat) for seat in seats]
     seed_list = list(seeds)
     total_pairs = len(seed_list) * len(seat_list)
-    completed_pairs = 0
+    completed_pairs = min(len(completed_keys), total_pairs)
     for seat in seat_list:
         for seed in seed_list:
+            key = (int(seed), int(seat))
+            if key in completed_keys:
+                continue
             left = run_policy_trace(
                 left_model,
                 seed=seed,
@@ -196,6 +204,7 @@ def compare_policy_traces(
                 chongci_bust_threshold=chongci_bust_threshold,
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
+                include_observation_arrays=include_observation_arrays,
             )
             right = run_policy_trace(
                 right_model,
@@ -208,9 +217,14 @@ def compare_policy_traces(
                 chongci_bust_threshold=chongci_bust_threshold,
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
+                include_observation_arrays=include_observation_arrays,
             )
-            pairs.append(compare_episode_trace(left, right, left_label=left_label, right_label=right_label))
+            pair = compare_episode_trace(left, right, left_label=left_label, right_label=right_label)
+            pairs.append(pair)
+            completed_keys.add(key)
             completed_pairs += 1
+            if pair_callback is not None:
+                pair_callback(pair, completed_pairs, total_pairs, int(seed), int(seat))
             if progress_callback is not None:
                 progress_callback(completed_pairs, total_pairs, int(seed), int(seat))
 
@@ -221,6 +235,19 @@ def compare_policy_traces(
         large_loss_threshold=large_loss_threshold,
         worst_delta_count=worst_delta_count,
     )
+
+
+def deduplicate_trace_pairs(pairs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return pairs with duplicate seed/seat entries removed in first-seen order."""
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for pair in pairs:
+        key = (int(pair["seed"]), int(pair["seat"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(pair)
+    return deduped
 
 
 def compare_episode_trace(
@@ -294,6 +321,12 @@ def summarize_trace_pairs(
         large_loss_threshold=large_loss_threshold,
         worst_delta_count=worst_delta_count,
     )
+    counterfactual_supervision = summarize_counterfactual_supervision(
+        pairs,
+        left_label=left_label,
+        right_label=right_label,
+        large_loss_threshold=large_loss_threshold,
+    )
 
     return {
         "schema_version": 1,
@@ -326,8 +359,139 @@ def summarize_trace_pairs(
                 name: dict(sorted(counter.items()))
                 for name, counter in divergence_contexts.items()
             },
+            "counterfactual_supervision": counterfactual_supervision,
             **high_risk,
         },
+    }
+
+
+def summarize_counterfactual_supervision(
+    pairs: Sequence[dict[str, Any]],
+    left_label: str = "left",
+    right_label: str = "right",
+    large_loss_threshold: Optional[float] = None,
+) -> dict[str, Any]:
+    """Summarize direct first-divergence labels from paired outcome differences."""
+    labels = []
+    avoided_family = Counter()
+    preferred_family = Counter()
+    family_pairs = Counter()
+    tag_counts = Counter()
+    high_risk_family = Counter()
+    reward_gaps = []
+    high_risk_reward_gaps = []
+
+    for pair in pairs:
+        label = counterfactual_label_from_pair(
+            pair,
+            left_label=left_label,
+            right_label=right_label,
+            large_loss_threshold=large_loss_threshold,
+        )
+        if label is None:
+            continue
+        labels.append(label)
+        reward_gap = float(label["reward_gap"])
+        reward_gaps.append(reward_gap)
+        preferred = label["preferred_action_family"]
+        avoided = label["avoided_action_family"]
+        preferred_family[preferred] += 1
+        avoided_family[avoided] += 1
+        family_pairs[f"{preferred}->{avoided}"] += 1
+        for tag in label["tags"]:
+            tag_counts[str(tag)] += 1
+        if label["is_high_risk"]:
+            high_risk_family[avoided] += 1
+            high_risk_reward_gaps.append(reward_gap)
+
+    return {
+        "labeled_pairs": len(labels),
+        "high_risk_labeled_pairs": int(sum(1 for label in labels if label["is_high_risk"])),
+        "avoided_action_family_counts": dict(sorted(avoided_family.items())),
+        "preferred_action_family_counts": dict(sorted(preferred_family.items())),
+        "preferred_to_avoided_family_counts": dict(sorted(family_pairs.items())),
+        "high_risk_avoided_action_family_counts": dict(sorted(high_risk_family.items())),
+        "tag_counts": dict(sorted(tag_counts.items())),
+        "reward_gap": _summary_or_empty(reward_gaps),
+        "high_risk_reward_gap": _summary_or_empty(high_risk_reward_gaps),
+        "discard_avoided_cases": [
+            label for label in labels if label["avoided_action_family"] == "discard"
+        ][:20],
+        "high_risk_cases": [
+            label for label in labels if label["is_high_risk"]
+        ][:20],
+    }
+
+
+def counterfactual_label_from_pair(
+    pair: dict[str, Any],
+    left_label: str = "left",
+    right_label: str = "right",
+    large_loss_threshold: Optional[float] = None,
+) -> Optional[dict[str, Any]]:
+    divergence = pair.get("first_divergence") or {}
+    left_step = divergence.get("left") or divergence.get(left_label)
+    right_step = divergence.get("right") or divergence.get(right_label)
+    if not left_step or not right_step:
+        return None
+
+    left_reward = float(pair[f"{left_label}_reward"])
+    right_reward = float(pair[f"{right_label}_reward"])
+    if left_reward == right_reward:
+        return None
+    if left_reward > right_reward:
+        preferred_label = left_label
+        avoided_label = right_label
+        preferred_step = left_step
+        avoided_step = right_step
+        preferred_reward = left_reward
+        avoided_reward = right_reward
+        preferred_outcome = pair.get(f"{left_label}_outcome")
+        avoided_outcome = pair.get(f"{right_label}_outcome")
+    else:
+        preferred_label = right_label
+        avoided_label = left_label
+        preferred_step = right_step
+        avoided_step = left_step
+        preferred_reward = right_reward
+        avoided_reward = left_reward
+        preferred_outcome = pair.get(f"{right_label}_outcome")
+        avoided_outcome = pair.get(f"{left_label}_outcome")
+
+    seat = int(pair["seat"])
+    tags = ["worse_reward"]
+    avoided_deal_in = _is_deal_in(avoided_outcome, seat)
+    preferred_deal_in = _is_deal_in(preferred_outcome, seat)
+    if avoided_deal_in:
+        tags.append("avoided_deal_in")
+    if avoided_deal_in and not preferred_deal_in:
+        tags.append("new_deal_in")
+    if large_loss_threshold is not None and avoided_reward <= float(large_loss_threshold):
+        tags.append("avoided_large_loss")
+        if preferred_reward > float(large_loss_threshold):
+            tags.append("new_large_loss")
+
+    is_high_risk = any(tag in tags for tag in ("new_deal_in", "new_large_loss", "avoided_large_loss"))
+    context_step = avoided_step or preferred_step
+    return {
+        "seed": int(pair["seed"]),
+        "seat": seat,
+        "first_divergence_index": pair.get("first_divergence_index"),
+        "decision_index": context_step.get("decision_index"),
+        "preferred_policy": preferred_label,
+        "avoided_policy": avoided_label,
+        "preferred_reward": preferred_reward,
+        "avoided_reward": avoided_reward,
+        "reward_gap": preferred_reward - avoided_reward,
+        "preferred_action_id": preferred_step.get("action_id"),
+        "preferred_action_label": preferred_step.get("action_label"),
+        "preferred_action_family": preferred_step.get("action_family", "missing"),
+        "avoided_action_id": avoided_step.get("action_id"),
+        "avoided_action_label": avoided_step.get("action_label"),
+        "avoided_action_family": avoided_step.get("action_family", "missing"),
+        "tags": sorted(set(tags)),
+        "is_high_risk": is_high_risk,
+        "scalars": (context_step.get("observation") or {}).get("scalars", {}),
     }
 
 
@@ -424,14 +588,14 @@ def step_payload(step: StepTrace) -> dict[str, Any]:
     }
 
 
-def summarize_observation(observation: Observation) -> dict[str, Any]:
+def summarize_observation(observation: Observation, include_arrays: bool = False) -> dict[str, Any]:
     family_counts = Counter(action_family(action_id) for action_id in observation.legal_actions)
     scalars = {
         name: float(observation.scalars[index])
         for index, name in SCALAR_NAMES.items()
         if index < observation.scalars.shape[0]
     }
-    return {
+    payload: dict[str, Any] = {
         "decision_index": int(observation.metadata.get("decision_index", 0)),
         "phase": int(observation.metadata.get("phase", 0)),
         "active_player": int(observation.metadata.get("active_player", observation.seat)),
@@ -440,6 +604,13 @@ def summarize_observation(observation: Observation) -> dict[str, Any]:
         "legal_action_family_rates": action_family_rates(family_counts),
         "scalars": scalars,
     }
+    if include_arrays:
+        payload["arrays"] = {
+            "planes": observation.planes.astype(np.float32, copy=False).tolist(),
+            "scalars": observation.scalars.astype(np.float32, copy=False).tolist(),
+            "action_mask": observation.action_mask.astype(np.int8, copy=False).tolist(),
+        }
+    return payload
 
 
 def bucket_scalar(name: str, value: Optional[float]) -> str:
@@ -462,3 +633,25 @@ def bucket_scalar(name: str, value: Optional[float]) -> str:
             return "0.50-0.75"
         return "0.75-1.00"
     return "present"
+
+
+def _summary_or_empty(values: Sequence[float]) -> dict[str, object]:
+    if not values:
+        return {"count": 0, "mean": None, "min": None, "max": None}
+    array = np.asarray(values, dtype=np.float32)
+    return {
+        "count": int(array.size),
+        "mean": float(np.mean(array)),
+        "min": float(np.min(array)),
+        "max": float(np.max(array)),
+    }
+
+
+def _is_deal_in(outcome: Any, seat: int) -> bool:
+    if not isinstance(outcome, dict):
+        return False
+    try:
+        discarder_seat = int(outcome.get("discarder_seat", -1))
+    except (TypeError, ValueError):
+        return False
+    return discarder_seat == int(seat) and discarder_seat >= 0

@@ -4,12 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.paired_trace import compare_policy_traces
+from fh_mahjong_ai.paired_trace import (
+    compare_policy_traces,
+    deduplicate_trace_pairs,
+    summarize_trace_pairs,
+)
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
 from fh_mahjong_ai.storage import load_checkpoint
 
@@ -37,6 +42,42 @@ def parse_seed_windows(values: list[str], episodes: int) -> list[int]:
     return seeds
 
 
+def load_resume_pairs(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    report = json.loads(path.read_text(encoding="utf-8"))
+    pairs = report.get("pairs", [])
+    if not isinstance(pairs, list):
+        raise ValueError(f"resume report has invalid pairs payload: {path}")
+    return deduplicate_trace_pairs(pairs)
+
+
+def write_report(
+    path: Path,
+    pairs: list[dict[str, Any]],
+    args: argparse.Namespace,
+    seeds: list[int],
+    complete: bool,
+) -> dict[str, Any]:
+    report = summarize_trace_pairs(
+        pairs,
+        left_label=args.left_label,
+        right_label=args.right_label,
+        large_loss_threshold=args.large_loss_threshold,
+        worst_delta_count=args.worst_delta_count,
+    )
+    report["left_checkpoint"] = str(args.left_checkpoint)
+    report["right_checkpoint"] = str(args.right_checkpoint)
+    report["seeds"] = seeds
+    report["seats"] = args.seats
+    report["match_mode"] = args.match_mode
+    report["device"] = args.device
+    report["complete"] = bool(complete)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare two checkpoints with paired online traces")
     parser.add_argument("--left-checkpoint", type=Path, required=True)
@@ -59,8 +100,24 @@ def main() -> None:
     parser.add_argument("--max-steps-per-episode", type=int, default=20000)
     parser.add_argument("--large-loss-threshold", type=float, default=None)
     parser.add_argument("--worst-delta-count", type=int, default=8)
+    parser.add_argument(
+        "--include-observation-arrays",
+        action="store_true",
+        help="Include full planes/scalars/action_mask arrays at first-divergence steps for direct counterfactual datasets.",
+    )
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--progress-interval", type=int, default=8)
+    parser.add_argument(
+        "--incremental-report-interval",
+        type=int,
+        default=0,
+        help="Write a resumable partial report after this many newly completed pairs; 0 disables incremental writes.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing --report-output pairs and skip completed seed/seat entries.",
+    )
     parser.add_argument("--report-output", type=Path, required=True)
     add_model_config_args(parser)
     args = parser.parse_args()
@@ -71,10 +128,24 @@ def main() -> None:
     left_model = load_model(args.left_checkpoint, args.device, model_config)
     right_model = load_model(args.right_checkpoint, args.device, model_config)
     progress_interval = max(0, int(args.progress_interval))
+    incremental_interval = max(0, int(args.incremental_report_interval))
+    existing_pairs = load_resume_pairs(args.report_output) if args.resume else []
+    incremental_pairs = list(existing_pairs)
+    if existing_pairs:
+        print(f"Resuming from {len(existing_pairs)} trace pairs in {args.report_output}", flush=True)
 
     def progress(completed: int, total: int, seed: int, seat: int) -> None:
         if progress_interval and (completed == 1 or completed % progress_interval == 0 or completed == total):
             print(f"Completed {completed}/{total} trace pairs; last seed={seed} seat={seat}", flush=True)
+
+    def checkpoint(pair: dict[str, Any], completed: int, total: int, seed: int, seat: int) -> None:
+        incremental_pairs.append(pair)
+        if incremental_interval and (completed % incremental_interval == 0 or completed == total):
+            write_report(args.report_output, incremental_pairs, args, seeds, complete=(completed == total))
+            print(
+                f"Partial report saved after {completed}/{total} trace pairs to {args.report_output}",
+                flush=True,
+            )
 
     report = compare_policy_traces(
         left_model=left_model,
@@ -92,17 +163,12 @@ def main() -> None:
         max_steps_per_episode=args.max_steps_per_episode,
         large_loss_threshold=args.large_loss_threshold,
         worst_delta_count=args.worst_delta_count,
+        include_observation_arrays=args.include_observation_arrays,
         progress_callback=progress,
+        pair_callback=checkpoint,
+        existing_pairs=existing_pairs,
     )
-    report["left_checkpoint"] = str(args.left_checkpoint)
-    report["right_checkpoint"] = str(args.right_checkpoint)
-    report["seeds"] = seeds
-    report["seats"] = args.seats
-    report["match_mode"] = args.match_mode
-    report["device"] = args.device
-
-    args.report_output.parent.mkdir(parents=True, exist_ok=True)
-    args.report_output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report = write_report(args.report_output, list(report["pairs"]), args, seeds, complete=True)
     summary = report["summary"]
     print(f"Pairs:              {summary['episodes']}")
     print(f"Divergence rate:    {summary['divergence_rate']:.2%}")

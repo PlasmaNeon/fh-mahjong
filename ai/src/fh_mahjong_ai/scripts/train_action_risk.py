@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -11,6 +12,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from fh_mahjong_ai.action_catalog import DISCARD_BASE, DISCARD_COUNT, action_family
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
@@ -37,6 +39,11 @@ RISK_ARRAY_KEYS = (
 OPTIONAL_RISK_ARRAY_KEYS = (
     "decision_indices",
     "sample_weights",
+    "terminal_is_draw",
+    "terminal_winner_seat",
+    "terminal_win_type",
+    "terminal_discarder_seat",
+    "terminal_total_score",
     "pairwise_preferred_action_ids",
     "pairwise_avoided_action_ids",
     "pairwise_weights",
@@ -57,6 +64,17 @@ class RiskTrainingConfig:
     target_mode: str = "terminal"
     score_pressure_threshold: float = 0.6
     score_pressure_weight: float = 0.5
+    discard_later_window: int = 4
+    discard_later_pressure_threshold: float = 0.6
+    discard_later_weight: float = 0.5
+    discard_outcome_window: int = 4
+    discard_outcome_weight: float = 1.0
+    future_context_window: int = 8
+    future_context_score_pressure_weight: float = 0.5
+    future_context_min_credit: float = 0.5
+    future_context_weight: float = 1.0
+    family_balance_strength: float = 0.0
+    family_weight_clip: float = 4.0
     batch_size: int = 2048
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
@@ -122,6 +140,15 @@ def train_action_risk(
         target_mode=config.target_mode,
         score_pressure_threshold=config.score_pressure_threshold,
         score_pressure_weight=config.score_pressure_weight,
+        discard_later_window=config.discard_later_window,
+        discard_later_pressure_threshold=config.discard_later_pressure_threshold,
+        discard_later_weight=config.discard_later_weight,
+        discard_outcome_window=config.discard_outcome_window,
+        discard_outcome_weight=config.discard_outcome_weight,
+        future_context_window=config.future_context_window,
+        future_context_score_pressure_weight=config.future_context_score_pressure_weight,
+        future_context_min_credit=config.future_context_min_credit,
+        future_context_weight=config.future_context_weight,
     )
     positive_indices = np.flatnonzero(labels > 0.5).astype(np.int64)
     negative_indices = np.flatnonzero(labels <= 0.5).astype(np.int64)
@@ -130,6 +157,12 @@ def train_action_risk(
             "balanced action-risk training needs both positive and negative large-loss rows; "
             f"positives={positive_indices.size} negatives={negative_indices.size}"
         )
+    loss_weights = risk_loss_weights(
+        arrays,
+        labels,
+        family_balance_strength=config.family_balance_strength,
+        family_weight_clip=config.family_weight_clip,
+    )
 
     paired_indices = np.flatnonzero(np.asarray(arrays.get("pairwise_weights", []), dtype=np.float32) > 0.0).astype(np.int64)
 
@@ -187,7 +220,7 @@ def train_action_risk(
                     rng=rng,
                 )
                 batch_indices = append_paired_batch_indices(batch_indices, paired_indices, effective_batch, config, rng)
-                metric = train_risk_step(model, optimizer, arrays, labels, severities, batch_indices, config)
+                metric = train_risk_step(model, optimizer, arrays, labels, severities, loss_weights, batch_indices, config)
                 latest = RiskTrainingMetrics(epoch=epoch, step=step, **metric)
                 metrics.append(latest)
                 if mlflow_run is not None:
@@ -221,6 +254,8 @@ def train_action_risk(
             "positive_transitions": int(positive_indices.size),
             "negative_transitions": int(negative_indices.size),
             "positive_rate": float(np.mean(labels)),
+            "loss_weight_mean": float(np.mean(loss_weights)),
+            "loss_weight_max": float(np.max(loss_weights)),
             "risk_reports": [asdict(report) for report in risk_reports],
             "paired_transitions": int(paired_indices.size),
             "config": asdict(config),
@@ -297,6 +332,15 @@ def risk_targets(
     target_mode: str = "terminal",
     score_pressure_threshold: float = 0.6,
     score_pressure_weight: float = 0.5,
+    discard_later_window: int = 4,
+    discard_later_pressure_threshold: float = 0.6,
+    discard_later_weight: float = 0.5,
+    discard_outcome_window: int = 4,
+    discard_outcome_weight: float = 1.0,
+    future_context_window: int = 8,
+    future_context_score_pressure_weight: float = 0.5,
+    future_context_min_credit: float = 0.5,
+    future_context_weight: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     seats = arrays["seats"].astype(np.int64, copy=False)
     row_indices = np.arange(seats.shape[0])
@@ -314,6 +358,53 @@ def risk_targets(
         pressure_severity = np.maximum(-returns, 0.0).astype(np.float32) * pressure.astype(np.float32)
         severities = severities + float(score_pressure_weight) * pressure_severity
         return labels, severities.astype(np.float32, copy=False)
+    if normalized_mode == "discard_later_pressure":
+        future_pressure = future_same_seat_score_pressure(arrays, window=discard_later_window)
+        action_ids = arrays["action_ids"].astype(np.int64, copy=False)
+        discard_actions = (DISCARD_BASE <= action_ids) & (action_ids < DISCARD_BASE + DISCARD_COUNT)
+        future_pressured_loss = (
+            discard_actions
+            & (returns <= 0.0)
+            & (future_pressure >= float(discard_later_pressure_threshold))
+        )
+        labels = (terminal_labels | future_pressured_loss).astype(np.float32)
+        future_severity = np.maximum(-returns, 0.0).astype(np.float32) * future_pressure.astype(np.float32)
+        severities = severities + float(discard_later_weight) * future_severity * future_pressured_loss.astype(np.float32)
+        return labels, severities.astype(np.float32, copy=False)
+    if normalized_mode == "discard_future_outcome":
+        outcome_mask, outcome_severity = discard_future_outcome_targets(
+            arrays,
+            returns,
+            threshold=float(threshold),
+            window=discard_outcome_window,
+        )
+        labels = (terminal_labels | outcome_mask).astype(np.float32)
+        severities = severities + float(discard_outcome_weight) * outcome_severity
+        return labels, severities.astype(np.float32, copy=False)
+    if normalized_mode == "future_outcome_context":
+        context_labels, context_severity = future_outcome_context_targets(
+            arrays,
+            returns,
+            threshold=float(threshold),
+            window=future_context_window,
+            score_pressure_weight=future_context_score_pressure_weight,
+            min_credit=future_context_min_credit,
+        )
+        labels = np.maximum(terminal_labels.astype(np.float32), context_labels.astype(np.float32))
+        severities = severities + float(future_context_weight) * context_severity.astype(np.float32, copy=False)
+        return labels.astype(np.float32, copy=False), severities.astype(np.float32, copy=False)
+    if normalized_mode == "family_future_outcome_context":
+        context_labels, context_severity = family_future_outcome_context_targets(
+            arrays,
+            returns,
+            threshold=float(threshold),
+            window=future_context_window,
+            score_pressure_weight=future_context_score_pressure_weight,
+            min_credit=future_context_min_credit,
+        )
+        labels = np.maximum(terminal_labels.astype(np.float32), context_labels.astype(np.float32))
+        severities = severities + float(future_context_weight) * context_severity.astype(np.float32, copy=False)
+        return labels.astype(np.float32, copy=False), severities.astype(np.float32, copy=False)
     raise ValueError(f"unsupported action-risk target_mode={target_mode!r}")
 
 
@@ -339,7 +430,340 @@ def chongci_score_pressure(arrays: dict[str, np.ndarray]) -> np.ndarray:
     )
     pressure = np.clip(pressure, 0.0, 1.0)
     return (pressure * np.clip(is_chongci, 0.0, 1.0)).astype(np.float32, copy=False)
+
+
+def future_same_seat_score_pressure(arrays: dict[str, np.ndarray], window: int = 4) -> np.ndarray:
+    rows = int(arrays["action_ids"].shape[0])
+    if rows == 0:
+        return np.zeros(0, dtype=np.float32)
+
+    pressure = chongci_score_pressure(arrays)
+    episode_indices = arrays["episode_index"].astype(np.int64, copy=False)
+    seats = arrays["seats"].astype(np.int64, copy=False)
+    decision_indices = arrays.get("decision_indices")
+    order_values = (
+        np.asarray(decision_indices, dtype=np.int64)
+        if decision_indices is not None
+        else np.arange(rows, dtype=np.int64)
+    )
+
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (episode_index, seat) in enumerate(zip(episode_indices.tolist(), seats.tolist())):
+        buckets[(int(episode_index), int(seat))].append(index)
+
+    future_pressure = np.zeros(rows, dtype=np.float32)
+    for indices in buckets.values():
+        ordered = sorted(indices, key=lambda index: (int(order_values[index]), int(index)))
+        if len(ordered) <= 1:
+            continue
+        values = pressure[np.asarray(ordered, dtype=np.int64)]
+        if window <= 0:
+            suffix_max = np.maximum.accumulate(values[::-1])[::-1]
+            for position, index in enumerate(ordered[:-1]):
+                future_pressure[index] = float(suffix_max[position + 1])
+            continue
+        for position, index in enumerate(ordered[:-1]):
+            end = min(len(ordered), position + 1 + int(window))
+            if end > position + 1:
+                future_pressure[index] = float(np.max(values[position + 1:end]))
+    return future_pressure
+
+
+def discard_future_outcome_targets(
+    arrays: dict[str, np.ndarray],
+    returns: np.ndarray,
+    threshold: float,
+    window: int = 4,
+) -> tuple[np.ndarray, np.ndarray]:
+    rows = int(arrays["action_ids"].shape[0])
+    labels = np.zeros(rows, dtype=np.bool_)
+    severities = np.zeros(rows, dtype=np.float32)
+    if rows == 0:
+        return labels, severities
+
+    action_ids = arrays["action_ids"].astype(np.int64, copy=False)
+    discard_actions = (DISCARD_BASE <= action_ids) & (action_ids < DISCARD_BASE + DISCARD_COUNT)
+    episode_indices = arrays["episode_index"].astype(np.int64, copy=False)
+    seats = arrays["seats"].astype(np.int64, copy=False)
+    decision_indices = arrays.get("decision_indices")
+    order_values = (
+        np.asarray(decision_indices, dtype=np.int64)
+        if decision_indices is not None
+        else np.arange(rows, dtype=np.int64)
+    )
+
+    terminal_discarder_seat = arrays.get("terminal_discarder_seat")
+    if terminal_discarder_seat is None:
+        deal_in = np.zeros(rows, dtype=np.bool_)
+    else:
+        discarder = np.asarray(terminal_discarder_seat, dtype=np.int64)
+        deal_in = (discarder == seats) & (discarder >= 0) & (returns <= 0.0)
+    large_loss = returns <= float(threshold)
+    bad_outcome = large_loss | deal_in
+    if not np.any(bad_outcome):
+        return labels, severities
+
+    outcome_severity = np.maximum(float(threshold) - returns, 0.0).astype(np.float32)
+    deal_in_severity = np.maximum(-returns, 0.0).astype(np.float32)
+    outcome_severity = np.maximum(outcome_severity, deal_in_severity * deal_in.astype(np.float32))
+
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (episode_index, seat) in enumerate(zip(episode_indices.tolist(), seats.tolist())):
+        buckets[(int(episode_index), int(seat))].append(index)
+
+    for indices in buckets.values():
+        group_bad = [index for index in indices if bool(bad_outcome[index])]
+        if not group_bad:
+            continue
+        ordered = sorted(indices, key=lambda index: (int(order_values[index]), int(index)))
+        discard_indices = [index for index in ordered if bool(discard_actions[index])]
+        if not discard_indices:
+            continue
+        selected = discard_indices if window <= 0 else discard_indices[-int(window):]
+        group_severity = float(np.max(outcome_severity[np.asarray(group_bad, dtype=np.int64)]))
+        for index in selected:
+            labels[index] = True
+            severities[index] = group_severity
     return labels, severities
+
+
+def future_outcome_context_targets(
+    arrays: dict[str, np.ndarray],
+    returns: np.ndarray,
+    threshold: float,
+    window: int = 8,
+    score_pressure_weight: float = 0.5,
+    min_credit: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Label recent same-seat actions before bad terminal outcomes.
+
+    This is broader than discard-only hindsight. It uses actual later outcomes,
+    then assigns family- and pressure-scaled credit to the recent visible actions
+    that could plausibly affect tail risk.
+    """
+    rows = int(arrays["action_ids"].shape[0])
+    labels = np.zeros(rows, dtype=np.float32)
+    severities = np.zeros(rows, dtype=np.float32)
+    if rows == 0:
+        return labels, severities
+
+    seats = arrays["seats"].astype(np.int64, copy=False)
+    action_ids = arrays["action_ids"].astype(np.int64, copy=False)
+    episode_indices = arrays["episode_index"].astype(np.int64, copy=False)
+    decision_indices = arrays.get("decision_indices")
+    order_values = (
+        np.asarray(decision_indices, dtype=np.int64)
+        if decision_indices is not None
+        else np.arange(rows, dtype=np.int64)
+    )
+    pressure = chongci_score_pressure(arrays)
+
+    terminal_discarder_seat = arrays.get("terminal_discarder_seat")
+    if terminal_discarder_seat is None:
+        deal_in = np.zeros(rows, dtype=np.bool_)
+    else:
+        discarder = np.asarray(terminal_discarder_seat, dtype=np.int64)
+        deal_in = (discarder == seats) & (discarder >= 0) & (returns <= 0.0)
+    large_loss = returns <= float(threshold)
+    bad_outcome = large_loss | deal_in
+    if not np.any(bad_outcome):
+        return labels, severities
+
+    base_severity = np.maximum(float(threshold) - returns, 0.0).astype(np.float32)
+    deal_in_severity = np.maximum(-returns, 0.0).astype(np.float32)
+    outcome_severity = np.maximum(base_severity, deal_in_severity * deal_in.astype(np.float32))
+
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (episode_index, seat) in enumerate(zip(episode_indices.tolist(), seats.tolist())):
+        buckets[(int(episode_index), int(seat))].append(index)
+
+    window_size = int(window)
+    for indices in buckets.values():
+        group_bad = [index for index in indices if bool(bad_outcome[index])]
+        if not group_bad:
+            continue
+        ordered = sorted(indices, key=lambda index: (int(order_values[index]), int(index)))
+        selected = ordered if window_size <= 0 else ordered[-window_size:]
+        if not selected:
+            continue
+        group_severity = float(np.max(outcome_severity[np.asarray(group_bad, dtype=np.int64)]))
+        if group_severity <= 0.0:
+            group_severity = float(np.max(np.maximum(-returns[np.asarray(group_bad, dtype=np.int64)], 0.0)))
+        selected_count = max(1, len(selected))
+        for position, index in enumerate(selected):
+            family_credit = action_family_risk_credit(int(action_ids[index]))
+            if family_credit <= 0.0:
+                continue
+            recency = (position + 1) / selected_count
+            pressure_multiplier = 1.0 + float(score_pressure_weight) * float(pressure[index])
+            normalized_multiplier = pressure_multiplier / max(1.0 + float(score_pressure_weight), 1e-6)
+            credit = float(family_credit) * (0.5 + 0.5 * recency) * normalized_multiplier
+            if credit < float(min_credit):
+                continue
+            labels[index] = max(float(labels[index]), min(1.0, credit))
+            severities[index] = max(float(severities[index]), group_severity * min(1.0, credit))
+    return labels.astype(np.float32, copy=False), severities.astype(np.float32, copy=False)
+
+
+def family_future_outcome_context_targets(
+    arrays: dict[str, np.ndarray],
+    returns: np.ndarray,
+    threshold: float,
+    window: int = 8,
+    score_pressure_weight: float = 0.5,
+    min_credit: float = 0.35,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Use separate hindsight semantics for discards and calls.
+
+    Discards get direct credit only when recent same-seat discards precede an
+    actual large loss or deal-in. Calls/passes get their own lower-variance
+    recent-action credit. This avoids teaching one broad target where discards
+    dominate the action-risk head and interruption decisions become noise.
+    """
+    rows = int(arrays["action_ids"].shape[0])
+    labels = np.zeros(rows, dtype=np.float32)
+    severities = np.zeros(rows, dtype=np.float32)
+    if rows == 0:
+        return labels, severities
+
+    discard_labels, discard_severities = discard_future_outcome_targets(
+        arrays,
+        returns,
+        threshold=threshold,
+        window=window,
+    )
+    labels = np.maximum(labels, discard_labels.astype(np.float32))
+    severities = np.maximum(severities, discard_severities.astype(np.float32, copy=False))
+
+    seats = arrays["seats"].astype(np.int64, copy=False)
+    action_ids = arrays["action_ids"].astype(np.int64, copy=False)
+    episode_indices = arrays["episode_index"].astype(np.int64, copy=False)
+    decision_indices = arrays.get("decision_indices")
+    order_values = (
+        np.asarray(decision_indices, dtype=np.int64)
+        if decision_indices is not None
+        else np.arange(rows, dtype=np.int64)
+    )
+    pressure = chongci_score_pressure(arrays)
+
+    terminal_discarder_seat = arrays.get("terminal_discarder_seat")
+    if terminal_discarder_seat is None:
+        deal_in = np.zeros(rows, dtype=np.bool_)
+    else:
+        discarder = np.asarray(terminal_discarder_seat, dtype=np.int64)
+        deal_in = (discarder == seats) & (discarder >= 0) & (returns <= 0.0)
+    large_loss = returns <= float(threshold)
+    bad_outcome = large_loss | deal_in
+    if not np.any(bad_outcome):
+        return labels.astype(np.float32, copy=False), severities.astype(np.float32, copy=False)
+
+    base_severity = np.maximum(float(threshold) - returns, 0.0).astype(np.float32)
+    deal_in_severity = np.maximum(-returns, 0.0).astype(np.float32)
+    outcome_severity = np.maximum(base_severity, deal_in_severity * deal_in.astype(np.float32))
+
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (episode_index, seat) in enumerate(zip(episode_indices.tolist(), seats.tolist())):
+        buckets[(int(episode_index), int(seat))].append(index)
+
+    window_size = int(window)
+    for indices in buckets.values():
+        group_bad = [index for index in indices if bool(bad_outcome[index])]
+        if not group_bad:
+            continue
+        ordered = sorted(indices, key=lambda index: (int(order_values[index]), int(index)))
+        selected = ordered if window_size <= 0 else ordered[-window_size:]
+        if not selected:
+            continue
+        group_severity = float(np.max(outcome_severity[np.asarray(group_bad, dtype=np.int64)]))
+        if group_severity <= 0.0:
+            group_severity = float(np.max(np.maximum(-returns[np.asarray(group_bad, dtype=np.int64)], 0.0)))
+        selected_count = max(1, len(selected))
+        for position, index in enumerate(selected):
+            family_credit = action_family_interruption_risk_credit(int(action_ids[index]))
+            if family_credit <= 0.0:
+                continue
+            recency = (position + 1) / selected_count
+            pressure_multiplier = 1.0 + float(score_pressure_weight) * float(pressure[index])
+            normalized_multiplier = pressure_multiplier / max(1.0 + float(score_pressure_weight), 1e-6)
+            credit = float(family_credit) * (0.5 + 0.5 * recency) * normalized_multiplier
+            if credit < float(min_credit):
+                continue
+            labels[index] = max(float(labels[index]), min(1.0, credit))
+            severities[index] = max(float(severities[index]), group_severity * min(1.0, credit))
+    return labels.astype(np.float32, copy=False), severities.astype(np.float32, copy=False)
+
+
+def action_family_risk_credit(action_id: int) -> float:
+    family = action_family(action_id)
+    if family == "discard":
+        return 1.0
+    if family == "kan":
+        return 0.9
+    if family == "pon":
+        return 0.8
+    if family == "chii":
+        return 0.75
+    if family == "pass":
+        return 0.75
+    if family == "haitei":
+        return 0.55
+    if family == "win":
+        return 0.0
+    return 0.4
+
+
+def action_family_interruption_risk_credit(action_id: int) -> float:
+    family = action_family(action_id)
+    if family == "kan":
+        return 1.0
+    if family == "pon":
+        return 0.9
+    if family == "chii":
+        return 0.8
+    if family == "pass":
+        return 0.55
+    if family == "haitei":
+        return 0.45
+    return 0.0
+
+
+def risk_loss_weights(
+    arrays: dict[str, np.ndarray],
+    labels: np.ndarray,
+    family_balance_strength: float = 0.0,
+    family_weight_clip: float = 4.0,
+) -> np.ndarray:
+    """Combine stored sample weights with optional action-family balance weights."""
+    rows = int(arrays["action_ids"].shape[0])
+    weights = np.asarray(arrays.get("sample_weights", np.ones(rows, dtype=np.float32)), dtype=np.float32).copy()
+    if rows == 0:
+        return weights
+
+    strength = max(0.0, min(1.0, float(family_balance_strength)))
+    if strength > 0.0:
+        action_ids = arrays["action_ids"].astype(np.int64, copy=False)
+        families = np.asarray([action_family(int(action_id)) for action_id in action_ids], dtype=object)
+        unique_families = sorted(str(family) for family in set(families.tolist()))
+        if unique_families:
+            family_weights = np.ones(rows, dtype=np.float32)
+            target_mass = rows / max(1, len(unique_families))
+            clip = max(1.0, float(family_weight_clip))
+            for family in unique_families:
+                mask = families == family
+                count = int(np.count_nonzero(mask))
+                if count <= 0:
+                    continue
+                family_weight = target_mass / count
+                family_weights[mask] = float(np.clip(family_weight, 1.0 / clip, clip))
+            weights *= ((1.0 - strength) + strength * family_weights).astype(np.float32, copy=False)
+
+    positive_mask = np.asarray(labels, dtype=np.float32) > 0.5
+    if np.any(positive_mask):
+        weights[positive_mask] = np.maximum(weights[positive_mask], 1.0)
+    mean = float(np.mean(weights))
+    if mean > 0.0:
+        weights = weights / mean
+    return weights.astype(np.float32, copy=False)
 
 
 def balanced_batch_indices(
@@ -405,6 +829,7 @@ def train_risk_step(
     arrays: dict[str, np.ndarray],
     labels: np.ndarray,
     severities: np.ndarray,
+    loss_weights: np.ndarray,
     indices: np.ndarray,
     config: RiskTrainingConfig,
 ) -> dict[str, float]:
@@ -415,12 +840,15 @@ def train_risk_step(
     action_ids = torch.from_numpy(arrays["action_ids"][indices].astype(np.int64, copy=False)).to(config.device)
     target_labels = torch.from_numpy(labels[indices].astype(np.float32, copy=False)).to(config.device)
     target_severities = torch.from_numpy(severities[indices].astype(np.float32, copy=False)).to(config.device)
+    target_weights = torch.from_numpy(loss_weights[indices].astype(np.float32, copy=False)).to(config.device)
 
     risk_logits, risk_severities = model.action_risk_predictions(planes, scalars, action_mask)
     logits = risk_logits.gather(1, action_ids.unsqueeze(1)).squeeze(1)
     severity = risk_severities.gather(1, action_ids.unsqueeze(1)).squeeze(1)
-    probability_loss = nn.functional.binary_cross_entropy_with_logits(logits, target_labels)
-    severity_loss = nn.functional.smooth_l1_loss(severity, target_severities)
+    probability_losses = nn.functional.binary_cross_entropy_with_logits(logits, target_labels, reduction="none")
+    severity_losses = nn.functional.smooth_l1_loss(severity, target_severities, reduction="none")
+    probability_loss = weighted_mean(probability_losses, target_weights)
+    severity_loss = weighted_mean(severity_losses, target_weights)
     paired_margin_loss, paired_severity_loss, paired_count, paired_delta_mae = pairwise_risk_losses(
         risk_logits,
         risk_severities,
@@ -567,12 +995,42 @@ def main() -> None:
     parser.add_argument("--threshold", type=float, default=-1.0)
     parser.add_argument(
         "--target-mode",
-        choices=("terminal", "score_pressure"),
+        choices=(
+            "terminal",
+            "score_pressure",
+            "discard_later_pressure",
+            "discard_future_outcome",
+            "future_outcome_context",
+            "family_future_outcome_context",
+        ),
         default="terminal",
-        help="Risk target definition. score_pressure adds visible Chongci match-pressure positives.",
+        help=(
+            "Risk target definition. score_pressure adds visible Chongci match-pressure positives; "
+            "discard_later_pressure adds positives only for discards followed by same-seat pressure; "
+            "discard_future_outcome adds positives for recent discards before actual bad terminal outcomes; "
+            "future_outcome_context adds family- and score-context-weighted positives for recent same-seat actions "
+            "before actual bad terminal outcomes; family_future_outcome_context separates discard hindsight from "
+            "interruption-decision hindsight before actual bad terminal outcomes."
+        ),
     )
     parser.add_argument("--score-pressure-threshold", type=float, default=0.6)
     parser.add_argument("--score-pressure-weight", type=float, default=0.5)
+    parser.add_argument("--discard-later-window", type=int, default=4)
+    parser.add_argument("--discard-later-pressure-threshold", type=float, default=0.6)
+    parser.add_argument("--discard-later-weight", type=float, default=0.5)
+    parser.add_argument("--discard-outcome-window", type=int, default=4)
+    parser.add_argument("--discard-outcome-weight", type=float, default=1.0)
+    parser.add_argument("--future-context-window", type=int, default=8)
+    parser.add_argument("--future-context-score-pressure-weight", type=float, default=0.5)
+    parser.add_argument("--future-context-min-credit", type=float, default=0.5)
+    parser.add_argument("--future-context-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--family-balance-strength",
+        type=float,
+        default=0.0,
+        help="Interpolate per-row loss weights toward equal action-family mass; 0 keeps legacy weighting.",
+    )
+    parser.add_argument("--family-weight-clip", type=float, default=4.0)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
     parser.add_argument("--severity-weight", type=float, default=0.2)
     parser.add_argument("--paired-trace-report", action="append", type=Path, default=[])
@@ -587,6 +1045,12 @@ def main() -> None:
     parser.add_argument("--paired-trace-left-label", type=str, default="anchor")
     parser.add_argument("--paired-trace-weight", type=float, default=1.0)
     parser.add_argument("--paired-trace-worst-delta-count", type=int, default=0)
+    parser.add_argument(
+        "--paired-trace-counterfactual-labels",
+        action="store_true",
+        help="Load all non-zero first-divergence reward-gap labels as preferred/avoided action supervision.",
+    )
+    parser.add_argument("--paired-trace-min-reward-gap", type=float, default=0.0)
     parser.add_argument("--paired-margin-weight", type=float, default=0.0)
     parser.add_argument("--paired-severity-weight", type=float, default=0.0)
     parser.add_argument("--paired-margin", type=float, default=0.1)
@@ -609,6 +1073,8 @@ def main() -> None:
         left_label=args.paired_trace_left_label,
         large_loss_threshold=args.threshold,
         worst_delta_count=args.paired_trace_worst_delta_count,
+        include_counterfactual_labels=args.paired_trace_counterfactual_labels,
+        min_counterfactual_reward_gap=args.paired_trace_min_reward_gap,
     ) if args.paired_trace_report else []
 
     train_action_risk(
@@ -620,6 +1086,17 @@ def main() -> None:
             target_mode=args.target_mode,
             score_pressure_threshold=args.score_pressure_threshold,
             score_pressure_weight=args.score_pressure_weight,
+            discard_later_window=args.discard_later_window,
+            discard_later_pressure_threshold=args.discard_later_pressure_threshold,
+            discard_later_weight=args.discard_later_weight,
+            discard_outcome_window=args.discard_outcome_window,
+            discard_outcome_weight=args.discard_outcome_weight,
+            future_context_window=args.future_context_window,
+            future_context_score_pressure_weight=args.future_context_score_pressure_weight,
+            future_context_min_credit=args.future_context_min_credit,
+            future_context_weight=args.future_context_weight,
+            family_balance_strength=args.family_balance_strength,
+            family_weight_clip=args.family_weight_clip,
             batch_size=args.batch_size,
             learning_rate=args.lr,
             weight_decay=args.weight_decay,

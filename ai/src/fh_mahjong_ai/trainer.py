@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from .action_catalog import action_family
 from .buffer import ReplayBuffer
 from .config import AdvantageWeightedBCConfig, DiscreteIQLConfig, OfflineQConfig, TrainConfig
 from .env import MahjongEnv
@@ -58,6 +59,11 @@ class DiscreteIQLMetrics:
     pairwise_q_loss: float
     large_loss_aux_loss: float
     large_loss_severity_loss: float
+    large_loss_bc_loss: float
+    large_loss_bc_count: int
+    external_risk_policy_loss: float
+    external_risk_policy_probability: float
+    external_risk_policy_mass: float
     large_loss_target_rate: float
     avg_large_loss_probability: float
     avg_large_loss_severity: float
@@ -276,12 +282,18 @@ class DiscreteIQLTrainer:
         optimizer: torch.optim.Optimizer,
         train_config: TrainConfig,
         iql_config: Optional[DiscreteIQLConfig] = None,
+        external_risk_model: Optional[nn.Module] = None,
     ) -> None:
         self.model = model
         self.target_model = target_model
         self.optimizer = optimizer
         self.train_config = train_config
         self.iql_config = iql_config or DiscreteIQLConfig()
+        self.external_risk_model = external_risk_model
+        if self.external_risk_model is not None:
+            self.external_risk_model.eval()
+            for param in self.external_risk_model.parameters():
+                param.requires_grad_(False)
         self._sample_rng = np.random.default_rng(train_config.seed)
 
     def train_step(self, replay_buffer: ReplayBuffer) -> DiscreteIQLMetrics:
@@ -303,6 +315,7 @@ class DiscreteIQLTrainer:
         pairwise_preferred_action_ids = torch.from_numpy(batch.pairwise_preferred_action_ids).to(self.train_config.device)
         pairwise_avoided_action_ids = torch.from_numpy(batch.pairwise_avoided_action_ids).to(self.train_config.device)
         pairwise_weights = torch.from_numpy(batch.pairwise_weights).to(self.train_config.device)
+        pairwise_reward_delta_targets = torch.from_numpy(batch.pairwise_reward_delta_targets).to(self.train_config.device)
         utility_returns = large_loss_adjusted_rewards(
             returns,
             self.iql_config.large_loss_threshold,
@@ -356,7 +369,11 @@ class DiscreteIQLTrainer:
             pairwise_preferred_action_ids,
             pairwise_avoided_action_ids,
             pairwise_weights,
+            reward_delta_targets=pairwise_reward_delta_targets,
             margin=self.iql_config.pairwise_margin,
+            reward_delta_weight=self.iql_config.pairwise_reward_delta_weight,
+            reward_delta_margin_scale=self.iql_config.pairwise_reward_delta_margin_scale,
+            reward_delta_clip=self.iql_config.pairwise_reward_delta_clip,
         )
         pairwise_q_loss, pairwise_q_count = pairwise_margin_loss(
             q_values,
@@ -364,7 +381,11 @@ class DiscreteIQLTrainer:
             pairwise_preferred_action_ids,
             pairwise_avoided_action_ids,
             pairwise_weights,
+            reward_delta_targets=pairwise_reward_delta_targets,
             margin=self.iql_config.pairwise_q_margin,
+            reward_delta_weight=self.iql_config.pairwise_reward_delta_weight,
+            reward_delta_margin_scale=self.iql_config.pairwise_reward_delta_margin_scale,
+            reward_delta_clip=self.iql_config.pairwise_reward_delta_clip,
         )
         large_loss_aux_loss, large_loss_severity_loss, large_loss_diagnostics = large_loss_auxiliary_losses(
             self.model,
@@ -379,6 +400,25 @@ class DiscreteIQLTrainer:
             severity_weight=self.iql_config.large_loss_severity_weight,
             detach_features=self.iql_config.large_loss_aux_detach,
         )
+        large_loss_bc_loss, large_loss_bc_count = large_loss_behavior_cloning_loss(
+            per_sample_policy_loss,
+            returns,
+            sample_weights,
+            threshold=self.iql_config.large_loss_threshold,
+            weight=self.iql_config.large_loss_bc_weight,
+        )
+        external_risk_policy_loss, external_risk_policy_diagnostics = external_risk_policy_regularizer(
+            risk_model=self.external_risk_model,
+            policy_logits=policy_logits,
+            planes=planes,
+            scalars=scalars,
+            action_mask=action_mask,
+            sample_weights=sample_weights,
+            weight=self.iql_config.external_risk_policy_weight,
+            threshold=self.iql_config.external_risk_policy_threshold,
+            family=self.iql_config.external_risk_policy_family,
+            severity_weight=self.iql_config.external_risk_policy_severity_weight,
+        )
 
         loss = (
             self.iql_config.q_weight * q_loss
@@ -390,6 +430,8 @@ class DiscreteIQLTrainer:
             + self.iql_config.pairwise_q_weight * pairwise_q_loss
             + self.iql_config.large_loss_aux_weight * large_loss_aux_loss
             + self.iql_config.large_loss_severity_weight * large_loss_severity_loss
+            + self.iql_config.large_loss_bc_weight * large_loss_bc_loss
+            + self.iql_config.external_risk_policy_weight * external_risk_policy_loss
         )
 
         self.optimizer.zero_grad(set_to_none=True)
@@ -408,6 +450,11 @@ class DiscreteIQLTrainer:
             pairwise_q_loss=float(pairwise_q_loss.item()),
             large_loss_aux_loss=float(large_loss_aux_loss.item()),
             large_loss_severity_loss=float(large_loss_severity_loss.item()),
+            large_loss_bc_loss=float(large_loss_bc_loss.item()),
+            large_loss_bc_count=large_loss_bc_count,
+            external_risk_policy_loss=float(external_risk_policy_loss.item()),
+            external_risk_policy_probability=external_risk_policy_diagnostics["avg_probability"],
+            external_risk_policy_mass=external_risk_policy_diagnostics["policy_mass"],
             large_loss_target_rate=large_loss_diagnostics["target_rate"],
             avg_large_loss_probability=large_loss_diagnostics["avg_probability"],
             avg_large_loss_severity=large_loss_diagnostics["avg_severity"],
@@ -454,7 +501,11 @@ def pairwise_margin_loss(
     preferred_action_ids: torch.Tensor,
     avoided_action_ids: torch.Tensor,
     pairwise_weights: torch.Tensor,
+    reward_delta_targets: Optional[torch.Tensor] = None,
     margin: float = 0.0,
+    reward_delta_weight: float = 0.0,
+    reward_delta_margin_scale: float = 0.0,
+    reward_delta_clip: float = 2.0,
 ) -> tuple[torch.Tensor, int]:
     valid = (
         (pairwise_weights > 0.0)
@@ -479,9 +530,17 @@ def pairwise_margin_loss(
     selected_preferred = preferred_action_ids[valid]
     selected_avoided = avoided_action_ids[valid]
     selected_weights = pairwise_weights[valid].to(dtype=logits.dtype, device=logits.device)
+    selected_margin = logits.new_full((count,), float(margin))
+    if reward_delta_targets is not None and (reward_delta_weight > 0.0 or reward_delta_margin_scale > 0.0):
+        selected_deltas = reward_delta_targets[valid].to(dtype=logits.dtype, device=logits.device)
+        selected_deltas = torch.clamp(selected_deltas, min=0.0, max=float(reward_delta_clip))
+        if reward_delta_weight > 0.0:
+            selected_weights = selected_weights * (1.0 + float(reward_delta_weight) * selected_deltas)
+        if reward_delta_margin_scale > 0.0:
+            selected_margin = selected_margin + float(reward_delta_margin_scale) * selected_deltas
     preferred_logits = selected_logits.gather(1, selected_preferred.unsqueeze(1)).squeeze(1)
     avoided_logits = selected_logits.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
-    losses = torch.relu(float(margin) - (preferred_logits - avoided_logits))
+    losses = torch.relu(selected_margin - (preferred_logits - avoided_logits))
     return weighted_mean(losses, selected_weights), count
 
 
@@ -540,6 +599,87 @@ def large_loss_auxiliary_losses(
             "avg_severity": float(severity.mean().item()),
         }
     return classification_loss, severity_loss, diagnostics
+
+
+def large_loss_behavior_cloning_loss(
+    per_sample_policy_loss: torch.Tensor,
+    returns: torch.Tensor,
+    sample_weights: torch.Tensor,
+    threshold: Optional[float],
+    weight: float,
+) -> tuple[torch.Tensor, int]:
+    if threshold is None or weight <= 0.0:
+        return per_sample_policy_loss.new_zeros(()), 0
+    mask = returns <= torch.as_tensor(threshold, dtype=returns.dtype, device=returns.device)
+    count = int(mask.sum().item())
+    if count == 0:
+        return per_sample_policy_loss.new_zeros(()), 0
+    masked_losses = per_sample_policy_loss[mask]
+    masked_weights = sample_weights[mask]
+    return weighted_mean(masked_losses, masked_weights), count
+
+
+def external_risk_policy_regularizer(
+    risk_model: Optional[nn.Module],
+    policy_logits: torch.Tensor,
+    planes: torch.Tensor,
+    scalars: torch.Tensor,
+    action_mask: torch.Tensor,
+    sample_weights: torch.Tensor,
+    weight: float,
+    threshold: float = 0.6,
+    family: str = "all",
+    severity_weight: float = 0.0,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    zero = policy_logits.new_zeros(())
+    diagnostics = {
+        "avg_probability": 0.0,
+        "policy_mass": 0.0,
+    }
+    if risk_model is None or weight <= 0.0:
+        return zero, diagnostics
+    if not hasattr(risk_model, "action_risk_predictions"):
+        return zero, diagnostics
+
+    family_mask = action_family_tensor(policy_logits.shape[1], family, policy_logits.device)
+    legal_mask = (action_mask > 0) & family_mask.unsqueeze(0)
+    if not bool(legal_mask.any().item()):
+        return zero, diagnostics
+
+    with torch.no_grad():
+        risk_logits, risk_severities = risk_model.action_risk_predictions(planes, scalars, action_mask)
+        risk_probabilities = torch.sigmoid(risk_logits)
+        excess_risk = torch.relu(risk_probabilities - float(threshold))
+        if severity_weight > 0.0:
+            excess_risk = excess_risk + float(severity_weight) * torch.relu(risk_severities)
+        excess_risk = excess_risk.masked_fill(~legal_mask, 0.0)
+        avg_probability = masked_mean(risk_probabilities, legal_mask)
+
+    masked_logits = policy_logits.masked_fill(action_mask <= 0, torch.finfo(policy_logits.dtype).min)
+    policy_probabilities = torch.softmax(masked_logits, dim=1)
+    selected_policy_mass = (policy_probabilities * legal_mask.to(dtype=policy_probabilities.dtype)).sum(dim=1)
+    per_row_loss = (policy_probabilities * excess_risk).sum(dim=1)
+    loss = weighted_mean(per_row_loss, sample_weights)
+    diagnostics = {
+        "avg_probability": float(avg_probability.item()),
+        "policy_mass": float(selected_policy_mass.mean().item()),
+    }
+    return loss, diagnostics
+
+
+def masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    selected = values.masked_select(mask)
+    if selected.numel() == 0:
+        return values.new_zeros(())
+    return selected.mean()
+
+
+def action_family_tensor(action_count: int, family: str, device: torch.device) -> torch.Tensor:
+    normalized = family.lower()
+    if normalized in {"", "all"}:
+        return torch.ones(action_count, dtype=torch.bool, device=device)
+    values = [action_family(action_id) == normalized for action_id in range(action_count)]
+    return torch.as_tensor(values, dtype=torch.bool, device=device)
 
 
 def discounted_terminal_returns(returns: torch.Tensor, steps_to_done: torch.Tensor, gamma: float) -> torch.Tensor:
