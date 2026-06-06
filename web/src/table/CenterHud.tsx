@@ -27,17 +27,17 @@ export function CenterHud({ hudChips, seats }: CenterHudProps) {
             </span>
           ))}
         </div>
-      </div>
 
-      {seats.map((seat) => (
-        <div
-          key={seat.direction}
-          className={`center-seat center-seat-${seat.direction} ${seat.isActive ? 'center-seat-active' : ''}`}
-        >
-          {seat.windKanji && <span className="center-seat-wind">{seat.windKanji}</span>}
-          <span className="center-seat-score">{seat.score}</span>
-        </div>
-      ))}
+        {seats.map((seat) => (
+          <div
+            key={seat.direction}
+            className={`center-seat center-seat-${seat.direction} ${seat.isActive ? 'center-seat-active' : ''}`}
+          >
+            {seat.windKanji && <span className="center-seat-wind">{seat.windKanji}</span>}
+            <span className="center-seat-score">{seat.score}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

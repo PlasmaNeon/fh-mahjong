@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
@@ -28,6 +29,7 @@
     "tailwindcss": "^4.2.1",
     "ts-proto": "^2.11.4",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^2.1.9"
   }
 }
