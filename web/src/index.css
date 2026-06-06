@@ -374,12 +374,11 @@ body {
   pointer-events: none;
 }
 
-/* Visible compact panel, centered in the wrapper. */
+/* Visible square panel that fills the wrapper. Holds the stat chips in the
+   centre and the per-seat wind + score blocks anchored to its four edges. */
 .center-info-panel {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -387,7 +386,7 @@ body {
   padding: 0.5rem 0.6rem;
   background: linear-gradient(180deg, rgba(6, 23, 24, 0.82), rgba(8, 35, 37, 0.74));
   border: 1px solid rgba(16, 185, 129, 0.35);
-  border-radius: 16px;
+  border-radius: 14px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 18px 48px rgba(0, 0, 0, 0.32);
@@ -436,8 +435,8 @@ body {
   text-shadow: 0 0 18px rgba(134, 239, 172, 0.24);
 }
 
-/* Per-seat wind + score blocks, placed in the ring outside the compact panel
-   and inside the surrounding discard lanes. Each faces its own seat. */
+/* Per-seat wind + score blocks, anchored to the four edges inside the square
+   panel. Each faces its own seat. */
 .center-seat {
   position: absolute;
   display: flex;
@@ -470,25 +469,25 @@ body {
 }
 
 .center-seat-bottom {
-  bottom: 2px;
+  bottom: 6px;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .center-seat-top {
-  top: 2px;
+  top: 6px;
   left: 50%;
   transform: translateX(-50%) rotate(180deg);
 }
 
 .center-seat-right {
-  right: 2px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%) rotate(-90deg);
 }
 
 .center-seat-left {
-  left: 2px;
+  left: 6px;
   top: 50%;
   transform: translateY(-50%) rotate(90deg);
 }
@@ -1363,6 +1362,16 @@ body {
   --seat-side-width: 160px;
   --seat-gap-min: 28px;
   --seat-exposed-gap: 10px;
+  --meld-group-gap: 12px;
+  --bundle-min-gap: 24px;
+  --bundle-span-self: 720px;
+  --bundle-span-opp: 630px;
+  --bundle-side-shift: 24px;
+  --bundle-flower-meld-gap: 8px;
+  --bundle-edge-offset: 28px;
+  --bundle-edge-offset-side: 40px;
+  --zone-z-discards: 12;
+  --zone-z-bundle: 16;
   display: block;
   width: 100%;
   height: 100%;
@@ -1377,13 +1386,23 @@ body {
 .game-stage .wild-tile-corner {
   top: var(--wild-tile-top);
   left: var(--wild-tile-left);
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 18px;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 14px;
 }
 
 .game-stage .wild-tile-corner-label {
-  font-size: 12px;
+  font-size: 11px;
+}
+
+/* a little smaller wild tile face */
+.game-stage .wild-tile-corner-face .mahjong-tile {
+  width: 24px;
+  height: 34px;
+}
+.game-stage .wild-tile-corner-face .mahjong-tile-back {
+  width: 24px;
+  height: 34px;
 }
 
 .game-stage .pov-left,
@@ -1514,89 +1533,7 @@ body {
   align-content: flex-start;
 }
 
-.game-stage .seat-lane-shell {
-  position: absolute;
-  pointer-events: none;
-}
-
-.game-stage .seat-lane-shell--bottom {
-  left: var(--bottom-hand-left);
-  right: var(--bottom-hand-right);
-  bottom: var(--bottom-hand-bottom);
-  height: var(--seat-bottom-height);
-}
-
-.game-stage .seat-lane-shell--top {
-  left: var(--top-hand-side-gap);
-  right: var(--top-hand-side-gap);
-  top: var(--top-hand-top);
-  height: var(--seat-top-height);
-}
-
-.game-stage .seat-lane-shell--left {
-  left: var(--side-hand-edge);
-  top: var(--side-hand-top);
-  bottom: var(--side-hand-bottom);
-  width: var(--seat-side-width);
-}
-
-.game-stage .seat-lane-shell--right {
-  right: var(--side-hand-edge);
-  top: var(--side-hand-top);
-  bottom: var(--side-hand-bottom);
-  width: var(--seat-side-width);
-}
-
-.game-stage .seat-lane {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  display: flex;
-}
-
-.game-stage .seat-lane--bottom {
-  flex-direction: row;
-  align-items: flex-end;
-}
-
-.game-stage .seat-lane--top {
-  flex-direction: row-reverse;
-  align-items: flex-start;
-}
-
-.game-stage .seat-lane--right {
-  flex-direction: column-reverse;
-  align-items: flex-end;
-}
-
-.game-stage .seat-lane--left {
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.game-stage .seat-lane__closed {
-  position: relative;
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-.game-stage .seat-lane__gap {
-  flex: 1 1 auto;
-}
-
-.game-stage .seat-lane--bottom .seat-lane__gap,
-.game-stage .seat-lane--top .seat-lane__gap {
-  min-width: var(--seat-gap-min);
-}
-
-.game-stage .seat-lane--left .seat-lane__gap,
-.game-stage .seat-lane--right .seat-lane__gap {
-  min-height: var(--seat-gap-min);
-}
-
-.game-stage .seat-hand,
-.game-stage .seat-exposed {
+.game-stage .seat-hand {
   pointer-events: auto;
 }
 
@@ -1703,84 +1640,6 @@ body {
   margin: 0;
 }
 
-.game-stage .seat-exposed {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--seat-exposed-gap);
-  min-width: 0;
-  min-height: 0;
-}
-
-.game-stage .seat-exposed--bottom {
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-end;
-}
-
-.game-stage .seat-exposed--top {
-  flex-direction: column-reverse;
-  align-items: flex-start;
-  justify-content: flex-start;
-}
-
-.game-stage .seat-exposed--right {
-  flex-direction: row;
-  align-items: flex-end;
-  justify-content: flex-end;
-}
-
-.game-stage .seat-exposed--left {
-  flex-direction: row-reverse;
-  align-items: flex-start;
-  justify-content: flex-start;
-}
-
-.game-stage .seat-flower-rail {
-  display: flex;
-  gap: 4px;
-  pointer-events: none;
-}
-
-.game-stage .seat-flower-rail--bottom {
-  flex-direction: row-reverse;
-  align-items: flex-end;
-}
-
-.game-stage .seat-flower-rail--top {
-  flex-direction: row;
-  align-items: flex-start;
-}
-
-.game-stage .seat-flower-rail--right {
-  flex-direction: column-reverse;
-  align-items: flex-end;
-}
-
-.game-stage .seat-flower-rail--left {
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.game-stage .seat-meld-rail {
-  display: flex;
-  gap: 10px;
-}
-
-.game-stage .seat-meld-rail--bottom,
-.game-stage .seat-meld-rail--top {
-  flex-direction: row;
-}
-
-.game-stage .seat-meld-rail--right {
-  flex-direction: column;
-  align-self: flex-start;
-}
-
-.game-stage .seat-meld-rail--left {
-  flex-direction: column-reverse;
-  align-self: flex-end;
-}
-
 .game-stage .pov-bottom.stolen-tile,
 .game-stage .pov-top.stolen-tile {
   width: var(--tile-height);
@@ -1831,4 +1690,94 @@ body {
 .game-stage-shell > .round-result-overlay .round-result-modal {
   width: min(760px, calc(var(--game-stage-scaled-width) - 1.5rem), calc(100vw - 1.5rem));
   max-height: min(86vh, calc(var(--game-stage-scaled-height) - 1.5rem), 780px);
+}
+
+/* ===== Seat bundle (canonical, rotated per seat) ===== */
+
+/* 0-size pivot at each player's edge midpoint; rotated by theta. The bundle
+   inside hangs off this point by its hand's bottom-centre. */
+.game-stage .seat-bundle-pivot {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: var(--zone-z-bundle);
+}
+.game-stage .seat-bundle-pivot--bottom {
+  left: 50%;
+  bottom: var(--bundle-edge-offset);
+}
+.game-stage .seat-bundle-pivot--top {
+  left: 50%;
+  top: var(--bundle-edge-offset);
+  transform: rotate(180deg);
+}
+/* nudge the side bundles symmetrically along their edge (left down, right up) so
+   the left bundle clears the upper-left wild-tile box; keeps left/right an exact
+   point-reflection through the table centre. */
+.game-stage .seat-bundle-pivot--left {
+  left: var(--bundle-edge-offset-side);
+  top: calc(50% + var(--bundle-side-shift));
+  transform: rotate(90deg);
+}
+.game-stage .seat-bundle-pivot--right {
+  right: var(--bundle-edge-offset-side);
+  top: calc(50% - var(--bundle-side-shift));
+  transform: rotate(-90deg);
+}
+
+/* The bundle: a fixed-width box centred on the pivot. justify-content
+   space-between pins the closed hand to the box's bottom-left and the exposed
+   stack (flowers above melds) to the bottom-right; the gap fills the middle and
+   shrinks as content grows. So the first hand tile (left edge) and the rightmost
+   meld (right edge) never move; nothing overflows because the box width never
+   exceeds the edge. Two widths: self (normal tiles) vs opponent (small tiles). */
+.game-stage .seat-bundle {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--bundle-min-gap);
+  pointer-events: none;
+}
+.game-stage .seat-bundle--self {
+  width: var(--bundle-span-self);
+}
+.game-stage .seat-bundle--opp {
+  width: var(--bundle-span-opp);
+}
+.game-stage .seat-bundle .zone-hand {
+  pointer-events: auto;
+}
+/* content-size the hand so the melds sit a fixed gap from the real tiles */
+.game-stage .seat-bundle .seat-hand--bottom {
+  width: auto;
+}
+
+/* Exposed stack: flowers above melds, bottom-aligned with the hand baseline. */
+.game-stage .seat-bundle__exposed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--bundle-flower-meld-gap);
+}
+
+.game-stage .seat-bundle .zone-flowers {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 4px;
+}
+/* row-reverse: first-formed meld ends up at the outer (far-from-hand) end; new
+   melds appear at the inner end and the block extends outward. */
+.game-stage .seat-bundle .zone-melds {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-end;
+  gap: var(--meld-group-gap);
+}
+
+.game-stage .discard-lane {
+  z-index: var(--zone-z-discards);
 }

@@ -19,8 +19,8 @@ func TestNewGame_ClassicDefault(t *testing.T) {
 		t.Fatalf("classic-mode ChongciConfig should be nil, got %+v", g.State.ChongciConfig)
 	}
 	for i, p := range g.State.Players {
-		if p.Score != 25000 {
-			t.Fatalf("classic seat %d Score = %d, want 25000", i, p.Score)
+		if p.Score != 0 {
+			t.Fatalf("classic seat %d Score = %d, want 0", i, p.Score)
 		}
 	}
 }

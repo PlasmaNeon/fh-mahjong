@@ -37,7 +37,7 @@ type Game struct {
 
 // MatchOptions configures a freshly constructed Game. The zero value
 // yields the project's classic match (endless hands, random dealer per
-// hand, players start at 25000). When Mode == MATCH_MODE_CHONGCI,
+// hand, players start at 0). When Mode == MATCH_MODE_CHONGCI,
 // ChongciConfig must be non-nil and is copied onto State.
 type MatchOptions struct {
 	Mode          pb.MatchMode
@@ -67,7 +67,7 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 	}
 	g.haiteiDrawIndex = -1
 
-	startingScore := int32(25000)
+	startingScore := int32(0)
 	if mode == pb.MatchMode_MATCH_MODE_CHONGCI {
 		if opts.ChongciConfig == nil {
 			// Defensive: caller passed CHONGCI without a config. Fall back to

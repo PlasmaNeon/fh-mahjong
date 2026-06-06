@@ -164,8 +164,8 @@ func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
 	if bind.Room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
 		t.Fatalf("MatchMode = %v, want CLASSIC", bind.Room.Engine.State.MatchMode)
 	}
-	if bind.Room.Engine.State.Players[0].Score != 25000 {
-		t.Fatalf("classic seat Score = %d, want 25000", bind.Room.Engine.State.Players[0].Score)
+	if bind.Room.Engine.State.Players[0].Score != 0 {
+		t.Fatalf("classic seat Score = %d, want 0", bind.Room.Engine.State.Players[0].Score)
 	}
 }
 
