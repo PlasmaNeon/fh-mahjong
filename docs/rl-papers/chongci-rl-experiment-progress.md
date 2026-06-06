@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-Last updated: 2026-05-30
+Last updated: 2026-06-03
 
 This note is the running experiment notebook for the Fenghua Mahjong AI work,
 especially the Chongci reward-learning line. Update this file after every new
@@ -3904,6 +3904,2862 @@ dominate the dataset and still have only `AUC 0.5052`. Smaller action families
 look somewhat better, but their sample counts are too small to justify a serving
 guard. The next target should focus on discard-specific later-trajectory labels
 or a more balanced calibration split, not global scalar pressure tuning.
+
+### Experiment: Discard Later-Trajectory Pressure Target
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-discard-later-pressure-20260602-101602`
+
+Question:
+
+Can the action-risk critic learn a more useful discard risk signal by labeling
+discard actions whose same-seat future trajectory enters visible Chongci
+pressure, instead of expanding risk labels globally?
+
+Implementation:
+
+`train_action_risk.py` now supports:
+
+```text
+--target-mode discard_later_pressure
+--discard-later-window
+--discard-later-pressure-threshold
+--discard-later-weight
+```
+
+The target keeps terminal large-loss positives for all action families. It adds
+extra positives only when:
+
+```text
+action family = discard
+final same-seat reward <= 0
+future same-seat Chongci score pressure >= threshold
+```
+
+Future pressure is computed inside the same `episode_index + seat` trajectory,
+ordered by `decision_indices` when present and falling back to row order for
+older shards.
+
+Decision:
+
+Rejected for guarded serving/evaluation.
+
+Interpretation:
+
+This is the first post-score-pressure target that directly follows the
+action-family calibration result. It improved severity calibration, but it did
+not improve probability ranking, especially for the discard family.
+
+Training:
+
+```text
+target_mode: discard_later_pressure
+discard_later_window: 4
+discard_later_pressure_threshold: 0.6
+discard_later_weight: 0.5
+steps_per_epoch: 150
+transitions: 436,877
+positive_transitions: 135,229
+positive_rate: 0.3095
+paired_transitions: 28
+```
+
+Independent calib16 result:
+
+```text
+variant                  AUC     Brier   pos_mean  neg_mean  severity_MAE
+discard_later_w4_t060    0.5041  0.2793  0.4922    0.4892    0.3466
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.4858  0.2166  0.4909
+discard 24,775  3,622 0.1462  0.5003  0.3041  0.3358
+kan      108     18    0.1667  0.5414  0.2859  0.7439
+pass     3,620   538   0.1486  0.5225  0.1746  0.3244
+pon      936     118   0.1261  0.4954  0.2258  0.4939
+win      759     76    0.1001  0.5668  0.1352  0.3298
+```
+
+The result is better on severity error than the score-pressure sweep, but worse
+on the ranking metric that matters for a guard. Discard probability is almost
+flat (`positive_mean 0.5280`, `negative_mean 0.5278`), so this target should not
+be promoted. The next useful branch should avoid more hand-built pressure
+labels and instead create a supervised target from actual later trajectory
+events: for example "this discard is the first discard before a future deal-in,
+bust, or large-loss transition" using explicit outcome/trace events rather than
+scalar pressure proxies.
+
+### Experiment: Discard Future-Outcome Target
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-discard-future-outcome-20260602-215612`
+
+Question:
+
+Can the action-risk critic rank risky discards better when labels come from
+actual future terminal events instead of visible pressure proxies?
+
+Implementation:
+
+`train_action_risk.py` now supports:
+
+```text
+--target-mode discard_future_outcome
+--discard-outcome-window
+--discard-outcome-weight
+```
+
+The target keeps terminal large-loss positives for all action families. It adds
+extra positives only to recent same-seat discard actions before actual bad
+terminal outcomes:
+
+```text
+terminal_discarder_seat == seat and final reward <= 0
+or final reward <= large-loss threshold
+```
+
+Within each `episode_index + seat` trajectory, rows are ordered by
+`decision_indices` when present. `--discard-outcome-window` selects the most
+recent discard actions before the terminal event, so the label is more localized
+than marking every action in a bad episode.
+
+Decision:
+
+Rejected for guarded serving/evaluation.
+
+Interpretation:
+
+This is the replacement for the rejected `discard_later_pressure` proxy target.
+It used actual terminal outcome fields instead of pressure proxies, but it made
+large-loss probability ranking worse.
+
+Training:
+
+```text
+target_mode: discard_future_outcome
+discard_outcome_window: 4
+discard_outcome_weight: 1.0
+steps_per_epoch: 150
+transitions: 436,877
+positive_transitions: 73,169
+positive_rate: 0.1675
+paired_transitions: 28
+```
+
+Independent calib16 result:
+
+```text
+variant              AUC     Brier   pos_mean  neg_mean  severity_MAE
+discard_outcome_w4   0.4983  0.2687  0.4811    0.4826    0.4097
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.4920  0.2783  0.4772
+discard 24,775  3,622 0.1462  0.4953  0.2729  0.3850
+kan      108     18    0.1667  0.6043  0.2482  0.7569
+pass     3,620   538   0.1486  0.4924  0.2541  0.5348
+pon      936     118   0.1261  0.5541  0.2410  0.5831
+win      759     76    0.1001  0.5361  0.2231  0.2458
+```
+
+Discard ranking stayed below random (`AUC 0.4953`), and overall positives
+scored slightly lower than negatives. This target should not be promoted. The
+likely issue is that terminal-event labels still do not identify the causal
+discard; they only select recent discards in bad episodes. The next target needs
+stronger counterfactual information, such as paired same-state action labels,
+or a separate supervised dataset that captures explicit deal-in-danger labels
+from visible opponent waits rather than final outcome alone.
+
+### Experiment: Paired Counterfactual Supervision Coverage
+
+Run:
+
+Coverage report:
+
+`/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/reports/counterfactual_supervision_summary.json`
+
+Training run:
+
+`/root/fh-mahjong-runs/chongci-counterfactual-actionrisk-20260602-220355`
+
+Question:
+
+Do the existing paired traces contain enough explicit same-state preferred /
+avoided action supervision, especially for discard and deal-in cases, to justify
+another training run?
+
+Implementation:
+
+`paired_trace.py` now adds `summary.counterfactual_supervision`. It converts
+each first-divergence pair with different final rewards into:
+
+```text
+preferred action = action from higher-reward policy
+avoided action = action from lower-reward policy
+tags = worse_reward, avoided_deal_in, new_deal_in, avoided_large_loss, new_large_loss
+```
+
+The summary reports preferred/avoided action-family counts, high-risk avoided
+families, reward-gap statistics, and sample high-risk cases.
+
+Decision:
+
+Rejected for guarded serving/evaluation.
+
+Interpretation:
+
+Coverage was better than the previous large-loss/worst-delta loader but still
+sparse at the matched training-row level.
+
+Counterfactual coverage from the existing 600-pair trace:
+
+```text
+labeled_pairs: 255
+high_risk_labeled_pairs: 47
+avoided discard labels: 229
+high-risk avoided discard labels: 42
+tag_counts:
+  worse_reward: 255
+  avoided_large_loss: 47
+  new_large_loss: 19
+```
+
+Matched training rows with `--paired-trace-counterfactual-labels` and
+`--paired-trace-min-reward-gap 0.05`:
+
+```text
+cases: 187
+matched pairwise transitions: 49
+mean pairwise reward delta: 0.3415
+max pairwise reward delta: 1.4090
+```
+
+Training:
+
+```text
+target_mode: terminal
+paired_trace_counterfactual_labels: true
+paired_trace_min_reward_gap: 0.05
+paired_margin_weight: 1.0
+paired_severity_weight: 0.5
+paired_batch_fraction: 0.5
+steps_per_epoch: 150
+transitions: 436,877
+positive_transitions: 72,858
+paired_transitions: 50
+```
+
+Independent calib16 result:
+
+```text
+variant                 AUC     Brier   pos_mean  neg_mean  severity_MAE
+counterfactual_gap005   0.5066  0.2758  0.4795    0.4755    0.3516
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.4995  0.2916  0.4486
+discard 24,775  3,622 0.1462  0.5067  0.2824  0.3583
+pass     3,620   538   0.1486  0.4910  0.2363  0.2381
+pon      936     118   0.1261  0.5547  0.2707  0.4792
+```
+
+This is directionally better for discard ranking than the rejected proxy-target
+runs, but it still does not beat the older plain visible58 action-risk critic
+(`AUC 0.5096`). Do not promote it. The lesson is that direct same-state labels
+help, but 49 matched pairwise transitions are not enough. The next useful move is
+to generate paired-trace-aligned shards specifically around divergence windows
+or export full observation tensors from paired traces so all 255 labels can train
+directly without relying on shard rematching.
+
+### Experiment: Direct Tensor Counterfactual Action-Risk Data
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-20260602-220925`
+
+Question:
+
+Can direct tensor-bearing paired-trace labels train the action-risk critic better
+than seed/decision rematching, by using all counterfactual first-divergence
+labels that pass the reward-gap threshold?
+
+Implementation:
+
+`paired_trace.py` can now include full `planes`, `scalars`, and `action_mask`
+arrays at first-divergence observations when run with:
+
+```text
+--include-observation-arrays
+```
+
+`build_counterfactual_risk_data.py` converts those tensor-bearing labels into a
+small sharded NPZ dataset. Each row stores the avoided action as the observed
+`action_id`, the preferred action in `pairwise_preferred_action_ids`, the avoided
+action in `pairwise_avoided_action_ids`, and the reward gap in
+`pairwise_reward_delta_targets`.
+
+Training plan:
+
+```text
+trace windows: 564000:50, 574000:50, 584000:50
+seats: 0,1,2,3
+min_reward_gap: 0.05
+target_mode: terminal
+paired_margin_weight: 1.0
+paired_severity_weight: 0.5
+paired_batch_fraction: 0.5
+```
+
+Result:
+
+The run completed successfully.
+
+```text
+trace pairs:                   600
+divergence rate:               71.83%
+candidate-better rate:         21.33%
+mean candidate-anchor delta:    0.0050
+counterfactual rows:           187
+positive terminal rows:         35
+skipped reward-gap labels:      68
+```
+
+Independent calib16 result:
+
+```text
+variant                       AUC     Brier   pos_mean  neg_mean  severity_MAE
+direct_counterfactual_gap005  0.5061  0.2482  0.4329    0.4280    0.4472
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.5225  0.2662  0.4309
+discard 24,775  3,622 0.1462  0.5048  0.2478  0.4594
+pass     3,620   538   0.1486  0.5245  0.2418  0.3660
+pon      936     118   0.1261  0.4723  0.2708  0.5094
+kan      108      18   0.1667  0.3840  0.3918  0.8248
+win      759      76   0.1001  0.5217  0.2148  0.3332
+```
+
+Decision:
+
+Reject for promotion. Direct tensor labels removed the rematching bottleneck,
+but the independent large-loss ranking still did not beat the older plain
+visible58 action-risk critic (`AUC 0.5096`). The discard-specific AUC also
+fell to `0.5048`, which is weaker than the rematched counterfactual run's
+discard AUC (`0.5067`).
+
+Interpretation:
+
+The failure is now less likely to be caused only by sparse rematching. Direct
+first-divergence labels are useful diagnostics, but as a standalone risk target
+they remain too local, too few, or too noisy for the current action-risk head.
+The next useful direction is not another scalar threshold sweep. Use the
+counterfactual tensor path as tooling, then either:
+
+1. add incremental/resumable paired-trace output so larger label sets are
+   practical, or
+2. move risk learning into a richer critic-side objective that combines later
+   trajectory labels, action family, score-pressure context, and terminal
+   downside rather than supervising only the first divergent action.
+
+Follow-up tooling:
+
+The paired-trace CLI now supports resumable long runs:
+
+```text
+--incremental-report-interval <pairs>
+--resume
+```
+
+`--incremental-report-interval` periodically writes a valid report to
+`--report-output`; `--resume` reloads existing seed/seat pairs from that report
+and skips them. This does not change model behavior or calibration metrics. It
+only prevents long tensor-bearing paired traces from losing all progress if a
+late seed is slow or interrupted.
+
+### Experiment: Larger Direct Tensor Counterfactual Action-Risk Data
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548`
+
+Question:
+
+Does a larger direct tensor-bearing counterfactual label set improve independent
+large-loss ranking enough to beat the plain visible58 action-risk critic
+(`AUC 0.5096`)?
+
+Design:
+
+```text
+trace windows: 564000:100, 574000:100, 584000:100
+seats: 0,1,2,3
+total trace pairs: 1200
+min_reward_gap: 0.05
+target_mode: terminal
+paired_margin_weight: 1.0
+paired_severity_weight: 0.5
+paired_batch_fraction: 0.5
+steps_per_epoch: 200
+```
+
+Operational change:
+
+This is the first run using resumable paired-trace output:
+
+```text
+--incremental-report-interval 20
+--resume
+```
+
+Result:
+
+The run completed successfully. The first partial checkpoint was written at
+`20/1200` trace pairs, proving the incremental report path works on the remote
+WSL machine.
+
+```text
+trace pairs:                   1200
+divergence rate:               69.00%
+candidate-better rate:         20.58%
+mean candidate-anchor delta:    0.0109
+counterfactual rows:           343
+positive terminal rows:         69
+skipped reward-gap labels:     144
+```
+
+Independent calib16 result:
+
+```text
+variant                            AUC     Brier   pos_mean  neg_mean  severity_MAE
+direct_counterfactual_large_gap005 0.5022  0.2448  0.4264    0.4248    0.3682
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.4853  0.2503  0.4805
+discard 24,775  3,622 0.1462  0.5018  0.2438  0.3740
+pass     3,620   538   0.1486  0.5143  0.2378  0.3050
+pon      936     118   0.1261  0.4747  0.2904  0.4442
+kan      108      18   0.1667  0.5414  0.3072  0.7814
+win      759      76   0.1001  0.5778  0.2368  0.1445
+```
+
+Decision:
+
+Reject for promotion. Scaling direct first-divergence tensor labels from `187`
+rows to `343` rows made severity error better but made risk ranking worse:
+overall AUC fell from `0.5061` to `0.5022`, and discard AUC fell from `0.5048`
+to `0.5018`. It remains below the plain visible58 action-risk critic
+(`AUC 0.5096`).
+
+Interpretation:
+
+This closes the direct first-divergence-only risk-target branch for now. The
+larger direct label set did not solve the calibration problem, so the issue is
+not just missing observation tensors or sparse rematching. First-divergence
+labels are still useful for diagnostics and future counterfactual tooling, but
+they should not be the main action-risk objective. The next branch should use a
+richer critic-side target: later-trajectory labels, action-family context,
+visible score pressure, and terminal downside together.
+
+### Implementation: Future Outcome Context Risk Target
+
+Change:
+
+`train_action_risk.py` now has a richer critic-side target:
+
+```text
+--target-mode future_outcome_context
+```
+
+This target keeps hard terminal large-loss labels, then adds context labels for
+recent same-seat actions before actual bad terminal outcomes. A bad outcome is:
+
+```text
+large final loss
+or deal-in with non-positive final reward
+```
+
+The label is not discard-only. It assigns family-specific credit to recent
+visible actions:
+
+```text
+discard > kan > pon ~= chii ~= pass > haitei
+win actions are not treated as risky
+```
+
+The credit is also scaled by visible Chongci score-pressure scalars, so an action
+near bust/large-loss pressure receives more risk supervision than the same
+family in a safe score state.
+
+New controls:
+
+```text
+--future-context-window
+--future-context-score-pressure-weight
+--future-context-min-credit
+--future-context-weight
+```
+
+Validation:
+
+```text
+uv run --project ai pytest \
+  ai/tests/test_train_action_risk.py \
+  ai/tests/test_reward_calibration.py \
+  ai/tests/test_paired_trace.py \
+  ai/tests/test_build_counterfactual_risk_data.py \
+  ai/tests/test_risk_filter.py
+```
+
+Local result:
+
+```text
+25 passed
+```
+
+Next experiment:
+
+Train a balanced action-risk critic with `future_outcome_context` on the same
+visible58/score-pressure/direct-counterfactual data mix, then calibrate on the
+same independent visible58 `calib16` gate. The promotion threshold is unchanged:
+it must beat the plain visible58 action-risk critic (`AUC 0.5096`), especially
+on discard-family AUC.
+
+### Experiment: Future Outcome Context Action-Risk Critic
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-future-context-actionrisk-20260603-032526`
+
+Question:
+
+Does replacing direct first-divergence-only labels with later-trajectory,
+score-aware, action-family-aware risk labels improve independent large-loss
+ranking?
+
+Training:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz
+  /root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-564000-n50-npz
+  /root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-574000-n50-npz
+  /root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-584000-n50-npz
+target_mode: future_outcome_context
+future_context_window: 8
+future_context_score_pressure_weight: 0.5
+future_context_min_credit: 0.5
+future_context_weight: 1.0
+steps_per_epoch: 200
+batch_size: 2048
+lr: 5e-5
+```
+
+Training target coverage:
+
+```text
+transitions:          436,877
+positive transitions:  73,314
+positive rate:          16.75%
+```
+
+Independent calib16 result:
+
+```text
+variant                         AUC     Brier   pos_mean  neg_mean  severity_MAE
+future_context_w8_p05_min05     0.5082  0.2628  0.5006    0.4969    0.3859
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.5312  0.2553  0.4579
+discard 24,775  3,622 0.1462  0.5056  0.2649  0.3876
+pass     3,620   538   0.1486  0.5078  0.2591  0.3412
+pon      936     118   0.1261  0.5072  0.2729  0.5342
+kan      108      18   0.1667  0.5506  0.2711  0.6018
+win      759      76   0.1001  0.5199  0.2101  0.2102
+```
+
+Decision:
+
+Reject for promotion, but keep the target implementation. This is the strongest
+recent richer-target result and it nearly reaches the plain visible58 baseline
+(`AUC 0.5096`), but it still does not beat it. Discard AUC is also only
+`0.5056`, so it is not enough for a serving guard.
+
+Interpretation:
+
+Later-trajectory labels plus score/action-family context are directionally
+better than direct first-divergence labels (`0.5082` vs `0.5022` on the larger
+direct run), but the ranking signal is still weak. The next variant should not
+return to direct first-divergence supervision. It should either:
+
+1. use action-family-specific calibration heads/weights so discard, pass, meld,
+   and win decisions do not compete for one poorly separated risk scale, or
+2. train the risk critic on a larger, more diverse trajectory set so the
+   future-context labels have enough positive examples per family.
+
+### Implementation: Action-Family-Balanced Risk Loss
+
+Change:
+
+`train_action_risk.py` now applies explicit per-row loss weights to both the
+risk-probability BCE and severity losses. The weight source is:
+
+```text
+stored sample_weights
+times optional action-family balance weights
+```
+
+New controls:
+
+```text
+--family-balance-strength
+--family-weight-clip
+```
+
+Default behavior is unchanged because `--family-balance-strength` defaults to
+`0.0`. When enabled, the trainer interpolates toward equal loss mass for action
+families such as discard, pass, pon, kan, chii, haitei, and win. This is intended
+to reduce discard-heavy domination without changing the evaluation gate.
+
+Validation:
+
+```text
+uv run --project ai pytest \
+  ai/tests/test_train_action_risk.py \
+  ai/tests/test_reward_calibration.py \
+  ai/tests/test_paired_trace.py \
+  ai/tests/test_build_counterfactual_risk_data.py \
+  ai/tests/test_risk_filter.py
+```
+
+Local result:
+
+```text
+26 passed
+```
+
+Next experiment:
+
+Train the future-context critic with action-family-balanced loss and a larger,
+more diverse data mix. This tests both proposed next steps together:
+
+```text
+target_mode: future_outcome_context
+family_balance_strength: 1.0
+larger data: visible58 train64 + scorepressure windows + direct tensor labels + current/all-seat self-play shards
+```
+
+### Experiment: Family-Balanced Future Context Risk Critic With Larger Data
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-familybalanced-future-context-actionrisk-20260603-134259`
+
+Question:
+
+Do action-family-balanced loss weights plus a larger/diverse data mix improve the
+future-context risk critic enough to beat the plain visible58 action-risk
+baseline?
+
+Training:
+
+```text
+data:
+  visible58 train64
+  scorepressure seed windows 564000/574000/584000
+  direct tensor counterfactual large gap005 shard
+  capped400k low-drift self-play shard
+target_mode: future_outcome_context
+family_balance_strength: 1.0
+family_weight_clip: 4.0
+future_context_window: 8
+future_context_score_pressure_weight: 0.5
+future_context_min_credit: 0.5
+steps_per_epoch: 250
+batch_size: 2048
+paired_margin_weight: 0.5
+paired_severity_weight: 0.25
+```
+
+Training target coverage:
+
+```text
+transitions:          837,220
+positive transitions: 145,122
+positive rate:          17.31%
+paired transitions:        343
+loss_weight_mean:        1.00
+loss_weight_max:         4.93
+```
+
+Independent calib16 result:
+
+```text
+variant                                      AUC     Brier   pos_mean  neg_mean  severity_MAE
+familybalanced_future_context_fb1_large      0.5053  0.4124  0.6504    0.6473    0.4132
+```
+
+Action-family calibration:
+
+```text
+family   count   pos   rate    AUC     Brier   severity_MAE
+chii     1,249   201   0.1609  0.4645  0.2591  0.4010
+discard 24,775  3,622 0.1462  0.5060  0.4585  0.4357
+pass     3,620   538   0.1486  0.4877  0.2352  0.3027
+pon      936     118   0.1261  0.5263  0.2503  0.4486
+kan      108      18   0.1667  0.5216  0.2965  0.6495
+win      759      76   0.1001  0.4680  0.2186  0.1475
+```
+
+Decision:
+
+Reject for promotion. The larger data mix plus full family-balanced weighting
+did not beat the plain visible58 baseline (`AUC 0.5096`) and also underperformed
+the unweighted future-context run (`AUC 0.5082`). Discard AUC was roughly flat
+(`0.5060` vs `0.5056`), but overall calibration got much worse because predicted
+risk probabilities shifted too high (`mean ~= 0.65`) and Brier rose to `0.4124`.
+
+Interpretation:
+
+Full-strength family balancing overcorrected. It may help minority families
+such as pon/kan, but it damaged chii/pass/win and global calibration. Do not
+use `family_balance_strength=1.0` as the default. If this branch continues, try
+a mild family balance such as `0.25` or `0.5`, or move to explicit per-family
+post-hoc calibration instead of forcing one shared model scale during training.
+
+### Experiment: Mild Family-Balanced Future Context Risk Critics
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-mild-familybalance-future-context-actionrisk-20260603-160652`
+
+Question:
+
+Does mild action-family balancing keep the benefits of the richer future-context
+target without the overcorrection seen at `family_balance_strength=1.0`?
+
+Training:
+
+Same larger data mix as the rejected full-balance run:
+
+```text
+visible58 train64
+scorepressure seed windows 564000/574000/584000
+direct tensor counterfactual large gap005 shard
+capped400k low-drift self-play shard
+```
+
+Shared settings:
+
+```text
+target_mode: future_outcome_context
+future_context_window: 8
+future_context_score_pressure_weight: 0.5
+future_context_min_credit: 0.5
+paired_margin_weight: 0.5
+paired_severity_weight: 0.25
+steps_per_epoch: 250
+batch_size: 2048
+```
+
+Variants:
+
+```text
+fb025: family_balance_strength 0.25
+fb05:  family_balance_strength 0.50
+```
+
+Independent calib16 result:
+
+```text
+variant                  AUC     Brier   pos_mean  neg_mean  severity_MAE
+future_context_fb025     0.5118  0.2683  0.4940    0.4876    0.3660
+future_context_fb05      0.5023  0.2995  0.5293    0.5278    0.3562
+```
+
+Action-family calibration:
+
+```text
+family   fb025 AUC  fb05 AUC
+chii     0.5492     0.5241
+discard  0.5089     0.4998
+pass     0.5218     0.4934
+pon      0.4531     0.4983
+kan      0.4889     0.5000
+win      0.5206     0.5150
+```
+
+Decision:
+
+Accept `future_context_fb025_large` as the best risk-critic calibration result
+so far, but do not promote it as a playing policy. It beats the plain visible58
+action-risk critic on overall AUC (`0.5118` vs `0.5096`) and improves discard
+AUC over the unweighted future-context run (`0.5089` vs `0.5056`). `fb05` is
+rejected because it regresses both overall and discard AUC.
+
+Interpretation:
+
+Mild family balancing is useful; stronger balancing overcorrects. The risk
+critic now has a better independent large-loss ranking signal, especially for
+discard/pass/chii, but pon/kan are still unstable because their calib counts are
+small. The next step should be a guarded evaluation or offline policy filter
+using `future_context_fb025_large`, with a conservative threshold sweep. Do not
+serve it blindly: risk AUC improved, but policy EV and tail-risk must still be
+measured in duplicate-seat evaluation.
+
+### Experiment: Risk-Guarded Evaluation With Future-Context fb025 Critic
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-riskguard-fb025-sweep-20260603-222928
+```
+
+Question:
+
+Can the best calibrated action-risk critic from `future_context_fb025_large`
+act as a conservative serving-time guard around the promoted Chongci policy?
+
+Saved test checkpoint:
+
+```text
+/root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt
+```
+
+This checkpoint was copied from:
+
+```text
+/root/fh-mahjong-runs/chongci-mild-familybalance-future-context-actionrisk-20260603-160652/checkpoints/future_context_fb025/epoch_001.pt
+```
+
+Evaluation:
+
+```text
+anchor policy:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+risk critic:
+  /root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt
+seed window:
+  650000:16
+seats:
+  0 1 2 3
+episodes:
+  64 per threshold
+guard settings:
+  candidate_risk_threshold=0.45
+  min_risk_reduction=0.08
+  max_policy_logit_gap=2.0
+  severity_weight=0.1
+```
+
+Result:
+
+```text
+anchor_risk_threshold  mean_reward  positive_rate  large_loss_rate  guard_choice_rate
+0.55                   -0.2243      39.06%         18.75%           1.25%
+0.60                   -0.2039      40.62%         14.06%           0.86%
+0.65                   -0.2288      37.50%         12.50%           0.58%
+0.70                   -0.2119      40.62%         14.06%           0.32%
+```
+
+Report:
+
+```text
+/root/fh-mahjong-runs/chongci-riskguard-fb025-sweep-20260603-222928/reports/riskguard_fb025_seed650000_n16.json
+/root/fh-mahjong-runs/chongci-riskguard-fb025-sweep-20260603-222928/reports/summary.json
+```
+
+Same-window anchor side-by-side:
+
+```text
+/root/fh-mahjong-runs/chongci-anchor-sidebyside-20000-20260603-230156
+```
+
+The first generic-anchor attempt used the default `max_steps_per_episode=256`
+and was invalid because every match truncated. The valid rerun matched the
+risk-guarded evaluator's `max_steps_per_episode=20000`.
+
+```text
+seed_window  policy       mean_reward  positive_rate  large_loss_rate
+650000:16    anchor       -0.2100      40.62%         15.62%
+650000:16    guard 0.60   -0.2039      40.62%         14.06%
+delta                     +0.0061      +0.00%         -1.56%
+```
+
+Independent gate:
+
+```text
+/root/fh-mahjong-runs/chongci-riskguard-fb025-independent-20260603-230720
+```
+
+```text
+seed_window  policy       mean_reward  positive_rate  large_loss_rate  guard_choice_rate
+660000:16    anchor       -0.1300      40.62%         17.19%           n/a
+660000:16    guard 0.60   -0.1446      37.50%         18.75%           0.81%
+delta                     -0.0146      -3.12%         +1.56%           n/a
+```
+
+Decision:
+
+Keep the saved risk critic as a testable artifact, but reject this guarded
+serving configuration for now. On the calibration/smoke window, threshold
+`0.60` slightly beat the pure anchor, but the independent `660000:16` gate
+reversed the result: mean reward, positive rate, and large-loss rate all
+regressed.
+
+Interpretation:
+
+The action-risk critic can affect play without causing illegal actions, but the
+current guard is not reliably selecting beneficial substitutions. The low guard
+choice rate (`~0.8%`) means each substitution has to be very high precision; on
+the independent window, those substitutions were not good enough. Do not spend
+more time on threshold sweeps for this critic. The next useful branch should
+improve the risk target/model itself or move the risk signal into offline
+training, then re-run the same side-by-side protocol.
+
+### Experiment: Risk-Guard Intervention Audit And Policy-Nearest Ranking
+
+Runs:
+
+```text
+/root/fh-mahjong-runs/chongci-riskguard-fb025-intervention-audit-fixed-20260603-233302
+/root/fh-mahjong-runs/chongci-riskguard-policynearest-20260603-234107
+```
+
+Question:
+
+Did the `future_context_fb025_large` guard fail because the risk model was
+unusable, or because the serving rule chose the lowest-risk substitute without
+preserving enough policy quality?
+
+Implementation:
+
+- Added generic intervention summaries to guarded evaluation reports.
+- Added `chosen_action_id` to `RiskGuardedPolicy` choice metadata.
+- Added `selection_mode="policy_nearest"` to `RiskGuardedPolicy` and
+  `evaluate_risk_guarded.py`.
+- `lowest_risk` keeps the old behavior: among allowed lower-risk actions, pick
+  the lowest risk score.
+- `policy_nearest` keeps all risk filters but ranks allowed substitutes by
+  closeness to the anchor policy logit, using risk only as a small tie-breaker.
+
+Independent `660000:16` result:
+
+```text
+policy                    mean_reward  positive_rate  large_loss_rate  guard_choice_rate
+anchor                    -0.1300      40.62%         17.19%           n/a
+lowest_risk guard 0.60    -0.1446      37.50%         18.75%           0.81%
+policy_nearest guard 0.60 -0.1351      37.50%         18.75%           0.82%
+```
+
+Intervention audit for the failed independent window:
+
+```text
+total interventions: 263 lowest_risk / 265 policy_nearest
+anchor action families changed:
+  discard: 243-245
+  chii:    13
+  pon:     6
+  pass:    1
+chosen action families:
+  discard: 241-243
+  pass:    13
+  chii:    6
+  kan:     2
+  pon:     1
+```
+
+Episode bucket signal:
+
+```text
+interventions per episode  count  mean_reward  positive_rate
+1                          7      -0.90 to -0.95  0.00%
+2-4                        30     -0.05 to -0.06  43.33%
+5+                         27     -0.03           40.74%
+```
+
+Decision:
+
+Reject both serving guard variants for now. `policy_nearest` recovered part of
+the mean-reward loss versus `lowest_risk`, but it still lost to pure anchor and
+did not improve positive rate or large-loss rate.
+
+Interpretation:
+
+The direct serving guard is too blunt even when substitutions are policy-near.
+Most interventions are discard-to-discard, so the critic is mostly changing
+tile choice, not correcting rare high-level mistakes. The worst bucket is
+episodes with exactly one intervention, which suggests the guard is not
+high-precision enough at the exact moments it chooses to act. The next branch
+should stop serving-time substitution for this critic and instead use the risk
+signal as training-side supervision or train a better discard-specific
+counterfactual critic before any new guard evaluation.
+
+### Experiment: External Risk Critic As IQL Policy Regularizer
+
+Runs:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-external-risk-discard-20260604-235637
+/root/fh-mahjong-runs/chongci-iql-external-risk-discard-t070-20260604-000909
+/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc-20260604-001937
+/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc3-20260604-002537
+```
+
+Question:
+
+Can the saved `future_context_fb025_large` risk critic help policy learning if
+used during offline IQL training instead of making live serving-time
+substitutions?
+
+Implementation:
+
+- Added an optional frozen external action-risk model to `DiscreteIQLTrainer`.
+- Added `--external-risk-checkpoint` to `train_iql.py`.
+- Added `--external-risk-policy-weight`, `--external-risk-policy-threshold`,
+  `--external-risk-policy-family`, and
+  `--external-risk-policy-severity-weight`.
+- Added `--large-loss-bc-weight` as a policy-only preservation term on
+  transitions whose terminal return is at or below `--large-loss-threshold`.
+- The regularizer computes the current policy distribution over legal actions,
+  asks the frozen risk critic for action-conditioned risk probabilities, and
+  penalizes policy mass assigned to legal actions whose risk exceeds the
+  configured threshold.
+- The first experiment was scoped to `discard` actions only because the serving
+  audit showed most failed interventions were discard-to-discard changes.
+
+Training setup:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+risk checkpoint:
+  /root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt
+datasets:
+  heuristic-chongci-50scalar-200
+  mixed-selfplay-iql-50
+  mixed-selfplay-iql-200-seats02
+  capped400k-current-lowdrift
+max_transitions:
+  150000 per dataset
+epochs:
+  1
+batch_size:
+  4096
+lr:
+  1e-5
+external_risk_policy_weight:
+  0.05
+external_risk_policy_family:
+  discard
+```
+
+Training diagnostics:
+
+```text
+threshold 0.60: ext_risk ~= 0.022-0.025
+threshold 0.70: ext_risk ~= 0.007-0.009
+```
+
+Quick gate on `660000:16`:
+
+```text
+policy                               mean_reward  positive_rate  large_loss_rate
+anchor                               -0.1328      40.62%         17.19%
+external risk discard t0.60          -0.0526      43.75%         20.31%
+external risk discard t0.70          -0.0526      43.75%         20.31%
+external risk discard + tailBC w1    -0.0598      42.19%         20.31%
+external risk discard + tailBC w3    -0.0845      42.19%         20.31%
+```
+
+Decision:
+
+Reject all external-risk discard regularizer variants as promotion candidates.
+They improve mean reward and positive rate on the quick gate, but every variant
+regresses large-loss rate by `+3.125%`, which violates the Chongci promotion
+guardrail. Increasing `large_loss_bc_weight` from `1.0` to `3.0` reduced the EV
+gain but still did not recover tail risk.
+
+Interpretation:
+
+Using the risk critic during training is more promising than serving-time
+substitution for mean reward, but this specific risk signal still does not
+control tail losses. Raising the risk threshold reduced the regularizer's loss
+magnitude but did not change the quick-gate result, suggesting the checkpoint
+movement is dominated by the IQL update plus coarse risk pressure rather than
+high-confidence tail correction. Adding a tail-only BC preservation term did
+not fix the large-loss regression; it mostly traded away some mean reward. Do
+not promote or expand this exact regularizer yet. The next useful branch is
+either:
+
+```text
+1. train a better discard-specific counterfactual risk critic before using it
+   in policy training, or
+2. use paired/counterfactual large-loss labels to tell the policy which
+   alternatives preserve EV without creating new large-loss cases.
+```
+
+### Experiment: Direct Counterfactual Pairwise IQL Auxiliary
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734
+```
+
+Question:
+
+Can tensor-bearing paired-trace counterfactual labels improve the reward-trained
+IQL policy when used as a direct preferred/avoided action margin, without
+behavior-cloning the avoided action?
+
+Implementation:
+
+- Added `--risk-trace-counterfactual-labels` and
+  `--risk-trace-min-counterfactual-reward-gap` to `train_iql.py` so exact-match
+  risk-trace replay can consume the same counterfactual first-divergence labels
+  as action-risk training.
+- Checked the existing large tensor trace against the older IQL replay shards.
+  It produced hundreds of labels but `0` exact replay matches across the known
+  heuristic/mixed/self-play datasets, so exact-match trace weighting would not
+  train anything.
+- Added `--pairwise-data` to `train_iql.py` for direct tensor-bearing
+  counterfactual NPZ shards. These rows are loaded as auxiliary replay with
+  normal IQL `sample_weights = 0`, dummy MC-compatible next-state fields, and
+  non-zero `pairwise_weights`, so they affect only policy/Q preferred-over-
+  avoided margin losses.
+
+Data:
+
+```text
+source paired trace:
+  /root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json
+direct pairwise shard:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/data/counterfactual-pairwise-gap010
+rows:
+  269
+positive terminal rows at <= -1.0:
+  52
+mean reward gap:
+  0.3873
+max reward gap:
+  1.5210
+```
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+base datasets:
+  heuristic-chongci-50scalar-200
+  mixed-selfplay-iql-50
+  mixed-selfplay-iql-200-seats02
+  capped400k-current-lowdrift
+max_transitions:
+  150000 per base dataset
+pairwise auxiliary:
+  same 269-row shard repeated 12 times
+epochs:
+  1
+batch_size:
+  4096
+lr:
+  1e-5
+pairwise_q_weight / margin:
+  0.25 / 0.10
+pairwise_weight / margin:
+  0.02 / 0.05
+```
+
+Training diagnostics:
+
+```text
+pairwise_count:
+  active, roughly 15-30 rows per logged batch
+pairwise_q_loss:
+  non-zero and decreasing, about 0.1695 -> 0.0878 in logged steps
+epoch avg loss:
+  0.1781
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/checkpoints/counterfactual_pairwise_q025_policy002/epoch_001.pt
+```
+
+Evaluation:
+
+```text
+smoke window:
+  660000:4, duplicate seats, 16 evaluated seats
+anchor:
+  mean_reward=-0.3686, positive_rate=43.75%, large_loss_rate=31.25%
+candidate:
+  mean_reward=-0.3611, positive_rate=43.75%, large_loss_rate=31.25%
+full independent gate:
+  660000:16, duplicate seats, 64 evaluated seats
+anchor:
+  mean_reward=-0.1328, positive_rate=40.62%, large_loss_rate=17.19%
+candidate:
+  mean_reward=-0.0805, positive_rate=43.75%, large_loss_rate=20.31%
+candidate full report:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/candidate_counterfactual_pairwise_gate_660000_16.json
+```
+
+Decision:
+
+Rejected. The candidate improves mean reward and positive-rate on the
+independent gate, but it regresses large-loss rate from `17.19%` to `20.31%`.
+That violates the Chongci promotion guardrail, so
+`ai/checkpoints/best-checkpoints.json` records it as a rejected candidate and
+the promoted checkpoint remains `iql_lowlr_selfplay200_epoch003`.
+
+Interpretation:
+
+The new plumbing is useful because it turns tensor-bearing paired traces into
+active pairwise IQL supervision even when exact seed/decision matching against
+older replay shards is impossible. However, this exact candidate repeats the
+same pattern as the frozen external-risk regularizer branch: better EV and
+positive-rate, worse tail risk. Do not scale this exact 269-row auxiliary ratio
+without a new tail-control ingredient. The useful next branch is to make the
+counterfactual auxiliary tail-aware, for example by training only high-risk
+counterfactual rows, using reward-gap/severity weights, or adding a tail
+constraint that blocks EV improvements which increase large-loss frequency.
+
+### Experiment: High-Risk-Only Counterfactual Pairwise IQL Auxiliary
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925
+```
+
+Question:
+
+Does restricting direct counterfactual pairwise supervision to only high-risk
+first-divergence rows avoid the large-loss regression from the broader
+269-row counterfactual auxiliary run?
+
+Data:
+
+```text
+source paired trace:
+  /root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json
+direct high-risk pairwise shard:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/data/counterfactual-highrisk-gap010
+rows:
+  52
+positive terminal rows at <= -1.0:
+  52
+skipped non-high-risk labels:
+  217
+mean reward gap:
+  0.4446
+max reward gap:
+  1.5210
+```
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+base datasets:
+  heuristic-chongci-50scalar-200
+  mixed-selfplay-iql-50
+  mixed-selfplay-iql-200-seats02
+  capped400k-current-lowdrift
+max_transitions:
+  150000 per base dataset
+pairwise auxiliary:
+  same 52-row shard repeated 64 times
+epochs:
+  1
+batch_size:
+  4096
+lr:
+  1e-5
+pairwise_q_weight / margin:
+  0.25 / 0.10
+pairwise_weight / margin:
+  0.01 / 0.05
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/checkpoints/highrisk_pairwise_q025_policy001/epoch_001.pt
+```
+
+Training diagnostics:
+
+```text
+pairwise_count:
+  active, roughly 15-32 rows per logged batch
+pairwise_q_loss:
+  non-zero and decreasing, about 0.1134 -> 0.0058 in logged steps
+epoch avg loss:
+  0.1619
+```
+
+Evaluation:
+
+```text
+smoke window:
+  660000:4, duplicate seats, 16 evaluated seats
+anchor:
+  mean_reward=-0.3686, positive_rate=43.75%, large_loss_rate=31.25%
+candidate:
+  mean_reward=-0.3599, positive_rate=43.75%, large_loss_rate=31.25%
+
+full independent gate:
+  660000:16, duplicate seats, 64 evaluated seats
+anchor:
+  mean_reward=-0.1328, positive_rate=40.62%, large_loss_rate=17.19%
+candidate:
+  mean_reward=-0.0883, positive_rate=43.75%, large_loss_rate=20.31%
+candidate full report:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/reports/candidate_highrisk_pairwise_gate_660000_16.json
+```
+
+Decision:
+
+Rejected. High-risk filtering preserved the same EV/positive-rate improvement,
+but it still regressed large-loss rate from `17.19%` to `20.31%`.
+`ai/checkpoints/best-checkpoints.json` records this as a rejected candidate.
+
+Interpretation:
+
+Narrowing pairwise labels to high-risk rows is not enough. The policy still
+moves into a better-average but worse-tail region. The next branch should stop
+treating pairwise margin as the whole tail-control mechanism. Use a true
+tail-aware objective, such as reward-gap/severity-weighted pairwise Q targets,
+explicit large-loss probability constraints during IQL, or a promotion-time
+conservative ensemble where the candidate can only override anchor actions when
+tail-risk stays below the anchor on matched states.
+
+### Experiment: Reward-Delta Severity Pairwise IQL Auxiliary
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002
+```
+
+Question:
+
+Can `pairwise_reward_delta_targets` make direct counterfactual pairwise IQL
+tail-aware enough to reduce the large-loss regression from equal-margin
+pairwise variants?
+
+Implementation:
+
+- Added `pairwise_reward_delta_targets` to `TrainBatch` and replay buffer
+  sampling.
+- Added `--pairwise-reward-delta-weight`,
+  `--pairwise-reward-delta-margin-scale`, and
+  `--pairwise-reward-delta-clip` to `train_iql.py`.
+- Pairwise rows can now scale relative row weights and required policy/Q
+  margins by clipped counterfactual reward gap. Defaults remain zero, preserving
+  previous behavior unless the new flags are enabled.
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+pairwise data:
+  269-row counterfactual-pairwise-gap010 shard repeated 12 times
+pairwise_q_weight / margin:
+  0.25 / 0.05
+pairwise_weight / margin:
+  0.01 / 0.02
+pairwise_reward_delta_weight:
+  1.0
+pairwise_reward_delta_margin_scale:
+  0.35
+pairwise_reward_delta_clip:
+  2.0
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/checkpoints/severity_pairwise_q025_policy001_margin035/epoch_001.pt
+```
+
+Training diagnostics:
+
+```text
+pairwise_count:
+  active, roughly 15-30 rows per logged batch
+pairwise_loss:
+  materially active, about 0.1078 -> 0.0089 in logged steps
+pairwise_q_loss:
+  materially active, about 0.2826 -> 0.1687 in logged steps
+epoch avg loss:
+  0.2027
+```
+
+Evaluation:
+
+```text
+smoke window:
+  660000:4, duplicate seats, 16 evaluated seats
+candidate:
+  mean_reward=-0.3207, positive_rate=43.75%, large_loss_rate=31.25%
+
+full independent gate:
+  660000:16, duplicate seats, 64 evaluated seats
+anchor:
+  mean_reward=-0.1328, positive_rate=40.62%, large_loss_rate=17.19%
+candidate:
+  mean_reward=-0.0745, positive_rate=43.75%, large_loss_rate=18.75%
+candidate full report:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/reports/candidate_severity_pairwise_gate_660000_16.json
+```
+
+Decision:
+
+Rejected, but keep as the best pairwise-tail direction so far. It still
+regresses large-loss rate against the promoted anchor, but it improves the
+pairwise branch from `20.31%` large-loss to `18.75%`.
+
+Interpretation:
+
+Reward-gap severity is the first pairwise change that actually moved tail risk
+in the right direction while preserving the EV gain. One stronger severity
+variant is justified. If that still cannot match the anchor's `17.19%`
+large-loss rate, stop pairwise-margin sweeps and move to explicit constrained
+selection or a separate large-loss probability constraint.
+
+### Experiment: Strong Reward-Delta Severity Pairwise IQL Auxiliary
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008
+```
+
+Question:
+
+Can a stronger reward-gap margin close the remaining one-seat tail gap from the
+moderate severity run?
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+pairwise data:
+  269-row counterfactual-pairwise-gap010 shard repeated 12 times
+pairwise_q_weight / margin:
+  0.35 / 0.05
+pairwise_weight / margin:
+  0.01 / 0.02
+pairwise_reward_delta_weight:
+  1.0
+pairwise_reward_delta_margin_scale:
+  0.70
+pairwise_reward_delta_clip:
+  2.0
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/checkpoints/severity_pairwise_q035_policy001_margin070/epoch_001.pt
+```
+
+Training diagnostics:
+
+```text
+pairwise_count:
+  active, roughly 15-30 rows per logged batch
+pairwise_loss:
+  much stronger, about 0.2504 -> 0.0147 in logged steps
+pairwise_q_loss:
+  much stronger, about 0.4604 -> 0.2947 in logged steps
+epoch avg loss:
+  0.2767
+```
+
+Evaluation:
+
+```text
+smoke window:
+  660000:4, duplicate seats, 16 evaluated seats
+candidate:
+  mean_reward=-0.2749, positive_rate=43.75%, large_loss_rate=31.25%
+
+full independent gate:
+  660000:16, duplicate seats, 64 evaluated seats
+anchor:
+  mean_reward=-0.1328, positive_rate=40.62%, large_loss_rate=17.19%
+candidate:
+  mean_reward=-0.0718, positive_rate=40.62%, large_loss_rate=20.31%
+candidate full report:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/reports/candidate_severity_strong_gate_660000_16.json
+```
+
+Decision:
+
+Rejected. Stronger severity margins improved mean reward but regressed
+large-loss rate back to `20.31%` and lost the positive-rate gain. This is worse
+than the moderate severity run for the Chongci promotion guard.
+
+Interpretation:
+
+Stop pairwise-margin sweeps. The moderate severity run showed that reward-gap
+targets can move tail risk in the right direction, but pairwise margin alone is
+not a reliable tail-control mechanism. The next branch should be an explicit
+constraint: either a large-loss probability constraint in IQL or a conservative
+anchor/candidate selector that allows candidate actions only when an independent
+tail-risk model says risk is no worse than anchor.
+
+### Experiment: Explicit Tail-Constrained Candidate Selector
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409
+```
+
+Question:
+
+Can we keep the EV upside from the moderate severity-pairwise candidate while
+blocking candidate overrides unless an independent action-risk model predicts
+large-loss probability is no worse than the promoted anchor action?
+
+Implementation:
+
+- Added `TailConstrainedCandidatePolicy`.
+- The policy computes:
+  - anchor action from promoted anchor policy logits,
+  - candidate action from reward-trained candidate policy logits,
+  - candidate Q advantage over the anchor action from the candidate Q head,
+  - anchor and candidate large-loss probability from the action-risk model.
+- It allows the candidate action only when:
+
+```text
+candidate_q - anchor_action_q >= min_q_margin
+candidate_large_loss_probability - anchor_large_loss_probability <= max_risk_increase
+candidate_tail_score - anchor_tail_score <= max_risk_increase
+```
+
+- With default `severity_weight=0`, the tail-score condition is the same as the
+  large-loss probability condition. This keeps the first implementation aligned
+  with the intended rule: candidate can improve EV only when large-loss
+  probability is no worse than anchor.
+- Added `evaluate_tail_constrained.py` to run duplicate-seat gate sweeps.
+
+Policy inputs:
+
+```text
+anchor checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/checkpoints/severity_pairwise_q025_policy001_margin035/epoch_001.pt
+risk checkpoint:
+  /root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt
+constraint:
+  min_q_margin=0.0
+  max_risk_increase=0.0
+  severity_weight=0.0
+```
+
+Smoke evaluation:
+
+```text
+window:
+  660000:4, duplicate seats, 16 evaluated seats
+anchor:
+  mean_reward=-0.3686, positive_rate=43.75%, large_loss_rate=31.25%
+tail constrained candidate:
+  mean_reward=-0.3596, positive_rate=43.75%, large_loss_rate=31.25%
+candidate override rate:
+  0.094%
+anchor block rate:
+  0.201%
+same-action rate:
+  99.705%
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_smoke_660000_4.json
+```
+
+Independent gate:
+
+```text
+window:
+  660000:16, duplicate seats, 64 evaluated seats
+anchor:
+  mean_reward=-0.1328, positive_rate=40.62%, large_loss_rate=17.19%
+tail constrained candidate:
+  mean_reward=-0.1324, positive_rate=40.62%, large_loss_rate=17.19%
+candidate override rate:
+  0.068%
+anchor block rate:
+  0.241%
+same-action rate:
+  99.691%
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_gate_660000_16.json
+```
+
+Decision:
+
+Not promoted yet, but this is the first candidate-serving path that preserves
+the anchor large-loss rate on the independent `660000:16` gate while allowing a
+small amount of EV-positive candidate behavior. The gain is tiny because the
+constraint is strict and the candidate/anchor agree on almost all actions.
+
+Follow-up:
+
+A larger combined-window validation finished:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+evaluated seats:
+  120
+anchor:
+  mean_reward=-0.0557, positive_rate=42.50%, large_loss_rate=15.00%
+tail constrained candidate:
+  mean_reward=-0.0570, positive_rate=41.67%, large_loss_rate=15.00%
+candidate override rate:
+  0.062%
+anchor block rate:
+  0.225%
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_combined_gate_534_544_554.json
+anchor report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/anchor_combined_gate_534_544_554_n10.json
+```
+
+Final decision:
+
+Rejected as a promotion candidate. The explicit constraint preserves large-loss
+rate on the combined gate, but it loses mean reward and positive-rate versus
+the promoted anchor. It also allows candidate overrides on only about `0.06%`
+of decisions, so it is currently too conservative to be useful.
+
+Interpretation:
+
+The explicit constraint behaves correctly. It blocks almost every candidate
+divergence, which means it is not a strong policy improvement yet, but it
+solves the specific failure mode from pairwise IQL: EV-up candidates no longer
+automatically increase tail risk. The next useful work is improving risk-model
+sensitivity or adding an action-family-specific tolerance so the constraint can
+safely allow more than about `0.06%` candidate overrides without regressing
+large-loss rate.
+
+### Experiment: Stronger Future-Context Risk Critic fb050
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437
+```
+
+Question:
+
+Can a stronger action-risk critic create better large-loss separation than the
+current `future_context_fb025` critic, so the tail-constrained candidate
+selector can safely allow more candidate actions?
+
+Data:
+
+```text
+/root/fh-mahjong-runs/chongci-visible58-actionrisk-20260531-215255/data/anchor-visible58-train64-npz
+/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-564000-n50-npz
+/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-574000-n50-npz
+/root/fh-mahjong-runs/chongci-large-counterfactual-scorepressure-20260601-225427/data/anchor-scorepressure-seed-584000-n50-npz
+/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/data/counterfactual-gap005-npz
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+```
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+checkpoint:
+  /root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437/checkpoints/future_context_fb050/epoch_001.pt
+target_mode:
+  future_outcome_context
+future_context_window:
+  12
+future_context_score_pressure_weight:
+  0.75
+future_context_min_credit:
+  0.35
+family_balance_strength:
+  0.50
+family_weight_clip:
+  6.0
+positive_fraction:
+  0.60
+severity_weight:
+  0.40
+paired trace:
+  /root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json
+paired_margin_weight:
+  1.0
+paired_severity_weight:
+  0.50
+paired_margin:
+  0.15
+steps_per_epoch:
+  500
+batch_size:
+  2048
+learning_rate:
+  5e-5
+MLflow tracking URI:
+  file:///root/fh-mahjong-mlruns
+```
+
+Training log ended with in-batch separation:
+
+```text
+step 500:
+  loss=0.6054
+  probability_loss=0.5702
+  severity_loss=0.0787
+  batch_positive_rate=46.1%
+  positive_probability=0.666
+  negative_probability=0.451
+  paired_count=717
+```
+
+Calibration:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+max_transitions:
+  150000
+report:
+  /root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437/reports/riskcritic_fb050_capped400k_calibration_150k.json
+```
+
+Result:
+
+```text
+overall:
+  AUC=0.509609
+  Brier=0.367835
+  positive_mean_probability=0.621192
+  negative_mean_probability=0.614801
+discard:
+  AUC=0.508306
+  positive_mean_probability=0.641232
+  negative_mean_probability=0.635552
+pon:
+  AUC=0.529279
+kan:
+  AUC=0.561398
+pass:
+  AUC=0.508965
+win:
+  AUC=0.545981
+```
+
+Baseline comparison on the same capped400k calibration protocol:
+
+```text
+previous future_context_fb025:
+  overall AUC=0.509855
+  Brier=0.270555
+  positive_mean_probability=0.495633
+  negative_mean_probability=0.490131
+  discard AUC=0.508570
+stronger fb050/window12:
+  overall AUC=0.509609
+  Brier=0.367835
+  positive_mean_probability=0.621192
+  negative_mean_probability=0.614801
+  discard AUC=0.508306
+```
+
+Decision:
+
+Rejected before tail-constrained serving/evaluation. The stronger run increased
+probability scale and the positive/negative mean gap slightly, but independent
+ranking did not improve: overall AUC and discard AUC are both lower than the
+existing `fb025` critic, and Brier is much worse. This is overconfidence, not a
+better risk model.
+
+Interpretation:
+
+Action-family-specific tolerance is available in the selector, but it should
+not be used with this critic. The next risk-model step should change the label
+or input signal, not simply increase family balance or future-context window
+again. Good candidates are explicit later-trajectory supervision for
+first-divergence states, separate discard/interruption risk heads, or critic-side
+features that expose visible danger context more directly.
+
+### Experiment: Family-Specific Future-Outcome Risk Critic
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834
+```
+
+Question:
+
+Can a different target signal improve risk-model sensitivity enough to make the
+tail-constrained candidate selector useful? This run stops broad future-context
+labeling and separates discard hindsight from interruption-decision hindsight.
+
+Code change:
+
+```text
+target_mode:
+  family_future_outcome_context
+```
+
+The new target keeps the existing checkpoint architecture and action-risk heads,
+but changes the labels:
+
+```text
+discard actions:
+  direct same-seat recent-discard hindsight before actual large loss or deal-in
+chii/pon/kan/pass/haitei:
+  separate lower-credit recent-action hindsight before actual large loss or deal-in
+win actions:
+  no auxiliary risk credit
+```
+
+This is intentionally different from `future_outcome_context`, where all recent
+families shared one broad credit rule.
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+target_mode:
+  family_future_outcome_context
+future_context_window:
+  8
+future_context_score_pressure_weight:
+  0.5
+future_context_min_credit:
+  0.35
+family_balance_strength:
+  0.25
+positive_fraction:
+  0.55
+severity_weight:
+  0.30
+paired trace:
+  /root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json
+paired_margin_weight:
+  0.5
+paired_severity_weight:
+  0.25
+steps_per_epoch:
+  500
+batch_size:
+  2048
+learning_rate:
+  5e-5
+```
+
+Training log ended with:
+
+```text
+step 500:
+  loss=0.6433
+  probability_loss=0.6139
+  severity_loss=0.0789
+  batch_positive_rate=46.4%
+  positive_probability=0.579
+  negative_probability=0.427
+  paired_count=512
+```
+
+Calibration:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+max_transitions:
+  150000
+report:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/riskcritic_family_context_capped400k_calibration_150k.json
+```
+
+Result:
+
+```text
+overall:
+  AUC=0.515713
+  Brier=0.299186
+  positive_mean_probability=0.546971
+  negative_mean_probability=0.538058
+discard:
+  AUC=0.514733
+  positive_mean_probability=0.554814
+  negative_mean_probability=0.546411
+chii:
+  AUC=0.522235
+kan:
+  AUC=0.565868
+pass:
+  AUC=0.514085
+pon:
+  AUC=0.508150
+win:
+  AUC=0.547209
+```
+
+Baseline comparison on the same capped400k calibration protocol:
+
+```text
+previous future_context_fb025:
+  overall AUC=0.509855
+  discard AUC=0.508570
+failed fb050/window12:
+  overall AUC=0.509609
+  discard AUC=0.508306
+family_future_outcome_context:
+  overall AUC=0.515713
+  discard AUC=0.514733
+```
+
+This passes the calibration-first gate. It is the best offline action-risk
+ranking signal so far.
+
+Tail-constrained smoke:
+
+```text
+anchor checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/checkpoints/severity_pairwise_q025_policy001_margin035/epoch_001.pt
+risk checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+seed window:
+  660000:4
+evaluated seats:
+  16
+```
+
+Known anchor smoke on the same window:
+
+```text
+mean_reward=-0.368562
+positive_reward_rate=43.75%
+large_loss_rate=31.25%
+```
+
+Smoke results:
+
+```text
+discard tolerance 0.02:
+  mean_reward=-0.371812
+  positive_reward_rate=43.75%
+  large_loss_rate=31.25%
+  candidate_override_rate=0.0269%
+  report=/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_discard002.json
+
+strict q_margin 0.0:
+  mean_reward=-0.371812
+  positive_reward_rate=43.75%
+  large_loss_rate=31.25%
+  candidate_override_rate=0.0269%
+  report=/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_strict_qsweep.json
+
+strict q_margin 0.01:
+  mean_reward=-0.371812
+  positive_reward_rate=43.75%
+  large_loss_rate=31.25%
+  candidate_override_rate=0.0134%
+  report=/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_strict_qsweep.json
+```
+
+Decision:
+
+Rejected for serving with the current candidate pair. The new target is a real
+calibration improvement, but the constrained selector still loses EV to the
+anchor on the small smoke while preserving the same positive and large-loss
+rates. Do not run the larger gate for this anchor/candidate/risk combination.
+
+Interpretation:
+
+Keep `family_future_outcome_context`; it improved offline risk ranking and is
+now the best diagnostic risk target. The remaining bottleneck is not risk
+calibration alone. The current candidate policy has too few useful candidate
+overrides under the no-worse-tail rule. The next experiment should either train
+a new candidate that directly uses this family-context risk critic during IQL,
+or build a candidate from states/actions where this critic shows confident
+positive separation, instead of only filtering the old severity-pairwise
+candidate at serving time.
+
+### Experiment: IQL With Family-Context Risk Regularizer
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857
+```
+
+Question:
+
+Can the calibrated `family_future_outcome_context` risk critic improve the
+policy during reward learning, instead of only filtering an already-trained
+candidate at serving time?
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+external risk checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt
+external_risk_policy_family:
+  discard
+external_risk_policy_threshold:
+  0.54
+external_risk_policy_weight:
+  0.50
+epochs:
+  1
+batch_size:
+  4096
+learning_rate:
+  3e-5
+max_transitions_per_dataset:
+  150000
+MLflow run id:
+  c9e79c68c115495188eda0b3acae65c9
+```
+
+Data:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz
+/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+```
+
+Training diagnostics:
+
+```text
+external risk policy loss stayed active:
+  ~0.053 to 0.056
+final avg loss:
+  0.1751
+final checkpoint:
+  epoch_001.pt
+```
+
+Important correction:
+
+The first smoke run omitted `--max-steps-per-episode`; those reports truncated
+all episodes and returned zero rewards. They are invalid for model comparison.
+All valid results below used:
+
+```text
+--max-steps-per-episode 20000
+```
+
+Direct serving smoke:
+
+```text
+seed window:
+  660000:4
+evaluated seats:
+  16
+candidate:
+  mean_reward=-0.137688
+  positive_reward_rate=56.25%
+  large_loss_rate=31.25%
+anchor:
+  mean_reward=-0.368562
+  positive_reward_rate=43.75%
+  large_loss_rate=31.25%
+candidate report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/candidate_smoke_660000_4_full.json
+anchor report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/anchor_smoke_660000_4_full.json
+```
+
+Direct independent gate:
+
+```text
+seed window:
+  660000:16
+evaluated seats:
+  64
+candidate:
+  mean_reward=-0.018328
+  positive_reward_rate=48.44%
+  large_loss_rate=18.75%
+anchor:
+  mean_reward=-0.132812
+  positive_reward_rate=40.62%
+  large_loss_rate=17.19%
+delta candidate - anchor:
+  mean_reward=+0.114484
+  positive_reward_rate=+7.81pp
+  large_loss_rate=+1.56pp
+candidate report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/candidate_gate_660000_16_full.json
+anchor report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/anchor_gate_660000_16_full.json
+```
+
+Direct-serving decision:
+
+Rejected. The candidate has a real EV/positive-rate gain, but it violates the
+current tail constraint because large-loss rate is worse than anchor.
+
+Tail-constrained serving check:
+
+```text
+anchor checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+candidate checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt
+risk checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+seed window:
+  660000:16
+```
+
+Result:
+
+```text
+q_margin=0.0:
+  mean_reward=-0.142797
+  positive_reward_rate=40.62%
+  large_loss_rate=17.19%
+  candidate_override_rate=0.1081%
+
+q_margin=0.01:
+  mean_reward=-0.142797
+  positive_reward_rate=40.62%
+  large_loss_rate=17.19%
+  candidate_override_rate=0.1050%
+
+anchor:
+  mean_reward=-0.132812
+  positive_reward_rate=40.62%
+  large_loss_rate=17.19%
+report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/tail_constrained_riskreg_candidate_gate_660000_16.json
+```
+
+Tail-constrained decision:
+
+Rejected. The explicit selector restores the anchor large-loss rate, but it
+also loses EV versus the anchor. This candidate should not go to the combined
+repeated gate.
+
+Interpretation:
+
+This is useful evidence. The risk-regularized IQL branch can produce a stronger
+EV candidate, unlike serving-time filtering of the older severity-pairwise
+candidate. The unresolved issue is still tail risk: direct serving is EV-up but
+tail-worse, while constrained serving is tail-safe but EV-down. The next branch
+should tighten training-time tail control rather than rely on serving-time
+filtering after training. Two concrete options:
+
+```text
+1. Increase training-side tail control mildly:
+   keep external risk family=discard, threshold=0.54,
+   add large_loss_bc_weight or reduce external-risk threshold to 0.535.
+
+2. Train a two-candidate sweep:
+   riskreg_discard_t054_w075 and riskreg_discard_t0535_w050,
+   then keep only variants whose 660000:16 direct gate has large_loss_rate <= anchor.
+```
+
+### Experiment: Stronger Discard Risk-Regularizer Sweep
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102
+```
+
+Question:
+
+Can mild extra training-side tail control keep the EV gain from the
+family-context risk-regularized IQL branch while removing the large-loss
+regression seen in `riskreg_discard_t054_w050`?
+
+Shared setup:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+external risk checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+external risk family:
+  discard
+epochs:
+  1
+batch_size:
+  4096
+learning_rate:
+  3e-5
+max_transitions_per_dataset:
+  150000
+```
+
+Candidates:
+
+```text
+riskreg_discard_t054_w075:
+  external_risk_policy_threshold=0.54
+  external_risk_policy_weight=0.75
+  checkpoint=/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t054_w075/epoch_001.pt
+  MLflow run id=86b5203328124c77995e7e7a481ac8cb
+
+riskreg_discard_t0535_w050:
+  external_risk_policy_threshold=0.535
+  external_risk_policy_weight=0.50
+  checkpoint=/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t0535_w050/epoch_001.pt
+  MLflow run id=1b3388f8203147bdaa5fd574b13c9ffb
+```
+
+Direct `660000:16` gate:
+
+```text
+anchor:
+  mean_reward=-0.132812
+  positive_reward_rate=40.62%
+  large_loss_rate=17.19%
+
+riskreg_discard_t054_w075:
+  mean_reward=-0.003938
+  positive_reward_rate=48.44%
+  large_loss_rate=17.19%
+  delta_mean_reward=+0.128875
+  delta_positive_reward_rate=+7.81pp
+  delta_large_loss_rate=+0.00pp
+  report=/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/reports/riskreg_discard_t054_w075_gate_660000_16_full.json
+
+riskreg_discard_t0535_w050:
+  mean_reward=-0.018328
+  positive_reward_rate=48.44%
+  large_loss_rate=18.75%
+  delta_mean_reward=+0.114484
+  delta_positive_reward_rate=+7.81pp
+  delta_large_loss_rate=+1.56pp
+  report=/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/reports/riskreg_discard_t0535_w050_gate_660000_16_full.json
+```
+
+Decision after `660000:16`:
+
+```text
+riskreg_discard_t0535_w050:
+  rejected for tail regression
+riskreg_discard_t054_w075:
+  advanced to combined gate
+```
+
+Important correction:
+
+The first combined-gate run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003157
+```
+
+is invalid because `--online-episodes` was omitted. Both reports had
+`online=null` and must not be used.
+
+Corrected combined gate:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+evaluated seats:
+  120
+online episodes flag:
+  --online-episodes 30
+```
+
+Result:
+
+```text
+anchor:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+  report=/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json
+
+riskreg_discard_t054_w075:
+  mean_reward=-0.067108
+  positive_reward_rate=43.33%
+  large_loss_rate=17.50%
+  report=/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/candidate_combined_gate_534_544_554_n10.json
+
+delta candidate - anchor:
+  mean_reward=-0.011433
+  positive_reward_rate=+0.83pp
+  large_loss_rate=+2.50pp
+summary=/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/combined_gate_summary.json
+```
+
+Decision:
+
+Rejected. `riskreg_discard_t054_w075` was promising on `660000:16`, but the
+larger combined gate showed both EV regression and tail-risk regression. Do not
+promote it.
+
+Interpretation:
+
+The family-context risk critic can create EV-up candidates, and the `0.54/0.75`
+variant briefly satisfied the independent `660000:16` tail guard, but the effect
+does not generalize across the larger gate. Further scalar threshold/weight
+sweeps are unlikely to be high-value unless the evaluation target changes.
+Prefer the next branch to add a direct training constraint on large-loss
+transitions, for example combining the discard risk regularizer with
+`large_loss_bc_weight`, or move to a larger data refresh before repeating this
+family.
+
+### Experiment: Discard Risk Regularizer Plus Large-Loss BC
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915
+```
+
+Question:
+
+Can direct large-loss transition preservation fix the tail regression from the
+otherwise promising `riskreg_discard_t054_w075` candidate?
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+external risk checkpoint:
+  /root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt
+checkpoint:
+  /root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915/checkpoints/riskreg_discard_t054_w075_llbc050/epoch_001.pt
+external_risk_policy_family:
+  discard
+external_risk_policy_threshold:
+  0.54
+external_risk_policy_weight:
+  0.75
+large_loss_threshold:
+  -1.0
+large_loss_bc_weight:
+  0.50
+epochs:
+  1
+batch_size:
+  4096
+learning_rate:
+  3e-5
+max_transitions_per_dataset:
+  150000
+MLflow run id:
+  074977cb205441ec930f3d2946f43bb3
+```
+
+Training diagnostics:
+
+```text
+large-loss BC term was active:
+  ll_bc about 0.0406 to 0.0654
+  large-loss rows per logged batch about 645 to 691
+external risk term stayed active:
+  ext_risk about 0.0534 to 0.0558
+final avg loss:
+  0.2159
+```
+
+Evaluation:
+
+The branch skipped the smaller `660000:16` screen and went directly to the
+combined decision gate, per the updated protocol.
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+evaluated seats:
+  120
+candidate report:
+  /root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915/reports/riskreg_discard_t054_w075_llbc050_combined_gate_534_544_554_n10.json
+anchor report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json
+```
+
+Result:
+
+```text
+anchor:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+
+riskreg_discard_t054_w075_llbc050:
+  mean_reward=-0.081767
+  positive_reward_rate=43.33%
+  large_loss_rate=20.00%
+
+delta candidate - anchor:
+  mean_reward=-0.026092
+  positive_reward_rate=+0.83pp
+  large_loss_rate=+5.00pp
+```
+
+Decision:
+
+Rejected. `large_loss_bc_weight=0.50` did not fix the tail issue. It worsened
+both EV and large-loss rate on the combined gate, even though the large-loss BC
+term was active during training.
+
+Interpretation:
+
+This closes the simple "add large-loss BC on top of discard risk regularizer"
+branch for now. The current dataset/model combination is not giving a stable
+tail-safe improvement through scalar loss additions. Next higher-value move is
+data refresh or more targeted data construction: generate new mixed self-play
+from the best anchor and the EV-up-but-tail-worse candidates, then train on
+states where the combined gate actually diverges, rather than adding another
+global scalar loss.
+
+### Experiment: Targeted Combined-Gate Divergence Data
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622
+```
+
+Question:
+
+Can fresh self-play from the promoted anchor plus the EV-up/tail-worse
+candidates fix the failure mode without adding another broad scalar penalty?
+This branch intentionally stopped stacking `external_risk_policy_weight`,
+`large_loss_bc_weight`, and other global loss terms. It instead trained only
+from actual combined-gate divergence states plus local decision context.
+
+Policy sources:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+riskreg_discard_t054_w075:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t054_w075/epoch_001.pt
+riskreg_discard_t054_w050:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt
+riskreg_discard_t0535_w050:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t0535_w050/epoch_001.pt
+```
+
+Paired traces:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+seats:
+  0, 1, 2, 3
+max_steps_per_episode:
+  20000
+
+anchor vs riskreg_discard_t054_w075:
+  report=/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w075_combined_trace.json
+  divergence_rate=92.50%
+  candidate_better_rate=31.67%
+  mean_delta=-0.011433
+  candidate_large_loss_cases=21
+  new_candidate_large_loss_cases=3
+
+anchor vs riskreg_discard_t054_w050:
+  report=/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w050_combined_trace.json
+  divergence_rate=91.67%
+  candidate_better_rate=30.83%
+  mean_delta=-0.013375
+  candidate_large_loss_cases=20
+  new_candidate_large_loss_cases=2
+
+anchor vs riskreg_discard_t0535_w050:
+  report=/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t0535w050_combined_trace.json
+  divergence_rate=91.67%
+  candidate_better_rate=30.83%
+  mean_delta=-0.013375
+  candidate_large_loss_cases=20
+  new_candidate_large_loss_cases=2
+```
+
+Fresh mixed data:
+
+```text
+seat 0:
+  anchor checkpoint
+seat 1:
+  riskreg_discard_t054_w075
+seat 2:
+  riskreg_discard_t054_w050
+seat 3:
+  riskreg_discard_t0535_w050
+
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-534000-n10-npz
+  transitions=20095
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-544000-n10-npz
+  transitions=21123
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-554000-n10-npz
+  transitions=20124
+```
+
+Code fix discovered during this run:
+
+`load_risk_cases_from_paired_trace_reports` assumed reward keys like
+`candidate_reward`. Named reports from this experiment used keys like
+`candidate_t054_w075_reward`. The loader now reads `left_label` and
+`right_label` from each report before loading rewards and counterfactual labels.
+
+Training variant 1:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/targeted_divergence_q025_context2/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+filtered data:
+  the three fresh mixed self-play shards above
+risk trace reports:
+  the three anchor-vs-candidate combined traces above
+risk_trace_filter_datasets:
+  true
+risk_trace_context_radius:
+  2
+pairwise_q_weight:
+  0.25
+pairwise_q_margin:
+  0.10
+pairwise_replay_multiplier:
+  0
+MLflow run id:
+  8937d164eb1d4b5995f35be9cf810ff6
+```
+
+Training diagnostics:
+
+```text
+matched cases:
+  7 + 6 + 6 across the three fresh shards
+filtered context rows:
+  9 + 8 + 10
+logged pairwise_count:
+  0
+```
+
+Evaluation:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/targeted_divergence_q025_context2_combined_gate_534_544_554_n10.json
+mean_reward:
+  -0.072475
+positive_reward_rate:
+  42.50%
+large_loss_rate:
+  17.50%
+```
+
+Training variant 2:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/targeted_divergence_q025_context2_replay512/epoch_001.pt
+same base data, filtered data, and trace reports as variant 1
+pairwise_q_weight:
+  0.25
+pairwise_q_margin:
+  0.10
+pairwise_replay_multiplier:
+  512
+MLflow run id:
+  73fe54f4b7f34b5a9da8bb2a71f0458b
+```
+
+Training diagnostics:
+
+```text
+matched cases:
+  7 + 6 + 6 across the three fresh shards
+pairwise replay rows:
+  3584 + 2560 + 3072
+logged pairwise_count:
+  about 62 to 71 per logged batch
+pairwise_q_loss:
+  non-zero early, then 0.0 after the Q margin was satisfied
+```
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/targeted_divergence_q025_context2_replay512_combined_gate_534_544_554_n10.json
+MLflow eval run id:
+  2c35a77530154319aad94b80243de12b
+```
+
+Result:
+
+```text
+anchor:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+
+targeted_divergence_q025_context2:
+  mean_reward=-0.072475
+  positive_reward_rate=42.50%
+  large_loss_rate=17.50%
+
+targeted_divergence_q025_context2_replay512:
+  mean_reward=-0.045225
+  positive_reward_rate=44.17%
+  large_loss_rate=16.67%
+```
+
+Decision:
+
+Rejected for promotion. The replay-expanded targeted variant is the best result
+from this branch because it improves EV and positive-rate versus the anchor,
+but it still violates the explicit tail constraint: candidate large-loss rate
+is `16.67%` versus anchor `15.00%`.
+
+Interpretation:
+
+The branch confirmed that using actual combined-gate divergence states is more
+useful than another global loss stack: replay512 recovered EV and positive-rate
+without an external risk regularizer or large-loss BC. However, the matched
+state set is too small and still does not control large-loss probability. The
+next useful move is not another scalar coefficient sweep. Either generate a
+larger aligned mixed dataset for the same anchor/candidate family so exact
+divergence coverage is not only 19 cases, or turn the paired traces into a
+direct counterfactual NPZ auxiliary dataset with enough rows to enforce
+tail-safe action preferences.
+
+### Experiment: Direct Counterfactual Combined-Gate Pairwise IQL
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622
+```
+
+Question:
+
+Can direct tensor-bearing counterfactual rows from the combined-gate paired
+traces train the reward policy better than sparse exact replay matching? This
+keeps the same principle as the prior branch: use the actual failure states
+from the combined gate, not another global scalar loss stack.
+
+Code/tooling:
+
+`build_counterfactual_risk_data.py` now reads each paired trace report's
+stored `left_label` and `right_label`, so named candidates such as
+`candidate_t054_w075` resolve reward/outcome keys correctly. Regression test:
+`ai/tests/test_build_counterfactual_risk_data.py`.
+
+Direct auxiliary data:
+
+```text
+source traces:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w075_combined_trace.json
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w050_combined_trace.json
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t0535w050_combined_trace.json
+min_reward_gap:
+  0.10
+large_loss_threshold:
+  -1.0
+
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t054w075
+  rows=48
+  mean_reward_gap=0.380438
+  max_reward_gap=1.312000
+  positive_terminal_rows=4
+
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t054w050
+  rows=47
+  mean_reward_gap=0.387298
+  max_reward_gap=1.312000
+  positive_terminal_rows=4
+
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t0535w050
+  rows=47
+  mean_reward_gap=0.387298
+  max_reward_gap=1.312000
+  positive_terminal_rows=4
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+pairwise auxiliary repeats:
+  64 per direct shard
+pairwise_q_weight / margin:
+  0.25 / 0.10
+pairwise_weight / margin:
+  0.01 / 0.05
+pairwise_reward_delta_weight:
+  0.50
+pairwise_reward_delta_margin_scale:
+  0.20
+pairwise_reward_delta_clip:
+  2.0
+epochs:
+  1
+batch_size:
+  4096
+learning_rate:
+  3e-5
+MLflow run id:
+  371bd8057c5f488b92d01e7838392a98
+```
+
+Training diagnostics:
+
+```text
+logged pairwise_count:
+  about 226 to 241 per logged batch
+pairwise_q_loss:
+  0.1089 at step 10
+  0.0339 at step 20
+  0.0095 at step 30
+pairwise policy loss:
+  near 0.0 after the policy margin was satisfied
+```
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+candidate report:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/direct_cf_gap010_q025_policy001_severity_combined_gate_534_544_554_n10.json
+candidate repeat report:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/candidate_repeat2.json
+anchor refresh report:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/anchor_refresh.json
+previous anchor report:
+  /root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json
+MLflow eval run id:
+  c428c0d6a3b0475aacbf9ebc21427135
+```
+
+Result:
+
+```text
+previous Chongci anchor:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+  reward_sum=-6.681002
+
+direct_cf_gap010_q025_policy001_severity:
+  mean_reward=-0.002317
+  positive_reward_rate=45.00%
+  large_loss_rate=14.17%
+  reward_sum=-0.278000
+
+delta candidate - previous anchor:
+  mean_reward=+0.053358
+  positive_reward_rate=+2.50pp
+  large_loss_rate=-0.83pp
+```
+
+Determinism check:
+
+```text
+candidate repeat 1:
+  mean_reward=-0.002317
+  positive_reward_rate=45.00%
+  large_loss_rate=14.17%
+  reward_sum=-0.278000
+
+candidate repeat 2:
+  mean_reward=-0.002317
+  positive_reward_rate=45.00%
+  large_loss_rate=14.17%
+  reward_sum=-0.278000
+
+anchor prior:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+  reward_sum=-6.681002
+
+anchor refresh:
+  mean_reward=-0.055675
+  positive_reward_rate=42.50%
+  large_loss_rate=15.00%
+  reward_sum=-6.681002
+```
+
+Decision:
+
+Promoted as the current Chongci reward-trained best. It improves EV and
+positive rate while reducing large-loss rate on the deterministic combined
+gate, and both candidate and anchor repeats matched exactly.
+
+Interpretation:
+
+This is the first branch in the recent tail-control work that passed the
+explicit tail constraint. The useful ingredient was not more scalar loss
+stacking; it was direct counterfactual supervision from tensor-bearing
+combined-gate first-divergence states, with reward-gap severity shaping. Next
+steps should build on this promoted checkpoint with a larger direct
+counterfactual dataset or a fresh self-play iteration using this checkpoint as
+one of the table policies.
 
 ## Maintenance Protocol For This Note
 

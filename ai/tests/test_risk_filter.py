@@ -65,6 +65,144 @@ def test_load_risk_cases_from_paired_trace_report_extracts_first_divergence(tmp_
     ]
 
 
+def test_load_risk_cases_from_paired_trace_report_extracts_counterfactual_labels(tmp_path: Path) -> None:
+    report_path = tmp_path / "trace.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "pairs": [
+                    {
+                        "seed": 100,
+                        "seat": 2,
+                        "anchor_reward": 0.25,
+                        "candidate_reward": -0.5,
+                        "reward_delta": -0.75,
+                        "anchor_outcome": {"discarder_seat": -1},
+                        "candidate_outcome": {"discarder_seat": 2},
+                        "first_divergence_index": 3,
+                        "first_divergence": {
+                            "left": {
+                                "decision_index": 77,
+                                "action_id": 46,
+                                "action_label": "pass",
+                            },
+                            "right": {
+                                "decision_index": 77,
+                                "action_id": 5,
+                                "action_label": "discard 1m",
+                            },
+                        },
+                    },
+                    {
+                        "seed": 101,
+                        "seat": 2,
+                        "anchor_reward": 0.25,
+                        "candidate_reward": 0.24,
+                        "reward_delta": -0.01,
+                        "first_divergence_index": 3,
+                        "first_divergence": {
+                            "left": {"decision_index": 77, "action_id": 46, "action_label": "pass"},
+                            "right": {"decision_index": 77, "action_id": 5, "action_label": "discard 1m"},
+                        },
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    cases = load_risk_cases_from_paired_trace_reports(
+        [report_path],
+        large_loss_threshold=-1.0,
+        include_large_losses=False,
+        include_new_large_losses=False,
+        include_counterfactual_labels=True,
+        min_counterfactual_reward_gap=0.1,
+    )
+
+    assert cases == [
+        RiskCase(
+            seed=100,
+            seat=2,
+            decision_index=77,
+            action_id=5,
+            action_label="discard 1m",
+            baseline_action_id=46,
+            baseline_action_label="pass",
+            reward=-0.5,
+            baseline_reward=0.25,
+            reward_delta=-0.75,
+            source="paired_trace_counterfactual",
+            tags=("avoided_deal_in", "counterfactual", "new_deal_in", "worse_reward"),
+        )
+    ]
+
+
+def test_load_risk_cases_from_paired_trace_report_uses_report_labels(tmp_path: Path) -> None:
+    report_path = tmp_path / "trace.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "left_label": "anchor",
+                "right_label": "candidate_t054_w075",
+                "pairs": [
+                    {
+                        "seed": 100,
+                        "seat": 2,
+                        "anchor_reward": 0.25,
+                        "candidate_t054_w075_reward": -0.5,
+                        "reward_delta": -0.75,
+                        "anchor_outcome": {"discarder_seat": -1},
+                        "candidate_t054_w075_outcome": {"discarder_seat": 2},
+                        "first_divergence_index": 3,
+                        "first_divergence": {
+                            "left": {
+                                "decision_index": 77,
+                                "action_id": 46,
+                                "action_label": "pass",
+                            },
+                            "right": {
+                                "decision_index": 77,
+                                "action_id": 5,
+                                "action_label": "discard 1m",
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    cases = load_risk_cases_from_paired_trace_reports(
+        [report_path],
+        large_loss_threshold=-1.0,
+        include_large_losses=False,
+        include_new_large_losses=False,
+        include_counterfactual_labels=True,
+        min_counterfactual_reward_gap=0.1,
+    )
+
+    assert cases == [
+        RiskCase(
+            seed=100,
+            seat=2,
+            decision_index=77,
+            action_id=5,
+            action_label="discard 1m",
+            baseline_action_id=46,
+            baseline_action_label="pass",
+            reward=-0.5,
+            baseline_reward=0.25,
+            reward_delta=-0.75,
+            source="paired_trace_counterfactual",
+            tags=("avoided_deal_in", "counterfactual", "new_deal_in", "worse_reward"),
+        )
+    ]
+
+
 def test_apply_risk_case_weights_matches_seed_seat_decision_action() -> None:
     arrays = {
         "episode_index": np.asarray([0, 0, 5, 5], dtype=np.int64),

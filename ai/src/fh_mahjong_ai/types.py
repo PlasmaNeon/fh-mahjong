@@ -60,3 +60,4 @@ class TrainBatch:
     pairwise_preferred_action_ids: IntArray
     pairwise_avoided_action_ids: IntArray
     pairwise_weights: FloatArray
+    pairwise_reward_delta_targets: FloatArray

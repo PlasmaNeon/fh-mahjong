@@ -78,6 +78,10 @@ class ReplayBuffer:
             [float(item.info.get("pairwise_weight", 0.0)) for item in items],
             dtype=np.float32,
         )
+        pairwise_reward_delta_targets = np.asarray(
+            [float(item.info.get("pairwise_reward_delta_target", 0.0)) for item in items],
+            dtype=np.float32,
+        )
         return TrainBatch(
             planes=planes,
             scalars=scalars,
@@ -94,6 +98,7 @@ class ReplayBuffer:
             pairwise_preferred_action_ids=pairwise_preferred_action_ids,
             pairwise_avoided_action_ids=pairwise_avoided_action_ids,
             pairwise_weights=pairwise_weights,
+            pairwise_reward_delta_targets=pairwise_reward_delta_targets,
         )
 
 
@@ -158,6 +163,11 @@ class ArrayReplayBuffer:
             if "pairwise_weights" in self.arrays
             else np.zeros(batch_size, dtype=np.float32)
         )
+        pairwise_reward_delta_targets = (
+            self.arrays["pairwise_reward_delta_targets"][indices].astype(np.float32, copy=False)
+            if "pairwise_reward_delta_targets" in self.arrays
+            else np.zeros(batch_size, dtype=np.float32)
+        )
 
         return TrainBatch(
             planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
@@ -181,6 +191,7 @@ class ArrayReplayBuffer:
             pairwise_preferred_action_ids=pairwise_preferred_action_ids,
             pairwise_avoided_action_ids=pairwise_avoided_action_ids,
             pairwise_weights=pairwise_weights,
+            pairwise_reward_delta_targets=pairwise_reward_delta_targets,
         )
 
 
@@ -244,6 +255,9 @@ def concatenate_train_batches(batches: Sequence[TrainBatch]) -> TrainBatch:
             copy=False,
         ),
         pairwise_weights=np.concatenate([batch.pairwise_weights for batch in batches]).astype(np.float32, copy=False),
+        pairwise_reward_delta_targets=np.concatenate(
+            [batch.pairwise_reward_delta_targets for batch in batches]
+        ).astype(np.float32, copy=False),
     )
 
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-31",
+  "updated_at": "2026-06-05",
   "selection_policy": {
     "objective": "single-round Fenghua expected payout",
     "gate": "fixed-seed duplicate-seat evaluation",
@@ -18,7 +18,7 @@
       "epochs": 6,
       "transitions": 1974159,
       "batch_size": 512,
-      "learning_rate": 0.00001,
+      "learning_rate": 1e-05,
       "temperature": 1.0,
       "max_weight": 2.0,
       "value_weight": 0.25,
@@ -66,116 +66,1090 @@
     ]
   },
   "current_chongci_reward_trained_best": {
-    "id": "iql_lowlr_selfplay200_epoch003",
-    "method": "discrete_iql_mixed_selfplay",
+    "id": "chongci_direct_cf_gap010_q025_policy001_severity_epoch001",
+    "method": "discrete_iql_direct_combined_gate_counterfactual_pairwise_auxiliary",
     "match_mode": "chongci",
-    "checkpoint_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+    "checkpoint_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt",
+    "source_run": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622",
     "source_datasets": [
-      "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
-      "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
-      "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz"
+      "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz",
+      "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t054w075",
+      "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t054w050",
+      "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/direct-counterfactual-gap010/t0535w050"
     ],
-    "previous_best_id": "iql_mixed_selfplay_50_epoch004",
-    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/checkpoints/iql_mixed_selfplay_50_4ep/epoch_004.pt",
+    "previous_best_id": "iql_lowlr_selfplay200_epoch003",
+    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
     "score_config": {
       "starting_score": 2000,
       "bust_threshold": 0,
       "max_hands": 50
     },
+    "policy_sources": {
+      "anchor": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+      "riskreg_discard_t054_w075": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t054_w075/epoch_001.pt",
+      "riskreg_discard_t054_w050": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt",
+      "riskreg_discard_t0535_w050": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t0535_w050/epoch_001.pt"
+    },
+    "paired_traces": [
+      {
+        "id": "anchor_vs_t054w075_combined_trace",
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w075_combined_trace.json",
+        "divergence_rate": 0.925,
+        "candidate_better_rate": 0.31666666666666665,
+        "mean_reward_delta": -0.011433334089815617,
+        "counterfactual_rows_gap010": 48
+      },
+      {
+        "id": "anchor_vs_t054w050_combined_trace",
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w050_combined_trace.json",
+        "divergence_rate": 0.9166666666666666,
+        "candidate_better_rate": 0.30833333333333335,
+        "mean_reward_delta": -0.013375001028180122,
+        "counterfactual_rows_gap010": 47
+      },
+      {
+        "id": "anchor_vs_t0535w050_combined_trace",
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t0535w050_combined_trace.json",
+        "divergence_rate": 0.9166666666666666,
+        "candidate_better_rate": 0.30833333333333335,
+        "mean_reward_delta": -0.013375001028180122,
+        "counterfactual_rows_gap010": 47
+      }
+    ],
     "training": {
-      "init_checkpoint": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/checkpoints/iql_mixed_selfplay_50_4ep/epoch_004.pt",
-      "selfplay_episodes": 200,
-      "selfplay_start_seed": 500000,
-      "selfplay_transitions": 203539,
-      "selfplay_checkpoint_seats": [
-        0,
-        2
-      ],
-      "epochs": 3,
+      "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+      "epochs": 1,
       "batch_size": 4096,
-      "learning_rate": 0.00003,
+      "learning_rate": 3e-05,
       "gamma": 0.99,
       "target_mode": "mc",
       "expectile": 0.7,
-      "temperature": 1.0,
+      "temperature": 3.0,
       "max_weight": 20.0,
-      "bc_weight": 1.0,
-      "cql_weight": 0.0,
-      "max_transitions_per_dataset": 200000,
-      "mlflow_run_id": "66bb53bf9b8d4d76882022369b823f3d"
+      "bc_weight": 0.05,
+      "pairwise_q_weight": 0.25,
+      "pairwise_q_margin": 0.1,
+      "pairwise_weight": 0.01,
+      "pairwise_margin": 0.05,
+      "pairwise_reward_delta_weight": 0.5,
+      "pairwise_reward_delta_margin_scale": 0.2,
+      "pairwise_reward_delta_clip": 2.0,
+      "pairwise_auxiliary_repeats_per_shard": 64,
+      "counterfactual_min_reward_gap": 0.1,
+      "counterfactual_rows": 142,
+      "max_transitions_per_dataset": 150000,
+      "mlflow_run_id": "371bd8057c5f488b92d01e7838392a98"
     },
-    "screening": [
-      {
-        "label": "duplicate_20_seed368000",
-        "seats": 80,
-        "start_seed": 368000,
-        "positive_reward_rate": 0.5625,
-        "large_loss_rate": 0.125,
-        "mean_reward": 0.20102500915527344,
-        "previous_best_positive_reward_rate": 0.5125,
-        "previous_best_large_loss_rate": 0.25,
-        "previous_best_mean_reward": 0.03981251269578934,
-        "report_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/reports/lowlr_3ep_epoch_003_duplicate20_seed368000.json",
-        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/reports/promoted_duplicate20_seed368000.json"
+    "promotion_gate": {
+      "seed_windows": [
+        "534000:10",
+        "544000:10",
+        "554000:10"
+      ],
+      "duplicate_seats": true,
+      "seats": 120,
+      "candidate_repeat1": {
+        "positive_reward_rate": 0.45,
+        "large_loss_rate": 0.14166666666666666,
+        "mean_reward": -0.0023166656028479338,
+        "reward_sum": -0.2779998779296875,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/direct_cf_gap010_q025_policy001_severity_combined_gate_534_544_554_n10.json",
+        "mlflow_run_id": "c428c0d6a3b0475aacbf9ebc21427135"
+      },
+      "candidate_repeat2": {
+        "positive_reward_rate": 0.45,
+        "large_loss_rate": 0.14166666666666666,
+        "mean_reward": -0.0023166656028479338,
+        "reward_sum": -0.2779998779296875,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/candidate_repeat2.json"
+      },
+      "previous_best_repeat": {
+        "positive_reward_rate": 0.425,
+        "large_loss_rate": 0.15,
+        "mean_reward": -0.05567501485347748,
+        "reward_sum": -6.681001663208008,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/anchor_refresh.json",
+        "prior_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json"
+      },
+      "delta_candidate_minus_previous_best": {
+        "mean_reward": 0.05335834925062955,
+        "positive_reward_rate": 0.025,
+        "large_loss_rate": -0.008333333333333331
       }
-    ],
+    },
     "evaluation": [
       {
-        "label": "duplicate_20_seed369000",
-        "seats": 80,
-        "start_seed": 369000,
-        "positive_reward_rate": 0.5375,
-        "large_loss_rate": 0.2375,
-        "mean_reward": 0.041212499141693115,
-        "previous_best_positive_reward_rate": 0.35,
-        "previous_best_large_loss_rate": 0.2125,
-        "previous_best_mean_reward": -0.21621248126029968,
-        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/candidate_duplicate20_seed369000.json",
-        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/promoted_duplicate20_seed369000.json"
-      },
-      {
-        "label": "duplicate_20_seed370000",
-        "seats": 80,
-        "start_seed": 370000,
-        "positive_reward_rate": 0.5,
-        "large_loss_rate": 0.1875,
-        "mean_reward": 0.029124995693564415,
-        "previous_best_positive_reward_rate": 0.5,
-        "previous_best_large_loss_rate": 0.15,
-        "previous_best_mean_reward": 0.025887494906783104,
-        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/candidate_duplicate20_seed370000.json",
-        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports/promoted_duplicate20_seed370000.json"
-      },
-      {
-        "label": "combined_duplicate_40_seed369000_370000",
-        "seats": 160,
-        "positive_reward_rate": 0.51875,
-        "large_loss_rate": 0.2125,
-        "mean_reward": 0.03516874760389328,
+        "label": "combined_gate_534_544_554_n10_repeat1",
+        "seats": 120,
+        "positive_reward_rate": 0.45,
+        "large_loss_rate": 0.14166666666666666,
+        "mean_reward": -0.0023166656028479338,
         "previous_best_positive_reward_rate": 0.425,
-        "previous_best_large_loss_rate": 0.18125,
-        "previous_best_mean_reward": -0.09516249597072601,
-        "report_path": "/root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports"
+        "previous_best_large_loss_rate": 0.15,
+        "previous_best_mean_reward": -0.05567501485347748,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/direct_cf_gap010_q025_policy001_severity_combined_gate_534_544_554_n10.json",
+        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json"
       },
       {
-        "label": "combined_duplicate_60_seed368000_369000_370000",
-        "seats": 240,
-        "positive_reward_rate": 0.5333333333333333,
-        "large_loss_rate": 0.18333333333333332,
-        "mean_reward": 0.09045416812102,
-        "previous_best_positive_reward_rate": 0.45416666666666666,
-        "previous_best_large_loss_rate": 0.20416666666666666,
-        "previous_best_mean_reward": -0.05017082591851552,
-        "report_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/reports and /root/fh-mahjong-runs/chongci-lowlr-candidate-gate-20260522-010126/reports"
+        "label": "combined_gate_534_544_554_n10_repeat2_determinism_check",
+        "seats": 120,
+        "positive_reward_rate": 0.45,
+        "large_loss_rate": 0.14166666666666666,
+        "mean_reward": -0.0023166656028479338,
+        "previous_best_positive_reward_rate": 0.425,
+        "previous_best_large_loss_rate": 0.15,
+        "previous_best_mean_reward": -0.05567501485347748,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/candidate_repeat2.json",
+        "previous_best_report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/repeated_gate_direct_cf_gap010_q025_policy001_severity/anchor_refresh.json"
       }
     ],
     "notes": [
       "Promoted for Chongci only; the classic Fenghua reward-trained best remains current_reward_trained_best.",
-      "The independent seed 369000-370000 gate improved mean reward and positive reward rate but regressed large-loss rate; including the seed 368000 screening window, the candidate improved mean reward, positive reward rate, and large-loss rate.",
-      "The previous 6-epoch 200-self-play run overfit after epoch 2; the promoted checkpoint uses a lower learning rate and 3 epochs."
+      "This promotion uses direct tensor-bearing counterfactual pairs from the same combined-gate divergence traces that rejected the EV-up/tail-worse risk-regularized candidates.",
+      "Candidate and previous-best repeats matched exactly on the combined gate, so the promotion is not due to evaluation drift.",
+      "The candidate improves mean reward by 0.05336, positive rate by 2.50pp, and large-loss rate by -0.83pp versus the previous Chongci anchor on the deterministic combined gate."
     ]
   },
+  "current_chongci_risk_critic_candidate": {
+    "id": "chongci_riskcritic_future_context_fb025_latest",
+    "method": "action_conditioned_large_loss_risk",
+    "match_mode": "chongci",
+    "checkpoint_path": "/root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt",
+    "source_checkpoint_path": "/root/fh-mahjong-runs/chongci-mild-familybalance-future-context-actionrisk-20260603-160652/checkpoints/future_context_fb025/epoch_001.pt",
+    "status": "testable_rejected_for_guarded_serving",
+    "training": {
+      "target_mode": "future_outcome_context",
+      "future_context_window": 8,
+      "future_context_score_pressure_weight": 0.5,
+      "future_context_min_credit": 0.5,
+      "family_balance_strength": 0.25,
+      "family_weight_clip": 4.0,
+      "paired_margin_weight": 0.5,
+      "paired_severity_weight": 0.25,
+      "steps_per_epoch": 250,
+      "batch_size": 2048,
+      "source_run": "/root/fh-mahjong-runs/chongci-mild-familybalance-future-context-actionrisk-20260603-160652"
+    },
+    "calibration": [
+      {
+        "label": "offline_future_context_fb025_calib16",
+        "calibration_seed_range": "650000-650015",
+        "large_loss_auc": 0.511846939823738,
+        "large_loss_brier": 0.2683,
+        "large_loss_positive_mean_probability": 0.494,
+        "large_loss_negative_mean_probability": 0.4876,
+        "large_loss_severity_mae": 0.366,
+        "discard_large_loss_auc": 0.5089021356145647,
+        "report_path": "/root/fh-mahjong-runs/chongci-mild-familybalance-future-context-actionrisk-20260603-160652/reports/future_context_fb025_calib16.json"
+      }
+    ],
+    "guarded_screening": [
+      {
+        "label": "riskguard_fb025_seed650000_n16_threshold_sweep",
+        "episodes_per_threshold": 64,
+        "seed_window": "650000:16",
+        "best_anchor_risk_threshold": 0.6,
+        "best_mean_reward": -0.2038906216621399,
+        "best_positive_reward_rate": 0.40625,
+        "best_large_loss_rate": 0.140625,
+        "best_guard_choice_rate": 0.008557419032449482,
+        "report_path": "/root/fh-mahjong-runs/chongci-riskguard-fb025-sweep-20260603-222928/reports/riskguard_fb025_seed650000_n16.json"
+      },
+      {
+        "label": "riskguard_fb025_t060_seed650000_n16_side_by_side",
+        "episodes": 64,
+        "seed_window": "650000:16",
+        "anchor_mean_reward": -0.21,
+        "anchor_positive_reward_rate": 0.40625,
+        "anchor_large_loss_rate": 0.15625,
+        "guard_mean_reward": -0.2038906216621399,
+        "guard_positive_reward_rate": 0.40625,
+        "guard_large_loss_rate": 0.140625,
+        "guard_choice_rate": 0.008557419032449482,
+        "delta_guard_minus_anchor": {
+          "mean_reward": 0.006109378337860119,
+          "positive_reward_rate": 0.0,
+          "large_loss_rate": -0.015625
+        },
+        "anchor_report_path": "/root/fh-mahjong-runs/chongci-anchor-sidebyside-20000-20260603-230156/reports/anchor_seed650000_n16.json",
+        "guard_report_path": "/root/fh-mahjong-runs/chongci-riskguard-fb025-sweep-20260603-222928/reports/riskguard_fb025_seed650000_n16.json"
+      },
+      {
+        "label": "riskguard_fb025_t060_seed660000_n16_independent_gate",
+        "episodes": 64,
+        "seed_window": "660000:16",
+        "anchor_mean_reward": -0.13,
+        "anchor_positive_reward_rate": 0.40625,
+        "anchor_large_loss_rate": 0.171875,
+        "guard_mean_reward": -0.14464062452316284,
+        "guard_positive_reward_rate": 0.375,
+        "guard_large_loss_rate": 0.1875,
+        "guard_choice_rate": 0.008126062104124827,
+        "delta_guard_minus_anchor": {
+          "mean_reward": -0.014640624523162837,
+          "positive_reward_rate": -0.03125,
+          "large_loss_rate": 0.015625
+        },
+        "report_path": "/root/fh-mahjong-runs/chongci-riskguard-fb025-independent-20260603-230720/reports/summary.json"
+      },
+      {
+        "label": "riskguard_fb025_t060_policynearest_seed660000_n16",
+        "episodes": 64,
+        "seed_window": "660000:16",
+        "selection_mode": "policy_nearest",
+        "anchor_mean_reward": -0.13,
+        "anchor_positive_reward_rate": 0.40625,
+        "anchor_large_loss_rate": 0.171875,
+        "guard_mean_reward": -0.13506250083446503,
+        "guard_positive_reward_rate": 0.375,
+        "guard_large_loss_rate": 0.1875,
+        "guard_choice_rate": 0.008191907014127175,
+        "delta_guard_minus_anchor": {
+          "mean_reward": -0.005062500834465026,
+          "positive_reward_rate": -0.03125,
+          "large_loss_rate": 0.015625
+        },
+        "intervention_source_counts": {
+          "risk_guard": 265
+        },
+        "intervention_anchor_family_counts": {
+          "chii": 13,
+          "discard": 245,
+          "pass": 1,
+          "pon": 6
+        },
+        "intervention_chosen_family_counts": {
+          "chii": 6,
+          "discard": 243,
+          "kan": 2,
+          "pass": 13,
+          "pon": 1
+        },
+        "report_path": "/root/fh-mahjong-runs/chongci-riskguard-policynearest-20260603-234107/reports/summary.json"
+      }
+    ],
+    "decision": "rejected_guarded_serving_gate",
+    "reason": "The fb025 future-context risk critic has the best offline large-loss AUC so far and threshold 0.60 slightly beat anchor on the calibration/smoke window, but the independent seed660000 duplicate gate regressed mean reward, positive rate, and large-loss rate. A policy-nearest substitute ranking recovered some mean reward but still lost to pure anchor and did not improve tail risk. Keep the checkpoint for analysis/testing only."
+  },
+  "rejected_chongci_risk_critic_candidates": [
+    {
+      "id": "chongci_riskcritic_future_context_fb050_window12_epoch001",
+      "method": "action_conditioned_large_loss_risk",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437/checkpoints/future_context_fb050/epoch_001.pt",
+      "status": "rejected_calibration_gate",
+      "training": {
+        "target_mode": "future_outcome_context",
+        "future_context_window": 12,
+        "future_context_score_pressure_weight": 0.75,
+        "future_context_min_credit": 0.35,
+        "family_balance_strength": 0.5,
+        "family_weight_clip": 6.0,
+        "positive_fraction": 0.6,
+        "severity_weight": 0.4,
+        "paired_margin_weight": 1.0,
+        "paired_severity_weight": 0.5,
+        "paired_margin": 0.15,
+        "paired_batch_fraction": 0.35,
+        "steps_per_epoch": 500,
+        "batch_size": 2048,
+        "learning_rate": 5e-05,
+        "source_run": "/root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437"
+      },
+      "calibration": {
+        "label": "capped400k_150k_action_large_loss_calibration",
+        "data_path": "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz",
+        "max_transitions": 150000,
+        "large_loss_auc": 0.509609165040303,
+        "large_loss_brier": 0.3678351044654846,
+        "large_loss_positive_mean_probability": 0.6211918592453003,
+        "large_loss_negative_mean_probability": 0.6148011684417725,
+        "discard_large_loss_auc": 0.5083055413661407,
+        "discard_large_loss_positive_mean_probability": 0.6412316560745239,
+        "discard_large_loss_negative_mean_probability": 0.6355515718460083,
+        "report_path": "/root/fh-mahjong-runs/chongci-stronger-familybalance-riskcritic-20260604-212437/reports/riskcritic_fb050_capped400k_calibration_150k.json"
+      },
+      "decision": "rejected_before_tail_constrained_evaluation",
+      "reason": "The stronger family-balance/window-12 critic increased probability scale but did not improve independent ranking. Overall AUC and discard AUC were both slightly worse than the prior fb025 critic on the same capped400k calibration protocol, and Brier was much worse, so constrained policy selection was not run."
+    },
+    {
+      "id": "chongci_riskcritic_family_future_context_epoch001",
+      "method": "action_conditioned_large_loss_risk",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt",
+      "status": "calibration_passed_serving_smoke_rejected",
+      "training": {
+        "target_mode": "family_future_outcome_context",
+        "future_context_window": 8,
+        "future_context_score_pressure_weight": 0.5,
+        "future_context_min_credit": 0.35,
+        "family_balance_strength": 0.25,
+        "family_weight_clip": 4.0,
+        "positive_fraction": 0.55,
+        "severity_weight": 0.3,
+        "paired_margin_weight": 0.5,
+        "paired_severity_weight": 0.25,
+        "paired_margin": 0.1,
+        "paired_batch_fraction": 0.25,
+        "steps_per_epoch": 500,
+        "batch_size": 2048,
+        "learning_rate": 5e-05,
+        "source_run": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834"
+      },
+      "calibration": {
+        "label": "capped400k_150k_action_large_loss_calibration",
+        "data_path": "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz",
+        "max_transitions": 150000,
+        "large_loss_auc": 0.5157129282378999,
+        "large_loss_brier": 0.2991856634616852,
+        "large_loss_positive_mean_probability": 0.5469706058502197,
+        "large_loss_negative_mean_probability": 0.5380576848983765,
+        "discard_large_loss_auc": 0.5147333728199761,
+        "discard_large_loss_positive_mean_probability": 0.5548141598701477,
+        "discard_large_loss_negative_mean_probability": 0.546411395072937,
+        "chii_large_loss_auc": 0.5222349053312061,
+        "pass_large_loss_auc": 0.5140852198928714,
+        "report_path": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/riskcritic_family_context_capped400k_calibration_150k.json"
+      },
+      "screening": [
+        {
+          "label": "tail_constrained_smoke_660000_4_discard002",
+          "seats": 16,
+          "seed_window": "660000:4",
+          "constraint": {
+            "q_margin": 0.0,
+            "max_risk_increase": 0.0,
+            "family_risk_increase": {
+              "discard": 0.02
+            }
+          },
+          "mean_reward": -0.37181249260902405,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "candidate_override_rate": 0.0002689256420599704,
+          "report_path": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_discard002.json"
+        },
+        {
+          "label": "tail_constrained_smoke_660000_4_strict_q0",
+          "seats": 16,
+          "seed_window": "660000:4",
+          "constraint": {
+            "q_margin": 0.0,
+            "max_risk_increase": 0.0
+          },
+          "mean_reward": -0.37181249260902405,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "candidate_override_rate": 0.0002689256420599704,
+          "report_path": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_strict_qsweep.json"
+        },
+        {
+          "label": "tail_constrained_smoke_660000_4_strict_q001",
+          "seats": 16,
+          "seed_window": "660000:4",
+          "constraint": {
+            "q_margin": 0.01,
+            "max_risk_increase": 0.0
+          },
+          "mean_reward": -0.37181249260902405,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "candidate_override_rate": 0.0001344628210299852,
+          "report_path": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/reports/tail_constrained_family_context_smoke_660000_4_strict_qsweep.json"
+        }
+      ],
+      "decision": "rejected_serving_smoke_ev_regression",
+      "reason": "The family-specific later-outcome target is the best offline action-risk calibration so far, but both strict and discard-tolerant tail-constrained selection lost EV to the anchor on the seed660000:4 smoke while preserving the same positive and large-loss rates. Keep the target implementation and use the critic for diagnostics; do not promote or run the larger gate with this candidate pair."
+    }
+  ],
   "rejected_candidates": [
+    {
+      "id": "chongci_iql_targeted_divergence_q025_context2_replay512_epoch001",
+      "method": "discrete_iql_targeted_combined_gate_divergence_pairwise_q",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/targeted_divergence_q025_context2_replay512/epoch_001.pt",
+      "source_run": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz",
+        "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-534000-n10-npz",
+        "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-544000-n10-npz",
+        "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/data/mixed-anchor-candidates-554000-n10-npz"
+      ],
+      "policy_sources": {
+        "anchor": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "riskreg_discard_t054_w075": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t054_w075/epoch_001.pt",
+        "riskreg_discard_t054_w050": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt",
+        "riskreg_discard_t0535_w050": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t0535_w050/epoch_001.pt"
+      },
+      "paired_traces": [
+        {
+          "id": "anchor_vs_t054w075_combined_trace",
+          "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w075_combined_trace.json",
+          "divergence_rate": 0.925,
+          "candidate_better_rate": 0.31666666666666665,
+          "mean_reward_delta": -0.011433334089815617,
+          "candidate_large_loss_cases": 21,
+          "new_candidate_large_loss_cases": 3
+        },
+        {
+          "id": "anchor_vs_t054w050_combined_trace",
+          "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t054w050_combined_trace.json",
+          "divergence_rate": 0.9166666666666666,
+          "candidate_better_rate": 0.30833333333333335,
+          "mean_reward_delta": -0.013375001028180122,
+          "candidate_large_loss_cases": 20,
+          "new_candidate_large_loss_cases": 2
+        },
+        {
+          "id": "anchor_vs_t0535w050_combined_trace",
+          "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/anchor_vs_t0535w050_combined_trace.json",
+          "divergence_rate": 0.9166666666666666,
+          "candidate_better_rate": 0.30833333333333335,
+          "mean_reward_delta": -0.013375001028180122,
+          "candidate_large_loss_cases": 20,
+          "new_candidate_large_loss_cases": 2
+        }
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 3e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 3.0,
+        "max_weight": 20.0,
+        "bc_weight": 0.05,
+        "pairwise_q_weight": 0.25,
+        "pairwise_q_margin": 0.1,
+        "pairwise_replay_multiplier": 512,
+        "risk_trace_filter_datasets": true,
+        "risk_trace_context_radius": 2,
+        "risk_trace_min_counterfactual_reward_gap": 0.1,
+        "max_transitions_per_dataset": 150000,
+        "matched_cases_by_dataset": [
+          0,
+          7,
+          6,
+          6
+        ],
+        "pairwise_replay_rows_by_dataset": [
+          0,
+          3584,
+          2560,
+          3072
+        ],
+        "mlflow_run_id": "73fe54f4b7f34b5a9da8bb2a71f0458b"
+      },
+      "combined_gate_534_544_554_n10": {
+        "seats": 120,
+        "positive_reward_rate": 0.44166666666666665,
+        "large_loss_rate": 0.16666666666666666,
+        "mean_reward": -0.04522501677274704,
+        "anchor_positive_reward_rate": 0.425,
+        "anchor_large_loss_rate": 0.15,
+        "anchor_mean_reward": -0.05567501485347748,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/targeted_divergence_q025_context2_replay512_combined_gate_534_544_554_n10.json",
+        "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json",
+        "mlflow_run_id": "2c35a77530154319aad94b80243de12b"
+      },
+      "ablation": {
+        "id": "targeted_divergence_q025_context2_no_replay",
+        "checkpoint_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/targeted_divergence_q025_context2/epoch_001.pt",
+        "pairwise_replay_multiplier": 0,
+        "matched_cases_by_dataset": [
+          0,
+          7,
+          6,
+          6
+        ],
+        "logged_pairwise_count": 0,
+        "mean_reward": -0.07247500121593475,
+        "positive_reward_rate": 0.425,
+        "large_loss_rate": 0.175,
+        "report_path": "/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/targeted_divergence_q025_context2_combined_gate_534_544_554_n10.json",
+        "mlflow_run_id": "8937d164eb1d4b5995f35be9cf810ff6"
+      },
+      "decision": "rejected_combined_gate_tail_regression",
+      "reason": "The targeted combined-gate divergence branch avoided broad scalar loss stacking and produced an EV/positive-rate gain after replay-expanding exact divergence rows, but it still regressed large-loss rate from the anchor 15.00% to 16.67%. Per the explicit tail constraint, this checkpoint is not promotable."
+    },
+    {
+      "id": "chongci_iql_riskreg_discard_t054_w075_llbc050_epoch001",
+      "method": "discrete_iql_external_action_risk_regularizer_large_loss_bc",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915/checkpoints/riskreg_discard_t054_w075_llbc050/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "external_risk_checkpoint": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt",
+        "external_risk_policy_family": "discard",
+        "external_risk_policy_threshold": 0.54,
+        "external_risk_policy_weight": 0.75,
+        "large_loss_threshold": -1.0,
+        "large_loss_bc_weight": 0.5,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 3e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "max_transitions_per_dataset": 150000,
+        "mlflow_run_id": "074977cb205441ec930f3d2946f43bb3",
+        "source_run": "/root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915"
+      },
+      "combined_gate_534_544_554_n10": {
+        "seats": 120,
+        "positive_reward_rate": 0.43333333333333335,
+        "large_loss_rate": 0.2,
+        "mean_reward": -0.08176667243242264,
+        "anchor_positive_reward_rate": 0.425,
+        "anchor_large_loss_rate": 0.15,
+        "anchor_mean_reward": -0.05567501485347748,
+        "report_path": "/root/fh-mahjong-runs/chongci-iql-riskreg-llbc-combined-20260605-011915/reports/riskreg_discard_t054_w075_llbc050_combined_gate_534_544_554_n10.json",
+        "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json"
+      },
+      "decision": "rejected_combined_gate_ev_and_tail_regression",
+      "reason": "Adding large_loss_bc_weight=0.50 to the previously promising t054/w075 discard risk regularizer worsened the combined gate: mean reward regressed by 0.0261 and large-loss rate regressed by 5.0pp versus anchor. The large-loss BC term was active during training, but it did not preserve tail outcomes in duplicate evaluation."
+    },
+    {
+      "id": "chongci_iql_family_riskreg_discard_sweep_20260605",
+      "method": "discrete_iql_external_action_risk_regularizer_sweep",
+      "match_mode": "chongci",
+      "status": "rejected_combined_gate",
+      "source_run": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "training_shared": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "external_risk_checkpoint": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt",
+        "external_risk_policy_family": "discard",
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 3e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_transitions_per_dataset": 150000
+      },
+      "screening": [
+        {
+          "id": "riskreg_discard_t054_w075",
+          "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t054_w075/epoch_001.pt",
+          "external_risk_policy_threshold": 0.54,
+          "external_risk_policy_weight": 0.75,
+          "mlflow_run_id": "86b5203328124c77995e7e7a481ac8cb",
+          "gate_660000_16": {
+            "seats": 64,
+            "positive_reward_rate": 0.484375,
+            "large_loss_rate": 0.171875,
+            "mean_reward": -0.003937503322958946,
+            "anchor_positive_reward_rate": 0.40625,
+            "anchor_large_loss_rate": 0.171875,
+            "anchor_mean_reward": -0.1328124850988388,
+            "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/reports/riskreg_discard_t054_w075_gate_660000_16_full.json"
+          },
+          "combined_gate_534_544_554_n10": {
+            "seats": 120,
+            "positive_reward_rate": 0.43333333333333335,
+            "large_loss_rate": 0.175,
+            "mean_reward": -0.06710834801197052,
+            "anchor_positive_reward_rate": 0.425,
+            "anchor_large_loss_rate": 0.15,
+            "anchor_mean_reward": -0.05567501485347748,
+            "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/candidate_combined_gate_534_544_554_n10.json",
+            "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-t054w075-combined-gate-20260605-003448/reports/anchor_combined_gate_534_544_554_n10.json"
+          },
+          "decision": "rejected_combined_gate_ev_and_tail_regression"
+        },
+        {
+          "id": "riskreg_discard_t0535_w050",
+          "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/checkpoints/riskreg_discard_t0535_w050/epoch_001.pt",
+          "external_risk_policy_threshold": 0.535,
+          "external_risk_policy_weight": 0.5,
+          "mlflow_run_id": "1b3388f8203147bdaa5fd574b13c9ffb",
+          "gate_660000_16": {
+            "seats": 64,
+            "positive_reward_rate": 0.484375,
+            "large_loss_rate": 0.1875,
+            "mean_reward": -0.018328124657273293,
+            "anchor_positive_reward_rate": 0.40625,
+            "anchor_large_loss_rate": 0.171875,
+            "anchor_mean_reward": -0.1328124850988388,
+            "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-sweep-20260605-002102/reports/riskreg_discard_t0535_w050_gate_660000_16_full.json"
+          },
+          "decision": "rejected_660000_gate_tail_regression"
+        }
+      ],
+      "decision": "rejected_combined_gate",
+      "reason": "The stronger t054/w075 variant passed the 660000:16 gate with EV and positive-rate gains and no large-loss regression, but failed the combined 534000/544000/554000 gate: mean reward worsened by 0.0114 and large-loss rate worsened by 2.5pp. The lower-threshold t0535/w050 variant was already rejected at 660000:16 for large-loss regression."
+    },
+    {
+      "id": "chongci_iql_family_riskreg_discard_t054_w050_epoch001",
+      "method": "discrete_iql_external_action_risk_regularizer",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/checkpoints/riskreg_discard_t054_w050/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "external_risk_checkpoint": "/root/fh-mahjong-runs/chongci-family-context-riskcritic-20260604-233834/checkpoints/family_context/epoch_001.pt",
+        "external_risk_policy_family": "discard",
+        "external_risk_policy_threshold": 0.54,
+        "external_risk_policy_weight": 0.5,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 3e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_transitions_per_dataset": 150000,
+        "mlflow_run_id": "c9e79c68c115495188eda0b3acae65c9",
+        "source_run": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857"
+      },
+      "screening": [
+        {
+          "label": "direct_duplicate_4_seed660000",
+          "seats": 16,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.5625,
+          "large_loss_rate": 0.3125,
+          "mean_reward": -0.13768750429153442,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/candidate_smoke_660000_4_full.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/anchor_smoke_660000_4_full.json"
+        },
+        {
+          "label": "direct_duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.484375,
+          "large_loss_rate": 0.1875,
+          "mean_reward": -0.018328124657273293,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/candidate_gate_660000_16_full.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/anchor_gate_660000_16_full.json"
+        },
+        {
+          "label": "tail_constrained_duplicate_16_seed660000_q0",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.40625,
+          "large_loss_rate": 0.171875,
+          "mean_reward": -0.14279687404632568,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "candidate_override_rate": 0.00108084738434933,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/tail_constrained_riskreg_candidate_gate_660000_16.json"
+        },
+        {
+          "label": "tail_constrained_duplicate_16_seed660000_q001",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.40625,
+          "large_loss_rate": 0.171875,
+          "mean_reward": -0.14279687404632568,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "candidate_override_rate": 0.0010499660305107775,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-family-riskreg-discard-20260604-234857/reports/tail_constrained_riskreg_candidate_gate_660000_16.json"
+        }
+      ],
+      "decision": "rejected_independent_gate_tail_regression",
+      "reason": "Direct serving improved EV and positive rate on the seed660000:16 gate but increased large-loss rate from 17.19% to 18.75%. The explicit tail-constrained selector restored anchor large-loss rate but lost EV versus the anchor, so neither direct nor constrained serving should be promoted."
+    },
+    {
+      "id": "chongci_iql_counterfactual_pairwise_q025_policy002_epoch001",
+      "method": "discrete_iql_direct_counterfactual_pairwise_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/checkpoints/counterfactual_pairwise_q025_policy002/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "auxiliary_pairwise_dataset": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/data/counterfactual-pairwise-gap010",
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "source_paired_trace": "/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json",
+        "counterfactual_rows": 269,
+        "counterfactual_min_reward_gap": 0.1,
+        "counterfactual_mean_reward_gap": 0.38728252053260803,
+        "counterfactual_max_reward_gap": 1.5210000276565552,
+        "counterfactual_large_loss_rows": 52,
+        "pairwise_auxiliary_repeats": 12,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 1e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_transitions_per_dataset": 150000,
+        "pairwise_q_weight": 0.25,
+        "pairwise_q_margin": 0.1,
+        "pairwise_weight": 0.02,
+        "pairwise_margin": 0.05
+      },
+      "screening": [
+        {
+          "label": "duplicate_4_seed660000_smoke",
+          "seats": 16,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "mean_reward": -0.36106252670288086,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/candidate_counterfactual_pairwise_smoke_660000_4.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/anchor_smoke_660000_4.json"
+        },
+        {
+          "label": "duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.08048437535762787,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/candidate_counterfactual_pairwise_gate_660000_16.json"
+        }
+      ],
+      "decision": "rejected_independent_gate_tail_regression",
+      "reason": "Rejected because direct counterfactual pairwise IQL improved mean reward and positive-reward rate on the independent 660000:16 duplicate gate but regressed large-loss rate from the promoted anchor 17.19% to 20.31%.",
+      "notes": [
+        "The direct pairwise-data path is mechanically active and useful tooling because exact replay matching found zero rows for the older datasets.",
+        "Do not scale this exact 269-row auxiliary ratio without a new tail-control ingredient; it repeats the EV-up/tail-risk-up failure mode seen in the external-risk regularizer branch."
+      ]
+    },
+    {
+      "id": "chongci_iql_counterfactual_highrisk_pairwise_q025_policy001_epoch001",
+      "method": "discrete_iql_direct_counterfactual_highrisk_pairwise_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/checkpoints/highrisk_pairwise_q025_policy001/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "auxiliary_pairwise_dataset": "/root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/data/counterfactual-highrisk-gap010",
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "source_paired_trace": "/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json",
+        "counterfactual_rows": 52,
+        "counterfactual_min_reward_gap": 0.1,
+        "counterfactual_high_risk_only": true,
+        "counterfactual_mean_reward_gap": 0.4446153938770294,
+        "counterfactual_max_reward_gap": 1.5210000276565552,
+        "counterfactual_large_loss_rows": 52,
+        "pairwise_auxiliary_repeats": 64,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 1e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_transitions_per_dataset": 150000,
+        "pairwise_q_weight": 0.25,
+        "pairwise_q_margin": 0.1,
+        "pairwise_weight": 0.01,
+        "pairwise_margin": 0.05
+      },
+      "screening": [
+        {
+          "label": "duplicate_4_seed660000_smoke",
+          "seats": 16,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "mean_reward": -0.35993748903274536,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/reports/candidate_highrisk_pairwise_smoke_660000_4.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/anchor_smoke_660000_4.json"
+        },
+        {
+          "label": "duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.08831249177455902,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-highrisk-pairwise-20260604-194925/reports/candidate_highrisk_pairwise_gate_660000_16.json"
+        }
+      ],
+      "decision": "rejected_independent_gate_tail_regression",
+      "reason": "Rejected because restricting direct counterfactual pairwise IQL to high-risk rows still improved mean reward and positive-reward rate while regressing large-loss rate from the promoted anchor 17.19% to 20.31%.",
+      "notes": [
+        "High-risk filtering did not fix the EV-up/tail-risk-up failure mode.",
+        "The next branch needs a true tail constraint or severity-aware target, not only narrower pairwise margin rows."
+      ]
+    },
+    {
+      "id": "chongci_iql_counterfactual_severity_pairwise_q025_policy001_margin035_epoch001",
+      "method": "discrete_iql_reward_delta_severity_pairwise_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/checkpoints/severity_pairwise_q025_policy001_margin035/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "auxiliary_pairwise_dataset": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/data/counterfactual-pairwise-gap010",
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "source_paired_trace": "/root/fh-mahjong-runs/chongci-direct-counterfactual-actionrisk-large-20260602-235548/reports/anchor_vs_candidate_tensor_trace.json",
+        "counterfactual_rows": 269,
+        "counterfactual_min_reward_gap": 0.1,
+        "counterfactual_mean_reward_gap": 0.38728252053260803,
+        "counterfactual_large_loss_rows": 52,
+        "pairwise_auxiliary_repeats": 12,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 1e-05,
+        "target_mode": "mc",
+        "max_transitions_per_dataset": 150000,
+        "pairwise_q_weight": 0.25,
+        "pairwise_q_margin": 0.05,
+        "pairwise_weight": 0.01,
+        "pairwise_margin": 0.02,
+        "pairwise_reward_delta_weight": 1.0,
+        "pairwise_reward_delta_margin_scale": 0.35,
+        "pairwise_reward_delta_clip": 2.0
+      },
+      "screening": [
+        {
+          "label": "duplicate_4_seed660000_smoke",
+          "seats": 16,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "mean_reward": -0.32068753242492676,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/reports/candidate_severity_pairwise_smoke_660000_4.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/anchor_smoke_660000_4.json"
+        },
+        {
+          "label": "duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.1875,
+          "mean_reward": -0.07453124225139618,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/reports/candidate_severity_pairwise_gate_660000_16.json"
+        }
+      ],
+      "decision": "rejected_independent_gate_tail_regression",
+      "reason": "Rejected because reward-delta severity pairwise IQL improved mean reward and reduced tail regression versus equal-margin pairwise runs, but still regressed large-loss rate from the promoted anchor 17.19% to 18.75%.",
+      "notes": [
+        "This is the first direct pairwise variant that moved large-loss rate down from 20.31% to 18.75%.",
+        "Try one stronger severity-margin variant before abandoning reward-delta pairwise constraints."
+      ]
+    },
+    {
+      "id": "chongci_iql_counterfactual_severity_pairwise_q035_policy001_margin070_epoch001",
+      "method": "discrete_iql_reward_delta_severity_pairwise_auxiliary",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/checkpoints/severity_pairwise_q035_policy001_margin070/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "auxiliary_pairwise_dataset": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/data/counterfactual-pairwise-gap010",
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "counterfactual_rows": 269,
+        "counterfactual_min_reward_gap": 0.1,
+        "counterfactual_mean_reward_gap": 0.38728252053260803,
+        "counterfactual_large_loss_rows": 52,
+        "pairwise_auxiliary_repeats": 12,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 1e-05,
+        "target_mode": "mc",
+        "max_transitions_per_dataset": 150000,
+        "pairwise_q_weight": 0.35,
+        "pairwise_q_margin": 0.05,
+        "pairwise_weight": 0.01,
+        "pairwise_margin": 0.02,
+        "pairwise_reward_delta_weight": 1.0,
+        "pairwise_reward_delta_margin_scale": 0.7,
+        "pairwise_reward_delta_clip": 2.0
+      },
+      "screening": [
+        {
+          "label": "duplicate_4_seed660000_smoke",
+          "seats": 16,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.3125,
+          "mean_reward": -0.2749374806880951,
+          "anchor_positive_reward_rate": 0.4375,
+          "anchor_large_loss_rate": 0.3125,
+          "anchor_mean_reward": -0.3685624897480011,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/reports/candidate_severity_strong_smoke_660000_4.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-pairwise-20260604-192734/reports/anchor_smoke_660000_4.json"
+        },
+        {
+          "label": "duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.40625,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.07182812690734863,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-strong-20260604-202008/reports/candidate_severity_strong_gate_660000_16.json"
+        }
+      ],
+      "decision": "rejected_independent_gate_tail_regression",
+      "reason": "Rejected because stronger reward-delta severity margins regressed large-loss rate back to 20.31% and lost the positive-rate gain, despite better mean reward.",
+      "notes": [
+        "Moderate severity margin 0.35 remains the best pairwise-tail variant but still fails the anchor tail guard.",
+        "Stop pairwise-margin sweeps; next work should use explicit constrained selection or large-loss probability constraints."
+      ]
+    },
+    {
+      "id": "chongci_iql_external_risk_discard_w005_epoch001",
+      "method": "discrete_iql_external_action_risk_policy_regularizer",
+      "match_mode": "chongci",
+      "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-20260604-235637/checkpoints/iql_external_risk_discard_w005_1ep/epoch_001.pt",
+      "source_datasets": [
+        "/root/fh-mahjong-runs/chongci-iql-50scalar-200-20260521-082220/data/heuristic-chongci-50scalar-200-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-50-20260521-211207/data/selfplay-iql-seat0-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-mixed-selfplay-iql-200-seats02-20260521-234609/data/selfplay-iql-seats0-2-vs-heuristic-npz",
+        "/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz"
+      ],
+      "training": {
+        "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+        "external_risk_checkpoint": "/root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt",
+        "external_risk_policy_weight": 0.05,
+        "external_risk_policy_threshold": 0.6,
+        "external_risk_policy_family": "discard",
+        "large_loss_bc_weight": 0.0,
+        "epochs": 1,
+        "batch_size": 4096,
+        "learning_rate": 1e-05,
+        "gamma": 0.99,
+        "target_mode": "mc",
+        "expectile": 0.7,
+        "temperature": 1.0,
+        "max_weight": 10.0,
+        "bc_weight": 1.0,
+        "cql_weight": 0.0,
+        "max_transitions_per_dataset": 150000,
+        "mlflow_run_id": "38d8953866a24951a6d740584559284a"
+      },
+      "screening": [
+        {
+          "label": "duplicate_16_seed660000",
+          "seats": 64,
+          "start_seed": 660000,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.05256249010562897,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-20260604-235637/reports/summary.json"
+        },
+        {
+          "label": "duplicate_16_seed660000_threshold070",
+          "seats": 64,
+          "start_seed": 660000,
+          "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-t070-20260604-000909/checkpoints/iql_external_risk_discard_w005_t070_1ep/epoch_001.pt",
+          "external_risk_policy_threshold": 0.7,
+          "positive_reward_rate": 0.4375,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.05256249010562897,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-t070-20260604-000909/reports/summary.json",
+          "mlflow_run_id": "ccb2e05f045d4306a3d1fa9c852b4fd4"
+        },
+        {
+          "label": "duplicate_16_seed660000_tailbc_w1",
+          "seats": 64,
+          "start_seed": 660000,
+          "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc-20260604-001937/checkpoints/iql_external_risk_discard_tailbc_w1_1ep/epoch_001.pt",
+          "large_loss_bc_weight": 1.0,
+          "positive_reward_rate": 0.421875,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.0598437562584877,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc-20260604-001937/reports/summary.json",
+          "mlflow_run_id": "42c5cf50a9a34c6fac4ac071f188e7b8"
+        },
+        {
+          "label": "duplicate_16_seed660000_tailbc_w3",
+          "seats": 64,
+          "start_seed": 660000,
+          "checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc3-20260604-002537/checkpoints/iql_external_risk_discard_tailbc_w3_1ep/epoch_001.pt",
+          "large_loss_bc_weight": 3.0,
+          "positive_reward_rate": 0.421875,
+          "large_loss_rate": 0.203125,
+          "mean_reward": -0.0845312550663948,
+          "anchor_positive_reward_rate": 0.40625,
+          "anchor_large_loss_rate": 0.171875,
+          "anchor_mean_reward": -0.1328124850988388,
+          "report_path": "/root/fh-mahjong-runs/chongci-iql-external-risk-discard-tailbc3-20260604-002537/reports/summary.json",
+          "mlflow_run_id": "c3bfe48a4f1847d3a0d48a0a5c0a35d4"
+        }
+      ],
+      "decision": "rejected_quick_gate_tail_regression",
+      "reason": "Training-side discard risk regularization improved mean reward and positive rate on seed660000 but regressed large-loss rate by 3.125 percentage points. Tail-only behavior-cloning preservation with weights 1.0 and 3.0 reduced EV gain but still did not recover large-loss rate; do not promote or widen this exact candidate family."
+    },
     {
       "id": "chongci_balanced_actionrisk_visible58_epoch003",
       "method": "balanced_action_conditioned_large_loss_risk",
@@ -188,7 +1162,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 3,
         "batch_size": 2048,
-        "learning_rate": 0.00002,
+        "learning_rate": 2e-05,
         "large_loss_threshold": -1.0,
         "positive_fraction": 0.5,
         "severity_weight": 0.05,
@@ -204,7 +1178,7 @@
           "transitions": 31448,
           "calibration_seed_range": "650000-650015",
           "large_loss_rate": 0.1454,
-          "large_loss_auc": 0.4990,
+          "large_loss_auc": 0.499,
           "large_loss_brier": 0.2876,
           "large_loss_positive_mean_probability": 0.5051,
           "large_loss_negative_mean_probability": 0.5059,
@@ -232,7 +1206,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -263,7 +1237,7 @@
           "large_loss_negative_mean_probability": 0.4596,
           "large_loss_severity_mae": 1.1919,
           "q_mae": 0.1345,
-          "q_rmse": 0.2170,
+          "q_rmse": 0.217,
           "q_bias": -0.0021,
           "q_corr": 0.0043,
           "value_mae": 0.0787,
@@ -288,7 +1262,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -310,8 +1284,8 @@
           "large_loss_rate": 0.1569,
           "large_loss_auc": 0.4998,
           "large_loss_brier": 0.3329,
-          "large_loss_severity_mae": 0.7600,
-          "q_mae": 0.1290,
+          "large_loss_severity_mae": 0.76,
+          "q_mae": 0.129,
           "q_rmse": 0.2032,
           "q_bias": -0.0035,
           "q_corr": 0.0055,
@@ -337,7 +1311,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -388,7 +1362,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -439,7 +1413,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -491,7 +1465,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -542,7 +1516,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 1,
         "batch_size": 2048,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "target_mode": "mc",
         "expectile": 0.7,
         "temperature": 1.0,
@@ -606,7 +1580,7 @@
         "epochs": 3,
         "selected_epoch": 2,
         "batch_size": 4096,
-        "learning_rate": 0.00001,
+        "learning_rate": 1e-05,
         "gamma": 0.99,
         "target_mode": "mc",
         "expectile": 0.7,
@@ -668,7 +1642,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 2,
         "batch_size": 4096,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "gamma": 0.99,
         "target_mode": "td",
         "expectile": 0.7,
@@ -739,7 +1713,7 @@
         "init_checkpoint": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
         "epochs": 2,
         "batch_size": 512,
-        "learning_rate": 0.000005,
+        "learning_rate": 5e-06,
         "gamma": 0.99,
         "target_mode": "mc",
         "expectile": 0.5,
@@ -823,7 +1797,7 @@
         "epochs": 2,
         "selected_epoch": 2,
         "batch_size": 4096,
-        "learning_rate": 0.00001,
+        "learning_rate": 1e-05,
         "gamma": 0.99,
         "target_mode": "mc",
         "expectile": 0.7,
@@ -912,5 +1886,79 @@
         }
       ]
     }
-  ]
+  ],
+  "current_chongci_tail_constrained_policy_candidate": {
+    "id": "tail_constrained_moderate_severity_pairwise_candidate_risk0",
+    "method": "tail_constrained_anchor_candidate_selector",
+    "match_mode": "chongci",
+    "status": "testable_rejected_combined_gate",
+    "anchor_checkpoint_path": "/root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt",
+    "candidate_checkpoint_path": "/root/fh-mahjong-runs/chongci-iql-counterfactual-severity-pairwise-20260604-201002/checkpoints/severity_pairwise_q025_policy001_margin035/epoch_001.pt",
+    "risk_checkpoint_path": "/root/fh-mahjong-checkpoints/chongci-riskcritic-future-context-fb025-latest.pt",
+    "constraint": {
+      "min_q_margin": 0.0,
+      "max_risk_increase": 0.0,
+      "max_candidate_risk": null,
+      "severity_weight": 0.0,
+      "rule": "allow candidate action only when candidate Q improves and predicted large-loss probability is no worse than anchor action"
+    },
+    "screening": [
+      {
+        "label": "duplicate_4_seed660000_smoke",
+        "seats": 16,
+        "start_seed": 660000,
+        "positive_reward_rate": 0.4375,
+        "large_loss_rate": 0.3125,
+        "mean_reward": -0.3595625162124634,
+        "anchor_positive_reward_rate": 0.4375,
+        "anchor_large_loss_rate": 0.3125,
+        "anchor_mean_reward": -0.3685624897480011,
+        "candidate_override_rate": 0.0009390931043734908,
+        "anchor_block_rate": 0.002012342366514623,
+        "report_path": "/root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_smoke_660000_4.json"
+      },
+      {
+        "label": "duplicate_16_seed660000",
+        "seats": 64,
+        "start_seed": 660000,
+        "positive_reward_rate": 0.40625,
+        "large_loss_rate": 0.171875,
+        "mean_reward": -0.13237498700618744,
+        "anchor_positive_reward_rate": 0.40625,
+        "anchor_large_loss_rate": 0.171875,
+        "anchor_mean_reward": -0.1328124850988388,
+        "candidate_override_rate": 0.0006793058729080467,
+        "anchor_block_rate": 0.0024084480948558017,
+        "report_path": "/root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_gate_660000_16.json"
+      }
+    ],
+    "pending_evaluation": null,
+    "decision": "rejected_combined_gate_ev_regression",
+    "notes": [
+      "This serving configuration preserves anchor large-loss rate on both the 660000:16 gate and the combined 534000/544000/554000 gate.",
+      "It is rejected as a promotion because the combined gate loses mean reward and positive-reward rate versus the anchor while allowing candidate overrides on only about 0.06% of decisions.",
+      "The explicit tail constraint works mechanically, but the current risk model/candidate pair is too conservative to produce useful EV improvement."
+    ],
+    "evaluation": [
+      {
+        "label": "combined_duplicate_30_seed534000_544000_554000",
+        "seats": 120,
+        "seed_windows": [
+          "534000:10",
+          "544000:10",
+          "554000:10"
+        ],
+        "positive_reward_rate": 0.4166666666666667,
+        "large_loss_rate": 0.15,
+        "mean_reward": -0.05695834010839462,
+        "anchor_positive_reward_rate": 0.425,
+        "anchor_large_loss_rate": 0.15,
+        "anchor_mean_reward": -0.05567501485347748,
+        "candidate_override_rate": 0.0006190840813932651,
+        "anchor_block_rate": 0.0022482527166386994,
+        "report_path": "/root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/tail_constrained_moderate_combined_gate_534_544_554.json",
+        "anchor_report_path": "/root/fh-mahjong-runs/chongci-tail-constrained-candidate-20260604-203409/reports/anchor_combined_gate_534_544_554_n10.json"
+      }
+    ]
+  }
 }
