@@ -41,7 +41,7 @@ export function SeatBundle({
       {hasExposed && (
         <div className="seat-bundle__exposed">
           <FlowerZone flowers={flowers} isWildTile={isWildTile} />
-          <OpenMeldZone melds={melds} isWildTile={isWildTile} />
+          <OpenMeldZone melds={melds} isWildTile={isWildTile} animateLayout={isSelf} />
         </div>
       )}
     </div>

@@ -60,7 +60,10 @@ export function ClosedHand({
 
     return (
       <motion.div
-        layout={isCurrentDrawnSlot ? false : 'position'}
+        // Only the self seat (bottom, never rotated) may use framer-motion layout
+        // animation. Inside a rotated pivot (left/right/top) framer mis-projects
+        // the layout delta and the tiles jitter, so opponents render statically.
+        layout={isSelf && !isCurrentDrawnSlot ? 'position' : false}
         key={tile.id}
         style={{
           zIndex: isRecentlyDrawn ? 0 : 10,
