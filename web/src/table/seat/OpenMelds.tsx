@@ -6,6 +6,9 @@ import type { MeldLike, TileLike } from '../types'
 type OpenMeldsProps = {
   melds: MeldLike[]
   isWildTile?: (tile: TileLike) => boolean
+  // Framer layout animation only works on the non-rotated self seat; opponents
+  // (rotated pivots) must not use it or the meld groups jitter.
+  animateLayout?: boolean
 }
 
 // Stable identity so only a newly-formed meld mounts (and plays the entrance).
@@ -15,14 +18,14 @@ function meldKey(meld: MeldLike, index: number): string {
   return first ? `t-${first.id}` : `i-${index}`
 }
 
-export function OpenMelds({ melds, isWildTile = () => false }: OpenMeldsProps) {
+export function OpenMelds({ melds, isWildTile = () => false, animateLayout = false }: OpenMeldsProps) {
   return (
     <>
       {melds.map((meld, meldIndex) => (
         <motion.div
           key={meldKey(meld, meldIndex)}
           className="seat-meld-group seat-meld-group--bottom"
-          layout
+          layout={animateLayout}
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.18, ease: 'easeOut', layout: { duration: 0.18, ease: 'easeOut' } }}
