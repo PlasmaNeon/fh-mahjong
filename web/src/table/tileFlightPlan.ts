@@ -44,10 +44,11 @@ export function tileIdsEqual(left: unknown, right: unknown) {
 }
 
 function shouldAnimateTileTransfer(previousRole: TileMotionRole, currentRole: TileMotionRole) {
-  return (
-    ((previousRole === 'hand' || previousRole === 'drawn') && currentRole === 'discard') ||
-    (previousRole === 'drawn' && currentRole === 'hand')
-  )
+  // Only fly tiles leaving a hand for the discard pond. The drawn -> hand merge
+  // (a tile sliding from the drawn slot into its sorted spot on discard) is owned
+  // by the closed hand's own layoutId animation; flying it here too would hide
+  // that slide behind the portal overlay and snap it at the end.
+  return (previousRole === 'hand' || previousRole === 'drawn') && currentRole === 'discard'
 }
 
 // Build a tile-sized rect centered on a (larger) origin region, used as the

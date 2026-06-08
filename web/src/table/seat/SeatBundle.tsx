@@ -1,11 +1,12 @@
 import { ClosedHand } from './ClosedHand'
 import { FlowerZone } from './FlowerZone'
 import { OpenMeldZone } from './OpenMeldZone'
-import type { PlayerTableView, TileLike } from '../types'
+import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type SeatBundleProps = {
   isSelf: boolean
   player: PlayerTableView
+  direction: SeatLaneDirection
   canDiscard?: boolean
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
@@ -19,6 +20,7 @@ type SeatBundleProps = {
 export function SeatBundle({
   isSelf,
   player,
+  direction,
   canDiscard = false,
   onDiscard,
   isWildTile = () => false,
@@ -33,6 +35,7 @@ export function SeatBundle({
       <ClosedHand
         isSelf={isSelf}
         player={player}
+        direction={direction}
         canDiscard={canDiscard}
         onDiscard={onDiscard}
         isWildTile={isWildTile}
