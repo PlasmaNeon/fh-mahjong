@@ -42,6 +42,7 @@ export function PlayerSeat({
         <SeatBundle
           isSelf={isSelf}
           player={player}
+          direction={direction}
           canDiscard={canDiscard}
           onDiscard={onDiscard}
           isWildTile={isWildTile}

@@ -3,11 +3,12 @@ import { motion } from 'framer-motion'
 import { TileComponent } from '../Tile'
 import { computeStableDisplayOrder } from '../handOrdering'
 import { tileIdsEqual } from '../meldOrdering'
-import type { PlayerTableView, TileLike } from '../types'
+import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type ClosedHandProps = {
   isSelf: boolean
   player: PlayerTableView
+  direction: SeatLaneDirection
   canDiscard?: boolean
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
@@ -21,6 +22,7 @@ const DRAW_OFFSET = { x: 0, y: -30 }
 export function ClosedHand({
   isSelf,
   player,
+  direction,
   canDiscard = false,
   onDiscard,
   isWildTile = () => false,
@@ -99,7 +101,7 @@ export function ClosedHand({
   return (
     <div className="zone-hand">
       <div className="seat-hand seat-hand--bottom">
-        <div className="seat-hand__tiles seat-hand__tiles--bottom">
+        <div className="seat-hand__tiles seat-hand__tiles--bottom" data-seat-hand-origin={direction}>
           {showClosedHand ? (
             sortedBaseTiles.map((tile) => renderHandTile(tile))
           ) : (
