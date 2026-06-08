@@ -55,24 +55,29 @@ export function ClosedHand({
     .filter((t): t is TileLike => t != null)
 
   const renderHandTile = (tile: TileLike, { isCurrentDrawnSlot = false }: { isCurrentDrawnSlot?: boolean } = {}) => {
-    const isRecentlyDrawn = isSelf && lastDrawnTileId.current === tile.id && !hasDrawnTile
+    // True only on the render right after a discard, for the tile that was just
+    // drawn and is now merging into the row from the separate drawn slot.
+    const isMergingDrawnTile = isSelf && lastDrawnTileId.current === tile.id && !hasDrawnTile
     const isHiddenByOverlay = hiddenTileIds?.has(tile.id) ?? false
 
     return (
       <motion.div
-        // Only the self seat (bottom, never rotated) may use framer-motion layout
-        // animation. Inside a rotated pivot (left/right/top) framer mis-projects
-        // the layout delta and the tiles jitter, so opponents render statically.
-        layout={isSelf && !isCurrentDrawnSlot ? 'position' : false}
+        // Only the self seat (bottom, never rotated) animates layout. The shared
+        // layoutId lets the just-drawn tile slide from the drawn slot into its
+        // sorted in-row slot across the DOM re-parent instead of popping, and
+        // also drives the normal sibling-shift. Opponents sit inside a rotated
+        // pivot where framer mis-projects the layout delta and tiles jitter, so
+        // they render statically (see fix #76).
+        layoutId={isSelf ? `closed-hand-tile-${tile.id}` : undefined}
         key={tile.id}
         style={{
-          zIndex: isRecentlyDrawn ? 0 : 10,
+          // The merging tile slides over its neighbours, so keep it on top.
+          zIndex: isMergingDrawnTile ? 30 : 10,
           visibility: isHiddenByOverlay ? 'hidden' : undefined,
         }}
         transition={{
           layout: {
-            duration: isRecentlyDrawn ? 0.15 : 0.25,
-            delay: isRecentlyDrawn ? 0.05 : 0,
+            duration: isMergingDrawnTile ? 0.28 : 0.25,
             ease: 'easeInOut',
           },
         }}
