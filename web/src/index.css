@@ -861,6 +861,64 @@ body {
   transform: rotate(0deg) scale(0.95);
 }
 
+/* Risky kong (加杠): the added 4th tile lies stacked on the called (sideways) tile. */
+.stolen-tile.has-added-kong {
+  position: relative;
+}
+
+/* The wrapper is a direct child of the stolen cell, so it inherits the stolen
+   child's rotation — cancel it and position the added tile over the called one. */
+.pov-bottom.stolen-tile>.added-kong-tile,
+.pov-top.stolen-tile>.added-kong-tile,
+.pov-left.stolen-tile>.added-kong-tile,
+.pov-right.stolen-tile>.added-kong-tile {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: none;
+}
+
+/* Place the added tile on the "outer" side of the called tile per POV. */
+.pov-bottom.stolen-tile>.added-kong-tile {
+  left: 0;
+  bottom: 100%;
+}
+
+.pov-top.stolen-tile>.added-kong-tile {
+  left: 0;
+  top: 100%;
+}
+
+.pov-left.stolen-tile>.added-kong-tile {
+  top: 0;
+  left: 100%;
+}
+
+.pov-right.stolen-tile>.added-kong-tile {
+  top: 0;
+  right: 100%;
+}
+
+/* Rotate the added tile's face to match the called tile's orientation. */
+.pov-bottom.stolen-tile>.added-kong-tile>* {
+  transform: rotate(-90deg) scale(0.95);
+}
+
+.pov-top.stolen-tile>.added-kong-tile>* {
+  transform: rotate(90deg) scale(0.95);
+}
+
+.pov-right.stolen-tile>.added-kong-tile>* {
+  transform: rotate(-180deg) scale(0.95);
+}
+
+.pov-left.stolen-tile>.added-kong-tile>* {
+  transform: rotate(0deg) scale(0.95);
+}
+
 /* Round Result Modal */
 .round-result-overlay {
   position: fixed;

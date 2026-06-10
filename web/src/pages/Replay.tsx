@@ -150,13 +150,17 @@ export default function Replay() {
       showClosedHand: showAllHands || seat === viewSeat,
       openMelds: player.melds.map((meld) => {
         const calledDirection = getCalledDirection(seat, meld.from)
-        const calledTileId = meld.from >= 0 && meld.tiles.length > 0
-          ? meld.tiles[meld.tiles.length - 1].id
+        // For an upgraded pon (risky kong) the added 4th tile was pushed last, so
+        // the originally-called tile sits one slot before it.
+        const calledIdx = meld.addedTile != null ? meld.tiles.length - 2 : meld.tiles.length - 1
+        const calledTileId = meld.from >= 0 && calledIdx >= 0
+          ? meld.tiles[calledIdx].id
           : null
         return {
           tiles: meld.tiles,
           calledTileId,
           calledDirection,
+          addedTileId: meld.addedTile,
         }
       }),
       flowerMelds: player.flowers,

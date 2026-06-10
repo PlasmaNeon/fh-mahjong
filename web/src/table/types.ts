@@ -12,6 +12,10 @@ export type MeldLike = {
   tiles: TileLike[]
   calledTileId?: number | null
   calledDirection?: number | null
+  // For a risky kong (加杠/upgraded pon): the id of the 4th tile added on top of
+  // the called tile. When set, the tile is rendered stacked on the called tile
+  // rather than inline in the meld row.
+  addedTileId?: number | null
 }
 
 export type PlayerTableView = {

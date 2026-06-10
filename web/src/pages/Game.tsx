@@ -303,6 +303,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
             tiles: meld.tiles || [],
             calledTileId: meld.calledTileId,
             calledDirection: meld.calledDirection,
+            addedTileId: meld.addedTileId,
         })),
         flowerMelds: player.flowerMelds || [],
         discards: player.discards || [],
@@ -357,6 +358,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
             tiles: meld.tiles || [],
             calledTileId: meld.calledTileId,
             calledDirection: meld.calledDirection,
+            addedTileId: meld.addedTileId,
         })),
         flowers: winnerPlayer?.flowerMelds || [],
         breakdown: (gameState.roundResult.breakdown || []).map((entry: any) => ({

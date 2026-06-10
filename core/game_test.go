@@ -225,6 +225,123 @@ func TestDeadWallKanDraw(t *testing.T) {
 	}
 }
 
+// TestRiskyKongUpgrade_BuddingAndAddedTile verifies that upgrading an open pon
+// to a kong (加杠 / risky kong) marks the budding bonus, optimistically marks the
+// blooming bonus from the dead-wall draw, records the added tile for UI stacking,
+// and that the budding bonus persists across a (non-winning) discard while the
+// blooming bonus is cleared.
+func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-risky-kong", r, core.MatchOptions{})
+	g.Start()
+
+	seat := g.State.ActivePlayer
+	player := g.State.Players[seat]
+
+	// Existing open pon (one tile called from another player) of 8p, plus the 4th
+	// 8p still in the closed hand to upgrade with.
+	suit, value := pb.Suit_SUIT_PIN, uint32(8)
+	called := &pb.Tile{Id: 9003, Suit: suit, Value: value}
+	added := &pb.Tile{Id: 9004, Suit: suit, Value: value}
+	player.OpenMelds = append(player.OpenMelds, &pb.Meld{
+		Type:            pb.ActionType_ACTION_PON,
+		Tiles:           []*pb.Tile{{Id: 9001, Suit: suit, Value: value}, {Id: 9002, Suit: suit, Value: value}, called},
+		CalledDirection: pb.MeldDirection(1),
+		CalledTileId:    called.Id,
+	})
+	player.ClosedHand = append(player.ClosedHand, added)
+
+	if err := g.ProcessPlayerAction(seat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: []*pb.Tile{added},
+	}); err != nil {
+		t.Fatalf("upgrade kan failed: %v", err)
+	}
+
+	meld := player.OpenMelds[0]
+	if meld.Type != pb.ActionType_ACTION_KAN {
+		t.Fatalf("expected pon upgraded to KAN, got %v", meld.Type)
+	}
+	if meld.AddedTileId != added.Id {
+		t.Errorf("expected AddedTileId %d, got %d", added.Id, meld.AddedTileId)
+	}
+	if !player.HasBuddingRiskyKong {
+		t.Errorf("expected HasBuddingRiskyKong=true after upgrade")
+	}
+	if !player.HasBloomingRiskyKong {
+		t.Errorf("expected HasBloomingRiskyKong=true (optimistic) after dead-wall draw")
+	}
+
+	// Discarding (i.e. not winning on the supplementary tile) clears blooming but
+	// keeps budding — the kong still scores when the hand is eventually won.
+	discard := player.ClosedHand[len(player.ClosedHand)-1]
+	if err := g.ProcessPlayerAction(seat, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discard,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if player.HasBloomingRiskyKong {
+		t.Errorf("expected HasBloomingRiskyKong cleared after discard")
+	}
+	if !player.HasBuddingRiskyKong {
+		t.Errorf("expected HasBuddingRiskyKong to persist after discard")
+	}
+}
+
+// TestDirectKong_BuddingPersistsAcrossDiscard verifies that claiming a discard to
+// form a kong (直杠 / direct kong) sets the budding+blooming direct-kong flags, and
+// that a subsequent discard clears blooming while keeping the persistent budding.
+func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-direct-kong", r, core.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	discardTile := g.State.Players[activePlayer].ClosedHand[0]
+
+	southSeat := (activePlayer + 1) % 4
+	south := g.State.Players[southSeat]
+	c1 := &pb.Tile{Id: discardTile.Id + 100, Suit: discardTile.Suit, Value: discardTile.Value}
+	c2 := &pb.Tile{Id: discardTile.Id + 200, Suit: discardTile.Suit, Value: discardTile.Value}
+	c3 := &pb.Tile{Id: discardTile.Id + 300, Suit: discardTile.Suit, Value: discardTile.Value}
+	south.ClosedHand = append(south.ClosedHand, c1, c2, c3)
+
+	if err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if err := g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: []*pb.Tile{c1, c2, c3},
+	}); err != nil {
+		t.Fatalf("direct kan failed: %v", err)
+	}
+
+	if !south.HasBuddingDirectKong {
+		t.Errorf("expected HasBuddingDirectKong=true after direct kong")
+	}
+	if !south.HasBloomingDirectKong {
+		t.Errorf("expected HasBloomingDirectKong=true (optimistic) after dead-wall draw")
+	}
+
+	discard2 := south.ClosedHand[len(south.ClosedHand)-1]
+	if err := g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discard2,
+	}); err != nil {
+		t.Fatalf("south discard failed: %v", err)
+	}
+	if south.HasBloomingDirectKong {
+		t.Errorf("expected HasBloomingDirectKong cleared after discard")
+	}
+	if !south.HasBuddingDirectKong {
+		t.Errorf("expected HasBuddingDirectKong to persist after discard")
+	}
+}
+
 func TestSetNextDealer_ConsumedOnce(t *testing.T) {
 	r := &rules.HometownRuleset{}
 	g := core.NewGame("test-override", r, core.MatchOptions{})
@@ -294,10 +411,10 @@ func TestNewGame_ChongciInitialization(t *testing.T) {
 
 func TestComputeMatchEndResult_Standings(t *testing.T) {
 	cases := []struct {
-		name      string
-		scores    [4]int32
+		name       string
+		scores     [4]int32
 		startScore int32
-		wantRanks [4]uint32 // indexed by seat
+		wantRanks  [4]uint32 // indexed by seat
 	}{
 		{
 			name:       "all distinct",

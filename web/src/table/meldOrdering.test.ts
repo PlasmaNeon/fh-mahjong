@@ -30,6 +30,16 @@ describe('reorderMeldTiles', () => {
     const meld: MeldLike = { tiles: [t(10), t(11), t(12)], calledTileId: -1, calledDirection: 0 }
     expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([10, 11, 12])
   })
+  it('excludes the added tile of a risky kong from the inline row', () => {
+    // pon(10,11,called=12) upgraded with added=13; added is rendered stacked, not inline.
+    const meld: MeldLike = {
+      tiles: [t(10), t(11), t(12), t(13)],
+      calledTileId: 12,
+      calledDirection: 1,
+      addedTileId: 13,
+    }
+    expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([10, 11, 12])
+  })
 })
 
 describe('orderMelds', () => {
