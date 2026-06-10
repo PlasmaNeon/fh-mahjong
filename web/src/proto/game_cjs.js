@@ -840,6 +840,7 @@ $root.game = (function() {
          * @property {Array.<game.ITile>|undefined} [tiles] Meld tiles
          * @property {game.MeldDirection|undefined} [calledDirection] Meld calledDirection
          * @property {number|undefined} [calledTileId] Meld calledTileId
+         * @property {number|undefined} [addedTileId] Meld addedTileId
          */
 
         /**
@@ -891,6 +892,14 @@ $root.game = (function() {
         Meld.prototype.calledTileId = 0;
 
         /**
+         * Meld addedTileId.
+         * @member {number} addedTileId
+         * @memberof game.Meld
+         * @instance
+         */
+        Meld.prototype.addedTileId = 0;
+
+        /**
          * Creates a new Meld instance using the specified properties.
          * @function create
          * @memberof game.Meld
@@ -923,6 +932,8 @@ $root.game = (function() {
                 writer.uint32(/* id 3, wireType 0 =*/24).int32(message.calledDirection);
             if (message.calledTileId != null && Object.hasOwnProperty.call(message, "calledTileId"))
                 writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.calledTileId);
+            if (message.addedTileId != null && Object.hasOwnProperty.call(message, "addedTileId"))
+                writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.addedTileId);
             return writer;
         };
 
@@ -975,6 +986,10 @@ $root.game = (function() {
                     }
                 case 4: {
                         message.calledTileId = reader.uint32();
+                        break;
+                    }
+                case 5: {
+                        message.addedTileId = reader.uint32();
                         break;
                     }
                 default:
@@ -1053,6 +1068,9 @@ $root.game = (function() {
             if (message.calledTileId != null && message.hasOwnProperty("calledTileId"))
                 if (!$util.isInteger(message.calledTileId))
                     return "calledTileId: integer expected";
+            if (message.addedTileId != null && message.hasOwnProperty("addedTileId"))
+                if (!$util.isInteger(message.addedTileId))
+                    return "addedTileId: integer expected";
             return null;
         };
 
@@ -1164,6 +1182,8 @@ $root.game = (function() {
             }
             if (object.calledTileId != null)
                 message.calledTileId = object.calledTileId >>> 0;
+            if (object.addedTileId != null)
+                message.addedTileId = object.addedTileId >>> 0;
             return message;
         };
 
@@ -1186,6 +1206,7 @@ $root.game = (function() {
                 object.type = options.enums === String ? "ACTION_UNKNOWN" : 0;
                 object.calledDirection = options.enums === String ? "MELD_DIRECTION_UNKNOWN" : 0;
                 object.calledTileId = 0;
+                object.addedTileId = 0;
             }
             if (message.type != null && message.hasOwnProperty("type"))
                 object.type = options.enums === String ? $root.game.ActionType[message.type] === undefined ? message.type : $root.game.ActionType[message.type] : message.type;
@@ -1198,6 +1219,8 @@ $root.game = (function() {
                 object.calledDirection = options.enums === String ? $root.game.MeldDirection[message.calledDirection] === undefined ? message.calledDirection : $root.game.MeldDirection[message.calledDirection] : message.calledDirection;
             if (message.calledTileId != null && message.hasOwnProperty("calledTileId"))
                 object.calledTileId = message.calledTileId;
+            if (message.addedTileId != null && message.hasOwnProperty("addedTileId"))
+                object.addedTileId = message.addedTileId;
             return object;
         };
 
@@ -7254,11 +7277,13 @@ $root.game = (function() {
      * @enum {number}
      * @property {number} DIFFICULTY_UNSPECIFIED=0 DIFFICULTY_UNSPECIFIED value
      * @property {number} DIFFICULTY_HEURISTIC=1 DIFFICULTY_HEURISTIC value
+     * @property {number} DIFFICULTY_RL=2 DIFFICULTY_RL value
      */
     game.Difficulty = (function() {
         var valuesById = {}, values = Object.create(valuesById);
         values[valuesById[0] = "DIFFICULTY_UNSPECIFIED"] = 0;
         values[valuesById[1] = "DIFFICULTY_HEURISTIC"] = 1;
+        values[valuesById[2] = "DIFFICULTY_RL"] = 2;
         return values;
     })();
 
@@ -7455,6 +7480,7 @@ $root.game = (function() {
                     return "difficulty: enum value expected";
                 case 0:
                 case 1:
+                case 2:
                     break;
                 }
             return null;
@@ -7492,6 +7518,10 @@ $root.game = (function() {
             case "DIFFICULTY_HEURISTIC":
             case 1:
                 message.difficulty = 1;
+                break;
+            case "DIFFICULTY_RL":
+            case 2:
+                message.difficulty = 2;
                 break;
             }
             return message;

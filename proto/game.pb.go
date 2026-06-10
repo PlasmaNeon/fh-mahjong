@@ -541,7 +541,11 @@ type Meld struct {
 	// 1: Right (shimocha), 2: Across (toimen), 3: Left (kamicha).
 	CalledDirection MeldDirection `protobuf:"varint,3,opt,name=called_direction,json=calledDirection,proto3,enum=game.MeldDirection" json:"called_direction,omitempty"`
 	// The ID of the specific tile that was called (useful for UI rendering to know which one to rotate sideways).
-	CalledTileId  uint32 `protobuf:"varint,4,opt,name=called_tile_id,json=calledTileId,proto3" json:"called_tile_id,omitempty"`
+	CalledTileId uint32 `protobuf:"varint,4,opt,name=called_tile_id,json=calledTileId,proto3" json:"called_tile_id,omitempty"`
+	// For a risky kong (加杠/upgraded pon), the ID of the 4th tile added on top of
+	// the already-called tile. Non-zero marks the meld as an added/risky kong so
+	// the UI can render the added tile stacked on the called tile.
+	AddedTileId   uint32 `protobuf:"varint,5,opt,name=added_tile_id,json=addedTileId,proto3" json:"added_tile_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -600,6 +604,13 @@ func (x *Meld) GetCalledDirection() MeldDirection {
 func (x *Meld) GetCalledTileId() uint32 {
 	if x != nil {
 		return x.CalledTileId
+	}
+	return 0
+}
+
+func (x *Meld) GetAddedTileId() uint32 {
+	if x != nil {
+		return x.AddedTileId
 	}
 	return 0
 }
@@ -2363,13 +2374,14 @@ const file_proto_game_proto_rawDesc = "" +
 	"\rtarget_player\x18\x04 \x01(\rR\ftargetPlayer\x12&\n" +
 	"\x0fis_robbing_kong\x18\x05 \x01(\bR\risRobbingKong\x12$\n" +
 	"\x0eis_bottom_tile\x18\x06 \x01(\bR\fisBottomTile\x12(\n" +
-	"\x10is_blooming_kong\x18\a \x01(\bR\x0eisBloomingKong\"\xb4\x01\n" +
+	"\x10is_blooming_kong\x18\a \x01(\bR\x0eisBloomingKong\"\xd8\x01\n" +
 	"\x04Meld\x12$\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x10.game.ActionTypeR\x04type\x12 \n" +
 	"\x05tiles\x18\x02 \x03(\v2\n" +
 	".game.TileR\x05tiles\x12>\n" +
 	"\x10called_direction\x18\x03 \x01(\x0e2\x13.game.MeldDirectionR\x0fcalledDirection\x12$\n" +
-	"\x0ecalled_tile_id\x18\x04 \x01(\rR\fcalledTileId\"\xb3\x06\n" +
+	"\x0ecalled_tile_id\x18\x04 \x01(\rR\fcalledTileId\x12\"\n" +
+	"\radded_tile_id\x18\x05 \x01(\rR\vaddedTileId\"\xb3\x06\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x05R\x05score\x12+\n" +

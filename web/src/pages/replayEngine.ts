@@ -12,6 +12,7 @@ export interface ReplayMeld {
   type: string
   tiles: ReplayTile[]
   from: number // discarder seat, -1 for closed
+  addedTile?: number // for an upgraded pon (risky kong): id of the added 4th tile
 }
 
 export interface ReplayPlayerState {
@@ -207,6 +208,7 @@ export class ReplayEngine {
           if (ponIdx >= 0) {
             p.melds[ponIdx].type = 'kan'
             p.melds[ponIdx].tiles.push(tileObjectFromId(action.tile as number))
+            p.melds[ponIdx].addedTile = action.tile as number
           }
           activeDiscard = null
           break

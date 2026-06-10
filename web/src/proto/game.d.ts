@@ -294,6 +294,9 @@ export namespace game {
 
         /** Meld calledTileId */
         calledTileId?: (number|undefined);
+
+        /** Meld addedTileId */
+        addedTileId?: (number|undefined);
     }
 
     /** Represents a Meld. */
@@ -316,6 +319,9 @@ export namespace game {
 
         /** Meld calledTileId. */
         public calledTileId: number;
+
+        /** Meld addedTileId. */
+        public addedTileId: number;
 
         /**
          * Creates a new Meld instance using the specified properties.

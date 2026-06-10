@@ -1047,6 +1047,16 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 			t.Errorf("want 154, got %d (canWin=%v)", s, ok)
 		}
 	})
+	t.Run("Budding Risky Kong", func(t *testing.T) {
+		// Base(1)+Tsumo(1)+NoWild(1)+BuddingRiskyKong(100)+SingleWait(1) = 104 (pon hand, no Common Win)
+		state := &pb.GameState{
+			Players: []*pb.PlayerState{{HasBuddingRiskyKong: true}},
+		}
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		if !ok || s != 104 {
+			t.Errorf("want 104, got %d (canWin=%v)", s, ok)
+		}
+	})
 	t.Run("Blooming Risky Kong", func(t *testing.T) {
 		// Base(1)+Tsumo(1)+NoWild(1)+BloomingRiskyKong(200)+SingleWait(1) = 204 (pon hand, no Common Win)
 		state := &pb.GameState{
@@ -1055,6 +1065,22 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
 		if !ok || s != 204 {
 			t.Errorf("want 204, got %d (canWin=%v)", s, ok)
+		}
+	})
+	t.Run("Bloomed Risky Kong scores once (blooming suppresses budding)", func(t *testing.T) {
+		// Both flags set (the engine sets budding on declaration and blooming
+		// optimistically). Only the blooming entry should score: 204, not 304.
+		state := &pb.GameState{
+			Players: []*pb.PlayerState{{HasBuddingRiskyKong: true, HasBloomingRiskyKong: true}},
+		}
+		s, breakdown, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		if !ok || s != 204 {
+			t.Errorf("want 204, got %d (canWin=%v)", s, ok)
+		}
+		for _, e := range breakdown {
+			if e.PatternName == "Budding Risky Kong (风险杠不开花)" {
+				t.Errorf("budding entry must be suppressed when bloomed: %v", breakdown)
+			}
 		}
 	})
 	t.Run("Blooming Flower Kong", func(t *testing.T) {

@@ -336,23 +336,23 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 	if state != nil && int(playerSeat) < len(state.Players) {
 		ps := state.Players[playerSeat]
 		if ps != nil {
-			if ps.HasBuddingDirectKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Direct Kong (直杠不开花)", Points: 50})
-			}
+			// Budding and blooming are mutually exclusive per kong type: a kong
+			// that bloomed (won on its supplementary tile) scores the blooming
+			// bonus only, never both.
 			if ps.HasBloomingDirectKong {
 				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Direct Kong (直杠开花)", Points: 100})
-			}
-			if ps.HasBuddingClosedKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Closed Kong (暗杠不开花)", Points: 100})
+			} else if ps.HasBuddingDirectKong {
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Direct Kong (直杠不开花)", Points: 50})
 			}
 			if ps.HasBloomingClosedKong {
 				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Closed Kong (暗杠开花)", Points: 150})
-			}
-			if ps.HasBuddingRiskyKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Risky Kong (风险杠不开花)", Points: 100})
+			} else if ps.HasBuddingClosedKong {
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Closed Kong (暗杠不开花)", Points: 100})
 			}
 			if ps.HasBloomingRiskyKong {
 				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Risky Kong (风险杠开花)", Points: 200})
+			} else if ps.HasBuddingRiskyKong {
+				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Risky Kong (风险杠不开花)", Points: 100})
 			}
 			if ps.HasBloomingFlowerKong {
 				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Flower Kong (花杠杠开)", Points: 50})

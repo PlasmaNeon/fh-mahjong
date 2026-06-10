@@ -448,16 +448,23 @@ func (g *Game) updateWangpaiTilesLeft() {
 // ExecuteSystemDraw handles drawing a tile from the wall at the start of a turn.
 // Normal draws go forward from wallIndex and STOP at the wangpai boundary.
 // When the live wall is exhausted, the player is offered the haitei (last drawable) tile.
-func (g *Game) ExecuteSystemDraw(seat uint32) error {
-	// Clear kong/flower bonus flags — a normal draw means any previous dead-wall context is stale
-	player := g.State.Players[seat]
-	player.HasBuddingDirectKong = false
+// clearBloomingKongFlags clears the transient "won on the supplementary tile"
+// flags. The budding flags are intentionally left untouched: a declared kong
+// still earns its budding bonus when the hand is eventually won, even though the
+// supplementary tile did not complete the hand.
+func (g *Game) clearBloomingKongFlags(player *pb.PlayerState) {
 	player.HasBloomingDirectKong = false
-	player.HasBuddingClosedKong = false
 	player.HasBloomingClosedKong = false
-	player.HasBuddingRiskyKong = false
 	player.HasBloomingRiskyKong = false
 	player.HasBloomingFlowerKong = false
+}
+
+func (g *Game) ExecuteSystemDraw(seat uint32) error {
+	// A normal draw means any previous dead-wall context is stale, so the
+	// transient blooming flags are cleared. Budding flags persist until the hand
+	// ends (see clearBloomingKongFlags).
+	player := g.State.Players[seat]
+	g.clearBloomingKongFlags(player)
 
 	// Check if the live wall (front → wangpai boundary) is exhausted
 	if g.wallIndex >= g.wangpaiBoundary {
@@ -561,6 +568,10 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	}
 
 	player := g.State.Players[seat]
+
+	// A fresh dead-wall draw resets which kong may "bloom"; clear any stale
+	// blooming flags before the caller sets the one matching this draw.
+	g.clearBloomingKongFlags(player)
 
 	// The wall is physically built in 2-tile high stacks.
 	// When drawing from the end of the wall, we always draw the top tile of the last stack first,
@@ -722,15 +733,10 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			g.Recorder.RecordDiscard(seat, action.Tile.Id)
 		}
 
-		// Choosing to discard means the player did not win on any dead-wall replacement tile,
-		// so all kong/flower bonus flags are now stale and must be cleared.
-		player.HasBuddingDirectKong = false
-		player.HasBloomingDirectKong = false
-		player.HasBuddingClosedKong = false
-		player.HasBloomingClosedKong = false
-		player.HasBuddingRiskyKong = false
-		player.HasBloomingRiskyKong = false
-		player.HasBloomingFlowerKong = false
+		// Choosing to discard means the player did not win on the dead-wall
+		// replacement tile, so the transient blooming flags are stale. Budding
+		// flags persist — the kong still scores when the hand is eventually won.
+		g.clearBloomingKongFlags(player)
 
 		// During haitei, only Ron is allowed as an interrupt (no Chii/Pon/Kan)
 		if g.State.IsHaitei {
@@ -803,6 +809,8 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 		return nil
 	} else if action.Type == pb.ActionType_ACTION_KAN || action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
 		player := g.State.Players[seat]
+		// Which kong type may "bloom" if the player wins on this dead-wall draw.
+		kongBloom := "" // "risky" (upgraded pon) or "closed" (4 from hand)
 
 		// Verify and remove the tiles from the closed hand
 		for _, requiredTile := range action.MeldTiles {
@@ -827,6 +835,9 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 				if m.Type == pb.ActionType_ACTION_PON && m.Tiles[0].Suit == action.MeldTiles[0].Suit && m.Tiles[0].Value == action.MeldTiles[0].Value {
 					m.Type = pb.ActionType_ACTION_KAN
 					m.Tiles = append(m.Tiles, action.MeldTiles...)
+					// Record the tile stacked on top of the originally-called tile so
+					// the UI can render the "risky kong" (加杠) stacked look.
+					m.AddedTileId = action.MeldTiles[0].Id
 					upgraded = true
 					break
 				}
@@ -840,6 +851,18 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 					CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
 				}
 				player.OpenMelds = append(player.OpenMelds, meld)
+			}
+
+			// Budding kong bonus (persistent): an upgraded pon is a risky kong,
+			// a fresh self-drawn kan is a closed kong. The bonus is awarded when
+			// the hand is won; it upgrades to a blooming bonus below if the player
+			// wins on the supplementary tile.
+			if upgraded {
+				player.HasBuddingRiskyKong = true
+				kongBloom = "risky"
+			} else {
+				player.HasBuddingClosedKong = true
+				kongBloom = "closed"
 			}
 
 			if g.Recorder != nil {
@@ -872,6 +895,15 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			return nil
 		}
 
+		// Optimistically mark the kong as blooming: if the player wins (tsumo) on
+		// this supplementary tile the blooming bonus applies; otherwise it is
+		// cleared on the next discard/draw, leaving only the budding bonus.
+		switch kongBloom {
+		case "risky":
+			player.HasBloomingRiskyKong = true
+		case "closed":
+			player.HasBloomingClosedKong = true
+		}
 		// Set kong bonus flag: winning on the dead wall draw after a flower reveal
 		if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
 			player.HasBloomingFlowerKong = true
@@ -1036,9 +1068,14 @@ func (g *Game) ResolveInterrupts() {
 		player.DrawnTileId = nil // Clear drawn tile formatting for steals
 
 		if winningAction.Type == pb.ActionType_ACTION_KAN {
+			// A kong claimed from a discard is a direct kong. Budding bonus is
+			// persistent; it upgrades to blooming if the player wins on the
+			// supplementary tile drawn below.
+			player.HasBuddingDirectKong = true
 			// A Kong requires a supplementary tile from the dead wall before discarding
 			g.ExecuteDeadWallDraw(winnerSeat)
 			if g.State.Phase != pb.GamePhase_PHASE_ROUND_END && g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+				player.HasBloomingDirectKong = true
 				g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
 			}
 		} else {

@@ -86,6 +86,10 @@ message Meld {
   MeldDirection called_direction = 3;
   // The ID of the specific tile that was called (useful for UI rendering to know which one to rotate sideways).
   uint32 called_tile_id = 4;
+  // For a risky kong (加杠/upgraded pon), the ID of the 4th tile added on top of
+  // the already-called tile. Non-zero marks the meld as an added/risky kong so
+  // the UI can render the added tile stacked on the called tile.
+  uint32 added_tile_id = 5;
 }
 
 // ---------------------------------------------------------

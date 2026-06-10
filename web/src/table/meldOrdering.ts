@@ -6,7 +6,10 @@ export function tileIdsEqual(left: unknown, right: unknown): boolean {
 }
 
 export function reorderMeldTiles(meld: MeldLike) {
-  const displayTiles = [...(meld.tiles || [])]
+  const addedTileId = meld.addedTileId ?? -1
+  // The added tile of a risky kong (加杠) is rendered stacked on the called tile,
+  // so it is excluded from the inline row here.
+  const displayTiles = [...(meld.tiles || [])].filter((tile) => !tileIdsEqual(tile.id, addedTileId))
   const calledTileId = meld.calledTileId ?? -1
   const calledDirection = meld.calledDirection ?? 0
   const stolenIdx = displayTiles.findIndex((tile) => tileIdsEqual(tile.id, calledTileId))
