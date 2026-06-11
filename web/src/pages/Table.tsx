@@ -68,11 +68,15 @@ export default function Table() {
     }, [gameState, navigate, leftMarker]);
 
     useEffect(() => {
-        if (leftMarker) return; // stay disconnected so the bot keeps our seat
         const stored = loadPrivateRoomSession(roomId);
-        if (stored && !isConnected) {
-            setGuestToken(stored.token);
-            setUsername(stored.username);
+        if (!stored) return;
+        // Always restore identity so the room screen (and the Rejoin banner)
+        // render after an intentional leave.
+        setGuestToken(stored.token);
+        setUsername(stored.username);
+        // But if the player intentionally left, stay disconnected so the bot
+        // keeps their seat — only auto-connect in the normal flow.
+        if (!leftMarker && !isConnected) {
             connect(stored.token);
         }
     }, [connect, isConnected, roomId, leftMarker]);
