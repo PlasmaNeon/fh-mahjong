@@ -5,7 +5,9 @@ import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { game } from '../proto/game';
 import { useGameStageLayout } from '../hooks/useGameStageLayout';
-import { getPrivateRoomToken } from './privateRoomSession';
+import { getPrivateRoomToken, loadPrivateRoomSession } from './privateRoomSession';
+import { saveLeftMatchMarker } from './rejoinMatch';
+import ExitMatchButton from './ExitMatchButton';
 import { preloadAllTileSvgs } from '../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
@@ -376,8 +378,21 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         actions: readyActions,
     } : null;
 
+    const roomId = loadPrivateRoomSession()?.tableId ?? null;
+
+    const handleLeaveMatch = () => {
+        if (roomId && matchId) {
+            saveLeftMatchMarker({ roomId, matchId });
+        }
+        socket?.close();
+        navigate(roomId ? `/room/${roomId}` : '/');
+    };
+
     return (
         <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
+            {gameState?.phase !== 5 && roomId && (
+                <ExitMatchButton roomId={roomId} onConfirmLeave={handleLeaveMatch} />
+            )}
             {gameState?.phase === 5 /* PHASE_MATCH_END */ && (
                 <MatchEndOverlay
                     state={gameState}
