@@ -5,6 +5,15 @@ import { useSocket } from '../contexts/SocketContext';
 import { useGameState } from '../contexts/GameContext';
 import { getApiUrl } from '../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
+import {
+    buildRejoinLink,
+    clearLeftMatchMarker,
+    extractRejoinToken,
+    loadLeftMatchMarker,
+    saveLeftMatchMarker,
+    stripTokenFromUrl,
+} from './rejoinMatch';
+import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
 import { game } from '../proto/game';
 import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../theme';
@@ -22,6 +31,7 @@ export default function Table() {
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
     const [rlAgentAvailable, setRlAgentAvailable] = useState(false);
+    const [leftMarker, setLeftMarker] = useState<LeftMatchMarker | null>(() => loadLeftMatchMarker());
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
@@ -29,20 +39,43 @@ export default function Table() {
 
     const myUserId = useMyUserId(guestToken);
 
+    // A cross-device rejoin link arrives as /room/:roomId?token=<jwt>. Save the
+    // token as our session, strip it from the URL (don't leave a bearer secret
+    // in history), and set the left-match marker so the Rejoin banner shows.
     useEffect(() => {
+        if (!roomId || typeof window === 'undefined') return;
+        const token = extractRejoinToken(window.location.search);
+        if (!token) return;
+
+        savePrivateRoomSession({
+            tableId: roomId,
+            token,
+            username: loadPrivateRoomSession(roomId)?.username ?? 'Guest',
+        });
+        setGuestToken(token);
+        window.history.replaceState(null, '', stripTokenFromUrl(window.location.href));
+
+        const marker = { roomId, matchId: '' };
+        saveLeftMatchMarker(marker);
+        setLeftMarker(marker);
+    }, [roomId]);
+
+    useEffect(() => {
+        if (leftMarker) return; // player intentionally left — show Rejoin, don't bounce back
         if (gameState && gameState.matchId) {
             navigate(`/match/${gameState.matchId}`);
         }
-    }, [gameState, navigate]);
+    }, [gameState, navigate, leftMarker]);
 
     useEffect(() => {
+        if (leftMarker) return; // stay disconnected so the bot keeps our seat
         const stored = loadPrivateRoomSession(roomId);
         if (stored && !isConnected) {
             setGuestToken(stored.token);
             setUsername(stored.username);
             connect(stored.token);
         }
-    }, [connect, isConnected, roomId]);
+    }, [connect, isConnected, roomId, leftMarker]);
 
     const handleAuthFailure = useCallback(() => {
         clearPrivateRoomSession(roomId);
@@ -70,6 +103,35 @@ export default function Table() {
     }, [guestToken, roomId, handleAuthFailure]);
 
     useEffect(() => { fetchTableState(); }, [fetchTableState]);
+
+    // If the match ended (or the room is back to configuring) while we were
+    // away, drop the marker so the normal room screen shows instead of Rejoin.
+    useEffect(() => {
+        if (leftMarker && tableState && tableState.state !== 'started') {
+            clearLeftMatchMarker();
+            setLeftMarker(null);
+        }
+    }, [leftMarker, tableState]);
+
+    const handleRejoin = useCallback(() => {
+        const session = loadPrivateRoomSession(roomId);
+        const matchId = leftMarker?.matchId || (tableState as any)?.matchId;
+        clearLeftMatchMarker();
+        setLeftMarker(null);
+        if (session?.token) connect(session.token);
+        if (matchId) navigate(`/match/${matchId}`);
+    }, [connect, navigate, roomId, leftMarker, tableState]);
+
+    const copyRejoinLink = useCallback(async () => {
+        const token = loadPrivateRoomSession(roomId)?.token;
+        if (!token || !roomId || typeof window === 'undefined') return;
+        const link = buildRejoinLink(window.location.origin, roomId, token);
+        try {
+            await navigator.clipboard.writeText(link);
+        } catch {
+            window.prompt('Copy your rejoin link:', link);
+        }
+    }, [roomId]);
 
     // Whether the server can route a seat to a trained RL agent. Polled every
     // 10s (the backend health check caches ~5s) so the option appears or
@@ -106,7 +168,7 @@ export default function Table() {
                 const data = JSON.parse(e.data);
                 if (data.type === 'lobby_update' && data.room === roomId && data.state) {
                     setTableState(data.state as PrivateTableState);
-                    if (data.state.state === 'started' && data.state.matchId) {
+                    if (!leftMarker && data.state.state === 'started' && data.state.matchId) {
                         navigate(`/match/${data.state.matchId}`);
                     }
                 }
@@ -117,7 +179,7 @@ export default function Table() {
 
         socket.addEventListener('message', handle);
         return () => socket.removeEventListener('message', handle);
-    }, [socket, isConnected, roomId, navigate]);
+    }, [socket, isConnected, roomId, navigate, leftMarker]);
 
     const performJoin = useCallback(async (token: string) => {
         if (!roomId) return;
@@ -310,6 +372,19 @@ export default function Table() {
     return (
         <Page>
             <Shell wide>
+                {leftMarker && (
+                    <Card>
+                        <Section
+                            title="Match in progress"
+                            subtitle="A bot is playing your seat while you're away."
+                        >
+                            <ToolsRow>
+                                <Button variant="primary" onClick={handleRejoin}>Rejoin</Button>
+                                <Button variant="default" onClick={copyRejoinLink}>Copy rejoin link</Button>
+                            </ToolsRow>
+                        </Section>
+                    </Card>
+                )}
                 <Card>
                     <PageHeader
                         title="Room"
