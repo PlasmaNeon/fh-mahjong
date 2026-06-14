@@ -87,6 +87,13 @@ type Room struct {
 	seatReleaseChan    chan *Client  // grace timer -> room: free the seat now
 	disconnectGrace    time.Duration // wait before a bot takes over a dropped seat
 
+	// botTick drives bot-only play one step at a time so the room loop stays
+	// responsive (e.g. to a reconnect) instead of running a whole bot-only
+	// game synchronously. botTickPending guards against stacking timers and is
+	// only touched on the room goroutine.
+	botTick        chan struct{}
+	botTickPending bool
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
@@ -159,6 +166,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		ReconnectedClient:  make(chan *Client, 4),
 		seatReleaseChan:    make(chan *Client, 4),
 		disconnectGrace:    defaultDisconnectGrace,
+		botTick:            make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(room)
@@ -188,6 +196,7 @@ func (r *Room) Start() {
 	// 1. In-memory buffer to record the full serialized replay of the match
 	var replayBytes []byte
 	replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+	r.maybeScheduleBotTick()
 
 	for {
 		select {
@@ -249,6 +258,7 @@ func (r *Room) Start() {
 				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 					r.storePaipuSnapshot()
 				}
+				r.maybeScheduleBotTick()
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
 
@@ -266,7 +276,7 @@ func (r *Room) Start() {
 				r.freeSeatForClient(client)
 				safeClose(client.Send)
 				log.Printf("Seat %d disconnected in room %s; bot taking over", seat, r.ID)
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+				r.maybeScheduleBotTick()
 			} else {
 				log.Printf("Seat %d disconnected in room %s; bot takes over in %s unless they return", seat, r.ID, r.disconnectGrace)
 				grace := r.disconnectGrace
@@ -287,7 +297,7 @@ func (r *Room) Start() {
 			safeClose(client.Send)
 			if found {
 				log.Printf("Seat %d grace window elapsed in room %s; bot taking over", seat, r.ID)
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+				r.maybeScheduleBotTick()
 			}
 
 		case client := <-r.ReconnectedClient:
@@ -310,6 +320,19 @@ func (r *Room) Start() {
 			}
 			r.SendStateToClient(client)
 			log.Printf("User %d reconnected to seat %d in room %s", client.UserID, seat, r.ID)
+			// If they returned while a bot is mid-turn, keep the bots moving up
+			// to their seat instead of stalling until they happen to act.
+			r.maybeScheduleBotTick()
+
+		case <-r.botTick:
+			// One step of bot-only play, then re-arm if more remains. Yielding
+			// between steps keeps the loop responsive to reconnects.
+			r.botTickPending = false
+			replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeatsN(1))
+			if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+				r.storePaipuSnapshot()
+			}
+			r.maybeScheduleBotTick()
 
 		case clientAction := <-r.ActionQueue:
 			// 1. Identify which seat this client belongs to
@@ -413,9 +436,16 @@ func (r *Room) Start() {
 }
 
 func (r *Room) advanceAutomatedSeats() [][]byte {
+	return r.advanceAutomatedSeatsN(maxAutomatedSeatIterations)
+}
+
+// advanceAutomatedSeatsN drives automated seats for at most maxIters steps.
+// Pass 1 to take a single bot step (used by the bot pump to stay responsive);
+// pass maxAutomatedSeatIterations to drain consecutive bot turns in one go.
+func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 	var payloads [][]byte
 
-	for iteration := 0; iteration < maxAutomatedSeatIterations; iteration++ {
+	for iteration := 0; iteration < maxIters; iteration++ {
 		switch r.Engine.State.Phase {
 		case pb.GamePhase_PHASE_PLAYER_TURN:
 			seat := r.Engine.State.ActivePlayer
@@ -506,13 +536,58 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 		}
 	}
 
-	log.Printf(
-		"stopped automated advancement for room %s after %d iterations at phase %v",
-		r.ID,
-		maxAutomatedSeatIterations,
-		r.Engine.State.Phase,
-	)
+	if maxIters > 1 {
+		log.Printf(
+			"stopped automated advancement for room %s after %d iterations at phase %v",
+			r.ID,
+			maxIters,
+			r.Engine.State.Phase,
+		)
+	}
 	return payloads
+}
+
+// botWorkPending reports whether the engine is waiting on an automated seat
+// that no connected human will drive — i.e. the bot pump should take a step.
+func (r *Room) botWorkPending() bool {
+	switch r.Engine.State.Phase {
+	case pb.GamePhase_PHASE_PLAYER_TURN:
+		return r.isAutomatedSeat(r.Engine.State.ActivePlayer)
+	case pb.GamePhase_PHASE_WAIT_DISCARDS:
+		// Bots resolve interrupts only once no connected human still has a
+		// pending call to make.
+		return !r.hasConnectedInterruptSeat()
+	case pb.GamePhase_PHASE_ROUND_END:
+		for seat := range r.Engine.State.Players {
+			if r.isAutomatedSeat(uint32(seat)) && !r.isSeatReady(seat) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// maybeScheduleBotTick arms a single delayed bot step when bot work is pending.
+// Driving one step per tick (rather than the whole bot-only game synchronously)
+// keeps the room loop responsive to reconnects. No-op if a tick is already
+// pending or no bot work remains. Called only from the room goroutine.
+func (r *Room) maybeScheduleBotTick() {
+	if r.botTickPending || !r.botWorkPending() {
+		return
+	}
+	r.botTickPending = true
+	delay := r.botActionDelay
+	go func() {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		select {
+		case r.botTick <- struct{}{}:
+		default:
+		}
+	}()
 }
 
 func (r *Room) isAutomatedSeat(seat uint32) bool {

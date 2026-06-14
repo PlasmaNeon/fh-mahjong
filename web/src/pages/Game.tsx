@@ -6,7 +6,7 @@ import { useGameState } from '../contexts/GameContext';
 import { game } from '../proto/game';
 import { useGameStageLayout } from '../hooks/useGameStageLayout';
 import { getPrivateRoomToken, loadPrivateRoomSession } from './privateRoomSession';
-import { saveLeftMatchMarker } from './rejoinMatch';
+import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import { preloadAllTileSvgs } from '../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../table/TableScene';
@@ -20,6 +20,13 @@ export default function Game() {
     const { gameState, mySeatId } = useGameState();
 
     useEffect(() => {
+        // If the player intentionally left this match, do NOT auto-reconnect.
+        // Closing the socket on leave flips isConnected to false and would
+        // otherwise instantly reconnect here, reclaiming the seat before the
+        // bot can take over (leaving the game paused on the player's turn).
+        if (loadLeftMatchMarker()) {
+            return;
+        }
         if (!isConnected || !socket) {
             const storedToken = getPrivateRoomToken();
             if (storedToken) {
