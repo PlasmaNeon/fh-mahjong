@@ -26,6 +26,11 @@ var fallbackHeuristicPolicy bot.Policy = bot.NewHeuristicPolicy()
 
 const maxAutomatedSeatIterations = 200
 
+// defaultDisconnectGrace is how long a dropped seat is held before a bot takes
+// over, giving a refresh or brief network blip time to reconnect without
+// losing turns. Override per-room with WithDisconnectGrace (0 = immediate).
+const defaultDisconnectGrace = 20 * time.Second
+
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
 	ID             string
@@ -45,8 +50,12 @@ type Room struct {
 	// supersedes BotPolicy for that seat. Populated by the matchmaker from
 	// the host's PrivateTable seat config. Seats not present in this map
 	// fall through to BotPolicy / the heuristic baseline (defensive only).
-	SeatPolicies    map[uint32]bot.Policy
-	Seats           map[uint32]*Client              // maps 0-3 to active WS connections
+	SeatPolicies map[uint32]bot.Policy
+	Seats        map[uint32]*Client // maps 0-3 to active WS connections
+	// SeatOwners maps a seat (0-3) to the user ID that owns it for the whole
+	// match. Unlike Seats it is never cleared on disconnect, so a player can
+	// reclaim their seat after a bot took it over. Populated at BindRoom.
+	SeatOwners      map[uint32]uint
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
@@ -69,6 +78,15 @@ type Room struct {
 	interruptTmr     *time.Timer
 	interruptEpoch   uint64 // incremented each interrupt cycle to prevent stale goroutines
 
+	// Seat lifecycle is owned by the room goroutine (Start's select loop) so
+	// Seats is only ever mutated from one place after the match begins. The hub
+	// hands disconnects and reconnects over these channels instead of touching
+	// Seats directly, which would race the room goroutine.
+	DisconnectedClient chan *Client  // hub -> room: a seat's socket dropped
+	ReconnectedClient  chan *Client  // hub -> room: an owner's socket returned
+	seatReleaseChan    chan *Client  // grace timer -> room: free the seat now
+	disconnectGrace    time.Duration // wait before a bot takes over a dropped seat
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
@@ -81,6 +99,17 @@ func WithBotPolicy(policy bot.Policy) RoomOption {
 	return func(room *Room) {
 		if policy != nil {
 			room.BotPolicy = policy
+		}
+	}
+}
+
+// WithDisconnectGrace sets how long a dropped seat is held before a bot takes
+// it over. Zero means the bot takes over immediately (used by tests). When the
+// option is omitted the room uses defaultDisconnectGrace.
+func WithDisconnectGrace(d time.Duration) RoomOption {
+	return func(r *Room) {
+		if d >= 0 {
+			r.disconnectGrace = d
 		}
 	}
 }
@@ -120,11 +149,16 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		DB:                 db,
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
+		SeatOwners:         make(map[uint32]uint),
 		TileObfuscationMap: obfMap,
 		ActionQueue:        make(chan ClientAction),
 		Shutdown:           make(chan bool),
 		InterruptChan:      make(chan bool, 1),
 		TimerResolveChan:   make(chan bool, 1),
+		DisconnectedClient: make(chan *Client, 4),
+		ReconnectedClient:  make(chan *Client, 4),
+		seatReleaseChan:    make(chan *Client, 4),
+		disconnectGrace:    defaultDisconnectGrace,
 	}
 	for _, opt := range opts {
 		opt(room)
@@ -217,6 +251,65 @@ func (r *Room) Start() {
 				}
 				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
 			}
+
+		case client := <-r.DisconnectedClient:
+			// A seat's socket dropped. Hold the seat for a grace window so a
+			// refresh or brief blip can reconnect without losing turns; after
+			// that a bot takes over. All matching is by pointer identity.
+			seat, found := r.seatForClient(client)
+			if !found {
+				// Never seated, or already superseded by a reconnect.
+				safeClose(client.Send)
+				continue
+			}
+			if r.disconnectGrace <= 0 {
+				r.freeSeatForClient(client)
+				safeClose(client.Send)
+				log.Printf("Seat %d disconnected in room %s; bot taking over", seat, r.ID)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+			} else {
+				log.Printf("Seat %d disconnected in room %s; bot takes over in %s unless they return", seat, r.ID, r.disconnectGrace)
+				grace := r.disconnectGrace
+				dropped := client
+				go func() {
+					time.Sleep(grace)
+					select {
+					case r.seatReleaseChan <- dropped:
+					default:
+					}
+				}()
+			}
+
+		case client := <-r.seatReleaseChan:
+			// Grace window elapsed. Free the seat only if this same connection
+			// still holds it (a reconnect would have replaced the pointer).
+			seat, found := r.freeSeatForClient(client)
+			safeClose(client.Send)
+			if found {
+				log.Printf("Seat %d grace window elapsed in room %s; bot taking over", seat, r.ID)
+				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+			}
+
+		case client := <-r.ReconnectedClient:
+			// An owner's socket returned. Rebind their seat (reclaiming it from
+			// a bot if needed), then replay the current board to just them.
+			seat, owned := r.seatForOwner(client.UserID)
+			if !owned {
+				log.Printf("Reconnect from user %d but no owned seat in room %s", client.UserID, r.ID)
+				safeClose(client.Send)
+				continue
+			}
+			if old, exists := r.Seats[seat]; exists && old != client {
+				safeClose(old.Send)
+			}
+			r.Seats[seat] = client
+			seatMsg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, seat))
+			select {
+			case client.Send <- seatMsg:
+			default:
+			}
+			r.SendStateToClient(client)
+			log.Printf("User %d reconnected to seat %d in room %s", client.UserID, seat, r.ID)
 
 		case clientAction := <-r.ActionQueue:
 			// 1. Identify which seat this client belongs to
@@ -425,6 +518,52 @@ func (r *Room) advanceAutomatedSeats() [][]byte {
 func (r *Room) isAutomatedSeat(seat uint32) bool {
 	_, connected := r.Seats[seat]
 	return !connected
+}
+
+// seatForClient returns the seat currently held by the given client, matched by
+// pointer identity. Called only from the room goroutine.
+func (r *Room) seatForClient(client *Client) (uint32, bool) {
+	for seat, c := range r.Seats {
+		if c == client {
+			return seat, true
+		}
+	}
+	return 0, false
+}
+
+// freeSeatForClient removes the seat held by the given client so the seat
+// becomes bot-controlled (isAutomatedSeat true). Matched by pointer identity so
+// a client that already reconnected (a new *Client at the same seat) is never
+// displaced by a stale release. Called only from the room goroutine.
+func (r *Room) freeSeatForClient(client *Client) (uint32, bool) {
+	seat, ok := r.seatForClient(client)
+	if ok {
+		delete(r.Seats, seat)
+	}
+	return seat, ok
+}
+
+// seatForOwner returns the seat owned by the given user ID for this match,
+// independent of whether a socket is currently connected. Lets a returning
+// player reclaim a seat a bot has been playing. Called only from the room
+// goroutine.
+func (r *Room) seatForOwner(userID uint) (uint32, bool) {
+	for seat, uid := range r.SeatOwners {
+		if uid == userID {
+			return seat, true
+		}
+	}
+	return 0, false
+}
+
+// safeClose closes a client send channel, tolerating a double close (e.g. a
+// reconnect superseded a seat and a late grace-release also fires for the old
+// connection). Sends on the closed channel are guarded by select/default at
+// the call sites, and the channel is no longer referenced by any seat once
+// closed here.
+func safeClose(ch chan []byte) {
+	defer func() { _ = recover() }()
+	close(ch)
 }
 
 // sleepBotThink pauses for r.botActionDelay before a bot action so the

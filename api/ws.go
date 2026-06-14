@@ -78,32 +78,34 @@ func (h *Hub) Run() {
 			h.Clients[client] = true
 			log.Printf("User %d connected via WS", client.UserID)
 
-			// Reconnection logic: if they are already legally assigned to an active room
+			// Reconnection: if they're already assigned to an active room, hand
+			// the socket to that room's goroutine, which owns Seats and will
+			// rebind the seat (reclaiming it from a bot if needed) and replay
+			// the board. Mutating Seats here would race the room goroutine.
 			if room, exists := h.UserRooms[client.UserID]; exists {
-				log.Printf("User %d reconnected to active room %s", client.UserID, room.ID)
-
-				// Find their assigned seat and update the active socket pointer
-				var assignedSeat uint32
-				for seat, c := range room.Seats {
-					if c != nil && c.UserID == client.UserID {
-						assignedSeat = seat
-						break
-					}
+				log.Printf("User %d reconnecting to active room %s", client.UserID, room.ID)
+				select {
+				case room.ReconnectedClient <- client:
+				default:
+					log.Printf("reconnect channel full for room %s, dropping", room.ID)
 				}
-				room.Seats[assignedSeat] = client
-
-				// Send them their seat assignment immediately
-				msg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, assignedSeat))
-				client.Send <- msg
-
-				// Send them the current master state of the board
-				room.SendStateToClient(client)
 			}
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
-				close(client.Send)
 				log.Printf("User %d disconnected", client.UserID)
+				if room, inRoom := h.UserRooms[client.UserID]; inRoom {
+					// Hand off to the room goroutine: it frees the seat (after a
+					// grace window) so a bot takes over, and closes Send itself
+					// to avoid racing BroadcastState against a closed channel.
+					select {
+					case room.DisconnectedClient <- client:
+					default:
+						safeClose(client.Send)
+					}
+				} else {
+					close(client.Send)
+				}
 			}
 		case payload := <-h.ActionStream:
 			// Route standard action to the specific match room
@@ -115,6 +117,7 @@ func (h *Hub) Run() {
 		case bind := <-h.BindRoom:
 			for seat, uid := range bind.Seats {
 				h.UserRooms[uid] = bind.Room
+				bind.Room.SeatOwners[seat] = uid // stable seat ownership for reconnect
 
 				for client := range h.Clients {
 					if client.UserID == uid {
