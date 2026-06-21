@@ -15348,6 +15348,59 @@ This is not another threshold or coefficient sweep. It tests the current
 hypothesis that the scorer needs broader source diversity and whole-source
 heldout model selection before any live duplicate-seat gate.
 
+### Experiment: Placement Reward-Shaping Pipeline Validation (bounded)
+
+Run:
+`/root/fh-mahjong-runs/placement-compare-20260621-012708`
+
+Question:
+Does the new `--reward-shaping placement` path (rank-based placement returns
+instead of raw net-score returns) run end to end on the real Go bridge, and does
+a small from-scratch comparison show any raw-vs-placement difference?
+
+Data:
+200 Chongci self-play episodes (seat 1 random, others heuristic), seed 800000,
+single window of mixed self-play shards (`shards/`).
+
+Training:
+Two IQL runs on identical data, from scratch, 3 epochs, batch 256, lr 1e-4, cuda:
+- raw MC return target (`iql-raw/epoch_003.pt`)
+- `--reward-shaping placement` MC return target (`iql-placement/epoch_003.pt`)
+During training the placement run showed the expected smaller value-target
+magnitude (q≈0.033, value≈0.006 vs raw q≈0.142, value≈0.071) because placement
+returns are bounded in [-1, 1].
+
+Evaluation:
+40-seed Chongci duplicate-seat eval (160 matches each), `--max-steps-per-episode
+4000`. NOTE: a first eval pass with the default step cap truncated every match
+(`match_truncated: 1.0`, all-zero reward); a high step cap is required for
+Chongci matches to resolve.
+
+Result:
+
+| metric | raw | placement |
+| --- | ---: | ---: |
+| mean_reward | -2.0698 | -2.0726 |
+| mean_reward_ci95 | 0.0166 | 0.0260 |
+| large_loss_rate | 1.0000 | 0.9938 |
+| positive_reward_rate | 0.0 | 0.0 |
+| round outcomes | match_end 1.0 | match_end 1.0 |
+
+Decision:
+inconclusive (mechanics validated, no quality signal).
+
+Interpretation:
+The full new pipeline works on the 4090 with the real bridge: placement
+data/return shaping, raw and placement IQL training, and fully-resolved
+duplicate-seat eval with the new `mean_reward_ci95` field. But both 3-epoch
+from-scratch models are degenerate (lose every match, ~100% large loss), so the
+means are statistically indistinguishable and tell us nothing about placement
+quality. A meaningful comparison needs the full protocol: warm-start from the
+promoted Chongci checkpoint, an order of magnitude more data, more epochs, and
+the placement `--target-mode global_ev_td` variant (train GlobalEV with
+`--reward-shaping placement`, then bootstrap IQL Q targets from it). Also: always
+pass a high `--max-steps-per-episode` for Chongci online/duplicate eval.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
