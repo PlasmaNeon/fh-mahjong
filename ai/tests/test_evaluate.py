@@ -378,6 +378,9 @@ class TestEvaluateOnline:
         assert "episode_summaries" in report
         assert "large_loss_episodes" in report
         assert "reward_summary" in report
+        assert "mean_reward_sem" in report
+        assert "mean_reward_ci95" in report
+        assert report["mean_reward_ci95"] >= 0.0
         assert "positive_reward_rate" in report
         assert "action_family_rates" in report
         assert "round_outcome_rates" in report
