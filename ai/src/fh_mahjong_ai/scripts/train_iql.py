@@ -12,6 +12,7 @@ from fh_mahjong_ai.buffer import ArrayReplayBuffer, CompositeReplayBuffer, Repla
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
+from fh_mahjong_ai.global_ev import GlobalEVNet
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import (
     RiskCase,
@@ -92,6 +93,8 @@ def train_iql(
     pairwise_reward_delta_weight: float = 0.0,
     pairwise_reward_delta_margin_scale: float = 0.0,
     pairwise_reward_delta_clip: float = 2.0,
+    policy_kl_anchor_checkpoint: Optional[Path] = None,
+    policy_kl_weight: float = 0.0,
     large_loss_aux_weight: float = 0.0,
     large_loss_severity_weight: float = 0.0,
     large_loss_aux_detach: bool = False,
@@ -101,8 +104,10 @@ def train_iql(
     external_risk_policy_threshold: float = 0.6,
     external_risk_policy_family: str = "all",
     external_risk_policy_severity_weight: float = 0.0,
+    global_ev_checkpoint: Optional[Path] = None,
     pairwise_replay_multiplier: int = 0,
     pairwise_data_paths: Optional[Sequence[Path]] = None,
+    pairwise_data_min_reward_gap: float = 0.0,
     risk_trace_reports: Optional[Sequence[Path]] = None,
     risk_trace_weight: float = 1.0,
     risk_trace_dataset_start_seeds: Optional[Sequence[int]] = None,
@@ -117,6 +122,8 @@ def train_iql(
     init_checkpoint: Optional[Path] = None,
     init_q_from_policy: bool = False,
     partial_init_checkpoint: bool = False,
+    critic_only: bool = False,
+    policy_head_only: bool = False,
     resume: bool = False,
     mlflow_enabled: bool = False,
     mlflow_tracking_uri: Optional[str] = None,
@@ -125,10 +132,16 @@ def train_iql(
     model_config: Optional[ModelConfig] = None,
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
+    if critic_only and policy_head_only:
+        raise ValueError("--critic-only and --policy-head-only are mutually exclusive")
+    if (critic_only or policy_head_only) and resume:
+        raise ValueError("parameter-freezing modes cannot be combined with --resume because optimizer groups differ")
     data_paths = normalize_data_paths(data_path)
     pairwise_paths = [Path(path) for path in (pairwise_data_paths or [])]
     if pairwise_paths and target_mode.lower() != "mc":
         raise ValueError("--pairwise-data is only supported with MC targets because it omits next-state TD fields")
+    if target_mode.lower() == "global_ev_td" and global_ev_checkpoint is None:
+        raise ValueError("--target-mode global_ev_td requires --global-ev-checkpoint")
     risk_cases = load_risk_cases_from_paired_trace_reports(
         list(risk_trace_reports or []),
         large_loss_threshold=large_loss_threshold,
@@ -146,6 +159,7 @@ def train_iql(
         and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
         pairwise_replay_multiplier=pairwise_replay_multiplier,
         pairwise_data_paths=pairwise_paths,
+        pairwise_data_min_reward_gap=pairwise_data_min_reward_gap,
         risk_filter_datasets=risk_trace_filter_datasets,
         risk_context_radius=risk_trace_context_radius,
     )
@@ -157,7 +171,8 @@ def train_iql(
     model = PolicyValueNet(env_config, model_config).to(device)
     target_model = PolicyValueNet(env_config, model_config).to(device)
     external_risk_model: Optional[PolicyValueNet] = None
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    policy_kl_anchor_model: Optional[PolicyValueNet] = None
+    global_ev_model: Optional[GlobalEVNet] = None
 
     start_epoch = 0
     partial_init_report: Optional[dict[str, object]] = None
@@ -175,6 +190,16 @@ def train_iql(
         if init_q_from_policy:
             model.initialize_q_head_from_policy()
 
+    if critic_only:
+        freeze_except_critic_heads(model)
+    if policy_head_only:
+        freeze_except_policy_head(model)
+    optimizer = torch.optim.AdamW(
+        [param for param in model.parameters() if param.requires_grad],
+        lr=learning_rate,
+        weight_decay=1e-4,
+    )
+
     if resume:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoints = sorted(checkpoint_dir.glob("epoch_*.pt"))
@@ -188,6 +213,18 @@ def train_iql(
         load_checkpoint(external_risk_checkpoint, external_risk_model)
         external_risk_model.eval()
         for param in external_risk_model.parameters():
+            param.requires_grad_(False)
+    if policy_kl_anchor_checkpoint is not None:
+        policy_kl_anchor_model = PolicyValueNet(env_config, model_config).to(device)
+        load_checkpoint(policy_kl_anchor_checkpoint, policy_kl_anchor_model)
+        policy_kl_anchor_model.eval()
+        for param in policy_kl_anchor_model.parameters():
+            param.requires_grad_(False)
+    if global_ev_checkpoint is not None:
+        global_ev_model = GlobalEVNet(env_config, model_config).to(device)
+        load_checkpoint(global_ev_checkpoint, global_ev_model)
+        global_ev_model.eval()
+        for param in global_ev_model.parameters():
             param.requires_grad_(False)
 
     train_config = TrainConfig(
@@ -218,6 +255,7 @@ def train_iql(
         pairwise_reward_delta_weight=pairwise_reward_delta_weight,
         pairwise_reward_delta_margin_scale=pairwise_reward_delta_margin_scale,
         pairwise_reward_delta_clip=pairwise_reward_delta_clip,
+        policy_kl_weight=policy_kl_weight,
         large_loss_aux_weight=large_loss_aux_weight,
         large_loss_severity_weight=large_loss_severity_weight,
         large_loss_aux_detach=large_loss_aux_detach,
@@ -234,6 +272,8 @@ def train_iql(
         train_config,
         iql_config,
         external_risk_model=external_risk_model,
+        policy_kl_anchor_model=policy_kl_anchor_model,
+        global_ev_model=global_ev_model,
     )
 
     steps_per_epoch = max(1, len(buf) // batch_size)
@@ -280,6 +320,8 @@ def train_iql(
                     "pairwise_reward_delta_weight": pairwise_reward_delta_weight,
                     "pairwise_reward_delta_margin_scale": pairwise_reward_delta_margin_scale,
                     "pairwise_reward_delta_clip": pairwise_reward_delta_clip,
+                    "policy_kl_anchor_checkpoint": policy_kl_anchor_checkpoint,
+                    "policy_kl_weight": policy_kl_weight,
                     "large_loss_aux_weight": large_loss_aux_weight,
                     "large_loss_severity_weight": large_loss_severity_weight,
                     "large_loss_aux_detach": large_loss_aux_detach,
@@ -289,8 +331,10 @@ def train_iql(
                     "external_risk_policy_threshold": external_risk_policy_threshold,
                     "external_risk_policy_family": external_risk_policy_family,
                     "external_risk_policy_severity_weight": external_risk_policy_severity_weight,
+                    "global_ev_checkpoint": global_ev_checkpoint,
                     "pairwise_replay_multiplier": pairwise_replay_multiplier,
                     "pairwise_data_paths": ",".join(str(path) for path in pairwise_paths),
+                    "pairwise_data_min_reward_gap": pairwise_data_min_reward_gap,
                     "risk_trace_reports": ",".join(str(path) for path in (risk_trace_reports or [])),
                     "risk_trace_weight": risk_trace_weight,
                     "risk_trace_dataset_start_seeds": ",".join(str(seed) for seed in (risk_trace_dataset_start_seeds or [])),
@@ -306,6 +350,8 @@ def train_iql(
                     "init_checkpoint": init_checkpoint,
                     "init_q_from_policy": init_q_from_policy,
                     "partial_init_checkpoint": partial_init_checkpoint,
+                    "policy_head_only": policy_head_only,
+                    "critic_only": critic_only,
                     "partial_init_loaded_keys": partial_init_report["loaded_keys"] if partial_init_report else None,
                     "partial_init_missing_keys": len(partial_init_report["missing_keys"]) if partial_init_report else None,
                     "partial_init_skipped_keys": len(partial_init_report["skipped_keys"]) if partial_init_report else None,
@@ -334,6 +380,7 @@ def train_iql(
                         f"bc={metrics.bc_loss:.4f}  cql={metrics.cql_loss:.4f}  "
                         f"pairwise={metrics.pairwise_loss:.4f}/{metrics.pairwise_count}  "
                         f"pairwise_q={metrics.pairwise_q_loss:.4f}  "
+                        f"policy_kl={metrics.policy_kl_loss:.4f}  "
                         f"ll_aux={metrics.large_loss_aux_loss:.4f}  "
                         f"ll_sev={metrics.large_loss_severity_loss:.4f}  "
                         f"ll_bc={metrics.large_loss_bc_loss:.4f}/{metrics.large_loss_bc_count}  "
@@ -362,6 +409,7 @@ def train_iql(
                             "last_cql_loss": latest_metrics.cql_loss,
                             "last_pairwise_loss": latest_metrics.pairwise_loss,
                             "last_pairwise_q_loss": latest_metrics.pairwise_q_loss,
+                            "last_policy_kl_loss": latest_metrics.policy_kl_loss,
                             "last_large_loss_aux_loss": latest_metrics.large_loss_aux_loss,
                             "last_large_loss_severity_loss": latest_metrics.large_loss_severity_loss,
                             "last_large_loss_bc_loss": latest_metrics.large_loss_bc_loss,
@@ -402,6 +450,19 @@ def normalize_data_paths(data_path: Path | Sequence[Path]) -> list[Path]:
     return paths
 
 
+def freeze_except_critic_heads(model: PolicyValueNet) -> None:
+    """Freeze policy-selection features and leave only value/Q heads trainable."""
+    trainable_prefixes = ("q_head.", "value_head.")
+    for name, param in model.named_parameters():
+        param.requires_grad_(name.startswith(trainable_prefixes))
+
+
+def freeze_except_policy_head(model: PolicyValueNet) -> None:
+    """Freeze encoder and critics while leaving only the served policy head trainable."""
+    for name, param in model.named_parameters():
+        param.requires_grad_(name.startswith("policy_head."))
+
+
 def load_iql_replay_buffer(
     data_paths: Sequence[Path],
     max_transitions: Optional[int] = None,
@@ -411,6 +472,7 @@ def load_iql_replay_buffer(
     apply_risk_cases: bool = False,
     pairwise_replay_multiplier: int = 0,
     pairwise_data_paths: Optional[Sequence[Path]] = None,
+    pairwise_data_min_reward_gap: float = 0.0,
     risk_filter_datasets: bool = False,
     risk_context_radius: int = 0,
 ) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
@@ -518,9 +580,17 @@ def load_iql_replay_buffer(
         arrays.setdefault("terminated", np.zeros(row_count, dtype=np.bool_))
         arrays.setdefault("truncated", np.zeros(row_count, dtype=np.bool_))
         pairwise_indices = np.flatnonzero(np.asarray(arrays["pairwise_weights"]) > 0.0).astype(np.int64)
+        if pairwise_data_min_reward_gap > 0.0:
+            reward_gaps = np.asarray(arrays.get("pairwise_reward_delta_targets", []), dtype=np.float32)
+            if reward_gaps.shape[0] != row_count:
+                print(f"pairwise auxiliary replay source={path} missing reward gaps for filtering; rows=0 skipped")
+                continue
+            pairwise_indices = pairwise_indices[reward_gaps[pairwise_indices] >= float(pairwise_data_min_reward_gap)]
         if pairwise_indices.size == 0:
             print(f"pairwise auxiliary replay source={path} rows=0 skipped")
             continue
+        if pairwise_replay_multiplier > 0:
+            pairwise_indices = np.repeat(pairwise_indices, int(pairwise_replay_multiplier)).astype(np.int64)
         buffer = ArrayReplayBuffer(arrays=arrays, indices=pairwise_indices)
         buffers.append(buffer)
         counts.append(len(buffer))
@@ -578,7 +648,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--target-mode", choices=("mc", "td"), default="mc")
+    parser.add_argument("--target-mode", choices=("mc", "td", "global_ev_td"), default="mc")
     parser.add_argument("--expectile", type=float, default=0.7)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--max-weight", type=float, default=20.0)
@@ -650,6 +720,18 @@ def main() -> None:
         help="Maximum reward-gap target used by pairwise reward-delta weighting and margin scaling.",
     )
     parser.add_argument(
+        "--policy-kl-anchor-checkpoint",
+        type=Path,
+        default=None,
+        help="Frozen checkpoint whose masked policy distribution anchors the trained policy through KL regularization.",
+    )
+    parser.add_argument(
+        "--policy-kl-weight",
+        type=float,
+        default=0.0,
+        help="Loss multiplier for KL(anchor policy || current policy) over legal masked actions.",
+    )
+    parser.add_argument(
         "--large-loss-aux-weight",
         type=float,
         default=0.0,
@@ -703,6 +785,12 @@ def main() -> None:
         help="Optional severity contribution in the external-risk policy loss.",
     )
     parser.add_argument(
+        "--global-ev-checkpoint",
+        type=Path,
+        default=None,
+        help="Frozen global EV checkpoint used for --target-mode global_ev_td Bellman targets.",
+    )
+    parser.add_argument(
         "--pairwise-replay-multiplier",
         type=int,
         default=0,
@@ -717,6 +805,12 @@ def main() -> None:
             "Direct pairwise auxiliary NPZ shard. Rows contribute pairwise preferred/avoided "
             "margin losses only; normal IQL sample weights are zeroed."
         ),
+    )
+    parser.add_argument(
+        "--pairwise-data-min-reward-gap",
+        type=float,
+        default=0.0,
+        help="Keep only direct --pairwise-data rows whose pairwise reward-gap target is at least this value.",
     )
     parser.add_argument(
         "--risk-trace-report",
@@ -785,6 +879,16 @@ def main() -> None:
         action="store_true",
         help="Load only compatible tensors from --init-checkpoint for explicit architecture ablations.",
     )
+    parser.add_argument(
+        "--critic-only",
+        action="store_true",
+        help="Freeze the policy path and train only value/Q heads for critic diagnostics.",
+    )
+    parser.add_argument(
+        "--policy-head-only",
+        action="store_true",
+        help="Freeze encoder and critics, training only the served policy logits head.",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--mlflow", action="store_true", help="Log training params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
@@ -824,6 +928,8 @@ def main() -> None:
         pairwise_reward_delta_weight=args.pairwise_reward_delta_weight,
         pairwise_reward_delta_margin_scale=args.pairwise_reward_delta_margin_scale,
         pairwise_reward_delta_clip=args.pairwise_reward_delta_clip,
+        policy_kl_anchor_checkpoint=args.policy_kl_anchor_checkpoint,
+        policy_kl_weight=args.policy_kl_weight,
         large_loss_aux_weight=args.large_loss_aux_weight,
         large_loss_severity_weight=args.large_loss_severity_weight,
         large_loss_aux_detach=args.large_loss_aux_detach,
@@ -833,8 +939,10 @@ def main() -> None:
         external_risk_policy_threshold=args.external_risk_policy_threshold,
         external_risk_policy_family=args.external_risk_policy_family,
         external_risk_policy_severity_weight=args.external_risk_policy_severity_weight,
+        global_ev_checkpoint=args.global_ev_checkpoint,
         pairwise_replay_multiplier=args.pairwise_replay_multiplier,
         pairwise_data_paths=args.pairwise_data,
+        pairwise_data_min_reward_gap=args.pairwise_data_min_reward_gap,
         risk_trace_reports=args.risk_trace_report,
         risk_trace_weight=args.risk_trace_weight,
         risk_trace_dataset_start_seeds=args.risk_trace_dataset_start_seed,
@@ -849,6 +957,8 @@ def main() -> None:
         init_checkpoint=args.init_checkpoint,
         init_q_from_policy=args.init_q_from_policy,
         partial_init_checkpoint=args.partial_init_checkpoint,
+        critic_only=args.critic_only,
+        policy_head_only=args.policy_head_only,
         resume=args.resume,
         mlflow_enabled=args.mlflow,
         mlflow_tracking_uri=args.mlflow_tracking_uri,

@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 from fh_mahjong_ai.buffer import ReplayBuffer
 from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, TrainConfig
+from fh_mahjong_ai.global_ev import GlobalEVNet
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import RiskCase
 from fh_mahjong_ai.scripts.train_iql import load_iql_replay_buffer, risk_context_indices, train_iql
@@ -21,6 +23,7 @@ from fh_mahjong_ai.trainer import (
     large_loss_adjusted_rewards,
     large_loss_sample_weights,
     pairwise_margin_loss,
+    policy_anchor_kl_loss,
 )
 from fh_mahjong_ai.types import Observation, Transition
 
@@ -90,6 +93,8 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert np.isfinite(metrics.cql_loss)
     assert np.isfinite(metrics.pairwise_loss)
     assert np.isfinite(metrics.pairwise_q_loss)
+    assert np.isfinite(metrics.policy_kl_loss)
+    assert metrics.policy_kl_loss == 0.0
     assert np.isfinite(metrics.large_loss_aux_loss)
     assert np.isfinite(metrics.large_loss_severity_loss)
     assert np.isfinite(metrics.large_loss_bc_loss)
@@ -103,6 +108,68 @@ def test_discrete_iql_trainer_runs_one_step() -> None:
     assert metrics.avg_sample_weight == 1.0
     assert metrics.max_sample_weight == 1.0
     assert metrics.pairwise_count == 0
+
+
+def test_discrete_iql_trainer_runs_global_ev_td_target() -> None:
+    env_config = EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    target_model = PolicyValueNet(env_config, model_config)
+    target_model.load_state_dict(model.state_dict())
+    global_ev_model = GlobalEVNet(env_config, model_config)
+
+    buf = ReplayBuffer(capacity=8)
+    buf.extend(_transitions(8, env_config))
+
+    trainer = DiscreteIQLTrainer(
+        model=model,
+        target_model=target_model,
+        optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3),
+        train_config=TrainConfig(batch_size=4),
+        iql_config=DiscreteIQLConfig(target_mode="global_ev_td", max_weight=5.0),
+        global_ev_model=global_ev_model,
+    )
+
+    metrics = trainer.train_step(buf)
+
+    assert np.isfinite(metrics.loss)
+    assert np.isfinite(metrics.q_loss)
+    assert np.isfinite(metrics.avg_target_q)
+
+
+def test_discrete_iql_global_ev_td_requires_model() -> None:
+    env_config = EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4)
+    model_config = ModelConfig(
+        channels=4,
+        residual_blocks=1,
+        plane_feature_dim=8,
+        scalar_hidden_dim=8,
+        trunk_hidden_dim=8,
+        value_hidden_dim=8,
+    )
+    model = PolicyValueNet(env_config, model_config)
+    target_model = PolicyValueNet(env_config, model_config)
+    target_model.load_state_dict(model.state_dict())
+    buf = ReplayBuffer(capacity=8)
+    buf.extend(_transitions(8, env_config))
+
+    trainer = DiscreteIQLTrainer(
+        model=model,
+        target_model=target_model,
+        optimizer=torch.optim.AdamW(model.parameters(), lr=1e-3),
+        train_config=TrainConfig(batch_size=4),
+        iql_config=DiscreteIQLConfig(target_mode="global_ev_td", max_weight=5.0),
+    )
+
+    with pytest.raises(ValueError, match="requires a frozen global EV model"):
+        trainer.train_step(buf)
 
 
 def test_pairwise_margin_loss_prefers_anchor_action() -> None:
@@ -205,6 +272,27 @@ def test_pairwise_margin_loss_empty_batch_stays_finite_with_masked_logits() -> N
 
     assert count == 0
     torch.testing.assert_close(loss, torch.tensor(0.0))
+
+
+def test_policy_anchor_kl_loss_is_zero_for_matching_logits() -> None:
+    env_config = EnvConfig()
+    model = PolicyValueNet(env_config, ModelConfig())
+    obs = _obs(90, env_config)
+    planes = torch.from_numpy(obs.planes[None, ...])
+    scalars = torch.from_numpy(obs.scalars[None, ...])
+    action_mask = torch.from_numpy(obs.action_mask[None, ...])
+    sample_weights = torch.ones(1, dtype=torch.float32)
+
+    with torch.no_grad():
+        logits, _ = model(planes, scalars, action_mask)
+
+    zero_loss = policy_anchor_kl_loss(model, logits, planes, scalars, action_mask, sample_weights)
+    shifted_logits = logits.clone()
+    shifted_logits[:, 0] += 5.0
+    shifted_loss = policy_anchor_kl_loss(model, shifted_logits, planes, scalars, action_mask, sample_weights)
+
+    torch.testing.assert_close(zero_loss, torch.tensor(0.0))
+    assert shifted_loss.item() > 0.0
 
 
 def test_large_loss_auxiliary_losses_train_probability_and_severity_targets() -> None:
@@ -409,6 +497,84 @@ def test_train_iql_runs_and_saves_checkpoint(tmp_path: Path) -> None:
     assert any(metric.external_risk_policy_loss >= 0.0 for metric in metrics)
 
 
+def test_train_iql_critic_only_freezes_policy_path(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    data_path = tmp_path / "data.jsonl"
+    init_ckpt = tmp_path / "init.pt"
+    ckpt_dir = tmp_path / "checkpoints"
+    model = PolicyValueNet(env_config, ModelConfig())
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+    save_checkpoint(init_ckpt, model, step=1)
+
+    metrics = train_iql(
+        data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        init_checkpoint=init_ckpt,
+        critic_only=True,
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        policy_weight=0.0,
+        bc_weight=0.0,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    before = torch.load(init_ckpt, map_location="cpu")["model"]
+    after = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")["model"]
+    q_changed = False
+    for name, before_tensor in before.items():
+        if name.startswith("q_head."):
+            q_changed = q_changed or not torch.equal(before_tensor, after[name])
+        elif not name.startswith("value_head."):
+            torch.testing.assert_close(after[name], before_tensor)
+    assert q_changed
+
+
+def test_train_iql_policy_head_only_freezes_encoder_and_critics(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    data_path = tmp_path / "data.jsonl"
+    init_ckpt = tmp_path / "init.pt"
+    ckpt_dir = tmp_path / "checkpoints"
+    model = PolicyValueNet(env_config, ModelConfig())
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+    save_checkpoint(init_ckpt, model, step=1)
+
+    metrics = train_iql(
+        data_path=data_path,
+        checkpoint_dir=ckpt_dir,
+        init_checkpoint=init_ckpt,
+        policy_head_only=True,
+        epochs=1,
+        batch_size=6,
+        learning_rate=1e-3,
+        q_weight=0.0,
+        value_weight=0.0,
+        policy_weight=1.0,
+        bc_weight=0.0,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+    )
+
+    assert len(metrics) > 0
+    before = torch.load(init_ckpt, map_location="cpu")["model"]
+    after = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")["model"]
+    policy_changed = False
+    for name, before_tensor in before.items():
+        if name.startswith("policy_head."):
+            policy_changed = policy_changed or not torch.equal(before_tensor, after[name])
+        else:
+            torch.testing.assert_close(after[name], before_tensor)
+    assert policy_changed
+
+
 def test_train_iql_runs_from_npz_shards_with_limit(tmp_path: Path) -> None:
     env_config = EnvConfig()
     shard_dir = tmp_path / "shards"
@@ -578,16 +744,47 @@ def test_train_iql_can_mix_direct_pairwise_auxiliary_data(tmp_path: Path) -> Non
     assert np.count_nonzero(batch.pairwise_weights > 0.0) == 2
     assert sorted(batch.pairwise_reward_delta_targets[batch.pairwise_weights > 0.0].tolist()) == [0.25, 1.25]
 
+    replay_buf, replay_transition_count, replay_counts = load_iql_replay_buffer(
+        [base_dir],
+        pairwise_data_paths=[pairwise_dir],
+        pairwise_replay_multiplier=4,
+    )
+    replay_batch = replay_buf.sample(16, seed=1)
+
+    assert replay_transition_count == 16
+    assert replay_counts == [8, 8]
+    assert np.count_nonzero(replay_batch.sample_weights == 0.0) == 8
+    assert np.count_nonzero(replay_batch.pairwise_weights > 0.0) == 8
+
+    filtered_buf, filtered_transition_count, filtered_counts = load_iql_replay_buffer(
+        [base_dir],
+        pairwise_data_paths=[pairwise_dir],
+        pairwise_replay_multiplier=4,
+        pairwise_data_min_reward_gap=0.5,
+    )
+    filtered_batch = filtered_buf.sample(12, seed=2)
+
+    assert filtered_transition_count == 12
+    assert filtered_counts == [8, 4]
+    assert np.count_nonzero(filtered_batch.sample_weights == 0.0) == 4
+    assert np.count_nonzero(filtered_batch.pairwise_weights > 0.0) == 4
+    assert set(filtered_batch.pairwise_reward_delta_targets[filtered_batch.pairwise_weights > 0.0].tolist()) == {1.25}
+
+    anchor_path = tmp_path / "anchor.pt"
+    save_checkpoint(anchor_path, PolicyValueNet(env_config, ModelConfig()), step=0)
     metrics = train_iql(
         data_path=base_dir,
         checkpoint_dir=ckpt_dir,
         pairwise_data_paths=[pairwise_dir],
+        pairwise_data_min_reward_gap=0.5,
         epochs=1,
         batch_size=10,
         learning_rate=1e-3,
         pairwise_q_weight=0.5,
         pairwise_q_margin=0.25,
         pairwise_reward_delta_margin_scale=0.1,
+        policy_kl_anchor_checkpoint=anchor_path,
+        policy_kl_weight=0.1,
         target_update_interval=1,
         target_tau=1.0,
         max_weight=5.0,
@@ -596,6 +793,7 @@ def test_train_iql_can_mix_direct_pairwise_auxiliary_data(tmp_path: Path) -> Non
     )
 
     assert any(metric.pairwise_count > 0 for metric in metrics)
+    assert all(np.isfinite(metric.policy_kl_loss) for metric in metrics)
 
 
 def test_risk_context_indices_keeps_exact_matches_and_same_seat_context() -> None:

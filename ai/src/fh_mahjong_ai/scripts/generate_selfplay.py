@@ -4,10 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import parse_qsl
 
 import numpy as np
 
@@ -33,6 +34,9 @@ class SeatPolicySpec:
     seat: int
     kind: str
     checkpoint_path: Optional[Path] = None
+    sample_temperature: Optional[float] = None
+    sample_top_k: Optional[int] = None
+    sample_action_family: Optional[str] = None
     source_id: int = -1
 
     @property
@@ -56,7 +60,11 @@ class RuntimeSeatPolicy:
 
 
 def parse_seat_policy(value: str) -> SeatPolicySpec:
-    """Parse `seat=heuristic`, `seat=random`, or `seat=checkpoint:/path.pt`."""
+    """Parse `seat=heuristic`, `seat=random`, or `seat=checkpoint:/path.pt`.
+
+    Checkpoint policies may append query-style sampling overrides, for example:
+    `3=checkpoint:/path/epoch_001.pt?temperature=0.75&top_k=3&sample_family=discard`.
+    """
     if "=" not in value:
         raise ValueError(f"seat policy must use seat=kind syntax, got {value!r}")
     seat_text, policy_text = value.split("=", 1)
@@ -75,7 +83,22 @@ def parse_seat_policy(value: str) -> SeatPolicySpec:
         checkpoint_text = policy_text.split(":", 1)[1]
         if not checkpoint_text:
             raise ValueError(f"checkpoint policy requires a path in {value!r}")
-        return SeatPolicySpec(seat=seat, kind="checkpoint", checkpoint_path=Path(checkpoint_text))
+        checkpoint_path_text, _, query_text = checkpoint_text.partition("?")
+        if not checkpoint_path_text:
+            raise ValueError(f"checkpoint policy requires a path in {value!r}")
+        overrides = dict(parse_qsl(query_text, keep_blank_values=False))
+        unknown_keys = set(overrides) - {"temperature", "top_k", "sample_family", "sample_action_family"}
+        if unknown_keys:
+            raise ValueError(f"unknown checkpoint sampling option(s) in {value!r}: {sorted(unknown_keys)}")
+        sample_family = overrides.get("sample_family", overrides.get("sample_action_family"))
+        return SeatPolicySpec(
+            seat=seat,
+            kind="checkpoint",
+            checkpoint_path=Path(checkpoint_path_text),
+            sample_temperature=float(overrides["temperature"]) if "temperature" in overrides else None,
+            sample_top_k=int(overrides["top_k"]) if "top_k" in overrides else None,
+            sample_action_family=sample_family,
+        )
     raise ValueError(f"unknown policy kind in {value!r}; expected heuristic, random, or checkpoint:<path>")
 
 
@@ -112,12 +135,7 @@ def resolve_seat_policies(
         raise ValueError("mock bridge self-play requires all seats to be random or checkpoint policies")
 
     return [
-        SeatPolicySpec(
-            seat=spec.seat,
-            kind=spec.kind,
-            checkpoint_path=spec.checkpoint_path,
-            source_id=index,
-        )
+        replace(spec, source_id=index)
         for index, spec in enumerate(specs)
     ]
 
@@ -126,6 +144,9 @@ def build_runtime_policies(
     specs: list[SeatPolicySpec],
     device: str = "cpu",
     seed: int = 1,
+    checkpoint_temperature: float = 0.0,
+    checkpoint_top_k: int = 0,
+    checkpoint_sample_action_family: str = "all",
 ) -> dict[int, RuntimeSeatPolicy]:
     runtime: dict[int, RuntimeSeatPolicy] = {}
     for spec in specs:
@@ -136,7 +157,23 @@ def build_runtime_policies(
         elif spec.kind == "checkpoint":
             if spec.checkpoint_path is None:
                 raise ValueError(f"checkpoint policy for seat {spec.seat} is missing path")
-            policy = CheckpointPolicy.from_checkpoint(spec.checkpoint_path, device=device)
+            sample_temperature = (
+                checkpoint_temperature if spec.sample_temperature is None else float(spec.sample_temperature)
+            )
+            sample_top_k = checkpoint_top_k if spec.sample_top_k is None else int(spec.sample_top_k)
+            sample_action_family = (
+                checkpoint_sample_action_family
+                if spec.sample_action_family is None
+                else str(spec.sample_action_family)
+            )
+            policy = CheckpointPolicy.from_checkpoint(
+                spec.checkpoint_path,
+                device=device,
+                sample_temperature=sample_temperature,
+                sample_top_k=sample_top_k,
+                sample_action_family=sample_action_family,
+                seed=seed + spec.seat,
+            )
         else:
             raise ValueError(f"unsupported policy kind {spec.kind!r}")
         runtime[spec.seat] = RuntimeSeatPolicy(spec=spec, policy=policy)
@@ -186,6 +223,12 @@ def collect_mixed_selfplay_episodes(
             }
             if getattr(choice, "value", None) is not None:
                 info["policy_value"] = float(choice.value)
+            if hasattr(choice, "greedy_action_id"):
+                info["policy_greedy_action_id"] = int(choice.greedy_action_id)
+            if hasattr(choice, "sampling_applied"):
+                info["policy_sampling_applied"] = bool(choice.sampling_applied)
+            if hasattr(choice, "sampled_from_greedy"):
+                info["policy_sampled_from_greedy"] = bool(choice.sampled_from_greedy)
 
             transition = Transition(
                 observation=observation,
@@ -234,6 +277,9 @@ def generate_mixed_selfplay_dataset(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     device: str = "cpu",
+    checkpoint_temperature: float = 0.0,
+    checkpoint_top_k: int = 0,
+    checkpoint_sample_action_family: str = "all",
 ) -> dict[str, Any]:
     normalized_output_format = normalize_output_format(output_format)
     controlled_seats = tuple(spec.seat for spec in seat_policies if spec.controlled)
@@ -251,7 +297,14 @@ def generate_mixed_selfplay_dataset(
         chongci_bust_threshold=chongci_bust_threshold,
         chongci_max_hands=chongci_max_hands,
     )
-    runtime_policies = build_runtime_policies(seat_policies, device=device, seed=start_seed)
+    runtime_policies = build_runtime_policies(
+        seat_policies,
+        device=device,
+        seed=start_seed,
+        checkpoint_temperature=checkpoint_temperature,
+        checkpoint_top_k=checkpoint_top_k,
+        checkpoint_sample_action_family=checkpoint_sample_action_family,
+    )
     bridge = build_bridge(config)
     shard_writer: ShardedTransitionWriter | None = None
     chunk_stats: list[dict[str, Any]] = []
@@ -338,6 +391,9 @@ def generate_mixed_selfplay_dataset(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
         seat_policies=seat_policies,
+        checkpoint_temperature=checkpoint_temperature,
+        checkpoint_top_k=checkpoint_top_k,
+        checkpoint_sample_action_family=checkpoint_sample_action_family,
     )
     manifest_output = manifest_path or default_manifest_path(output_path)
     write_dataset_manifest(manifest_output, manifest)
@@ -352,6 +408,9 @@ def selfplay_manifest(
     bridge_kind: str,
     bridge_library_path: Optional[Path],
     seat_policies: list[SeatPolicySpec],
+    checkpoint_temperature: float = 0.0,
+    checkpoint_top_k: int = 0,
+    checkpoint_sample_action_family: str = "all",
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -375,6 +434,9 @@ def selfplay_manifest(
             "policy": "mixed_selfplay",
             "bridge_kind": bridge_kind,
             "bridge_library_path": str(bridge_library_path) if bridge_library_path else None,
+            "checkpoint_temperature": float(checkpoint_temperature),
+            "checkpoint_top_k": int(checkpoint_top_k),
+            "checkpoint_sample_action_family": str(checkpoint_sample_action_family),
             "git_commit": current_git_commit(),
         },
         "seat_policies": [
@@ -384,6 +446,9 @@ def selfplay_manifest(
                 "source_id": spec.source_id,
                 "source": spec.source_label,
                 "checkpoint_path": str(spec.checkpoint_path) if spec.checkpoint_path else None,
+                "sample_temperature": spec.sample_temperature,
+                "sample_top_k": spec.sample_top_k,
+                "sample_action_family": spec.sample_action_family,
                 "controlled": spec.controlled,
             }
             for spec in seat_policies
@@ -443,6 +508,27 @@ def main() -> None:
     parser.add_argument("--chongci-max-hands", type=int, default=50, help="Chongci hand cap")
     parser.add_argument("--chunk-size", type=int, default=100, help="Episodes per generation chunk")
     parser.add_argument("--device", type=str, default="cpu", help="Device for checkpoint policies")
+    parser.add_argument(
+        "--checkpoint-temperature",
+        type=float,
+        default=0.0,
+        help="Sample checkpoint policy logits with this temperature. Zero keeps greedy action selection.",
+    )
+    parser.add_argument(
+        "--checkpoint-top-k",
+        type=int,
+        default=0,
+        help="When checkpoint sampling is enabled, restrict sampling to the top-K legal checkpoint actions. Zero disables.",
+    )
+    parser.add_argument(
+        "--checkpoint-sample-action-family",
+        type=str,
+        default="all",
+        help=(
+            "Limit checkpoint sampling to decisions whose legal actions are all in this action family, "
+            "for example discard. Use all to sample every checkpoint decision."
+        ),
+    )
     args = parser.parse_args()
 
     seat_policies = resolve_seat_policies(
@@ -474,6 +560,9 @@ def main() -> None:
         chongci_bust_threshold=args.chongci_bust_threshold,
         chongci_max_hands=args.chongci_max_hands,
         device=args.device,
+        checkpoint_temperature=args.checkpoint_temperature,
+        checkpoint_top_k=args.checkpoint_top_k,
+        checkpoint_sample_action_family=args.checkpoint_sample_action_family,
     )
     print(f"Done: {stats['transitions']} transitions from {stats['episodes']} episodes in {stats['elapsed_seconds']}s")
     print(f"Saved to {args.output}")

@@ -2031,6 +2031,351 @@ export namespace game {
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
+    /** Properties of a BranchEvaluationRequest. */
+    interface IBranchEvaluationRequest {
+
+        /** BranchEvaluationRequest actionIds */
+        actionIds?: (number[]|undefined);
+
+        /** BranchEvaluationRequest stopAtRoundEnd */
+        stopAtRoundEnd?: (boolean|undefined);
+
+        /** BranchEvaluationRequest maxDecisions */
+        maxDecisions?: (number|undefined);
+    }
+
+    /** Represents a BranchEvaluationRequest. */
+    class BranchEvaluationRequest implements IBranchEvaluationRequest {
+
+        /**
+         * Constructs a new BranchEvaluationRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IBranchEvaluationRequest);
+
+        /** BranchEvaluationRequest actionIds. */
+        public actionIds: number[];
+
+        /** BranchEvaluationRequest stopAtRoundEnd. */
+        public stopAtRoundEnd: boolean;
+
+        /** BranchEvaluationRequest maxDecisions. */
+        public maxDecisions: number;
+
+        /**
+         * Creates a new BranchEvaluationRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns BranchEvaluationRequest instance
+         */
+        public static create(properties?: game.IBranchEvaluationRequest): game.BranchEvaluationRequest;
+
+        /**
+         * Encodes the specified BranchEvaluationRequest message. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
+         * @param message BranchEvaluationRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IBranchEvaluationRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified BranchEvaluationRequest message, length delimited. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
+         * @param message BranchEvaluationRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IBranchEvaluationRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a BranchEvaluationRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns BranchEvaluationRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationRequest;
+
+        /**
+         * Decodes a BranchEvaluationRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns BranchEvaluationRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationRequest;
+
+        /**
+         * Verifies a BranchEvaluationRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a BranchEvaluationRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns BranchEvaluationRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationRequest;
+
+        /**
+         * Creates a plain object from a BranchEvaluationRequest message. Also converts values to other types if specified.
+         * @param message BranchEvaluationRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.BranchEvaluationRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this BranchEvaluationRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for BranchEvaluationRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a BranchEvaluationResult. */
+    interface IBranchEvaluationResult {
+
+        /** BranchEvaluationResult actionId */
+        actionId?: (number|undefined);
+
+        /** BranchEvaluationResult rewards */
+        rewards?: (number[]|undefined);
+
+        /** BranchEvaluationResult terminated */
+        terminated?: (boolean|undefined);
+
+        /** BranchEvaluationResult truncated */
+        truncated?: (boolean|undefined);
+
+        /** BranchEvaluationResult roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
+
+        /** BranchEvaluationResult decisions */
+        decisions?: (number|Long|undefined);
+
+        /** BranchEvaluationResult error */
+        error?: (string|undefined);
+    }
+
+    /** Represents a BranchEvaluationResult. */
+    class BranchEvaluationResult implements IBranchEvaluationResult {
+
+        /**
+         * Constructs a new BranchEvaluationResult.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IBranchEvaluationResult);
+
+        /** BranchEvaluationResult actionId. */
+        public actionId: number;
+
+        /** BranchEvaluationResult rewards. */
+        public rewards: number[];
+
+        /** BranchEvaluationResult terminated. */
+        public terminated: boolean;
+
+        /** BranchEvaluationResult truncated. */
+        public truncated: boolean;
+
+        /** BranchEvaluationResult roundOutcome. */
+        public roundOutcome: game.RoundOutcome;
+
+        /** BranchEvaluationResult decisions. */
+        public decisions: (number|Long);
+
+        /** BranchEvaluationResult error. */
+        public error: string;
+
+        /**
+         * Creates a new BranchEvaluationResult instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns BranchEvaluationResult instance
+         */
+        public static create(properties?: game.IBranchEvaluationResult): game.BranchEvaluationResult;
+
+        /**
+         * Encodes the specified BranchEvaluationResult message. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
+         * @param message BranchEvaluationResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IBranchEvaluationResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified BranchEvaluationResult message, length delimited. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
+         * @param message BranchEvaluationResult message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IBranchEvaluationResult, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a BranchEvaluationResult message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns BranchEvaluationResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResult;
+
+        /**
+         * Decodes a BranchEvaluationResult message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns BranchEvaluationResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResult;
+
+        /**
+         * Verifies a BranchEvaluationResult message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a BranchEvaluationResult message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns BranchEvaluationResult
+         */
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationResult;
+
+        /**
+         * Creates a plain object from a BranchEvaluationResult message. Also converts values to other types if specified.
+         * @param message BranchEvaluationResult
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.BranchEvaluationResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this BranchEvaluationResult to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for BranchEvaluationResult
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a BranchEvaluationResponse. */
+    interface IBranchEvaluationResponse {
+
+        /** BranchEvaluationResponse observation */
+        observation?: (game.ISeatObservation|undefined);
+
+        /** BranchEvaluationResponse results */
+        results?: (game.IBranchEvaluationResult[]|undefined);
+    }
+
+    /** Represents a BranchEvaluationResponse. */
+    class BranchEvaluationResponse implements IBranchEvaluationResponse {
+
+        /**
+         * Constructs a new BranchEvaluationResponse.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IBranchEvaluationResponse);
+
+        /** BranchEvaluationResponse observation. */
+        public observation: game.SeatObservation;
+
+        /** BranchEvaluationResponse results. */
+        public results: game.BranchEvaluationResult[];
+
+        /**
+         * Creates a new BranchEvaluationResponse instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns BranchEvaluationResponse instance
+         */
+        public static create(properties?: game.IBranchEvaluationResponse): game.BranchEvaluationResponse;
+
+        /**
+         * Encodes the specified BranchEvaluationResponse message. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
+         * @param message BranchEvaluationResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IBranchEvaluationResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified BranchEvaluationResponse message, length delimited. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
+         * @param message BranchEvaluationResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IBranchEvaluationResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a BranchEvaluationResponse message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns BranchEvaluationResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResponse;
+
+        /**
+         * Decodes a BranchEvaluationResponse message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns BranchEvaluationResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResponse;
+
+        /**
+         * Verifies a BranchEvaluationResponse message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a BranchEvaluationResponse message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns BranchEvaluationResponse
+         */
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationResponse;
+
+        /**
+         * Creates a plain object from a BranchEvaluationResponse message. Also converts values to other types if specified.
+         * @param message BranchEvaluationResponse
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.BranchEvaluationResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this BranchEvaluationResponse to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for BranchEvaluationResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
     /** Properties of a TrajectoryRequest. */
     interface ITrajectoryRequest {
 

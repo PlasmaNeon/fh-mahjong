@@ -81,6 +81,7 @@ class DiscreteIQLConfig:
     pairwise_reward_delta_weight: float = 0.0
     pairwise_reward_delta_margin_scale: float = 0.0
     pairwise_reward_delta_clip: float = 2.0
+    policy_kl_weight: float = 0.0
     large_loss_aux_weight: float = 0.0
     large_loss_severity_weight: float = 0.0
     large_loss_aux_detach: bool = False

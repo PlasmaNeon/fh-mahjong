@@ -54,9 +54,15 @@ def main() -> None:
     parser.add_argument("--severity-weight", type=float, default=0.0)
     parser.add_argument(
         "--selection-mode",
-        choices=("lowest_risk", "policy_nearest"),
+        choices=("lowest_risk", "policy_nearest", "policy_topk_risk"),
         default="lowest_risk",
         help="Risk substitute ranking rule after threshold filters pass.",
+    )
+    parser.add_argument(
+        "--policy-top-k",
+        type=int,
+        default=0,
+        help="When selection-mode=policy_topk_risk, restrict substitutes to the anchor policy top-k legal actions.",
     )
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--start-seed", type=int, default=1000)
@@ -96,6 +102,7 @@ def main() -> None:
                 candidate_risk_threshold=args.candidate_risk_threshold,
                 min_risk_reduction=args.min_risk_reduction,
                 max_policy_logit_gap=args.max_policy_logit_gap,
+                policy_top_k=args.policy_top_k,
                 severity_weight=args.severity_weight,
                 selection_mode=args.selection_mode,
                 device=args.device,
@@ -142,6 +149,7 @@ def main() -> None:
             "candidate_risk_threshold": args.candidate_risk_threshold,
             "min_risk_reduction": args.min_risk_reduction,
             "max_policy_logit_gap": args.max_policy_logit_gap,
+            "policy_top_k": args.policy_top_k,
             "severity_weight": args.severity_weight,
             "selection_mode": args.selection_mode,
         },

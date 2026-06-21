@@ -63,6 +63,7 @@ class FakeGoLibrary:
         self.FHEnvNew = FakeFunction(callback=self._new)
         self.FHEnvReset = FakeFunction(callback=self._reset)
         self.FHEnvStep = FakeFunction(callback=self._step)
+        self.FHEnvEvaluateBranches = FakeFunction(callback=self._evaluate_branches)
         self.FHEnvClose = FakeFunction(callback=self._close)
         self.FHGenerateHeuristicTrajectory = FakeFunction(callback=self._trajectory)
         self.FHFree = FakeFunction(callback=self._free)
@@ -125,6 +126,26 @@ class FakeGoLibrary:
         )
         return self._bytes_result(response.SerializeToString())
 
+    def _evaluate_branches(self, handle, request_ptr, request_len):
+        request = game_pb2.BranchEvaluationRequest()
+        request.ParseFromString(ctypes.string_at(request_ptr, request_len))
+        response = game_pb2.BranchEvaluationResponse(observation=self._observation())
+        for action_id in request.action_ids:
+            response.results.append(
+                game_pb2.BranchEvaluationResult(
+                    action_id=int(action_id),
+                    rewards=[float(action_id), 0.0, 0.0, 0.0],
+                    terminated=True,
+                    decisions=3,
+                    round_outcome=game_pb2.RoundOutcome(
+                        is_draw=False,
+                        winner_seat=0,
+                        win_type=game_pb2.ACTION_TSUMO,
+                    ),
+                )
+            )
+        return self._bytes_result(response.SerializeToString())
+
     def _close(self, handle) -> None:
         self.closed_handles.append(int(handle))
 
@@ -175,6 +196,26 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(result.info["round_outcome"]["win_type_name"], "ACTION_RON")
         self.assertEqual(result.info["round_outcome"]["winner_seat"], 1)
         self.assertEqual(result.info["round_outcome"]["discarder_seat"], 0)
+
+    def test_evaluate_branches_decodes_go_results(self) -> None:
+        fake_library = FakeGoLibrary()
+        config = EnvConfig(
+            plane_shape=(1, 1, 1),
+            scalar_features=1,
+            action_space_size=2,
+            bridge_library_path=Path("/tmp/libfh_mahjong_bridge_fake.so"),
+        )
+
+        with mock.patch.object(bridge_module.ctypes, "CDLL", return_value=fake_library):
+            bridge = CtypesGoBridge(config)
+            results = bridge.evaluate_branches([0, 1])
+            bridge.close()
+
+        self.assertEqual([result.action_id for result in results], [0, 1])
+        self.assertEqual(results[1].rewards.tolist(), [1.0, 0.0, 0.0, 0.0])
+        self.assertTrue(results[1].terminated)
+        self.assertEqual(results[1].decisions, 3)
+        self.assertEqual(results[1].info["round_outcome"]["win_type_name"], "ACTION_TSUMO")
 
     def test_chongci_config_is_forwarded_to_go_bridge(self) -> None:
         fake_library = FakeGoLibrary()

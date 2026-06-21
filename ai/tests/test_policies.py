@@ -231,3 +231,30 @@ def test_risk_guarded_policy_can_choose_policy_nearest_lower_risk_action() -> No
     assert choice.action_id == 6
     assert choice.info is not None
     assert choice.info["selection_mode"] == "policy_nearest"
+
+
+def test_risk_guarded_policy_topk_risk_limits_candidate_set() -> None:
+    anchor = FixedHeadsModel(logits={5: 10.0, 6: 9.5, 7: 8.0}, q_values={})
+    risk = FixedHeadsModel(
+        logits={},
+        q_values={},
+        risk_logits={5: 2.0, 6: -1.0, 7: -5.0},
+        risk_severities={5: 0.9, 6: 0.3, 7: 0.1},
+    )
+    policy = RiskGuardedPolicy(
+        anchor,
+        risk,
+        anchor_risk_threshold=0.0,
+        candidate_risk_threshold=1.0,
+        min_risk_reduction=0.0,
+        max_policy_logit_gap=99.0,
+        policy_top_k=2,
+        selection_mode="policy_topk_risk",
+    )
+
+    choice = policy.choose(_observation())
+
+    assert choice.action_id == 6
+    assert choice.info is not None
+    assert choice.info["selection_mode"] == "policy_topk_risk"
+    assert choice.info["policy_top_k"] == 2

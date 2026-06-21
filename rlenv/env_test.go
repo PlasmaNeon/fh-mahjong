@@ -339,6 +339,55 @@ func TestGenerateHeuristicTrajectoryChongciReachesMatchEnd(t *testing.T) {
 	}
 }
 
+func TestEvaluateBranchesUsesCloneAndPreservesLiveEnvironment(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       512,
+	}
+
+	env := New(config)
+	reset, err := env.Reset(&pb.EnvResetRequest{Seed: 71, Config: config})
+	if err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+	actionIDs := firstLegalActionIDs(reset.Observation.ActionMask, 2)
+	if len(actionIDs) < 2 {
+		t.Fatalf("expected at least two legal actions, got %v", actionIDs)
+	}
+	stateBefore := proto.Clone(env.game.State).(*pb.GameState)
+
+	response, err := env.EvaluateBranches(&pb.BranchEvaluationRequest{ActionIds: actionIDs})
+	if err != nil {
+		t.Fatalf("branch evaluation failed: %v", err)
+	}
+
+	assertObservationEqual(t, response.Observation, reset.Observation)
+	if !proto.Equal(env.game.State, stateBefore) {
+		t.Fatalf("branch evaluation mutated the live environment")
+	}
+	if len(response.Results) != len(actionIDs) {
+		t.Fatalf("branch result count = %d, want %d", len(response.Results), len(actionIDs))
+	}
+	for i, result := range response.Results {
+		if result.ActionId != actionIDs[i] {
+			t.Fatalf("result action id = %d, want %d", result.ActionId, actionIDs[i])
+		}
+		if result.Error != "" {
+			t.Fatalf("branch action %d returned error: %s", result.ActionId, result.Error)
+		}
+		if len(result.Rewards) != 4 {
+			t.Fatalf("branch action %d rewards = %v", result.ActionId, result.Rewards)
+		}
+		if !result.Terminated && !result.Truncated {
+			t.Fatalf("branch action %d did not reach a terminal or truncated state", result.ActionId)
+		}
+		if result.Decisions == 0 {
+			t.Fatalf("branch action %d did not count decisions", result.ActionId)
+		}
+	}
+}
+
 func TestChongciResetDeterministicAcrossMultipleHands(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
@@ -470,6 +519,20 @@ func firstLegalActionID(mask []byte) int {
 		}
 	}
 	return -1
+}
+
+func firstLegalActionIDs(mask []byte, limit int) []uint32 {
+	actions := make([]uint32, 0, limit)
+	for actionID, enabled := range mask {
+		if enabled != 1 {
+			continue
+		}
+		actions = append(actions, uint32(actionID))
+		if len(actions) == limit {
+			return actions
+		}
+	}
+	return actions
 }
 
 func assertResetResponseEqual(t *testing.T, lhs *pb.EnvResetResponse, rhs *pb.EnvResetResponse) {

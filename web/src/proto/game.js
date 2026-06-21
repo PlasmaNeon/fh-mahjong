@@ -6280,6 +6280,926 @@ export const game = $root.game = (() => {
         return EnvStepResponse;
     })();
 
+    game.BranchEvaluationRequest = (function() {
+
+        /**
+         * Properties of a BranchEvaluationRequest.
+         * @memberof game
+         * @interface IBranchEvaluationRequest
+         * @property {Array.<number>|undefined} [actionIds] BranchEvaluationRequest actionIds
+         * @property {boolean|undefined} [stopAtRoundEnd] BranchEvaluationRequest stopAtRoundEnd
+         * @property {number|undefined} [maxDecisions] BranchEvaluationRequest maxDecisions
+         */
+
+        /**
+         * Constructs a new BranchEvaluationRequest.
+         * @memberof game
+         * @classdesc Represents a BranchEvaluationRequest.
+         * @implements IBranchEvaluationRequest
+         * @constructor
+         * @param {game.IBranchEvaluationRequest=} [properties] Properties to set
+         */
+        function BranchEvaluationRequest(properties) {
+            this.actionIds = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * BranchEvaluationRequest actionIds.
+         * @member {Array.<number>} actionIds
+         * @memberof game.BranchEvaluationRequest
+         * @instance
+         */
+        BranchEvaluationRequest.prototype.actionIds = $util.emptyArray;
+
+        /**
+         * BranchEvaluationRequest stopAtRoundEnd.
+         * @member {boolean} stopAtRoundEnd
+         * @memberof game.BranchEvaluationRequest
+         * @instance
+         */
+        BranchEvaluationRequest.prototype.stopAtRoundEnd = false;
+
+        /**
+         * BranchEvaluationRequest maxDecisions.
+         * @member {number} maxDecisions
+         * @memberof game.BranchEvaluationRequest
+         * @instance
+         */
+        BranchEvaluationRequest.prototype.maxDecisions = 0;
+
+        /**
+         * Creates a new BranchEvaluationRequest instance using the specified properties.
+         * @function create
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {game.IBranchEvaluationRequest=} [properties] Properties to set
+         * @returns {game.BranchEvaluationRequest} BranchEvaluationRequest instance
+         */
+        BranchEvaluationRequest.create = function create(properties) {
+            return new BranchEvaluationRequest(properties);
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationRequest message. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {game.IBranchEvaluationRequest} message BranchEvaluationRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.actionIds != null && message.actionIds.length) {
+                writer.uint32(/* id 1, wireType 2 =*/10).fork();
+                for (let i = 0; i < message.actionIds.length; ++i)
+                    writer.uint32(message.actionIds[i]);
+                writer.ldelim();
+            }
+            if (message.stopAtRoundEnd != null && Object.hasOwnProperty.call(message, "stopAtRoundEnd"))
+                writer.uint32(/* id 2, wireType 0 =*/16).bool(message.stopAtRoundEnd);
+            if (message.maxDecisions != null && Object.hasOwnProperty.call(message, "maxDecisions"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxDecisions);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationRequest message, length delimited. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {game.IBranchEvaluationRequest} message BranchEvaluationRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a BranchEvaluationRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.BranchEvaluationRequest} BranchEvaluationRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.BranchEvaluationRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        if (!(message.actionIds && message.actionIds.length))
+                            message.actionIds = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.actionIds.push(reader.uint32());
+                        } else
+                            message.actionIds.push(reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        message.stopAtRoundEnd = reader.bool();
+                        break;
+                    }
+                case 3: {
+                        message.maxDecisions = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a BranchEvaluationRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.BranchEvaluationRequest} BranchEvaluationRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a BranchEvaluationRequest message.
+         * @function verify
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        BranchEvaluationRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.actionIds != null && message.hasOwnProperty("actionIds")) {
+                if (!Array.isArray(message.actionIds))
+                    return "actionIds: array expected";
+                for (let i = 0; i < message.actionIds.length; ++i)
+                    if (!$util.isInteger(message.actionIds[i]))
+                        return "actionIds: integer[] expected";
+            }
+            if (message.stopAtRoundEnd != null && message.hasOwnProperty("stopAtRoundEnd"))
+                if (typeof message.stopAtRoundEnd !== "boolean")
+                    return "stopAtRoundEnd: boolean expected";
+            if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
+                if (!$util.isInteger(message.maxDecisions))
+                    return "maxDecisions: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a BranchEvaluationRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.BranchEvaluationRequest} BranchEvaluationRequest
+         */
+        BranchEvaluationRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.BranchEvaluationRequest)
+                return object;
+            let message = new $root.game.BranchEvaluationRequest();
+            if (object.actionIds) {
+                if (!Array.isArray(object.actionIds))
+                    throw TypeError(".game.BranchEvaluationRequest.actionIds: array expected");
+                message.actionIds = [];
+                for (let i = 0; i < object.actionIds.length; ++i)
+                    message.actionIds[i] = object.actionIds[i] >>> 0;
+            }
+            if (object.stopAtRoundEnd != null)
+                message.stopAtRoundEnd = Boolean(object.stopAtRoundEnd);
+            if (object.maxDecisions != null)
+                message.maxDecisions = object.maxDecisions >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a BranchEvaluationRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {game.BranchEvaluationRequest} message BranchEvaluationRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        BranchEvaluationRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.actionIds = [];
+            if (options.defaults) {
+                object.stopAtRoundEnd = false;
+                object.maxDecisions = 0;
+            }
+            if (message.actionIds && message.actionIds.length) {
+                object.actionIds = [];
+                for (let j = 0; j < message.actionIds.length; ++j)
+                    object.actionIds[j] = message.actionIds[j];
+            }
+            if (message.stopAtRoundEnd != null && message.hasOwnProperty("stopAtRoundEnd"))
+                object.stopAtRoundEnd = message.stopAtRoundEnd;
+            if (message.maxDecisions != null && message.hasOwnProperty("maxDecisions"))
+                object.maxDecisions = message.maxDecisions;
+            return object;
+        };
+
+        /**
+         * Converts this BranchEvaluationRequest to JSON.
+         * @function toJSON
+         * @memberof game.BranchEvaluationRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        BranchEvaluationRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for BranchEvaluationRequest
+         * @function getTypeUrl
+         * @memberof game.BranchEvaluationRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        BranchEvaluationRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.BranchEvaluationRequest";
+        };
+
+        return BranchEvaluationRequest;
+    })();
+
+    game.BranchEvaluationResult = (function() {
+
+        /**
+         * Properties of a BranchEvaluationResult.
+         * @memberof game
+         * @interface IBranchEvaluationResult
+         * @property {number|undefined} [actionId] BranchEvaluationResult actionId
+         * @property {Array.<number>|undefined} [rewards] BranchEvaluationResult rewards
+         * @property {boolean|undefined} [terminated] BranchEvaluationResult terminated
+         * @property {boolean|undefined} [truncated] BranchEvaluationResult truncated
+         * @property {game.IRoundOutcome|undefined} [roundOutcome] BranchEvaluationResult roundOutcome
+         * @property {number|Long|undefined} [decisions] BranchEvaluationResult decisions
+         * @property {string|undefined} [error] BranchEvaluationResult error
+         */
+
+        /**
+         * Constructs a new BranchEvaluationResult.
+         * @memberof game
+         * @classdesc Represents a BranchEvaluationResult.
+         * @implements IBranchEvaluationResult
+         * @constructor
+         * @param {game.IBranchEvaluationResult=} [properties] Properties to set
+         */
+        function BranchEvaluationResult(properties) {
+            this.rewards = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * BranchEvaluationResult actionId.
+         * @member {number} actionId
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.actionId = 0;
+
+        /**
+         * BranchEvaluationResult rewards.
+         * @member {Array.<number>} rewards
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.rewards = $util.emptyArray;
+
+        /**
+         * BranchEvaluationResult terminated.
+         * @member {boolean} terminated
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.terminated = false;
+
+        /**
+         * BranchEvaluationResult truncated.
+         * @member {boolean} truncated
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.truncated = false;
+
+        /**
+         * BranchEvaluationResult roundOutcome.
+         * @member {game.RoundOutcome} roundOutcome
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.roundOutcome = null;
+
+        /**
+         * BranchEvaluationResult decisions.
+         * @member {number|Long} decisions
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.decisions = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * BranchEvaluationResult error.
+         * @member {string} error
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         */
+        BranchEvaluationResult.prototype.error = "";
+
+        /**
+         * Creates a new BranchEvaluationResult instance using the specified properties.
+         * @function create
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {game.IBranchEvaluationResult=} [properties] Properties to set
+         * @returns {game.BranchEvaluationResult} BranchEvaluationResult instance
+         */
+        BranchEvaluationResult.create = function create(properties) {
+            return new BranchEvaluationResult(properties);
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationResult message. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
+         * @function encode
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {game.IBranchEvaluationResult} message BranchEvaluationResult message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationResult.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.actionId != null && Object.hasOwnProperty.call(message, "actionId"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.actionId);
+            if (message.rewards != null && message.rewards.length) {
+                writer.uint32(/* id 2, wireType 2 =*/18).fork();
+                for (let i = 0; i < message.rewards.length; ++i)
+                    writer.float(message.rewards[i]);
+                writer.ldelim();
+            }
+            if (message.terminated != null && Object.hasOwnProperty.call(message, "terminated"))
+                writer.uint32(/* id 3, wireType 0 =*/24).bool(message.terminated);
+            if (message.truncated != null && Object.hasOwnProperty.call(message, "truncated"))
+                writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            if (message.roundOutcome != null && Object.hasOwnProperty.call(message, "roundOutcome"))
+                $root.game.RoundOutcome.encode(message.roundOutcome, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
+            if (message.decisions != null && Object.hasOwnProperty.call(message, "decisions"))
+                writer.uint32(/* id 6, wireType 0 =*/48).uint64(message.decisions);
+            if (message.error != null && Object.hasOwnProperty.call(message, "error"))
+                writer.uint32(/* id 7, wireType 2 =*/58).string(message.error);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationResult message, length delimited. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {game.IBranchEvaluationResult} message BranchEvaluationResult message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationResult.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a BranchEvaluationResult message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.BranchEvaluationResult} BranchEvaluationResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationResult.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.BranchEvaluationResult();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.actionId = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        if (!(message.rewards && message.rewards.length))
+                            message.rewards = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.rewards.push(reader.float());
+                        } else
+                            message.rewards.push(reader.float());
+                        break;
+                    }
+                case 3: {
+                        message.terminated = reader.bool();
+                        break;
+                    }
+                case 4: {
+                        message.truncated = reader.bool();
+                        break;
+                    }
+                case 5: {
+                        message.roundOutcome = $root.game.RoundOutcome.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 6: {
+                        message.decisions = reader.uint64();
+                        break;
+                    }
+                case 7: {
+                        message.error = reader.string();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a BranchEvaluationResult message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.BranchEvaluationResult} BranchEvaluationResult
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationResult.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a BranchEvaluationResult message.
+         * @function verify
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        BranchEvaluationResult.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                if (!$util.isInteger(message.actionId))
+                    return "actionId: integer expected";
+            if (message.rewards != null && message.hasOwnProperty("rewards")) {
+                if (!Array.isArray(message.rewards))
+                    return "rewards: array expected";
+                for (let i = 0; i < message.rewards.length; ++i)
+                    if (typeof message.rewards[i] !== "number")
+                        return "rewards: number[] expected";
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                if (typeof message.terminated !== "boolean")
+                    return "terminated: boolean expected";
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                if (typeof message.truncated !== "boolean")
+                    return "truncated: boolean expected";
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome")) {
+                let error = $root.game.RoundOutcome.verify(message.roundOutcome);
+                if (error)
+                    return "roundOutcome." + error;
+            }
+            if (message.decisions != null && message.hasOwnProperty("decisions"))
+                if (!$util.isInteger(message.decisions) && !(message.decisions && $util.isInteger(message.decisions.low) && $util.isInteger(message.decisions.high)))
+                    return "decisions: integer|Long expected";
+            if (message.error != null && message.hasOwnProperty("error"))
+                if (!$util.isString(message.error))
+                    return "error: string expected";
+            return null;
+        };
+
+        /**
+         * Creates a BranchEvaluationResult message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.BranchEvaluationResult} BranchEvaluationResult
+         */
+        BranchEvaluationResult.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.BranchEvaluationResult)
+                return object;
+            let message = new $root.game.BranchEvaluationResult();
+            if (object.actionId != null)
+                message.actionId = object.actionId >>> 0;
+            if (object.rewards) {
+                if (!Array.isArray(object.rewards))
+                    throw TypeError(".game.BranchEvaluationResult.rewards: array expected");
+                message.rewards = [];
+                for (let i = 0; i < object.rewards.length; ++i)
+                    message.rewards[i] = Number(object.rewards[i]);
+            }
+            if (object.terminated != null)
+                message.terminated = Boolean(object.terminated);
+            if (object.truncated != null)
+                message.truncated = Boolean(object.truncated);
+            if (object.roundOutcome != null) {
+                if (typeof object.roundOutcome !== "object")
+                    throw TypeError(".game.BranchEvaluationResult.roundOutcome: object expected");
+                message.roundOutcome = $root.game.RoundOutcome.fromObject(object.roundOutcome);
+            }
+            if (object.decisions != null)
+                if ($util.Long)
+                    (message.decisions = $util.Long.fromValue(object.decisions)).unsigned = true;
+                else if (typeof object.decisions === "string")
+                    message.decisions = parseInt(object.decisions, 10);
+                else if (typeof object.decisions === "number")
+                    message.decisions = object.decisions;
+                else if (typeof object.decisions === "object")
+                    message.decisions = new $util.LongBits(object.decisions.low >>> 0, object.decisions.high >>> 0).toNumber(true);
+            if (object.error != null)
+                message.error = String(object.error);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a BranchEvaluationResult message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {game.BranchEvaluationResult} message BranchEvaluationResult
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        BranchEvaluationResult.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.rewards = [];
+            if (options.defaults) {
+                object.actionId = 0;
+                object.terminated = false;
+                object.truncated = false;
+                object.roundOutcome = null;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.decisions = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.decisions = options.longs === String ? "0" : 0;
+                object.error = "";
+            }
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                object.actionId = message.actionId;
+            if (message.rewards && message.rewards.length) {
+                object.rewards = [];
+                for (let j = 0; j < message.rewards.length; ++j)
+                    object.rewards[j] = options.json && !isFinite(message.rewards[j]) ? String(message.rewards[j]) : message.rewards[j];
+            }
+            if (message.terminated != null && message.hasOwnProperty("terminated"))
+                object.terminated = message.terminated;
+            if (message.truncated != null && message.hasOwnProperty("truncated"))
+                object.truncated = message.truncated;
+            if (message.roundOutcome != null && message.hasOwnProperty("roundOutcome"))
+                object.roundOutcome = $root.game.RoundOutcome.toObject(message.roundOutcome, options);
+            if (message.decisions != null && message.hasOwnProperty("decisions"))
+                if (typeof message.decisions === "number")
+                    object.decisions = options.longs === String ? String(message.decisions) : message.decisions;
+                else
+                    object.decisions = options.longs === String ? $util.Long.prototype.toString.call(message.decisions) : options.longs === Number ? new $util.LongBits(message.decisions.low >>> 0, message.decisions.high >>> 0).toNumber(true) : message.decisions;
+            if (message.error != null && message.hasOwnProperty("error"))
+                object.error = message.error;
+            return object;
+        };
+
+        /**
+         * Converts this BranchEvaluationResult to JSON.
+         * @function toJSON
+         * @memberof game.BranchEvaluationResult
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        BranchEvaluationResult.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for BranchEvaluationResult
+         * @function getTypeUrl
+         * @memberof game.BranchEvaluationResult
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        BranchEvaluationResult.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.BranchEvaluationResult";
+        };
+
+        return BranchEvaluationResult;
+    })();
+
+    game.BranchEvaluationResponse = (function() {
+
+        /**
+         * Properties of a BranchEvaluationResponse.
+         * @memberof game
+         * @interface IBranchEvaluationResponse
+         * @property {game.ISeatObservation|undefined} [observation] BranchEvaluationResponse observation
+         * @property {Array.<game.IBranchEvaluationResult>|undefined} [results] BranchEvaluationResponse results
+         */
+
+        /**
+         * Constructs a new BranchEvaluationResponse.
+         * @memberof game
+         * @classdesc Represents a BranchEvaluationResponse.
+         * @implements IBranchEvaluationResponse
+         * @constructor
+         * @param {game.IBranchEvaluationResponse=} [properties] Properties to set
+         */
+        function BranchEvaluationResponse(properties) {
+            this.results = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * BranchEvaluationResponse observation.
+         * @member {game.SeatObservation} observation
+         * @memberof game.BranchEvaluationResponse
+         * @instance
+         */
+        BranchEvaluationResponse.prototype.observation = null;
+
+        /**
+         * BranchEvaluationResponse results.
+         * @member {Array.<game.BranchEvaluationResult>} results
+         * @memberof game.BranchEvaluationResponse
+         * @instance
+         */
+        BranchEvaluationResponse.prototype.results = $util.emptyArray;
+
+        /**
+         * Creates a new BranchEvaluationResponse instance using the specified properties.
+         * @function create
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {game.IBranchEvaluationResponse=} [properties] Properties to set
+         * @returns {game.BranchEvaluationResponse} BranchEvaluationResponse instance
+         */
+        BranchEvaluationResponse.create = function create(properties) {
+            return new BranchEvaluationResponse(properties);
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationResponse message. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
+         * @function encode
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {game.IBranchEvaluationResponse} message BranchEvaluationResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationResponse.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.observation != null && Object.hasOwnProperty.call(message, "observation"))
+                $root.game.SeatObservation.encode(message.observation, writer.uint32(/* id 1, wireType 2 =*/10).fork()).ldelim();
+            if (message.results != null && message.results.length)
+                for (let i = 0; i < message.results.length; ++i)
+                    $root.game.BranchEvaluationResult.encode(message.results[i], writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
+            return writer;
+        };
+
+        /**
+         * Encodes the specified BranchEvaluationResponse message, length delimited. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {game.IBranchEvaluationResponse} message BranchEvaluationResponse message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        BranchEvaluationResponse.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a BranchEvaluationResponse message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.BranchEvaluationResponse} BranchEvaluationResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationResponse.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.BranchEvaluationResponse();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.observation = $root.game.SeatObservation.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 2: {
+                        if (!(message.results && message.results.length))
+                            message.results = [];
+                        message.results.push($root.game.BranchEvaluationResult.decode(reader, reader.uint32()));
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a BranchEvaluationResponse message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.BranchEvaluationResponse} BranchEvaluationResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        BranchEvaluationResponse.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a BranchEvaluationResponse message.
+         * @function verify
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        BranchEvaluationResponse.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.observation != null && message.hasOwnProperty("observation")) {
+                let error = $root.game.SeatObservation.verify(message.observation);
+                if (error)
+                    return "observation." + error;
+            }
+            if (message.results != null && message.hasOwnProperty("results")) {
+                if (!Array.isArray(message.results))
+                    return "results: array expected";
+                for (let i = 0; i < message.results.length; ++i) {
+                    let error = $root.game.BranchEvaluationResult.verify(message.results[i]);
+                    if (error)
+                        return "results." + error;
+                }
+            }
+            return null;
+        };
+
+        /**
+         * Creates a BranchEvaluationResponse message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.BranchEvaluationResponse} BranchEvaluationResponse
+         */
+        BranchEvaluationResponse.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.BranchEvaluationResponse)
+                return object;
+            let message = new $root.game.BranchEvaluationResponse();
+            if (object.observation != null) {
+                if (typeof object.observation !== "object")
+                    throw TypeError(".game.BranchEvaluationResponse.observation: object expected");
+                message.observation = $root.game.SeatObservation.fromObject(object.observation);
+            }
+            if (object.results) {
+                if (!Array.isArray(object.results))
+                    throw TypeError(".game.BranchEvaluationResponse.results: array expected");
+                message.results = [];
+                for (let i = 0; i < object.results.length; ++i) {
+                    if (typeof object.results[i] !== "object")
+                        throw TypeError(".game.BranchEvaluationResponse.results: object expected");
+                    message.results[i] = $root.game.BranchEvaluationResult.fromObject(object.results[i]);
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a BranchEvaluationResponse message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {game.BranchEvaluationResponse} message BranchEvaluationResponse
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        BranchEvaluationResponse.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.results = [];
+            if (options.defaults)
+                object.observation = null;
+            if (message.observation != null && message.hasOwnProperty("observation"))
+                object.observation = $root.game.SeatObservation.toObject(message.observation, options);
+            if (message.results && message.results.length) {
+                object.results = [];
+                for (let j = 0; j < message.results.length; ++j)
+                    object.results[j] = $root.game.BranchEvaluationResult.toObject(message.results[j], options);
+            }
+            return object;
+        };
+
+        /**
+         * Converts this BranchEvaluationResponse to JSON.
+         * @function toJSON
+         * @memberof game.BranchEvaluationResponse
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        BranchEvaluationResponse.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for BranchEvaluationResponse
+         * @function getTypeUrl
+         * @memberof game.BranchEvaluationResponse
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        BranchEvaluationResponse.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.BranchEvaluationResponse";
+        };
+
+        return BranchEvaluationResponse;
+    })();
+
     game.TrajectoryRequest = (function() {
 
         /**

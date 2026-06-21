@@ -24,6 +24,7 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
       - `EnvConfig.match_mode` / `chongci_config` let training choose classic single-hand or Chongci multi-hand simulator mode
     - `EnvResetRequest` / `EnvResetResponse`
     - `EnvStepRequest` / `EnvStepResponse`
+    - `BranchEvaluationRequest` / `BranchEvaluationResponse` / `BranchEvaluationResult` for exact same-state candidate-action rollouts through the Go RL bridge; `stop_at_round_end` provides practical hand-EV labels inside multi-hand Chongci contexts
     - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
       - `EnvResetResponse.round_outcome` / `EnvStepResponse.round_outcome` carry terminal round metadata when a round ends
       - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` and `terminal_outcome` carry final round targets for offline warm-start consumers

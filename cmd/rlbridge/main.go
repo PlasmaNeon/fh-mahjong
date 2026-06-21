@@ -93,6 +93,27 @@ func FHEnvStep(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FHByte
 	return marshalResult(response)
 }
 
+//export FHEnvEvaluateBranches
+func FHEnvEvaluateBranches(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FHBytesResult {
+	env, err := lookupEnv(uint64(handle))
+	if err != nil {
+		return errorResult(err)
+	}
+
+	request := &pb.BranchEvaluationRequest{}
+	if data := inputBytes(requestPtr, requestLen); len(data) > 0 {
+		if err := proto.Unmarshal(data, request); err != nil {
+			return errorResult(err)
+		}
+	}
+
+	response, err := env.EvaluateBranches(request)
+	if err != nil {
+		return errorResult(err)
+	}
+	return marshalResult(response)
+}
+
 //export FHEnvClose
 func FHEnvClose(handle C.uint64_t) {
 	envMu.Lock()
