@@ -32,6 +32,8 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
             "positive_rate": 0.0,
             "zero_rate": 0.0,
             "negative_rate": 0.0,
+            "sem": 0.0,
+            "ci95": 0.0,
         }
 
     array = np.asarray(values, dtype=np.float32)
@@ -39,6 +41,7 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
     positive_count = int(np.sum(array > 0))
     zero_count = int(np.sum(array == 0))
     negative_count = int(np.sum(array < 0))
+    sem = float(np.std(array, ddof=1) / np.sqrt(count)) if count > 1 else 0.0
     return {
         "count": count,
         "sum": float(np.sum(array)),
@@ -52,6 +55,8 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
         "positive_rate": positive_count / count,
         "zero_rate": zero_count / count,
         "negative_rate": negative_count / count,
+        "sem": sem,
+        "ci95": 1.96 * sem,
     }
 
 
