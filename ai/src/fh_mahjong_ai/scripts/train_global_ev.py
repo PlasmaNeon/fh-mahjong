@@ -49,6 +49,8 @@ class GlobalEVTrainConfig:
     branch_cf_pairwise_reward_gap_weight: float = 0.0
     branch_cf_pairwise_reward_gap_margin_scale: float = 0.0
     branch_cf_pairwise_reward_gap_clip: float = 2.0
+    reward_shaping: str = "raw"
+    placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
 
 
 def train_global_ev(
@@ -74,7 +76,11 @@ def train_global_ev(
         max_transitions=max_transitions,
         branch_cf_action_targets=config.branch_cf_action_targets,
     )
-    targets = global_ev_targets(arrays)
+    targets = global_ev_targets(
+        arrays,
+        reward_shaping=config.reward_shaping,
+        placement_values=config.placement_values,
+    )
     train_indices, validation_indices = episode_split_indices(
         arrays["episode_index"],
         validation_mod=config.validation_mod,
@@ -544,6 +550,19 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument(
+        "--reward-shaping",
+        choices=("raw", "placement"),
+        default="raw",
+        help="raw terminal net-score EV target (default) or rank-based placement EV",
+    )
+    parser.add_argument(
+        "--placement-values",
+        type=float,
+        nargs=4,
+        default=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+        help="placement values for ranks 1..4 when --reward-shaping placement",
+    )
+    parser.add_argument(
         "--action-conditioned",
         action="store_true",
         help="Train EV(state, action_id) instead of EV(state).",
@@ -608,6 +627,8 @@ def main() -> None:
         branch_cf_pairwise_reward_gap_weight=args.branch_cf_pairwise_reward_gap_weight,
         branch_cf_pairwise_reward_gap_margin_scale=args.branch_cf_pairwise_reward_gap_margin_scale,
         branch_cf_pairwise_reward_gap_clip=args.branch_cf_pairwise_reward_gap_clip,
+        reward_shaping=args.reward_shaping,
+        placement_values=tuple(args.placement_values),
     )
     report = train_global_ev(
         data_paths=args.data,

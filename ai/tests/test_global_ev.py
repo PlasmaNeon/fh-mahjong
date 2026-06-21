@@ -91,6 +91,24 @@ def test_global_ev_targets_use_acting_seat_reward() -> None:
     np.testing.assert_allclose(global_ev_targets(arrays), np.asarray([1.0, 0.8, 0.6], dtype=np.float32))
 
 
+def test_global_ev_targets_support_placement_shaping() -> None:
+    arrays = {
+        "seats": np.asarray([0, 2, 3], dtype=np.int16),
+        "terminal_rewards": np.asarray(
+            [
+                [1.0, 0.0, -0.5, -0.5],
+                [-0.2, -0.3, 0.8, -0.3],
+                [-0.1, -0.2, -0.3, 0.6],
+            ],
+            dtype=np.float32,
+        ),
+    }
+
+    targets = global_ev_targets(arrays, reward_shaping="placement")
+    # row0 seat0 is best -> 1.0; row1 seat2 is best -> 1.0; row2 seat3 is best -> 1.0
+    np.testing.assert_allclose(targets, np.asarray([1.0, 1.0, 1.0], dtype=np.float32))
+
+
 def test_episode_split_indices_hold_out_whole_episode_mod_bucket() -> None:
     train_indices, validation_indices = episode_split_indices(
         np.asarray([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64),
@@ -185,6 +203,34 @@ def test_train_global_ev_writes_checkpoint_and_report(tmp_path: Path) -> None:
     assert (checkpoint_dir / "epoch_001.pt").exists()
     saved_report = json.loads(report_path.read_text(encoding="utf-8"))
     assert saved_report["validation"]["count"] == report["validation"]["count"]
+
+
+def test_train_global_ev_with_placement_shaping(tmp_path: Path) -> None:
+    env_config = EnvConfig(action_space_size=16, plane_shape=(2, 3, 1), scalar_features=4)
+    data_path = tmp_path / "transitions.jsonl"
+    checkpoint_dir = tmp_path / "checkpoints"
+    write_transitions_jsonl(data_path, _transitions(12, env_config))
+
+    report = train_global_ev(
+        data_paths=[data_path],
+        checkpoint_dir=checkpoint_dir,
+        config=GlobalEVTrainConfig(
+            batch_size=4,
+            learning_rate=1e-3,
+            epochs=1,
+            steps_per_epoch=2,
+            validation_mod=2,
+            device="cpu",
+            reward_shaping="placement",
+        ),
+        model_config=_small_model_config(),
+    )
+
+    assert report["method"] == "global_ev"
+    # placement targets live in [-1, 1]
+    assert report["target_summary"]["min"] >= -1.0 - 1e-6
+    assert report["target_summary"]["max"] <= 1.0 + 1e-6
+    assert (checkpoint_dir / "epoch_001.pt").exists()
 
 
 def test_train_action_global_ev_writes_checkpoint_and_report(tmp_path: Path) -> None:
