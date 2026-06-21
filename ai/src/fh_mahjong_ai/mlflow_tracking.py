@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+import re
 from typing import Any, Iterator, Mapping, Optional
 
 DEFAULT_EXPERIMENT_NAME = "fh-mahjong-ai"
@@ -75,7 +76,8 @@ def _iter_numeric_metrics(prefix: str, payload: Mapping[str, Any]) -> Iterator[t
 
 
 def _metric_key(key: str) -> str:
-    return key.replace(" ", "_").replace("/", ".")
+    normalized = key.replace(" ", "_").replace("/", ".")
+    return re.sub(r"[^A-Za-z0-9_.: -]", "_", normalized)
 
 
 def _param_value(value: Any) -> str | int | float | bool:

@@ -10,8 +10,10 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 
 - **action.go** — 204-action catalog plus action-mask generation and action encode/decode helpers. `DecodeActionID` is exported so serving clients can validate remote policy ids through the same legality map used by the RL bridge.
 - **observation.go** — Seat-relative observation encoder (`39 x 42 x 1` planes, 58 scalars) with no hidden-opponent tile leakage. `EncodeObservation` is exported for remote-policy clients that need the same visible input format as Python training.
-- **env.go** — `Env` wrapper with deterministic `Reset`, `Step`, and `GenerateHeuristicTrajectory`.
+- **env.go** — `Env` wrapper with deterministic `Reset`, `Step`, `EvaluateBranches`, and `GenerateHeuristicTrajectory`.
   - Terminal responses include `RoundOutcome` metadata for winner, win type, discarder, draw flag, score, and payouts.
+  - `EvaluateBranches` clones the live `core.Game`, applies each candidate action from the current learning-seat decision, then lets deterministic heuristics finish the branch to create same-state counterfactual labels without mutating the live environment.
+  - Branch requests can stop at the next round end for multi-hand modes, returning hand payout labels from the current visible match context instead of rolling every candidate to full Chongci match end.
 - **action_test.go** — Fixed action/tile-index mapping tests; tile faces follow the backend shanten order `man, pin, sou, jihai, flower`.
 - **env_test.go** — Determinism, action round-trip, hidden-information, and trajectory-export tests.
 

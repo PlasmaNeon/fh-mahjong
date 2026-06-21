@@ -57,6 +57,7 @@ class DiscreteIQLMetrics:
     cql_loss: float
     pairwise_loss: float
     pairwise_q_loss: float
+    policy_kl_loss: float
     large_loss_aux_loss: float
     large_loss_severity_loss: float
     large_loss_bc_loss: float
@@ -283,6 +284,8 @@ class DiscreteIQLTrainer:
         train_config: TrainConfig,
         iql_config: Optional[DiscreteIQLConfig] = None,
         external_risk_model: Optional[nn.Module] = None,
+        policy_kl_anchor_model: Optional[nn.Module] = None,
+        global_ev_model: Optional[nn.Module] = None,
     ) -> None:
         self.model = model
         self.target_model = target_model
@@ -290,9 +293,19 @@ class DiscreteIQLTrainer:
         self.train_config = train_config
         self.iql_config = iql_config or DiscreteIQLConfig()
         self.external_risk_model = external_risk_model
+        self.policy_kl_anchor_model = policy_kl_anchor_model
+        self.global_ev_model = global_ev_model
         if self.external_risk_model is not None:
             self.external_risk_model.eval()
             for param in self.external_risk_model.parameters():
+                param.requires_grad_(False)
+        if self.policy_kl_anchor_model is not None:
+            self.policy_kl_anchor_model.eval()
+            for param in self.policy_kl_anchor_model.parameters():
+                param.requires_grad_(False)
+        if self.global_ev_model is not None:
+            self.global_ev_model.eval()
+            for param in self.global_ev_model.parameters():
                 param.requires_grad_(False)
         self._sample_rng = np.random.default_rng(train_config.seed)
 
@@ -343,6 +356,12 @@ class DiscreteIQLTrainer:
             with torch.no_grad():
                 _, next_values = self.target_model(next_planes, next_scalars, next_action_mask)
                 target_q = utility_rewards + self.iql_config.gamma * (1.0 - dones) * next_values
+        elif target_mode == "global_ev_td":
+            if self.global_ev_model is None:
+                raise ValueError("target_mode='global_ev_td' requires a frozen global EV model")
+            with torch.no_grad():
+                next_global_ev = self.global_ev_model(next_planes, next_scalars)
+                target_q = utility_rewards + self.iql_config.gamma * (1.0 - dones) * next_global_ev
         else:
             raise ValueError(f"unsupported discrete IQL target_mode={self.iql_config.target_mode!r}")
 
@@ -387,6 +406,14 @@ class DiscreteIQLTrainer:
             reward_delta_margin_scale=self.iql_config.pairwise_reward_delta_margin_scale,
             reward_delta_clip=self.iql_config.pairwise_reward_delta_clip,
         )
+        policy_kl_loss = policy_anchor_kl_loss(
+            anchor_model=self.policy_kl_anchor_model,
+            policy_logits=policy_logits,
+            planes=planes,
+            scalars=scalars,
+            action_mask=action_mask,
+            sample_weights=torch.maximum(sample_weights, (pairwise_weights > 0.0).to(dtype=sample_weights.dtype)),
+        )
         large_loss_aux_loss, large_loss_severity_loss, large_loss_diagnostics = large_loss_auxiliary_losses(
             self.model,
             planes,
@@ -428,6 +455,7 @@ class DiscreteIQLTrainer:
             + self.iql_config.cql_weight * cql_loss
             + self.iql_config.pairwise_weight * pairwise_loss
             + self.iql_config.pairwise_q_weight * pairwise_q_loss
+            + self.iql_config.policy_kl_weight * policy_kl_loss
             + self.iql_config.large_loss_aux_weight * large_loss_aux_loss
             + self.iql_config.large_loss_severity_weight * large_loss_severity_loss
             + self.iql_config.large_loss_bc_weight * large_loss_bc_loss
@@ -448,6 +476,7 @@ class DiscreteIQLTrainer:
             cql_loss=float(cql_loss.item()),
             pairwise_loss=float(pairwise_loss.item()),
             pairwise_q_loss=float(pairwise_q_loss.item()),
+            policy_kl_loss=float(policy_kl_loss.item()),
             large_loss_aux_loss=float(large_loss_aux_loss.item()),
             large_loss_severity_loss=float(large_loss_severity_loss.item()),
             large_loss_bc_loss=float(large_loss_bc_loss.item()),
@@ -542,6 +571,25 @@ def pairwise_margin_loss(
     avoided_logits = selected_logits.gather(1, selected_avoided.unsqueeze(1)).squeeze(1)
     losses = torch.relu(selected_margin - (preferred_logits - avoided_logits))
     return weighted_mean(losses, selected_weights), count
+
+
+def policy_anchor_kl_loss(
+    anchor_model: Optional[nn.Module],
+    policy_logits: torch.Tensor,
+    planes: torch.Tensor,
+    scalars: torch.Tensor,
+    action_mask: torch.Tensor,
+    sample_weights: torch.Tensor,
+) -> torch.Tensor:
+    if anchor_model is None:
+        return policy_logits.new_zeros(())
+    with torch.no_grad():
+        anchor_logits, _ = anchor_model(planes, scalars, action_mask)
+        anchor_log_probs = torch.log_softmax(anchor_logits, dim=1)
+        anchor_probs = torch.softmax(anchor_logits, dim=1)
+    policy_log_probs = torch.log_softmax(policy_logits, dim=1)
+    per_sample_kl = torch.sum(anchor_probs * (anchor_log_probs - policy_log_probs), dim=1)
+    return weighted_mean(per_sample_kl, sample_weights)
 
 
 def large_loss_auxiliary_losses(

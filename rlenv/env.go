@@ -87,6 +87,147 @@ func (e *Env) Step(request *pb.EnvStepRequest) (*pb.EnvStepResponse, error) {
 	return e.advanceToDecision()
 }
 
+func (e *Env) EvaluateBranches(request *pb.BranchEvaluationRequest) (*pb.BranchEvaluationResponse, error) {
+	if e.game == nil || e.game.State == nil {
+		return nil, fmt.Errorf("environment must be reset before evaluating branches")
+	}
+
+	seat, ok := e.currentLearningSeat()
+	if !ok {
+		return nil, fmt.Errorf("no learning seat is currently waiting for input")
+	}
+
+	observation, err := encodeObservation(e.game.State, seat, e.decisionCount)
+	if err != nil {
+		return nil, err
+	}
+
+	actionIDs := branchActionIDs(request, observation.ActionMask)
+	response := &pb.BranchEvaluationResponse{
+		Observation: cloneObservation(observation),
+		Results:     make([]*pb.BranchEvaluationResult, 0, len(actionIDs)),
+	}
+	for _, actionID := range actionIDs {
+		response.Results = append(response.Results, e.evaluateBranch(seat, actionID, request))
+	}
+	return response, nil
+}
+
+func (e *Env) evaluateBranch(seat uint32, actionID uint32, request *pb.BranchEvaluationRequest) *pb.BranchEvaluationResult {
+	result := &pb.BranchEvaluationResult{ActionId: actionID}
+
+	branch := &Env{
+		config:        normalizeConfig(e.config),
+		game:          e.game.CloneForBranch(),
+		heuristic:     e.heuristic,
+		learningSeats: map[uint32]bool{},
+		decisionCount: e.decisionCount,
+		baseSeed:      e.baseSeed,
+	}
+	if branch.game == nil {
+		result.Error = "cannot clone environment game"
+		return result
+	}
+
+	action, err := decodeActionID(branch.game.State, seat, int(actionID))
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	branch.decisionCount++
+	if err := branch.game.ProcessPlayerAction(seat, action); err != nil {
+		result.Error = err.Error()
+		return result
+	}
+
+	rollout, err := branch.advanceToTerminalWithHeuristics(e.decisionCount, branchStopAtRoundEnd(request), branchMaxDecisions(request))
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.Rewards = append([]float32(nil), rollout.Rewards...)
+	result.Terminated = rollout.Terminated
+	result.Truncated = rollout.Truncated
+	result.RoundOutcome = cloneRoundOutcome(rollout.RoundOutcome)
+	result.Decisions = branch.decisionCount - e.decisionCount
+	return result
+}
+
+func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtRoundEnd bool, maxBranchDecisions uint64) (*pb.EnvStepResponse, error) {
+	for {
+		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			return &pb.EnvStepResponse{
+				Observation: emptyObservation(e.game.State, e.decisionCount),
+				Rewards:     matchEndRewards(e.game.State),
+				Terminated:  true,
+			}, nil
+		}
+
+		if e.game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+			if stopAtRoundEnd {
+				return &pb.EnvStepResponse{
+					Observation:  emptyObservation(e.game.State, e.decisionCount),
+					Rewards:      roundRewards(e.game.State),
+					Terminated:   true,
+					RoundOutcome: roundOutcome(e.game.State),
+				}, nil
+			}
+			if e.game.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+				if err := e.readyAllPlayersForNextRound(); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			return &pb.EnvStepResponse{
+				Observation:  emptyObservation(e.game.State, e.decisionCount),
+				Rewards:      roundRewards(e.game.State),
+				Terminated:   true,
+				RoundOutcome: roundOutcome(e.game.State),
+			}, nil
+		}
+
+		if maxBranchDecisions > 0 && e.decisionCount-startDecisionCount >= maxBranchDecisions {
+			return &pb.EnvStepResponse{
+				Observation: emptyObservation(e.game.State, e.decisionCount),
+				Rewards:     make([]float32, 4),
+				Truncated:   true,
+			}, nil
+		}
+
+		if e.config.MaxDecisions > 0 && e.decisionCount >= uint64(e.config.MaxDecisions) {
+			return &pb.EnvStepResponse{
+				Observation: emptyObservation(e.game.State, e.decisionCount),
+				Rewards:     make([]float32, 4),
+				Truncated:   true,
+			}, nil
+		}
+
+		if seat, ok := e.currentActionSeat(); ok {
+			action := e.heuristic.ChooseAction(e.game.State, seat)
+			if action == nil {
+				return nil, fmt.Errorf("heuristic returned nil action for seat %d", seat)
+			}
+
+			e.decisionCount++
+			if err := e.game.ProcessPlayerAction(seat, action); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if e.game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+			if err := e.assertInterruptsReadyToResolve(); err != nil {
+				return nil, err
+			}
+			e.game.ResolveInterrupts()
+			continue
+		}
+
+		return nil, fmt.Errorf("no actionable seat found during branch rollout: %s", e.decisionStateSummary())
+	}
+}
+
 func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.TrajectoryDataset, error) {
 	episodes := uint32(1)
 	startSeed := uint64(1)
@@ -300,6 +441,34 @@ func (e *Env) currentHeuristicSeat() (uint32, bool) {
 	return e.currentSeat(false)
 }
 
+func (e *Env) currentActionSeat() (uint32, bool) {
+	if e.game == nil || e.game.State == nil {
+		return 0, false
+	}
+
+	switch e.game.State.Phase {
+	case pb.GamePhase_PHASE_PLAYER_TURN:
+		seat := e.game.State.ActivePlayer
+		if len(e.game.State.Players[seat].ValidActions) == 0 {
+			return 0, false
+		}
+		return seat, true
+	case pb.GamePhase_PHASE_WAIT_DISCARDS:
+		for seat := uint32(0); seat < uint32(len(e.game.State.Players)); seat++ {
+			if seat == e.game.State.ActivePlayer {
+				continue
+			}
+			player := e.game.State.Players[seat]
+			if len(player.ValidActions) == 0 || e.game.InterruptQueued(seat) {
+				continue
+			}
+			return seat, true
+		}
+	}
+
+	return 0, false
+}
+
 func (e *Env) currentSeat(learning bool) (uint32, bool) {
 	if e.game == nil || e.game.State == nil {
 		return 0, false
@@ -506,6 +675,30 @@ func clonePayouts(payouts []*pb.PlayerPayout) []*pb.PlayerPayout {
 		})
 	}
 	return cloned
+}
+
+func branchActionIDs(request *pb.BranchEvaluationRequest, actionMask []byte) []uint32 {
+	if request != nil && len(request.ActionIds) > 0 {
+		return append([]uint32(nil), request.ActionIds...)
+	}
+	actions := make([]uint32, 0)
+	for actionID, enabled := range actionMask {
+		if enabled == 1 {
+			actions = append(actions, uint32(actionID))
+		}
+	}
+	return actions
+}
+
+func branchStopAtRoundEnd(request *pb.BranchEvaluationRequest) bool {
+	return request != nil && request.StopAtRoundEnd
+}
+
+func branchMaxDecisions(request *pb.BranchEvaluationRequest) uint64 {
+	if request == nil || request.MaxDecisions == 0 {
+		return 0
+	}
+	return uint64(request.MaxDecisions)
 }
 
 func configOrDefault(request *pb.TrajectoryRequest) *pb.EnvConfig {

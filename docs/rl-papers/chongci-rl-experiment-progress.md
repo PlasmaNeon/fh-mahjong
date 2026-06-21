@@ -15293,6 +15293,61 @@ reports. The next aligned direction is to build a larger multi-source training
 set first, then use a source-heldout protocol where one whole seed window/source
 is held out during model selection.
 
+### Experiment: Larger Multi-Source Sequence Dataset
+
+Run:
+`/root/fh-mahjong-runs/chongci-sequence-multisource-20260621-000804`
+
+Question:
+Does a larger multi-source sequence dataset reduce source-window overfitting
+enough for the sequence reward-delta scorer to pass whole-source heldout
+preflight?
+
+Training sources:
+
+```text
+existing sources:
+  /root/fh-mahjong-runs/chongci-sequence-full-20260620-025953 train splits
+  /root/fh-mahjong-runs/chongci-sequence-independent-preflight-20260620-035316 independent reports
+  /root/fh-mahjong-runs/chongci-sequence-worstsource-20260620-202912 independent2 reports
+new train sources:
+  tail 774000:10
+  tail 784000:10
+  fresh 794000:10
+  fresh 804000:10
+  fresh2 814000:10
+  fresh2 824000:10
+new whole-source holdouts:
+  tail 834000:10
+  fresh 844000:10
+  fresh2 854000:10
+```
+
+Training plan:
+
+```text
+model: PairwiseSequenceDeltaNet
+source_balanced_batches: true
+worst_source_loss_weight: 1.0
+epochs: 4
+steps_per_epoch: 220
+batch_size: 120
+lr: 1.0e-4
+selection: reject unless all base and new whole-source holdouts are non-negative
+```
+
+Current status:
+Started on remote WSL. Nine paired-trace jobs are running in parallel to build
+six new train sources plus three new whole-source holdouts.
+
+Decision:
+Still running.
+
+Interpretation:
+This is not another threshold or coefficient sweep. It tests the current
+hypothesis that the scorer needs broader source diversity and whole-source
+heldout model selection before any live duplicate-seat gate.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:

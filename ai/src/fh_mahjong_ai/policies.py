@@ -242,6 +242,7 @@ class RiskGuardedPolicy:
         candidate_risk_threshold: float = 0.45,
         min_risk_reduction: float = 0.1,
         max_policy_logit_gap: float = 3.0,
+        policy_top_k: int = 0,
         severity_weight: float = 0.0,
         selection_mode: str = "lowest_risk",
         device: str = "cpu",
@@ -252,9 +253,10 @@ class RiskGuardedPolicy:
         self.candidate_risk_threshold = float(candidate_risk_threshold)
         self.min_risk_reduction = float(min_risk_reduction)
         self.max_policy_logit_gap = float(max_policy_logit_gap)
+        self.policy_top_k = max(0, int(policy_top_k))
         self.severity_weight = float(severity_weight)
-        if selection_mode not in {"lowest_risk", "policy_nearest"}:
-            raise ValueError("selection_mode must be 'lowest_risk' or 'policy_nearest'")
+        if selection_mode not in {"lowest_risk", "policy_nearest", "policy_topk_risk"}:
+            raise ValueError("selection_mode must be 'lowest_risk', 'policy_nearest', or 'policy_topk_risk'")
         self.selection_mode = selection_mode
         self.device = device
 
@@ -291,6 +293,12 @@ class RiskGuardedPolicy:
                 & (risk_reduction >= self.min_risk_reduction)
                 & (logit_gap <= self.max_policy_logit_gap)
             )
+            if self.selection_mode == "policy_topk_risk" and self.policy_top_k > 0:
+                top_k = min(self.policy_top_k, int(legal.numel()))
+                top_k_indices = torch.topk(legal_logits, k=top_k).indices
+                top_k_mask = torch.zeros_like(allowed, dtype=torch.bool)
+                top_k_mask[top_k_indices] = True
+                allowed &= top_k_mask
             if bool(allowed.any().item()):
                 risk_score = legal_risks + self.severity_weight * legal_severities
                 if self.selection_mode == "policy_nearest":
@@ -325,6 +333,7 @@ class RiskGuardedPolicy:
                 "candidate_risk_threshold": self.candidate_risk_threshold,
                 "min_risk_reduction": self.min_risk_reduction,
                 "max_policy_logit_gap": self.max_policy_logit_gap,
+                "policy_top_k": self.policy_top_k,
                 "selection_mode": self.selection_mode,
             },
         )

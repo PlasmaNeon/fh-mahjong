@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 
+from .action_catalog import action_family
 from .bridge import build_bridge
 from .checkpoint_manifest import DEFAULT_MANIFEST_PATH, load_checkpoint_manifest, resolve_checkpoint_path
 from .config import EnvConfig, ModelConfig
@@ -21,24 +23,58 @@ class ServedAction:
     value: float
     checkpoint_path: str
     checkpoint_step: int
+    greedy_action_id: int = -1
+    sampling_applied: bool = False
+    sampled_from_greedy: bool = False
 
 
 class CheckpointPolicy:
     """PolicyValueNet checkpoint wrapper for visible-observation inference."""
 
-    def __init__(self, model: PolicyValueNet, checkpoint_path: Path, checkpoint_step: int, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        model: PolicyValueNet,
+        checkpoint_path: Path,
+        checkpoint_step: int,
+        device: str = "cpu",
+        sample_temperature: float = 0.0,
+        sample_top_k: int = 0,
+        sample_action_family: str = "all",
+        seed: int = 1,
+    ) -> None:
         self.model = model
         self.checkpoint_path = checkpoint_path
         self.checkpoint_step = checkpoint_step
         self.device = device
+        self.sample_temperature = max(0.0, float(sample_temperature))
+        self.sample_top_k = max(0, int(sample_top_k))
+        self.sample_action_family = str(sample_action_family or "all")
+        self._rng = np.random.default_rng(seed)
         self.model.eval()
 
     @classmethod
-    def from_checkpoint(cls, checkpoint_path: Path, device: str = "cpu") -> "CheckpointPolicy":
+    def from_checkpoint(
+        cls,
+        checkpoint_path: Path,
+        device: str = "cpu",
+        sample_temperature: float = 0.0,
+        sample_top_k: int = 0,
+        sample_action_family: str = "all",
+        seed: int = 1,
+    ) -> "CheckpointPolicy":
         model = PolicyValueNet(EnvConfig(), ModelConfig())
         step = load_checkpoint(checkpoint_path, model)
         model.to(device)
-        return cls(model=model, checkpoint_path=checkpoint_path, checkpoint_step=step, device=device)
+        return cls(
+            model=model,
+            checkpoint_path=checkpoint_path,
+            checkpoint_step=step,
+            device=device,
+            sample_temperature=sample_temperature,
+            sample_top_k=sample_top_k,
+            sample_action_family=sample_action_family,
+            seed=seed,
+        )
 
     @torch.inference_mode()
     def choose(self, observation: Observation) -> ServedAction:
@@ -55,7 +91,25 @@ class CheckpointPolicy:
             raise ValueError(f"expected at most {expected_scalars} scalars, got {scalars.shape[1]}")
         action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(self.device)
         logits, value = self.model(planes, scalars, action_mask)
-        action_id = int(torch.argmax(logits, dim=1).item())
+        greedy_action_id = int(torch.argmax(logits, dim=1).item())
+        sampling_actions = self._sampling_actions(legal_actions)
+        sampling_applied = self.sample_temperature > 0.0 and bool(sampling_actions)
+        if self.sample_temperature > 0.0 and sampling_actions:
+            legal_actions = sampling_actions
+            candidate_actions = np.asarray(legal_actions, dtype=np.int64)
+            legal_logits = logits[0, legal_actions].detach().cpu().numpy().astype(np.float64)
+            if self.sample_top_k > 0 and legal_logits.size > self.sample_top_k:
+                top_indices = np.argpartition(-legal_logits, self.sample_top_k - 1)[: self.sample_top_k]
+                top_indices = top_indices[np.argsort(-legal_logits[top_indices])]
+                candidate_actions = candidate_actions[top_indices]
+                legal_logits = legal_logits[top_indices]
+            scaled = legal_logits / self.sample_temperature
+            scaled -= float(np.max(scaled))
+            probabilities = np.exp(scaled)
+            probabilities /= float(np.sum(probabilities))
+            action_id = int(self._rng.choice(candidate_actions, p=probabilities))
+        else:
+            action_id = greedy_action_id
         if action_id not in legal_actions:
             raise ValueError(f"model selected illegal action_id={action_id}; legal={legal_actions}")
         return ServedAction(
@@ -63,7 +117,17 @@ class CheckpointPolicy:
             value=float(value.item()),
             checkpoint_path=str(self.checkpoint_path),
             checkpoint_step=self.checkpoint_step,
+            greedy_action_id=greedy_action_id,
+            sampling_applied=sampling_applied,
+            sampled_from_greedy=sampling_applied and action_id != greedy_action_id,
         )
+
+    def _sampling_actions(self, legal_actions: list[int]) -> list[int]:
+        if self.sample_action_family in {"", "all", "*"}:
+            return list(legal_actions)
+        if all(action_family(action_id) == self.sample_action_family for action_id in legal_actions):
+            return list(legal_actions)
+        return []
 
 
 def load_policy_from_manifest(

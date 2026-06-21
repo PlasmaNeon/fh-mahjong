@@ -12,6 +12,7 @@ This package wraps the `rlenv` environment in a narrow protobuf-based C ABI so P
   - `FHEnvNew`
   - `FHEnvReset`
   - `FHEnvStep`
+  - `FHEnvEvaluateBranches`
   - `FHEnvClose`
   - `FHGenerateHeuristicTrajectory`
   - `FHFree`

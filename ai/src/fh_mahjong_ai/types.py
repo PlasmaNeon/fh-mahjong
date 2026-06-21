@@ -33,6 +33,17 @@ class StepResult:
 
 
 @dataclass
+class BranchResult:
+    action_id: int
+    rewards: FloatArray
+    terminated: bool
+    truncated: bool = False
+    decisions: int = 0
+    error: str = ""
+    info: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Transition:
     observation: Observation
     action_id: int

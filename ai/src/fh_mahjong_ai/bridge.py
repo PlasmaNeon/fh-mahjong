@@ -12,7 +12,7 @@ import numpy as np
 
 from .config import EnvConfig
 from .generated.proto import game_pb2
-from .types import Observation, StepResult, Transition
+from .types import BranchResult, Observation, StepResult, Transition
 
 
 class BridgeError(RuntimeError):
@@ -33,6 +33,15 @@ class MahjongBridge(ABC):
     @abstractmethod
     def step(self, action_id: int) -> StepResult:
         raise NotImplementedError
+
+    def evaluate_branches(
+        self,
+        action_ids: list[int] | tuple[int, ...] | None = None,
+        *,
+        stop_at_round_end: bool = False,
+        max_decisions: int = 0,
+    ) -> list[BranchResult]:
+        raise BridgeError(f"{type(self).__name__} does not support branch evaluation")
 
     @abstractmethod
     def close(self) -> None:
@@ -92,6 +101,40 @@ class MockMahjongBridge(MahjongBridge):
             terminated=terminated,
             info={"mock_action": action_id, "step_index": self._state.step_index},
         )
+
+    def evaluate_branches(
+        self,
+        action_ids: list[int] | tuple[int, ...] | None = None,
+        *,
+        stop_at_round_end: bool = False,
+        max_decisions: int = 0,
+    ) -> list[BranchResult]:
+        if self._current_observation is None:
+            raise BridgeError("mock bridge must be reset before evaluate_branches()")
+        candidates = tuple(action_ids) if action_ids is not None else self._current_observation.legal_actions
+        results: list[BranchResult] = []
+        for action_id in candidates:
+            if action_id not in self._current_observation.legal_actions:
+                results.append(
+                    BranchResult(
+                        action_id=int(action_id),
+                        rewards=np.zeros(4, dtype=np.float32),
+                        error=f"illegal mock action {action_id}",
+                    )
+                )
+                continue
+            rewards = np.zeros(4, dtype=np.float32)
+            rewards[self._current_observation.seat] = float(action_id) / max(1, self.config.action_space_size)
+            results.append(
+                BranchResult(
+                    action_id=int(action_id),
+                    rewards=rewards,
+                    terminated=True,
+                    decisions=1,
+                    info={"bridge": "mock", "branch": True},
+                )
+            )
+        return results
 
     def close(self) -> None:
         return None
@@ -193,6 +236,25 @@ class CtypesGoBridge(MahjongBridge):
         response.ParseFromString(self._call_bytes(self._library.FHGenerateHeuristicTrajectory, self._serialize(request)))
         return [self._decode_transition(sample) for sample in response.samples]
 
+    def evaluate_branches(
+        self,
+        action_ids: list[int] | tuple[int, ...] | None = None,
+        *,
+        stop_at_round_end: bool = False,
+        max_decisions: int = 0,
+    ) -> list[BranchResult]:
+        request = game_pb2.BranchEvaluationRequest(
+            stop_at_round_end=bool(stop_at_round_end),
+            max_decisions=max(0, int(max_decisions)),
+        )
+        if action_ids is not None:
+            request.action_ids.extend(int(action_id) for action_id in action_ids)
+        response = game_pb2.BranchEvaluationResponse()
+        response.ParseFromString(
+            self._call_bytes(self._library.FHEnvEvaluateBranches, self._handle, self._serialize(request))
+        )
+        return [self._decode_branch_result(result) for result in response.results]
+
     def _configure_signatures(self) -> None:
         self._library.FHEnvNew.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self._library.FHEnvNew.restype = ctypes.c_uint64
@@ -202,6 +264,9 @@ class CtypesGoBridge(MahjongBridge):
 
         self._library.FHEnvStep.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
         self._library.FHEnvStep.restype = FHBytesResult
+
+        self._library.FHEnvEvaluateBranches.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        self._library.FHEnvEvaluateBranches.restype = FHBytesResult
 
         self._library.FHEnvClose.argtypes = [ctypes.c_uint64]
         self._library.FHEnvClose.restype = None
@@ -321,6 +386,18 @@ class CtypesGoBridge(MahjongBridge):
             next_observation=self._decode_observation(sample.next_observation),
             terminated=bool(sample.terminated),
             truncated=bool(sample.truncated),
+            info=info,
+        )
+
+    def _decode_branch_result(self, result: game_pb2.BranchEvaluationResult) -> BranchResult:
+        info = self._round_outcome_info(result, "round_outcome")
+        return BranchResult(
+            action_id=int(result.action_id),
+            rewards=self._decode_rewards(result.rewards),
+            terminated=bool(result.terminated),
+            truncated=bool(result.truncated),
+            decisions=int(result.decisions),
+            error=str(result.error),
             info=info,
         )
 

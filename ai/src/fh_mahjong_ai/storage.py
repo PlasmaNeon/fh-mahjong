@@ -413,6 +413,18 @@ def _transitions_to_arrays(transitions: list[Transition]) -> dict[str, np.ndarra
         "steps_to_done": steps_to_done,
         "policy_source_ids": np.asarray([int(t.info.get("policy_source_id", -1)) for t in transitions], dtype=np.int16),
         "policy_values": np.asarray([float(t.info.get("policy_value", np.nan)) for t in transitions], dtype=np.float32),
+        "policy_greedy_action_ids": np.asarray(
+            [int(t.info.get("policy_greedy_action_id", -1)) for t in transitions],
+            dtype=np.int64,
+        ),
+        "policy_sampling_applied": np.asarray(
+            [bool(t.info.get("policy_sampling_applied", False)) for t in transitions],
+            dtype=np.bool_,
+        ),
+        "policy_sampled_from_greedy": np.asarray(
+            [bool(t.info.get("policy_sampled_from_greedy", False)) for t in transitions],
+            dtype=np.bool_,
+        ),
         "sample_weights": np.asarray([float(t.info.get("sample_weight", 1.0)) for t in transitions], dtype=np.float32),
         "terminal_rewards": np.stack([terminal_rewards_for(t) for t in transitions]).astype(np.float32),
         "terminal_is_draw": np.asarray([bool(o.get("is_draw", False)) for o in outcomes], dtype=np.bool_),
@@ -474,6 +486,12 @@ def _policy_source_info(arrays: np.lib.npyio.NpzFile, index: int) -> dict[str, o
         value = float(arrays["policy_values"][index])
         if not np.isnan(value):
             info["policy_value"] = value
+    if "policy_greedy_action_ids" in arrays.files:
+        info["policy_greedy_action_id"] = int(arrays["policy_greedy_action_ids"][index])
+    if "policy_sampling_applied" in arrays.files:
+        info["policy_sampling_applied"] = bool(arrays["policy_sampling_applied"][index])
+    if "policy_sampled_from_greedy" in arrays.files:
+        info["policy_sampled_from_greedy"] = bool(arrays["policy_sampled_from_greedy"][index])
     return info
 
 

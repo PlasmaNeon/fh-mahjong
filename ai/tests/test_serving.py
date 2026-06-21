@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import torch
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.serve_policy import PolicyHolder, observation_from_json
@@ -32,6 +33,85 @@ def test_checkpoint_policy_selects_legal_masked_action(tmp_path: Path) -> None:
 
     assert action.action_id in observation.legal_actions
     assert action.checkpoint_step == 7
+
+
+def test_checkpoint_policy_temperature_sampling_is_seeded(tmp_path: Path) -> None:
+    checkpoint = _checkpoint(tmp_path)
+    first = CheckpointPolicy.from_checkpoint(checkpoint, sample_temperature=1.0, seed=11)
+    second = CheckpointPolicy.from_checkpoint(checkpoint, sample_temperature=1.0, seed=11)
+    mask = np.zeros(204, dtype=np.int8)
+    mask[5:12] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
+        action_mask=mask,
+    )
+
+    first_actions = [first.choose(observation).action_id for _ in range(8)]
+    second_actions = [second.choose(observation).action_id for _ in range(8)]
+
+    assert first_actions == second_actions
+    assert set(first_actions).issubset(set(observation.legal_actions))
+
+
+def test_checkpoint_policy_temperature_sampling_respects_top_k(tmp_path: Path) -> None:
+    checkpoint = _checkpoint(tmp_path)
+    policy = CheckpointPolicy.from_checkpoint(checkpoint, sample_temperature=1.0, sample_top_k=2, seed=13)
+    mask = np.zeros(204, dtype=np.int8)
+    mask[5:12] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
+        action_mask=mask,
+    )
+
+    with torch.inference_mode():
+        planes = torch.from_numpy(observation.planes).unsqueeze(0)
+        scalars = torch.from_numpy(observation.scalars).unsqueeze(0)
+        action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0)
+        logits, _ = policy.model(planes, scalars, action_mask)
+    legal_actions = np.asarray(observation.legal_actions, dtype=np.int64)
+    legal_logits = logits[0, observation.legal_actions].numpy()
+    top_two = set(legal_actions[np.argsort(-legal_logits)[:2]].tolist())
+
+    sampled_actions = {policy.choose(observation).action_id for _ in range(20)}
+
+    assert sampled_actions.issubset(top_two)
+    sampled_choice = policy.choose(observation)
+    assert sampled_choice.greedy_action_id in observation.legal_actions
+    assert sampled_choice.sampling_applied is True
+
+
+def test_checkpoint_policy_family_limited_sampling_keeps_mixed_decisions_greedy(tmp_path: Path) -> None:
+    checkpoint = _checkpoint(tmp_path)
+    sampled = CheckpointPolicy.from_checkpoint(
+        checkpoint,
+        sample_temperature=1.0,
+        sample_top_k=2,
+        sample_action_family="discard",
+        seed=17,
+    )
+    greedy = CheckpointPolicy.from_checkpoint(checkpoint)
+    mask = np.zeros(204, dtype=np.int8)
+    mask[0] = 1
+    mask[5:8] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
+        action_mask=mask,
+    )
+
+    sampled_actions = [sampled.choose(observation).action_id for _ in range(8)]
+    greedy_choice = greedy.choose(observation)
+
+    assert sampled_actions == [greedy_choice.action_id] * 8
+    choice = sampled.choose(observation)
+    assert choice.greedy_action_id == greedy_choice.action_id
+    assert choice.sampling_applied is False
+    assert choice.sampled_from_greedy is False
 
 
 def test_checkpoint_policy_rejects_empty_mask(tmp_path: Path) -> None:

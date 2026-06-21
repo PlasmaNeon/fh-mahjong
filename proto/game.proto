@@ -290,6 +290,32 @@ message EnvStepResponse {
   RoundOutcome round_outcome = 5;
 }
 
+message BranchEvaluationRequest {
+  // Candidate action IDs to evaluate from the current environment decision.
+  // When empty, the bridge evaluates every legal action in the current mask.
+  repeated uint32 action_ids = 1;
+  // For multi-hand match modes, stop the branch at the next hand result and
+  // return that hand's payout instead of rolling to full match end.
+  bool stop_at_round_end = 2;
+  // Optional per-branch decision cap. Zero uses EnvConfig.max_decisions.
+  uint32 max_decisions = 3;
+}
+
+message BranchEvaluationResult {
+  uint32 action_id = 1;
+  repeated float rewards = 2;
+  bool terminated = 3;
+  bool truncated = 4;
+  RoundOutcome round_outcome = 5;
+  uint64 decisions = 6;
+  string error = 7;
+}
+
+message BranchEvaluationResponse {
+  SeatObservation observation = 1;
+  repeated BranchEvaluationResult results = 2;
+}
+
 message TrajectoryRequest {
   uint32 episodes = 1;
   uint64 start_seed = 2;
