@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-Last updated: 2026-06-03
+Last updated: 2026-06-16
 
 This note is the running experiment notebook for the Fenghua Mahjong AI work,
 especially the Chongci reward-learning line. Update this file after every new
@@ -28,18 +28,19 @@ The current answer is a pragmatic, Mortal-style training stack:
 6. promote checkpoints only through duplicate-seat evaluation, not training
    loss, offline agreement, or raw win rate.
 
-The main promoted Chongci checkpoint remains:
+The main promoted Chongci checkpoint is:
 
 ```text
-id: iql_lowlr_selfplay200_epoch003
-path: /root/fh-mahjong-runs/chongci-selfplay-200-ablation-20260522-001945/checkpoints/iql_lowlr_3ep/epoch_003.pt
+id: chongci_broader_mixed_iql_highrisk_pairwise_epoch001
+path: /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
 ```
 
 The latest experiments show a recurring pattern: reward-learning candidates can
-reduce tail losses or look good on a quick screen, but independent gates often
-reverse the signal. The immediate research bottleneck is no longer just "train
-more"; it is evaluation stability, repeated-gate reliability, and separating
-mean-reward improvement from large-loss control.
+improve EV while creating new tail losses unless the data includes enough
+candidate-vs-anchor divergence coverage. The current broader mixed IQL anchor
+is promoted because it improved mean reward, positive-reward rate, and
+large-loss rate on two identical deterministic combined-gate repeats. The next
+work should start from this checkpoint as the new Chongci anchor.
 
 ## Original Motivation And Learning Path
 
@@ -6760,6 +6761,8537 @@ combined-gate first-divergence states, with reward-gap severity shaping. Next
 steps should build on this promoted checkpoint with a larger direct
 counterfactual dataset or a fresh self-play iteration using this checkpoint as
 one of the table policies.
+
+### Experiment: Promoted Anchor Self-Play And Larger Direct-CF Follow-Up
+
+Run:
+
+```text
+self-play:
+  /root/fh-mahjong-runs/chongci-promoted-anchor-selfplay-20260605-185613-bridgefix
+larger direct counterfactual data:
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-20260605-185614-bridgefix
+larger direct counterfactual IQL repeat32:
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-iql-20260605-213733
+larger direct counterfactual IQL repeat8:
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-iql-lowdose-20260605-214843
+```
+
+Question:
+
+After promoting `direct_cf_gap010_q025_policy001_severity`, can we improve the
+new anchor by either:
+
+1. starting a fresh mixed self-play iteration using the promoted checkpoint as
+   one table policy, or
+2. building a larger direct counterfactual dataset from fresh candidate-vs-anchor
+   divergence windows?
+
+Data:
+
+```text
+self-play data:
+  /root/fh-mahjong-runs/chongci-promoted-anchor-selfplay-20260605-185613-bridgefix/data/promoted-anchor-mixed-720000-n200-npz
+  transitions=409337
+
+self-play table policies:
+  seat 0: promoted direct-CF checkpoint
+  seat 1: previous iql_lowlr_selfplay200_epoch003 anchor
+  seat 2: promoted direct-CF checkpoint
+  seat 3: riskreg_discard_t054_w075
+
+larger direct-CF paired trace windows:
+  664000:20
+  674000:20
+  684000:20
+seats:
+  0, 1, 2, 3
+trace pairs per comparison:
+  240
+```
+
+Larger direct-CF trace summaries:
+
+```text
+promoted_anchor vs previous_anchor:
+  divergence_rate=88.75%
+  previous_anchor_better_rate=32.50%
+  mean_delta=-0.0219
+
+promoted_anchor vs riskreg_t054_w075:
+  divergence_rate=96.25%
+  riskreg_t054_w075_better_rate=35.00%
+  mean_delta=-0.0192
+
+promoted_anchor vs riskreg_t054_w050:
+  divergence_rate=96.25%
+  riskreg_t054_w050_better_rate=35.42%
+  mean_delta=-0.0175
+
+promoted_anchor vs riskreg_t0535_w050:
+  divergence_rate=96.25%
+  riskreg_t0535_w050_better_rate=35.00%
+  mean_delta=-0.0192
+```
+
+Larger direct-CF rows:
+
+```text
+gap010:
+  previous_anchor rows=96, positive_terminal_rows=23, mean_reward_gap=0.4724
+  t054w075 rows=107, positive_terminal_rows=26, mean_reward_gap=0.4839
+  t054w050 rows=108, positive_terminal_rows=27, mean_reward_gap=0.4823
+  t0535w050 rows=108, positive_terminal_rows=27, mean_reward_gap=0.4823
+  total rows=419
+
+gap005:
+  previous_anchor rows=124, positive_terminal_rows=27, mean_reward_gap=0.3814
+  t054w075 rows=134, positive_terminal_rows=31, mean_reward_gap=0.4013
+  t054w050 rows=136, positive_terminal_rows=32, mean_reward_gap=0.3981
+  t0535w050 rows=136, positive_terminal_rows=32, mean_reward_gap=0.3981
+  total rows=530
+```
+
+Training:
+
+```text
+self-play iter1:
+  init_checkpoint=/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+  epochs=2
+  lr=2e-5
+  max_transitions=200000
+  direct-CF auxiliary=old gap010 shards repeated 32x
+  MLflow run id=337ced55f30c4fe3a892410220769730
+
+larger direct-CF repeat32:
+  init_checkpoint=/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+  direct-CF auxiliary=new gap010 shards repeated 32x
+  pairwise_q_weight=0.25
+  pairwise_q_margin=0.10
+  pairwise_weight=0.01
+  pairwise_margin=0.05
+  pairwise_reward_delta_weight=0.50
+  pairwise_reward_delta_margin_scale=0.20
+  max_transitions=150000
+  MLflow run id=be146174b8af4118b015a6b2affa281a
+
+larger direct-CF repeat8:
+  same as repeat32, but new gap010 shards repeated 8x
+  MLflow run id=b9093a024d83463387516716e64193c6
+```
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+```
+
+Result:
+
+| checkpoint | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 14.17% |
+| promoted-anchor self-play iter1 epoch2 | -0.0461 | -5.5380 | 46.67% | 15.00% |
+| larger direct-CF gap010 repeat32 | -0.0581 | -6.9720 | 43.33% | 16.67% |
+| larger direct-CF gap010 repeat8 | -0.0367 | -4.4100 | 44.17% | 15.83% |
+
+Decision:
+
+Rejected. None of the follow-up checkpoints beat the promoted direct-CF anchor.
+The repeat8 run was less damaging than repeat32, but it still violated the
+explicit tail guard and lost EV versus the promoted checkpoint.
+
+Interpretation:
+
+The promoted checkpoint remains the current Chongci reward-trained best. Simply
+adding more direct-CF rows from the same EV-up/tail-worse candidate family does
+not improve the promoted policy when training starts from that promoted policy.
+The direct-CF mechanism is still valid because it produced the promoted anchor,
+but this larger follow-up data appears to pull the policy back toward rejected
+candidate behavior. Do not keep sweeping replay repeats for this exact larger
+gap010 setup. The next useful branch needs a different target construction,
+such as filtering direct-CF rows to cases where the promoted anchor is the
+preferred action, separating action families, or building a new divergence set
+against genuinely new candidates rather than the already-rejected riskreg family.
+
+### Experiment: Anchor-Preferred High-Risk Direct-CF Filter
+
+Run:
+
+```text
+filtered direct-CF data:
+  /root/fh-mahjong-runs/chongci-anchor-preferred-direct-cf-20260605-231142
+IQL candidate:
+  /root/fh-mahjong-runs/chongci-anchor-preferred-highrisk-iql-20260605-231252
+```
+
+Question:
+
+Can the larger direct-CF follow-up become useful if we stop training on
+candidate-preferred rows from rejected policies and keep only rows where the
+current promoted anchor was the better policy? A high-risk-only subset was used
+for the training run so the auxiliary target focused on avoided large-loss /
+deal-in cases rather than broad policy preservation.
+
+Code/tooling:
+
+`build_counterfactual_risk_data.py` now supports:
+
+```text
+--preferred-policy <label>
+```
+
+This keeps only rows where the paired-trace counterfactual label selected that
+policy as the preferred side. Regression coverage:
+`ai/tests/test_build_counterfactual_risk_data.py`.
+
+Filtered data:
+
+```text
+anchor-preferred gap010 rows:
+  previous_anchor: 50
+  t054w075: 54
+  t054w050: 54
+  t0535w050: 54
+  total: 212
+
+anchor-preferred high-risk gap010 rows:
+  previous_anchor: 11
+  t054w075: 13
+  t054w050: 13
+  t0535w050: 13
+  total: 50
+
+anchor-preferred gap005 rows:
+  previous_anchor: 61
+  t054w075: 65
+  t054w050: 65
+  t0535w050: 65
+  total: 256
+
+anchor-preferred high-risk gap005 rows:
+  previous_anchor: 11
+  t054w075: 15
+  t054w050: 15
+  t0535w050: 15
+  total: 56
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-anchor-preferred-highrisk-iql-20260605-231252/checkpoints/anchor_preferred_highrisk_gap010_q025_policy001_severity_repeat64/epoch_001.pt
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+pairwise data:
+  anchor-preferred high-risk gap010 shards repeated 64x
+pairwise_q_weight / margin:
+  0.25 / 0.10
+pairwise_weight / margin:
+  0.01 / 0.05
+pairwise_reward_delta_weight:
+  0.50
+pairwise_reward_delta_margin_scale:
+  0.20
+MLflow run id:
+  48253a5edff2409d880406f24ecae982
+```
+
+Training diagnostics:
+
+```text
+logged pairwise_count:
+  75 to 88
+pairwise_q_loss:
+  0.1122 at step 10
+  0.0517 at step 20
+  0.0216 at step 30
+```
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10
+  544000:10
+  554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-anchor-preferred-highrisk-iql-20260605-231252/reports/anchor_preferred_highrisk_gap010_repeat64_combined_gate_534_544_554_n10.json
+MLflow eval run id:
+  640996c532674f008e4bef20f58bdee3
+```
+
+Result:
+
+| checkpoint | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 14.17% |
+| anchor-preferred high-risk gap010 repeat64 | -0.0624 | -7.4860 | 43.33% | 17.50% |
+
+Decision:
+
+Rejected. Filtering to promoted-anchor-preferred high-risk rows did not fix the
+larger direct-CF family. It worsened EV and tail risk more than the all-row
+repeat8 candidate.
+
+Interpretation:
+
+This closes the "same rejected candidate family + pairwise IQL target"
+direction for now. Even when rows only reinforce the promoted anchor on
+high-risk divergences, the resulting Q/policy update moves the deployed greedy
+policy in a worse direction. The issue is likely not just candidate-preferred
+rows; the offline pairwise objective is too blunt for these sparse
+first-divergence contexts once the promoted checkpoint is already strong.
+
+Next useful branch:
+
+1. Analyze the rejected candidate's first-divergence families and large-loss
+   seeds to find whether one action family, especially discard, is responsible.
+2. Build an action-family-specific target only if that analysis identifies a
+   narrow failure mode.
+3. Otherwise generate a genuinely new candidate family or move to critic-side
+   diagnostics instead of more pairwise IQL target variants.
+
+### Diagnostic: Larger Direct-CF Tail-Failure Shape
+
+Run:
+
+```text
+remote diagnostic JSON:
+  /tmp/chongci_tail_diagnostic_20260606.json
+paired-trace source:
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-20260605-185614-bridgefix/reports
+evaluation reports:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/reports/direct_cf_gap010_q025_policy001_severity_combined_gate_534_544_554_n10.json
+  /root/fh-mahjong-runs/chongci-promoted-anchor-selfplay-20260605-185613-bridgefix/reports/promoted_anchor_selfplay_iter1_epoch002_combined_gate_534_544_554_n10.json
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-iql-20260605-213733/reports/larger_direct_cf_gap010_q025_policy001_severity_combined_gate_534_544_554_n10.json
+  /root/fh-mahjong-runs/chongci-larger-direct-cf-iql-lowdose-20260605-214843/reports/larger_direct_cf_gap010_repeat8_q025_policy001_severity_combined_gate_534_544_554_n10.json
+  /root/fh-mahjong-runs/chongci-anchor-preferred-highrisk-iql-20260605-231252/reports/anchor_preferred_highrisk_gap010_repeat64_combined_gate_534_544_554_n10.json
+```
+
+Question:
+
+Before training another branch, do the rejected follow-up candidates show a
+narrow action-family failure that justifies an action-family-specific risk
+target?
+
+Method:
+
+The diagnostic reused existing `paired_trace.py` first-divergence summaries and
+combined-gate evaluation reports. It compared:
+
+- counterfactual preferred/avoided action families in the larger direct-CF
+  paired traces,
+- high-risk first-divergence labels,
+- large-loss seed/seat sets for the promoted anchor and rejected follow-ups,
+- action-family rates inside large-loss episodes.
+
+First-divergence label summary:
+
+| avoided action family | all labels | high-risk labels |
+| --- | ---: | ---: |
+| discard | 641 | 141 |
+| chii | 35 | 16 |
+| pass | 19 | 7 |
+| pon | 1 | 0 |
+
+Top preferred-to-avoided family pairs:
+
+| preferred -> avoided | count |
+| --- | ---: |
+| discard -> discard | 641 |
+| pass -> chii | 23 |
+| chii -> chii | 12 |
+| chii -> pass | 11 |
+| pon -> pass | 8 |
+| pass -> pon | 1 |
+
+Tag counts:
+
+| tag | count |
+| --- | ---: |
+| worse_reward | 696 |
+| avoided_large_loss | 164 |
+| new_large_loss | 61 |
+
+Combined-gate tail comparison:
+
+| checkpoint | mean reward | large-loss rate | added large losses vs anchor | recovered large losses vs anchor |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | 14.17% | 0 | 0 |
+| self-play iter1 epoch002 | -0.0461 | 15.00% | 3 | 2 |
+| larger direct-CF repeat32 | -0.0581 | 16.67% | 5 | 2 |
+| larger direct-CF repeat8 | -0.0367 | 15.83% | 4 | 2 |
+| anchor-preferred high-risk repeat64 | -0.0624 | 17.50% | 5 | 1 |
+
+Repeated added large-loss seed/seats:
+
+```text
+self-play iter1 epoch002:
+  534000:1, 534002:0, 534005:2
+larger direct-CF repeat32:
+  534000:1, 534002:0, 534005:2, 544009:1, 554004:3
+larger direct-CF repeat8:
+  534000:1, 534002:0, 544009:1, 554004:3
+anchor-preferred high-risk repeat64:
+  534000:0, 534000:1, 534002:0, 534002:1, 544009:1
+```
+
+Large-loss action-family rates were nearly identical to the anchor. The largest
+differences were on the order of a few tenths of a percentage point, not a clear
+family-level behavioral shift:
+
+```text
+promoted anchor large-loss family rates:
+  discard 78.98%, pass 11.64%, chii 4.18%, pon 2.93%, win 1.91%, kan 0.35%
+
+larger direct-CF repeat8 large-loss family deltas vs anchor:
+  discard +0.21 pp, pass -0.33 pp, chii +0.10 pp, pon +0.03 pp, kan +0.03 pp
+
+anchor-preferred high-risk repeat64 large-loss family deltas vs anchor:
+  discard +0.14 pp, pass -0.05 pp, chii -0.10 pp, pon -0.06 pp, kan +0.03 pp
+```
+
+Decision:
+
+Do not start an action-family-specific risk calibration branch from these
+aggregate reports. The first-divergence labels are mostly discard-vs-discard,
+but the rejected checkpoints do not show a meaningful aggregate action-family
+rate shift in the large-loss episodes. A broad "penalize discard risk harder"
+target would likely repeat the same scalar-loss problem under a narrower name.
+
+Interpretation:
+
+The failure is seed-local and context-specific, not family-global. The repeated
+new large losses cluster around a small set of seed/seats, especially
+`534000:1`, `534002:0`, and `544009:1`. The next useful data product is an
+exact first-divergence inspection for those added large-loss cases: state
+scalars, legal mask, chosen action ids, action logits/Q deltas, and downstream
+reward. Only after that should we decide whether the issue is discard danger,
+call/pass timing, score-pressure miscalibration, or a value overestimate.
+
+Next useful branch:
+
+1. Build a small deterministic failure-slice report for the repeated added
+   large-loss seed/seats.
+2. Include first-divergence action ids, action families, selected tile ids,
+   visible score-pressure scalars, shanten/ukeire scalars, top masked Q actions,
+   and final reward deltas.
+3. Train only if the failure-slice report shows a stable pattern. Otherwise
+   generate a genuinely new candidate family rather than continuing the larger
+   direct-CF pairwise line.
+
+### Diagnostic: Repeated Added-Loss Failure Slice
+
+Run:
+
+```text
+remote run:
+  /root/fh-mahjong-runs/chongci-failure-slice-20260606
+reports:
+  /root/fh-mahjong-runs/chongci-failure-slice-20260606/reports/promoted_anchor_vs_larger_direct_cf_repeat8_failure_slice.json
+  /root/fh-mahjong-runs/chongci-failure-slice-20260606/reports/promoted_anchor_vs_anchor_preferred_highrisk_repeat64_failure_slice.json
+compact summaries:
+  /tmp/chongci_failure_slice_summary_20260606.json
+  /tmp/chongci_failure_slice_q_summary_20260606.json
+```
+
+Question:
+
+On the repeated added large-loss seed/seats, what exactly changes at the first
+divergence? Is the problem broad family selection, Q/value ranking, or small
+policy-logit flips between discard choices?
+
+Seed/seat slice:
+
+```text
+seeds:
+  534000, 534002, 534005, 544009, 554004
+seats:
+  0, 1, 2, 3
+episodes per comparison:
+  20
+```
+
+Result:
+
+| comparison | divergence rate | candidate better rate | mean reward delta |
+| --- | ---: | ---: | ---: |
+| promoted anchor vs larger direct-CF repeat8 | 95.00% | 15.00% | -0.1418 |
+| promoted anchor vs anchor-preferred high-risk repeat64 | 95.00% | 20.00% | -0.1885 |
+
+First-divergence families:
+
+| comparison | family pairs |
+| --- | --- |
+| repeat8 | `discard->discard: 16`, `chii->pass: 2`, `pon->pass: 1` |
+| anchor-preferred high-risk | `discard->discard: 16`, `chii->pass: 2`, `pon->pass: 1` |
+
+Counterfactual labels:
+
+| comparison | labeled pairs | high-risk pairs | avoided family summary |
+| --- | ---: | ---: | --- |
+| repeat8 | 15 | 5 | `discard: 12`, `pass: 2`, `pon: 1` |
+| anchor-preferred high-risk | 14 | 6 | `discard: 11`, `pass: 2`, `pon: 1` |
+
+Worst first-divergence examples:
+
+| comparison | seed:seat | anchor reward | candidate reward | delta | anchor action | candidate action |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| repeat8 | 534005:3 | 0.863 | -0.375 | -1.238 | discard 3p | discard 3z |
+| repeat8 | 534000:0 | -0.359 | -0.907 | -0.548 | discard 3m | discard 9s |
+| repeat8 | 554004:0 | 0.195 | -0.263 | -0.458 | discard 1z | discard 4s |
+| anchor-preferred high-risk | 534002:1 | 0.987 | -1.278 | -2.265 | discard 3s | discard 2s |
+| anchor-preferred high-risk | 554004:0 | 0.195 | -0.585 | -0.780 | discard 4m | discard 3s |
+| anchor-preferred high-risk | 534000:0 | -0.359 | -1.095 | -0.736 | discard 4p | discard 2s |
+
+Policy/Q readout:
+
+The deployed action is selected by masked policy logits, not by the Q head. In
+the worst failure states, the follow-up checkpoints mostly flip the top two
+policy-logit discards:
+
+```text
+repeat8, 534000:0:
+  anchor policy top:    discard 3m, discard 9s, discard 1s
+  candidate policy top: discard 9s, discard 3m, discard 1s
+
+repeat8, 554004:0:
+  anchor policy top:    discard 1z, discard 4s, discard 9s
+  candidate policy top: discard 4s, discard 1z, discard 9s
+
+anchor-preferred high-risk, 534002:1:
+  anchor policy top:    discard 3s, discard 2s, discard 1m
+  candidate policy top: discard 2s, discard 3s, discard 1m
+
+anchor-preferred high-risk, 544009:1:
+  anchor policy top:    discard 6s, discard 7m, discard 7s
+  candidate policy top: discard 7m, discard 6s, discard 7s
+```
+
+The Q head does not consistently explain these served-action flips. For
+example, on `534000:0` in the repeat8 slice, the candidate action had higher
+anchor-model Q than the anchor action, but the realized outcome was worse after
+the policy flip. On `554004:3`, the anchor action had much higher Q and remained
+the better outcome. This means a simple "use Q margin" rule is not reliable
+enough by itself; the issue is local policy ranking under delayed reward noise.
+
+Decision:
+
+Do not train another global pairwise or family-level objective from this data.
+The failure is now narrow enough to target directly: near-tie discard policy
+flips in high-impact Chongci states. The next training candidate should preserve
+the promoted anchor's top discard when:
+
+- both policies choose discard,
+- the candidate only wins the policy-logit ranking by a small margin,
+- the promoted anchor has better realized reward on the paired trace,
+- the case is a new large loss or large reward regression.
+
+Interpretation:
+
+This is different from the earlier broad risk regularizer. The target should
+not say "discard is risky" or "all candidate divergence is bad." It should say:
+when the current promoted anchor and a follow-up checkpoint disagree between
+two legal discards and the follow-up creates a large regression, add a local
+policy-margin preservation example for the anchor discard. This is closer to
+behavioral guardrail distillation than reward shaping.
+
+Next useful branch:
+
+1. Build a small near-tie discard regression dataset from the failure-slice
+   reports and any larger paired traces with observation arrays.
+2. Train a low-dose policy-margin preservation candidate from the promoted
+   anchor, without changing the Q objective.
+3. Gate on the same combined seed windows. Promote only if mean reward and
+   large-loss rate are no worse than the promoted direct-CF anchor.
+
+### Experiment: Failure-Slice Discard Policy-Margin Candidate
+
+Run:
+
+```text
+failure-slice paired traces:
+  /root/fh-mahjong-runs/chongci-failure-slice-20260606
+training run:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-000641
+checkpoint:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-000641/checkpoints/failure_slice_discard_policy_margin_w010_m005/epoch_001.pt
+```
+
+Question:
+
+Can a very narrow policy-margin preservation branch fix the repeated
+discard-vs-discard large-loss regressions without touching the Q-margin
+objective?
+
+Data:
+
+The data builder gained action-family filters:
+
+```text
+--preferred-action-family
+--avoided-action-family
+```
+
+The candidate used only rows satisfying:
+
+```text
+preferred_policy = promoted_anchor
+preferred_action_family = discard
+avoided_action_family = discard
+high_risk_only = true
+min_reward_gap = 0.1
+```
+
+Filtered rows:
+
+| source report | base rows |
+| --- | ---: |
+| promoted anchor vs larger direct-CF repeat8 failure slice | 3 |
+| promoted anchor vs anchor-preferred high-risk repeat64 failure slice | 5 |
+| merged base rows | 8 |
+| repeated auxiliary rows | 512 |
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+epochs:
+  1
+learning rate:
+  2e-5
+pairwise_weight / margin:
+  0.01 / 0.05
+pairwise_q_weight:
+  0.0
+pairwise_reward_delta_weight / margin_scale / clip:
+  0.2 / 0.05 / 1.0
+MLflow training run:
+  31704ddbe7f54eb19fc16ed84640f608
+```
+
+Training diagnostics:
+
+```text
+pairwise_count:
+  12 to 19 per logged batch
+pairwise_loss:
+  0.0000 throughout
+pairwise_q_loss:
+  logged diagnostically but not weighted
+```
+
+Interpretation of training diagnostics:
+
+The policy-margin loss being zero means the promoted-anchor initialized policy
+already satisfied this specific margin on sampled auxiliary rows. The run still
+changed the model through the base IQL update, but the intended narrow
+guardrail did not actively train.
+
+Evaluation:
+
+An initial evaluation without `--online-episodes` produced `online: null`. A
+second evaluation with `--online-episodes 30` but without
+`--max-steps-per-episode 20000` truncated all matches and produced all-zero
+rewards. Both are invalid. The accepted evaluation is the corrected run:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+max steps per episode:
+  20000
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-000641/reports/failure_slice_discard_policy_margin_w010_m005_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  bcc795fc45054200914c2c9ecc3721c1
+```
+
+Result:
+
+| checkpoint | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 14.17% |
+| failure-slice discard policy-margin | -0.0282 | -3.3850 | 45.00% | 15.83% |
+
+Large-loss delta:
+
+```text
+added large-loss seed/seats:
+  534002:0, 544009:2
+recovered large-loss seed/seats:
+  none
+```
+
+Decision:
+
+Rejected. The candidate preserved positive-reward rate but worsened EV and
+large-loss rate versus the promoted direct-CF anchor.
+
+Interpretation:
+
+This closes the first tiny near-tie policy-margin attempt. The result is useful
+because it shows that simply replaying the known failure-slice rows as a
+low-dose policy-margin auxiliary is not enough; the pairwise policy loss was
+already satisfied at initialization. The next branch should not increase this
+same loss weight blindly. It needs either:
+
+1. a stricter active condition that actually produces non-zero policy loss, such
+   as larger margins or logit-rank preservation against the candidate action, or
+2. a new candidate-generation path that creates fresh paired traces where the
+   promoted anchor is not already margin-satisfied.
+
+### Diagnostic And Experiment: Scored First-Divergence Trace And Margin025
+
+Run:
+
+```text
+scored trace:
+  /root/fh-mahjong-runs/chongci-scored-failure-slice-20260606/reports/promoted_anchor_vs_failure_slice_policy_margin_added_loss_scored_trace.json
+training run:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-active025
+checkpoint:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-active025/checkpoints/failure_slice_discard_policy_margin_w010_m025/epoch_001.pt
+```
+
+Question:
+
+Can compact policy/Q score diagnostics explain why the margin005 branch still
+created added large losses? If the anchor's first-divergence policy margins are
+small, does a stricter policy-margin setting help?
+
+Code/tooling:
+
+`paired_trace.py` now supports:
+
+```text
+--include-action-scores
+--action-score-top-k
+```
+
+This records compact top masked policy logits and top masked Q values for each
+recorded step. It is intentionally separate from `--include-observation-arrays`
+so first-divergence analysis does not always require huge tensor-bearing
+reports.
+
+Scored trace:
+
+```text
+comparison:
+  promoted anchor vs failure_slice_discard_policy_margin_w010_m005
+seed/seat slice:
+  534002 and 544009, seats 0-3
+pairs:
+  8
+divergence rate:
+  87.50%
+candidate better rate:
+  25.00%
+mean delta:
+  -0.1209
+family pairs:
+  discard->discard: 5
+  chii->chii: 1
+  chii->pass: 1
+```
+
+Key scored examples:
+
+```text
+544009:2:
+  reward delta: -0.728
+  anchor action: discard 1p
+  candidate action: discard 7p
+  anchor policy top:    discard 1p 3.947, discard 7p 3.809
+  candidate policy top: discard 7p 3.840, discard 1p 3.822
+
+534002:0:
+  reward delta: -0.098
+  anchor action: discard 1p
+  candidate action: discard 9p
+  anchor policy top:    discard 1p -0.858, discard 9p -0.879
+  candidate policy top: discard 9p -0.766, discard 1p -1.063
+
+534002:1:
+  reward delta: -0.216
+  anchor action: chii 6m7m8m
+  candidate action: chii 7m8m9m
+  anchor policy top:    chii 6m7m8m -0.498, chii 7m8m9m -0.629
+  candidate policy top: chii 7m8m9m -0.571, chii 6m7m8m -0.580
+```
+
+Direct margin check on the original repeated auxiliary shard showed several
+anchor-preferred rows had small anchor logit margins:
+
+```text
+534000:1 discard 1z over discard 3s: 0.028
+554004:3 discard 1m over discard 1p: 0.183
+534002:0 discard 6p over discard 3m: 0.114
+534000:1 discard 9m over discard 9s: 0.194
+534002:1 discard 3s over discard 2s: 0.164
+```
+
+Training:
+
+Same setup as margin005, except:
+
+```text
+pairwise_margin:
+  0.25
+pairwise_weight:
+  0.01
+pairwise_q_weight:
+  0.0
+MLflow training run:
+  2f8100be6e6845cf9ac157a9d73bf553
+```
+
+Training diagnostics:
+
+Logged `pairwise_loss` was still `0.0000` by the first logged step, but the
+direct pre-training margin check showed the stricter margin was active for some
+rows at initialization. The most likely explanation is that those rows were
+satisfied before the first logged interval.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+max steps per episode:
+  20000
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-failure-slice-policy-margin-20260606-active025/reports/failure_slice_discard_policy_margin_w010_m025_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  bccbc227177b4cf3bd2b85d06f2d8a10
+```
+
+Result:
+
+| checkpoint | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 14.17% |
+| margin005 | -0.0282 | -3.3850 | 45.00% | 15.83% |
+| margin025 | -0.0275 | -3.3030 | 45.83% | 15.00% |
+
+Large-loss delta:
+
+```text
+margin025 added vs promoted anchor:
+  534002:0
+margin025 recovered vs promoted anchor:
+  none
+margin025 recovered vs margin005:
+  544009:2
+```
+
+Decision:
+
+Rejected. Margin025 is directionally better than margin005 on positive-rate and
+large-loss rate, but it still loses EV and tail risk versus the promoted
+direct-CF anchor.
+
+Interpretation:
+
+The stricter policy margin partially helped: it removed one of margin005's added
+large losses. But the branch still does not meet the promotion guard, and the
+remaining failure `534002:0` shows that preserving a few known discard rankings
+is too local to protect the full gate. Do not keep sweeping only
+`pairwise_margin` on this eight-row shard.
+
+Next useful branch:
+
+1. Keep `--include-action-scores` as the default diagnostic tool for any future
+   paired-trace failure slice.
+2. Generate a larger scored failure dataset from fresh candidate families, not
+   just the same eight-row failure slice.
+3. If adding a new objective, make it teacher-policy distillation on selected
+   high-risk states rather than another pairwise-margin sweep.
+
+### Diagnostic And Experiment: Full Scored Trace And Preferred-Action Teacher Replay
+
+Run:
+
+```text
+full scored tensor trace:
+  /root/fh-mahjong-runs/chongci-larger-scored-failure-data-20260606/reports/promoted_anchor_vs_margin025_combined_gate_scored_tensor_trace.json
+teacher data:
+  /root/fh-mahjong-runs/chongci-larger-scored-failure-data-20260606/data/promoted_anchor_teacher_discard_gap010
+repeated teacher data:
+  /root/fh-mahjong-runs/chongci-larger-scored-failure-data-20260606/data/promoted_anchor_teacher_discard_gap010_repeat512
+training run:
+  /root/fh-mahjong-runs/chongci-teacher-discard-distill-20260606-020712
+checkpoint:
+  /root/fh-mahjong-runs/chongci-teacher-discard-distill-20260606-020712/checkpoints/teacher_discard_gap010_repeat512_bc005/epoch_001.pt
+```
+
+Question:
+
+Can a larger scored tensor trace provide enough promoted-anchor-preferred
+discard examples to train teacher-policy distillation instead of pairwise-margin
+ranking?
+
+Scored trace:
+
+```text
+comparison:
+  promoted anchor vs margin025
+seed windows:
+  534000:10, 544000:10, 554000:10
+seats:
+  0, 1, 2, 3
+pairs:
+  120
+divergence rate:
+  67.50%
+candidate better rate:
+  20.00%
+mean reward delta:
+  -0.0252
+```
+
+Counterfactual labels:
+
+```text
+labeled pairs:
+  51
+high-risk labeled pairs:
+  9
+preferred->avoided families:
+  discard->discard: 44
+  chii->chii: 2
+  chii->pass: 2
+  pass->chii: 1
+  pass->pon: 2
+tags:
+  worse_reward: 51
+  avoided_large_loss: 9
+  new_large_loss: 1
+```
+
+The only new large-loss case versus the promoted anchor in this trace was:
+
+```text
+534002:0
+  reward delta: -0.098
+  first divergence index: 22
+  anchor action: discard 1p
+  candidate action: discard 9p
+```
+
+Reusable teacher rows:
+
+```text
+preferred_policy = promoted_anchor
+preferred_action_family = discard
+avoided_action_family = discard
+min_reward_gap = 0.1
+training_target_policy = preferred
+rows:
+  11
+repeated rows:
+  5632
+```
+
+Code/tooling:
+
+`build_counterfactual_risk_data.py` now supports:
+
+```text
+--training-target-policy avoided
+--training-target-policy preferred
+```
+
+Default `avoided` preserves the old risk/negative-example behavior. `preferred`
+sets `action_ids` and `terminal_rewards` from the better policy, so the shard
+can be used as normal `--data` for teacher-policy replay. The builder also now
+emits normal transition arrays (`next_planes`, `next_scalars`,
+`next_action_mask`, `rewards`, `terminated`, `truncated`, `steps_to_done`) so
+these shards can be used by `train_iql --data`, not only `--pairwise-data`.
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+teacher data:
+  promoted_anchor_teacher_discard_gap010_repeat512
+epochs:
+  1
+learning rate:
+  2e-5
+bc_weight:
+  0.05
+pairwise_weight:
+  0.0
+pairwise_q_weight:
+  0.0
+MLflow training run:
+  f6de4d4faa0b444b822b45d9eb9e1efb
+```
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+max steps per episode:
+  20000
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-teacher-discard-distill-20260606-020712/reports/teacher_discard_gap010_repeat512_bc005_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  1bfa7ad826404341885ee58aff3abf94
+```
+
+Result:
+
+| checkpoint | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 14.17% |
+| margin025 | -0.0275 | -3.3030 | 45.83% | 15.00% |
+| teacher discard gap010 repeat512 | -0.0485 | -5.8140 | 45.83% | 18.33% |
+
+Large-loss delta versus promoted anchor:
+
+```text
+added:
+  534000:1
+  534002:0
+  544004:2
+  554001:1
+  554009:0
+  554009:2
+recovered:
+  534005:0
+```
+
+Decision:
+
+Rejected. Direct preferred-action teacher replay improved positive-rate versus
+the anchor, but it badly regressed EV and tail risk.
+
+Interpretation:
+
+This result is worse than margin025. The issue is likely that the teacher rows
+are too narrow and too heavily repeated: they preserve some promoted-anchor
+discard choices but distort nearby policy behavior enough to create new tail
+losses. Do not repeat the same teacher shard with only a larger repeat count or
+larger BC weight.
+
+Next useful branch:
+
+1. Stop training on this `margin025`-derived teacher shard.
+2. Generate fresh candidate families or broaden data collection before another
+   teacher-distillation attempt.
+3. If using teacher replay again, use a larger and more balanced scored dataset
+   with both promoted-anchor wins and candidate wins, then constrain training so
+   it does not only reinforce one side of a narrow failure slice.
+
+### Experiment: Fresh Candidate Family And Balanced Teacher Replay
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051
+```
+
+Question:
+
+What is the current target after rejecting scalar loss stacking and the narrow
+teacher-discard replay branch?
+
+Current target:
+
+Find an EV-improving policy update that does not increase large-loss
+probability versus the promoted anchor. Operationally, generate fresh
+candidate families from the promoted anchor, keep EV-up/tail-worse policies as
+counterfactual data sources, then train a tail-constrained update from the
+actual divergence states. Do not promote a checkpoint only because mean reward
+improves.
+
+Promoted anchor:
+
+```text
+/root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+```
+
+Fresh candidate probes:
+
+| candidate | checkpoint | training run | expectile | temperature | BC weight | quick gate mean | quick positive | quick large-loss |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| base_iql_e075_temp5_bc002 | `/root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/checkpoints/base_iql_e075_temp5_bc002/epoch_001.pt` | `b289ed09bba84c71ba8fbf4f2be59ec2` | 0.75 | 5.0 | 0.02 | -0.0444 | 41.67% | 18.75% |
+| base_iql_e065_temp2_bc010 | `/root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/checkpoints/base_iql_e065_temp2_bc010/epoch_001.pt` | `07c2a4e944c24f699fbbf9b79377fbbc` | 0.65 | 2.0 | 0.10 | -0.0195 | 41.67% | 16.67% |
+
+Quick-screen reports:
+
+```text
+/root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/base_iql_e075_temp5_bc002_quick_gate_534_544_554_n4.json
+/root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/base_iql_e065_temp2_bc010_quick_gate_534_544_554_n4.json
+```
+
+Decision after quick screen:
+
+Neither fresh probe is promotable from the quick screen. The
+`base_iql_e065_temp2_bc010` candidate is the better data source because it is
+less tail-regressive and closer to the anchor while still producing different
+decisions.
+
+Full scored trace for `base_iql_e065_temp2_bc010`:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/promoted_anchor_vs_fresh_e065_temp2_bc010_combined_gate_scored_tensor_trace.json
+evaluated pairs:
+  120
+divergence rate:
+  70.83%
+candidate better:
+  25.00%
+same reward:
+  59.17%
+reward delta mean:
+  +0.0063
+reward delta sum:
+  +0.7570
+```
+
+Full scored-trace result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 17 / 120 | 14.17% |
+| base_iql_e065_temp2_bc010 | 0.0040 | 0.4790 | 46.67% | 19 / 120 | 15.83% |
+
+New large-loss cases introduced by the fresh candidate:
+
+```text
+534000:1  delta=-0.314  anchor=discard 7s       candidate=discard 1z
+534005:2  delta=-1.250  anchor=chii 5p6p7p      candidate=pass
+```
+
+Counterfactual rows from the scored trace:
+
+```text
+labeled pairs:
+  49
+high-risk pairs:
+  10
+family pairs:
+  chii->chii: 1
+  chii->pass: 6
+  discard->discard: 72
+  kan->discard: 1
+  pon->chii: 2
+  pon->pass: 3
+preferred-to-avoided pairs:
+  discard->discard: 37
+  pass->chii: 3
+  pass->pon: 3
+  chii->pass: 3
+  chii->pon: 1
+  chii->chii: 1
+  pon->chii: 1
+tags:
+  worse_reward: 49
+  avoided_large_loss: 10
+  new_large_loss: 2
+```
+
+Balanced teacher data:
+
+```text
+source trace:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/promoted_anchor_vs_fresh_e065_temp2_bc010_combined_gate_scored_tensor_trace.json
+base dataset:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/balanced_teacher_gap010
+expanded dataset:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/balanced_teacher_gap010_repeat128
+target policy:
+  preferred action from either anchor or candidate
+minimum reward gap:
+  0.1
+base rows:
+  20
+anchor-preferred rows:
+  7
+candidate-preferred rows:
+  13
+expanded rows:
+  2560
+mean reward gap:
+  0.2699
+max reward gap:
+  1.25
+```
+
+Balanced teacher training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/checkpoints/balanced_teacher_gap010_repeat128_bc002/epoch_001.pt
+MLflow training run:
+  7114b4eecc014ff7a7cfe15ec2c84b47
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+teacher data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/balanced_teacher_gap010_repeat128
+max transitions:
+  200000
+epochs:
+  1
+learning rate:
+  2e-5
+expectile:
+  0.7
+temperature:
+  3.0
+BC weight:
+  0.02
+pairwise weight:
+  0.0
+pairwise Q weight:
+  0.0
+```
+
+Balanced teacher evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/balanced_teacher_gap010_repeat128_bc002_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  2cf45c5bfa22411b9bf4f9ca49f7a8ff
+```
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 17 / 120 | 14.17% |
+| fresh base_iql_e065_temp2_bc010 | 0.0040 | 0.4790 | 46.67% | 19 / 120 | 15.83% |
+| balanced teacher gap010 repeat128 bc002 | 0.0204 | 2.4460 | 47.50% | 20 / 120 | 16.67% |
+
+Balanced teacher large-loss delta versus promoted anchor:
+
+```text
+added:
+  534000:1
+  534002:0
+  534005:1
+  544009:2
+recovered:
+  534005:0
+```
+
+Decision:
+
+Rejected for promotion. The balanced teacher candidate improves EV and
+positive-reward rate, but worsens large-loss probability from 14.17% to 16.67%.
+This violates the current promotion rule.
+
+Interpretation:
+
+The fresh candidate and the balanced teacher candidate are both useful because
+they expose EV-up/tail-worse decisions from the current promoted anchor. They
+are not useful as promoted checkpoints yet. This confirms the target should be
+tail-constrained EV improvement: preserve the EV gains from the balanced
+teacher branch while explicitly blocking or retraining the added large-loss
+decisions.
+
+Next useful branch:
+
+1. Build a tail-constrained data product from the added large-loss seed/seats
+   (`534000:1`, `534002:0`, `534005:1`, `534005:2`, `544009:2`) plus recovered
+   cases such as `534005:0`.
+2. Train against those exact divergence states with a rule that EV-up actions
+   are only accepted when they do not increase large-loss probability versus
+   the promoted anchor.
+3. Use the same deterministic combined gate as the promotion guard. The current
+   promoted anchor remains unchanged until a candidate improves EV/positive rate
+   without worsening large-loss rate.
+
+### Experiment: Targeted High-Risk Constraint On Balanced Teacher
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735
+```
+
+Question:
+
+Can we keep some of the balanced-teacher EV gain while directly constraining the
+two fresh-candidate large-loss divergences where the promoted anchor was the
+preferred side?
+
+Data:
+
+```text
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+balanced teacher data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/balanced_teacher_gap010_repeat128
+anchor high-risk base data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/anchor_highrisk_gap010
+anchor high-risk repeated data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/anchor_highrisk_gap010_repeat512
+source trace:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/reports/promoted_anchor_vs_fresh_e065_temp2_bc010_combined_gate_scored_tensor_trace.json
+```
+
+High-risk shard:
+
+```text
+preferred policy:
+  promoted_anchor
+training target:
+  preferred action
+high-risk only:
+  true
+minimum reward gap:
+  0.1
+base rows:
+  2
+repeated rows:
+  1024
+mean reward gap:
+  0.7820
+max reward gap:
+  1.25
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/checkpoints/tail_balanced_highrisk_gap010/epoch_001.pt
+MLflow training run:
+  60a23635002348aa903f6a3154f5864a
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+epochs:
+  1
+max transitions per dataset:
+  200000
+learning rate:
+  2e-5
+expectile:
+  0.7
+temperature:
+  3.0
+BC weight:
+  0.02
+pairwise weight:
+  0.01
+pairwise margin:
+  0.05
+pairwise Q weight:
+  0.25
+pairwise Q margin:
+  0.1
+pairwise reward-delta weight:
+  0.5
+pairwise reward-delta margin scale:
+  0.2
+```
+
+Training health:
+
+Pairwise Q supervision was active. The logged pairwise counts were non-zero
+throughout the epoch and `pairwise_q_loss` dropped from `0.1368` near step 10
+to `0.0006` near step 40. This confirms the high-risk rows were seen by the
+optimizer.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/reports/tail_balanced_highrisk_gap010_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  f407ce9366d04903a5d39dce8fd0a0d6
+```
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 17 / 120 | 14.17% |
+| balanced teacher gap010 repeat128 bc002 | 0.0204 | 2.4460 | 47.50% | 20 / 120 | 16.67% |
+| tail balanced highrisk gap010 | -0.0200 | -1.8180 | 45.83% | 19 / 120 | 15.83% |
+
+Decision:
+
+Rejected. The explicit high-risk anchor rows reduced the balanced-teacher tail
+regression from `20 / 120` to `19 / 120`, but the candidate still worsened the
+promoted anchor tail count of `17 / 120` and also lost mean reward versus the
+anchor.
+
+Interpretation:
+
+This confirms that two repeated high-risk rows are not enough to make the
+balanced-teacher update tail-safe. The branch is useful because it shows the
+direction is mechanically active, but it should not be repeated with only a
+larger repeat factor. The next useful data source needs more actual
+candidate-vs-anchor divergence windows, especially the balanced-teacher
+candidate's own added large-loss states.
+
+Next useful branch:
+
+1. Generate a scored tensor paired trace between the promoted anchor and
+   `tail_balanced_highrisk_gap010`.
+2. Build a larger high-risk anchor-preferred shard from that trace and the
+   balanced-teacher trace, not just the original two fresh-candidate failures.
+3. Prefer a larger direct counterfactual dataset over more repeat-count tuning.
+
+### Experiment: Expanded Tail-Candidate High-Risk Constraint
+
+Run:
+
+```text
+/root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444
+```
+
+Question:
+
+Does adding a second high-risk direct-CF shard from
+`promoted_anchor` versus `tail_balanced_highrisk_gap010` close the remaining
+large-loss gap to the promoted anchor?
+
+Paired trace:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/reports/promoted_anchor_vs_tail_balanced_highrisk_gap010_scored_tensor_trace.json
+left:
+  promoted_anchor
+right:
+  tail_balanced_highrisk_gap010
+pairs:
+  120
+complete:
+  true
+divergence rate:
+  95.83%
+tail_balanced_highrisk_gap010 better:
+  37.50%
+same reward:
+  27.50%
+labeled counterfactual pairs:
+  87
+avoided-large-loss labels:
+  17
+new-large-loss labels:
+  4
+```
+
+New high-risk shard:
+
+```text
+source:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/data/anchor_highrisk_tail_candidate_gap010
+repeated:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/data/anchor_highrisk_tail_candidate_gap010_repeat512
+preferred policy:
+  promoted_anchor
+training target:
+  preferred action
+high-risk only:
+  true
+minimum reward gap:
+  0.1
+base rows:
+  4
+repeated rows:
+  2048
+mean reward gap:
+  0.5037
+max reward gap:
+  1.4660
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444/checkpoints/tail_balanced_highrisk2_gap010/epoch_001.pt
+MLflow training run:
+  f59aff0a1fff4f639ba253695ac4e289
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+balanced teacher data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/balanced_teacher_gap010_repeat128
+old high-risk data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/anchor_highrisk_gap010_repeat512
+new high-risk data:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/data/anchor_highrisk_tail_candidate_gap010_repeat512
+epochs:
+  1
+max transitions per dataset:
+  200000
+learning rate:
+  2e-5
+expectile:
+  0.7
+temperature:
+  3.0
+BC weight:
+  0.02
+pairwise weight:
+  0.01
+pairwise margin:
+  0.05
+pairwise Q weight:
+  0.25
+pairwise Q margin:
+  0.1
+pairwise reward-delta weight:
+  0.5
+pairwise reward-delta margin scale:
+  0.2
+```
+
+Training health:
+
+Pairwise Q supervision was active again. Logged pairwise counts were non-zero
+(`110` to `136` sampled rows per logged batch), and `pairwise_q_loss` dropped
+from `0.1360` at step 10 to `0.0005` at step 50.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444/reports/tail_balanced_highrisk2_gap010_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  4f25b7a26a2d46a190ae5a236db27b67
+```
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | -0.0023 | -0.2780 | 45.00% | 17 / 120 | 14.17% |
+| tail balanced highrisk gap010 | -0.0200 | -1.8180 | 45.83% | 19 / 120 | 15.83% |
+| tail balanced highrisk2 gap010 | -0.0300 | -3.7330 | 46.67% | 18 / 120 | 15.00% |
+
+Decision:
+
+Rejected. The expanded high-risk shard improves tail risk versus the prior
+targeted candidate, but it still worsens the promoted anchor's large-loss count
+from `17 / 120` to `18 / 120`, and mean reward is also worse than the anchor.
+
+Interpretation:
+
+The direct-CF high-risk constraints are mechanically active and move tail risk
+in the expected direction, but this data family is still too small and too
+reactive. Repeating a handful of high-risk rows can partially repair a rejected
+candidate, but it does not yet produce a promotable update. The next branch
+should gather broader fresh candidate-vs-anchor divergence data rather than
+adding another repeat-count or nearby pairwise-weight tweak to this same shard.
+
+Next useful branch:
+
+1. Stop extending this specific high-risk replay stack unless new divergence
+   data is added.
+2. Generate a broader fresh candidate family or mixed self-play batch from the
+   promoted anchor plus the EV-up/tail-worse rejected candidates.
+3. Build a larger direct-CF dataset from many actual divergence windows, then
+   train with the same deterministic promotion guard.
+
+### Experiment: Broader Mixed Self-Play IQL Promotion
+
+Run:
+
+```text
+self-play:
+  /root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601
+training:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720
+```
+
+Question:
+
+Can broader fresh mixed self-play from the promoted anchor plus the EV-up /
+tail-worse rejected candidate family produce a tail-safe EV improvement, instead
+of repeatedly tuning the same tiny high-risk shard?
+
+Data generation:
+
+```text
+output:
+  /root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz
+episodes:
+  200
+start seed:
+  760000
+transitions:
+  409882
+shards:
+  9
+seat 0:
+  promoted_anchor
+seat 1:
+  fresh_base_iql_e065_temp2_bc010
+seat 2:
+  balanced_teacher_gap010_repeat128_bc002
+seat 3:
+  tail_balanced_highrisk2_gap010
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+MLflow training run:
+  9b0f942e7c84483b9ed9329c467363d3
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-targeted-divergence-data-20260605-015622/checkpoints/direct_cf_gap010_q025_policy001_severity/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+fresh mixed data:
+  /root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz
+pairwise-only high-risk data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/anchor_highrisk_gap010_repeat512
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/data/anchor_highrisk_tail_candidate_gap010_repeat512
+epochs:
+  1
+max transitions per dataset:
+  200000
+learning rate:
+  2e-5
+expectile:
+  0.7
+temperature:
+  3.0
+BC weight:
+  0.03
+pairwise weight:
+  0.01
+pairwise margin:
+  0.05
+pairwise Q weight:
+  0.25
+pairwise Q margin:
+  0.1
+pairwise reward-delta weight:
+  0.5
+pairwise reward-delta margin scale:
+  0.2
+```
+
+Training health:
+
+The high-risk rows were used as pairwise-only auxiliary replay. Training logs
+showed non-zero pairwise batches and active Q-side constraints early:
+`pairwise_q_loss=0.1376` at step 10, then `0.0000` after the margin fit. This
+means the run used the high-risk rows without letting their terminal returns
+dominate the normal IQL replay.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+repeat 1 report:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/reports/broader_mixed_iql_highrisk_pairwise_combined_gate_534_544_554_n10.json
+repeat 1 MLflow eval run:
+  49dd6116145f447090f70f24afc50db8
+repeat 2 report:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/reports/repeated_gate_broader_mixed_iql_highrisk_pairwise_candidate_repeat2.json
+repeat 2 MLflow eval run:
+  d89cc6eaf9d94a5db31a322072828224
+```
+
+Result:
+
+| policy | repeat | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| previous promoted anchor | known deterministic | -0.0023 | -0.2780 | 45.00% | 17 / 120 | 14.17% |
+| broader mixed IQL high-risk pairwise | 1 | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| broader mixed IQL high-risk pairwise | 2 | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+
+Decision:
+
+Promoted as the new `current_chongci_reward_trained_best`.
+
+Interpretation:
+
+This is the first branch in this sequence that moved all promotion metrics in
+the right direction. The key change was not another scalar penalty or more
+repeat-count pressure on the same tiny direct-CF shard. The useful ingredient
+was broader fresh mixed self-play involving the previous promoted anchor and
+the EV-up/tail-worse rejected policies, while keeping high-risk direct-CF rows
+as pairwise-only constraints.
+
+Next useful branch:
+
+1. Treat
+   `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+   as the new anchor for future Chongci reward-learning experiments.
+2. Run the next self-play iteration from this promoted checkpoint, not the
+   older direct-CF anchor.
+3. Preserve the same promotion rule: improve EV/positive rate and do not worsen
+   large-loss rate on deterministic duplicate-seat gates.
+
+### Experiment: Post-Promotion All-Anchor Self-Play Iteration
+
+Run:
+
+```text
+self-play:
+  /root/fh-mahjong-runs/chongci-promoted-broader-selfplay-20260610-223633
+normal-dose training:
+  /root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-20260610-225703
+low-dose training:
+  /root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-lowdose-20260610-230656
+ultra-low-dose training:
+  /root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-ultralow-20260610-231629
+```
+
+Question:
+
+After promoting `broader_mixed_iql_highrisk_pairwise`, can a direct all-anchor
+self-play iteration improve it further?
+
+Data generation:
+
+```text
+output:
+  /root/fh-mahjong-runs/chongci-promoted-broader-selfplay-20260610-223633/data/broader-anchor-selfplay-780000-n200-npz
+episodes:
+  200
+start seed:
+  780000
+transitions:
+  405621
+shards:
+  9
+seat 0:
+  broader_mixed_iql_highrisk_pairwise
+seat 1:
+  broader_mixed_iql_highrisk_pairwise
+seat 2:
+  broader_mixed_iql_highrisk_pairwise
+seat 3:
+  broader_mixed_iql_highrisk_pairwise
+```
+
+Training data:
+
+```text
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+fresh all-anchor self-play:
+  /root/fh-mahjong-runs/chongci-promoted-broader-selfplay-20260610-223633/data/broader-anchor-selfplay-780000-n200-npz
+pairwise-only high-risk data:
+  /root/fh-mahjong-runs/chongci-fresh-candidate-family-20260607-015051/data/anchor_highrisk_gap010_repeat512
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced-20260607-023735/data/anchor_highrisk_tail_candidate_gap010_repeat512
+```
+
+Training variants:
+
+| variant | checkpoint | learning rate | BC weight | MLflow train run |
+| --- | --- | ---: | ---: | --- |
+| normal | `/root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-20260610-225703/checkpoints/broader_anchor_selfplay_iter1/epoch_001.pt` | 2e-5 | 0.03 | `e876f5354b4d48ca99b01af218b20b3b` |
+| low-dose | `/root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-lowdose-20260610-230656/checkpoints/broader_anchor_selfplay_iter1_lowdose/epoch_001.pt` | 1e-5 | 0.04 | `b79ba370265140b6bae923d8152c929a` |
+| ultra-low-dose | `/root/fh-mahjong-runs/chongci-broader-anchor-selfplay-iql-ultralow-20260610-231629/checkpoints/broader_anchor_selfplay_iter1_ultralow/epoch_001.pt` | 5e-6 | 0.05 | `64d804c28a8b4775b9c2ae5cb29f45d2` |
+
+Training health:
+
+The pairwise rows were sampled in all three variants, but `pairwise_q_loss`
+was already `0.0000` from the first logged batch. This means the promoted model
+already satisfied those older high-risk Q margins; the new signal in this
+experiment mainly came from the all-anchor self-play returns.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+```
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate | MLflow eval run |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% | `49dd6116145f447090f70f24afc50db8` |
+| normal all-anchor self-play | -0.0100 | -1.1960 | 47.50% | 14 / 120 | 11.67% | `7ede60742c544ad2a1c03382ad432ca9` |
+| low-dose all-anchor self-play | 0.0100 | 0.8120 | 48.33% | 15 / 120 | 12.50% | `e8f0857948f54f73a6cadae31ef08f3d` |
+| ultra-low-dose all-anchor self-play | -0.0100 | -1.0480 | 45.83% | 16 / 120 | 13.33% | `43f59235b51c4276b5c87b02c79ee231` |
+
+Decision:
+
+Rejected all three variants. The current promoted anchor remains:
+
+```text
+/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+```
+
+Interpretation:
+
+The all-anchor self-play data is useful, but not directly promotable with these
+simple one-epoch IQL updates. The normal and low-dose variants improved tail
+risk, and low-dose also improved positive rate, but both lost reward sum versus
+the promoted anchor. Ultra-low-dose removed most of the useful tail improvement
+while still losing EV.
+
+The important signal is that this data family can reduce large-loss count, but
+it currently trades away EV. Do not promote a variant only because tail risk is
+better. The next branch should use these rejected variants as divergence data:
+trace the promoted anchor against the low-dose candidate, then extract
+counterfactual states where low-dose avoided large losses without sacrificing
+too much EV.
+
+Next useful branch:
+
+1. Run a scored tensor paired trace between the promoted anchor and
+   `broader_anchor_selfplay_iter1_lowdose`.
+2. Build direct-CF rows from states where low-dose is better or avoids large
+   losses, while filtering out broad EV-losing decisions.
+3. Train a small candidate from those targeted rows instead of another global
+   all-anchor self-play sweep.
+
+### Experiment: Low-Dose Divergence Direct-CF Pairwise
+
+Run:
+
+```text
+paired trace:
+  /root/fh-mahjong-runs/chongci-lowdose-divergence-trace-20260610-232802
+training:
+  /root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-iql-20260610-235147
+```
+
+Question:
+
+The low-dose all-anchor self-play candidate improved positive rate and
+large-loss count but lost reward sum. Can we copy only the low-dose decisions
+that beat the promoted anchor, without inheriting the whole EV regression?
+
+Paired trace:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-lowdose-divergence-trace-20260610-232802/reports/promoted_anchor_vs_lowdose_selfplay_iter1_scored_tensor_trace.json
+left:
+  promoted_anchor
+right:
+  lowdose_selfplay_iter1
+pairs:
+  120
+complete:
+  true
+divergence rate:
+  64.17%
+lowdose better:
+  19.17%
+same reward:
+  65.83%
+labeled counterfactual pairs:
+  41
+avoided-large-loss labels:
+  6
+new-large-loss labels:
+  1
+```
+
+Direct-CF data:
+
+```text
+lowdose preferred gap010:
+  /root/fh-mahjong-runs/chongci-lowdose-divergence-trace-20260610-232802/data/lowdose_preferred_gap010_repeat256
+base rows:
+  10
+repeated rows:
+  2560
+mean reward gap:
+  0.3010
+max reward gap:
+  0.4500
+
+lowdose preferred highrisk gap010:
+  /root/fh-mahjong-runs/chongci-lowdose-divergence-trace-20260610-232802/data/lowdose_preferred_highrisk_gap010_repeat512
+base rows:
+  3
+repeated rows:
+  1536
+mean reward gap:
+  0.3667
+max reward gap:
+  0.4500
+
+anchor preferred highrisk gap010:
+  no rows at min_reward_gap=0.1
+```
+
+Training:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-iql-20260610-235147/checkpoints/lowdose_targeted_pairwise/epoch_001.pt
+MLflow training run:
+  a5f6a52a5f2545f28291db0a49db7d60
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+base data:
+  /root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz
+pairwise-only data:
+  lowdose_preferred_gap010_repeat256
+  lowdose_preferred_highrisk_gap010_repeat512
+  older anchor_highrisk_gap010_repeat512
+  older anchor_highrisk_tail_candidate_gap010_repeat512
+learning rate:
+  1e-5
+BC weight:
+  0.03
+pairwise Q weight:
+  0.25
+pairwise Q margin:
+  0.1
+```
+
+Training health:
+
+The new pairwise rows were active. Logged `pairwise_q_loss` started at `0.0454`
+and decreased to `0.0024`, with non-zero pairwise counts in every logged batch.
+
+Evaluation:
+
+```text
+seed windows:
+  534000:10, 544000:10, 554000:10
+duplicate seats:
+  true
+evaluated seats:
+  120
+report:
+  /root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-iql-20260610-235147/reports/lowdose_targeted_pairwise_combined_gate_534_544_554_n10.json
+MLflow eval run:
+  84131a67989b46c59d79ce957a1ea125
+```
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| low-dose self-play candidate | 0.0100 | 0.8120 | 48.33% | 15 / 120 | 12.50% |
+| low-dose targeted pairwise | -0.0200 | -1.8000 | 47.50% | 19 / 120 | 15.83% |
+| fresh low-dose targeted pairwise w015 | -0.0200 | -2.0880 | 46.67% | 16 / 120 | 13.33% |
+| fresh low-dose targeted pairwise effective w015 | -0.0300 | -3.0260 | 47.50% | 17 / 120 | 14.17% |
+| promoted diverse IQL lr5e-6 bc05 | -0.0300 | -3.1400 | 45.00% | 19 / 120 | 15.83% |
+| promoted diverse filtered IQL lr5e-6 bc05 | -0.0100 | -1.6750 | 45.83% | 18 / 120 | 15.00% |
+
+Decision:
+
+Rejected. The targeted pairwise data was mechanically active but made the
+policy worse on both EV and large-loss rate.
+
+Interpretation:
+
+The low-dose candidate's useful behavior is not captured well enough by first
+divergence pairwise margins alone. The low-dose policy had only 10 meaningful
+preferred rows at `gap >= 0.1`, and replaying those margins overfit local
+preferences without preserving the broader EV/tail balance.
+
+Next useful branch:
+
+1. Stop this low-dose pairwise branch.
+2. If continuing from the all-anchor self-play data, use outcome filtering or a
+   larger paired-trace data product, not the 10-row first-divergence shard.
+3. The current promoted anchor remains unchanged.
+
+### Experiment: Fresh Low-Dose Direct-CF Pairwise w015
+
+Run:
+`/root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-fresh-20260611-003312`
+
+Question:
+Can a broader old+fresh low-dose-vs-anchor direct counterfactual dataset transfer
+the low-dose candidate's lower tail risk without losing the promoted anchor's EV?
+
+Data:
+
+- Base IQL data:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Fresh paired trace:
+  `/root/fh-mahjong-runs/chongci-lowdose-divergence-trace-fresh-20260611-000449/reports/promoted_anchor_vs_lowdose_selfplay_iter1_fresh_scored_tensor_trace.json`
+- Fresh trace summary:
+  120 pairs, 68.33% first-action divergence, 15.00% low-dose-better rate,
+  62.50% same-reward rate, 45 labeled counterfactual pairs.
+- Fresh counterfactual tags:
+  9 avoided-large-loss, 2 new-large-loss, 45 worse-reward.
+- Preferred action families:
+  42 discard, 2 pass, 1 chii.
+- Pairwise auxiliary data:
+  old low-dose preferred `gap >= 0.1`, old low-dose preferred high-risk
+  `gap >= 0.1`, fresh low-dose preferred `gap >= 0.05`, and fresh low-dose
+  preferred high-risk `gap >= 0.1`.
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Epochs: 1
+- Batch size: 512
+- LR: `1e-5`
+- MC target with `gamma=1.0`
+- `bc_weight=0.03`
+- `pairwise_q_weight=0.15`, `pairwise_q_margin=0.08`
+- `pairwise_weight=0.005`, `pairwise_margin=0.04`
+- `pairwise_reward_delta_weight=0.25`
+- MLflow train run:
+  `6ff05a24ccff446495fc26083490fbce`
+
+Evaluation:
+
+- Gate: `534000:10`, `544000:10`, `554000:10`, duplicate seats, 120 seats.
+- Report:
+  `/root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-fresh-20260611-003312/reports/lowdose_targeted_pairwise_fresh_w015_combined_gate_534_544_554_n10.json`
+- MLflow eval run:
+  `cb2b5a8f58f0431b9e48f4a920d12e0e`
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| fresh low-dose targeted pairwise w015 | -0.0200 | -2.0880 | 46.67% | 16 / 120 | 13.33% |
+
+Decision:
+
+Rejected. The candidate tied the promoted anchor on large-loss rate but lost EV
+and positive-reward rate.
+
+Interpretation:
+
+This did not reproduce the low-dose candidate's useful tail improvement. The
+fresh trace added coverage, but most preferred rows were still discard-only
+first-divergence examples. The trainer also reported raw pairwise row counts
+during training, so repeated direct-CF shards did not behave as a clear larger
+effective dataset in the training log. Do not continue this branch with nearby
+pairwise weight changes alone.
+
+Next useful branch:
+
+1. Inspect/fix pairwise auxiliary loading if repeated shards are supposed to
+   change effective sampling frequency.
+2. Prefer a larger aligned data product from more low-dose-vs-anchor windows
+   before another direct-CF candidate.
+3. Keep the promoted anchor unchanged.
+
+### Experiment: Fresh Low-Dose Direct-CF Pairwise Effective w015
+
+Run:
+`/root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-fresh-effective-20260611-004747`
+
+Question:
+After fixing the repeated-shard manifests so `read_transition_arrays` loads the
+intended number of pairwise rows, does the same low-dose direct-CF branch work?
+
+Data:
+
+- Same base data and same old+fresh low-dose preferred pairwise shards as the
+  prior w015 run.
+- Manifest fix:
+  the ad hoc repeated shards originally wrote `num_transitions` but not the
+  canonical `transitions` field, so the loader only read the original raw row
+  counts. The remote repeated manifests were fixed to include `transitions`.
+- Effective pairwise rows loaded:
+  1,280 old `gap >= 0.1`, 768 old high-risk `gap >= 0.1`, 1,536 fresh
+  `gap >= 0.05`, and 512 fresh high-risk `gap >= 0.1`.
+
+Training:
+
+- Same hyperparameters as w015:
+  `pairwise_q_weight=0.15`, `pairwise_q_margin=0.08`,
+  `pairwise_weight=0.005`, `pairwise_margin=0.04`,
+  `pairwise_reward_delta_weight=0.25`.
+- MLflow train run:
+  `71a01a1ebb59476a9ed4d5857f068aac`
+
+Evaluation:
+
+- Gate: `534000:10`, `544000:10`, `554000:10`, duplicate seats, 120 seats.
+- Report:
+  `/root/fh-mahjong-runs/chongci-lowdose-targeted-pairwise-fresh-effective-20260611-004747/reports/lowdose_targeted_pairwise_fresh_effective_w015_combined_gate_534_544_554_n10.json`
+- MLflow eval run:
+  `d0ef0078574d4345b75d06ba0417bfa8`
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| fresh low-dose targeted pairwise effective w015 | -0.0300 | -3.0260 | 47.50% | 17 / 120 | 14.17% |
+
+Decision:
+
+Rejected. Once the intended repeated pairwise rows actually loaded, the
+candidate tied positive-reward rate but regressed EV and large-loss rate.
+
+Interpretation:
+
+This closes the low-dose first-divergence pairwise branch. The previous w015
+run was under-dosed due to a generated-manifest issue; the corrected effective
+run shows that adding the intended pairwise pressure makes tail risk worse, not
+better. Do not continue with nearby low-dose pairwise weight changes.
+
+Next useful branch:
+
+1. Stop low-dose first-divergence direct-CF pairwise tuning.
+2. Use larger aligned self-play/counterfactual data from promoted anchor plus
+   diverse policies, or move to a different risk target that is not only first
+   divergence.
+3. Keep the promoted anchor unchanged.
+
+### Experiment: Promoted Diverse IQL lr5e-6 bc05
+
+Run:
+`/root/fh-mahjong-runs/chongci-promoted-diverse-iql-20260611-021603`
+
+Question:
+Does a larger mixed self-play dataset improve the current promoted anchor when
+trained conservatively without the failed low-dose pairwise objective?
+
+Data:
+
+- Fresh mixed self-play run:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-selfplay-20260611-013359`
+- Fresh mixed data:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-selfplay-20260611-013359/data/promoted-anchor2-lowdose-prev-800000-n400-npz`
+- Episodes: 400
+- Transitions: 817,238
+- Start seed: 800000
+- Seat policies:
+  seat 0 current promoted anchor, seat 1 current promoted anchor,
+  seat 2 low-dose self-play candidate, seat 3 previous direct-CF anchor.
+- Training data:
+  capped current replay, prior broader mixed replay, and the fresh diverse
+  replay.
+- Pairwise data:
+  only the older anchor high-risk pairwise auxiliaries from the current
+  promotion family; no low-dose pairwise rows.
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Epochs: 1
+- Batch size: 4096
+- LR: `5e-6`
+- MC target with `gamma=0.99`
+- `bc_weight=0.05`
+- `pairwise_q_weight=0.25`, `pairwise_q_margin=0.1`
+- `pairwise_weight=0.01`, `pairwise_margin=0.05`
+- `pairwise_reward_delta_weight=0.5`
+- MLflow train run:
+  `1a4a374839e148cb89e590ca24d93175`
+
+Evaluation:
+
+- Gate: `534000:10`, `544000:10`, `554000:10`, duplicate seats, 120 seats.
+- Report:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-iql-20260611-021603/reports/promoted_diverse_iql_lr5e6_bc05_combined_gate_534_544_554_n10.json`
+- MLflow eval run:
+  `1c6dc10a86794c16a078b1b82c8d11b8`
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| promoted diverse IQL lr5e-6 bc05 | -0.0300 | -3.1400 | 45.00% | 19 / 120 | 15.83% |
+
+Decision:
+
+Rejected. Training on all seats from the larger diverse dataset regressed EV,
+positive-reward rate, and large-loss rate.
+
+Interpretation:
+
+The generated data is still useful, but not as a direct all-policy imitation/RL
+source. Seat 2 and seat 3 actions come from weaker or older policies, so using
+all seats as normal policy targets likely teaches behavior the current anchor
+should not copy.
+
+Next useful branch:
+
+1. Reuse this dataset by filtering to the promoted-anchor seats only
+   (`seat in {0, 1}`), so the model learns anchor decisions against diverse
+   opponents.
+2. Keep the promoted anchor unchanged.
+
+### Experiment: Promoted Diverse Filtered IQL lr5e-6 bc05
+
+Run:
+`/root/fh-mahjong-runs/chongci-promoted-diverse-filtered-iql-20260611-022743`
+
+Question:
+Can the larger diverse-opponent dataset help if training uses only the current
+promoted-anchor seats instead of all policies at the table?
+
+Data:
+
+- Source data:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-selfplay-20260611-013359/data/promoted-anchor2-lowdose-prev-800000-n400-npz`
+- Filtered data:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-selfplay-20260611-013359/data/promoted-anchor-seats01-vs-diverse-800000-n400-npz`
+- Filter:
+  keep `seat in {0, 1}` because both seats used the current promoted anchor.
+- Filtered transitions:
+  408,608 total; 204,348 from seat 0 and 204,260 from seat 1.
+- Training data:
+  capped current replay, prior broader mixed replay, and filtered anchor-seat
+  diverse-opponent replay.
+- Pairwise data:
+  only the older anchor high-risk pairwise auxiliaries from the current
+  promotion family; no low-dose pairwise rows.
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Epochs: 1
+- Batch size: 4096
+- LR: `5e-6`
+- MC target with `gamma=0.99`
+- `bc_weight=0.05`
+- `pairwise_q_weight=0.25`, `pairwise_q_margin=0.1`
+- `pairwise_weight=0.01`, `pairwise_margin=0.05`
+- `pairwise_reward_delta_weight=0.5`
+- MLflow train run:
+  `56774b3818a24936ac65f8a4388d3358`
+
+Evaluation:
+
+- Gate: `534000:10`, `544000:10`, `554000:10`, duplicate seats, 120 seats.
+- Report:
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-filtered-iql-20260611-022743/reports/promoted_diverse_filtered_iql_lr5e6_bc05_combined_gate_534_544_554_n10.json`
+- MLflow eval run:
+  `753849732c0e4e72bfa3bde1aac5c3b9`
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% |
+| promoted diverse filtered IQL lr5e-6 bc05 | -0.0100 | -1.6750 | 45.83% | 18 / 120 | 15.00% |
+
+Decision:
+
+Rejected. Filtering to promoted-anchor seats improved over all-seat diverse
+training, but still regressed EV, positive-reward rate, and large-loss rate.
+
+Interpretation:
+
+The larger diverse-opponent data did not help under the current conservative
+IQL recipe. The failure is weaker than all-seat training, which confirms that
+copying non-anchor policies was harmful, but the filtered recipe still pushes
+the checkpoint away from the promoted anchor's gate behavior.
+
+Next useful branch:
+
+1. Stop replay-only variants of this diverse-opponent dataset for now.
+2. Move to a different risk target or explicit promotion-gate counterfactuals
+   beyond first-divergence pairwise.
+3. Keep the promoted anchor unchanged.
+
+### Diagnostic: Promoted Anchor vs Filtered Diverse IQL
+
+Run:
+`/root/fh-mahjong-runs/chongci-filtered-diverse-diagnostic-trace-20260611-024027`
+
+Question:
+Why did the filtered diverse-opponent replay candidate fail the combined gate,
+and what should the next target focus on?
+
+Trace:
+
+- Left policy:
+  current promoted anchor,
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Right policy:
+  filtered diverse IQL candidate,
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-filtered-iql-20260611-022743/checkpoints/promoted_diverse_filtered_iql_lr5e6_bc05/epoch_001.pt`
+- Gate windows:
+  `534000:10`, `544000:10`, `554000:10`, all four seats.
+- Report:
+  `/root/fh-mahjong-runs/chongci-filtered-diverse-diagnostic-trace-20260611-024027/reports/promoted_anchor_vs_filtered_diverse_iql_combined_gate_trace.json`
+
+Result:
+
+- Pairs: 120
+- First-action divergence rate: 55.83%
+- Filtered candidate better rate: 15.00%
+- Same-reward rate: 70.00%
+- Mean reward delta, candidate minus anchor: -0.0260
+- Labeled counterfactual pairs: 36
+- High-risk labeled pairs: 10
+- Tags:
+  10 avoided-large-loss, 2 new-large-loss, 36 worse-reward.
+- Preferred action families:
+  34 discard, 1 pass, 1 chii.
+- Avoided action families:
+  34 discard, 2 chii.
+- High-risk avoided action families:
+  10 discard.
+
+Interpretation:
+
+The failure is mostly not action-family selection. The high-risk cases are
+discard-vs-discard disagreements, so the next target should focus on tile-level
+discard risk/selection under Chongci score pressure, not broad family weights or
+another replay-only IQL pass.
+
+Next useful branch:
+
+1. Build a tile-level discard-risk target from promoted-anchor-vs-candidate
+   high-risk discard disagreements.
+2. Train it as critic-side/risk-side supervision first, then decide whether it
+   should influence the policy.
+3. Keep the promoted anchor unchanged until the deterministic combined gate
+   improves EV without worsening large-loss rate.
+
+### Experiment: Discard Direct-CF Risk Critic
+
+Run:
+`/root/fh-mahjong-runs/chongci-discard-riskcritic-20260611-063150`
+
+Question:
+Can a critic-side action-risk head learn tile-level discard risk from the
+promoted-anchor-vs-filtered-candidate high-risk discard disagreements?
+
+Data:
+
+- Diagnostic trace:
+  `/root/fh-mahjong-runs/chongci-filtered-diverse-diagnostic-trace-20260611-024027/reports/promoted_anchor_vs_filtered_diverse_iql_combined_gate_trace.json`
+- Direct-CF high-risk avoided-discard shard:
+  `/root/fh-mahjong-runs/chongci-filtered-diverse-diagnostic-trace-20260611-024027/data/highrisk_avoided_discard`
+  - 10 rows
+  - 10 positive terminal rows
+  - mean reward gap 0.4665
+- Direct-CF all avoided-discard shard:
+  `/root/fh-mahjong-runs/chongci-filtered-diverse-diagnostic-trace-20260611-024027/data/all_avoided_discard`
+  - 34 rows
+  - 10 positive terminal rows
+  - mean reward gap 0.2408
+- Broad risk training data:
+  capped current replay, prior broader mixed replay, filtered anchor-seat
+  diverse-opponent replay, plus the 34-row all-avoided-discard direct-CF shard.
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-discard-riskcritic-20260611-063150/checkpoints/discard_cf_risk_frozen/epoch_002.pt`
+- Target mode:
+  `family_future_outcome_context`
+- Encoder:
+  frozen
+- Epochs:
+  2
+- Steps per epoch:
+  160
+- Batch size:
+  2048
+- LR:
+  `5e-5`
+- Paired risk objective:
+  `paired_margin_weight=1.0`, `paired_severity_weight=0.5`,
+  `paired_batch_fraction=0.25`
+- Training report:
+  `/root/fh-mahjong-runs/chongci-discard-riskcritic-20260611-063150/reports/discard_cf_risk_frozen_train.json`
+- Loaded rows:
+  600,034 total, 104,260 positive, 495,774 negative, 34 paired rows.
+
+Training Result:
+
+- Final batch positive predicted risk:
+  0.6163
+- Final batch negative predicted risk:
+  0.5220
+- Final paired margin loss:
+  0.0000 with 512 paired samples in the batch.
+
+Direct-CF Calibration:
+
+Report:
+`/root/fh-mahjong-runs/chongci-discard-riskcritic-20260611-063150/reports/discard_cf_risk_frozen_calibration.json`
+
+| dataset | rows | avoided prob mean | preferred prob mean | prob gap mean | prob gap positive rate | severity gap positive rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all avoided discard | 34 | 0.5458 | 0.3661 | 0.1797 | 100.00% | 79.41% |
+| high-risk avoided discard | 10 | 0.8305 | 0.4228 | 0.4077 | 100.00% | 90.00% |
+
+Interpretation:
+
+The critic learned the direct-CF distinction on the small diagnostic shard: the
+avoided discard has higher predicted risk than the preferred action in every
+direct-CF row. However, this is calibration on only 34 direct-CF rows and is not
+enough evidence for serving.
+
+Guarded Evaluation:
+
+Report:
+`/root/fh-mahjong-runs/chongci-discard-riskcritic-20260611-063150/reports/discard_cf_risk_guard_policy_nearest_t075_060_gap15_combined_gate.json`
+
+Configuration:
+
+- Anchor policy:
+  current promoted anchor
+- Risk checkpoint:
+  discard direct-CF risk critic
+- `anchor_risk_threshold=0.75`
+- `candidate_risk_threshold=0.60`
+- `min_risk_reduction=0.15`
+- `max_policy_logit_gap=1.5`
+- Selection mode:
+  `policy_nearest`
+
+Result:
+
+| policy | mean reward | reward sum | positive rate | large-loss count | large-loss rate | guard choice rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| current promoted anchor | 0.0100 | 1.4410 | 47.50% | 16 / 120 | 13.33% | 0.00% |
+| discard risk guard | -0.0600 | -6.6560 | 45.83% | 23 / 120 | 19.17% | 0.76% |
+
+Decision:
+
+Rejected for guarded serving. The critic is useful as an offline diagnostic,
+but the first guarded evaluation strongly regressed EV and large-loss rate even
+with a low intervention rate.
+
+Next useful branch:
+
+1. Do not use this risk critic for serving or policy regularization yet.
+2. Broaden risk calibration beyond the 34 direct-CF rows before another guard.
+3. Prefer building a larger tile-level discard dataset from more paired traces,
+   especially later-trajectory discard disagreements, before applying the risk
+   head to policy.
+
+### Experiment: Multi-Divergence Tile-Level Discard Calibration
+
+Run:
+`/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146`
+
+Question:
+Can we broaden tile-level discard calibration beyond the 34 strict
+first-divergence direct-CF rows by recording multiple aligned action
+disagreements per paired seed/seat trace?
+
+Implementation:
+
+- Added paired-trace `--max-divergences`.
+- The default remains `1`, preserving strict first-divergence behavior.
+- Values above `1` persist later aligned disagreements as calibration evidence.
+- Later rows are not strict same-state counterfactuals after the first different
+  action, so they must not be used as promotion-gate proof by themselves.
+- Added `build_counterfactual_risk_data.py --divergence-source first|later|all`.
+  The default remains `first`.
+
+Validation:
+
+- Local:
+  `uv run --project ai pytest ai/tests/test_paired_trace.py ai/tests/test_build_counterfactual_risk_data.py ai/tests/test_train_action_risk.py`
+- Remote:
+  `/root/.local/bin/uv run --project ai pytest ai/tests/test_paired_trace.py ai/tests/test_build_counterfactual_risk_data.py ai/tests/test_train_action_risk.py`
+- Result:
+  both passed.
+
+Trace:
+
+- Left:
+  current promoted anchor,
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Right:
+  rejected filtered diverse IQL,
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-filtered-iql-20260611-022743/checkpoints/promoted_diverse_filtered_iql_lr5e6_bc05/epoch_001.pt`
+- Seed windows:
+  `590000:10`, `600000:10`, `610000:10`
+- Seats:
+  0, 1, 2, 3
+- Pairs:
+  120
+- Max divergences per pair:
+  12
+- Report:
+  `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/reports/promoted_anchor_vs_filtered_diverse_iql_multidiv_trace.json`
+
+Trace Result:
+
+| metric | value |
+| --- | ---: |
+| pairs | 120 |
+| divergence rate | 62.50% |
+| right better rate | 19.17% |
+| same reward rate | 64.17% |
+| mean reward delta | +0.0210 |
+| all stored divergences | 635 |
+| later divergences | 560 |
+| later discard-vs-discard disagreements | 360 |
+
+Direct Shards:
+
+| shard | rows | positive terminal rows | mean reward gap |
+| --- | ---: | ---: | ---: |
+| `later_avoided_discard` | 361 | 119 | 0.2283 |
+| `later_discard_vs_discard` | 287 | 93 | 0.2247 |
+
+Shard paths:
+
+- `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/data/later_avoided_discard`
+- `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/data/later_discard_vs_discard`
+
+Decision:
+
+Accepted as a diagnostic data-generation improvement. The new data source is
+large enough to replace the previous 34-row direct-CF shard for calibration
+experiments, but later aligned rows are still not promotion evidence.
+
+### Experiment: Later Discard-Vs-Discard Risk Critic
+
+Run:
+`/root/fh-mahjong-runs/chongci-later-discard-riskcritic-20260611-215649`
+
+Question:
+Can the larger later discard-vs-discard shard train a stronger tile-level
+action-risk critic without changing the promoted policy?
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-later-discard-riskcritic-20260611-215649/checkpoints/later_discard_cf_risk_frozen/epoch_002.pt`
+- Data:
+  broader mixed replay, promoted diverse replay, and
+  `later_discard_vs_discard`
+- Target mode:
+  `family_future_outcome_context`
+- Encoder:
+  frozen
+- Epochs:
+  2
+- Steps per epoch:
+  160
+- Batch size:
+  2048
+- LR:
+  `5e-5`
+- Pairwise objective:
+  `paired_margin_weight=1.0`, `paired_severity_weight=0.5`,
+  `paired_batch_fraction=0.25`
+- Training report:
+  `/root/fh-mahjong-runs/chongci-later-discard-riskcritic-20260611-215649/reports/later_discard_cf_risk_frozen_train.json`
+- Loaded rows:
+  600,287 total, 96,484 positive, 503,803 negative, 287 paired rows.
+
+Training Result:
+
+| metric | value |
+| --- | ---: |
+| final loss | 0.8540 |
+| final positive probability | 0.5627 |
+| final negative probability | 0.5467 |
+| final paired margin loss | 0.0001 |
+| final paired count | 274 |
+| final paired delta MAE | 0.1472 |
+
+Pairwise Calibration:
+
+Report:
+`/root/fh-mahjong-runs/chongci-later-discard-riskcritic-20260611-215649/reports/later_discard_vs_discard_pairwise_calibration.json`
+
+| metric | value |
+| --- | ---: |
+| rows | 287 |
+| positive terminal rate | 32.40% |
+| avoided probability mean | 0.5848 |
+| preferred probability mean | 0.1961 |
+| probability gap mean | 0.3887 |
+| probability gap positive rate | 100.00% |
+| severity gap positive rate | 83.62% |
+
+Terminal Calibration:
+
+Report:
+`/root/fh-mahjong-runs/chongci-later-discard-riskcritic-20260611-215649/reports/later_discard_vs_discard_terminal_calibration.json`
+
+| metric | value |
+| --- | ---: |
+| rows | 287 |
+| large-loss rate | 32.40% |
+| large-loss AUC | 0.5901 |
+| large-loss Brier | 0.3056 |
+| large-loss severity MAE | 0.3388 |
+
+Decision:
+
+Rejected for serving / guard use. The critic strongly ranks avoided discards
+above preferred discards on the new direct shard, but terminal large-loss AUC is
+only 0.5901 and the examples are later aligned disagreements rather than strict
+same-state counterfactuals.
+
+Interpretation:
+
+The new tooling solved the data-volume problem for tile-level discard
+calibration. It did not yet solve independent risk calibration. The right next
+move is to use these rows for analysis and to mine stricter same-state or
+near-state discard counterfactuals, not to run another guard threshold sweep.
+
+### Experiment: Near-State Discard Counterfactual Extraction
+
+Run:
+`/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146`
+
+Question:
+How many of the 287 later discard-vs-discard rows remain useful after requiring
+near-state evidence: both candidate discard tiles legal in both observations,
+small visible-scalar distance, and similar legal-action masks?
+
+Implementation:
+
+- Added `fh_mahjong_ai.near_state_counterfactuals`.
+- Added CLI:
+  `python -m fh_mahjong_ai.scripts.extract_near_state_discards`
+- The extractor filters tensor-bearing paired traces by:
+  - discard-vs-discard preferred/avoided actions,
+  - non-zero reward gap,
+  - both chosen discard actions legal in both recorded observations,
+  - bounded `decision_index` gap,
+  - bounded visible-scalar L1/Linf distance,
+  - minimum action-mask Jaccard overlap.
+- This is still diagnostic. Later aligned disagreements are not promotion proof.
+
+Validation:
+
+- Local:
+  `uv run --project ai pytest ai/tests/test_near_state_counterfactuals.py ai/tests/test_paired_trace.py ai/tests/test_build_counterfactual_risk_data.py ai/tests/test_train_action_risk.py`
+- Result:
+  28 passed.
+- Remote:
+  `/root/.local/bin/uv run --project ai pytest ai/tests/test_near_state_counterfactuals.py ai/tests/test_paired_trace.py ai/tests/test_build_counterfactual_risk_data.py`
+- Result:
+  19 passed.
+
+Reports:
+
+| filter | report | cases | high-risk cases | mean reward gap |
+| --- | --- | ---: | ---: | ---: |
+| strict | `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/reports/near_state_later_discard_vs_discard_strict.json` | 8 | 3 | 0.1315 |
+| relaxed gap 2 | `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/reports/near_state_later_discard_vs_discard_relaxed_gap2.json` | 16 | 4 | 0.1194 |
+| relaxed gap 4 | `/root/fh-mahjong-runs/chongci-multidivergence-trace-20260611-213146/reports/near_state_later_discard_vs_discard_relaxed_gap4.json` | 24 | 8 | 0.1179 |
+
+Strict filter:
+
+- `max_decision_index_gap=0`
+- `max_scalar_l1=0.10`
+- `max_scalar_linf=0.25`
+- `min_action_mask_jaccard=0.95`
+
+Relaxed gap 4 filter:
+
+- `max_decision_index_gap=4`
+- `max_scalar_l1=0.20`
+- `max_scalar_linf=0.45`
+- `min_action_mask_jaccard=0.85`
+
+Main Rejection Reason:
+
+In the strict extraction, 224 rows were rejected because the alternate discard
+was not legal in both observations. This means most later aligned
+discard-vs-discard rows are not true tile-swap comparisons, even when the action
+family matches.
+
+Decision:
+
+Do not train from the near-state filtered rows. The strict set has only 8 cases,
+and the relaxed set has only 24. That is useful as a diagnostic sanity check but
+too small for the next risk critic.
+
+Interpretation:
+
+The next data step should not be more filtering of later aligned disagreements.
+We need stricter same-state counterfactuals:
+
+1. first-divergence discard-vs-discard traces over more independent windows, or
+2. environment snapshot/branching support so the same visible state can be
+   stepped with alternate legal discard actions.
+
+The second option is the more correct long-term path, but it requires Go bridge
+state snapshot/restore or an explicit branch-evaluation API.
+
+### Experiment: Strict First-Divergence Discard Counterfactuals
+
+Runs:
+
+- `/root/fh-mahjong-runs/chongci-firstdiv-discard-trace-20260611-230907`
+- `/root/fh-mahjong-runs/chongci-firstdiv-discard-trace-diverseall-20260611-234813`
+
+Question:
+Can strict first-divergence discard-vs-discard traces provide cleaner
+same-state tile-level counterfactuals than later aligned disagreements?
+
+Trace A:
+
+- Left:
+  current promoted anchor,
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Right:
+  rejected filtered diverse IQL,
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-filtered-iql-20260611-022743/checkpoints/promoted_diverse_filtered_iql_lr5e6_bc05/epoch_001.pt`
+- Seed windows:
+  `620000:20`, `640000:20`, `680000:20`
+- Pairs:
+  240
+- Report:
+  `/root/fh-mahjong-runs/chongci-firstdiv-discard-trace-20260611-230907/reports/promoted_anchor_vs_filtered_diverse_iql_firstdiv_trace.json`
+
+Trace A result:
+
+| metric | value |
+| --- | ---: |
+| divergence rate | 62.08% |
+| candidate better rate | 17.08% |
+| same reward rate | 65.00% |
+| mean reward delta | -0.0048 |
+| labeled first-divergence pairs | 84 |
+| high-risk labeled pairs | 19 |
+| first discard-vs-discard rows | 78 |
+| positive terminal rows | 17 |
+| mean reward gap | 0.2449 |
+
+Trace B:
+
+- Left:
+  current promoted anchor,
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Right:
+  rejected all-seat diverse IQL,
+  `/root/fh-mahjong-runs/chongci-promoted-diverse-iql-20260611-021603/checkpoints/promoted_diverse_iql_lr5e6_bc05/epoch_001.pt`
+- Seed windows:
+  `700000:20`, `720000:20`, `740000:20`
+- Pairs:
+  240
+- Report:
+  `/root/fh-mahjong-runs/chongci-firstdiv-discard-trace-diverseall-20260611-234813/reports/promoted_anchor_vs_diverse_all_iql_firstdiv_trace.json`
+
+Trace B result:
+
+| metric | value |
+| --- | ---: |
+| divergence rate | 67.50% |
+| candidate better rate | 15.83% |
+| same reward rate | 62.08% |
+| mean reward delta | -0.0005 |
+| labeled first-divergence pairs | 91 |
+| high-risk labeled pairs | 17 |
+| first discard-vs-discard rows | 82 |
+| positive terminal rows | 16 |
+| mean reward gap | 0.1862 |
+
+Interpretation From Data Generation:
+
+Strict first-divergence rows are much cleaner than later aligned disagreements.
+Across two 240-pair traces, we got 160 strict discard-vs-discard rows with 33
+large-loss rows. This is still small, but it is high-quality enough for one
+diagnostic critic run.
+
+### Experiment: Strict First-Divergence Risk Critic
+
+Run:
+`/root/fh-mahjong-runs/chongci-strict-firstdiv-riskcritic-20260612-002627`
+
+Question:
+Can a risk critic trained on strict first-divergence discard-vs-discard rows
+generalize to an independent strict first-divergence holdout?
+
+Training:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-strict-firstdiv-riskcritic-20260612-002627/checkpoints/strict_firstdiv_discard_risk_frozen/epoch_002.pt`
+- Data:
+  broader mixed replay, promoted diverse replay, Trace A `first_discard_vs_discard`,
+  Trace B `first_discard_vs_discard`
+- Target mode:
+  `family_future_outcome_context`
+- Encoder:
+  frozen
+- Epochs:
+  2
+- Steps per epoch:
+  160
+- Batch size:
+  2048
+- LR:
+  `5e-5`
+- Pairwise objective:
+  `paired_margin_weight=1.0`, `paired_severity_weight=0.5`,
+  `paired_batch_fraction=0.25`
+- Training report:
+  `/root/fh-mahjong-runs/chongci-strict-firstdiv-riskcritic-20260612-002627/reports/strict_firstdiv_discard_risk_frozen_train.json`
+- Loaded rows:
+  600,160 total, 96,424 positive, 503,736 negative, 160 paired rows.
+
+Training Result:
+
+| metric | value |
+| --- | ---: |
+| final loss | 0.8723 |
+| final positive probability | 0.5435 |
+| final negative probability | 0.5193 |
+| final paired margin loss | 0.0146 |
+| final paired count | 512 |
+| final paired delta MAE | 0.1444 |
+
+Pairwise Calibration:
+
+Report:
+`/root/fh-mahjong-runs/chongci-strict-firstdiv-riskcritic-20260612-002627/reports/strict_firstdiv_pairwise_calibration.json`
+
+| dataset | rows | prob gap mean | prob gap positive rate | severity gap positive rate |
+| --- | ---: | ---: | ---: | ---: |
+| train filtered first-div | 78 | 0.2011 | 98.72% | 78.21% |
+| train diverse-all first-div | 82 | 0.1492 | 100.00% | 67.07% |
+| holdout filtered first-div 590/600/610 | 39 | 0.0587 | 58.97% | 51.28% |
+
+Terminal Holdout Calibration:
+
+Report:
+`/root/fh-mahjong-runs/chongci-strict-firstdiv-riskcritic-20260612-002627/reports/strict_firstdiv_holdout_terminal_calibration.json`
+
+| metric | value |
+| --- | ---: |
+| holdout rows | 39 |
+| large-loss rate | 33.33% |
+| large-loss AUC | 0.3166 |
+| large-loss Brier | 0.3938 |
+| large-loss severity MAE | 0.4500 |
+
+Decision:
+
+Rejected for guarded serving and policy regularization. The critic fits the two
+strict training shards but fails the independent strict first-divergence holdout.
+Do not tune thresholds around this critic.
+
+Interpretation:
+
+Strict first-divergence data is the right direction, but 160 rows is not enough
+coverage for a robust action-risk critic. The next useful choices are:
+
+1. collect more strict first-divergence discard-vs-discard rows across more
+   candidate checkpoints and independent windows, or
+2. implement exact state snapshot/branch evaluation in the Go bridge so we can
+   evaluate alternate legal discards from the same state directly.
+
+The second path is more likely to become a durable reward-learning primitive,
+because it would create explicit counterfactual labels instead of hoping paired
+checkpoint divergences cover enough tile choices.
+
+### Implementation: Exact Go Branch Evaluation
+
+Date:
+2026-06-12
+
+Question:
+Can we create exact same-state counterfactual labels for candidate actions
+instead of relying only on paired checkpoint divergences?
+
+Change:
+Added `core.Game.CloneForBranch()` and `rlenv.Env.EvaluateBranches()`.
+The branch evaluator clones the authoritative Go state machine, applies one
+candidate action from the current learning-seat decision, then lets the shared
+deterministic heuristic policy finish the branch. The live environment remains
+unchanged. The c-shared bridge now exports `FHEnvEvaluateBranches`, and Python
+exposes it as `CtypesGoBridge.evaluate_branches()`.
+
+Validation:
+
+| check | result |
+| --- | --- |
+| `go test ./core ./rlenv ./cmd/rlbridge` | pass |
+| `uv run --project ai pytest ai/tests/test_bridge.py` | pass |
+| `go build -buildmode=c-shared -o build/libfh_mahjong_bridge.dylib ./cmd/rlbridge` | pass |
+| Python real-bridge branch smoke, seed 71, actions 8 and 9 | pass |
+
+Smoke result:
+From the same current Go observation, action 8 rolled out to rewards
+`[-0.008, -0.008, -0.008, 0.024]` after 52 branch decisions, while action 9
+rolled out to `[-0.052, -0.052, 0.208, -0.104]` after 36 branch decisions.
+Both branches terminated normally and returned no branch error.
+
+Decision:
+Merged direction locally as the next reward-learning primitive, but not yet a
+promoted agent. This is tooling for exact counterfactual dataset generation.
+
+Interpretation:
+This removes the main data bottleneck seen in strict first-divergence paired
+trace work: we no longer need two checkpoints to naturally disagree on the
+same state before comparing alternate legal discards. The next experiment
+should generate branch-evaluated discard counterfactual shards from mixed
+self-play states and train the action-risk/reward auxiliary on those direct
+labels.
+
+Follow-up implementation:
+Added `fh-mj-generate-branch-counterfactuals`, which collects states from
+checkpoint/random self-play seats, evaluates legal discard branches through
+`EvaluateBranches`, and writes direct pairwise NPZ shards compatible with
+`fh-mj-train-iql --pairwise-data`.
+
+Generator smoke:
+
+```bash
+uv run --project ai fh-mj-generate-branch-counterfactuals \
+  --episodes 1 \
+  --start-seed 71 \
+  --output-dir /tmp/fh-branch-cf-smoke \
+  --seat-policy 0=random \
+  --match-mode classic \
+  --max-steps-per-episode 512 \
+  --max-rows 1 \
+  --max-branch-actions 2 \
+  --seed 7
+```
+
+Result:
+The smoke produced one direct discard-vs-discard pairwise row with mean reward
+gap `0.296`, using the real Go c-shared bridge. This validates the data path;
+the next useful remote run is a larger Chongci checkpoint-state generation job.
+
+### Experiment: Branch Counterfactual Pairwise IQL V1
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350`
+
+Question:
+Can exact same-state Go branch labels for alternate legal discards improve the
+promoted Chongci anchor when used as pairwise-only IQL supervision?
+
+Data:
+
+- Branch-CF run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-20260612-005749`
+- Branch-CF shard:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-20260612-005749/data/anchor-branch-cf-821000-r512`
+- Controlled seat: seat 0 using the promoted Chongci anchor checkpoint
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Opponents: Go heuristic seats.
+- Rows: 512 discard-vs-discard same-state pairwise labels.
+- Branch calls: 911.
+- Branch results: 4198.
+- Branch mode: stop at next round end, branch cap 1024 decisions.
+- Max branch actions per decision: 4.
+- Minimum reward gap: `0.01`.
+- Mean reward gap: `0.141244`.
+- Max reward gap: `1.842`.
+- Generation time: `135.45s`.
+
+Training:
+
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350/checkpoints/branch_cf_pairwise_iql/epoch_001.pt`
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Normal replay:
+  `/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz`
+  and
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Epochs: 1.
+- Batch size: 4096.
+- Learning rate: `1e-5`.
+- Target mode: MC, `gamma=0.99`.
+- IQL: `expectile=0.7`, `temperature=3.0`, `max_weight=20`.
+- BC weight: `0.03`.
+- Pairwise policy: weight `0.005`, margin `0.04`.
+- Pairwise Q: weight `0.15`, margin `0.08`.
+- Reward-delta scaling: weight `0.25`, margin scale `0.1`, clip `2.0`.
+- Max transitions per normal dataset: 200000.
+- MLflow run id: `ecbad1c2611f4f0d944d208f0379aa38`.
+
+Evaluation:
+
+- Gate: duplicate-seat combined gate over `534000:10`, `544000:10`,
+  `554000:10`.
+- Seats: 120.
+- Candidate report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350/reports/branch_cf_pairwise_iql_combined_gate_534_544_554_n10.json`
+- Anchor repeat report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350/reports/current_anchor_combined_gate_534_544_554_n10.json`
+- Candidate MLflow eval run: `3629dce6a5d04ba08ffe9f1e42f53ab7`.
+- Anchor MLflow eval run: `ec5fd10e544a464cbf0575503f2f4af5`.
+
+Result:
+
+| metric | branch-CF candidate | current anchor | delta |
+| --- | ---: | ---: | ---: |
+| seats | 120 | 120 | 0 |
+| reward sum | -3.3690 | 1.4410 | -4.8100 |
+| mean reward | -0.03 | 0.01 | -0.04 |
+| positive-reward rate | 45.83% | 47.50% | -1.67pp |
+| large-loss count | 19 | 16 | +3 |
+| large-loss rate | 15.83% | 13.33% | +2.50pp |
+
+Decision:
+Rejected. The exact branch labels and training pipeline worked, but this first
+512-row pairwise IQL update regressed EV, positive-reward rate, and tail risk.
+The promoted Chongci checkpoint remains unchanged.
+
+Interpretation:
+The new branch evaluator is useful, but directly pushing 512 round-end
+discard-pair labels into policy/Q margins is too blunt at this dose. Do not
+promote this checkpoint. Next useful options are: collect more branch rows,
+lower pairwise pressure, or use the exact branch labels first for
+critic/calibration analysis before shaping the deployed policy.
+
+Calibration follow-up:
+Added `fh-mj-branch-cf-calibration` to score the exact branch-CF shard without
+running a new gate. The diagnostic compares whether a checkpoint ranks the
+preferred branch action above the avoided branch action under policy logits,
+Q-values, and optional action-risk outputs.
+
+Reports:
+
+- Anchor:
+  `/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350/reports/anchor_branch_cf_calibration_r512.json`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-branch-cf-iql-20260612-010350/reports/candidate_branch_cf_calibration_r512.json`
+
+MLflow runs:
+
+- Anchor calibration: `4bbb00ee8b3441f1bde16e4e4e5fcf85`
+- Candidate calibration: `8bf0f0c46fc64218b5622cbabd69b2d3`
+
+Calibration result:
+
+| metric | anchor | branch-CF candidate | delta |
+| --- | ---: | ---: | ---: |
+| rows | 512 | 512 | 0 |
+| policy preferred rate | 63.09% | 63.87% | +0.78pp |
+| policy reward-gap-weighted preferred rate | 59.18% | 59.69% | +0.51pp |
+| Q preferred rate | 50.59% | 56.05% | +5.47pp |
+| Q reward-gap-weighted preferred rate | 50.74% | 56.00% | +5.25pp |
+| risk lower-is-better preferred rate | 51.17% | 51.37% | +0.20pp |
+| policy argmax preferred-action rate | 31.84% | 31.84% | 0.00pp |
+| Q argmax preferred-action rate | 8.01% | 9.57% | +1.56pp |
+
+High-gap slice:
+
+| reward-gap bucket | rows | anchor policy preferred | candidate policy preferred | anchor Q preferred | candidate Q preferred |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `0.50+` | 12 | 41.67% | 41.67% | 41.67% | 41.67% |
+
+Interpretation:
+The rejected candidate did learn the branch labels somewhat, especially in the
+Q head, so the training signal was not inactive. However, that improvement did
+not transfer to duplicate-seat evaluation, and the current 512-row shard has
+only 12 large-gap rows. The next run should increase exact branch-CF coverage
+and high-gap diversity before applying stronger policy/Q shaping. This also
+rules out simply rerunning nearby coefficients on the same small shard.
+
+### Experiment: Larger Branch Counterfactual Low-Pressure IQL
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-cf-large-iql-20260613-000745-retry`
+
+Question:
+Does a larger exact branch-CF shard with better high-gap coverage and lower
+pairwise pressure transfer better than the rejected 512-row branch-CF update?
+
+Data:
+
+- Branch-CF data run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507`
+- Branch-CF shard:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507/data/anchor-branch-cf-831000-r2048-gap002-b6`
+- Rows: 2048 discard-vs-discard same-state labels.
+- Episodes requested: 1200.
+- Start seed: 831000.
+- Controlled seat: promoted Chongci anchor, seat 0.
+- Opponents: Go heuristic seats.
+- Branch calls: 3349.
+- Branch results: 21378.
+- Branch mode: stop at next round end, branch cap 1024 decisions.
+- Max branch actions per decision: 6.
+- Minimum reward gap: `0.02`.
+- Mean reward gap: `0.188823`.
+- Max reward gap: `1.824`.
+- High-gap rows (`reward_gap >= 0.50`): 120.
+- Generation time: `682.29s`.
+
+Pre-training calibration:
+
+| checkpoint | policy preferred | Q preferred | risk lower-is-better |
+| --- | ---: | ---: | ---: |
+| promoted anchor | 56.98% | 51.22% | 51.90% |
+| rejected 512-row candidate | 57.32% | 51.66% | 51.76% |
+
+The rejected 512-row candidate barely generalized to this larger branch-CF
+shard, which confirms that the previous small-shard calibration gain was not
+enough evidence for promotion.
+
+Training:
+
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-large-iql-20260613-000745-retry/checkpoints/branch_cf_large_lowpressure_iql/epoch_001.pt`
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Normal replay:
+  `/root/fh-mahjong-runs/chongci-capped400k-lowdrift-mlflow-run-20260525-230058/data/selfplay-current-capped400k-npz`
+  and
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Epochs: 1.
+- Batch size: 4096.
+- Learning rate: `1e-5`.
+- Target mode: MC, `gamma=0.99`.
+- IQL: `expectile=0.7`, `temperature=3.0`, `max_weight=20`.
+- BC weight: `0.05`.
+- Pairwise policy: weight `0.001`, margin `0.03`.
+- Pairwise Q: weight `0.05`, margin `0.05`.
+- Reward-delta scaling: weight `0.10`, margin scale `0.08`, clip `2.0`.
+- Max transitions: 200000.
+- MLflow run id: `165a48077a0b40aaa2a8babcb649349f`.
+
+Training log:
+
+- Pairwise rows loaded: 2048.
+- Pairwise batches were active, with logged `pairwise_count` values 15, 22,
+  and 27 at steps 25, 50, and 75.
+- Final epoch average loss: `0.0728`.
+
+Post-training calibration:
+
+| metric | anchor | candidate | delta |
+| --- | ---: | ---: | ---: |
+| policy preferred rate | 56.98% | 57.28% | +0.29pp |
+| policy reward-gap-weighted preferred rate | 57.63% | 58.10% | +0.47pp |
+| Q preferred rate | 51.22% | 54.15% | +2.93pp |
+| Q reward-gap-weighted preferred rate | 50.46% | 53.53% | +3.06pp |
+| high-gap Q preferred rate | 55.83% | 58.33% | +2.50pp |
+
+Calibration report:
+`/root/fh-mahjong-runs/chongci-branch-cf-large-iql-20260613-000745-retry/reports/large_lowpressure_branch_cf_calibration_r2048.json`
+
+Evaluation:
+
+- Gate: duplicate-seat combined gate over `534000:10`, `544000:10`,
+  `554000:10`.
+- Seats: 120.
+- Correct candidate report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-large-iql-20260613-000745-retry/reports/large_lowpressure_combined_gate_534_544_554_n10_max8192.json`
+- MLflow eval run: `8daa8f94807f4d188e4f7d02aa90622b`.
+- Invalid first eval:
+  `/root/fh-mahjong-runs/chongci-branch-cf-large-iql-20260613-000745-retry/reports/large_lowpressure_combined_gate_534_544_554_n10.json`
+  used the default step cap and all 120 matches truncated, so it is ignored.
+
+Result:
+
+| metric | large branch-CF candidate | current anchor | delta |
+| --- | ---: | ---: | ---: |
+| seats | 120 | 120 | 0 |
+| reward sum | -2.9230 | 1.4410 | -4.3640 |
+| mean reward | -0.02 | 0.01 | -0.03 |
+| positive-reward rate | 45.00% | 47.50% | -2.50pp |
+| large-loss count | 18 | 16 | +2 |
+| large-loss rate | 15.00% | 13.33% | +1.67pp |
+
+Decision:
+Rejected. The larger shard and lower pairwise pressure improved exact branch
+Q ranking, but duplicate-seat EV, positive rate, and large-loss rate all
+regressed versus the promoted anchor.
+
+Interpretation:
+Short-horizon branch-CF labels are useful diagnostics, and the Q head can be
+nudged toward them. But direct policy/Q margin shaping from these labels is not
+yet transferring to better full-match play. Stop this direct branch-CF shaping
+line for now. Keep the larger shard for critic-side calibration or analysis,
+but do not promote or serve this checkpoint.
+
+### Experiment: Branch-CF Frozen Action-Risk Critic
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101`
+
+Question:
+Can exact same-state branch-CF rows train a critic-side action-risk head that
+recognizes risky discard alternatives, without changing the deployed policy?
+
+Data:
+
+- Training shard:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507/data/anchor-branch-cf-831000-r2048-gap002-b6`
+- Rows: 2048.
+- Bad-branch threshold: avoided branch reward `<= -0.2`.
+- Positive avoided branches: 328.
+- Negative avoided branches: 1720.
+- Pairwise supervision: all 2048 rows.
+
+Training:
+
+- Output checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/checkpoints/branch_cf_risk_frozen_t020/epoch_003.pt`
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Encoder: frozen.
+- Epochs: 3.
+- Steps per epoch: 120.
+- Batch size: 1024.
+- Learning rate: `5e-5`.
+- Target mode: terminal.
+- Threshold: `-0.2`.
+- Paired margin weight: `1.0`.
+- Paired severity weight: `0.25`.
+- Paired margin: `0.10`.
+- Paired delta scale: `0.5`.
+- Paired delta clip: `3.0`.
+- Paired batch fraction: `0.5`.
+- Report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/reports/branch_cf_risk_frozen_t020_train.json`
+
+Training behavior:
+The paired margin loss was active on every logged step with `paired_count=1024`.
+It fell from `1.4725` at epoch 1 step 1 to `0.3807` at epoch 3 step 120.
+The probability head also separated terminal branch labels: at the final logged
+step, positive branch probability was `0.484` and negative branch probability
+was `0.307`.
+
+In-sample branch-CF calibration:
+
+- Report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/reports/branch_cf_risk_frozen_t020_calibration_r2048.json`
+- MLflow run: `2d1e3e924f344b199d749cbaf42ab173`.
+- Risk lower-is-better preferred rate: `76.46%`.
+
+Holdout data:
+
+- Holdout run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-20260613-004200`
+- Holdout shard:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-20260613-004200/data/anchor-branch-cf-841000-r512-gap002-b6`
+- Rows: 512.
+- Branch calls: 811.
+- Branch results: 5168.
+- Max branch actions per decision: 6.
+- Minimum reward gap: `0.02`.
+- Mean reward gap: `0.176687`.
+- Max reward gap: `2.124`.
+- Generation time: `193.73s`.
+
+Holdout calibration:
+
+| checkpoint / head | risk preferred | weighted risk preferred | high-gap risk preferred |
+| --- | ---: | ---: | ---: |
+| promoted anchor risk head | 52.15% | 51.65% | 42.86% |
+| branch-CF frozen risk critic | 61.91% | 59.63% | 57.14% |
+
+For reference, the reward/Q heads still did not solve this holdout:
+
+| checkpoint | Q preferred | weighted Q preferred | high-gap Q preferred |
+| --- | ---: | ---: | ---: |
+| promoted anchor | 49.22% | 47.27% | 28.57% |
+| large low-pressure branch-CF IQL candidate | 49.61% | 48.95% | 33.33% |
+
+Larger independent holdout:
+
+- Holdout run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827`
+- Holdout shard:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/data/anchor-branch-cf-851000-r2048-gap002-b6`
+- Rows: 2048.
+- Branch calls: 3376.
+- Branch results: 21410.
+- Mean reward gap: `0.215305`.
+- Max reward gap: `3.849`.
+- High-gap rows (`reward_gap >= 0.50`): 152.
+- Generation time: `1174.80s`.
+
+Larger holdout calibration:
+
+| checkpoint / head | risk preferred | weighted risk preferred | high-gap risk preferred |
+| --- | ---: | ---: | ---: |
+| promoted anchor risk head | 53.22% | 51.31% | 53.95% |
+| branch-CF frozen risk critic | 63.18% | 61.99% | 65.13% |
+
+Larger holdout reports:
+
+- Anchor:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/reports/anchor_calibration_holdout_large_r2048.json`
+- Branch-CF risk critic:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/reports/branch_cf_risk_frozen_t020_calibration_holdout_large_r2048.json`
+
+Decision:
+Diagnostic only. The branch-CF risk critic generalizes better than the anchor
+risk head on both a 512-row and a 2048-row independent holdout. However, no
+guarded-serving or policy-regularized duplicate-seat gate has passed. Do not
+serve this critic yet.
+
+Interpretation:
+This is the first branch-CF result that transfers in the intended critic-side
+direction: a frozen risk head can learn that the preferred branch should look
+less risky than the avoided branch better than the default anchor risk head.
+The result is still not a policy improvement by itself. Next useful work is a
+deliberately conservative risk-guard experiment around the promoted anchor, with
+promotion allowed only if duplicate-seat EV is not harmed and large-loss rate is
+no worse than the unguarded anchor.
+
+Guard screen:
+The first conservative guard used the promoted anchor policy by default and
+allowed the risk critic to substitute a nearby lower-risk legal action only when
+all filters passed.
+
+Configuration:
+
+- Report:
+  `/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/reports/risk_guarded_policy_nearest_gate_534_544_554_n10.json`
+- Gate: duplicate-seat combined gate over `534000:10`, `544000:10`,
+  `554000:10`.
+- Seats: 120.
+- Selection mode: `policy_nearest`.
+- Candidate risk threshold: `0.45`.
+- Minimum risk reduction: `0.15`.
+- Maximum policy logit gap: `1.5`.
+- Anchor risk thresholds swept: `0.55`, `0.65`, `0.75`.
+
+Guard result:
+
+| anchor risk threshold | reward sum | mean reward | positive rate | large-loss rate | guard choice rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| unguarded anchor | 1.4410 | 0.01 | 47.50% | 13.33% | 0.00% |
+| `0.55` | -4.5270 | -0.0377 | 46.67% | 18.33% | 0.82% |
+| `0.65` | -4.5810 | -0.0382 | 44.17% | 16.67% | 0.53% |
+| `0.75` | -2.0110 | -0.0168 | 45.00% | 15.00% | 0.27% |
+
+Guard decision:
+Rejected. Even sparse guard interventions worsened EV and tail risk versus the
+unguarded anchor. The critic remains useful for offline branch-risk analysis,
+but it is not serving- or policy-regularization-ready.
+
+Exact branch-CF guard preflight:
+Added `fh-mj-branch-cf-guard-diagnostics` to compare a guard configuration
+against exact branch-CF labels before running another duplicate-seat gate. The
+diagnostic checks whether guard interventions turn an exact avoided branch into
+the exact preferred branch, and whether the exact preferred branch even passes
+the guard filters.
+
+Report:
+`/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/reports/risk_guarded_policy_nearest_branch_cf_preflight_holdout_large_r2048.json`
+
+Preflight data:
+`/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/data/anchor-branch-cf-851000-r2048-gap002-b6`
+
+Preflight result:
+
+| anchor risk threshold | guard changes | rescues avoided->preferred | harms preferred->avoided | known reward delta | changes to unlabeled |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `0.55` | 17 | 0 | 0 | 0.0000 | 17 |
+| `0.65` | 11 | 0 | 0 | 0.0000 | 11 |
+| `0.75` | 7 | 0 | 0 | 0.0000 | 7 |
+
+Filter diagnosis:
+
+- Anchor chose the exact avoided branch on 241 of 2048 rows.
+- Exact preferred branch passed the `max_policy_logit_gap <= 1.5` filter on
+  only 4 of those 241 anchor-avoided rows.
+- Exact preferred branch passed all current guard filters on 0 rows at every
+  tested threshold.
+- Median anchor-to-preferred policy logit gap on anchor-avoided rows was
+  `20.6959`, so the current guard design is fundamentally policy-near and
+  cannot reach many exact preferred branch alternatives.
+
+Preflight decision:
+This explains the failed duplicate-seat guard: it was not performing exact
+branch rescues. It was making rare substitutions into actions outside the
+preferred/avoided branch label pair, so the offline branch-CF evidence did not
+support the live guard. Do not run nearby guard-threshold sweeps. Any future
+guard must first show positive rescue count and positive known reward-gap delta
+on exact branch-CF preflight before duplicate-seat evaluation.
+
+Oracle preferred-branch preflight:
+Extended `fh-mj-branch-cf-guard-diagnostics` with an upper-bound diagnostic that
+asks whether the exact preferred branch would pass risk filters if the
+policy-logit gap cap were relaxed. This is not a serving policy. It separates
+two failure modes: a critic that cannot identify safer preferred branches versus
+a proposal policy that cannot reach those branches.
+
+Report:
+`/root/fh-mahjong-runs/chongci-branch-cf-riskcritic-20260613-004101/reports/risk_guarded_policy_nearest_branch_cf_preflight_holdout_large_r2048_oracle.json`
+
+Oracle preflight result on the 2048-row large holdout:
+
+| anchor risk threshold | base risk-filter pass | cap `1.5` rescue delta | cap `3.0` rescue delta | cap `6.0` rescue delta | cap `12.0` rescue delta | cap `24.0` rescue delta | no cap rescue delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `0.55` | 30 | 0 / 0.0000 | 1 / 0.3280 | 6 / 1.5620 | 11 / 2.2050 | 28 / 4.7600 | 30 / 4.8980 |
+| `0.65` | 24 | 0 / 0.0000 | 1 / 0.3280 | 5 / 1.3460 | 10 / 1.9890 | 22 / 3.6410 | 24 / 3.7790 |
+| `0.75` | 11 | 0 / 0.0000 | 0 / 0.0000 | 3 / 0.6840 | 4 / 1.0000 | 10 / 2.0120 | 11 / 2.1140 |
+
+Interpretation:
+The frozen risk critic is not useless: when handed the exact preferred branch,
+it allows some positive reward-gap rescues under relaxed policy-distance caps.
+The current `max_policy_logit_gap <= 1.5` guard allows none. The blocker is
+therefore mainly action proposal / policy prior mismatch, not just risk-score
+calibration. A future branch should train the policy to make exact preferred
+branch actions reachable, or use branch-CF data as policy-side distillation,
+before another duplicate-seat guard gate.
+
+Policy-side branch-CF distillation pilot:
+After the oracle preflight showed a policy-prior mismatch, ran a one-epoch
+policy-side branch-CF distillation pilot. This reused the promoted Chongci
+checkpoint as initialization, trained on the current mixed self-play replay, and
+added the 2048-row exact branch-CF shard as direct pairwise auxiliary data.
+`--pairwise-replay-multiplier` was extended to apply to direct `--pairwise-data`
+rows so the branch-CF rows are not drowned by the much larger mixed replay.
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638`
+
+Training:
+
+- Main data:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Pairwise data:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507/data/anchor-branch-cf-831000-r2048-gap002-b6`
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- Candidate checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638/checkpoints/branch_cf_policy_distill_w4_m6_repeat128/epoch_001.pt`
+- Pairwise replay rows after multiplier: `262144`.
+- Pairwise policy weight: `4.0`.
+- Pairwise margin: `6.0`.
+- Pairwise reward-delta weight: `2.0`.
+- Pairwise reward-delta margin scale: `2.0`.
+- Q-side pairwise weight: `0.0`.
+- Epochs: `1`.
+
+Branch-CF calibration:
+
+| dataset | policy preferred margin rate | policy preferred argmax | policy avoided argmax | Q preferred margin rate |
+| --- | ---: | ---: | ---: | ---: |
+| train branch-CF r2048 | 99.95% | 33.45% | 0.00% | 53.17% |
+| holdout branch-CF r2048 | 61.28% | 23.68% | 10.64% | 50.54% |
+
+Calibration reports:
+
+- Train:
+  `/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638/reports/policy_distill_train_branch_cf_calibration_r2048.json`
+- Holdout:
+  `/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638/reports/policy_distill_holdout_branch_cf_calibration_r2048.json`
+- Candidate-as-anchor preflight:
+  `/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638/reports/policy_distill_as_anchor_branch_cf_preflight_holdout_r2048.json`
+
+Smoke evaluation:
+
+| screen | seats | mean reward | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: |
+| `534000:2` duplicate seats | 8 | -0.26 | 37.50% | 62.50% |
+
+Smoke report:
+`/root/fh-mahjong-runs/chongci-branch-cf-policy-distill-20260614-0638/reports/policy_distill_smoke_534000_n2.json`
+
+Decision:
+Rejected before full duplicate-seat gate. The pilot proves the policy logits can
+be moved toward exact branch-CF labels, but the resulting live policy is not
+gameplay-safe. The full `534000/544000/554000` gate was started and stopped
+after roughly eight minutes with no report because the smaller smoke already
+showed severe tail-risk regression.
+
+Interpretation:
+Naively forcing branch-CF preferred actions into the policy head overfits the
+exact branch labels and damages broad policy behavior. The next branch should
+not increase this loss further. Use branch-CF labels more conservatively:
+filtered high-confidence rows, family-specific distillation, KL anchoring to
+the promoted policy, or an action-proposal head evaluated offline before any
+live gate.
+
+KL-anchored branch-CF distillation pilots:
+Added two safety controls to `fh-mj-train-iql` before retrying policy-side
+branch-CF distillation:
+
+- `--pairwise-data-min-reward-gap` filters direct `--pairwise-data` rows by
+  `pairwise_reward_delta_targets`.
+- `--policy-kl-anchor-checkpoint` plus `--policy-kl-weight` regularizes the
+  trained masked policy distribution toward a frozen promoted-anchor policy.
+
+First KL pilot:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-kl-distill-20260614-0710`
+- Candidate checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-kl-distill-20260614-0710/checkpoints/branch_cf_kl_anchor_gap050_w030_m20_repeat64/epoch_001.pt`
+- Reward-gap filter: `>= 0.5`.
+- Effective direct pairwise replay rows: `7680`.
+- Pairwise policy weight: `0.3`.
+- Pairwise margin: `2.0`.
+- Pairwise reward-delta weight: `1.0`.
+- Pairwise reward-delta margin scale: `0.5`.
+- KL anchor: promoted Chongci checkpoint.
+- KL weight: `1.0`.
+
+First KL calibration:
+
+| dataset | policy preferred margin rate | policy preferred argmax | policy avoided argmax | Q preferred margin rate |
+| --- | ---: | ---: | ---: | ---: |
+| train branch-CF r2048 | 59.42% | 23.54% | 12.06% | 52.00% |
+| holdout branch-CF r2048 | 58.40% | 23.83% | 11.67% | 51.86% |
+
+First KL smoke:
+
+| policy | screen | seats | mean reward | positive rate | large-loss rate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| promoted anchor | `534000:2` | 8 | 0.0040 | 50.00% | 50.00% |
+| gap050 KL candidate | `534000:2` | 8 | -0.1749 | 50.00% | 50.00% |
+
+Second strict KL pilot:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-branch-cf-kl-distill-strict-20260614-0725`
+- Candidate checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-cf-kl-distill-strict-20260614-0725/checkpoints/branch_cf_kl_anchor_gap100_w005_m05_repeat64/epoch_001.pt`
+- Reward-gap filter: `>= 1.0`.
+- Effective direct pairwise replay rows: `2240`.
+- Pairwise policy weight: `0.05`.
+- Pairwise margin: `0.5`.
+- Pairwise reward-delta weight: `0.0`.
+- Pairwise reward-delta margin scale: `0.0`.
+- KL anchor: promoted Chongci checkpoint.
+- KL weight: `5.0`.
+
+Strict KL calibration:
+
+| dataset | policy preferred margin rate | policy preferred argmax | policy avoided argmax | Q preferred margin rate |
+| --- | ---: | ---: | ---: | ---: |
+| train branch-CF r2048 | 57.91% | 23.05% | 12.55% | 51.76% |
+| holdout branch-CF r2048 | 57.08% | 23.73% | 11.82% | 51.32% |
+
+Strict KL smoke:
+
+| policy | screen | seats | mean reward | positive rate | large-loss rate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| strict KL candidate | `534000:2` | 8 | -0.0599 | 50.00% | 50.00% |
+| strict KL candidate | `534000:4` | 16 | -0.0325 | 50.00% | 50.00% |
+| promoted anchor | `534000:4` | 16 | 0.0279 | 50.00% | 50.00% |
+
+Decision:
+Rejected before full duplicate-seat gate. KL anchoring and high-confidence row
+filtering avoided the catastrophic large-loss smoke from the naive policy
+distillation run, but both KL candidates still lost EV versus the promoted
+anchor while providing no positive-rate or tail-risk improvement.
+
+Interpretation:
+Stop policy-side branch-CF distillation weight/filter tuning in this family.
+The branch-CF labels remain useful for diagnostics and critic/proposal analysis,
+but forcing them into the deployed policy head does not currently improve live
+Chongci play. The next viable direction is not another nearby pairwise-weight
+sweep; it should be a separate action-proposal/reranking analysis, more aligned
+full-match counterfactual labels, or fresh self-play data that naturally visits
+the branch-CF-preferred actions before policy training.
+
+Branch-CF proposal/reranking diagnostics:
+Added proposal/rerank diagnostics to `fh-mj-branch-cf-calibration`. The report
+now measures whether exact branch-CF preferred actions are reachable in the
+anchor policy's legal top-k candidates and whether Q or risk reranking can turn
+an avoided top-1 action into the exact preferred branch action.
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745`
+
+Data:
+`/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/data/anchor-branch-cf-851000-r2048-gap002-b6`
+
+Reports:
+
+- Promoted anchor:
+  `/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745/reports/anchor_holdout_proposal_rerank_r2048.json`
+- Branch-CF frozen risk critic:
+  `/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745/reports/riskcritic_holdout_proposal_rerank_r2048.json`
+- Strict KL rejected candidate:
+  `/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745/reports/strict_kl_holdout_proposal_rerank_r2048.json`
+
+Offline proposal/rerank result on the 2048-row holdout:
+
+| scorer / reranker | preferred rank median | preferred better than avoided | top-k | preferred in policy top-k | rescues | harms | known reward-gap delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| anchor policy rank | 4.0 | 57.23% | 3 | 43.5% | n/a | n/a | n/a |
+| anchor Q rerank | n/a | n/a | 3 | 43.5% | 22 | 36 | 0.179 |
+| anchor risk rerank | 5.0 | 53.22% | 3 | 43.5% | 25 | 25 | 0.133 |
+| branch-CF risk rerank | 5.0 | 63.18% | 3 | 43.5% | 28 | 23 | 3.954 |
+| branch-CF risk rerank | 5.0 | 63.18% | 5 | 60.4% | 29 | 29 | 1.776 |
+| branch-CF risk rerank | 5.0 | 63.18% | 10 | 92.2% | 34 | 22 | 1.035 |
+
+Interpretation from offline diagnostics:
+The branch-CF risk critic does have a useful exact-label signal when used only
+inside the anchor policy's top-k proposals. The best offline screen was top-3
+risk reranking: small positive rescue/harm balance and positive known
+reward-gap delta.
+
+Live top-k risk-rerank smoke:
+Added `--selection-mode policy_topk_risk --policy-top-k N` to
+`fh-mj-evaluate-risk-guarded`, then tested the branch-CF risk critic as a live
+top-3 reranker around the promoted anchor.
+
+| policy | screen | seats | mean reward | positive rate | large-loss rate | risk-guard choice rate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| top-3 risk rerank, unconstrained | `534000:2` | 8 | -1.9032 | 0.00% | 100.00% | 60.52% |
+| top-3 risk rerank, strict thresholds | `534000:2` | 8 | -0.6619 | 37.50% | 62.50% | 5.52% |
+
+Live reports:
+
+- Unconstrained:
+  `/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745/reports/top3_risk_rerank_smoke_534000_n2.json`
+- Strict:
+  `/root/fh-mahjong-runs/chongci-branch-cf-proposal-diagnostics-20260614-0745/reports/top3_risk_rerank_strict_smoke_534000_n2.json`
+
+Decision:
+Rejected for serving/evaluation. The exact branch-CF top-k rerank signal does
+not transfer to live Chongci action selection. The unconstrained top-3 reranker
+intervened far too often and collapsed every smoke seat into a large loss; the
+strict version intervened sparsely but still materially regressed EV and tail
+risk. Do not continue with nearby top-k risk-rerank threshold sweeps.
+
+Interpretation:
+The issue is not just whether a preferred branch action is present in policy
+top-k. The short-horizon branch-CF label does not reliably define a safe
+full-match intervention rule. The next branch should move away from serving-time
+reranking and toward more aligned labels: full-match branch evaluation,
+counterfactual labels conditioned on match phase/score pressure, or fresh
+self-play data where the improved action sequence is generated organically.
+
+Full-match branch-CF feasibility probe:
+Added progress instrumentation to `fh-mj-generate-branch-counterfactuals`:
+`--progress-every N` writes JSON branch-start/branch-done lines, branch elapsed
+time, and result terminated/truncated/error counts; `--max-elapsed-seconds S`
+stops after the current branch call once the wall-clock budget is exhausted.
+
+Run:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-probe-20260614-0755`
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+
+Probe results:
+
+| probe | branch cap | min gap | rows | branch calls | branch results | elapsed | finding |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| tiny full-match truncation probe | 256 | 0.00 | 0 | 193 | 547 | 120.0s | every branch result truncated |
+| truncation diagnostic probe | 256 | 0.00 | 0 | 40 | 114 | 35.5s | result_truncated equals branch action count |
+| high-cap zero-gap smoke | 4096 | 0.00 | 1 | 1 | 2 | 22.4s | full-match branches can terminate, but first row had zero reward gap |
+| high-cap meaningful probe | 4096 | 0.02 | 4 | 11 | 32 | 100.8s | generated usable non-zero-gap full-match labels |
+
+Meaningful shard:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-probe-20260614-0755/data/fullmatch-branch-cf-861050-e1-r4-b2-d4096-gap002`
+
+Meaningful shard manifest:
+
+- rows: 4
+- mean reward gap: 0.4305
+- max reward gap: 0.6140
+- skipped no-label branch calls: 7
+- skipped not-enough-discard states: 1
+- branch mode: full match (`branch_stop_at_round_end=false`)
+- max branch actions: 2
+- branch max decisions: 4096
+
+Anchor calibration report:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-probe-20260614-0755/reports/anchor_fullmatch_probe_r4.json`
+
+Tiny calibration result:
+
+| rows | policy preferred rate | policy argmax preferred | Q preferred rate | Q argmax preferred | risk lower-is-better rate |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 75.00% | 50.00% | 25.00% | 0.00% | 50.00% |
+
+Interpretation:
+Full-match branch labels are feasible but expensive: roughly 4 useful rows in
+101 seconds in this tiny probe. The low-cap probes were invalid because they
+only produced truncated branch results. The high-cap labels look more aligned
+with the promoted policy head than with the current Q head, which argues against
+using the current Q/risk heads as a reranker and favors a larger diagnostic
+full-match branch-CF shard before any training change.
+
+Decision:
+Do not train on the four-row shard. Next, generate a larger full-match
+diagnostic shard with `--branch-max-decisions 4096`, `--max-branch-actions 2`,
+`--min-reward-gap 0.02`, and progress logging. Use that shard only for
+calibration and failure-slice analysis first. If density and calibration remain
+reasonable, then try a very small policy-side auxiliary run with strict duplicate
+gate promotion; otherwise pivot to fresh self-play data instead of more branch
+label engineering.
+
+Larger full-match diagnostic shard:
+Generated the first larger diagnostic shard from the same promoted anchor with
+the high-cap full-match settings.
+
+Run:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-20260614-0753`
+
+Data:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-20260614-0753/data/fullmatch-branch-cf-861100-e4-r32-b2-d4096-gap002`
+
+Report:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-20260614-0753/reports/anchor_fullmatch_diagnostic_r32.json`
+
+Generation summary:
+
+| rows | episodes | branch calls | branch results | skipped no-label | skipped not-enough-discards | elapsed | mean gap | max gap |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 4 | 59 | 165 | 27 | 15 | 308.7s | 0.2153 | 0.5560 |
+
+Anchor calibration:
+
+| rows | policy preferred | policy argmax preferred | Q preferred | Q argmax preferred | risk lower-is-better |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 65.62% | 53.12% | 53.12% | 9.38% | 62.50% |
+
+Policy proposal coverage:
+
+| metric | value |
+| --- | ---: |
+| preferred policy rank median | 1.0 |
+| avoided policy rank median | 5.0 |
+| preferred better than avoided by policy | 65.62% |
+| preferred in policy top-3 | 62.50% |
+| avoided in policy top-3 | 28.12% |
+| reward-gap-weighted preferred in policy top-3 | 71.03% |
+
+Interpretation:
+The first 32-row full-match shard supports the idea that the promoted policy is
+already partially aligned with full-match branch labels, especially in top-1 and
+top-3 proposal rank. The Q head is weaker as an action selector despite a small
+majority preferred-rate, because Q argmax hits the preferred action on only
+9.38% of rows. This is not enough data for a training claim, but it is enough to
+justify scaling the full-match diagnostic shard before another policy update.
+
+Next decision:
+Scale the same full-match label source to a larger diagnostic shard before
+training. The immediate target is a 128-row shard using the same settings. Use
+it for calibration/failure slices first; only train if policy top-k coverage and
+reward-gap density remain stable.
+
+Full-match 128-row diagnostic and low-dose auxiliary reject:
+
+128-row diagnostic run:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-128-20260614-0800`
+
+Data:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-128-20260614-0800/data/fullmatch-branch-cf-861500-e12-r128-b2-d4096-gap002`
+
+Reports:
+
+- Anchor calibration:
+  `/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-128-20260614-0800/reports/anchor_fullmatch_diagnostic_r128.json`
+- Failure slices:
+  `/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-128-20260614-0800/reports/anchor_fullmatch_diagnostic_r128_failures.json`
+
+Generation summary:
+
+| rows | episodes | branch calls | branch results | skipped no-label | skipped not-enough-discards | elapsed | mean gap | max gap |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 12 | 226 | 630 | 98 | 41 | 1062.3s | 0.3329 | 1.4730 |
+
+Reward-gap density:
+
+| gap filter | rows |
+| ---: | ---: |
+| >= 0.20 | 76 |
+| >= 0.50 | 33 |
+| >= 0.75 | 19 |
+| >= 1.00 | 9 |
+
+Anchor calibration:
+
+| rows | policy preferred | policy argmax preferred | policy argmax avoided | Q preferred | Q argmax preferred | risk lower-is-better |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 38.28% | 25.78% | 45.31% | 52.34% | 11.72% | 51.56% |
+
+Policy proposal coverage:
+
+| top-k | preferred in policy top-k | avoided in policy top-k | reward-gap-weighted preferred |
+| ---: | ---: | ---: | ---: |
+| 3 | 40.62% | 58.59% | 39.30% |
+| 5 | 57.81% | 70.31% | 51.36% |
+| 10 | 86.72% | 96.88% | 90.75% |
+| 20 | 100.00% | 100.00% | 100.00% |
+
+Failure slices:
+
+| segment | rows | rate | mean reward gap | median reward gap |
+| --- | ---: | ---: | ---: | ---: |
+| policy misrank | 79 | 61.72% | 0.3513 | 0.2310 |
+| high-gap policy misrank | 21 | 16.41% | 0.8309 | 0.7850 |
+| Q misrank | 61 | 47.66% | 0.3162 | 0.2200 |
+| high-gap Q misrank | 13 | 10.16% | 0.9053 | 0.9730 |
+
+Interpretation:
+The 128-row shard reversed the optimistic 32-row signal. The promoted policy is
+often confidently choosing the full-match avoided discard, including high-gap
+rows. This makes full-match branch labels a real diagnostic target, but not a
+safe direct policy overwrite target without strong anchoring.
+
+Low-dose full-match KL auxiliary:
+
+Run:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-kl-lowdose-20260614-0820`
+
+Training:
+
+- Base data:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Pairwise data:
+  `/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-diagnostic-128-20260614-0800/data/fullmatch-branch-cf-861500-e12-r128-b2-d4096-gap002`
+- Pairwise row filter: reward gap >= 0.5, 33 source rows.
+- Pairwise replay multiplier: 64, 2112 effective rows.
+- Init/KL anchor:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+- LR: `1e-5`
+- BC weight: `0.05`
+- Pairwise policy weight: `0.05`
+- Pairwise policy margin: `0.5`
+- Pairwise Q weight: `0.05`
+- Pairwise Q margin: `0.1`
+- KL weight: `5.0`
+- MLflow run: `20df942b1a7d4919aa33e1cc5d049927`
+
+Candidate:
+`/root/fh-mahjong-runs/chongci-fullmatch-branch-cf-kl-lowdose-20260614-0820/checkpoints/fullmatch_gap050_kl_lowdose/epoch_001.pt`
+
+Calibration on the same 128-row full-match shard:
+
+| policy | policy preferred | policy argmax preferred | policy argmax avoided | Q preferred | Q argmax preferred |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | 38.28% | 25.78% | 45.31% | 52.34% | 11.72% |
+| low-dose candidate | 41.41% | 25.78% | 42.97% | 62.50% | 12.50% |
+
+Smoke evaluation:
+
+| policy | screen | seats | mean reward | reward sum | positive rate | large-loss rate |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | `534000:2` | 8 | 0.00 | 0.0320 | 50.00% | 50.00% |
+| low-dose candidate | `534000:2` | 8 | -0.16 | -1.3180 | 50.00% | 50.00% |
+
+Decision:
+Rejected before a full duplicate gate. The low-dose full-match auxiliary
+improves offline Q preference and barely improves policy preference, but it
+still loses live smoke EV with no positive-rate or large-loss improvement.
+
+Interpretation:
+Stop direct policy-side branch-label distillation again, even with full-match
+labels, unless a new mechanism changes how labels enter training. The next
+aligned path is fresh self-play data that lets alternative decisions unfold
+organically, not another pairwise-weight/threshold sweep.
+
+Sampled-anchor self-play pivot:
+Added checkpoint-temperature sampling for mixed self-play generation while
+keeping default serving/evaluation greedy. This allows controlled exploration
+from the promoted policy without deploying stochastic actions.
+
+Run started:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-20260614-0835`
+
+Data target:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-20260614-0835/data/anchor-sampled-temp025-862000-n100-npz`
+
+Generation settings:
+
+- seats 0-3: promoted anchor checkpoint
+- checkpoint temperature: `0.25`
+- episodes: `100`
+- start seed: `862000`
+- match mode: Chongci
+- chunk size: `10`
+
+Purpose:
+Use this as the next candidate data source for reward learning if it completes
+with plausible returns and legal-action validation. The first screen after
+generation should compare its outcome distribution against greedy-anchor
+self-play before training from it.
+
+Sampled-anchor self-play result:
+
+Completed:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-20260614-0835/data/anchor-sampled-temp025-862000-n100-npz`
+
+Generation summary:
+
+| episodes | transitions | elapsed | temperature | seats |
+| ---: | ---: | ---: | ---: | --- |
+| 100 | 204538 | 665.6s | 0.25 | all promoted anchor |
+
+Outcome comparison:
+
+| dataset | episode-seats | positive rate | large-loss rate <= -0.5 | min return | max return |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| sampled anchor temp 0.25 | 400 | 47.25% | 29.75% | -2.152 | 3.527 |
+| greedy anchor first 400 seats | 400 | 48.00% | 30.00% | n/a | n/a |
+| broader mixed first 400 seats | 400 | 46.00% | 34.50% | n/a | n/a |
+
+Low-dose sampled-IQL run:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-iql-20260614-0850`
+
+Medium-dose sampled-IQL run:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-iql-medium-20260614-0900`
+
+Training source for both:
+
+- Base:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- Fresh sampled:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-20260614-0835/data/anchor-sampled-temp025-862000-n100-npz`
+- Init:
+  `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+
+| run | LR | BC | KL | sampled-data argmax divergence vs anchor | full-match-CF argmax divergence | smoke reward sum | decision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| low-dose | 1e-5 | 0.05 | 2.0 | 0.21% | 0.00% | 0.0320 | no-op |
+| medium-dose | 2e-5 | 0.03 | 1.0 | 0.38% | 0.00% | 0.0320 | no-op |
+
+Both matched the promoted anchor exactly on the `534000:2` smoke report:
+8 seats, reward sum `0.0320`, positive rate `50.00%`, large-loss rate `50.00%`.
+
+Interpretation:
+Temperature `0.25` was too close to greedy. It generated valid data, but the
+dataset still agrees with the greedy anchor on roughly 99% of sampled decisions,
+so conservative IQL barely changed the deployed policy. Do not widen-gate these
+checkpoints; they are no-op diagnostics.
+
+Next probe:
+Started a smaller higher-exploration sampled self-play run:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-temp075-20260614-0910`
+
+Target:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-temp075-20260614-0910/data/anchor-sampled-temp075-863000-n50-npz`
+
+Settings:
+
+- episodes: `50`
+- start seed: `863000`
+- checkpoint temperature: `0.75`
+- all seats: promoted anchor checkpoint
+
+Screen before training:
+Compare return distribution and greedy-anchor action agreement. Only train from
+this data if it provides materially more action diversity without clearly
+destroying the outcome distribution.
+
+Temp 0.75 sampled-anchor probe:
+
+Completed:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-selfplay-temp075-20260614-0910/data/anchor-sampled-temp075-863000-n50-npz`
+
+Generation summary:
+
+| episodes | transitions | elapsed | temperature | seats |
+| ---: | ---: | ---: | ---: | --- |
+| 50 | 103178 | 343.1s | 0.75 | all promoted anchor |
+
+Distribution and diversity:
+
+| dataset | episode-seats | positive rate | large-loss rate <= -0.5 | greedy agreement first 20k | median return |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| temp 0.25 | 400 | 47.25% | 29.75% | 99.13% | -0.0400 |
+| temp 0.75 | 200 | 43.50% | 32.00% | 97.90% | -0.1115 |
+
+Temp 0.75 IQL:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-temp075-iql-20260614-0920`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-temp075-iql-20260614-0920/checkpoints/sampled_anchor_temp075_iql_medium/epoch_001.pt`
+- MLflow run: `ccba8208a6694c4d84f00679d02bba30`
+- Argmax divergence: 0.33% on temp 0.75 sampled data, 0.78% on full-match CF.
+- Smoke `534000:2`: reward sum `-0.2260` vs promoted anchor `0.0320`, same positive and large-loss rates.
+
+Temp 0.75 AWBC:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-temp075-awbc-20260614-0930`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-temp075-awbc-20260614-0930/checkpoints/sampled_anchor_temp075_awbc/epoch_001.pt`
+- MLflow run: `3bde7df655b34e739916f2cd54a6be77`
+- Argmax divergence: 0.24% on temp 0.75 sampled data, 0.00% on full-match CF.
+- Smoke `534000:2`: reward sum `-0.2810` vs promoted anchor `0.0320`, same positive and large-loss rates.
+
+Decision:
+Reject both temp 0.75 candidates before wider gates. Temp 0.75 increased action
+diversity only modestly and worsened the sampled self-play outcome distribution.
+IQL and AWBC still mostly preserved the promoted policy, and the few changed
+actions hurt smoke EV.
+
+Interpretation:
+Simple global temperature sampling is not enough. Temp 0.25 is too greedy; temp
+0.75 is still mostly greedy but already degrades outcomes. The next data path
+should use a more targeted exploration mechanism, for example per-seat
+sampled-vs-greedy mixing, top-k-only sampling, or sampling only at high-value
+uncertain decisions. Do not spend wider gates on these no-op sampled-data
+checkpoints.
+
+### Experiment: Anchor Top-K Sampled Self-Play Probe
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945`
+
+Question:
+Can checkpoint self-play exploration be made more useful by sampling only among
+the promoted anchor's top legal actions, instead of globally sampling over all
+legal actions with a higher temperature?
+
+Implementation:
+
+- Added checkpoint-policy sampling controls:
+  - `CheckpointPolicy.from_checkpoint(..., sample_temperature=T, sample_top_k=K, seed=S)`
+  - `fh-mj-generate-selfplay --checkpoint-temperature T --checkpoint-top-k K`
+- Defaults remain greedy serving/evaluation: `sample_temperature=0.0`,
+  `sample_top_k=0`.
+- Self-play manifests now record both `checkpoint_temperature` and
+  `checkpoint_top_k`.
+
+Data:
+
+`/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz`
+
+Generation summary:
+
+| episodes | transitions | elapsed | temperature | top-k | seats |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 50 | 100831 | 350.0s | 1.0 | 3 | all promoted anchor |
+
+Distribution and diversity:
+
+| dataset | episode-seats | positive rate | large-loss rate <= -0.5 | greedy agreement first 20k | median return |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| temp 0.25 | 400 | 47.25% | 29.75% | 99.13% | -0.0400 |
+| temp 0.75 | 200 | 43.50% | 32.00% | 97.90% | -0.1115 |
+| top-k 3 temp 1.0 | 200 | 48.00% | 32.00% | 97.25% | -0.0765 |
+
+The top-k dataset produced slightly more action diversity than temp 0.75 while
+keeping a better sampled outcome distribution. It is still mostly greedy, but it
+is the best of the simple sampled-anchor probes so far.
+
+Training:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-iql-20260614-0955`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-iql-20260614-0955/checkpoints/sampled_anchor_topk3_iql_medium/epoch_001.pt`
+- MLflow run: `5a48986343744644a0bb1268c96cd1e7`
+- Recipe matched the temp 0.75 medium IQL comparison:
+  - base data:
+    `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+  - top-k data:
+    `/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz`
+  - init/KL anchor:
+    `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+  - epoch `1`, batch `4096`, learning rate `2e-5`, BC weight `0.03`,
+    policy KL weight `1.0`, max transitions `200000` per dataset.
+
+Offline drift:
+
+| comparison set | checked rows | argmax divergence vs anchor |
+| --- | ---: | ---: |
+| top-k sampled data | 20000 | 0.27% |
+| full-match branch-CF 128 | 128 | 0.78% |
+
+Evaluation:
+
+Use `--max-steps-per-episode 0` for Chongci duplicate smoke gates. Without this,
+the Python evaluator default can truncate all seats before match end and produce
+zero-reward `match_truncated` reports for both anchor and candidate.
+
+Corrected smoke window: `534000:2`, duplicate seats, Chongci max hands `50`.
+
+| checkpoint | reward sum | mean reward | positive rate | large-loss rate | outcomes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| promoted anchor | 0.0320 | 0.0040 | 50.00% | 50.00% | 8 match_end |
+| top-k IQL candidate | -0.3140 | -0.0392 | 50.00% | 50.00% | 8 match_end |
+
+Decision:
+Reject the top-k IQL candidate before wider gates. Keep the top-k sampling
+tooling and dataset as useful exploration infrastructure, but do not promote
+this checkpoint.
+
+Interpretation:
+Top-k sampling is a better data-generation primitive than broad temperature
+sampling, but a simple one-epoch IQL update still does not improve the anchor.
+The policy barely moves offline, and the small live differences hurt expected
+value on the smoke gate. The next experiment should either generate more top-k
+data with a direct sampled-vs-greedy paired comparison, or train with a clearer
+objective on the sampled divergences instead of another broad IQL pass.
+
+### Experiment: Exact Sampled-Vs-Greedy Branch Counterfactuals
+
+Run:
+
+`/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-topk3-large-20260614-1545`
+
+Question:
+
+Can we avoid broad sampled-data policy drift by labeling only the exact same-state
+decisions where top-k sampling chooses a different action than the greedy anchor?
+
+Implementation:
+
+- Added `fh-mj-generate-sampled-branch-counterfactuals`.
+- The generator loads a checkpoint, computes both greedy and sampled top-k
+  actions from the same visible observation, and calls Go `evaluate_branches()`
+  only when those two actions differ.
+- It writes the same pairwise NPZ schema consumed by `fh-mj-train-iql
+  --pairwise-data`, with extra diagnostics:
+  `branch_greedy_action_ids`, `branch_sampled_action_ids`, and
+  `branch_sampled_ranks`.
+- Existing broad branch-CF generation remains discard-only by default. This new
+  path can label all legal action families because sampled-vs-greedy differences
+  include discard, chii, pon, kan, pass, and haitei/win decisions.
+
+Smoke shard:
+
+`/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-topk3-20260614-1540/data/topk3-sampled-vs-greedy-865000-r128`
+
+| rows | elapsed | branch errors | mean gap | max gap | sampled preferred | greedy preferred |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 34.5s | 0 | 0.0540 | 1.2300 | 92 | 36 |
+
+Anchor calibration on the 128-row smoke shard:
+
+| scorer | preferred rate | reward-gap weighted preferred rate |
+| --- | ---: | ---: |
+| policy logits | 28.91% | 66.23% |
+| Q values | 50.78% | 65.33% |
+
+Large shard:
+
+`/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-topk3-large-20260614-1545/data/topk3-sampled-vs-greedy-865100-r2048`
+
+| rows | elapsed | branch errors | mean gap | max gap | sampled preferred | greedy preferred |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2048 | 394.3s | 0 | 0.0457 | 1.3240 | 1618 | 430 |
+
+Reward-gap distribution:
+
+| filter | rows | sampled preferred rate | mean gap |
+| --- | ---: | ---: | ---: |
+| all rows | 2048 | 79.00% | 0.0457 |
+| gap >= 0.01 | 587 | 49.40% | 0.1580 |
+| gap >= 0.05 | 387 | 50.65% | 0.2227 |
+| gap >= 0.10 | 266 | 48.50% | 0.2917 |
+| gap >= 0.50 | 30 | 36.67% | 0.7921 |
+
+Important detail:
+Most rows have zero or near-zero branch reward gap. Because the branch result
+order is greedy then sampled, zero-gap rows can make the sampled action appear
+preferred without meaningful evidence. Training must filter these out with
+`--pairwise-data-min-reward-gap`; do not train on all rows.
+
+Anchor calibration on the 2048-row shard:
+
+| scorer | all preferred | weighted preferred | gap 0.05-0.20 | gap 0.20-0.50 | gap 0.50+ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| policy logits | 21.04% | 51.38% | 48.86% | 47.83% | 63.33% |
+| Q values | 51.22% | 46.53% | 51.60% | 44.93% | 43.33% |
+
+Training candidate A:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-iql-20260614-1555`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-iql-20260614-1555/checkpoints/topk3_sampled_greedy_pairwise_iql_gap005/epoch_001.pt`
+- MLflow run: `566cb373550c4639a134d8816fcbb984`
+- Data:
+  - base mixed replay:
+    `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+  - top-k sampled replay:
+    `/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz`
+  - pairwise data:
+    `topk3-sampled-vs-greedy-865100-r2048`
+- Pairwise filter: `--pairwise-data-min-reward-gap 0.05`
+- Effective auxiliary rows: `24768`
+- Pairwise batches were active: logged `pairwise_count` around 300 rows/batch.
+
+Candidate A calibration:
+
+| scorer | all preferred | weighted preferred | gap 0.05-0.20 | gap 0.20-0.50 | gap 0.50+ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| policy logits | 25.93% | 67.44% | 65.30% | 71.74% | 66.67% |
+| Q values | 54.74% | 67.83% | 67.58% | 68.84% | 70.00% |
+
+Candidate A smoke, corrected `534000:2` duplicate-seat gate with
+`--max-steps-per-episode 0`:
+
+| checkpoint | reward sum | mean reward | positive rate | large-loss rate | outcomes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| promoted anchor | 0.0320 | 0.0040 | 50.00% | 50.00% | 8 match_end |
+| candidate A | -1.4470 | -0.1809 | 50.00% | 50.00% | 8 match_end |
+
+Decision:
+Reject candidate A before wider gates. It fit the branch labels but damaged
+live expected value.
+
+Training candidate B:
+
+- Run:
+  `/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-iql-conservative-20260614-1605`
+- Candidate:
+  `/root/fh-mahjong-runs/chongci-sampled-greedy-branch-cf-iql-conservative-20260614-1605/checkpoints/topk3_sampled_greedy_pairwise_iql_gap010_conservative/epoch_001.pt`
+- MLflow run: `2bac1bb5c6984982a8c253ff24e8f66f`
+- Changes from candidate A:
+  - no broad top-k sampled replay
+  - `--pairwise-data-min-reward-gap 0.10`
+  - learning rate `5e-6`
+  - pairwise policy weight `0.005`
+  - pairwise policy margin `0.02`
+  - policy KL weight `5.0`
+- Effective auxiliary rows: `17024`
+- Pairwise batches were active.
+
+Candidate B calibration:
+
+| scorer | all preferred | weighted preferred | gap 0.05-0.20 | gap 0.20-0.50 | gap 0.50+ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| policy logits | 22.31% | 53.32% | 51.60% | 50.00% | 63.33% |
+| Q values | 52.05% | 54.53% | 54.34% | 56.52% | 50.00% |
+
+Candidate B smoke, corrected `534000:2` duplicate-seat gate:
+
+| checkpoint | reward sum | mean reward | positive rate | large-loss rate | outcomes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| promoted anchor | 0.0320 | 0.0040 | 50.00% | 50.00% | 8 match_end |
+| candidate B | -0.3150 | -0.0394 | 50.00% | 50.00% | 8 match_end |
+
+Decision:
+Reject candidate B before wider gates. It is safer than candidate A but still
+loses the smoke gate.
+
+Interpretation:
+The exact sampled-vs-greedy branch-CF generator is successful and should be kept.
+It creates dense same-state labels quickly, and those labels produce active
+pairwise training. However, direct policy distillation from short-horizon
+branch labels is still not sufficient for live Chongci improvement. The failure
+mode is now clear: calibration on branch labels improves, but the duplicate-seat
+EV gate gets worse.
+
+Stop rule:
+Do not run another nearby pairwise-IQL coefficient sweep on this same 2048-row
+short-horizon shard. The next useful step needs a new ingredient:
+
+- branch to match end for a smaller high-confidence sampled-vs-greedy shard,
+- learn a Q/reranker diagnostic from branch labels without changing the served
+  policy head, then validate it with a guarded candidate screen,
+- or use these exact branch labels to choose which top-k sampled states deserve
+  longer branch evaluation instead of training directly on all short-horizon
+  labels.
+
+### Experiment: Chongci Global EV Predictor V1
+
+Run:
+`/root/fh-mahjong-runs/chongci-global-ev-v1-20260614-172311`
+
+Question:
+Can a separate visible-state global expected-value predictor learn final
+Chongci match value well enough to become the missing Mortal/Suphx-style global
+reward signal, instead of continuing short-horizon branch-CF policy sweeps?
+
+Data:
+
+- `/root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz`
+- `/root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz`
+- Capped at `--max-transitions 100000` per source, producing `200000`
+  total transitions.
+- Target is final terminal reward for the acting seat:
+  `terminal_rewards[row, seat]`.
+
+Training:
+
+CLI:
+
+```bash
+fh-mj-train-global-ev \
+  --data /root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz \
+  --data /root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz \
+  --checkpoint-dir /root/fh-mahjong-runs/chongci-global-ev-v1-20260614-172311/checkpoints/global_ev_v1 \
+  --report-output /root/fh-mahjong-runs/chongci-global-ev-v1-20260614-172311/reports/global_ev_v1.json \
+  --epochs 3 \
+  --batch-size 2048 \
+  --lr 1e-4 \
+  --weight-decay 1e-4 \
+  --max-transitions 100000 \
+  --device cuda \
+  --model-channel-attention \
+  --mlflow \
+  --mlflow-tracking-uri sqlite:////root/fh-mahjong-branch-cf/ai/mlflow.db \
+  --mlflow-experiment chongci-rl \
+  --mlflow-run-name global_ev_v1
+```
+
+MLflow run:
+`5290d322e81b49818febaace6365a303`
+
+Evaluation:
+Episode-mod validation split, `validation_mod=10`, no duplicate-seat serving
+evaluation because this checkpoint is a value model, not a policy.
+
+Result:
+
+| metric | global EV model | train-mean baseline |
+| --- | ---: | ---: |
+| validation transitions | 19,661 | 19,661 |
+| MAE | 0.4893 | 0.7676 |
+| RMSE | 0.6775 | 1.0096 |
+| correlation | 0.7566 | 0.0000 |
+| bias | -0.1231 | -0.0018 |
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-global-ev-v1-20260614-172311/checkpoints/global_ev_v1/epoch_003.pt`
+
+Decision:
+Successful calibration probe. Do not promote this as a policy, but keep the
+global EV path and scale it to the full mixed/top-k dataset.
+
+Interpretation:
+This is the first recent branch after the sampled branch-CF rejections that
+shows a strong transferable learning signal without changing action selection.
+It matches the Mortal/Suphx lesson: learn a global outcome predictor from
+visible state first, then use it to normalize rewards, select valuable branch
+states, or rank candidate continuations. The negative bias means it should not
+yet be used as an absolute serving-time score; first use it for calibration,
+diagnostics, and relative comparisons on held-out data.
+
+### Experiment: Chongci Global EV Full Scale And First TD Policy Probes
+
+Runs:
+
+- Full global EV:
+  `/root/fh-mahjong-runs/chongci-global-ev-full-20260614-172415`
+- Policy-architecture global EV:
+  `/root/fh-mahjong-runs/chongci-global-ev-policyarch-20260614-172734`
+- Unconstrained `global_ev_td` IQL probe:
+  `/root/fh-mahjong-runs/chongci-global-ev-td-iql-probe-20260614-172802`
+- KL-constrained `global_ev_td` IQL probe:
+  `/root/fh-mahjong-runs/chongci-global-ev-td-iql-kl-probe-20260614-173036`
+
+Question:
+After the standalone global EV predictor proves learnable, can it be used
+directly as a Bellman target for IQL policy improvement?
+
+Implementation:
+Added explicit IQL support for:
+
+```text
+--target-mode global_ev_td --global-ev-checkpoint PATH
+```
+
+The target is:
+
+```text
+Q_target = immediate_reward + gamma * frozen_global_ev(next_observation)
+```
+
+This is intentionally separate from `mc` and learned-`td` targets so runs are
+auditable and cannot accidentally change reward semantics.
+
+Full global EV training:
+
+- Data: all `510713` transitions from the broader mixed self-play and top-k
+  sampled datasets.
+- Model: no-pooling residual CNN with channel attention.
+- Epochs: `5`
+- MLflow run: `05f31e499f044b8995ebc2456972664b`
+- Checkpoint:
+  `/root/fh-mahjong-runs/chongci-global-ev-full-20260614-172415/checkpoints/global_ev_full/epoch_005.pt`
+
+Full global EV result:
+
+| metric | global EV model | train-mean baseline |
+| --- | ---: | ---: |
+| validation transitions | 50,909 | 50,909 |
+| MAE | 0.5449 | 0.8052 |
+| RMSE | 0.7102 | 1.0367 |
+| correlation | 0.7367 | 0.0000 |
+| bias | -0.0483 | -0.0036 |
+
+Policy-architecture global EV:
+
+- Data: `200000` capped transitions, same sources as V1.
+- Model: default policy-compatible no-attention architecture.
+- Epochs: `3`
+- MLflow run: `278c835f141b4f9cbf2ba97ec2bdf733`
+- Checkpoint:
+  `/root/fh-mahjong-runs/chongci-global-ev-policyarch-20260614-172734/checkpoints/global_ev_policyarch/epoch_003.pt`
+
+Policy-architecture EV result:
+
+| metric | global EV model | train-mean baseline |
+| --- | ---: | ---: |
+| validation transitions | 19,661 | 19,661 |
+| MAE | 0.5024 | 0.7676 |
+| RMSE | 0.6787 | 1.0096 |
+| correlation | 0.7474 | 0.0000 |
+| bias | -0.0511 | -0.0018 |
+
+Policy probes:
+
+Both probes warm-started from the promoted Chongci anchor:
+`/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+
+Both used capped mixed/top-k data with `--max-transitions 100000`, one epoch,
+and the policy-compatible global EV checkpoint above.
+
+Smoke evaluation:
+
+- Window: `534000:2`
+- Duplicate seats: yes
+- Seats: `8`
+- Mode: `chongci`
+- `--max-steps-per-episode 0`
+
+| checkpoint | reward sum | mean reward | positive rate | large-loss rate | large-loss count |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| promoted anchor | 0.0320 | 0.0040 | 50.00% | 25.00% | 2 |
+| global EV TD IQL | -1.2830 | -0.1604 | 50.00% | 50.00% | 4 |
+| global EV TD IQL + anchor KL | -0.6650 | -0.0831 | 50.00% | 37.50% | 3 |
+
+Decision:
+Accept the global EV predictor infrastructure. Reject both direct
+`global_ev_td` policy probes before any wider gate.
+
+Interpretation:
+The visible-state global EV model is learning a real outcome signal. The policy
+update failure means the current direct Bellman-target recipe still changes
+the action distribution in harmful states, even with anchor KL. This is not a
+reason to discard global EV; it means the next use should be more conservative:
+
+- use global EV for diagnostics and branch/state selection first,
+- compare global EV deltas on candidate-vs-anchor first divergences,
+- use it as an auxiliary value calibration target before using it as the main
+  Q target,
+- avoid more nearby `global_ev_td` policy coefficient sweeps until divergence
+  analysis shows which action families or score-pressure states caused the
+  smoke loss.
+
+### Experiment: Global EV First-Divergence Diagnostics And Action EV Probe
+
+Runs:
+
+- KL candidate paired trace:
+  `/root/fh-mahjong-runs/chongci-global-ev-td-iql-kl-probe-20260614-173036/reports/anchor_vs_candidate_tensor_trace_534000_n2.json`
+- State global EV diagnostic:
+  `/root/fh-mahjong-runs/chongci-global-ev-td-iql-kl-probe-20260614-173036/reports/global_ev_first_divergence_diagnostics_534000_n2.json`
+- Action-conditioned global EV:
+  `/root/fh-mahjong-runs/chongci-action-global-ev-policyarch-20260614-174339`
+- Action-conditioned global EV diagnostic:
+  `/root/fh-mahjong-runs/chongci-global-ev-td-iql-kl-probe-20260614-173036/reports/action_global_ev_first_divergence_diagnostics_534000_n2.json`
+
+Question:
+Can the learned global EV signal explain why the KL-constrained
+`global_ev_td` policy probe lost the smoke gate?
+
+Implementation:
+
+- Added `fh-mj-global-ev-diagnostics`.
+- It reads tensor-bearing paired-trace reports produced with
+  `--include-observation-arrays`.
+- State mode scores `EV(state)` for anchor and candidate first-divergence
+  observations.
+- Action-conditioned mode scores `EV(state, action_id)` for the two first
+  divergence actions.
+- Added `--action-conditioned` to `fh-mj-train-global-ev`, implemented
+  `ActionGlobalEVNet`, and added tests for model shape, training, and
+  divergence diagnostics.
+
+Paired trace:
+
+- Left: promoted anchor
+- Right: KL-constrained `global_ev_td` probe
+- Window: `534000:2`
+- Seats: `0 1 2 3`
+- Pairs: `8`
+- Divergence rate: `100%`
+- Candidate better rate: `0%`
+- Mean reward delta: `-0.0871`
+
+State global EV diagnostic:
+
+| metric | value |
+| --- | ---: |
+| scoreable divergences | 8 |
+| MAE | 0.0871 |
+| correlation | 0.0000 |
+| sign accuracy | 0.00% |
+| harmful recall | 0.00% |
+
+Interpretation:
+This result is expected and important. At first divergence, the anchor and
+candidate are in the same visible state. A state-only `EV(state)` model gives
+the same prediction to both actions, so it cannot rank a discard choice. It is
+still useful for state valuation and calibration, but not for same-state action
+selection.
+
+Action-conditioned EV training:
+
+CLI used:
+
+```bash
+fh-mj-train-global-ev \
+  --action-conditioned \
+  --data /root/fh-mahjong-runs/chongci-broader-mixed-selfplay-20260607-032601/data/anchor-fresh-balanced-tail2-760000-n200-npz \
+  --data /root/fh-mahjong-runs/chongci-sampled-anchor-topk3-temp100-20260614-0945/data/anchor-sampled-topk3-temp100-864000-n50-npz \
+  --checkpoint-dir /root/fh-mahjong-runs/chongci-action-global-ev-policyarch-20260614-174339/checkpoints/action_global_ev_policyarch \
+  --report-output /root/fh-mahjong-runs/chongci-action-global-ev-policyarch-20260614-174339/reports/action_global_ev_policyarch.json \
+  --epochs 3 \
+  --batch-size 4096 \
+  --lr 1e-4 \
+  --weight-decay 1e-4 \
+  --max-transitions 100000 \
+  --device cuda
+```
+
+MLflow run:
+`3fa59115f82b41548a7ec972aa21f17f`
+
+Action-conditioned EV result:
+
+| metric | action EV model | train-mean baseline |
+| --- | ---: | ---: |
+| validation transitions | 19,661 | 19,661 |
+| MAE | 0.5045 | 0.7676 |
+| RMSE | 0.6843 | 1.0096 |
+| correlation | 0.7429 | 0.0000 |
+| bias | -0.0632 | -0.0018 |
+
+Action-conditioned first-divergence diagnostic:
+
+| metric | value |
+| --- | ---: |
+| scoreable divergences | 8 |
+| MAE | 0.0965 |
+| correlation | 0.3092 |
+| sign accuracy | 66.67% |
+| harmful divergences | 3 |
+| harmful predicted harmful rate | 66.67% |
+| family pair | discard -> discard |
+
+Action-conditioned EV guard preflight:
+
+Candidate action is allowed when:
+
+```text
+EV(state, candidate_action) - EV(state, anchor_action) >= margin
+```
+
+| margin | allowed | harmful block rate | actual allowed delta sum |
+| ---: | ---: | ---: | ---: |
+| 0.0000 | 4 / 8 | 66.67% | -0.2380 |
+| -0.0200 | 5 / 8 | 66.67% | -0.2380 |
+| -0.0500 | 8 / 8 | 0.00% | -0.6970 |
+
+Worst false positive:
+
+- Seed `534000`, seat `1`, decision `433`
+- Anchor action: `discard 1z`
+- Candidate action: `discard 3s`
+- Actual delta: `-0.2380`
+- Predicted delta: `+0.0383`
+- Context: rank score `0.3333`, overall shanten `0.4444`,
+  ukeire `1.0`, large-loss margin `0.4610`, opponent large-loss pressure
+  `0.6270`
+
+Decision:
+Keep action-conditioned EV as a diagnostic and candidate guard signal. Do not
+promote any policy from this branch yet.
+
+Guard decision:
+Do not run live guarded duplicate-seat evaluation yet. The strict action-EV
+guard blocks two of three harmful first divergences, but it still allows one
+harmful candidate discard with actual delta `-0.2380`. The loose margin
+`-0.05` allows all first divergences and would not protect the anchor.
+
+Next useful branch:
+Use action-conditioned EV for a conservative preflight/rerank diagnostic before
+training another policy:
+
+- Compare anchor action vs candidate action on paired first divergences.
+- Gate only when `EV(state, candidate_action)` is not worse than
+  `EV(state, anchor_action)` by a small margin.
+- Validate on paired traces first, then only run duplicate-seat evaluation if
+  harmful first-divergence recall is high and false-positive rate is low.
+
+Stop rule:
+Do not retry state-only `global_ev_td` coefficient sweeps. State EV cannot rank
+same-state actions. Use action-conditioned EV or exact branch outcomes for
+action selection diagnostics.
+
+### Experiment: Exact Branch-CF Action-EV Calibration
+
+Runs:
+
+- Branch-only action EV:
+  `/root/fh-mahjong-runs/chongci-branch-action-ev-20260614-201134`
+- Trajectory-initialized branch fine-tune:
+  `/root/fh-mahjong-runs/chongci-branch-action-ev-finetune-20260614-201348`
+
+Question:
+Can exact branch-CF preferred/avoided rewards improve action-conditioned EV
+enough to become a reliable guard or reranker?
+
+Implementation:
+
+- Added `fh-mj-train-global-ev --branch-cf-action-targets`.
+- Each exact branch-CF row is expanded into two action-conditioned samples:
+  preferred action with `branch_preferred_rewards`, avoided action with
+  `branch_avoided_rewards`.
+- Added `fh-mj-action-ev-branch-cf-calibration` to measure whether an
+  action-EV checkpoint ranks exact preferred branch actions above avoided
+  branch actions on train and holdout shards.
+
+Branch-CF datasets:
+
+- Train:
+  `/root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507/data/anchor-branch-cf-831000-r2048-gap002-b6`
+- Holdout:
+  `/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/data/anchor-branch-cf-851000-r2048-gap002-b6`
+
+Branch-only action EV:
+
+- Training rows: `4096` action-target rows from `2048` branch-CF pairs
+- MLflow run: `f89766d263ef42a2a8591569a818be84`
+- Checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-action-ev-20260614-201134/checkpoints/branch_action_ev/epoch_012.pt`
+
+Branch-CF calibration:
+
+| checkpoint | train preferred rate | train gap-weighted preferred | holdout preferred rate | holdout gap-weighted preferred |
+| --- | ---: | ---: | ---: | ---: |
+| trajectory action EV | 48.29% | 47.28% | 46.44% | 48.68% |
+| branch-only action EV | 67.24% | 67.91% | 68.65% | 66.66% |
+
+Smoke first-divergence diagnostic on the KL rejected candidate:
+
+| checkpoint | sign accuracy | harmful recall | margin 0 allowed | margin 0 actual allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| trajectory action EV | 66.67% | 66.67% | 4 / 8 | -0.2380 |
+| branch-only action EV | 33.33% | 33.33% | 3 / 8 | -0.4590 |
+
+Interpretation:
+Exact branch-CF targets do improve ranking on exact branch-CF holdout, but the
+branch-only model transfers worse to the paired smoke first-divergence trace.
+This suggests the current branch-CF distribution is useful as a diagnostic
+label source, but too narrow as a standalone action-EV training distribution.
+
+Trajectory-initialized branch fine-tune:
+
+- Init checkpoint:
+  `/root/fh-mahjong-runs/chongci-action-global-ev-policyarch-20260614-174339/checkpoints/action_global_ev_policyarch/epoch_003.pt`
+- Fine-tune checkpoint:
+  `/root/fh-mahjong-runs/chongci-branch-action-ev-finetune-20260614-201348/checkpoints/branch_action_ev_finetune/epoch_004.pt`
+- MLflow run: `57169bbf29ba474685d2a8bd9d546ec9`
+
+Calibration:
+
+| checkpoint | train preferred rate | train gap-weighted preferred | holdout preferred rate | holdout gap-weighted preferred |
+| --- | ---: | ---: | ---: | ---: |
+| trajectory-initialized branch fine-tune | 52.83% | 51.50% | 49.37% | 49.39% |
+
+Smoke first-divergence diagnostic:
+
+| checkpoint | sign accuracy | harmful recall | margin 0 allowed | margin 0 actual allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| trajectory-initialized branch fine-tune | 66.67% | 66.67% | 4 / 8 | -0.2380 |
+
+Decision:
+Reject branch-only and trajectory-initialized branch fine-tune as guard models.
+Keep the calibration tooling. The best current guard preflight signal remains
+the trajectory action-EV checkpoint, but it still needs a larger paired-trace
+preflight before any live guarded duplicate-seat evaluation.
+
+Next useful branch:
+Run a larger tensor-bearing paired trace for the rejected KL candidate and
+score the trajectory action-EV guard margins. If margin `0.0` still lets
+through harmful first divergences, do not build live guard serving yet.
+
+### Experiment: Larger Action-EV Guard Preflight
+
+Run:
+`/root/fh-mahjong-runs/chongci-action-ev-larger-preflight-20260614-201508`
+
+Question:
+Do the current action-conditioned EV checkpoints block harmful first
+divergences on a larger tensor-bearing paired trace before any live guarded
+duplicate-seat evaluation?
+
+Data:
+
+- Anchor checkpoint: promoted Chongci reward-trained anchor.
+- Candidate checkpoint: rejected KL-constrained `global_ev_td` IQL probe.
+- Seed window: `534000:10`
+- Seats: `0 1 2 3`
+- Paired trace settings: tensor-bearing first-divergence trace,
+  `--max-divergences 1`, `--max-steps-per-episode 0`
+- Paired trace report:
+  `/root/fh-mahjong-runs/chongci-action-ev-larger-preflight-20260614-201508/reports/anchor_vs_candidate_tensor_trace_534000_n10.json`
+
+Paired trace summary:
+
+| metric | value |
+| --- | ---: |
+| pairs | 40 |
+| scoreable first divergences | 37 |
+| divergence rate | 92.50% |
+| candidate better rate | 12.50% |
+| mean candidate-minus-anchor delta | -0.1348 |
+
+Guard preflight metrics:
+
+| checkpoint | first-divergence corr | sign accuracy | harmful recall | margin 0 allowed | margin 0 actual allowed delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| trajectory action EV | -0.0098 | 42.11% | 35.71% | 20 / 37 | -4.4580 |
+| branch-only action EV | 0.1526 | 52.63% | 50.00% | 20 / 37 | -2.6580 |
+| branch fine-tune action EV | -0.0752 | 52.63% | 50.00% | 19 / 37 | -4.3400 |
+
+Decision:
+Rejected for serving/guard use. No action-EV checkpoint is safe enough for live
+guarded duplicate-seat evaluation. The branch-only model is the least bad at
+margin `0.0`, but it still lets through substantial harmful reward delta.
+
+Interpretation:
+State-only EV cannot compare same-state actions. Action-conditioned EV can, but
+the current regression-only branch-CF objective is not aligned enough with the
+paired-trace failures that matter for serving. The next branch should train the
+action-EV scorer with an explicit branch-CF pairwise ranking loss and then
+repeat this same larger paired-trace preflight before any live guard or rerank.
+
+Implementation follow-up:
+Added `fh-mj-train-global-ev` branch-CF pairwise ranking controls:
+
+```text
+--branch-cf-pairwise-weight
+--branch-cf-pairwise-margin
+--branch-cf-pairwise-reward-gap-weight
+--branch-cf-pairwise-reward-gap-margin-scale
+--branch-cf-pairwise-reward-gap-clip
+```
+
+These controls train `EV(state, preferred_action)` above
+`EV(state, avoided_action)` directly on exact branch-CF rows while preserving
+the branch reward regression target. This is diagnostic/guard infrastructure,
+not a promoted play policy.
+
+### Experiment: Branch-CF Pairwise Action-EV
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-action-ev-pairwise-20260615-032903`
+
+Question:
+Does adding an explicit branch-CF pairwise ranking loss make action-EV useful
+enough for first-divergence guard/rerank preflight?
+
+Training:
+
+```text
+fh-mj-train-global-ev
+--data /root/fh-mahjong-runs/chongci-branch-cf-anchor-large-20260612-235507/data/anchor-branch-cf-831000-r2048-gap002-b6
+--action-conditioned
+--branch-cf-action-targets
+--branch-cf-pairwise-weight 1.0
+--branch-cf-pairwise-margin 0.05
+--branch-cf-pairwise-reward-gap-weight 1.0
+--branch-cf-pairwise-reward-gap-margin-scale 0.10
+--epochs 12
+--batch-size 1024
+--lr 0.0001
+--device cuda
+```
+
+MLflow run:
+`57ebc1615c984ca9a9a0e7ce5ebfc111`
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-branch-action-ev-pairwise-20260615-032903/checkpoints/branch_action_ev_pairwise/epoch_012.pt`
+
+Regression result:
+
+| metric | value |
+| --- | ---: |
+| validation MAE | 0.1242 |
+| validation RMSE | 0.1944 |
+| validation correlation | 0.1764 |
+| baseline validation MAE | 0.1153 |
+| branch-pair validation preferred rate | 77.33% |
+| branch-pair validation gap-weighted preferred rate | 69.93% |
+
+Exact branch-CF calibration:
+
+| split | preferred rate | gap-weighted preferred rate | mean margin |
+| --- | ---: | ---: | ---: |
+| train | 74.95% | 72.86% | 0.0497 |
+| holdout | 73.73% | 71.40% | 0.0479 |
+
+Compared with the regression-only branch action-EV checkpoint, the pairwise
+loss improves exact branch-CF holdout ranking from `68.65%` preferred to
+`73.73%` preferred.
+
+Paired-trace preflight:
+
+- Paired trace:
+  `/root/fh-mahjong-runs/chongci-action-ev-larger-preflight-20260614-201508/reports/anchor_vs_candidate_tensor_trace_534000_n10.json`
+- Diagnostic report:
+  `/root/fh-mahjong-runs/chongci-branch-action-ev-pairwise-20260615-032903/reports/pairwise_action_ev_first_divergence_diagnostics_strict_534000_n10.json`
+
+| metric | value |
+| --- | ---: |
+| scoreable first divergences | 37 |
+| MAE | 0.1884 |
+| correlation | 0.1734 |
+| sign accuracy | 68.42% |
+| harmful recall | 71.43% |
+
+Guard margin screen:
+
+| margin | allowed | harmful block rate | actual allowed delta sum |
+| ---: | ---: | ---: | ---: |
+| -0.0200 | 23 / 37 | 42.86% | -3.5190 |
+| -0.0500 | 26 / 37 | 35.71% | -3.4170 |
+| 0.0000 | 14 / 37 | 71.43% | -2.8020 |
+| 0.0200 | 11 / 37 | 78.57% | -0.5900 |
+| 0.0500 | 11 / 37 | 78.57% | -0.5900 |
+| 0.1000 | 6 / 37 | 85.71% | -0.2160 |
+| 0.1500 | 0 / 37 | 100.00% | 0.0000 |
+
+Decision:
+Rejected for serving/guard use. The pairwise ranking objective improves exact
+branch-CF ranking and larger paired-trace sign accuracy, but the useful guard
+margins still allow negative reward delta. The only non-negative setting blocks
+every divergence, which is equivalent to refusing the candidate rather than
+learning a useful guard.
+
+Interpretation:
+The model is now fitting branch-CF ordering better, so the infrastructure is
+working. The remaining failure is data/label alignment: exact branch rows from
+generic anchor self-play do not yet cover the high-impact paired-trace failure
+states well enough. Do not continue nearby margin/weight sweeps on this branch.
+
+Next useful branch:
+Generate exact branch-CF labels from the actual high-impact paired-trace failure
+states, starting with the worst false positives in this report. The priority is
+to make the action-EV scorer see those state/action contexts directly, not to
+tune another global pairwise coefficient.
+
+### Experiment: Targeted Action-EV Branch-CF From Guard Failures
+
+Runs:
+
+- False-positive branch-CF from `534000:10`:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-falsepositive-20260615-052116`
+- Worst-delta branch-CF from `534000:10`:
+  `/root/fh-mahjong-runs/chongci-targeted-worstdelta-branchcf-20260615-052259`
+- Targeted mixed model, `534000` targets only:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-mixed-20260615-052217`
+- Additional targeted branch-CF from independent `544000:10`:
+  `/root/fh-mahjong-runs/chongci-targeted-544-branchcf-20260615-053312`
+- Targeted mixed model, `534000+544000` targets:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-mixed3-20260615-053423`
+
+Question:
+Can exact branch-CF labels mined from high-impact paired-trace guard failures
+make action-EV reliable enough for guard/rerank use?
+
+Implementation:
+
+Added `fh-mj-generate-targeted-branch-counterfactuals`.
+
+The CLI reads paired-trace or action-EV diagnostic reports, extracts target
+`seed/seat/decision_index` cases, replays the anchor checkpoint with exactly
+that learning seat controlled, calls Go `EvaluateBranches` at the live matched
+state, and writes the existing pairwise NPZ branch-CF schema.
+
+This matters because saved observation tensors are not enough for exact branch
+evaluation; the Go bridge needs the full hidden game state.
+
+Targeted data:
+
+| source | rows | mean reward gap | max reward gap | notes |
+| --- | ---: | ---: | ---: | --- |
+| `534000` action-EV false positives | 4 | 0.4520 | 1.2380 | all target decisions replayed |
+| `534000` worst reward deltas | 8 | 0.3823 | 1.2380 | includes one pon/pass branch pair |
+| `544000` action-EV false positives | 6 | 0.0753 | 0.2200 | lower gap than `534000` |
+| `544000` worst reward deltas | 8 | 0.1029 | 0.2600 | lower gap than `534000` |
+
+Training:
+
+Mixed targeted models used the broad exact branch-CF shard plus repeated
+targeted rows, with the same branch-CF pairwise action-EV objective:
+
+```text
+--action-conditioned
+--branch-cf-action-targets
+--branch-cf-pairwise-weight 1.0
+--branch-cf-pairwise-margin 0.05
+--branch-cf-pairwise-reward-gap-weight 1.0
+--branch-cf-pairwise-reward-gap-margin-scale 0.10
+```
+
+Results on training/mining windows:
+
+| checkpoint | eval window | sign accuracy | harmful recall | best useful margin | best useful allowed delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| pairwise action-EV | `534000:10` | 68.42% | 71.43% | 0.1000 | -0.2160 |
+| targeted mixed, `534000` only | `534000:10` | 57.89% | 71.43% | 0.1000 | -0.1660 |
+| targeted mixed3, `534000+544000` | `544000:10` | 36.36% | 33.33% | 0.0500 | +0.1730 |
+
+The `544000` positive result is not sufficient because `544000` was also used
+for targeted data mining before mixed3 was trained.
+
+Held-out evaluation:
+
+- Held-out trace:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-mixed3-20260615-053423/reports/anchor_vs_candidate_tensor_trace_554000_n10.json`
+- Pairs: `40`
+- Divergence rate: `72.50%`
+- Candidate better rate: `15.00%`
+- Mean candidate-minus-anchor delta: `-0.1002`
+
+Held-out guard preflight:
+
+| checkpoint | sign accuracy | harmful recall | margin 0 allowed delta | margin 0.05 allowed delta | margin 0.10 allowed delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pairwise action-EV | 52.63% | 46.15% | -2.9420 | -2.0310 | -0.7770 |
+| targeted mixed3 | 52.63% | 61.54% | -1.4230 | -0.8840 | -0.8880 |
+
+Decision:
+Rejected for guard/serving use. Targeted branch-CF mining improves the held-out
+allowed-delta loss compared with the broad pairwise model, but every non-empty
+guard margin still allows negative reward delta on held-out `554000:10`.
+
+Interpretation:
+The targeted exact-state generator is useful and should stay. The current
+action-EV scorer is still not robust enough to guard a live candidate. The
+failure is no longer missing exact-state plumbing; it is weak generalization
+from tiny targeted branch labels.
+
+Stop rule:
+Do not run live guarded duplicate-seat evaluation from these action-EV
+checkpoints. Do not continue by changing only pairwise weights or guard margins.
+
+Next useful branch:
+Scale the targeted exact-state dataset across more independent windows before
+training another scorer, or use the targeted data as an offline diagnostic for
+candidate proposal quality rather than a serving guard. A minimum viable next
+dataset should mine false positives and worst deltas from at least three
+training windows, then hold out a fourth window before any guard consideration.
+
+### Experiment: Scaled Targeted Action-EV And Proposal Diagnostics
+
+Runs:
+
+- Targeted data scale run:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-scale-20260615-054630`
+- Scaled targeted action-EV training:
+  `/root/fh-mahjong-runs/chongci-targeted-action-ev-scaled-train-20260615-061310`
+- Proposal-quality diagnostic:
+  `/root/fh-mahjong-runs/chongci-targeted-proposal-diagnostics2-20260615-061827`
+
+Question:
+Does adding more independent targeted exact-state branch labels make action-EV
+robust enough for guard use, and if not, are candidates even proposing exact
+preferred branches?
+
+Scaled targeted data:
+
+| window | false-positive rows | false-positive mean gap | worst-delta rows | worst-delta mean gap |
+| --- | ---: | ---: | ---: | ---: |
+| `564000:10` | 5 | 0.1012 | 8 | 0.1512 |
+| `574000:10` | 4 | 0.1022 | 8 | 0.0665 |
+| `584000:10` | 8 | 0.2267 | 8 | 0.1182 |
+
+Trace summaries for these mining windows:
+
+| window | pairs | divergence rate | candidate better rate | mean candidate-minus-anchor delta |
+| --- | ---: | ---: | ---: | ---: |
+| `564000:10` | 40 | 80.00% | 17.50% | -0.0261 |
+| `574000:10` | 40 | 82.50% | 20.00% | -0.0108 |
+| `584000:10` | 40 | 82.50% | 25.00% | -0.0569 |
+
+Training:
+
+The scaled scorer used the broad branch-CF shard plus the older `534000` and
+`544000` targeted rows and the new `564000`, `574000`, `584000` rows, repeated
+32 times.
+
+MLflow run:
+`e3f153e570b44cc6875f930d5ea5cefc`
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-targeted-action-ev-scaled-train-20260615-061310/checkpoints/targeted_action_ev_scaled/epoch_012.pt`
+
+Training report:
+
+| metric | value |
+| --- | ---: |
+| action-target transitions | 8384 |
+| validation MAE | 0.1292 |
+| baseline validation MAE | 0.1209 |
+| validation correlation | 0.3110 |
+| branch-CF holdout preferred rate | 67.29% |
+| branch-CF holdout gap-weighted preferred rate | 63.74% |
+
+Held-out `554000:10` guard preflight:
+
+| checkpoint | sign accuracy | harmful recall | margin 0 allowed delta | margin 0.05 allowed delta | margin 0.10 allowed delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| targeted mixed3 | 52.63% | 61.54% | -1.4230 | -0.8840 | -0.8880 |
+| scaled targeted action-EV | 63.16% | 46.15% | -2.9070 | -1.8230 | -1.0380 |
+
+Decision:
+Rejected for guard/serving use. Scaling targeted data improved validation
+correlation but worsened the held-out guard screen versus mixed3. This confirms
+that more of the same small targeted labels is not enough.
+
+Proposal-quality diagnostic:
+
+After adding action IDs to compact global-EV diagnostic rows and preserving
+left/right paired-trace actions in targeted branch-CF arrays, the held-out
+`554000` proposal-quality report showed:
+
+| policy side | valid rows | exact preferred matches | preferred match rate | exact avoided matches | neither rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor/left | 15 | 2 | 13.33% | 0 | 86.67% |
+| candidate/right | 15 | 3 | 20.00% | 0 | 80.00% |
+
+Report:
+`/root/fh-mahjong-runs/chongci-targeted-proposal-diagnostics2-20260615-061827/reports/proposal_quality_554.json`
+
+Interpretation:
+The candidate is not commonly choosing the exact preferred branch in these
+failure states. The guard model is therefore trying to rescue a weak proposal
+set rather than selecting between consistently good candidates. This makes live
+guarding a poor next step.
+
+Stop rule:
+Do not continue action-EV guard training by only adding more small targeted
+windows, pairwise weights, or guard margin sweeps.
+
+Next useful branch:
+Improve candidate proposal quality directly. Use exact branch-CF rows to train
+or evaluate the policy/Q action head so the candidate can put exact preferred
+branches into its top-k proposals before rerunning action-EV guard work.
+
+### Experiment: Branch-CF proposal policy head training
+
+Run:
+`/root/fh-mahjong-runs/chongci-branch-proposal-policy-20260615-062504`
+
+Follow-up stronger run:
+`/root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005`
+
+Question:
+Can exact branch-counterfactual labels improve the candidate's action proposal
+quality enough that future critic or guard work has good branches to choose
+from?
+
+Data:
+The first run used the broad `2048`-row branch-CF shard
+`anchor-branch-cf-831000-r2048-gap002-b6` plus targeted exact-state rows from
+false-positive and worst-delta action-EV windows. The stronger run reused the
+same data mixture.
+
+Training:
+Both runs initialized from the promoted Chongci anchor:
+`/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`.
+
+The first run trained frozen encoder heads for `8` epochs with `q_weight=0.25`,
+`anchor_kl_weight=0.05`, and `reward_gap_weight=0.5`; MLflow run
+`bd345015e00f4db0a85e3d0cb73e5e74`.
+
+The stronger run trained frozen encoder heads for `20` epochs and `10`
+steps/epoch with `q_weight=0.5`, `anchor_kl_weight=0.02`, and
+`reward_gap_weight=1.0`; MLflow run
+`b2ed0192632b44b5b0215e60b04c38a9`.
+
+Evaluation:
+Independent branch-CF holdout:
+`/root/fh-mahjong-runs/chongci-branch-cf-holdout-large-20260613-004827/data/anchor-branch-cf-851000-r2048-gap002-b6`.
+
+Selected-window duplicate-seat smoke:
+`534000:6`, `544001:4`, `554001:1`, all seats, Chongci mode,
+`--max-steps-per-episode 0`.
+
+Result:
+
+| checkpoint | branch holdout policy better | branch holdout Q better | policy argmax preferred | selected smoke mean | selected smoke positive | selected smoke large loss |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| anchor | 57.23% | 51.37% | 23.78% | -0.01 | 50.00% | 18.18% |
+| first proposal epoch 8 | 57.37% | 53.03% | 23.88% | not run | not run | not run |
+| strong proposal epoch 17 | 62.45% | 63.53% | 22.56% | -1.00 | 11.36% | 45.45% |
+| strong proposal epoch 20 | 62.11% | 62.55% | 22.22% | not run | not run | not run |
+
+Reports:
+
+```text
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-20260615-062504/reports/branch_proposal_holdout_calibration.json
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-20260615-062504/reports/anchor_holdout_calibration.json
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005/reports/branch_proposal_strong_epoch017_holdout_calibration.json
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005/reports/branch_proposal_strong_epoch020_holdout_calibration.json
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005/reports/anchor_selected_window_smoke.json
+/root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005/reports/strong_epoch017_selected_window_smoke.json
+```
+
+Decision:
+Reject both branch-proposal policy checkpoints for gameplay. The stronger
+checkpoint clearly improves exact branch-label ranking, but it destroys live
+selected-window Chongci performance.
+
+Interpretation:
+Short-horizon exact branch-CF labels remain useful diagnostics, but directly
+pushing the deployed policy head toward them is not aligned enough with
+full-match Chongci EV and tail risk. This repeats the earlier pattern seen in
+branch-CF distillation: offline preferred-label gains are not sufficient.
+
+Stop rule:
+Do not continue this line with nearby proposal-head hyperparameter sweeps. The
+next useful direction should either collect more aligned full-match labels,
+use branch labels only for offline diagnostics/state selection, or train a
+separate non-serving proposal model whose suggestions must pass an exact
+preflight before gameplay.
+
+### Experiment: Full-match aligned divergence from failed proposal policy
+
+Run:
+`/root/fh-mahjong-runs/chongci-fullmatch-aligned-proposal-divergence-20260615-063931`
+
+Question:
+Can real full-match divergence labels from the failed proposal policy produce a
+more aligned training signal than short-horizon exact branch-CF labels?
+
+Data:
+Paired trace compared the promoted anchor against the rejected strong proposal
+checkpoint:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+proposal_bad:
+  /root/fh-mahjong-runs/chongci-branch-proposal-policy-strong-20260615-063005/checkpoints/branch_proposal_policy_strong/epoch_017.pt
+windows:
+  534000:6
+  544001:4
+  554001:1
+seats:
+  0, 1, 2, 3
+max_divergences:
+  1
+```
+
+Trace result:
+
+```text
+pairs: 44
+divergence_rate: 100.00%
+proposal_bad_better_rate: 13.64%
+mean proposal_bad-minus-anchor delta: -0.9893
+```
+
+Report:
+`/root/fh-mahjong-runs/chongci-fullmatch-aligned-proposal-divergence-20260615-063931/reports/anchor_vs_proposal_bad_selected_trace.json`
+
+Counterfactual shard:
+
+```text
+path:
+  /root/fh-mahjong-runs/chongci-fullmatch-aligned-proposal-divergence-20260615-063931/data/anchor_preferred_first_gap005
+rows:
+  36
+min_reward_gap:
+  0.05
+mean_reward_gap:
+  1.3046
+preferred_policy:
+  anchor
+divergence_source:
+  first
+```
+
+Training:
+One conservative IQL epoch initialized from the promoted anchor, using the
+current broader mixed self-play data as normal replay and the 36-row
+full-match-aligned shard as pairwise-only auxiliary data.
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-fullmatch-aligned-proposal-divergence-20260615-063931/checkpoints/fullmatch_aligned_pairwise_lowdose/epoch_001.pt
+MLflow:
+  095fdc10468b4c7e823b0afda035df4a
+pairwise rows after replay expansion:
+  2304
+pairwise policy loss:
+  0.0000
+pairwise Q loss:
+  active, last logged 0.0862
+```
+
+Evaluation:
+Same selected-window duplicate-seat smoke, Chongci mode,
+`--max-steps-per-episode 0`.
+
+| checkpoint | mean reward | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: |
+| anchor | -0.01 | 50.00% | 18.18% |
+| full-match aligned pairwise low-dose | -0.04 | 45.45% | 20.45% |
+
+Report:
+`/root/fh-mahjong-runs/chongci-fullmatch-aligned-proposal-divergence-20260615-063931/reports/fullmatch_aligned_pairwise_lowdose_selected_window_smoke.json`
+
+Decision:
+Rejected. This is much less destructive than the proposal-policy checkpoint,
+but it still loses EV, positive rate, and large-loss rate against the anchor on
+the same selected-window smoke.
+
+Interpretation:
+The aligned full-match trace is a better data source than short-horizon branch
+labels, but 36 strict first-divergence rows from one failed policy are still too
+small for a useful direct training update. The next useful step is not another
+nearby low-dose replay multiplier or pairwise coefficient. Generate a larger
+independent full-match divergence set first, then inspect whether anchor-
+preferred rows cover enough action contexts before training again.
+
+### Experiment: Mortal-Style Mixed Full-Match Self-Play IQL Low-Dose
+
+Run:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500`
+
+Question:
+After re-reading Mortal and Suphx, test the better-aligned direction:
+large operation-level full-match replay first, then one conservative reward-
+learning update from the promoted Chongci anchor. This intentionally avoids
+another small branch-CF, action-EV guard, or scalar risk-penalty sweep.
+
+Implementation changes:
+- Added per-seat checkpoint sampling overrides to `fh-mj-generate-selfplay`.
+  This allows two greedy anchor seats plus one controlled exploration seat in
+  the same table.
+- Added `--checkpoint-sample-action-family` / per-seat `sample_family`, so the
+  exploration checkpoint samples only decisions where all legal actions are in
+  the requested family. For this run, exploration was discard-only.
+- Added `fh-mj-dataset-diagnostics` to summarize replay coverage before
+  training: policy-source mix, action-family distribution, final acting-seat
+  return, large-loss coverage, terminal outcome fields when present, and
+  Chongci score-pressure buckets.
+
+Data:
+Generated 400 full Chongci matches, seeds `900000` through `900399`, all four
+seats in the simulator.
+
+Table mix:
+- seat 0: greedy promoted anchor
+- seat 1: greedy promoted anchor
+- seat 2: heuristic/shanten opponent, auto-played by Go
+- seat 3: promoted anchor with top-k sampling only on discard-only decisions
+
+Anchor:
+`/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`
+
+Dataset:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/data/anchor2-heuristic-discard-sampled-900000-n400-npz`
+
+Manifest:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/anchor2-heuristic-discard-sampled-900000-n400.manifest.json`
+
+Generation result:
+- matches: 400
+- transitions: 611,706
+- elapsed: 2,459.61 seconds
+- shards: 13
+
+Coverage diagnostics:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/anchor2-heuristic-discard-sampled-900000-n400.dataset_diagnostics.json`
+
+Key coverage:
+- policy source rows: source 0 = 203,559, source 1 = 204,053, source 3 =
+  204,094. Source 2 is the heuristic opponent and is not emitted as learning
+  rows because Go auto-plays heuristic seats.
+- action-family distribution:
+  - discard: 481,867 (78.77%)
+  - pass: 70,098 (11.46%)
+  - chii: 24,803 (4.05%)
+  - pon: 18,403 (3.01%)
+  - win: 14,652 (2.40%)
+  - kan: 1,862 (0.30%)
+  - haitei: 21
+- acting-seat final return:
+  - mean: -0.00223
+  - sum: -1,364.70
+  - std: 1.0433
+  - min/max: -2.275 / 4.221
+  - positive rate: 48.38%
+  - large-loss rate at `-1.0`: 17.32%
+- score-pressure scalars were available.
+
+Diagnostic limitation:
+The full-match Chongci replay stores final match returns correctly, but the
+round-style terminal winner/discarder fields were not populated in this dataset
+(`winner_seat=-1`, `discarder_seat=-1`). Deal-in/win counts therefore remain
+evaluation-time metrics for this run, not dataset-coverage metrics.
+
+Training:
+One conservative IQL epoch from the promoted anchor:
+
+```text
+target_mode=mc
+epochs=1
+batch_size=4096
+lr=0.00001
+expectile=0.7
+temperature=3.0
+max_weight=20.0
+bc_weight=0.04
+policy_kl_anchor_checkpoint=<promoted anchor>
+policy_kl_weight=0.02
+large_loss_threshold=-1.0
+max_transitions=200000
+device=cuda
+```
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/checkpoints/mortalstyle_mixed_iql_lowdose/epoch_001.pt`
+
+MLflow training run:
+`27739837660d457f9825d3ae8bdc91b6`
+
+Final logged training loss:
+`0.0719`
+
+Evaluation:
+Selected-window duplicate-seat smoke only:
+- seeds: `534000:6`, `544001:4`, `554001:1`
+- mode: Chongci
+- seats: duplicate all seats
+- max steps per episode: `0`
+
+Reports:
+- anchor:
+  `/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/anchor_selected_window_smoke.json`
+- candidate:
+  `/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/candidate_selected_window_smoke.json`
+
+| checkpoint | episodes | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor | 44 | -0.0150 | -0.6600 | 50.00% | 18.18% |
+| mortal-style mixed IQL low-dose | 44 | -0.0690 | -3.0380 | 45.45% | 18.18% |
+
+Decision:
+Rejected. The candidate ties large-loss rate but loses expected reward and
+positive rate on the selected-window duplicate-seat smoke. Do not run the
+repeated combined gate for this checkpoint.
+
+Interpretation:
+The new data loop is the right direction and is much better aligned with Mortal
+than the previous tiny branch-CF shards, but one low-dose MC-IQL pass over the
+first 200k rows still nudged the policy in a worse direction. The likely next
+engineering gap is not another scalar penalty. The next useful step is to make
+the dataset/training loop more measurable:
+
+1. Record whether sampled discard actions actually diverged from greedy anchor
+   actions during generation.
+2. Add an offline replay evaluation of anchor vs trained candidate over the
+   generated dataset before live smoke.
+3. If the sampled seat rarely differs from greedy, increase discard exploration
+   coverage or explicitly store greedy-vs-sampled divergence rows.
+4. If divergence is healthy, train with stronger anchor preservation or split
+   train/validation by match seed before another live smoke.
+
+Follow-up replay policy diagnostic:
+
+To reuse the generated replay and rejected checkpoint instead of discarding the
+experiment, added `fh-mj-replay-policy-diagnostics` and ran it on the first
+200,000 replay rows used by the IQL update.
+
+Report:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/mortalstyle_mixed_iql_lowdose_replay_policy_diagnostics_200k.json`
+
+Key result:
+- anchor vs replay agreement: 99.305%
+- candidate vs replay agreement: 99.2305%
+- candidate vs anchor divergence: 374 / 200,000 = 0.187%
+- divergence by source:
+  - source 0: 89 / 66,433 = 0.134%
+  - source 1: 108 / 66,710 = 0.162%
+  - source 3: 177 / 66,857 = 0.265%
+- divergence action-family pairs:
+  - discard -> discard: 349
+  - chii -> pass: 10
+  - pass -> chii: 5
+  - pass -> pon: 3
+  - other pairs: 7
+- all-row return mean: -0.0160
+- anchor/candidate-agree return mean: -0.0158
+- anchor/candidate-diverge return mean: -0.1143
+- large-loss rows: 16.19%
+- large-loss rows with candidate/anchor divergence: 78
+
+Interpretation update:
+The rejected checkpoint did not broadly drift away from the anchor. It changed
+only a tiny slice of decisions, and that slice has materially worse replay
+return. This makes the run useful as a targeted failure-mining source:
+
+1. Extract the 374 candidate-vs-anchor divergence rows.
+2. Prioritize the 349 discard-vs-discard rows and the 78 large-loss divergence
+   rows.
+3. Reconstruct or branch-evaluate those exact states if possible.
+4. Use them as explicit anchor-preservation / do-not-change labels before
+   another broad IQL pass.
+5. Do not generate a larger 1000-match dataset until this divergence slice is
+   understood; otherwise we risk scaling the same weak signal.
+
+### Experiment: Anchor-Preservation Divergence Shard And Retry
+
+Run:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500`
+
+Question:
+Can we reuse the rejected Mortal-style mixed IQL candidate by mining its harmful
+anchor-vs-candidate replay divergences, then training a conservative retry that
+keeps the broad reward-learning update while explicitly preserving the anchor on
+the known bad discard changes?
+
+New tooling:
+Extended `fh-mj-replay-policy-diagnostics` so it can write a pairwise auxiliary
+shard from candidate-vs-anchor replay divergences. The labels are deliberately
+marked as `anchor_preservation_divergence`, not exact branch-CF labels: anchor
+action is preferred, rejected-candidate action is avoided, and a small synthetic
+pairwise gap is used only to prevent known bad drift.
+
+Extracted shards:
+- all divergences:
+  `/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/data/anchor_preservation_divergences_200k`
+- discard-vs-discard divergences:
+  `/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/data/anchor_preservation_discard_divergences_200k`
+
+All-divergence shard:
+- rows: 374
+- return mean: -0.1143
+- action-family pairs:
+  - discard -> discard: 349
+  - chii -> pass: 10
+  - pass -> chii: 5
+  - pass -> pon: 3
+  - other: 7
+
+Discard-vs-discard shard:
+- rows: 349
+- return mean: -0.0895
+- source rows:
+  - source 0: 82
+  - source 1: 100
+  - source 3: 167
+
+Calibration on the discard-vs-discard shard:
+- anchor policy preferred-action rate: 100.00%
+- rejected candidate policy preferred-action rate: 0.57%
+- rejected candidate policy avoided-action rate: 99.43%
+
+This validates that the shard directly captures the policy-head difference that
+made the rejected checkpoint worse, rather than broad unrelated replay noise.
+
+Training:
+One conservative IQL retry from the promoted anchor:
+
+```text
+data=<400-match mixed full-match replay>
+pairwise_data=anchor_preservation_discard_divergences_200k
+pairwise_replay_multiplier=32
+pairwise_weight=0.02
+pairwise_margin=0.05
+pairwise_q_weight=0.0
+target_mode=mc
+epochs=1
+batch_size=4096
+lr=0.00001
+bc_weight=0.04
+policy_kl_weight=0.02
+max_transitions=200000
+```
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/checkpoints/mortalstyle_mixed_iql_anchor_preserve_discard/epoch_001.pt`
+
+MLflow training run:
+`f7a2718b643949caa8eb9002c7b64eec`
+
+Replay diagnostic after training:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/mortalstyle_mixed_iql_anchor_preserve_discard_replay_policy_diagnostics_200k.json`
+
+Compared with the first rejected candidate:
+- candidate-vs-anchor divergence fell from 374 to 129 rows.
+- discard-vs-discard divergence fell from 349 to 114 rows.
+- large-loss divergence fell from 78 to 24 rows.
+- divergence-row mean return improved from -0.1143 to -0.0701.
+
+Selected-window duplicate-seat smoke:
+`/root/fh-mahjong-runs/chongci-mortalstyle-mixed-selfplay-20260616-044500/reports/mortalstyle_mixed_iql_anchor_preserve_discard_selected_window_smoke.json`
+
+| checkpoint | episodes | mean reward | reward sum | positive rate | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor | 44 | -0.0150 | -0.6600 | 50.00% | 18.18% |
+| first mixed IQL reject | 44 | -0.0690 | -3.0380 | 45.45% | 18.18% |
+| anchor-preservation retry | 44 | -0.0240 | -1.0580 | 47.73% | 18.18% |
+
+Decision:
+Rejected, but useful. The divergence-mining approach recovered most of the
+damage from the first rejected candidate, but it still loses EV and positive
+rate versus the promoted anchor on the selected-window smoke. Do not run the
+repeated combined gate.
+
+Interpretation:
+This confirms prior rejected experiments are reusable:
+- The rejected candidate exposed a small harmful policy-drift slice.
+- Mining that slice and training against it reduced harmful replay divergence.
+- The approach improved the rejected checkpoint materially, but not enough for
+promotion.
+
+Next direction:
+Use divergence extraction as a preflight loop before any more live smoke:
+
+1. For every new broad IQL/AWBC candidate, compare it against the anchor on the
+   replay dataset first.
+2. If candidate-vs-anchor divergence is tiny and negative-return concentrated,
+   mine those rows and correct before live evaluation.
+3. If divergence is broad or improves replay return, then run selected-window
+   smoke.
+4. The next actual improvement attempt should collect stronger positive
+   exploration signal, not only anchor-preservation negatives. Candidate
+   preservation can stop harm, but it does not by itself create better play.
+
+### Experiment: Stronger Discard-Sampling Coverage Probe
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-coverage-20260616-081945`
+
+Target recap:
+The target remains a stronger Chongci policy than the promoted anchor, measured
+by deterministic duplicate-seat mean reward with no worse large-loss rate.
+Reward learning should improve operation-level action choice under final
+Chongci match return. The previous anchor-preservation retry was useful but not
+sufficient: it reduced harmful drift from a rejected candidate, but it did not
+create better play. The corrected next target is therefore positive exploration
+signal, not another preservation-only sweep.
+
+Question:
+Does stronger discard-only top-k sampling produce measurable sampled-vs-greedy
+divergence with usable final-return coverage?
+
+Data:
+Generated 100 full Chongci matches:
+
+```text
+seeds: 910000..910099
+table:
+  seat 0: greedy promoted anchor
+  seat 1: greedy promoted anchor
+  seat 2: heuristic opponent
+  seat 3: promoted anchor, temperature=1.25, top_k=5, sample_family=discard
+```
+
+Dataset:
+`/root/fh-mahjong-runs/chongci-sampled-discard-coverage-20260616-081945/data/anchor2-heuristic-discard-sampled-910000-n100-npz`
+
+Diagnostics:
+`/root/fh-mahjong-runs/chongci-sampled-discard-coverage-20260616-081945/reports/anchor2-heuristic-discard-sampled-910000-n100.dataset_diagnostics.json`
+
+Generation result:
+- matches: 100
+- transitions: 153,663
+- elapsed: 628.42 seconds
+
+Overall coverage:
+- acting-return mean: -0.0160
+- positive rate: 46.10%
+- large-loss rate: 15.94%
+- action mix:
+  - discard: 78.65%
+  - pass: 11.54%
+  - chii: 4.07%
+  - pon: 3.06%
+  - win: 2.40%
+  - kan: 0.28%
+
+Sampling coverage:
+- sampling-applied rows: 40,161
+- true sampled-vs-greedy divergences: 1,710
+- sampled-vs-greedy rate among sampled decisions: 4.26%
+- all sampled divergences were `discard -> discard`
+- sampled divergence return mean: +0.0102
+- sampled divergence positive rate: 43.74%
+- sampled divergence large-loss rate: 15.03%
+
+Interpretation:
+This is a useful correction. The previous 400-match run did not record whether
+sampling truly changed the greedy action, so it could not distinguish weak
+exploration from anchor-clone replay. The new instrumentation shows that
+stronger discard-only sampling does produce a nontrivial set of actual
+discard-vs-discard divergences, and those divergences are not obviously worse:
+their mean return is slightly positive and their large-loss rate is lower than
+the full dataset.
+
+Decision:
+Scale this exact sampling setting to a larger independent dataset before
+training. Do not train from this 100-match probe alone; use it as a coverage
+gate. The next run should generate 400 matches with the same settings and then
+train only after dataset diagnostics confirm similar or better sampled
+divergence coverage.
+
+### Experiment: Scaled Discard-Sampling Coverage Gate
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304`
+
+Question:
+Does the stronger discard-only sampling signal from the 100-match probe remain
+usable at 400 matches, and is broad IQL training justified?
+
+Data:
+Generated 400 full Chongci matches:
+
+```text
+seeds: 920000..920399
+table:
+  seat 0: greedy promoted anchor
+  seat 1: greedy promoted anchor
+  seat 2: heuristic opponent
+  seat 3: promoted anchor, temperature=1.25, top_k=5, sample_family=discard
+transitions: 613,997
+elapsed: 2,412.91 seconds
+```
+
+Dataset:
+`/root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304/data/anchor2-heuristic-discard-sampled-920000-n400-npz`
+
+Diagnostics:
+`/root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304/reports/anchor2-heuristic-discard-sampled-920000-n400.dataset_diagnostics.json`
+
+Overall coverage:
+- acting-return mean: -0.0352
+- positive rate: 44.99%
+- large-loss rate: 15.66%
+- action mix:
+  - discard: 78.75%
+  - pass: 11.45%
+  - chii: 4.06%
+  - pon: 3.03%
+  - win: 2.40%
+  - kan: 0.31%
+
+Sampling coverage:
+- sampling-applied rows: 160,519
+- true sampled-vs-greedy divergences: 6,873
+- sampled-vs-greedy rate among sampled decisions: 4.28%
+- all sampled divergences were `discard -> discard`
+- sampled divergence return mean: -0.2071
+- sampled divergence positive rate: 37.31%
+- sampled divergence large-loss rate: 19.34%
+
+Decision:
+Do not train broad IQL/AWBC from this dataset as-is. The dataset has enough
+true sampled-vs-greedy decisions, but the sampled divergence slice is
+materially worse than the full dataset: lower mean return, lower positive rate,
+and higher large-loss rate.
+
+Interpretation:
+The stronger sampling setting solved the previous coverage problem but exposed
+a better target problem: naive discard exploration often chooses worse actions.
+The useful next step is to reuse the exact branch-counterfactual infrastructure
+on sampled-vs-greedy discard divergences, preferably with full-match branch
+rollouts, and only train from validated positive branch labels. This keeps the
+work aligned with final Chongci reward instead of learning from broad sampled
+replay that is already tail-worse.
+
+### Experiment: Full-Match Sampled-Vs-Greedy Discard Branch-CF Probe
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-branchcf-20260616-091439`
+
+Question:
+Can we turn the stronger sampling coverage into aligned reward-learning labels
+by evaluating exact sampled-vs-greedy discard divergences through match end?
+
+Data:
+
+```text
+parent scaled dataset:
+  /root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304
+checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+seeds: 930000..930019
+temperature: 1.25
+top_k: 5
+action_family: discard
+min_reward_gap: 0.02
+max_rows: 256
+branch_through_match_end: true
+branch_max_decisions: 8192
+```
+
+Decision:
+Completed. The run hit the 256-row cap:
+
+```text
+rows: 256
+branch_calls: 821
+branch_results: 1,642
+skipped_same_action: 23,118
+skipped_action_family: 64
+skipped_no_label: 565
+mean_reward_gap: 0.2479
+max_reward_gap: 1.3300
+sampled_preferred_count: 124
+greedy_preferred_count: 132
+preferred_family_counts: discard=256
+avoided_family_counts: discard=256
+elapsed_seconds: 2,438.08
+```
+
+Interpretation:
+This is the correct data shape. It shows the stronger discard sampler is not
+generically good, but it does find real positive alternatives: sampled is
+preferred in 124/256 full-match exact branch labels, while greedy is preferred
+in 132/256. This is much better than broad sampled replay because every row is
+an exact same-state comparison with final Chongci match reward.
+
+### Experiment: Full-Match Pairwise IQL From Sampled Discard Labels
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-20260616-095618`
+
+Question:
+Can one conservative MC-IQL pass use the broad sampled dataset for final-return
+coverage while the full-match sampled-vs-greedy branch-CF shard supplies exact
+same-state discard preferences?
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+primary data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304/data/anchor2-heuristic-discard-sampled-920000-n400-npz
+pairwise data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-branchcf-20260616-091439/data/sampled-discard-fullmatch-930000-e20-r256-gap002
+epochs: 1
+lr: 1e-5
+max_transitions: 200,000
+policy_kl_weight: 0.05
+pairwise_replay_multiplier: 64
+pairwise_weight: 0.005
+pairwise_q_weight: 0.10
+pairwise_margin: 0.02
+pairwise_q_margin: 0.02
+MLflow run id: f33d4a688ca045e19f72423d7f3dbcee
+```
+
+Candidate:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-20260616-095618/checkpoints/sampled_discard_fullmatch_pairwise_iql/epoch_001.pt`
+
+Selected-window smoke:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+episodes: 44
+max_steps_per_episode: 0
+```
+
+| checkpoint | avg reward | reward sum | positive rate | large-loss rate | win rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor | -0.0100 | -0.6600 | 50.00% | 18.18% | 50.00% |
+| full-match pairwise IQL | -0.0200 | -1.0520 | 50.00% | 18.18% | 50.00% |
+
+Decision:
+Rejected. Do not run the larger repeated gate. The candidate ties the selected
+smoke large-loss rate but loses EV/reward sum versus the anchor.
+
+Interpretation:
+The target correction was right: broad sampled replay alone was tail-worse, and
+exact full-match branch labels are the right aligned primitive. The first
+256-row auxiliary shard is still too small or underweighted to improve live
+duplicate-seat EV from the current anchor. Do not sweep nearby pairwise
+coefficients. The next useful step is to scale full-match sampled-vs-greedy
+branch-CF labels across more independent seeds, then train a candidate only
+after the scaled shard has enough preferred sampled alternatives and balanced
+greedy-preservation rows.
+
+### Experiment: Scaled Full-Match Sampled-Vs-Greedy Branch-CF Labels
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-branchcf-scale-20260616-100502`
+
+Question:
+Can the balanced 256-row full-match sampled-vs-greedy discard branch-CF probe
+be scaled to a stronger aligned auxiliary dataset before another reward
+learning candidate?
+
+Data:
+
+```text
+parent broad sampled dataset:
+  /root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304
+parent 256-row branch-CF probe:
+  /root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-branchcf-20260616-091439
+checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+seeds: 940000..940079
+temperature: 1.25
+top_k: 5
+action_family: discard
+min_reward_gap: 0.02
+max_rows: 1,024
+branch_through_match_end: true
+branch_max_decisions: 8192
+max_elapsed_seconds: 21,600
+```
+
+Result:
+
+```text
+rows: 1,024
+branch_calls: 3,065
+branch_results: 6,130
+skipped_same_action: 86,590
+skipped_action_family: 241
+skipped_no_label: 2,041
+mean_reward_gap: 0.2752
+max_reward_gap: 1.7430
+sampled_preferred_count: 492
+greedy_preferred_count: 532
+preferred_family_counts: discard=1,024
+avoided_family_counts: discard=1,024
+elapsed_seconds: 9,386.38
+```
+
+Decision:
+Passed data-quality screening. The preferred split remains balanced enough to
+avoid learning "sampled is always better", and the mean reward gap is large
+enough to justify one scaled-label candidate.
+
+### Experiment: Scaled Full-Match Pairwise IQL Candidate
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009`
+
+Question:
+Does replacing the 256-row full-match sampled-vs-greedy branch-CF shard with a
+balanced 1,024-row shard fix the selected-smoke-only improvement and transfer
+to the repeated combined gate?
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+primary data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304/data/anchor2-heuristic-discard-sampled-920000-n400-npz
+pairwise data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-branchcf-scale-20260616-100502/data/sampled-discard-fullmatch-940000-e80-r1024-gap002
+epochs: 1
+lr: 1e-5
+max_transitions: 200,000
+policy_kl_weight: 0.05
+pairwise_replay_multiplier: 32
+pairwise_weight: 0.005
+pairwise_q_weight: 0.10
+pairwise_margin: 0.02
+pairwise_q_margin: 0.02
+MLflow run id: de4c5f12601f4a5591ab672f538df820
+```
+
+Candidate:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/checkpoints/sampled_discard_fullmatch_pairwise_iql_scale/epoch_001.pt`
+
+Selected-window smoke:
+
+| checkpoint | avg reward | reward sum | positive rate | large-loss rate | win rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor | -0.0100 | -0.6600 | 50.00% | 18.18% | 50.00% |
+| scaled pairwise IQL | 0.0500 | 2.0380 | 50.00% | 15.91% | 50.00% |
+
+Repeated combined gate, repeat 1:
+
+| checkpoint | avg reward | reward sum | positive rate | large-loss rate | win rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| anchor | 0.0100 | 1.4410 | 47.50% | 13.33% | 47.50% |
+| scaled pairwise IQL | -0.0000 | -0.2770 | 47.50% | 14.17% | 47.50% |
+
+Decision:
+Rejected. The selected-window smoke improvement did not transfer to the first
+combined-gate repeat. The candidate loses EV and worsens large-loss rate versus
+the anchor. Repeat 2 was stopped because repeat 1 already failed the promotion
+rule.
+
+Interpretation:
+The scaled full-match branch labels are useful, but training from broad sampled
+replay plus balanced sampled-vs-greedy pairwise labels still creates broad
+policy drift. The candidate diverged often and did not generalize to the full
+combined gate. Do not tune nearby pairwise weights from this point. Diagnose
+the failed combined-gate divergences and build targeted labels from actual
+high-impact failure states.
+
+### Experiment: Combined-Gate Failure Trace And Worst-State Targeted Branch-CF
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009`
+
+Question:
+Which exact decisions caused the scaled pairwise IQL candidate to fail the
+combined gate, and can those states be converted into aligned branch-CF labels?
+
+Paired trace:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_combined_gate_trace.json`
+
+Compact summary:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_combined_gate_trace_compact_summary.json`
+
+Trace result:
+
+```text
+pairs: 120
+diverged_pairs: 113
+divergence_rate: 94.17%
+stored_divergences: 326
+candidate_better_count: 41
+anchor_better_count: 32
+tie_count: 47
+candidate_better_rate: 34.17%
+mean_delta_candidate_minus_anchor: -0.0143
+anchor_large_loss_count: 16
+candidate_large_loss_count: 17
+new_large_loss_count: 2
+avoided_large_loss_count: 1
+first-divergence right action families:
+  discard: 108
+  chii: 2
+  pon: 2
+  kan: 1
+```
+
+Worst-target report:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_worst20_cases.json`
+
+Targeted branch-CF:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/data/worst20_targeted_fullmatch_branchcf_gap002`
+
+Targeted branch-CF result:
+
+```text
+target_cases: 20
+rows: 19
+branch_calls: 20
+branch_results: 152
+skipped_missing_decision: 0
+skipped_not_enough_actions: 0
+skipped_no_label: 1
+mean_reward_gap: 0.5974
+max_reward_gap: 1.7300
+preferred_family_counts:
+  discard: 17
+  pass: 2
+avoided_family_counts:
+  discard: 17
+  chii: 1
+  pon: 1
+elapsed_seconds: 427.08
+```
+
+Decision:
+Diagnostic only for now. The 19-row targeted shard is high quality and directly
+comes from the failed combined-gate states, but it is too small to train a new
+candidate by itself.
+
+All-anchor-better targeted report:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_anchor_better_cases.json`
+
+All-anchor-better targeted branch-CF:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/data/anchor_better_targeted_fullmatch_branchcf_gap002`
+
+All-anchor-better targeted branch-CF result:
+
+```text
+target_cases: 32
+rows: 29
+branch_calls: 32
+branch_results: 255
+skipped_missing_decision: 0
+skipped_not_enough_actions: 0
+skipped_no_label: 3
+mean_reward_gap: 0.4769
+max_reward_gap: 1.7300
+preferred_family_counts:
+  discard: 27
+  pass: 2
+avoided_family_counts:
+  discard: 27
+  chii: 1
+  pon: 1
+elapsed_seconds: 655.13
+```
+
+Decision:
+Keep this shard as high-signal failure-state data, but do not train from it
+alone. It is larger than the worst-20 shard and covers all anchor-better cases
+from the failed combined-gate trace, yet 29 rows is still not enough evidence
+for a new reward-learning candidate by itself.
+
+Interpretation:
+The next useful data step is to scale this targeted failure-state branch-CF
+process: include all anchor-better cases from the paired trace, new large-loss
+cases, and more failed candidate windows. A future candidate should train on
+the broad 1,024 sampled-vs-greedy full-match labels plus a materially larger
+targeted failure-state shard, not just the broad sampled replay.
+
+### Experiment: Independent Failure Trace And Targeted Branch-CF Expansion
+
+Run:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009`
+
+Question:
+Does the scaled pairwise IQL candidate fail in the same way on independent
+windows, and can those failures expand the high-signal targeted branch-CF data
+without relying only on the original combined-gate trace?
+
+Paired trace:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_independent_564_574_584_trace.json`
+
+Compact summary:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_independent_564_574_584_compact_summary.json`
+
+Trace result:
+
+```text
+seed windows: 564000:10, 574000:10, 584000:10
+pairs: 120
+diverged_pairs: 111
+divergence_rate: 92.50%
+candidate_better_rate: 30.83%
+mean_delta_candidate_minus_anchor: -0.0123
+anchor_reward_sum: -4.1130
+candidate_reward_sum: -5.5860
+anchor_positive_rate: 43.33%
+candidate_positive_rate: 42.50%
+anchor_better_cases_gap002: 34
+candidate_better_cases_gap002: 30
+tie_cases_gap002: 56
+new_large_loss_cases_threshold_neg1: 5
+```
+
+Independent anchor-better target report:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/reports/anchor_vs_scaled_pairwise_iql_independent_564_574_584_anchor_better_cases.json`
+
+Independent targeted branch-CF:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/data/independent_anchor_better_targeted_fullmatch_branchcf_gap002`
+
+Independent targeted branch-CF result:
+
+```text
+target_cases: 34
+rows: 30
+branch_calls: 34
+branch_results: 270
+skipped_missing_decision: 0
+skipped_not_enough_actions: 0
+skipped_no_label: 4
+mean_reward_gap: 0.3362
+max_reward_gap: 2.0530
+preferred_family_counts:
+  chii: 2
+  discard: 27
+  pass: 1
+avoided_family_counts:
+  chii: 2
+  discard: 27
+  pass: 1
+elapsed_seconds: 650.94
+```
+
+Decision:
+Keep the independent targeted shard. It confirms the rejected candidate fails
+outside the original gate windows and gives another 30 aligned full-match
+branch labels. Together with the 29-row all-anchor-better shard from the
+original gate, the current targeted failure-state pool has 59 non-overlapping
+high-signal rows. This is still small, so any training use must be conservative
+and mixed with the broad 1,024 sampled-vs-greedy full-match branch labels and
+the main transition dataset.
+
+Interpretation:
+The repeated pattern is now clear: the failed candidate has broad action drift,
+mostly on discard decisions, and the anchor often wins by avoiding a small
+number of high-impact discard/pass/chii choices. The next candidate, if trained,
+should use these targeted rows as a small failure-preservation replay, not as a
+new primary objective. If that still fails, the correct next move is more
+independent failure mining, not coefficient sweeps.
+
+### Experiment: Combined Targeted Failure Replay IQL
+
+Run:
+`/root/fh-mahjong-runs/chongci-combined-targeted-failure-iql-20260617-055103`
+
+Question:
+Can the broad 1,024 sampled-vs-greedy full-match branch labels be improved by
+adding the 59 targeted failure-state rows as a small replay source, while using
+stronger KL anchoring to avoid the broad policy drift seen in the previous
+scaled pairwise IQL candidate?
+
+Combined pairwise data:
+`/root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/data/combined_broad_targeted_pairwise_gap002_targetedx8`
+
+Composition:
+
+```text
+broad sampled-vs-greedy rows: 1024 x 1
+original-gate targeted anchor-better rows: 29 x 8
+independent targeted anchor-better rows: 30 x 8
+merged pairwise rows before trainer replay: 1496
+pairwise rows after trainer replay multiplier 24: 35904
+mean pairwise reward gap: 0.3163
+max pairwise reward gap: 2.0530
+```
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+primary data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-scaled-20260616-083304/data/anchor2-heuristic-discard-sampled-920000-n400-npz
+pairwise data:
+  /root/fh-mahjong-runs/chongci-sampled-discard-fullmatch-pairwise-iql-scale-20260617-035009/data/combined_broad_targeted_pairwise_gap002_targetedx8
+epochs: 1
+batch_size: 512
+lr: 7e-6
+target_mode: mc
+max_transitions: 200,000
+policy_kl_weight: 0.08
+pairwise_replay_multiplier: 24
+pairwise_weight: 0.003
+pairwise_q_weight: 0.08
+pairwise_margin: 0.02
+pairwise_q_margin: 0.02
+MLflow run id: b9ea3ebb096b49d990889e8ba06bccd4
+final loss: 0.1601
+```
+
+Candidate:
+`/root/fh-mahjong-runs/chongci-combined-targeted-failure-iql-20260617-055103/checkpoints/combined_targeted_failure_iql/epoch_001.pt`
+
+Selected-window smoke:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+max_steps_per_episode: 0
+large_loss_threshold: -1.0
+```
+
+Reports:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-combined-targeted-failure-iql-20260617-055103/reports/smoke_selected_anchor.json
+  MLflow run id: 4090d85d1271446a8e0fd72508729537
+candidate:
+  /root/fh-mahjong-runs/chongci-combined-targeted-failure-iql-20260617-055103/reports/smoke_selected_candidate.json
+  MLflow run id: c199024ab6dc45d09b8fdf3f669fe972
+```
+
+| checkpoint | episodes | avg reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| anchor | 44 | -0.0100 | -0.6600 | 50.00% | 8 | 18.18% |
+| combined targeted failure IQL | 44 | -0.0700 | -3.1770 | 45.45% | 9 | 20.45% |
+
+Decision:
+Rejected. The candidate fails the selected-window smoke before the repeated
+combined gate: it loses EV, positive rate, and large-loss rate versus the
+promoted anchor.
+
+Interpretation:
+Adding 59 targeted failure-state rows with conservative KL was not enough to
+repair the broad drift introduced by the sampled-vs-greedy pairwise objective.
+The useful artifacts are the independent paired trace, the targeted branch-CF
+shards, and the merged dataset builder output. Do not continue by only tuning
+nearby pairwise weights. The next better direction is to increase aligned
+full-match self-play data quality: either mine more independent failed windows
+until targeted coverage is materially larger, or generate a fresh mixed
+self-play dataset from the promoted anchor plus controlled discard exploration
+and train a lower-drift candidate from that broader data.
+
+### Experiment: Fresh Discard-Exploration Self-Play IQL
+
+Data run:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501`
+
+Training run:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312`
+
+Question:
+Can a fresh Mortal-style operation-level dataset from the promoted anchor plus
+controlled discard-only exploration improve the anchor without relying on the
+failed sampled-vs-greedy pairwise objective?
+
+Data generation:
+
+```text
+episodes: 400
+start_seed: 980000
+end_seed: 980399
+transitions: 607,761
+chunk_size: 25
+elapsed_seconds: 2,822.46
+dataset:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/data/anchor-anchor-heuristic-discard-sampled-980000-n400-npz
+manifest:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/reports/anchor-anchor-heuristic-discard-sampled-980000-n400.manifest.json
+seat 0: promoted anchor, greedy
+seat 1: promoted anchor, greedy
+seat 2: heuristic, auto-play baseline
+seat 3: promoted anchor, top-3 sampling only on discard decisions
+sample temperature: 0.85
+```
+
+Dataset diagnostics:
+
+```text
+diagnostics:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/reports/dataset_diagnostics.json
+sampling diagnostics:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/reports/sampling_and_return_diagnostics.json
+controlled rows by policy source:
+  seat 0 anchor: 202,354
+  seat 1 anchor: 202,877
+  seat 3 sampled anchor: 202,530
+action-family rates:
+  discard: 78.70%
+  pass: 11.53%
+  chii: 3.97%
+  pon: 3.05%
+  win: 2.43%
+  kan: 0.31%
+sampled seat:
+  sampling_applied_count: 158,885
+  sampled_from_greedy_count: 4,474
+  sampled_from_greedy_family: discard->discard
+acting-seat mean terminal reward: -0.0142
+positive rate: 46.07%
+large-loss rate: 15.65%
+sampled-from-greedy mean terminal reward: -0.0652
+sampled-from-greedy positive rate: 42.33%
+sampled-from-greedy large-loss rate: 15.89%
+```
+
+Interpretation before training:
+The data is mechanically healthy: seat coverage is balanced, the sampled seat
+actually diverges from greedy on discard decisions, and sampled divergences have
+worse average return than the full dataset. That is useful IQL data because it
+contains operation-level evidence about which sampled discard deviations were
+bad.
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+primary data:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/data/anchor-anchor-heuristic-discard-sampled-980000-n400-npz
+epochs: 1
+batch_size: 512
+lr: 5e-6
+target_mode: mc
+max_transitions: 300,000
+bc_weight: 0.05
+policy_kl_weight: 0.10
+pairwise data: none
+MLflow run id: 7d38061fd4cd475897d81ef1d626ef4c
+final loss: 0.0900
+```
+
+Candidate:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt`
+
+Selected-window smoke:
+
+```text
+seed windows: 534000:6, 544001:4, 554001:1
+duplicate seats: true
+max_steps_per_episode: 0
+large_loss_threshold: -1.0
+```
+
+Reports:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/smoke_selected_anchor.json
+  MLflow run id: a7323a86d5d244ce9a35ff6fe61dce6c
+candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/smoke_selected_candidate.json
+  MLflow run id: 4ff8b302b5dd4dadb6834de10bfe0e2e
+```
+
+| checkpoint | episodes | avg reward | reward sum | positive rate | large-loss count | large-loss rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| anchor | 44 | -0.0100 | -0.6600 | 50.00% | 8 | 18.18% |
+| fresh discard-explore IQL | 44 | -0.0700 | -3.1770 | 45.45% | 9 | 20.45% |
+
+Paired trace:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/anchor_vs_fresh_discard_explore_iql_smoke_trace.json`
+
+Compact trace summary:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/anchor_vs_fresh_discard_explore_iql_smoke_trace_compact_summary.json`
+
+Trace result:
+
+```text
+pairs: 44
+diverged_pairs: 35
+divergence_rate: 79.55%
+candidate_better_rate: 29.55%
+mean_delta_candidate_minus_anchor: -0.0559
+anchor_better_cases_gap002: 10
+candidate_better_cases_gap002: 9
+tie_cases_gap002: 25
+new_large_loss_cases_threshold_neg1: 1
+avoided_large_loss_cases_threshold_neg1: 0
+first-divergence candidate action families:
+  discard: 34
+  chii: 1
+worst first-divergence:
+  seed: 544004
+  seat: 0
+  anchor action: discard 7s
+  candidate action: discard 3p
+  anchor reward: 1.0560
+  candidate reward: -0.4210
+  reward delta: -1.4770
+```
+
+Targeted anchor-better report:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/anchor_vs_fresh_discard_explore_iql_anchor_better_cases.json`
+
+Targeted branch-CF:
+`/root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/data/fresh_iql_anchor_better_targeted_fullmatch_branchcf_gap002`
+
+Targeted branch-CF result:
+
+```text
+target_cases: 10
+rows: 8
+branch_calls: 10
+branch_results: 86
+skipped_missing_decision: 0
+skipped_not_enough_actions: 0
+skipped_no_label: 2
+mean_reward_gap: 0.4084
+max_reward_gap: 1.3200
+preferred_family_counts:
+  discard: 8
+avoided_family_counts:
+  discard: 8
+elapsed_seconds: 184.84
+```
+
+Q-ranking diagnostics:
+
+```text
+paired-trace Q diagnostics, anchor:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/paired_trace_q_rank_anchor.json
+paired-trace Q diagnostics, rejected candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/paired_trace_q_rank_candidate.json
+targeted branch-CF calibration, anchor:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/targeted_branchcf_q_rank_anchor.json
+targeted branch-CF calibration, rejected candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/reports/targeted_branchcf_q_rank_candidate.json
+```
+
+| diagnostic set | checkpoint | rows | policy preferred rate | Q preferred rate | Q weighted preferred rate | key result |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| paired first-divergence labels | anchor | 19 | 52.63% | 57.89% | 53.21% | weak Q separation; 42.11% Q misrank |
+| paired first-divergence labels | fresh discard-explore IQL | 19 | 47.37% | 57.89% | 52.93% | policy worse than anchor on the same labels |
+| targeted branch-CF rows | anchor | 8 | 37.50% | 50.00% | 65.26% | exact-state Q is not reliable enough |
+| targeted branch-CF rows | fresh discard-explore IQL | 8 | 50.00% | 50.00% | 65.26% | exact-state Q remains at 50% preferred rate |
+
+Decision:
+Rejected. The fresh data was good enough to train from, but this low-drift IQL
+candidate failed the selected-window smoke and therefore should not run the
+larger repeated combined gate.
+
+Interpretation:
+The failure is again broad discard drift: the candidate diverges on 79.55% of
+smoke pairs and almost all first divergences are discard choices. The sampled
+exploration dataset is still useful, but one epoch of IQL from it moved the
+policy into a bad region. The targeted branch-CF follow-up confirms the losing
+states are real high-gap discard decisions, but only produced 8 rows. That is
+diagnostic data, not enough for another training candidate by itself.
+
+The Q-ranking diagnostics add one stronger constraint: the current Q head should
+not be trusted to drive policy improvement yet. On paired first-divergence labels
+it only ranks the preferred action above the avoided action 57.89% of the time,
+and on the exact targeted branch-CF rows it is 50.00% for both the anchor and
+the rejected candidate. That means the next learning step should first improve
+Q/value ranking under a frozen or tightly anchored policy path, then re-run
+these diagnostics before any new gameplay gate.
+
+Next direction:
+Do not run another nearby IQL or pairwise-weight sweep. The better next
+implementation is a constrained value-learning pass: freeze or strongly anchor
+the policy-selection path, learn Q/value from the fresh exploration data, and
+validate whether the learned Q ranks anchor actions above candidate actions on
+the smoke trace and the 8 targeted branch-CF rows before allowing policy
+improvement.
+
+### Experiment: Critic-Only Q-Ranking Diagnostic
+
+Run:
+`/root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030`
+
+Question:
+Can we improve the Q/value ranking signal from the fresh discard-exploration
+dataset and exact targeted branch-CF rows without changing the served policy?
+
+Implementation change:
+Added `--critic-only` to `fh_mahjong_ai.scripts.train_iql`. This freezes every
+parameter except `q_head.*` and `value_head.*`, and rejects `--resume` because
+optimizer parameter groups differ. The local and remote regression test
+`test_train_iql_critic_only_freezes_policy_path` verifies non-critic tensors
+stay unchanged while the Q head moves.
+
+First attempt:
+`/root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-230522`
+
+This failed before training because MLflow server was not listening on
+`127.0.0.1:5000`. The remote MLflow server was then started with a SQLite backend
+under `/root/fh-mahjong-runs/mlflow`.
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+primary data:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-selfplay-20260618-031501/data/anchor-anchor-heuristic-discard-sampled-980000-n400-npz
+pairwise Q-only data:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/data/fresh_iql_anchor_better_targeted_fullmatch_branchcf_gap002
+epochs: 1
+batch_size: 512
+lr: 2e-5
+target_mode: mc
+max_transitions: 300,000
+policy_weight: 0.0
+bc_weight: 0.0
+q_weight: 1.0
+value_weight: 1.0
+pairwise_replay_multiplier: 128
+pairwise_q_weight: 0.20
+pairwise_q_margin: 0.02
+pairwise_reward_delta_weight: 0.5
+pairwise_reward_delta_margin_scale: 0.1
+critic_only: true
+MLflow run id: 1638dd93059b4ff18b021504fbb9c386
+final loss: 0.0300
+```
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt`
+
+Checkpoint audit:
+
+```text
+non_critic_changed: 0
+critic_unchanged: 0
+```
+
+This confirms the policy-selection path did not move. This checkpoint must not
+be treated as a playable policy promotion.
+
+Diagnostics:
+
+```text
+paired trace report:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/reports/paired_trace_q_rank_critic_only.json
+targeted branch-CF report:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/reports/targeted_branchcf_q_rank_critic_only.json
+```
+
+| diagnostic set | rows | policy preferred rate | Q preferred rate | Q weighted preferred rate | Q misrank rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| paired first-divergence labels | 19 | 52.63% | 63.16% | 79.65% | 36.84% |
+| targeted branch-CF rows | 8 | 37.50% | 100.00% | 100.00% | 0.00% |
+
+Decision:
+Accepted as a diagnostic success only. The critic-only pass proves the Q/value
+head can learn the known bad discard divergences without policy drift. It does
+not prove a stronger playing policy yet, because action selection is still the
+unchanged promoted anchor policy.
+
+Next direction:
+Use this critic checkpoint to create a constrained policy-improvement step:
+derive policy targets only where the critic has exact-state support, keep KL to
+the promoted anchor, and require the same Q-ranking preflight before any
+duplicate-seat smoke. Do not run a gameplay gate directly on this checkpoint;
+its policy is intentionally unchanged.
+
+### Experiment: Policy-Head-Only Exact Branch-CF Candidates
+
+Question:
+Can the diagnostic critic be converted into a small playable policy improvement
+by updating only `policy_head.*` from the 8 exact targeted branch-CF rows, while
+keeping encoder, Q, and value fixed?
+
+Implementation change:
+Added `--policy-head-only` to `fh_mahjong_ai.scripts.train_iql`. This freezes
+the encoder, value head, Q head, and risk heads, leaving only the served policy
+logits trainable. The regression test
+`test_train_iql_policy_head_only_freezes_encoder_and_critics` verifies that only
+`policy_head.*` tensors change.
+
+Candidate A:
+`/root/fh-mahjong-runs/chongci-policy-head-exactcf-20260618-000001`
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-policy-head-exactcf-20260618-000001/checkpoints/policy_head_exactcf_kl_anchor/epoch_001.pt`
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+policy_head_only: true
+lr: 5e-5
+pairwise rows: 8 exact targeted branch-CF rows repeated 256x
+pairwise_weight: 0.05
+policy_kl_weight: 0.20
+normal replay rows: 1,024, with q/value/policy/bc weights set to 0.0
+MLflow run id: dbae90f9e1c8474283cd7e4dd588f3ae
+final loss: 0.3845
+checkpoint audit:
+  non_policy_changed: 0
+  policy_unchanged: 0
+```
+
+Candidate A preflight:
+
+| diagnostic set | rows | policy preferred rate | Q preferred rate | Q misrank rate |
+| --- | ---: | ---: | ---: | ---: |
+| paired first-divergence labels | 19 | 42.11% | 63.16% | 36.84% |
+| targeted branch-CF rows | 8 | 50.00% | 100.00% | 0.00% |
+
+Decision:
+Rejected before duplicate-seat smoke. Candidate A improved the exact targeted
+branch-CF policy rate from 37.50% to 50.00%, but broad paired-trace policy
+preference regressed from the anchor/critic-only 52.63% to 42.11%. That violates
+the preflight rule: do not spend a live gate on a candidate whose small exact
+update already harms the known failed-smoke first-divergence labels.
+
+Candidate B:
+`/root/fh-mahjong-runs/chongci-policy-head-exactcf-strongkl-20260618-000002`
+
+Checkpoint:
+`/root/fh-mahjong-runs/chongci-policy-head-exactcf-strongkl-20260618-000002/checkpoints/policy_head_exactcf_strongkl/epoch_001.pt`
+
+Training:
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+policy_head_only: true
+lr: 1e-5
+pairwise rows: 8 exact targeted branch-CF rows repeated 128x
+pairwise_weight: 0.02
+policy_kl_weight: 1.00
+normal replay rows: 1,024, with q/value/policy/bc weights set to 0.0
+MLflow run id: 331f245a1d724759a0070d14f1863634
+final loss: 0.1848
+checkpoint audit:
+  non_policy_changed: 0
+  policy_unchanged: 0
+```
+
+Candidate B preflight:
+
+| diagnostic set | rows | policy preferred rate | Q preferred rate | Q misrank rate |
+| --- | ---: | ---: | ---: | ---: |
+| paired first-divergence labels | 19 | 52.63% | 63.16% | 36.84% |
+| targeted branch-CF rows | 8 | 37.50% | 100.00% | 0.00% |
+
+Decision:
+Rejected before duplicate-seat smoke. Candidate B preserved the broad
+paired-trace policy rate, but it did not improve the exact targeted branch-CF
+policy rate. It is effectively a no-op for the intended correction.
+
+Interpretation:
+The constrained policy-head path is directionally correct but data-limited. The
+critic can fit the 8 exact branch-CF labels, but the policy head cannot use that
+tiny shard safely: either it moves enough to improve exact rows and regresses
+broad paired labels, or it preserves broad labels and makes no exact correction.
+
+Next direction:
+Stop tuning these two weights. Generate a larger exact-state branch-CF policy
+dataset from more failed windows before another policy update. The minimum
+useful next dataset should contain enough same-state discard-vs-discard rows to
+split into train/holdout and require both:
+
+```text
+1. train exact branch-CF policy preferred rate improves
+2. held-out exact branch-CF policy preferred rate improves
+3. paired failed-smoke policy preferred rate does not regress
+```
+
+Only after that should a duplicate-seat smoke run be allowed.
+
+### Experiment: Expanded Exact-State Branch-CF Data Generation
+
+Run:
+`/root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003`
+
+Question:
+Can we mine enough additional same-state failure windows from the rejected fresh
+discard-exploration IQL candidate to support a real train/holdout exact branch-CF
+policy dataset?
+
+Step started:
+An expanded tensor-bearing paired trace is running between:
+
+```text
+left / anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+right / rejected candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt
+seed windows:
+  534000:20
+  544000:20
+  554000:20
+seats: 0, 1, 2, 3
+total paired seed/seat cases: 240
+match_mode: chongci
+max_steps_per_episode: 0
+large_loss_threshold: -1.0
+include_observation_arrays: true
+include_action_scores: true
+max_divergences: 1
+report:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace.json
+log:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/logs/paired_trace.log
+pid:
+  184432
+```
+
+Current status:
+The process is running on remote WSL. The child Python process is actively using
+CPU; no final report has been written yet.
+
+Partial-40 branch-CF probe:
+
+```text
+snapshot:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace_partial40_snapshot.json
+case_source: worst_reward_delta_cases
+output:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/worst_delta_partial40_targeted_branchcf_gap002
+target_cases: 15
+rows: 7
+branch_calls: 15
+branch_results: 148
+skipped_no_label: 8
+mean_reward_gap: 0.1631
+max_reward_gap: 0.5080
+preferred_family_counts:
+  discard: 7
+avoided_family_counts:
+  discard: 7
+```
+
+Interpretation:
+The partial trace is producing the right kind of data, but 7 exact rows is still
+too small for another policy-head update. Keep this shard as reusable auxiliary
+evidence, but wait for more paired-trace coverage before training.
+
+Partial-60 worst-delta branch-CF:
+
+```text
+snapshot:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace_partial60_snapshot.json
+case_source: worst_reward_delta_cases
+output:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/worst_delta_partial60_targeted_branchcf_gap002
+target_cases: 21
+rows: 11
+branch_calls: 21
+branch_results: 200
+skipped_no_label: 10
+mean_reward_gap: 0.2289
+max_reward_gap: 0.5080
+preferred_family_counts:
+  discard: 11
+avoided_family_counts:
+  discard: 11
+```
+
+Partial-80 candidate-large-loss branch-CF:
+
+```text
+snapshot:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace_partial80_snapshot.json
+case_source: candidate_large_loss_cases
+output:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/candidate_large_loss_partial80_targeted_branchcf_gap002
+target_cases: 12
+rows: 7
+branch_calls: 12
+branch_results: 118
+skipped_no_label: 5
+mean_reward_gap: 0.2014
+max_reward_gap: 0.3380
+controlled_seats:
+  0, 1
+preferred_family_counts:
+  discard: 7
+avoided_family_counts:
+  discard: 7
+```
+
+Interpretation:
+Both probes validate the data source, but they remain below the threshold for
+another policy-head candidate. The correct next move is still to let the paired
+trace continue, then generate a larger deduplicated exact-state shard from the
+full or a later partial report.
+
+Partial-120 all-first-divergence branch-CF:
+
+```text
+snapshot:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace_partial120_snapshot.json
+case_source: pairs
+output:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial120_targeted_branchcf_gap002
+target_cases: 94
+rows: 65
+branch_calls: 94
+branch_results: 918
+skipped_no_label: 29
+mean_reward_gap: 0.1897
+max_reward_gap: 1.1800
+controlled_seats:
+  0, 1
+preferred_family_counts:
+  discard: 65
+avoided_family_counts:
+  discard: 65
+split:
+  train rows: 52
+  holdout rows: 13
+  split seed: 20260618
+train:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial120_targeted_branchcf_gap002_split/train
+holdout:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial120_targeted_branchcf_gap002_split/holdout
+```
+
+Baseline calibration on the split using the critic-only checkpoint:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+train report:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/all_first_divergence_partial120_train_calibration_critic_only.json
+holdout report:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/all_first_divergence_partial120_holdout_calibration_critic_only.json
+train policy preferred rate: 50.00%
+train Q preferred rate: 51.92%
+holdout policy preferred rate: 61.54%
+holdout Q preferred rate: 61.54%
+```
+
+Policy-head candidate C:
+`/root/fh-mahjong-runs/chongci-policy-head-allcf-partial120-20260618-001200`
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+train pairwise data:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial120_targeted_branchcf_gap002_split/train
+policy_head_only: true
+lr: 2e-5
+pairwise_replay_multiplier: 64
+pairwise_weight: 0.03
+policy_kl_weight: 0.50
+MLflow run id: 1fd98a849b2c4dce98fe7d8093f3d5f4
+checkpoint:
+  /root/fh-mahjong-runs/chongci-policy-head-allcf-partial120-20260618-001200/checkpoints/policy_head_allcf_partial120_kl/epoch_001.pt
+checkpoint audit:
+  non_policy_changed: 0
+  policy_unchanged: 0
+```
+
+Candidate C preflight:
+
+| diagnostic set | baseline policy preferred | candidate policy preferred | Q preferred |
+| --- | ---: | ---: | ---: |
+| exact branch-CF train | 50.00% | 51.92% | 51.92% |
+| exact branch-CF holdout | 61.54% | 61.54% | 61.54% |
+| original failed-smoke paired labels | 52.63% | 57.89% | 63.16% |
+
+Decision:
+Rejected before duplicate-seat smoke. It improved train and original paired
+labels but did not improve exact branch-CF holdout.
+
+Policy-head candidate D:
+`/root/fh-mahjong-runs/chongci-policy-head-allcf-partial120-strong-20260618-001500`
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+policy_head_only: true
+lr: 3e-5
+pairwise_replay_multiplier: 96
+pairwise_weight: 0.05
+policy_kl_weight: 0.30
+MLflow run id: 0165c4704869466688d9530332a01dc5
+checkpoint:
+  /root/fh-mahjong-runs/chongci-policy-head-allcf-partial120-strong-20260618-001500/checkpoints/policy_head_allcf_partial120_strong/epoch_001.pt
+checkpoint audit:
+  non_policy_changed: 0
+  policy_unchanged: 0
+```
+
+Candidate D preflight:
+
+| diagnostic set | baseline policy preferred | candidate policy preferred | Q preferred |
+| --- | ---: | ---: | ---: |
+| exact branch-CF train | 50.00% | 51.92% | 51.92% |
+| exact branch-CF holdout | 61.54% | 61.54% | 61.54% |
+| original failed-smoke paired labels | 52.63% | 52.63% | 63.16% |
+
+Decision:
+Rejected before duplicate-seat smoke. Stronger policy-head movement did not
+improve holdout and lost the original paired-label gain from candidate C.
+
+Interpretation:
+The 65-row partial-120 exact branch-CF shard is useful, but the current
+policy-head-only recipe is not yet converting it into a generalizing policy
+improvement. The Q head is also weak on the broader all-first-divergence exact
+labels: only 51.92% train and 61.54% holdout preferred rate. This means the
+next better step is not another policy coefficient tweak; first improve or
+refresh the critic on the broader all-first-divergence exact data, then retry
+policy only if Q-ranking improves on both train and holdout.
+
+Critic-only candidate E:
+`/root/fh-mahjong-runs/chongci-critic-allcf-partial120-20260618-001800`
+
+```text
+init checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+critic_only: true
+train pairwise data:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial120_targeted_branchcf_gap002_split/train
+lr: 3e-5
+pairwise_replay_multiplier: 128
+pairwise_q_weight: 0.40
+MLflow run id: 97f90919293d40cdaaa80032c57bd3ed
+checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-allcf-partial120-20260618-001800/checkpoints/critic_allcf_partial120/epoch_001.pt
+checkpoint audit:
+  non_critic_changed: 0
+  critic_unchanged: 0
+```
+
+Candidate E preflight:
+
+| diagnostic set | baseline Q preferred | candidate Q preferred |
+| --- | ---: | ---: |
+| exact branch-CF train | 51.92% | 100.00% |
+| exact branch-CF holdout | 61.54% | 53.85% |
+| original failed-smoke paired labels | 63.16% | 63.16% |
+
+Decision:
+Rejected as a critic update. It overfits the 52-row train split and worsens
+holdout. Do not use it for policy training or serving.
+
+Partial-180 status:
+
+```text
+pairs: 180 / 240
+divergence_rate: 78.89%
+reward_delta_mean: -0.0482
+worst_reward_delta_cases: 46
+candidate_large_loss_cases: 31
+high_risk_cases: 20
+snapshot:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace_partial180_snapshot.json
+new branch-CF job:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_partial180_targeted_branchcf_gap002
+pid:
+  187076
+```
+
+Full paired trace result:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace.json
+pairs: 240
+complete: true
+divergence_rate: 79.17%
+candidate_better_rate: 24.17%
+mean_delta_candidate_minus_anchor: -0.0394
+worst_reward_delta_cases: 59
+candidate_large_loss_cases: 40
+high_risk_cases: 20
+```
+
+Full all-first-divergence branch-CF:
+
+```text
+case_source: pairs
+output:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002
+target_cases: 190
+rows: 135
+branch_calls: 190
+branch_results: 1882
+skipped_no_label: 55
+mean_reward_gap: 0.2153
+max_reward_gap: 1.3200
+controlled_seats:
+  0, 1, 2, 3
+preferred_family_counts:
+  discard: 135
+avoided_family_counts:
+  discard: 135
+split:
+  train rows: 108
+  holdout rows: 27
+  split seed: 20260618
+train:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+holdout:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/holdout
+```
+
+Baseline full-split calibration:
+
+```text
+checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-only-qrank-20260617-231030/checkpoints/fresh_discard_explore_critic_only_qrank/epoch_001.pt
+train policy preferred: 53.70%
+train Q preferred: 56.48%
+holdout policy preferred: 62.96%
+holdout Q preferred: 59.26%
+```
+
+Critic-only candidate F:
+`/root/fh-mahjong-runs/chongci-critic-allcf-full240-20260618-003000`
+
+```text
+critic_only: true
+train pairwise data:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+lr: 5e-6
+pairwise_replay_multiplier: 32
+pairwise_q_weight: 0.05
+MLflow run id: 9bdc6d939ae843bda3e65e520e1bbe80
+checkpoint:
+  /root/fh-mahjong-runs/chongci-critic-allcf-full240-20260618-003000/checkpoints/critic_allcf_full240_lowdose/epoch_001.pt
+checkpoint audit:
+  non_critic_changed: 0
+  critic_unchanged: 0
+```
+
+Candidate F preflight:
+
+| diagnostic set | baseline Q preferred | candidate Q preferred |
+| --- | ---: | ---: |
+| exact branch-CF train | 56.48% | 77.78% |
+| exact branch-CF holdout | 59.26% | 59.26% |
+| original failed-smoke paired labels | 63.16% | 63.16% |
+
+Decision:
+Rejected as a critic update. It improves train Q but only ties holdout Q.
+
+Policy-head candidate G:
+`/root/fh-mahjong-runs/chongci-policy-head-allcf-full240-20260618-003300`
+
+```text
+policy_head_only: true
+train pairwise data:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+lr: 1e-5
+pairwise_replay_multiplier: 64
+pairwise_weight: 0.03
+policy_kl_weight: 0.50
+MLflow run id: 68c914c75245484b8040c013565fbe79
+checkpoint:
+  /root/fh-mahjong-runs/chongci-policy-head-allcf-full240-20260618-003300/checkpoints/policy_head_allcf_full240_kl/epoch_001.pt
+checkpoint audit:
+  non_policy_changed: 0
+  policy_unchanged: 0
+```
+
+Candidate G preflight:
+
+| diagnostic set | baseline policy preferred | candidate policy preferred |
+| --- | ---: | ---: |
+| exact branch-CF train | 53.70% | 54.63% |
+| exact branch-CF holdout | 62.96% | 62.96% |
+| original failed-smoke paired labels | 52.63% | 57.89% |
+
+Decision:
+Rejected before duplicate-seat smoke. It improves train and the original
+failed-smoke paired labels, but the exact branch-CF holdout only ties baseline.
+
+Current conclusion:
+The expanded data loop worked: it produced a real 135-row exact same-state
+discard branch-CF dataset. The current head-only recipes still do not generalize
+past holdout. This suggests the next useful change is not another coefficient
+sweep; it is either a better split/coverage strategy from more independent seeds
+or a different supervised objective that uses the full legal-branch reward
+distribution rather than only preferred-vs-avoided pair labels.
+
+### Experiment: action-conditioned EV on full240 exact branch-CF
+
+Run:
+`/root/fh-mahjong-runs/chongci-action-ev-full240-20260618-234627`
+
+Question:
+Can a separate `EV(state, action)` predictor learn the exact same-state
+discard reward gaps better than the previous policy-head and Q-head pairwise
+updates?
+
+Data:
+
+```text
+train:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+holdout:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/holdout
+source paired trace:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/reports/anchor_vs_fresh_iql_expanded_trace.json
+```
+
+Training:
+
+```text
+script:
+  fh_mahjong_ai.scripts.train_global_ev
+mode:
+  --action-conditioned
+  --branch-cf-action-targets
+epochs: 4
+steps_per_epoch: 40
+batch_size: 64
+lr: 3e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: 02731be9102d4bad835502abfd079964
+checkpoint:
+  /root/fh-mahjong-runs/chongci-action-ev-full240-20260618-234627/checkpoints/action_ev_full240_gaprank/epoch_004.pt
+```
+
+Exact branch-CF calibration:
+
+| split | rows | preferred rate | reward-gap weighted preferred rate |
+| --- | ---: | ---: | ---: |
+| train | 108 | 94.44% | 95.13% |
+| holdout | 27 | 66.67% | 81.84% |
+
+Training report:
+
+```text
+expanded train transitions: 216
+internal validation MAE: 0.1869
+internal validation correlation: -0.0945
+constant baseline MAE: 0.1213
+```
+
+First-divergence paired-trace preflight:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-action-ev-full240-20260618-234627/reports/paired_trace_action_ev_preflight.json
+scoreable divergences: 190
+sign accuracy: 47.86%
+harmful count: 59
+harmful predicted harmful rate: 38.98%
+guard margin 0.0000:
+  allowed: 101
+  harmful block rate: 38.98%
+  actual allowed delta sum: -6.3810
+guard margin -0.0200:
+  allowed: 111
+  harmful block rate: 33.90%
+  actual allowed delta sum: -6.1830
+guard margin -0.0500:
+  allowed: 119
+  harmful block rate: 32.20%
+  actual allowed delta sum: -6.0940
+```
+
+Decision:
+Rejected for guarded serving and promotion. The exact branch-CF holdout result
+is better than the previous head-only tie, especially on reward-gap weighted
+ranking, but paired-trace preflight still allows a negative total reward delta.
+
+Interpretation:
+The action-conditioned EV direction is more aligned than scalar risk stacking,
+but the current 135-row full240 exact branch-CF shard is not enough to make a
+reliable first-divergence guard. Keep the tooling and the data. Do not run live
+guarded duplicate-seat evaluation from this checkpoint. The next useful step is
+to expand independent same-state branch coverage or train from a fuller legal
+branch reward distribution rather than only one preferred/avoided pair per
+state.
+
+Next when complete:
+Build a larger independent exact-state action-EV dataset from new seed windows,
+prioritizing candidate-loss first divergences and high-gap discard alternatives.
+Keep train/holdout split by seed window, not just row count, then rerun the same
+paired-trace preflight before any guarded serving attempt.
+
+### Experiment: independent exact-state branch-CF data generation
+
+Run:
+`/root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957`
+
+Question:
+Can new independent seed windows produce a larger same-state discard branch-CF
+dataset that generalizes better than the full240 shard?
+
+Data-generation plan:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt
+seed windows:
+  564000:20
+  574000:20
+  584000:20
+seats:
+  0, 1, 2, 3
+paired trace pairs:
+  240 planned
+paired trace report:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/reports/anchor_vs_fresh_iql_independent_trace.json
+targeted branch-CF output:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/data/all_first_divergence_independent_targeted_branchcf_gap002
+```
+
+Branch-CF labeling settings:
+
+```text
+case_source: pairs
+action_family: discard
+min_reward_gap: 0.02
+max_branch_actions: 0
+match_mode: chongci
+max_steps_per_episode: 0
+```
+
+Current status:
+Started on remote WSL. The checkpoints loaded successfully and paired-trace
+progress reached `1/240` pairs with no configuration error.
+
+Partial status update:
+
+```text
+elapsed: about 6 minutes
+paired-trace progress: 24/240
+partial report written at: 20/240
+partial divergence rate: 50.00%
+partial candidate better rate: 10.00%
+partial mean candidate-anchor reward delta: -0.0122
+process state: active Python child, about 105% CPU
+```
+
+Final result:
+
+```text
+paired trace pairs: 240
+divergence rate: 72.92%
+candidate better rate: 21.67%
+same reward rate: 55.83%
+mean candidate-anchor reward delta: -0.004925
+scoreable branch target cases: 175
+targeted exact branch-CF rows: 106
+branch calls: 175
+branch results: 1720
+skipped no label: 69
+mean branch reward gap: 0.2143
+max branch reward gap: 1.3320
+preferred family: discard only
+avoided family: discard only
+```
+
+Diagnostics:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/reports/targeted_branch_cf_diagnostics.json
+data:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/data/all_first_divergence_independent_targeted_branchcf_gap002
+split:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/data/all_first_divergence_independent_targeted_branchcf_gap002_split
+train split:
+  75 rows, episode_index < 584000
+holdout split:
+  31 rows, episode_index >= 584000
+left policy preferred match rate: 5.66%
+right policy preferred match rate: 7.55%
+```
+
+Interpretation:
+This is a useful independent branch-label dataset. The low left/right preferred
+match rates mean neither original policy usually chose the exact best branch,
+so the value is in the counterfactual labels rather than imitation of either
+checkpoint.
+
+### Experiment: combined old+independent action-EV
+
+Run:
+`/root/fh-mahjong-runs/chongci-action-ev-combined-exactcf-20260619-004613`
+
+Question:
+Does adding the independent exact-state branch-CF rows improve action-EV
+generalization across both the old full240 holdout and the new held-out
+`584xxx` seed window?
+
+Training:
+
+```text
+old train:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+new train:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/data/all_first_divergence_independent_targeted_branchcf_gap002_split/train
+epochs: 4
+steps_per_epoch: 60
+batch_size: 64
+lr: 2e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: dfd6564836684550a8158c24b3089d2d
+checkpoint:
+  /root/fh-mahjong-runs/chongci-action-ev-combined-exactcf-20260619-004613/checkpoints/action_ev_combined_gaprank/epoch_004.pt
+```
+
+Exact branch-CF calibration:
+
+| split | rows | preferred rate | reward-gap weighted preferred rate |
+| --- | ---: | ---: | ---: |
+| old train | 108 | 96.30% | 97.11% |
+| old holdout | 27 | 48.15% | 52.78% |
+| new train | 75 | 97.33% | 94.00% |
+| new holdout | 31 | 54.84% | 57.92% |
+
+Paired-trace preflight:
+
+| report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| old trace | 190 | 49.57% | 50.85% | -2.6380 |
+| new trace | 175 | 50.94% | 57.41% | 1.4470 |
+
+Decision:
+Rejected for guarded serving and promotion. The new-trace guard preflight is
+positive, but the old-trace guard preflight is still negative and branch-CF
+holdout rates are weak. This checkpoint is diagnostic only.
+
+Interpretation:
+Adding independent rows helped on the new paired trace but did not generalize
+back to the old trace or produce strong held-out branch ranking. The next move
+should not be another coefficient sweep. Use the combined branch-CF datasets to
+train a less overfit objective or generate a larger multi-window shard before
+any policy/serving attempt.
+
+### Experiment: tail-candidate independent exact-state branch-CF data generation
+
+Run:
+`/root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908`
+
+Question:
+Can a different rejected/diverse candidate policy expose different same-state
+discard branch labels than the fresh discard-explore candidate, improving
+multi-window coverage without tuning the action-EV objective again?
+
+Data-generation plan:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+candidate:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444/checkpoints/tail_balanced_highrisk2_gap010/epoch_001.pt
+seed windows:
+  594000:20
+  604000:20
+  614000:20
+seats:
+  0, 1, 2, 3
+paired trace pairs:
+  240 planned
+paired trace report:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/reports/anchor_vs_tail_balanced_independent_trace.json
+targeted branch-CF output:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/data/all_first_divergence_tail_targeted_branchcf_gap002
+```
+
+Branch-CF labeling settings:
+
+```text
+case_source: pairs
+action_family: discard
+min_reward_gap: 0.02
+max_branch_actions: 0
+match_mode: chongci
+max_steps_per_episode: 0
+```
+
+Current status:
+Started on remote WSL. Both checkpoints loaded successfully and paired-trace
+progress reached `1/240` pairs with no configuration error.
+
+Partial status update:
+
+```text
+elapsed: about 4 minutes
+partial report written at: 20/240
+partial divergence rate: 90.00%
+partial candidate better rate: 30.00%
+partial same reward rate: 25.00%
+partial mean candidate-anchor reward delta: 0.00725
+candidate large-loss cases: 0
+```
+
+Second partial status update:
+
+```text
+elapsed: about 30 minutes
+paired-trace log progress: 152/240
+partial report written at: 140/240
+partial divergence rate: 89.29%
+partial candidate better rate: 25.71%
+partial same reward rate: 36.43%
+partial mean candidate-anchor reward delta: -0.03636
+candidate large-loss cases: 0
+```
+
+Final result:
+
+```text
+paired trace pairs: 240
+divergence rate: 87.08%
+candidate better rate: 27.92%
+same reward rate: 36.67%
+mean candidate-anchor reward delta: -0.02836
+scoreable branch target cases: 209
+targeted exact branch-CF rows: 139
+branch calls: 209
+branch results: 2073
+skipped no label: 70
+mean branch reward gap: 0.2410
+max branch reward gap: 2.0970
+preferred family: discard only
+avoided family: discard only
+```
+
+Diagnostics:
+
+```text
+report:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/reports/targeted_branch_cf_diagnostics.json
+data:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/data/all_first_divergence_tail_targeted_branchcf_gap002
+split:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/data/all_first_divergence_tail_targeted_branchcf_gap002_split
+train split:
+  89 rows, episode_index < 614000
+holdout split:
+  50 rows, episode_index >= 614000
+left policy preferred match rate: 9.35%
+right policy preferred match rate: 11.51%
+```
+
+Interpretation:
+This is a strong complementary shard. It has higher divergence than the fresh
+candidate trace, a larger reward-gap maximum, and a low original-policy
+preferred-match rate. It should be kept as data, but by itself it still does
+not justify a serving/guard model.
+
+### Experiment: multi-window action-EV from old+fresh+tail exact branch-CF
+
+Run:
+`/root/fh-mahjong-runs/chongci-action-ev-multiwindow-exactcf-20260619-014619`
+
+Question:
+Does combining the old full240 shard, the fresh independent shard, and the tail
+independent shard make the action-conditioned EV predictor robust enough across
+multiple held-out seed windows and paired-trace preflights?
+
+Training:
+
+```text
+old train:
+  /root/fh-mahjong-runs/chongci-expanded-exactcf-data-20260618-000003/data/all_first_divergence_full240_targeted_branchcf_gap002_split/train
+fresh train:
+  /root/fh-mahjong-runs/chongci-independent-exactcf-data-20260618-234957/data/all_first_divergence_independent_targeted_branchcf_gap002_split/train
+tail train:
+  /root/fh-mahjong-runs/chongci-tail-independent-exactcf-data-20260619-004908/data/all_first_divergence_tail_targeted_branchcf_gap002_split/train
+epochs: 4
+steps_per_epoch: 80
+batch_size: 64
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: fbeb83d6669441658269904f75c7d000
+checkpoint:
+  /root/fh-mahjong-runs/chongci-action-ev-multiwindow-exactcf-20260619-014619/checkpoints/action_ev_multiwindow_gaprank/epoch_004.pt
+```
+
+Exact branch-CF calibration:
+
+| split | rows | preferred rate | reward-gap weighted preferred rate |
+| --- | ---: | ---: | ---: |
+| old train | 108 | 94.44% | 96.92% |
+| old holdout | 27 | 59.26% | 62.37% |
+| fresh train | 75 | 92.00% | 89.69% |
+| fresh holdout | 31 | 58.06% | 65.24% |
+| tail train | 89 | 94.38% | 95.50% |
+| tail holdout | 50 | 78.00% | 88.45% |
+
+Paired-trace preflight:
+
+| report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| old trace | 190 | 40.17% | 37.29% | -8.0270 |
+| fresh trace | 175 | 61.32% | 61.11% | 3.4810 |
+| tail trace | 209 | 44.74% | 41.18% | -7.1680 |
+
+Decision:
+Rejected for guarded serving and promotion. Held-out branch-CF ranking improved
+on the tail shard and modestly on old/fresh holdouts, but full paired-trace
+preflight still fails on old and tail traces.
+
+Interpretation:
+The same-state branch labels are useful and reusable, but action-EV pairwise
+training still does not predict full first-divergence reward deltas reliably.
+This is not fixed by another nearby coefficient or epoch sweep. The next
+direction should change the objective or data representation: train on
+trace-level outcomes for all first-divergence rows, add richer context/history
+features to the action-EV scorer, or move these labels into a conservative
+policy update only after a stronger preflight objective is available.
+
+### Tooling: paired-trace action-EV dataset builder
+
+Local code added:
+
+```text
+ai/src/fh_mahjong_ai/paired_trace_action_ev.py
+ai/src/fh_mahjong_ai/scripts/build_paired_trace_action_ev_data.py
+ai/tests/test_paired_trace_action_ev.py
+```
+
+Purpose:
+Convert tensor-bearing paired-trace first-divergence outcome deltas into the
+same branch-action EV NPZ schema consumed by `train_global_ev
+--branch-cf-action-targets`. Unlike exact branch-CF best/worst labels, this
+uses actual anchor-vs-candidate final match reward differences from paired
+traces.
+
+Validation:
+
+```text
+local:
+  uv run --project ai pytest ai/tests/test_paired_trace_action_ev.py ai/tests/test_global_ev.py ai/tests/test_global_ev_diagnostics.py
+  16 passed
+remote:
+  /root/.local/bin/uv run --project ai pytest ai/tests/test_paired_trace_action_ev.py ai/tests/test_global_ev.py ai/tests/test_global_ev_diagnostics.py
+  16 passed
+```
+
+### Experiment: paired-trace delta action-EV
+
+Data run:
+`/root/fh-mahjong-runs/chongci-paired-trace-action-ev-data-20260619-020620`
+
+Question:
+Can direct first-divergence paired-trace reward deltas train an action-EV model
+that passes paired-trace preflight better than same-state branch-CF best/worst
+training?
+
+Built paired-trace action-EV rows:
+
+| source trace | rows after gap >= 0.02 | train rows | holdout rows |
+| --- | ---: | ---: | ---: |
+| old | 95 | 68 | 27 |
+| fresh | 84 | 59 | 25 |
+| tail | 127 | 88 | 39 |
+
+Training run:
+`/root/fh-mahjong-runs/chongci-action-ev-pairedtrace-delta-20260619-020647`
+
+Training:
+
+```text
+old train:
+  /root/fh-mahjong-runs/chongci-paired-trace-action-ev-data-20260619-020620/data/old_paired_trace_action_ev_gap002_split/train
+fresh train:
+  /root/fh-mahjong-runs/chongci-paired-trace-action-ev-data-20260619-020620/data/fresh_paired_trace_action_ev_gap002_split/train
+tail train:
+  /root/fh-mahjong-runs/chongci-paired-trace-action-ev-data-20260619-020620/data/tail_paired_trace_action_ev_gap002_split/train
+epochs: 4
+steps_per_epoch: 80
+batch_size: 64
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: 8d3da5b491eb4a5886a9cc78d2190b69
+checkpoint:
+  /root/fh-mahjong-runs/chongci-action-ev-pairedtrace-delta-20260619-020647/checkpoints/action_ev_pairedtrace_delta/epoch_004.pt
+```
+
+Internal validation:
+
+```text
+validation MAE: 0.9311
+validation RMSE: 1.1446
+validation correlation: 0.5033
+constant baseline MAE: 0.9584
+```
+
+Full-trace preflight:
+
+| report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| old trace | 190 | 49.57% | 52.54% | 1.1160 |
+| fresh trace | 175 | 60.38% | 64.81% | 2.6290 |
+| tail trace | 209 | 55.26% | 60.00% | 2.3530 |
+
+Holdout-only preflight:
+
+| report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| old holdout | 64 | 29.03% | 23.08% | -1.5920 |
+| fresh holdout | 61 | 54.55% | 50.00% | -1.1260 |
+| tail holdout | 69 | 48.98% | 58.06% | -1.9470 |
+
+Decision:
+Rejected for guarded serving and promotion. The full-trace preflight looked
+positive, but holdout-only preflight is negative on all three source traces.
+
+Interpretation:
+The direct paired-trace objective is closer to the desired full reward signal
+than branch-CF best/worst labels, but the current dataset/model still overfits
+seed-window-specific signals. Keep the builder and data. Next useful move is
+not threshold tuning; it is either more independent trace windows with
+holdout-first evaluation, or a model/objective that uses richer trajectory
+context rather than only the first-divergence visible observation.
+
+### Implementation: trajectory-context paired-trace action-EV
+
+Question:
+Can paired-trace action-EV use visible trajectory history before the first
+divergence, rather than only the first-divergence observation, so the scorer has
+enough context to generalize across seed windows?
+
+Code changes:
+
+```text
+ai/src/fh_mahjong_ai/paired_trace.py
+ai/src/fh_mahjong_ai/paired_trace_action_ev.py
+ai/src/fh_mahjong_ai/global_ev_diagnostics.py
+ai/src/fh_mahjong_ai/scripts/build_paired_trace_action_ev_data.py
+ai/src/fh_mahjong_ai/scripts/action_ev_branch_cf_calibration.py
+ai/src/fh_mahjong_ai/scripts/global_ev_diagnostics.py
+ai/tests/test_paired_trace.py
+ai/tests/test_paired_trace_action_ev.py
+ai/tests/test_global_ev_diagnostics.py
+```
+
+Added `pre_divergence_context` to paired-trace reports. It records only visible,
+reward-free context:
+
+- divergence step and decision index,
+- prefix action-family rates,
+- previous action-family one-hot,
+- visible scalar deltas from the first decision to the divergence.
+
+The context vector is appended by
+`fh-mj-build-paired-trace-action-ev-data --include-trajectory-context`. This
+widens paired-trace action-EV scalar inputs from 58 to 81.
+
+Validation:
+
+```text
+local:
+  uv run --project ai pytest \
+    ai/tests/test_paired_trace.py \
+    ai/tests/test_paired_trace_action_ev.py \
+    ai/tests/test_global_ev.py \
+    ai/tests/test_global_ev_diagnostics.py \
+    ai/tests/test_iql.py::test_train_iql_critic_only_freezes_policy_path \
+    ai/tests/test_iql.py::test_train_iql_policy_head_only_freezes_encoder_and_critics \
+    ai/tests/test_paired_trace_q_diagnostics.py \
+    ai/tests/test_branch_cf_calibration.py
+  41 passed
+
+remote:
+  /root/.local/bin/uv run --project ai pytest \
+    ai/tests/test_paired_trace.py \
+    ai/tests/test_paired_trace_action_ev.py \
+    ai/tests/test_global_ev.py \
+    ai/tests/test_global_ev_diagnostics.py \
+    ai/tests/test_iql.py::test_train_iql_critic_only_freezes_policy_path \
+    ai/tests/test_iql.py::test_train_iql_policy_head_only_freezes_encoder_and_critics \
+    ai/tests/test_paired_trace_q_diagnostics.py \
+    ai/tests/test_branch_cf_calibration.py
+  41 passed
+```
+
+### Experiment: context paired-trace tail smoke
+
+Data run:
+`/root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149`
+
+Policies:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+candidate:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444/checkpoints/tail_balanced_highrisk2_gap010/epoch_001.pt
+```
+
+Trace command:
+
+```text
+fh-mj-paired-trace
+  --seed-window 624000:20
+  --seed-window 634000:20
+  --seed-window 644000:20
+  --seats 0 1 2 3
+  --match-mode chongci
+  --max-steps-per-episode 0
+  --include-observation-arrays
+  --max-divergences 1
+```
+
+Status:
+The full trace is still running. At the 80-pair partial report, it had reached
+seat 1 and covered seeds `624000..644019`.
+
+Partial report at 80 pairs:
+
+| metric | value |
+| --- | ---: |
+| pairs | 80 |
+| candidate reward delta sum | 2.8420 |
+| candidate reward delta mean | 0.0355 |
+| negative delta rate | 30.00% |
+| positive delta rate | 38.75% |
+
+Context check:
+
+```text
+first 20 pairs: context available in 19/20 pairs
+partial shard scalar shape: (33, 81)
+context_available_sum: 33.0
+```
+
+Partial60 training shard:
+
+```text
+source report:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/reports/anchor_vs_tail_context_trace.json
+data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_partial60
+split:
+  train: episode_index < 644000
+  holdout: episode_index >= 644000
+rows:
+  total 33
+  train 21
+  holdout 12
+scalar width:
+  81
+```
+
+Important implementation issue found:
+The first split script copied the original manifest without changing top-level
+`transitions`, `shard_size`, or shard row counts. `read_transition_arrays`
+therefore allocated 33 rows for a 21-row train shard and left uninitialized
+garbage rows, which produced huge invalid action ids and CUDA embedding-index
+asserts. The split manifest was rebuilt with matching top-level and shard row
+counts. After the fix, expanded action ids loaded as `0..203`.
+
+Training run:
+`/root/fh-mahjong-runs/chongci-action-ev-context-tail-partial60-fixed-20260619-023632`
+
+Training:
+
+```text
+train data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_partial60_split/train
+epochs: 4
+steps_per_epoch: 40
+batch_size: 32
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: f24e434cd5ae475799dc5ca16ad35b0f
+checkpoint:
+  /root/fh-mahjong-runs/chongci-action-ev-context-tail-partial60-fixed-20260619-023632/checkpoints/action_ev_context_tail_partial60/epoch_004.pt
+```
+
+Internal validation:
+
+```text
+validation MAE: 0.6030
+validation RMSE: 0.7373
+validation correlation: 0.3643
+constant baseline MAE: 0.8229
+pair preference accuracy: 75.00%
+```
+
+Preflight:
+
+| report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: | ---: |
+| partial report, 80 pairs | 69 | 65.45% | 58.33% | 4.9330 |
+| holdout `seed >= 644000`, 20 pairs | 15 | 53.85% | 50.00% | 0.1790 |
+
+Decision:
+Diagnostic only. Do not promote or serve. The result is too small and includes
+only a one-seat holdout window, but it is useful because the holdout-only
+preflight is no longer immediately negative and the context-bearing data path
+works end to end.
+
+Next:
+Wait for the full 240-pair trace to finish. Rebuild the context shard and split
+by independent seed windows before training a real context action-EV model.
+Then compare holdout-only preflight to the previous no-context paired-trace
+delta model. If holdout still fails, the next change should be more data
+diversity or a stronger sequential model, not threshold tuning.
+
+### Experiment: context paired-trace tail full240
+
+Data run:
+`/root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149`
+
+Final trace summary:
+
+| metric | value |
+| --- | ---: |
+| pairs | 240 |
+| seats | 0, 1, 2, 3 |
+| seed windows | `624000:20`, `634000:20`, `644000:20` |
+| divergence rate | 88.33% |
+| candidate better rate | 33.33% |
+| reward delta mean | 0.0323 |
+| reward delta sum | 7.7550 |
+| negative delta rate | 29.58% |
+| positive delta rate | 33.33% |
+
+Full context shard:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_full240
+split:
+  train: episode_index < 644000
+  holdout: episode_index >= 644000
+rows:
+  total 128
+  train 82
+  holdout 46
+scalar width:
+  81
+expanded action ids:
+  train 0..203
+  holdout 0..202
+```
+
+Training run:
+`/root/fh-mahjong-runs/chongci-action-ev-context-tail-full240-20260620-004119`
+
+Training:
+
+```text
+train data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_full240_split/train
+epochs: 4
+steps_per_epoch: 80
+batch_size: 64
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: 56eba63c914e483780b9a24bb464d19c
+```
+
+Training behavior:
+
+| epoch | train MAE | validation MAE | validation corr | pair pref |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.4490 | 0.5793 | 0.6757 | 50.00% |
+| 2 | 0.2005 | 0.6241 | 0.5418 | 57.14% |
+| 3 | 0.1357 | 0.7790 | 0.4288 | 57.14% |
+| 4 | 0.0962 | 0.8444 | 0.3787 | 57.14% |
+
+The validation curve overfits after epoch 1, but paired-trace preflight is the
+actual diagnostic.
+
+Same-report preflight:
+
+| checkpoint | report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| epoch 1 | train windows | 141 | 70.71% | 69.57% | 8.2810 |
+| epoch 1 | holdout `seed >= 644000` | 71 | 34.62% | 48.00% | -0.0510 |
+| epoch 1 | full trace | 212 | 58.28% | 61.97% | 8.2300 |
+| epoch 4 | train windows | 141 | 86.87% | 95.65% | 12.6310 |
+| epoch 4 | holdout `seed >= 644000` | 71 | 48.08% | 68.00% | 1.6510 |
+| epoch 4 | full trace | 212 | 73.51% | 85.92% | 14.2820 |
+
+Legacy zero-context cross-report preflight with epoch 4:
+
+These older reports do not contain `pre_divergence_context`, so diagnostics pad
+the 23 context scalars with zeros. This is useful as a robustness check but not
+a fair context-vs-context comparison.
+
+| report | subset | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| old | holdout | 64 | 38.71% | 46.15% | -2.6700 |
+| old | full | 190 | 53.85% | 61.02% | -3.7980 |
+| fresh | holdout | 61 | 45.45% | 37.50% | -3.1730 |
+| fresh | full | 175 | 49.06% | 46.30% | -2.5910 |
+| tail | holdout | 69 | 51.02% | 51.61% | -3.4150 |
+| tail | full | 209 | 55.92% | 63.53% | -3.8540 |
+
+Decision:
+Rejected for guarded serving and promotion. The context-bearing same-report
+holdout is promising relative to the previous no-context all-holdout failure,
+but cross-report zero-context preflight is still negative. The correct next
+step is to generate additional context-bearing paired traces from different
+candidates/windows and train on that combined context data, not to tune margins
+on this single trace.
+
+### Experiment: context paired-trace fresh data generation
+
+Data run:
+`/root/fh-mahjong-runs/chongci-context-pairedtrace-fresh-20260620-004411`
+
+Question:
+Can a second context-bearing paired trace from a different candidate reduce the
+single-trace overfitting seen in the tail-only context action-EV model?
+
+Policies:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt
+```
+
+Trace command:
+
+```text
+fh-mj-paired-trace
+  --seed-window 654000:20
+  --seed-window 664000:20
+  --seed-window 674000:20
+  --seats 0 1 2 3
+  --match-mode chongci
+  --max-steps-per-episode 0
+  --include-observation-arrays
+  --max-divergences 1
+```
+
+Status:
+Running on remote WSL. At the first 20-pair partial report:
+
+| metric | value |
+| --- | ---: |
+| pairs | 20 |
+| reward delta sum | -1.6090 |
+| reward delta mean | -0.0805 |
+| negative delta rate | 30.00% |
+| positive delta rate | 20.00% |
+| zero delta rate | 50.00% |
+
+Next:
+Wait for 240/240 pairs, then build a context shard and train a combined
+tail+fresh context action-EV model with holdout-only preflight on both context
+reports.
+
+### Experiment: combined tail+fresh context action-EV
+
+Fresh context trace final summary:
+
+Run:
+`/root/fh-mahjong-runs/chongci-context-pairedtrace-fresh-20260620-004411`
+
+| metric | value |
+| --- | ---: |
+| pairs | 240 |
+| seats | 0, 1, 2, 3 |
+| seed windows | `654000:20`, `664000:20`, `674000:20` |
+| divergence rate | 75.00% |
+| candidate better rate | 22.50% |
+| reward delta mean | -0.0178 |
+| reward delta sum | -4.2730 |
+| negative delta rate | 24.58% |
+| positive delta rate | 22.50% |
+
+Fresh context shard:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-fresh-20260620-004411/data/fresh_context_paired_trace_action_ev_gap002_full240
+split:
+  train: episode_index < 674000
+  holdout: episode_index >= 674000
+rows:
+  total 98
+  train 63
+  holdout 35
+scalar width:
+  81
+expanded action ids:
+  train 0..203
+  holdout 0..197
+```
+
+Training run:
+`/root/fh-mahjong-runs/chongci-action-ev-context-tail-fresh-20260620-012543`
+
+Training:
+
+```text
+train data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_full240_split/train
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-fresh-20260620-004411/data/fresh_context_paired_trace_action_ev_gap002_full240_split/train
+epochs: 4
+steps_per_epoch: 100
+batch_size: 64
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: 79e996b21faf49ebaafe480fddc190d5
+```
+
+Internal validation:
+
+| epoch | train MAE | validation MAE | validation corr | pair pref |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.4835 | 0.6158 | 0.4867 | 47.62% |
+| 2 | 0.2534 | 0.7716 | 0.4313 | 47.62% |
+| 3 | 0.1744 | 0.8177 | 0.3531 | 52.38% |
+| 4 | 0.1377 | 0.8180 | 0.3166 | 57.14% |
+
+Preflight:
+
+| checkpoint | report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| epoch 1 | tail train | 141 | 60.61% | 54.35% | 4.0900 |
+| epoch 1 | tail holdout | 71 | 46.15% | 64.00% | 0.0790 |
+| epoch 1 | tail full | 212 | 55.63% | 57.75% | 4.1690 |
+| epoch 1 | fresh train | 118 | 63.51% | 60.00% | 1.1830 |
+| epoch 1 | fresh holdout | 62 | 48.72% | 63.16% | -1.4760 |
+| epoch 1 | fresh full | 180 | 58.41% | 61.02% | -0.2930 |
+| epoch 4 | tail train | 141 | 80.81% | 86.96% | 10.8210 |
+| epoch 4 | tail holdout | 71 | 38.46% | 56.00% | 0.8550 |
+| epoch 4 | tail full | 212 | 66.23% | 76.06% | 11.6760 |
+| epoch 4 | fresh train | 118 | 75.68% | 75.00% | 4.9870 |
+| epoch 4 | fresh holdout | 62 | 41.03% | 42.11% | -3.0000 |
+| epoch 4 | fresh full | 180 | 63.72% | 64.41% | 1.9870 |
+
+Decision:
+Rejected for guarded serving and promotion. Combining tail+fresh context data
+improved train/full reports but still failed the fresh holdout. This is another
+seed-window generalization failure, not a margin problem.
+
+Interpretation:
+The visible trajectory context is useful infrastructure, but the current
+action-EV objective still overfits source windows/candidates. Continue with
+data diversity and stronger holdout protocols. Do not tune guard thresholds or
+nearby loss coefficients on this branch.
+
+### Experiment: context paired-trace fresh2 data generation
+
+Data run:
+`/root/fh-mahjong-runs/chongci-context-pairedtrace-fresh2-20260620-012813`
+
+Question:
+The combined tail+fresh context model failed the fresh holdout, so can more
+fresh-candidate context data from independent seed windows improve source
+coverage without changing loss coefficients?
+
+Policies:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt
+```
+
+Trace command:
+
+```text
+fh-mj-paired-trace
+  --seed-window 684000:20
+  --seed-window 694000:20
+  --seed-window 704000:20
+  --seats 0 1 2 3
+  --match-mode chongci
+  --max-steps-per-episode 0
+  --include-observation-arrays
+  --max-divergences 1
+```
+
+Status:
+Running on remote WSL. Startup was valid: both checkpoints loaded and the first
+pair completed.
+
+Final trace summary:
+
+| metric | value |
+| --- | ---: |
+| pairs | 240 |
+| seats | 0, 1, 2, 3 |
+| seed windows | `684000:20`, `694000:20`, `704000:20` |
+| divergence rate | 81.25% |
+| candidate better rate | 28.33% |
+| reward delta mean | 0.0149 |
+| reward delta sum | 3.5780 |
+| negative delta rate | 20.42% |
+| positive delta rate | 28.33% |
+
+Fresh2 context shard:
+
+```text
+data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-fresh2-20260620-012813/data/fresh2_context_paired_trace_action_ev_gap002_full240
+split:
+  train: episode_index < 704000
+  holdout: episode_index >= 704000
+rows:
+  total 94
+  train 58
+  holdout 36
+scalar width:
+  81
+expanded action ids:
+  train 0..188
+  holdout 0..192
+```
+
+### Experiment: combined tail+fresh+fresh2 context action-EV
+
+Training run:
+`/root/fh-mahjong-runs/chongci-action-ev-context-tail-fresh-fresh2-20260620-021122`
+
+Question:
+Does adding another independent fresh-candidate context trace fix the fresh
+holdout failure without changing thresholds or loss coefficients?
+
+Training:
+
+```text
+train data:
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-tail-20260619-022149/data/tail_context_paired_trace_action_ev_gap002_full240_split/train
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-fresh-20260620-004411/data/fresh_context_paired_trace_action_ev_gap002_full240_split/train
+  /root/fh-mahjong-runs/chongci-context-pairedtrace-fresh2-20260620-012813/data/fresh2_context_paired_trace_action_ev_gap002_full240_split/train
+epochs: 4
+steps_per_epoch: 120
+batch_size: 64
+lr: 1.5e-4
+pairwise_weight: 0.25
+reward_gap_weight: 1.0
+reward_gap_margin_scale: 0.1
+MLflow run id: a8d94f6d85c84af4aa3e6c654fda9b0c
+```
+
+Internal validation:
+
+| epoch | train MAE | validation MAE | validation corr | pair pref |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.5444 | 0.6057 | 0.6132 | 55.56% |
+| 2 | 0.3410 | 0.5915 | 0.6434 | 40.74% |
+| 3 | 0.2400 | 0.6672 | 0.5486 | 40.74% |
+| 4 | 0.1784 | 0.6684 | 0.5276 | 62.96% |
+
+Preflight:
+
+| checkpoint | report | scoreable divergences | sign accuracy | harmful recall | guard margin 0 allowed delta |
+| --- | --- | ---: | ---: | ---: | ---: |
+| epoch 1 | tail holdout | 71 | 44.23% | 52.00% | -0.5140 |
+| epoch 1 | fresh holdout | 62 | 51.28% | 57.89% | -1.0600 |
+| epoch 1 | fresh2 holdout | 67 | 52.50% | 63.16% | 1.4550 |
+| epoch 2 | tail holdout | 71 | 42.31% | 32.00% | -0.4720 |
+| epoch 2 | fresh holdout | 62 | 51.28% | 63.16% | -0.4150 |
+| epoch 2 | fresh2 holdout | 67 | 57.50% | 63.16% | 0.7380 |
+| epoch 4 | tail holdout | 71 | 30.77% | 36.00% | -0.9280 |
+| epoch 4 | fresh holdout | 62 | 41.03% | 42.11% | -0.8970 |
+| epoch 4 | fresh2 holdout | 67 | 62.50% | 63.16% | 2.3530 |
+
+Decision:
+Rejected for guarded serving and promotion. Adding a second fresh context trace
+helped the fresh2 holdout but did not fix tail/fresh holdout generalization.
+Every candidate epoch has at least two negative holdout preflights.
+
+Interpretation:
+This is now enough evidence to stop this action-EV recipe. The failure is not
+just missing one more fresh trace or a bad epoch choice. The next move should
+change the objective/model shape, for example a direct pairwise reward-delta
+model over both divergent actions plus context, or a proper sequential/history
+encoder. Do not continue simple scalar, threshold, epoch, or coefficient sweeps
+on this branch.
+
+### Experiment: Direct Pairwise Reward-Delta Predictor
+
+Run:
+`/root/fh-mahjong-runs/chongci-pairwise-delta-tail-fresh-fresh2-20260620-021914`
+
+Question:
+Does predicting `candidate_reward - anchor_reward` directly from the shared
+first-divergence observation, visible trajectory context, and both divergent
+action ids generalize better than assigning absolute action EV to each action?
+
+Data:
+
+```text
+train reports:
+  tail context train
+  fresh context train
+  fresh2 context train
+holdout reports:
+  tail context holdout
+  fresh context holdout
+  fresh2 context holdout
+rows: 387
+scalar width: 81
+target: final Chongci reward delta
+```
+
+Training:
+
+```text
+model: scalar/context MLP + left/right/action-delta embeddings
+epochs: 4
+steps_per_epoch: 120
+batch_size: 64
+lr: 1.5e-4
+weight_decay: 1e-4
+device: cuda
+```
+
+Preflight, margin 0:
+
+| checkpoint | tail holdout | fresh holdout | fresh2 holdout | decision |
+| --- | ---: | ---: | ---: | --- |
+| epoch 1 | 2.964 | -0.333 | 0.423 | reject |
+| epoch 2 | 0.847 | -0.763 | 0.202 | reject |
+| epoch 3 | 0.789 | -0.643 | -0.205 | reject |
+| epoch 4 | 1.092 | -0.552 | -0.047 | reject |
+
+Decision:
+Rejected for serving, guarded evaluation, and promotion. The direct
+reward-delta objective improved the full-report picture, but every epoch still
+failed at least one independent holdout.
+
+Interpretation:
+This is a better diagnostic shape than action-EV for paired traces, but the
+first-divergence scalar/action MLP still overfits source windows. Do not promote
+from full-report gains. The next useful direction is real visible history input
+or more source-diverse full-match paired traces, not threshold tuning.
+
+### Experiment: Direct Pairwise Reward-Delta With Nonzero Gap Filter
+
+Run:
+`/root/fh-mahjong-runs/chongci-pairwise-delta-gap002-tail-fresh-fresh2-20260620-022139`
+
+Question:
+Is the holdout failure mainly caused by noisy zero/near-zero reward-delta rows?
+
+Data:
+Same train/eval reports as the direct pairwise reward-delta experiment, but
+training excluded rows with `abs(candidate_reward - anchor_reward) < 0.02`.
+
+Training:
+
+```text
+rows: 203
+model: same scalar/action pairwise-delta MLP
+epochs: 4
+steps_per_epoch: 120
+batch_size: 64
+lr: 1.5e-4
+device: cuda
+```
+
+Preflight, margin 0:
+
+| checkpoint | tail holdout | fresh holdout | fresh2 holdout | decision |
+| --- | ---: | ---: | ---: | --- |
+| epoch 1 | 4.706 | -2.535 | 0.738 | reject |
+| epoch 2 | 0.497 | -2.335 | 0.082 | reject |
+| epoch 3 | 0.087 | -2.348 | -0.397 | reject |
+| epoch 4 | 0.308 | -2.348 | -0.732 | reject |
+
+Decision:
+Rejected. Filtering small-gap rows made the fresh holdout materially worse.
+
+Interpretation:
+The blocker is not just label noise from near-zero deltas. Stop this scalar/action
+pairwise MLP family unless the data/model shape changes.
+
+### Experiment: Visible Sequence Pairwise-Delta Smoke
+
+Run:
+`/root/fh-mahjong-runs/chongci-sequence-smoke-20260620-023204`
+
+Question:
+Can paired-trace reports store compact visible pre-divergence operation history,
+and can a sequence-aware reward-delta model consume it?
+
+Data:
+
+```text
+tail candidate:
+  train seeds 624000:2
+  holdout seeds 644000:2
+fresh candidate:
+  train seeds 654000:2
+  holdout seeds 674000:2
+fresh2 candidate:
+  train seeds 684000:2
+  holdout seeds 704000:2
+seats: 0, 1, 2, 3
+full pairs: 48
+train divergence rows: 21
+```
+
+Implementation:
+- Added `pre_divergence_sequence` to paired-trace reports.
+- Added `PairwiseSequenceDeltaNet`, a small GRU over visible prefix rows plus
+  the existing scalar/action pairwise-delta inputs.
+- Added `fh-mj-train-pairwise-delta --sequence-model`.
+
+Training:
+
+```text
+epochs: 4
+steps_per_epoch: 80
+batch_size: 32
+lr: 1.5e-4
+device: cuda
+```
+
+Result:
+
+| report | scoreable divergences | sign accuracy | guard margin 0 allowed delta |
+| --- | ---: | ---: | ---: |
+| tail holdout | 8 | 25.00% | 0.184 |
+| fresh holdout | 8 | 20.00% | -1.170 |
+| fresh2 holdout | 6 | 50.00% | 0.024 |
+
+Decision:
+Infrastructure validated, model rejected. This was intentionally a small smoke,
+not a promotion candidate.
+
+Interpretation:
+The next aligned step is a full source-diverse sequence paired-trace refresh,
+then source-heldout sequence training. Do not read the tiny smoke as evidence
+that sequence history works or fails for strength; it only proves the data and
+training path are mechanically usable.
+
+### Experiment: Full Source-Diverse Sequence Pairwise-Delta
+
+Run:
+`/root/fh-mahjong-runs/chongci-sequence-full-20260620-025953`
+
+Question:
+Does a source-diverse full paired-trace refresh with compact visible
+pre-divergence sequences let the sequence pairwise-delta model pass independent
+source-heldout preflight?
+
+Data:
+
+```text
+anchor:
+  /root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt
+tail candidate:
+  /root/fh-mahjong-runs/chongci-tail-constrained-balanced2-20260607-031444/checkpoints/tail_balanced_highrisk2_gap010/epoch_001.pt
+fresh/fresh2 candidate:
+  /root/fh-mahjong-runs/chongci-fresh-discard-explore-iql-20260618-040312/checkpoints/fresh_discard_explore_iql_lowdrift/epoch_001.pt
+tail seeds:
+  624000:20, 634000:20, 644000:20
+fresh seeds:
+  654000:20, 664000:20, 674000:20
+fresh2 seeds:
+  684000:20, 694000:20, 704000:20
+seats:
+  0, 1, 2, 3
+max_steps_per_episode:
+  20000
+```
+
+Training plan:
+
+```text
+split:
+  tail holdout: seed >= 644000
+  fresh holdout: seed >= 674000
+  fresh2 holdout: seed >= 704000
+model:
+  PairwiseSequenceDeltaNet
+epochs:
+  4
+steps_per_epoch:
+  160
+batch_size:
+  64
+lr:
+  1.0e-4
+```
+
+Evaluation:
+The pipeline will write per-epoch holdout preflight reports under
+`reports/preflight_epoch*_*.json` and aggregate them in
+`reports/epoch_preflight_summary.json`.
+
+Trace result:
+
+| report | pairs | divergence rate | candidate better rate | mean delta |
+| --- | ---: | ---: | ---: | ---: |
+| tail full | 240 | 88.33% | 33.33% | 0.0323 |
+| fresh full | 240 | 75.00% | 25.42% | -0.0178 |
+| fresh2 full | 240 | 81.25% | 28.33% | 0.0149 |
+
+Training result:
+
+| epoch | train MAE | validation MAE | validation corr |
+| --- | ---: | ---: | ---: |
+| 1 | 0.1573 | 0.1930 | 0.2761 |
+| 2 | 0.1407 | 0.2138 | 0.2670 |
+| 3 | 0.1106 | 0.2526 | 0.1978 |
+| 4 | 0.0823 | 0.2836 | 0.1753 |
+
+Source-heldout preflight, margin 0:
+
+| checkpoint | tail holdout | fresh holdout | fresh2 holdout | decision |
+| --- | ---: | ---: | ---: | --- |
+| epoch 1 | 4.193 | -2.509 | 0.256 | reject |
+| epoch 2 | 2.533 | -1.093 | 1.184 | reject |
+| epoch 3 | 3.364 | -0.131 | 0.770 | reject |
+| epoch 4 | 2.846 | 0.016 | 0.768 | borderline |
+
+Epoch 4 was the first checkpoint with all source-heldout margin-0 deltas
+non-negative, but the fresh holdout was only `0.016` and failed at margin
+`0.05` (`-0.378`). This is not strong enough for live guarded evaluation.
+
+### Experiment: Independent Sequence Pairwise-Delta Preflight
+
+Run:
+`/root/fh-mahjong-runs/chongci-sequence-independent-preflight-20260620-035316`
+
+Question:
+Does the borderline epoch-4 sequence scorer from
+`chongci-sequence-full-20260620-025953` hold up on new independent seed windows
+without retraining?
+
+Data:
+
+```text
+scored checkpoint:
+  /root/fh-mahjong-runs/chongci-sequence-full-20260620-025953/checkpoints/pairwise_sequence_delta_full/epoch_004.pt
+tail independent:
+  714000:10, all seats
+fresh independent:
+  724000:10, all seats
+fresh2 independent:
+  734000:10, all seats
+```
+
+Trace result:
+
+| report | pairs | divergence rate | mean delta |
+| --- | ---: | ---: | ---: |
+| tail independent | 40 | 95.00% | 0.0562 |
+| fresh independent | 40 | 67.50% | 0.0617 |
+| fresh2 independent | 40 | 75.00% | -0.0035 |
+
+Preflight, epoch 4, margin 0:
+
+| report | scoreable divergences | sign accuracy | allowed delta | allowed count |
+| --- | ---: | ---: | ---: | ---: |
+| tail independent | 38 | 38.46% | -0.225 | 18 |
+| fresh independent | 27 | 47.62% | 1.561 | 17 |
+| fresh2 independent | 30 | 50.00% | 1.411 | 17 |
+
+Decision:
+Rejected for guard, serving, and promotion. The full source-heldout result was
+not stable on new independent seeds.
+
+Interpretation:
+Visible sequence context is useful infrastructure, and it improved over the
+earlier scalar/action pairwise-delta failures, but the current scorer still
+overfits source windows. Do not run duplicate-seat guarded evaluation from this
+scorer. The next aligned direction is not another threshold sweep; either expand
+independent source diversity before training or change the scorer objective to
+optimize worst-source/heldout robustness directly.
+
+### Experiment: Source-Balanced Worst-Source Sequence Pairwise-Delta
+
+Run:
+`/root/fh-mahjong-runs/chongci-sequence-worstsource-20260620-202912`
+
+Question:
+Can broader source diversity plus a worst-source training objective make the
+sequence reward-delta scorer robust enough to pass original holdouts and a new
+independent preflight?
+
+Implementation:
+- Added source ids to pairwise-delta arrays.
+- Added `fh-mj-train-pairwise-delta --source-balanced-batches`.
+- Added `--worst-source-loss-weight`, which adds the maximum per-source batch
+  MSE to the normal MSE objective.
+
+Training data:
+
+```text
+original source train reports:
+  tail train
+  fresh train
+  fresh2 train
+additional source-diversity reports:
+  tail independent 714000:10
+  fresh independent 724000:10
+  fresh2 independent 734000:10
+rows:
+  482
+```
+
+Training:
+
+```text
+model: PairwiseSequenceDeltaNet
+source_balanced_batches: true
+worst_source_loss_weight: 1.0
+epochs: 4
+steps_per_epoch: 180
+batch_size: 96
+lr: 1.0e-4
+```
+
+Training metrics:
+
+| epoch | train MAE | validation MAE | validation corr |
+| --- | ---: | ---: | ---: |
+| 1 | 0.2085 | 0.2611 | 0.1122 |
+| 2 | 0.1803 | 0.2639 | 0.0646 |
+| 3 | 0.1576 | 0.2660 | 0.1262 |
+| 4 | 0.1403 | 0.2899 | 0.0380 |
+
+New independent2 preflight data:
+
+```text
+tail independent2: 744000:10, all seats
+fresh independent2: 754000:10, all seats
+fresh2 independent2: 764000:10, all seats
+```
+
+Independent2 trace result:
+
+| report | pairs | divergence rate | mean delta |
+| --- | ---: | ---: | ---: |
+| tail independent2 | 40 | 87.50% | 0.0794 |
+| fresh independent2 | 40 | 75.00% | 0.0194 |
+| fresh2 independent2 | 40 | 77.50% | 0.0267 |
+
+Preflight, margin 0:
+
+| checkpoint | tail holdout | fresh holdout | fresh2 holdout | tail independent2 | fresh independent2 | fresh2 independent2 | decision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| epoch 1 | 1.986 | -1.273 | -0.390 | 1.914 | 0.114 | 1.115 | reject |
+| epoch 2 | 2.799 | -2.698 | -0.253 | 0.706 | 0.150 | 1.280 | reject |
+| epoch 3 | 3.691 | -2.686 | -0.101 | 0.611 | 0.149 | 0.961 | reject |
+| epoch 4 | 2.928 | -2.331 | -0.522 | 0.718 | -0.367 | 1.032 | reject |
+
+Decision:
+Rejected. The robust objective fixed the prior tail-independent failure but
+regressed the original fresh/fresh2 source holdouts and did not stay positive on
+fresh independent2.
+
+Interpretation:
+Do not sweep `worst_source_loss_weight` as the next move. The failure moved
+between sources instead of disappearing, which means the scorer still lacks a
+stable generalization signal. The useful artifacts remain: source ids,
+source-balanced batches, worst-source objective support, and the independent2
+reports. The next aligned direction is to build a larger multi-source training
+set first, then use a source-heldout protocol where one whole seed window/source
+is held out during model selection.
 
 ## Maintenance Protocol For This Note
 

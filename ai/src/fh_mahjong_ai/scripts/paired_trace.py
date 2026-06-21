@@ -72,6 +72,10 @@ def write_report(
     report["seats"] = args.seats
     report["match_mode"] = args.match_mode
     report["device"] = args.device
+    report["include_observation_arrays"] = bool(args.include_observation_arrays)
+    report["include_action_scores"] = bool(args.include_action_scores)
+    report["action_score_top_k"] = int(args.action_score_top_k)
+    report["max_divergences"] = int(args.max_divergences)
     report["complete"] = bool(complete)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -104,6 +108,26 @@ def main() -> None:
         "--include-observation-arrays",
         action="store_true",
         help="Include full planes/scalars/action_mask arrays at first-divergence steps for direct counterfactual datasets.",
+    )
+    parser.add_argument(
+        "--include-action-scores",
+        action="store_true",
+        help="Include compact top masked policy-logit and Q-value diagnostics for each recorded decision.",
+    )
+    parser.add_argument(
+        "--action-score-top-k",
+        type=int,
+        default=5,
+        help="Number of legal actions to include in each policy/Q score diagnostic.",
+    )
+    parser.add_argument(
+        "--max-divergences",
+        type=int,
+        default=1,
+        help=(
+            "Maximum aligned action disagreements to store per seed/seat pair. "
+            "Values above 1 are later aligned disagreements, not strict same-state counterfactuals."
+        ),
     )
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--progress-interval", type=int, default=8)
@@ -164,6 +188,9 @@ def main() -> None:
         large_loss_threshold=args.large_loss_threshold,
         worst_delta_count=args.worst_delta_count,
         include_observation_arrays=args.include_observation_arrays,
+        include_action_scores=args.include_action_scores,
+        action_score_top_k=args.action_score_top_k,
+        max_divergences=args.max_divergences,
         progress_callback=progress,
         pair_callback=checkpoint,
         existing_pairs=existing_pairs,
