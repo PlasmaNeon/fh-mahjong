@@ -66,6 +66,36 @@ Later policy:
 - Split the flat action space into decision-family heads if the flat head becomes a bottleneck.
 - Add Suphx-style oracle/global reward prediction as auxiliary training, not as the first serving path.
 
+## Current Chongci Reward-Learning Target
+
+The current target is not another broad scalar risk penalty or same-state
+branch-label sweep. The active direction is:
+
+```text
+full-match paired traces
+-> first-divergence final reward deltas
+-> visible pre-divergence trajectory context
+-> holdout-only paired-trace preflight
+-> duplicate-seat promotion gate only after holdout is non-negative
+```
+
+Use exact same-state branch-CF shards as auxiliary supervision and diagnostic
+coverage, not as the main promotion signal. The recent no-context paired-trace
+delta scorer improved full-trace diagnostics but failed every holdout-only
+preflight window, so future attempts must prove generalization on independent
+seed windows before any guarded serving or promotion gate.
+
+The current context extension appends visible, reward-free history scalars to
+first-divergence action-EV rows:
+
+- divergence step and decision index,
+- prefix action-family rates,
+- previous action-family one-hot,
+- visible scalar deltas from the first decision to the divergence.
+
+This keeps the deployed-information boundary intact while giving the scorer
+more trajectory context than a single first-divergence observation.
+
 ## Stage 0: Working Vocabulary
 
 Goal: understand the words before touching algorithms.
@@ -323,7 +353,12 @@ Mahjong exercise:
    - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
    - Use final hand or Chongci match reward as the delayed target.
    - Keep behavior-cloning regularization.
-   - Treat first-divergence weighting as a targeted ablation; pair it with a stronger objective before repeating it.
+   - Train direct paired-trace first-divergence reward-delta scorers before repeating same-state branch-label sweeps.
+   - Add visible trajectory context and compact pre-divergence sequence rows to first-divergence scorers when holdout preflight shows seed-window overfitting.
+   - Use source-heldout paired-trace preflight as the screen for sequence scorers; do not promote from train-window or full-report gains.
+   - If a sequence scorer only barely passes source-heldout preflight, run a fresh independent seed-window preflight before any duplicate-seat or guarded-serving evaluation.
+   - If robust source-balanced training moves the failure between sources, stop coefficient changes and build a larger multi-source dataset with whole-source heldout model selection.
+   - Keep exact branch-CF shards as auxiliary supervision and diagnostics, not as the main promotion signal.
    - Promote only if duplicate evaluation improves over BC and heuristic baselines.
 8. Add mixed self-play:
    - Generate random wall seeds and let checkpoint agents play through full matches.

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 import numpy as np
+import torch
 from torch import nn
 
 from .action_catalog import action_label
@@ -50,6 +51,50 @@ SCALAR_NAMES = {
     57: "public_threat",
 }
 
+ACTION_FAMILY_CONTEXT_ORDER = ("discard", "chii", "pon", "kan", "win", "pass", "haitei")
+TRACE_CONTEXT_SCALAR_NAMES = (
+    "trace_context_available",
+    "trace_divergence_step_2000",
+    "trace_decision_index_2000",
+    "trace_prefix_discard_rate",
+    "trace_prefix_chii_rate",
+    "trace_prefix_pon_rate",
+    "trace_prefix_kan_rate",
+    "trace_prefix_win_rate",
+    "trace_prefix_pass_rate",
+    "trace_prefix_haitei_rate",
+    "trace_prev_discard",
+    "trace_prev_chii",
+    "trace_prev_pon",
+    "trace_prev_kan",
+    "trace_prev_win",
+    "trace_prev_pass",
+    "trace_prev_haitei",
+    "trace_overall_shanten_delta",
+    "trace_hand_progress_delta",
+    "trace_rank_score_delta",
+    "trace_leader_pressure_delta",
+    "trace_large_loss_margin_delta",
+    "trace_public_threat_delta",
+)
+TRACE_SEQUENCE_LENGTH = 16
+TRACE_SEQUENCE_SCALAR_NAMES = (
+    "overall_shanten",
+    "hand_progress",
+    "rank_score",
+    "leader_pressure",
+    "large_loss_margin",
+    "public_threat",
+    "active_discard_danger",
+    "discard_danger_range",
+)
+TRACE_SEQUENCE_FEATURE_NAMES = (
+    "trace_sequence_age_16",
+    "trace_sequence_decision_index_2000",
+    *tuple(f"trace_sequence_{family}" for family in ACTION_FAMILY_CONTEXT_ORDER),
+    *tuple(f"trace_sequence_{name}" for name in TRACE_SEQUENCE_SCALAR_NAMES),
+)
+
 
 @dataclass(frozen=True)
 class StepTrace:
@@ -61,6 +106,7 @@ class StepTrace:
     action_label: str
     value: Optional[float]
     observation: dict[str, Any]
+    action_scores: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +132,8 @@ def run_policy_trace(
     chongci_max_hands: int = 50,
     max_steps_per_episode: int = 20000,
     include_observation_arrays: bool = False,
+    include_action_scores: bool = False,
+    action_score_top_k: int = 5,
 ) -> EpisodeTrace:
     """Run one deterministic seed/seat episode and record every learned-policy decision."""
     config = EnvConfig(
@@ -127,6 +175,17 @@ def run_policy_trace(
 
         while observation.legal_actions:
             choice = policy.choose(observation)
+            action_scores = (
+                score_observation_actions(
+                    model,
+                    observation,
+                    chosen_action_id=int(choice.action_id),
+                    device=device,
+                    top_k=action_score_top_k,
+                )
+                if include_action_scores
+                else None
+            )
             steps.append(
                 StepTrace(
                     index=len(steps),
@@ -137,6 +196,7 @@ def run_policy_trace(
                     action_label=action_label(int(choice.action_id)),
                     value=choice.value,
                     observation=summarize_observation(observation, include_arrays=include_observation_arrays),
+                    action_scores=action_scores,
                 )
             )
             result = env.step(int(choice.action_id))
@@ -178,6 +238,9 @@ def compare_policy_traces(
     large_loss_threshold: Optional[float] = None,
     worst_delta_count: int = 8,
     include_observation_arrays: bool = False,
+    include_action_scores: bool = False,
+    action_score_top_k: int = 5,
+    max_divergences: int = 1,
     progress_callback: Optional[Callable[[int, int, int, int], None]] = None,
     pair_callback: Optional[Callable[[dict[str, Any], int, int, int, int], None]] = None,
     existing_pairs: Sequence[dict[str, Any]] = (),
@@ -205,6 +268,8 @@ def compare_policy_traces(
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
                 include_observation_arrays=include_observation_arrays,
+                include_action_scores=include_action_scores,
+                action_score_top_k=action_score_top_k,
             )
             right = run_policy_trace(
                 right_model,
@@ -218,8 +283,16 @@ def compare_policy_traces(
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
                 include_observation_arrays=include_observation_arrays,
+                include_action_scores=include_action_scores,
+                action_score_top_k=action_score_top_k,
             )
-            pair = compare_episode_trace(left, right, left_label=left_label, right_label=right_label)
+            pair = compare_episode_trace(
+                left,
+                right,
+                left_label=left_label,
+                right_label=right_label,
+                max_divergences=max_divergences,
+            )
             pairs.append(pair)
             completed_keys.add(key)
             completed_pairs += 1
@@ -255,11 +328,12 @@ def compare_episode_trace(
     right: EpisodeTrace,
     left_label: str = "left",
     right_label: str = "right",
+    max_divergences: int = 1,
 ) -> dict[str, Any]:
-    first_divergence = first_divergence_index(
-        [step.action_id for step in left.steps],
-        [step.action_id for step in right.steps],
-    )
+    left_actions = [step.action_id for step in left.steps]
+    right_actions = [step.action_id for step in right.steps]
+    divergence_indexes = divergence_indices(left_actions, right_actions, max_count=max_divergences)
+    first_divergence = divergence_indexes[0] if divergence_indexes else None
     reward_delta = right.reward - left.reward
     return {
         "seed": left.seed,
@@ -273,6 +347,12 @@ def compare_episode_trace(
         f"{right_label}_outcome": right.outcome,
         "first_divergence_index": first_divergence,
         "first_divergence": divergence_payload(left, right, first_divergence),
+        "pre_divergence_context": pre_divergence_context(left, right, first_divergence),
+        "pre_divergence_sequence": pre_divergence_sequence(left, right, first_divergence),
+        "divergences": [
+            indexed_divergence_payload(left, right, index)
+            for index in divergence_indexes
+        ],
     }
 
 
@@ -428,8 +508,13 @@ def counterfactual_label_from_pair(
     left_label: str = "left",
     right_label: str = "right",
     large_loss_threshold: Optional[float] = None,
+    divergence: Optional[dict[str, Any]] = None,
+    divergence_index: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
-    divergence = pair.get("first_divergence") or {}
+    divergence = divergence or pair.get("first_divergence") or {}
+    if divergence_index is None:
+        raw_index = divergence.get("divergence_index") if isinstance(divergence, dict) else None
+        divergence_index = pair.get("first_divergence_index") if raw_index is None else int(raw_index)
     left_step = divergence.get("left") or divergence.get(left_label)
     right_step = divergence.get("right") or divergence.get(right_label)
     if not left_step or not right_step:
@@ -477,6 +562,7 @@ def counterfactual_label_from_pair(
         "seed": int(pair["seed"]),
         "seat": seat,
         "first_divergence_index": pair.get("first_divergence_index"),
+        "divergence_index": divergence_index,
         "decision_index": context_step.get("decision_index"),
         "preferred_policy": preferred_label,
         "avoided_policy": avoided_label,
@@ -551,13 +637,32 @@ def high_risk_pair_payload(
 
 
 def first_divergence_index(left_actions: Sequence[int], right_actions: Sequence[int]) -> Optional[int]:
+    indexes = divergence_indices(left_actions, right_actions, max_count=1)
+    return indexes[0] if indexes else None
+
+
+def divergence_indices(
+    left_actions: Sequence[int],
+    right_actions: Sequence[int],
+    max_count: int = 1,
+) -> list[int]:
+    """Return bounded aligned action-disagreement indexes, plus terminal length divergence.
+
+    Indexes after the first divergence are aligned by step number, not guaranteed same-state
+    counterfactuals. They are useful for broader risk calibration, not strict promotion evidence.
+    """
+    if max_count <= 0:
+        return []
+    indexes: list[int] = []
     limit = min(len(left_actions), len(right_actions))
     for index in range(limit):
         if int(left_actions[index]) != int(right_actions[index]):
-            return index
-    if len(left_actions) != len(right_actions):
-        return limit
-    return None
+            indexes.append(index)
+            if len(indexes) >= max_count:
+                return indexes
+    if len(left_actions) != len(right_actions) and len(indexes) < max_count:
+        indexes.append(limit)
+    return indexes
 
 
 def divergence_payload(left: EpisodeTrace, right: EpisodeTrace, index: Optional[int]) -> Optional[dict[str, Any]]:
@@ -575,8 +680,104 @@ def divergence_payload(left: EpisodeTrace, right: EpisodeTrace, index: Optional[
     return payload
 
 
+def indexed_divergence_payload(left: EpisodeTrace, right: EpisodeTrace, index: int) -> dict[str, Any]:
+    payload = divergence_payload(left, right, index) or {}
+    payload["divergence_index"] = int(index)
+    return payload
+
+
+def pre_divergence_context(left: EpisodeTrace, right: EpisodeTrace, index: Optional[int]) -> dict[str, float]:
+    if index is None:
+        return {name: 0.0 for name in TRACE_CONTEXT_SCALAR_NAMES}
+    prefix = left.steps[: max(0, int(index))]
+    count = max(1, len(prefix))
+    family_counts = Counter(step.action_family for step in prefix)
+    current_step = step_at_or_none(left, index) or step_at_or_none(right, index)
+    first_step = step_at_or_none(left, 0) or step_at_or_none(right, 0)
+    previous_family = prefix[-1].action_family if prefix else "missing"
+    values: dict[str, float] = {
+        "trace_context_available": 1.0,
+        "trace_divergence_step_2000": float(index) / 2000.0,
+        "trace_decision_index_2000": float(current_step.decision_index if current_step is not None else index) / 2000.0,
+    }
+    for family in ACTION_FAMILY_CONTEXT_ORDER:
+        values[f"trace_prefix_{family}_rate"] = float(family_counts.get(family, 0) / count)
+    for family in ACTION_FAMILY_CONTEXT_ORDER:
+        values[f"trace_prev_{family}"] = 1.0 if previous_family == family else 0.0
+    for name in (
+        "overall_shanten",
+        "hand_progress",
+        "rank_score",
+        "leader_pressure",
+        "large_loss_margin",
+        "public_threat",
+    ):
+        values[f"trace_{name}_delta"] = scalar_from_step(current_step, name) - scalar_from_step(first_step, name)
+    return {name: float(values.get(name, 0.0)) for name in TRACE_CONTEXT_SCALAR_NAMES}
+
+
+def pre_divergence_sequence(
+    left: EpisodeTrace,
+    right: EpisodeTrace,
+    index: Optional[int],
+    max_length: int = TRACE_SEQUENCE_LENGTH,
+) -> list[dict[str, Any]]:
+    """Return compact visible prefix steps before the first divergence.
+
+    The two traces are still aligned before the first different action, so the
+    left prefix is enough and avoids duplicating identical history. The payload
+    excludes terminal rewards and hidden information.
+    """
+    del right
+    if index is None:
+        return []
+    limit = max(0, int(index))
+    length = max(0, int(max_length))
+    if limit <= 0 or length <= 0:
+        return []
+    prefix = left.steps[max(0, limit - length) : limit]
+    rows: list[dict[str, Any]] = []
+    for offset, step in enumerate(prefix):
+        age = len(prefix) - offset
+        features: dict[str, float] = {
+            "trace_sequence_age_16": float(min(age, TRACE_SEQUENCE_LENGTH)) / float(TRACE_SEQUENCE_LENGTH),
+            "trace_sequence_decision_index_2000": float(step.decision_index) / 2000.0,
+        }
+        for family in ACTION_FAMILY_CONTEXT_ORDER:
+            features[f"trace_sequence_{family}"] = 1.0 if step.action_family == family else 0.0
+        for name in TRACE_SEQUENCE_SCALAR_NAMES:
+            features[f"trace_sequence_{name}"] = scalar_from_step(step, name)
+        rows.append(
+            {
+                "index": int(step.index),
+                "decision_index": int(step.decision_index),
+                "action_id": int(step.action_id),
+                "action_family": step.action_family,
+                "features": {name: float(features.get(name, 0.0)) for name in TRACE_SEQUENCE_FEATURE_NAMES},
+            }
+        )
+    return rows
+
+
+def step_at_or_none(trace: EpisodeTrace, index: int) -> Optional[StepTrace]:
+    if 0 <= int(index) < len(trace.steps):
+        return trace.steps[int(index)]
+    return None
+
+
+def scalar_from_step(step: Optional[StepTrace], name: str) -> float:
+    if step is None:
+        return 0.0
+    scalars = (step.observation or {}).get("scalars", {})
+    value = scalars.get(name)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def step_payload(step: StepTrace) -> dict[str, Any]:
-    return {
+    payload = {
         "index": step.index,
         "decision_index": step.decision_index,
         "seat": step.seat,
@@ -586,6 +787,58 @@ def step_payload(step: StepTrace) -> dict[str, Any]:
         "value": step.value,
         "observation": step.observation,
     }
+    if step.action_scores is not None:
+        payload["action_scores"] = step.action_scores
+    return payload
+
+
+def score_observation_actions(
+    model: nn.Module,
+    observation: Observation,
+    chosen_action_id: int,
+    device: str = "cpu",
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Return compact masked policy/Q score diagnostics for an observation."""
+    planes = torch.from_numpy(observation.planes).unsqueeze(0).to(device)
+    scalars = torch.from_numpy(observation.scalars).unsqueeze(0).to(device)
+    action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(device)
+    with torch.inference_mode():
+        logits, policy_value = model(planes, scalars, action_mask)
+        q_values, q_value = model.q_values(planes, scalars, action_mask)
+
+    mask_row = action_mask[0]
+    logits_row = logits[0].masked_fill(mask_row <= 0, torch.finfo(logits.dtype).min)
+    q_row = q_values[0].masked_fill(mask_row <= 0, torch.finfo(q_values.dtype).min)
+    chosen = int(chosen_action_id)
+    return {
+        "chosen_action_id": chosen,
+        "chosen_action_label": action_label(chosen),
+        "chosen_action_family": action_family(chosen),
+        "policy_value": float(policy_value.item()),
+        "q_value": float(q_value.item()),
+        "chosen_policy_logit": float(logits_row[chosen].item()),
+        "chosen_q": float(q_row[chosen].item()),
+        "top_policy_logits": _top_action_values(logits_row, observation.action_mask, top_k=top_k),
+        "top_q": _top_action_values(q_row, observation.action_mask, top_k=top_k),
+    }
+
+
+def _top_action_values(values: torch.Tensor, action_mask: np.ndarray, top_k: int) -> list[dict[str, Any]]:
+    legal_count = int(np.count_nonzero(action_mask))
+    limit = min(max(0, int(top_k)), legal_count)
+    if limit <= 0:
+        return []
+    top_values, top_indices = torch.topk(values, k=limit)
+    return [
+        {
+            "action_id": int(action_id),
+            "action_label": action_label(int(action_id)),
+            "action_family": action_family(int(action_id)),
+            "score": float(score),
+        }
+        for action_id, score in zip(top_indices.detach().cpu().tolist(), top_values.detach().cpu().tolist())
+    ]
 
 
 def summarize_observation(observation: Observation, include_arrays: bool = False) -> dict[str, Any]:

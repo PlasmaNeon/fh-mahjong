@@ -40,6 +40,11 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - Observation summaries name Chongci score-pressure scalars for risk reports: leader pressure, large-loss safety margin, own bust safety, and opponent large-loss pressure.
   - Paired trace summaries include `counterfactual_supervision`, which converts first-divergence outcome differences into preferred/avoided action-family counts and tags new deal-in / new large-loss cases before training on paired labels.
   - Paired trace comparison can resume from existing seed/seat pairs and skip completed entries, so long tensor-bearing trace jobs can be checkpointed instead of writing only at the end.
+  - `--max-divergences` can persist additional aligned action disagreements after the first divergence. Treat those later rows as risk-calibration evidence only; after the first different action, paired trajectories are no longer guaranteed same-state counterfactuals.
+  - Reports include compact visible `pre_divergence_sequence` rows for sequence-aware paired-delta diagnostics. These rows must remain reward-free and hidden-info-free.
+- **src/fh_mahjong_ai/paired_trace_delta.py** — Direct paired-trace candidate-anchor reward-delta model and diagnostics. It predicts final reward delta from first-divergence visible scalars/context plus both divergent action ids.
+  - The optional sequence model consumes compact visible pre-divergence prefix rows from paired-trace reports. Keep this diagnostic-only until it passes independent holdout preflight.
+  - Source ids, source-balanced batches, and worst-source loss support robustness experiments; use them to change the training objective, not to tune serving thresholds.
 - **src/fh_mahjong_ai/buffer.py** — Object and array-backed replay buffers with terminal-reward-aware value targets plus next-observation/reward/done fields for TD learning.
   - `ArrayReplayBuffer` can also sample from BC-only arrays that omit next-state TD fields.
 - **src/fh_mahjong_ai/storage.py** — Checkpoint, JSONL, and sharded NumPy transition persistence helpers.
@@ -75,6 +80,9 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `--large-loss-aux-weight` and `--large-loss-severity-weight` train target-side tail-risk heads from terminal returns without changing deployed action selection; `--large-loss-aux-detach` trains them from detached trunk features for diagnostic/no-policy-gradient ablations.
   - `--external-risk-checkpoint` plus `--external-risk-policy-weight` uses a frozen action-risk critic as a policy regularizer during IQL training. Prefer family-scoped first runs such as `--external-risk-policy-family discard`; this is the replacement path after serving-time risk guards failed independent duplicate gates.
   - `--large-loss-bc-weight` adds a policy-only preservation term on large-loss transitions. Use it with `--large-loss-threshold` when a candidate improves EV but regresses large-loss rate.
+- **src/fh_mahjong_ai/scripts/train_pairwise_delta.py** — CLI: train the direct paired-trace reward-delta predictor from one or more train reports and evaluate named report splits. This is diagnostic-only until it passes holdout-only paired-trace preflight.
+  - `--sequence-model` uses the visible pre-divergence sequence encoder and should be compared against the scalar/action MLP on source-heldout paired-trace reports before any promotion attempt.
+  - `--source-balanced-batches` and `--worst-source-loss-weight` are for source-robust sequence scorer experiments after a model passes one heldout source window but fails a fresh independent source. Use them to change the training objective, not to tune serving thresholds.
 - **src/fh_mahjong_ai/scripts/train_action_risk.py** — CLI: train action-conditioned large-loss risk heads from saved transition shards with balanced positive/negative batches.
   - Use this as a calibration-only path when IQL auxiliary training is active but large-loss AUC remains near random; it optimizes the observed dataset action's risk probability and severity directly.
   - `--paired-trace-report` adds counterfactual first-divergence supervision: the risk head must rank the worse candidate action above the anchor action and fit the reward-delta severity target on matched seed/seat/decision rows.
@@ -96,6 +104,8 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
   - `--large-loss-threshold` enables auxiliary large-loss calibration metrics, including probability Brier/AUC and severity error; `--large-loss-risk-mode` can force action-conditioned or legacy state-only risk calibration.
 - **src/fh_mahjong_ai/scripts/paired_trace.py** — CLI: run paired checkpoint traces over duplicate seed windows and save reward-delta, divergence, and context-bucket diagnostics.
   - `--incremental-report-interval` writes resumable partial reports during long runs; `--resume` reuses existing `--report-output` pairs and skips completed seed/seat entries.
+  - `--include-action-scores` adds compact top masked policy-logit and Q-value diagnostics to each recorded step.
+  - Paired reports include reward-free `pre_divergence_context` and `pre_divergence_sequence` fields for trajectory-context scorer experiments.
 - **src/fh_mahjong_ai/scripts/build_counterfactual_risk_data.py** — CLI: convert tensor-bearing paired trace first-divergence labels into a tiny sharded NPZ dataset with direct preferred/avoided action-risk supervision. Like `risk_filter.py`, it must honor each report's stored `left_label` / `right_label` instead of assuming generic `anchor` / `candidate` reward keys.
 - **src/fh_mahjong_ai/scripts/serve_policy.py** — CLI: lightweight JSON HTTP policy server. It returns an `action_id`; callers must still apply Go-side action decoding/validation before mutating game state.
 - **src/fh_mahjong_ai/scripts/serving_smoke.py** — CLI: load a manifest checkpoint and step through the mock or Go bridge so legality validation catches invalid served actions.
@@ -118,7 +128,8 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 - **tests/test_evaluate.py** — Tests for offline and online evaluation functions.
 - **tests/test_policies.py** — Tests for guarded Q-policy action selection.
 - **tests/test_reward_calibration.py** — Tests for reward-calibration reports and `steps_to_done` fallback handling.
-- **tests/test_paired_trace.py** — Tests for paired-trace divergence detection and observation summary helpers.
+- **tests/test_paired_trace.py** — Tests for paired-trace divergence detection, visible sequence context, and observation summary helpers.
+- **tests/test_paired_trace_delta.py** — Tests for direct paired-trace delta row construction, sequence-model prediction shape, source-balanced sampling, and guard-preflight accounting.
 - **tests/test_serving.py** — Tests for checkpoint-backed serving decisions, JSON observation parsing, and bridge legality smoke behavior.
 - **tests/test_pipeline_e2e.py** — End-to-end pipeline integration test (mock bridge).
 - **tests/test_model.py** — Tests for the no-pooling default encoder, pooled/channel-attention ablations, dueling-Q action-mask behavior, and old-checkpoint compatibility.

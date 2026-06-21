@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import pytest
 import numpy as np
+import torch
 from torch import nn
 
 from fh_mahjong_ai.paired_trace import (
     EpisodeTrace,
     StepTrace,
+    compare_episode_trace,
     compare_policy_traces,
     counterfactual_label_from_pair,
     deduplicate_trace_pairs,
+    divergence_indices,
     first_divergence_index,
+    pre_divergence_context,
+    pre_divergence_sequence,
+    score_observation_actions,
     summarize_observation,
     summarize_trace_pairs,
 )
@@ -24,6 +30,124 @@ def test_first_divergence_index_detects_action_change() -> None:
 def test_first_divergence_index_detects_length_change() -> None:
     assert first_divergence_index([5, 6], [5, 6, 7]) == 2
     assert first_divergence_index([5, 6], [5, 6]) is None
+
+
+def test_divergence_indices_reports_bounded_action_changes() -> None:
+    assert divergence_indices([5, 6, 7, 8], [5, 9, 7, 10], max_count=3) == [1, 3]
+    assert divergence_indices([5, 6], [5, 6, 7], max_count=3) == [2]
+    assert divergence_indices([5, 6, 7], [5, 8, 9], max_count=1) == [1]
+
+
+def test_compare_episode_trace_records_bounded_divergences() -> None:
+    def step(index: int, action_id: int) -> StepTrace:
+        return StepTrace(
+            index=index,
+            decision_index=100 + index,
+            seat=0,
+            action_id=action_id,
+            action_family="discard",
+            action_label=f"action {action_id}",
+            value=None,
+            observation={"scalars": {}},
+        )
+
+    left = EpisodeTrace(
+        seed=1,
+        seat=0,
+        reward=0.0,
+        terminated=True,
+        truncated=False,
+        steps=(step(0, 5), step(1, 6), step(2, 7), step(3, 8)),
+        outcome=None,
+    )
+    right = EpisodeTrace(
+        seed=1,
+        seat=0,
+        reward=-1.0,
+        terminated=True,
+        truncated=False,
+        steps=(step(0, 5), step(1, 9), step(2, 7), step(3, 10)),
+        outcome=None,
+    )
+
+    pair = compare_episode_trace(left, right, max_divergences=2)
+
+    assert pair["first_divergence_index"] == 1
+    assert [item["divergence_index"] for item in pair["divergences"]] == [1, 3]
+    assert pair["divergences"][1]["left"]["action_id"] == 8
+    assert pair["divergences"][1]["right"]["action_id"] == 10
+    assert pair["pre_divergence_context"]["trace_context_available"] == 1.0
+    assert pair["pre_divergence_context"]["trace_prefix_discard_rate"] == 1.0
+
+
+def test_pre_divergence_context_records_history_without_rewards() -> None:
+    def step(index: int, action_id: int, family: str, shanten: float) -> StepTrace:
+        return StepTrace(
+            index=index,
+            decision_index=200 + index,
+            seat=0,
+            action_id=action_id,
+            action_family=family,
+            action_label=f"action {action_id}",
+            value=None,
+            observation={"scalars": {"overall_shanten": shanten, "hand_progress": index / 10.0}},
+        )
+
+    trace = EpisodeTrace(
+        seed=1,
+        seat=0,
+        reward=0.0,
+        terminated=True,
+        truncated=False,
+        steps=(step(0, 5, "discard", 0.8), step(1, 47, "pon", 0.6), step(2, 8, "discard", 0.5)),
+        outcome=None,
+    )
+
+    context = pre_divergence_context(trace, trace, 2)
+
+    assert context["trace_context_available"] == 1.0
+    assert context["trace_prefix_discard_rate"] == 0.5
+    assert context["trace_prefix_pon_rate"] == 0.5
+    assert context["trace_prev_pon"] == 1.0
+    assert context["trace_overall_shanten_delta"] == pytest.approx(-0.3)
+    assert "reward" not in context
+
+
+def test_pre_divergence_sequence_records_recent_visible_steps_only() -> None:
+    def step(index: int, action_id: int, family: str, shanten: float) -> StepTrace:
+        return StepTrace(
+            index=index,
+            decision_index=300 + index,
+            seat=0,
+            action_id=action_id,
+            action_family=family,
+            action_label=f"action {action_id}",
+            value=None,
+            observation={"scalars": {"overall_shanten": shanten, "leader_pressure": 0.25}},
+        )
+
+    trace = EpisodeTrace(
+        seed=1,
+        seat=0,
+        reward=0.0,
+        terminated=True,
+        truncated=False,
+        steps=(
+            step(0, 5, "discard", 0.8),
+            step(1, 47, "pon", 0.6),
+            step(2, 8, "discard", 0.5),
+        ),
+        outcome=None,
+    )
+
+    sequence = pre_divergence_sequence(trace, trace, 3, max_length=2)
+
+    assert [row["action_id"] for row in sequence] == [47, 8]
+    assert sequence[0]["features"]["trace_sequence_pon"] == 1.0
+    assert sequence[1]["features"]["trace_sequence_discard"] == 1.0
+    assert sequence[1]["features"]["trace_sequence_overall_shanten"] == pytest.approx(0.5)
+    assert "reward" not in sequence[0]
+    assert "reward" not in sequence[0]["features"]
 
 
 def test_deduplicate_trace_pairs_keeps_first_seed_seat_pair() -> None:
@@ -130,6 +254,54 @@ def test_summarize_observation_reports_legal_family_rates_and_scalars() -> None:
     assert summary["scalars"]["overall_shanten"] == 0.5
     assert summary["scalars"]["large_loss_margin"] == 0.75
     assert summary["scalars"]["self_bust_margin"] == 0.25
+
+
+def test_score_observation_actions_reports_masked_policy_and_q_tops() -> None:
+    class ScoreModel(nn.Module):
+        def forward(
+            self,
+            planes: torch.Tensor,
+            scalars: torch.Tensor,
+            action_mask: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            del planes, scalars
+            logits = torch.full_like(action_mask, -10.0, dtype=torch.float32)
+            logits[:, 2] = 1.0
+            logits[:, 5] = 3.0
+            logits[:, 7] = 9.0
+            return logits, torch.tensor([0.25], dtype=torch.float32)
+
+        def q_values(
+            self,
+            planes: torch.Tensor,
+            scalars: torch.Tensor,
+            action_mask: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            del planes, scalars
+            q_values = torch.full_like(action_mask, -10.0, dtype=torch.float32)
+            q_values[:, 2] = 4.0
+            q_values[:, 5] = 2.0
+            q_values[:, 7] = 8.0
+            return q_values, torch.tensor([0.5], dtype=torch.float32)
+
+    mask = np.zeros(204, dtype=np.int8)
+    mask[2] = 1
+    mask[5] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(58, dtype=np.float32),
+        action_mask=mask,
+        metadata={},
+    )
+
+    scores = score_observation_actions(ScoreModel(), observation, chosen_action_id=5, top_k=3)
+
+    assert scores["chosen_action_id"] == 5
+    assert scores["chosen_policy_logit"] == 3.0
+    assert scores["chosen_q"] == 2.0
+    assert [item["action_id"] for item in scores["top_policy_logits"]] == [5, 2]
+    assert [item["action_id"] for item in scores["top_q"]] == [2, 5]
 
 
 def test_summarize_trace_pairs_handles_terminal_length_divergence() -> None:
