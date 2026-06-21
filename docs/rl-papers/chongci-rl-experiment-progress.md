@@ -15401,6 +15401,65 @@ the placement `--target-mode global_ev_td` variant (train GlobalEV with
 `--reward-shaping placement`, then bootstrap IQL Q targets from it). Also: always
 pass a high `--max-steps-per-episode` for Chongci online/duplicate eval.
 
+### Experiment: Full-Scale Warm-Started Placement / GlobalEV-TD Campaign
+
+Run:
+`/root/fh-mahjong-runs/placement-campaign-20260621-022616`
+
+Question:
+With proper warm-start from the promoted anchor and scaled anchor-in-the-loop
+mixed self-play, does placement reward shaping (MC) or placement-aware
+`--target-mode global_ev_td` beat the promoted Chongci anchor on a duplicate-seat
+CI gate?
+
+Data:
+3 fresh windows of mixed self-play (300 Chongci episodes each, seeds 810000 /
+820000 / 830000; promoted anchor in two seats + one random seat + heuristic,
+seats rotated, GPU inference) plus the existing
+`chongci-broader-mixed-selfplay-20260607-032601/.../anchor-fresh-balanced-tail2-760000-n200-npz`
+dataset. Reused via repeated `--data`.
+
+Training (all warm-started from the promoted anchor
+`chongci-broader-mixed-iql-20260607-034720/.../epoch_001.pt`, 6 epochs, batch
+256, lr 1e-4, cuda):
+- raw MC return target
+- `--reward-shaping placement` MC return target
+- `--target-mode global_ev_td` bootstrapped from a placement-trained GlobalEV
+  (`fh-mj-train-global-ev --reward-shaping placement`, 4 epochs)
+
+Evaluation:
+80-seed Chongci duplicate-seat eval, `--max-steps-per-episode 4000`, all matches
+resolved (`match_end 1.0`). Anchor evaluated on the identical gate.
+
+Result:
+
+| variant | mean_reward | ci95 | large_loss_rate | positive_reward_rate |
+| --- | ---: | ---: | ---: | ---: |
+| anchor (promoted) | -0.0903 | 0.1291 | 0.2156 | 0.4406 |
+| raw warm-start | -0.1749 | 0.1296 | 0.2469 | 0.4281 |
+| placement | -0.2018 | 0.1293 | 0.2531 | 0.4250 |
+| global_ev_td (placement) | -0.2053 | 0.1371 | 0.2750 | 0.4094 |
+
+Decision:
+rejected (no promotion). No candidate beats the anchor.
+
+Interpretation:
+The anchor is best on every metric. All three warm-start fine-tunes drifted
+slightly worse, and placement / global_ev_td did not help. Individual gaps fall
+within the wide 80-seed CI (~0.13), but the monotonic ordering of large-loss rate
+(0.2156 -> 0.2469 -> 0.2531 -> 0.2750) and positive rate (0.4406 -> 0.4281 ->
+0.4250 -> 0.4094) indicates a small but consistent regression from this
+fine-tune recipe rather than pure noise. Likely causes: (1) 6-epoch fine-tuning
+of an already well-tuned promoted checkpoint on a smaller/fresher data mix drifts
+it (distribution shift / mild forgetting); (2) placement shaping changes the
+target scale and, under a short fine-tune, did not produce a better policy.
+What to try before concluding placement shaping is unhelpful: train candidates on
+the anchor's full original data mix (not just ~1100 episodes) so fine-tuning does
+not regress; use a lower LR / fewer epochs to limit drift; and widen the eval to
+several hundred seeds to tighten the CI below the observed gaps. The placement
+and global_ev_td code paths are correct and validated; this is a negative result
+about the warm-start fine-tune recipe at this data scale, not a code failure.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
