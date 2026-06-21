@@ -6,12 +6,17 @@ from typing import Deque, Iterable, Optional, Sequence
 
 import numpy as np
 
+from .data import placement_shaped_returns
 from .types import TrainBatch, Transition
+
+_DEFAULT_PLACEMENT_VALUES = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
 
 
 @dataclass
 class ReplayBuffer:
     capacity: int
+    reward_shaping: str = "raw"
+    placement_values: tuple = _DEFAULT_PLACEMENT_VALUES
 
     def __post_init__(self) -> None:
         self._items: Deque[Transition] = deque(maxlen=self.capacity)
@@ -42,9 +47,12 @@ class ReplayBuffer:
         def _return_for(item: Transition) -> float:
             seat = item.observation.seat
             tr = item.info.get("terminal_rewards")
-            if tr is not None:
-                return float(tr[seat])
-            return float(item.rewards[seat])
+            if tr is None:
+                return float(item.rewards[seat])
+            tr = np.asarray(tr, dtype=np.float32)
+            if self.reward_shaping == "placement":
+                tr = placement_shaped_returns(tr, self.placement_values)
+            return float(tr[seat])
 
         def _reward_for(item: Transition) -> float:
             return float(item.rewards[item.observation.seat])
@@ -108,6 +116,8 @@ class ArrayReplayBuffer:
 
     arrays: dict[str, np.ndarray]
     indices: np.ndarray
+    reward_shaping: str = "raw"
+    placement_values: tuple = _DEFAULT_PLACEMENT_VALUES
 
     def __post_init__(self) -> None:
         self.indices = np.asarray(self.indices, dtype=np.int64)
@@ -124,7 +134,12 @@ class ArrayReplayBuffer:
         indices = self.indices[positions]
         seats = self.arrays["seats"][indices].astype(np.int64, copy=False)
 
-        returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
+        if self.reward_shaping == "placement":
+            full_terminal = self.arrays["terminal_rewards"][indices].astype(np.float32, copy=False)
+            shaped = placement_shaped_returns(full_terminal, self.placement_values)
+            returns = shaped[np.arange(indices.shape[0]), seats].astype(np.float32, copy=False)
+        else:
+            returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
         steps_to_done = (
             self.arrays["steps_to_done"][indices].astype(np.int32, copy=False)
             if "steps_to_done" in self.arrays

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
@@ -110,6 +111,23 @@ def test_reward_summary_reports_distribution() -> None:
     assert report["zero_count"] == 1
     assert report["negative_count"] == 1
     assert report["positive_rate"] == 0.5
+
+
+def test_reward_summary_reports_sem_and_ci95() -> None:
+    summary = reward_summary([1.0, 1.0, 1.0, 1.0])
+    assert summary["sem"] == 0.0
+    assert summary["ci95"] == 0.0
+
+    summary = reward_summary([0.0, 2.0])
+    # sample std (ddof=1) of [0, 2] is sqrt(2); sem = sqrt(2) / sqrt(2) = 1.0
+    assert summary["sem"] == pytest.approx(1.0, abs=1e-6)
+    assert summary["ci95"] == pytest.approx(1.96, abs=1e-6)
+
+
+def test_reward_summary_empty_has_ci_fields() -> None:
+    summary = reward_summary([])
+    assert summary["sem"] == 0.0
+    assert summary["ci95"] == 0.0
 
 
 def test_parse_seed_windows_supports_non_contiguous_eval_windows() -> None:
@@ -360,6 +378,9 @@ class TestEvaluateOnline:
         assert "episode_summaries" in report
         assert "large_loss_episodes" in report
         assert "reward_summary" in report
+        assert "mean_reward_sem" in report
+        assert "mean_reward_ci95" in report
+        assert report["mean_reward_ci95"] >= 0.0
         assert "positive_reward_rate" in report
         assert "action_family_rates" in report
         assert "round_outcome_rates" in report

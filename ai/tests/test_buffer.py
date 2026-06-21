@@ -109,3 +109,54 @@ def test_array_replay_buffer_supports_bc_only_arrays() -> None:
     assert batch.next_planes.shape == (1, 0)
     assert batch.rewards[0] == 0.0
     assert batch.dones[0] == 0.0
+
+
+def test_array_replay_buffer_placement_shaping() -> None:
+    arrays = {
+        "seats": np.asarray([1], dtype=np.int16),
+        "planes": np.zeros((1, 39, 42, 1), dtype=np.float32),
+        "scalars": np.zeros((1, 42), dtype=np.float32),
+        "action_mask": np.ones((1, 204), dtype=np.int8),
+        "action_ids": np.asarray([7], dtype=np.int64),
+        "steps_to_done": np.asarray([4], dtype=np.int32),
+        "terminal_rewards": np.asarray([[0, 9, 0, 0]], dtype=np.float32),
+    }
+    raw = ArrayReplayBuffer(arrays=arrays, indices=np.asarray([0], dtype=np.int64))
+    assert raw.sample(1, seed=42).returns[0] == 9.0
+
+    shaped = ArrayReplayBuffer(
+        arrays=arrays,
+        indices=np.asarray([0], dtype=np.int64),
+        reward_shaping="placement",
+    )
+    # seat 1 has the highest terminal reward -> rank 0 -> placement value 1.0
+    assert shaped.sample(1, seed=42).returns[0] == 1.0
+
+
+def test_object_replay_buffer_placement_shaping() -> None:
+    transition = Transition(
+        observation=Observation(
+            seat=0,
+            planes=np.zeros((39, 42, 1), dtype=np.float32),
+            scalars=np.zeros(42, dtype=np.float32),
+            action_mask=np.ones(204, dtype=np.int8),
+        ),
+        action_id=3,
+        rewards=np.zeros(4, dtype=np.float32),
+        next_observation=Observation(
+            seat=0,
+            planes=np.zeros((39, 42, 1), dtype=np.float32),
+            scalars=np.zeros(42, dtype=np.float32),
+            action_mask=np.ones(204, dtype=np.int8),
+        ),
+        terminated=True,
+        info={"terminal_rewards": np.asarray([0.5, 1.1, -0.2, -1.4], dtype=np.float32)},
+    )
+    raw = ReplayBuffer(capacity=4)
+    raw.append(transition)
+    assert raw.sample(1, seed=0).returns[0] == np.float32(0.5)
+
+    shaped = ReplayBuffer(capacity=4, reward_shaping="placement")
+    shaped.append(transition)
+    # seat 0 is second best (1.1 belongs to seat 1) -> placement value 1/3
+    assert abs(float(shaped.sample(1, seed=0).returns[0]) - 1.0 / 3.0) < 1e-6

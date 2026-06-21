@@ -599,6 +599,66 @@ def test_train_iql_runs_from_npz_shards_with_limit(tmp_path: Path) -> None:
     assert (ckpt_dir / "epoch_001.pt").exists()
 
 
+def test_train_iql_runs_with_placement_reward_shaping(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_dir, _transitions(12, env_config), shard_size=5)
+
+    metrics = train_iql(
+        data_path=shard_dir,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=4,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+        reward_shaping="placement",
+    )
+
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_load_iql_replay_buffer_applies_placement_shaping(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    write_transitions_npz_shards(shard_dir, _transitions(8, env_config), shard_size=8)
+
+    buf, _, _ = load_iql_replay_buffer([shard_dir], reward_shaping="placement")
+    batch = buf.sample(4, seed=0)
+    # placement values live in [-1, 1] regardless of the raw net-score scale
+    assert float(batch.returns.min()) >= -1.0 - 1e-6
+    assert float(batch.returns.max()) <= 1.0 + 1e-6
+
+
+def test_train_iql_cli_accepts_reward_shaping_flag(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    from fh_mahjong_ai.scripts import train_iql as train_iql_cli
+
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_dir, _transitions(12, env_config), shard_size=5)
+
+    argv = [
+        "fh-mj-train-iql",
+        "--data", str(shard_dir),
+        "--checkpoint-dir", str(ckpt_dir),
+        "--epochs", "1",
+        "--batch-size", "4",
+        "--reward-shaping", "placement",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    train_iql_cli.main()
+
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
 def test_load_iql_replay_buffer_can_add_pairwise_auxiliary_rows(tmp_path: Path) -> None:
     env_config = EnvConfig()
     shard_dir = tmp_path / "shards"

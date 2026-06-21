@@ -7,6 +7,7 @@ from fh_mahjong_ai.data import (
     backfill_returns,
     backfill_steps_to_done,
     compute_steps_to_done,
+    placement_shaped_returns,
     split_episodes,
     split_train_validation,
 )
@@ -161,3 +162,38 @@ class TestTrainValidationSplit:
     def test_rejects_invalid_fraction(self) -> None:
         with pytest.raises(ValueError):
             split_train_validation([], validation_fraction=1.0)
+
+
+class TestPlacementShapedReturns:
+    def test_basic_ranking(self) -> None:
+        rewards = np.array([[0.5, -0.2, 1.1, -1.4]], dtype=np.float32)
+        shaped = placement_shaped_returns(rewards)
+        # seat2 best -> 1.0, seat0 second -> 1/3, seat1 third -> -1/3, seat3 last -> -1.0
+        np.testing.assert_allclose(
+            shaped[0], [1.0 / 3.0, -1.0 / 3.0, 1.0, -1.0], rtol=1e-6
+        )
+
+    def test_averages_ties(self) -> None:
+        rewards = np.array([[1.0, 1.0, -1.0, -1.0]], dtype=np.float32)
+        shaped = placement_shaped_returns(rewards)
+        # top two tie -> average(1.0, 1/3); bottom two tie -> average(-1/3, -1.0)
+        np.testing.assert_allclose(
+            shaped[0],
+            [2.0 / 3.0, 2.0 / 3.0, -2.0 / 3.0, -2.0 / 3.0],
+            rtol=1e-6,
+        )
+
+    def test_preserves_shape(self) -> None:
+        rewards = np.zeros((5, 4), dtype=np.float32)
+        assert placement_shaped_returns(rewards).shape == (5, 4)
+
+    def test_handles_1d_row(self) -> None:
+        rewards = np.array([0.5, -0.2, 1.1, -1.4], dtype=np.float32)
+        shaped = placement_shaped_returns(rewards)
+        np.testing.assert_allclose(
+            shaped, [1.0 / 3.0, -1.0 / 3.0, 1.0, -1.0], rtol=1e-6
+        )
+
+    def test_rejects_mismatched_table(self) -> None:
+        with pytest.raises(ValueError):
+            placement_shaped_returns(np.zeros((1, 4)), placement_values=(1.0, -1.0))

@@ -130,6 +130,8 @@ def train_iql(
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
     model_config: Optional[ModelConfig] = None,
+    reward_shaping: str = "raw",
+    placement_values: Sequence[float] = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
     if critic_only and policy_head_only:
@@ -162,6 +164,8 @@ def train_iql(
         pairwise_data_min_reward_gap=pairwise_data_min_reward_gap,
         risk_filter_datasets=risk_trace_filter_datasets,
         risk_context_radius=risk_trace_context_radius,
+        reward_shaping=reward_shaping,
+        placement_values=placement_values,
     )
     if transition_count <= 0:
         raise ValueError(f"no transitions loaded from {data_paths}")
@@ -264,6 +268,8 @@ def train_iql(
         external_risk_policy_threshold=external_risk_policy_threshold,
         external_risk_policy_family=external_risk_policy_family,
         external_risk_policy_severity_weight=external_risk_policy_severity_weight,
+        reward_shaping=reward_shaping,
+        placement_values=tuple(placement_values),
     )
     trainer = DiscreteIQLTrainer(
         model,
@@ -475,6 +481,8 @@ def load_iql_replay_buffer(
     pairwise_data_min_reward_gap: float = 0.0,
     risk_filter_datasets: bool = False,
     risk_context_radius: int = 0,
+    reward_shaping: str = "raw",
+    placement_values: Sequence[float] = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
 ) -> tuple[ReplayBuffer | ArrayReplayBuffer | CompositeReplayBuffer, int, list[int]]:
     buffers: list[ReplayBuffer | ArrayReplayBuffer] = []
     counts: list[int] = []
@@ -514,12 +522,14 @@ def load_iql_replay_buffer(
             buffer = ArrayReplayBuffer(
                 arrays=arrays,
                 indices=indices,
+                reward_shaping=reward_shaping,
+                placement_values=tuple(placement_values),
             )
             if pairwise_replay_multiplier > 0 and "pairwise_weights" in arrays:
                 pairwise_indices = np.flatnonzero(np.asarray(arrays["pairwise_weights"]) > 0.0).astype(np.int64)
                 if pairwise_indices.size > 0:
                     auxiliary_indices = np.repeat(pairwise_indices, int(pairwise_replay_multiplier)).astype(np.int64)
-                    buffers.append(ArrayReplayBuffer(arrays=arrays, indices=auxiliary_indices))
+                    buffers.append(ArrayReplayBuffer(arrays=arrays, indices=auxiliary_indices, reward_shaping=reward_shaping, placement_values=tuple(placement_values)))
                     counts.append(len(auxiliary_indices))
                     print(
                         "pairwise replay "
@@ -554,7 +564,11 @@ def load_iql_replay_buffer(
                         print(f"risk trace filtered replay source={path} rows=0 skipped")
                         continue
                     print(f"risk trace filtered replay source={path} rows={len(transitions)} radius={risk_context_radius}")
-            buffer = ReplayBuffer(capacity=len(transitions))
+            buffer = ReplayBuffer(
+                capacity=len(transitions),
+                reward_shaping=reward_shaping,
+                placement_values=tuple(placement_values),
+            )
             buffer.extend(transitions)
 
         buffers.append(buffer)
@@ -659,6 +673,19 @@ def main() -> None:
     parser.add_argument("--cql-weight", type=float, default=0.0)
     parser.add_argument("--target-update-interval", type=int, default=25)
     parser.add_argument("--target-tau", type=float, default=0.005)
+    parser.add_argument(
+        "--reward-shaping",
+        choices=("raw", "placement"),
+        default="raw",
+        help="raw terminal net-score return (default) or rank-based placement value",
+    )
+    parser.add_argument(
+        "--placement-values",
+        type=float,
+        nargs=4,
+        default=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+        help="placement values for ranks 1..4 when --reward-shaping placement",
+    )
     parser.add_argument(
         "--large-loss-threshold",
         type=float,
@@ -918,6 +945,8 @@ def main() -> None:
         cql_weight=args.cql_weight,
         target_update_interval=args.target_update_interval,
         target_tau=args.target_tau,
+        reward_shaping=args.reward_shaping,
+        placement_values=tuple(args.placement_values),
         large_loss_threshold=args.large_loss_threshold,
         large_loss_penalty=args.large_loss_penalty,
         large_loss_weight=args.large_loss_weight,

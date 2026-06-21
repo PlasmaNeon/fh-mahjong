@@ -8,6 +8,7 @@ import torch
 from torch import Tensor, nn
 
 from .config import EnvConfig, ModelConfig
+from .data import placement_shaped_returns
 from .model import ResidualBlock
 
 
@@ -175,13 +176,19 @@ class ActionGlobalEVNet(nn.Module):
         return self.head(torch.cat([plane_features, scalar_features, action_features], dim=1)).squeeze(-1)
 
 
-def global_ev_targets(arrays: dict[str, np.ndarray]) -> np.ndarray:
+def global_ev_targets(
+    arrays: dict[str, np.ndarray],
+    reward_shaping: str = "raw",
+    placement_values: Sequence[float] = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+) -> np.ndarray:
     seats = np.asarray(arrays["seats"], dtype=np.int64)
     rewards = np.asarray(arrays["terminal_rewards"], dtype=np.float32)
     if rewards.ndim != 2 or rewards.shape[1] < 4:
         raise ValueError("terminal_rewards must have shape [N, 4]")
     if seats.shape[0] != rewards.shape[0]:
         raise ValueError("seats and terminal_rewards must have the same row count")
+    if reward_shaping == "placement":
+        rewards = placement_shaped_returns(rewards, placement_values)
     return rewards[np.arange(rewards.shape[0]), seats].astype(np.float32)
 
 

@@ -32,6 +32,8 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
             "positive_rate": 0.0,
             "zero_rate": 0.0,
             "negative_rate": 0.0,
+            "sem": 0.0,
+            "ci95": 0.0,
         }
 
     array = np.asarray(values, dtype=np.float32)
@@ -39,6 +41,7 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
     positive_count = int(np.sum(array > 0))
     zero_count = int(np.sum(array == 0))
     negative_count = int(np.sum(array < 0))
+    sem = float(np.std(array, ddof=1) / np.sqrt(count)) if count > 1 else 0.0
     return {
         "count": count,
         "sum": float(np.sum(array)),
@@ -52,6 +55,8 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
         "positive_rate": positive_count / count,
         "zero_rate": zero_count / count,
         "negative_rate": negative_count / count,
+        "sem": sem,
+        "ci95": 1.96 * sem,
     }
 
 
@@ -569,6 +574,8 @@ def evaluate_policy_online(
         "seat": learning_seat,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
+        "mean_reward_sem": rewards["sem"],
+        "mean_reward_ci95": rewards["ci95"],
         "reward_sum": rewards["sum"],
         "reward_summary": rewards,
         "win_count": wins,
@@ -721,6 +728,8 @@ def evaluate_duplicate_seats_policy(
         "seats": seat_list,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
+        "mean_reward_sem": rewards["sem"],
+        "mean_reward_ci95": rewards["ci95"],
         "reward_sum": rewards["sum"],
         "reward_summary": rewards,
         "win_count": wins,
@@ -840,6 +849,8 @@ def evaluate_duplicate_seats(
         "seats": seat_list,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
+        "mean_reward_sem": rewards["sem"],
+        "mean_reward_ci95": rewards["ci95"],
         "reward_sum": rewards["sum"],
         "reward_summary": rewards,
         "win_count": wins,

@@ -90,6 +90,8 @@ class DiscreteIQLConfig:
     external_risk_policy_threshold: float = 0.6
     external_risk_policy_family: str = "all"
     external_risk_policy_severity_weight: float = 0.0
+    reward_shaping: str = "raw"
+    placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
 
 
 @dataclass

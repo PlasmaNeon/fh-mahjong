@@ -1,11 +1,42 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 import numpy as np
 
 from .types import Transition
+
+
+def placement_shaped_returns(
+    terminal_rewards: np.ndarray,
+    placement_values: Sequence[float] = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+) -> np.ndarray:
+    """Convert per-seat terminal rewards into rank-based placement values.
+
+    The last axis is the seat axis. Each row is ranked by descending reward
+    (rank 0 = highest reward -> placement_values[0]). Tied rewards receive the
+    average of their tied placement values. Output keeps the input shape.
+    """
+    rewards = np.asarray(terminal_rewards, dtype=np.float32)
+    table = np.asarray(placement_values, dtype=np.float32)
+    if rewards.shape[-1] != table.shape[0]:
+        raise ValueError("placement_values length must match the seat axis")
+
+    flat = rewards.reshape(-1, rewards.shape[-1])
+    shaped = np.empty_like(flat)
+    for row_index in range(flat.shape[0]):
+        row = flat[row_index]
+        order = np.argsort(-row, kind="stable")
+        ranks = np.empty(row.shape[0], dtype=np.int64)
+        ranks[order] = np.arange(row.shape[0])
+        seat_values = table[ranks]
+        for value in np.unique(row):
+            tie_mask = row == value
+            if int(np.count_nonzero(tie_mask)) > 1:
+                seat_values[tie_mask] = float(seat_values[tie_mask].mean())
+        shaped[row_index] = seat_values
+    return shaped.reshape(rewards.shape)
 
 
 def split_episodes(transitions: List[Transition]) -> List[List[Transition]]:
