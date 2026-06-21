@@ -2,6 +2,26 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **UPDATE 2026-06-21 (post-merge of PR #82 "chongci rl tooling"):** main now ships a
+> `GlobalEVNet` visible-state final-match-EV predictor (`ai/src/fh_mahjong_ai/global_ev.py`,
+> `fh-mj-train-global-ev`) plus IQL integration via `--target-mode global_ev_td` (bootstrap Q
+> targets from a frozen global-EV value function) and a `policy_kl_weight` config field. This is
+> the real implementation of the "visible global reward/value prediction" idea from the design
+> discussion. This branch was rebased onto that main. **Synergy added (committed):**
+> `global_ev_targets()` and `fh-mj-train-global-ev` now accept `--reward-shaping placement`, so the
+> global EV value function can be trained on rank-based placement EV; IQL `--target-mode
+> global_ev_td` then bootstraps *placement-aware* Q targets. Net effect: placement shaping is now
+> available in BOTH the MC return path (`fh-mj-train-iql --reward-shaping placement`) and the
+> learned-value-bootstrap path (`fh-mj-train-global-ev --reward-shaping placement` →
+> `fh-mj-train-iql --target-mode global_ev_td --global-ev-checkpoint ...`).
+>
+> The recommended Phase-3 training recipe is now: (a) train a raw GlobalEV and a placement
+> GlobalEV on the Phase-2 data; (b) run three IQL variants on identical data — raw MC baseline,
+> `--reward-shaping placement` MC, and `--target-mode global_ev_td` with the placement GlobalEV;
+> (c) compare all three against the current promoted checkpoint on the fixed CI gate. The
+> `global_ev_td` + placement-GlobalEV variant is the most promising because it combines a learned
+> value function with placement-aware credit assignment.
+
 **Goal:** Improve the Chongci RL agent by (1) hardening evaluation with confidence intervals, (2) scaling mixed self-play data to establish a clean stronger baseline, and (3) adding placement-aware (rank-based) reward shaping as an isolated, toggleable ablation on top of that baseline.
 
 **Architecture:** Three sequenced phases. Phase 1 adds standard-error/CI reporting to the existing duplicate-seat evaluation so every later comparison is trustworthy. Phase 2 is an operational data-scaling runbook that produces a larger mixed self-play dataset and a re-trained IQL checkpoint using the *current* (raw net-score) return target — this is the new baseline. Phase 3 adds placement-aware reward shaping as a read-time transform on the already-stored per-seat `terminal_rewards` vector (no Go changes, no data regeneration), wired behind a `--reward-shaping placement` flag, then trained and compared against the Phase-2 baseline. Conservative Q/value learning (discrete IQL with expectile value + BC regularization) is already the default and is unchanged.
