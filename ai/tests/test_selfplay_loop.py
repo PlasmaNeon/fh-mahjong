@@ -154,3 +154,50 @@ def test_ledger_record_rejection_increments_patience(tmp_path: Path):
     assert ledger.current_best == "/init.pt"
     assert ledger.consecutive_non_promotions == 1
     assert ledger.history[-1]["decision"] == "rejected_screen"
+
+
+from fh_mahjong_ai.config import EnvConfig, ModelConfig
+from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.selfplay_loop import LoopConfig, evaluate_checkpoint
+from fh_mahjong_ai.storage import save_checkpoint
+
+
+def _tiny_env_model():
+    # The mock bridge emits default observation dims (39x42x1 / 58 / 204); use a
+    # small ModelConfig for speed but keep the default EnvConfig dims so the model
+    # matches the bridge.
+    env = EnvConfig(bridge_kind="mock")
+    model = ModelConfig(
+        channels=8, residual_blocks=1, plane_feature_dim=16,
+        scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+    )
+    return env, model
+
+
+def test_loop_config_defaults():
+    cfg = LoopConfig(
+        run_dir=Path("/tmp/run"),
+        fixed_init="/init.pt",
+        base_data=["/base"],
+        initial_best="/init.pt",
+    )
+    assert cfg.iterations == 5
+    assert cfg.screen_seeds == 80
+    assert cfg.confirm_seeds == 240
+    assert cfg.match_mode == "chongci"
+
+
+def test_evaluate_checkpoint_returns_gate_metric_keys(tmp_path: Path):
+    env, model_cfg = _tiny_env_model()
+    ckpt = tmp_path / "m.pt"
+    save_checkpoint(ckpt, PolicyValueNet(env, model_cfg))
+
+    report = evaluate_checkpoint(
+        checkpoint=ckpt,
+        seeds=[1, 2],
+        env_config=env,
+        model_config=model_cfg,
+        device="cpu",
+    )
+    for key in ("mean_reward", "mean_reward_ci95", "large_loss_rate", "positive_reward_rate"):
+        assert key in report

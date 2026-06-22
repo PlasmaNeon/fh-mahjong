@@ -4,7 +4,12 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from .config import EnvConfig, ModelConfig
+from .evaluate import evaluate_duplicate_seats
+from .model import PolicyValueNet
+from .storage import load_checkpoint
 
 
 class GateOutcome(str, Enum):
@@ -132,3 +137,66 @@ class LoopLedger:
             }
         )
         self.save()
+
+
+@dataclass
+class LoopConfig:
+    run_dir: Path
+    fixed_init: str
+    base_data: List[str]
+    initial_best: str
+    iterations: int = 5
+    episodes_per_iter: int = 300
+    start_seed: int = 810000
+    seed_stride: int = 10000
+    screen_seeds: int = 80
+    confirm_seeds: int = 240
+    eval_start_seed: int = 870000
+    epochs: int = 4
+    batch_size: int = 256
+    lr: float = 1e-4
+    patience: int = 3
+    match_mode: str = "chongci"
+    device: str = "cpu"
+    bridge_kind: str = "go"
+    bridge_library_path: Optional[str] = None
+    max_steps_per_episode: Optional[int] = 4000
+    seat_policy_template: Sequence[str] = (
+        "0=checkpoint:{best}",
+        "1=checkpoint:{best}",
+        "3=random",
+    )
+    thresholds: GateThresholds = None
+
+    def __post_init__(self) -> None:
+        self.run_dir = Path(self.run_dir)
+        if self.thresholds is None:
+            self.thresholds = GateThresholds()
+
+
+def evaluate_checkpoint(
+    checkpoint: Path,
+    seeds: Sequence[int],
+    env_config: EnvConfig,
+    model_config: ModelConfig,
+    device: str = "cpu",
+    match_mode: str = "classic",
+    bridge_kind: str = "mock",
+    bridge_library_path: Optional[str] = None,
+    large_loss_threshold: Optional[float] = -1.0,
+    max_steps_per_episode: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Load a checkpoint and return its duplicate-seat report (top-level gate metrics)."""
+    model = PolicyValueNet(env_config, model_config).to(device)
+    load_checkpoint(Path(checkpoint), model)
+    model.eval()
+    return evaluate_duplicate_seats(
+        model=model,
+        seeds=list(seeds),
+        bridge_kind=bridge_kind,
+        bridge_library_path=bridge_library_path,
+        device=device,
+        large_loss_threshold=large_loss_threshold,
+        match_mode=match_mode,
+        max_steps_per_episode=max_steps_per_episode,
+    )
