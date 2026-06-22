@@ -263,3 +263,38 @@ def test_run_iteration_mock_updates_ledger(tmp_path: Path):
     assert len(ledger.history) == 1
     assert len(ledger.accumulated_selfplay) == 1
     assert (cfg.run_dir / "iter1" / "candidate").exists()
+
+
+from fh_mahjong_ai.selfplay_loop import run_loop
+
+
+def test_run_loop_runs_iterations_and_is_resumable(tmp_path: Path):
+    env, model_cfg = _tiny_env_model()
+    init = tmp_path / "init.pt"
+    save_checkpoint(init, PolicyValueNet(env, model_cfg))
+
+    cfg = LoopConfig(
+        run_dir=tmp_path / "run",
+        fixed_init=str(init),
+        base_data=[],
+        initial_best=str(init),
+        iterations=2,
+        episodes_per_iter=2,
+        screen_seeds=2,
+        confirm_seeds=2,
+        epochs=1,
+        batch_size=4,
+        match_mode="classic",
+        device="cpu",
+        bridge_kind="mock",
+        max_steps_per_episode=None,
+        seat_policy_template=["0=random", "1=random", "2=random", "3=random"],
+    )
+
+    ledger = run_loop(cfg, env, model_cfg)
+    assert ledger.iteration == 2
+    assert (cfg.run_dir / "ledger.json").exists()
+
+    # Resume is a no-op once iterations are exhausted.
+    resumed = run_loop(cfg, env, model_cfg, resume=True)
+    assert resumed.iteration == 2

@@ -342,3 +342,35 @@ def run_iteration(
             dict(cand_confirm) if cand_confirm is not None else None,
         )
     return outcome
+
+
+def run_loop(
+    config: LoopConfig,
+    env_config: EnvConfig,
+    model_config: ModelConfig,
+    resume: bool = False,
+) -> LoopLedger:
+    ledger_path = config.run_dir / "ledger.json"
+    if resume and ledger_path.exists():
+        ledger = LoopLedger.load(ledger_path)
+    else:
+        ledger = LoopLedger(
+            path=ledger_path,
+            iteration=0,
+            fixed_init=config.fixed_init,
+            base_data=list(config.base_data),
+            current_best=config.initial_best,
+            accumulated_selfplay=[],
+        )
+        ledger.save()
+
+    while ledger.iteration < config.iterations:
+        if ledger.consecutive_non_promotions >= config.patience:
+            print(
+                f"stopping: {ledger.consecutive_non_promotions} consecutive non-promotions "
+                f">= patience {config.patience}"
+            )
+            break
+        outcome = run_iteration(config, ledger, env_config, model_config)
+        print(f"iteration {ledger.iteration}: {outcome.value} (best={ledger.current_best})")
+    return ledger
