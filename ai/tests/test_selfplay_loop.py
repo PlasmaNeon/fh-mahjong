@@ -94,3 +94,63 @@ def test_gate_decision_rejects_on_confirm():
         cand_screen, best, GateThresholds(), lambda: (cand_confirm, best_confirm)
     )
     assert outcome is GateOutcome.REJECTED_CONFIRM
+
+
+from fh_mahjong_ai.selfplay_loop import LoopLedger
+
+
+def test_ledger_save_load_round_trip(tmp_path: Path):
+    ledger = LoopLedger(
+        path=tmp_path / "ledger.json",
+        iteration=0,
+        fixed_init="/init.pt",
+        base_data=["/base"],
+        current_best="/init.pt",
+        accumulated_selfplay=[],
+    )
+    ledger.save()
+    loaded = LoopLedger.load(tmp_path / "ledger.json")
+    assert loaded.iteration == 0
+    assert loaded.current_best == "/init.pt"
+    assert loaded.base_data == ["/base"]
+
+
+def test_ledger_record_promotion_updates_best_and_cache(tmp_path: Path):
+    ledger = LoopLedger(
+        path=tmp_path / "ledger.json",
+        iteration=1,
+        fixed_init="/init.pt",
+        base_data=["/base"],
+        current_best="/init.pt",
+        accumulated_selfplay=["/sp1"],
+    )
+    ledger.current_best_eval = {"screen": {"mean_reward": 0.0}, "confirm": {"mean_reward": 0.0}}
+    ledger.record_promotion(
+        candidate="/iter1/candidate/epoch_003.pt",
+        screen={"mean_reward": 0.1},
+        confirm={"mean_reward": 0.2},
+    )
+    assert ledger.current_best == "/iter1/candidate/epoch_003.pt"
+    assert ledger.current_best_eval["confirm"]["mean_reward"] == 0.2
+    assert ledger.consecutive_non_promotions == 0
+    assert ledger.history[-1]["decision"] == "promoted"
+
+
+def test_ledger_record_rejection_increments_patience(tmp_path: Path):
+    ledger = LoopLedger(
+        path=tmp_path / "ledger.json",
+        iteration=1,
+        fixed_init="/init.pt",
+        base_data=["/base"],
+        current_best="/init.pt",
+        accumulated_selfplay=["/sp1"],
+    )
+    ledger.record_rejection(
+        candidate="/iter1/candidate/epoch_003.pt",
+        outcome="rejected_screen",
+        screen={"mean_reward": -0.5},
+        confirm=None,
+    )
+    assert ledger.current_best == "/init.pt"
+    assert ledger.consecutive_non_promotions == 1
+    assert ledger.history[-1]["decision"] == "rejected_screen"
