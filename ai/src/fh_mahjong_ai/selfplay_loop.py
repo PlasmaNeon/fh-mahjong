@@ -15,6 +15,7 @@ from .scripts.generate_selfplay import (
     collect_mixed_selfplay_episodes,
     resolve_seat_policies,
 )
+from .scripts.train_iql import train_iql
 from .storage import load_checkpoint, write_transitions_npz_shards
 
 
@@ -256,3 +257,88 @@ def generate_iteration_selfplay(
             close()
     write_transitions_npz_shards(out_dir, transitions)
     return out_dir
+
+
+def _seat_policies_for_iteration(template: Sequence[str], best_checkpoint: str) -> List[str]:
+    return [value.replace("{best}", str(best_checkpoint)) for value in template]
+
+
+def run_iteration(
+    config: LoopConfig,
+    ledger: LoopLedger,
+    env_config: EnvConfig,
+    model_config: ModelConfig,
+) -> GateOutcome:
+    """Run one self-play -> train -> gate iteration; mutate and persist the ledger."""
+    iteration = ledger.iteration + 1
+    ledger.iteration = iteration
+    iter_dir = config.run_dir / f"iter{iteration}"
+
+    # 1. Generate self-play with the current best policy.
+    seat_values = _seat_policies_for_iteration(config.seat_policy_template, ledger.current_best)
+    selfplay_dir = generate_iteration_selfplay(
+        env_config=env_config,
+        out_dir=iter_dir / "selfplay",
+        episodes=config.episodes_per_iter,
+        start_seed=config.start_seed + iteration * config.seed_stride,
+        best_checkpoint=ledger.current_best,
+        seat_policy_values=seat_values,
+        device=config.device,
+    )
+    ledger.accumulated_selfplay.append(str(selfplay_dir))
+    ledger.save()
+
+    # 2. Train a fresh candidate from the fixed init on all accumulated data.
+    candidate_dir = iter_dir / "candidate"
+    data_paths = [Path(p) for p in (ledger.base_data + ledger.accumulated_selfplay)]
+    train_iql(
+        data_path=data_paths,
+        checkpoint_dir=candidate_dir,
+        epochs=config.epochs,
+        batch_size=config.batch_size,
+        learning_rate=config.lr,
+        init_checkpoint=Path(config.fixed_init) if config.fixed_init else None,
+        device=config.device,
+        model_config=model_config,
+    )
+    candidate = candidate_dir / f"epoch_{config.epochs:03d}.pt"
+
+    # 3. Two-stage CI gate.
+    def _eval(ckpt: str, seeds_count: int) -> Dict[str, Any]:
+        seeds = list(range(config.eval_start_seed, config.eval_start_seed + seeds_count))
+        return evaluate_checkpoint(
+            checkpoint=Path(ckpt),
+            seeds=seeds,
+            env_config=env_config,
+            model_config=model_config,
+            device=config.device,
+            match_mode=config.match_mode,
+            bridge_kind=config.bridge_kind,
+            bridge_library_path=config.bridge_library_path,
+            max_steps_per_episode=config.max_steps_per_episode,
+        )
+
+    best_screen = ledger.current_best_eval.get("screen") or _eval(ledger.current_best, config.screen_seeds)
+    ledger.current_best_eval["screen"] = best_screen
+    candidate_screen = _eval(str(candidate), config.screen_seeds)
+
+    def _confirm_evaluator():
+        best_confirm = ledger.current_best_eval.get("confirm") or _eval(ledger.current_best, config.confirm_seeds)
+        ledger.current_best_eval["confirm"] = best_confirm
+        candidate_confirm = _eval(str(candidate), config.confirm_seeds)
+        return candidate_confirm, best_confirm
+
+    outcome, cand_confirm, _best_confirm = gate_decision(
+        candidate_screen, best_screen, config.thresholds, _confirm_evaluator
+    )
+
+    if outcome is GateOutcome.PROMOTED:
+        ledger.record_promotion(str(candidate), candidate_screen, dict(cand_confirm))
+    else:
+        ledger.record_rejection(
+            str(candidate),
+            outcome.value,
+            candidate_screen,
+            dict(cand_confirm) if cand_confirm is not None else None,
+        )
+    return outcome

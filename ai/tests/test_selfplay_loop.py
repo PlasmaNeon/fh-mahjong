@@ -221,3 +221,45 @@ def test_generate_iteration_selfplay_writes_shards(tmp_path: Path):
     )
     arrays = read_transition_arrays(out, keys=("action_ids",))
     assert arrays["action_ids"].shape[0] > 0
+
+
+from fh_mahjong_ai.selfplay_loop import run_iteration
+
+
+def test_run_iteration_mock_updates_ledger(tmp_path: Path):
+    env, model_cfg = _tiny_env_model()  # bridge_kind="mock"
+    init = tmp_path / "init.pt"
+    save_checkpoint(init, PolicyValueNet(env, model_cfg))
+
+    cfg = LoopConfig(
+        run_dir=tmp_path / "run",
+        fixed_init=str(init),
+        base_data=[],            # mock: no base data; train on the iteration's self-play only
+        initial_best=str(init),
+        iterations=1,
+        episodes_per_iter=3,
+        screen_seeds=2,
+        confirm_seeds=2,
+        epochs=1,
+        batch_size=4,
+        match_mode="classic",
+        device="cpu",
+        bridge_kind="mock",
+        max_steps_per_episode=None,
+        seat_policy_template=["0=random", "1=random", "2=random", "3=random"],
+    )
+    ledger = LoopLedger(
+        path=cfg.run_dir / "ledger.json",
+        iteration=0,
+        fixed_init=cfg.fixed_init,
+        base_data=cfg.base_data,
+        current_best=cfg.initial_best,
+        accumulated_selfplay=[],
+    )
+
+    outcome = run_iteration(cfg, ledger, env, model_cfg)
+    assert outcome in {GateOutcome.PROMOTED, GateOutcome.REJECTED_SCREEN, GateOutcome.REJECTED_CONFIRM}
+    # an iteration always appends one history record and one accumulated self-play dir
+    assert len(ledger.history) == 1
+    assert len(ledger.accumulated_selfplay) == 1
+    assert (cfg.run_dir / "iter1" / "candidate").exists()
