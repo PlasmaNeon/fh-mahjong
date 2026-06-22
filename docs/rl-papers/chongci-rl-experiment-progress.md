@@ -15460,6 +15460,72 @@ several hundred seeds to tighten the CI below the observed gaps. The placement
 and global_ev_td code paths are correct and validated; this is a negative result
 about the warm-start fine-tune recipe at this data scale, not a code failure.
 
+### Experiment: Corrected Gentle-Recipe Placement Re-Run
+
+Run:
+`/root/fh-mahjong-runs/placement-campaign2-20260621-170935`
+
+Question:
+Campaign #1 used an aggressive fine-tune (lr 1e-4, 6 epochs, batch 256) that
+might have caused the regression. The promoted anchor was actually built with a
+gentle recipe (lr 2e-5, 1 epoch, batch 4096) on its own 409882-transition mix.
+Does matching that gentle recipe, on the anchor's original data, let placement or
+global_ev_td beat the anchor on a tighter (160-seed) CI gate?
+
+Data:
+Anchor's original training mix
+(`chongci-broader-mixed-selfplay-20260607-032601/.../anchor-fresh-balanced-tail2-760000-n200-npz`,
+409882 transitions) plus the reused campaign-#1 self-play windows (sp-a/b/c).
+`--max-transitions 200000` per dataset.
+
+Training (warm-start from the promoted anchor, lr 2e-5, 2 epochs, batch 4096,
+bc-weight 0.03, cuda): raw MC, `--reward-shaping placement` MC, and
+`--target-mode global_ev_td` from a placement-trained GlobalEV (3 epochs).
+
+Evaluation:
+160-seed Chongci duplicate-seat gate, `--max-steps-per-episode 4000`, all matches
+resolved. Anchor re-evaluated on the identical gate.
+
+Result:
+
+| variant | mean_reward | ci95 | large_loss_rate | positive_reward_rate |
+| --- | ---: | ---: | ---: | ---: |
+| anchor (promoted) | -0.0902 | 0.0881 | 0.2094 | 0.4328 |
+| raw warm-start | -0.5190 | 0.0825 | 0.3625 | 0.3047 |
+| placement | -0.5113 | 0.0829 | 0.3609 | 0.3063 |
+| global_ev_td (placement) | -0.5870 | 0.0807 | 0.3797 | 0.2797 |
+
+Decision:
+rejected (no promotion).
+
+Interpretation:
+All fine-tune variants regress hard versus the anchor with non-overlapping CIs
+(160 seeds tightens ci95 to ~0.08, below the gaps), so this is significant, not
+noise. Placement is statistically identical to raw (no benefit); global_ev_td is
+worst. Counterintuitively the gentle recipe regressed WORSE than campaign #1's
+aggressive recipe (raw -0.519 vs -0.175), which means campaign #2 introduced its
+own confounds rather than isolating the recipe: `--max-transitions 200000` reads
+the first 200k episode-ordered rows of each dataset (a biased subset), and batch
+4096 with only ~390 steps gives poor IQL value estimates. So neither campaign is
+a perfectly clean controlled test.
+
+Robust cross-campaign conclusion: IQL warm-start fine-tuning of the promoted
+anchor consistently fails to improve and significantly regresses it across two
+very different hyperparameter regimes, and placement reward shaping never helps
+(placement ~= raw in both campaigns). The anchor is a strong local optimum that
+short IQL fine-tunes move away from.
+
+Recommendation: shelve anchor warm-start fine-tuning and placement-as-objective
+as the improvement lever. The placement / GlobalEV / eval-CI code is correct and
+merged (PR #83) and stays available, but is not the path to a better Chongci
+agent. Pivot research effort to: (a) the proven from-scratch mixed self-play loop
+with a growing frozen checkpoint pool and duplicate-seat promotion (the only path
+that ever produced a Chongci promotion), and (b) training-only oracle auxiliaries
+(opponent tile / wall prediction feeding the value/Q heads, deployed visible-only)
+to attack the POMDP directly. If anyone revisits fine-tuning, first remove the
+confounds: no `--max-transitions` truncation, moderate batch size, and reproduce
+the anchor's full auxiliary-term recipe; but the prior is now poor.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
