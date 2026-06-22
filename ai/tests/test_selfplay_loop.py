@@ -298,3 +298,42 @@ def test_run_loop_runs_iterations_and_is_resumable(tmp_path: Path):
     # Resume is a no-op once iterations are exhausted.
     resumed = run_loop(cfg, env, model_cfg, resume=True)
     assert resumed.iteration == 2
+
+
+def test_cli_runs_loop_on_mock_bridge(tmp_path: Path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import selfplay_loop as cli
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+
+    env = EnvConfig(bridge_kind="mock")
+    model_cfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                            scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16)
+    init = tmp_path / "init.pt"
+    save_checkpoint(init, PolicyValueNet(env, model_cfg))
+
+    argv = [
+        "fh-mj-selfplay-loop",
+        "--run-dir", str(tmp_path / "run"),
+        "--fixed-init", str(init),
+        "--initial-best", str(init),
+        "--iterations", "1",
+        "--episodes-per-iter", "2",
+        "--screen-seeds", "2",
+        "--confirm-seeds", "2",
+        "--epochs", "1",
+        "--batch-size", "4",
+        "--match-mode", "classic",
+        "--bridge-kind", "mock",
+        "--seat-policy-template", "0=random", "1=random", "2=random", "3=random",
+        "--model-channels", "8",
+        "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16",
+        "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16",
+        "--model-value-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert (tmp_path / "run" / "ledger.json").exists()
