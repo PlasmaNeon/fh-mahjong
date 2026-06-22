@@ -201,3 +201,23 @@ def test_evaluate_checkpoint_returns_gate_metric_keys(tmp_path: Path):
     )
     for key in ("mean_reward", "mean_reward_ci95", "large_loss_rate", "positive_reward_rate"):
         assert key in report
+
+
+from fh_mahjong_ai.selfplay_loop import generate_iteration_selfplay
+from fh_mahjong_ai.storage import read_transition_arrays
+
+
+def test_generate_iteration_selfplay_writes_shards(tmp_path: Path):
+    env, _ = _tiny_env_model()  # bridge_kind="mock"
+    # On the mock bridge all seats must be controlled; use random for every seat.
+    out = generate_iteration_selfplay(
+        env_config=env,
+        out_dir=tmp_path / "sp",
+        episodes=2,
+        start_seed=500,
+        best_checkpoint=None,
+        seat_policy_values=["0=random", "1=random", "2=random", "3=random"],
+        device="cpu",
+    )
+    arrays = read_transition_arrays(out, keys=("action_ids",))
+    assert arrays["action_ids"].shape[0] > 0

@@ -9,7 +9,13 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from .config import EnvConfig, ModelConfig
 from .evaluate import evaluate_duplicate_seats
 from .model import PolicyValueNet
-from .storage import load_checkpoint
+from .scripts.generate_selfplay import (
+    build_bridge,
+    build_runtime_policies,
+    collect_mixed_selfplay_episodes,
+    resolve_seat_policies,
+)
+from .storage import load_checkpoint, write_transitions_npz_shards
 
 
 class GateOutcome(str, Enum):
@@ -200,3 +206,53 @@ def evaluate_checkpoint(
         match_mode=match_mode,
         max_steps_per_episode=max_steps_per_episode,
     )
+
+
+def generate_iteration_selfplay(
+    env_config: EnvConfig,
+    out_dir: Path,
+    episodes: int,
+    start_seed: int,
+    best_checkpoint: Optional[str],
+    seat_policy_values: Sequence[str],
+    device: str = "cpu",
+) -> Path:
+    """Generate one iteration's mixed self-play shards; returns the shard directory.
+
+    The current best checkpoint path must already be substituted into
+    ``seat_policy_values`` (see ``run_iteration``); ``best_checkpoint`` is accepted
+    for symmetry/logging only.
+    """
+    out_dir = Path(out_dir)
+    seat_policies = resolve_seat_policies(list(seat_policy_values), bridge_kind=env_config.bridge_kind)
+    controlled_seats = tuple(spec.seat for spec in seat_policies if spec.controlled)
+    config = EnvConfig(
+        action_space_size=env_config.action_space_size,
+        plane_shape=env_config.plane_shape,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        learning_seats=controlled_seats,
+        auto_play_heuristics=True,
+        max_steps_per_episode=env_config.max_steps_per_episode,
+        match_mode=env_config.match_mode,
+        chongci_starting_score=env_config.chongci_starting_score,
+        chongci_bust_threshold=env_config.chongci_bust_threshold,
+        chongci_max_hands=env_config.chongci_max_hands,
+    )
+    runtime_policies = build_runtime_policies(seat_policies, device=device, seed=start_seed)
+    bridge = build_bridge(config)
+    try:
+        transitions = collect_mixed_selfplay_episodes(
+            config=config,
+            bridge=bridge,
+            runtime_policies=runtime_policies,
+            episodes=episodes,
+            start_seed=start_seed,
+        )
+    finally:
+        close = getattr(bridge, "close", None)
+        if callable(close):
+            close()
+    write_transitions_npz_shards(out_dir, transitions)
+    return out_dir
