@@ -15581,6 +15581,57 @@ follow-up so the loop can run far more self-play per iteration, then re-run with
 more iterations; the oracle-auxiliary direction remains the higher-upside
 alternative. The loop itself (PR #85) is sound and ready to scale.
 
+### Experiment: Big-Batch Loop Validation (OOM — reframes the bottleneck)
+
+Run:
+`/root/fh-mahjong-runs/loop-bigdata-20260622-232250`
+
+Question:
+Before building parallel self-play generation, cheaply test the hypothesis that
+the loop failed to beat the anchor only because each iteration had too few
+episodes. Run the existing `fh-mj-selfplay-loop` with `--episodes-per-iter 1500`
+(5x the first live run) for 2 iterations, warm-started from the promoted anchor.
+
+Result:
+The run was OOM-killed during iteration 1 training (`LOOP EXITED rc=137`,
+SIGKILL). Generation succeeded (38 shards, ~1.85M transitions from 1500 episodes,
+~1230 transitions/episode all-seat), but `train_iql` then tried to materialize the
+full accumulated dataset (~1.85M new + 409882 base) in the in-memory array replay
+buffer (planes + next_planes at 39x42 each). The kernel OOM-killer killed the
+process at ~31 GB RSS / 118 GB virtual on this 31 GB WSL2 box. No candidate was
+trained; the science question (does more data beat the anchor) is unanswered.
+
+Decision:
+inconclusive on the hypothesis; but it surfaces the real binding constraint.
+
+Interpretation:
+This reframes the whole "scale the self-play loop" direction. The binding
+constraint is NOT generation speed (the parallel-generation spec) — it is
+**training memory**: IQL loads the entire dataset into RAM, so the loop is capped
+at roughly the dataset size that fits in 31 GB. Back-of-envelope: ~13.5 KB per
+transition (current + next planes/scalars/masks) => ~1 M transitions is already
+near the safe ceiling, and the 409 K-transition anchor base alone plus ~300-400
+new episodes is about as much as fits. In other words, the original 300-episode
+loop run was already near the memory ceiling, and we cannot give the loop
+meaningfully more data per iteration on this box without changing how training
+consumes data.
+
+Consequences for next steps:
+- The shelved parallel-generation spec
+  (`docs/superpowers/specs/2026-06-22-parallel-selfplay-generation-design.md`)
+  solves the wrong problem: generating more data faster does not help if we cannot
+  train on it. Do not build it next.
+- To actually scale self-play data, the prerequisite is **memory-efficient
+  training**: stream/chunk the replay buffer from disk during IQL, or sample a
+  bounded working set per epoch from the sharded NPZ instead of materializing
+  every row. (`--max-transitions` bounds memory but reintroduces the
+  first-shards-only truncation bias seen in campaign #2, so a sampling/streaming
+  loader is the real fix.)
+- Alternatively, accept that the self-play loop is memory-capped at ~300
+  episodes/iter on this hardware (and the anchor was not beaten at that scale
+  across the first live run), and pivot effort to the oracle-auxiliary research
+  direction, which does not depend on growing the offline dataset.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
