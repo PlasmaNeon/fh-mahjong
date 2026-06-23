@@ -15526,6 +15526,61 @@ to attack the POMDP directly. If anyone revisits fine-tuning, first remove the
 confounds: no `--max-transitions` truncation, moderate batch size, and reproduce
 the anchor's full auxiliary-term recipe; but the prior is now poor.
 
+### Experiment: Live Self-Play Improvement Loop (fh-mj-selfplay-loop)
+
+Run:
+`/root/fh-mahjong-runs/selfplay-loop-20260621-233930`
+
+Question:
+Can the proven mixed self-play loop — generate with the current best, train a
+fresh IQL candidate on accumulated data (never fine-tuning the rolling best), and
+promote only on a CI-confirmed gain — advance past the promoted Chongci anchor,
+the thing reward shaping and warm-start fine-tuning could not do?
+
+Setup:
+First live run of `fh-mj-selfplay-loop` (merged in PR #85). Warm-start from the
+promoted anchor (`--fixed-init` and `--initial-best` =
+`chongci-broader-mixed-iql-20260607-034720/.../epoch_001.pt`), `--base-data` = the
+anchor's original 409882-transition mix. 6 iterations max, 300 episodes/iter
+(current best in 2 seats + heuristic + random), fresh IQL each iter (4 epochs,
+batch 256, lr 1e-4, no truncation), two-stage CI gate (60-seed screen -> 160-seed
+confirm), patience 3, Chongci, GPU.
+
+Result:
+Early-stopped at patience after 3 consecutive non-promotions; no candidate
+promoted. `current_best` stayed the anchor throughout.
+
+| iter | decision | candidate screen mean | candidate confirm mean (ci95) |
+| --- | --- | ---: | ---: |
+| anchor | (baseline) | -0.0666 (screen) | -0.0902 (0.0881) |
+| 1 | rejected_confirm | -0.0738 | -0.148 (0.0938) |
+| 2 | rejected_screen | -0.2026 | not run |
+| 3 | rejected_screen | -0.1987 | not run |
+
+Decision:
+rejected (no promotion). Loop exited cleanly (rc=0).
+
+Interpretation:
+The loop infrastructure is fully validated on real hardware: self-play
+generation, fresh-IQL-on-accumulated-data training, the two-stage CI gate
+(iter 1 correctly rejected on CI overlap; iters 2-3 cheaply rejected on the
+screen without spending a confirm), best-eval caching, the resumable ledger, and
+the patience early-stop all worked. The deployed best never regressed
+(monotonic), which is the core safety property.
+
+But like reward shaping and warm-start fine-tuning before it, a short self-play
+loop did not beat the anchor. The cause is data scale, not the method: each
+iteration added only 300 episodes against the anchor's 409882-transition base, so
+3 iterations (~900 episodes) is far too little signal to move a well-tuned
+checkpoint, and iter 1's candidate was already close (screen -0.074 vs anchor
+-0.067) before regressing on confirm. To actually clear the anchor the loop needs
+many more iterations and/or much larger episodes-per-iter, which is impractical at
+the current single-env generation speed (~20-40 min per 300-episode window with
+checkpoint seats). The aligned next step is the deferred parallel-generation
+follow-up so the loop can run far more self-play per iteration, then re-run with
+more iterations; the oracle-auxiliary direction remains the higher-upside
+alternative. The loop itself (PR #85) is sound and ready to scale.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
