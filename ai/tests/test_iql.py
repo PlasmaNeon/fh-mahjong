@@ -1000,3 +1000,44 @@ def test_train_iql_supports_partial_init_for_deeper_model(tmp_path: Path) -> Non
 
     assert len(metrics) > 0
     assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_iql_stream_runs_and_saves(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    ckpt_dir = tmp_path / "checkpoints"
+    write_transitions_npz_shards(shard_dir, _transitions(16, env_config), shard_size=8)
+
+    metrics = train_iql(
+        data_path=shard_dir,
+        checkpoint_dir=ckpt_dir,
+        epochs=1,
+        batch_size=4,
+        learning_rate=1e-3,
+        target_update_interval=1,
+        target_tau=1.0,
+        max_weight=5.0,
+        device="cpu",
+        log_interval=1,
+        stream=True,
+        stream_shuffle_buffer=8,
+        stream_workers=0,
+    )
+    assert len(metrics) > 0
+    assert (ckpt_dir / "epoch_001.pt").exists()
+
+
+def test_train_iql_stream_rejects_pairwise(tmp_path: Path) -> None:
+    env_config = EnvConfig()
+    shard_dir = tmp_path / "shards"
+    write_transitions_npz_shards(shard_dir, _transitions(8, env_config), shard_size=8)
+    with pytest.raises(ValueError, match="stream"):
+        train_iql(
+            data_path=shard_dir,
+            checkpoint_dir=tmp_path / "ck",
+            epochs=1,
+            batch_size=4,
+            device="cpu",
+            stream=True,
+            pairwise_data_paths=[shard_dir],
+        )

@@ -13,6 +13,7 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.global_ev import GlobalEVNet
+from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import (
     RiskCase,
@@ -132,6 +133,9 @@ def train_iql(
     model_config: Optional[ModelConfig] = None,
     reward_shaping: str = "raw",
     placement_values: Sequence[float] = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+    stream: bool = False,
+    stream_shuffle_buffer: int = 50000,
+    stream_workers: int = 2,
 ) -> List[DiscreteIQLMetrics]:
     """Train a conservative discrete IQL model from one or more fixed trajectory datasets."""
     if critic_only and policy_head_only:
@@ -144,29 +148,44 @@ def train_iql(
         raise ValueError("--pairwise-data is only supported with MC targets because it omits next-state TD fields")
     if target_mode.lower() == "global_ev_td" and global_ev_checkpoint is None:
         raise ValueError("--target-mode global_ev_td requires --global-ev-checkpoint")
-    risk_cases = load_risk_cases_from_paired_trace_reports(
-        list(risk_trace_reports or []),
-        large_loss_threshold=large_loss_threshold,
-        worst_delta_count=risk_trace_worst_delta_count,
-        include_counterfactual_labels=risk_trace_counterfactual_labels,
-        min_counterfactual_reward_gap=risk_trace_min_counterfactual_reward_gap,
-    )
-    buf, transition_count, dataset_transition_counts = load_iql_replay_buffer(
-        data_paths,
-        max_transitions=max_transitions,
-        risk_cases=risk_cases,
-        risk_weight=risk_trace_weight,
-        risk_dataset_start_seeds=risk_trace_dataset_start_seeds,
-        apply_risk_cases=bool(risk_cases)
-        and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
-        pairwise_replay_multiplier=pairwise_replay_multiplier,
-        pairwise_data_paths=pairwise_paths,
-        pairwise_data_min_reward_gap=pairwise_data_min_reward_gap,
-        risk_filter_datasets=risk_trace_filter_datasets,
-        risk_context_radius=risk_trace_context_radius,
-        reward_shaping=reward_shaping,
-        placement_values=placement_values,
-    )
+    if stream:
+        if pairwise_paths or risk_trace_reports:
+            raise ValueError("--stream does not support --pairwise-data or risk-trace options")
+        buf = StreamingReplayBuffer(
+            data_paths,
+            batch_size=batch_size,
+            shuffle_buffer=stream_shuffle_buffer,
+            num_workers=stream_workers,
+            seed=0,
+            reward_shaping=reward_shaping,
+            placement_values=tuple(placement_values),
+        )
+        transition_count = len(buf)
+        dataset_transition_counts = [transition_count]
+    else:
+        risk_cases = load_risk_cases_from_paired_trace_reports(
+            list(risk_trace_reports or []),
+            large_loss_threshold=large_loss_threshold,
+            worst_delta_count=risk_trace_worst_delta_count,
+            include_counterfactual_labels=risk_trace_counterfactual_labels,
+            min_counterfactual_reward_gap=risk_trace_min_counterfactual_reward_gap,
+        )
+        buf, transition_count, dataset_transition_counts = load_iql_replay_buffer(
+            data_paths,
+            max_transitions=max_transitions,
+            risk_cases=risk_cases,
+            risk_weight=risk_trace_weight,
+            risk_dataset_start_seeds=risk_trace_dataset_start_seeds,
+            apply_risk_cases=bool(risk_cases)
+            and (risk_trace_weight > 1.0 or pairwise_weight > 0.0 or pairwise_q_weight > 0.0),
+            pairwise_replay_multiplier=pairwise_replay_multiplier,
+            pairwise_data_paths=pairwise_paths,
+            pairwise_data_min_reward_gap=pairwise_data_min_reward_gap,
+            risk_filter_datasets=risk_trace_filter_datasets,
+            risk_context_radius=risk_trace_context_radius,
+            reward_shaping=reward_shaping,
+            placement_values=placement_values,
+        )
     if transition_count <= 0:
         raise ValueError(f"no transitions loaded from {data_paths}")
 
@@ -679,6 +698,9 @@ def main() -> None:
         default="raw",
         help="raw terminal net-score return (default) or rank-based placement value",
     )
+    parser.add_argument("--stream", action="store_true", help="Stream batches from sharded data (memory-bounded; large datasets)")
+    parser.add_argument("--stream-shuffle-buffer", type=int, default=50000)
+    parser.add_argument("--stream-workers", type=int, default=2)
     parser.add_argument(
         "--placement-values",
         type=float,
@@ -947,6 +969,9 @@ def main() -> None:
         target_tau=args.target_tau,
         reward_shaping=args.reward_shaping,
         placement_values=tuple(args.placement_values),
+        stream=args.stream,
+        stream_shuffle_buffer=args.stream_shuffle_buffer,
+        stream_workers=args.stream_workers,
         large_loss_threshold=args.large_loss_threshold,
         large_loss_penalty=args.large_loss_penalty,
         large_loss_weight=args.large_loss_weight,
