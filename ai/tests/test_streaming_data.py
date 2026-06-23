@@ -51,3 +51,25 @@ def test_build_shard_index_counts_rows_across_dirs(tmp_path: Path):
     assert total == 16
     assert sum(rows for _, rows in shards) == 16
     assert all(rows > 0 for _, rows in shards)
+
+
+def test_iterable_dataset_yields_every_row_once_single_worker(tmp_path: Path):
+    from fh_mahjong_ai.streaming_data import TransitionIterableDataset
+
+    d = _make_shards(tmp_path, 10, "a", start=0)
+    ds = TransitionIterableDataset([d], shuffle_buffer=3, seed=0)
+    action_ids = sorted(int(s["action_ids"]) for s in ds)
+    assert action_ids == list(range(10))  # every row exactly once, no dup/drop
+
+
+def test_collate_builds_trainbatch(tmp_path: Path):
+    from fh_mahjong_ai.streaming_data import TransitionIterableDataset, collate_transitions
+
+    d = _make_shards(tmp_path, 8, "a", start=0)
+    ds = TransitionIterableDataset([d], shuffle_buffer=2, seed=0)
+    samples = list(ds)[:4]
+    batch = collate_transitions(samples)
+    assert batch.planes.shape == (4, 39, 42, 1)
+    assert batch.action_ids.shape == (4,)
+    assert batch.returns.shape == (4,)
+    assert batch.next_planes.shape == (4, 39, 42, 1)

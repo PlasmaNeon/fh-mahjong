@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
+from torch.utils.data import IterableDataset, get_worker_info
 
+from .buffer import _DEFAULT_PLACEMENT_VALUES, train_batch_from_arrays
 from .storage import SHARDED_TRANSITIONS_MANIFEST
+from .types import TrainBatch
 
 
 def build_shard_index(data_paths: Sequence[Path]) -> Tuple[List[Tuple[Path, int]], int]:
@@ -25,3 +28,81 @@ def build_shard_index(data_paths: Sequence[Path]) -> Tuple[List[Tuple[Path, int]
         raise ValueError(f"no shards found in {list(data_paths)}")
     total = sum(rows for _, rows in index)
     return index, total
+
+
+# Per-row fields carried from a shard into collate. Full per-seat vectors
+# (terminal_rewards, rewards) are kept so train_batch_from_arrays computes the
+# acting-seat return/reward identically to the in-memory buffer.
+_ROW_KEYS = (
+    "seats", "planes", "scalars", "action_mask", "action_ids", "steps_to_done",
+    "terminal_rewards", "rewards", "terminated", "truncated",
+    "next_planes", "next_scalars", "next_action_mask", "sample_weights",
+)
+
+
+class TransitionIterableDataset(IterableDataset):
+    """Streams per-transition samples from sharded .npz datasets.
+
+    One full pass (__iter__) yields every row exactly once with local shuffling.
+    """
+
+    def __init__(
+        self,
+        data_paths: Sequence[Path],
+        shuffle_buffer: int = 50000,
+        seed: int = 0,
+    ) -> None:
+        super().__init__()
+        self.index, self.total = build_shard_index(data_paths)
+        self.shuffle_buffer = max(1, int(shuffle_buffer))
+        self.seed = int(seed)
+        self._epoch = 0
+
+    def __len__(self) -> int:
+        return self.total
+
+    def _shards_for_worker(self) -> List[Tuple[Path, int]]:
+        info = get_worker_info()
+        if info is None:
+            return list(self.index)
+        return [s for i, s in enumerate(self.index) if i % info.num_workers == info.id]
+
+    def __iter__(self) -> Iterator[Dict[str, np.ndarray]]:
+        info = get_worker_info()
+        worker_id = 0 if info is None else info.id
+        rng = np.random.default_rng(self.seed + self._epoch * 1000 + worker_id)
+        self._epoch += 1
+
+        shards = self._shards_for_worker()
+        order = rng.permutation(len(shards))
+        buffer: List[Dict[str, np.ndarray]] = []
+
+        def _emit_random() -> Dict[str, np.ndarray]:
+            j = int(rng.integers(len(buffer)))
+            buffer[j], buffer[-1] = buffer[-1], buffer[j]
+            return buffer.pop()
+
+        for shard_pos in order:
+            shard_path, _ = shards[int(shard_pos)]
+            with np.load(shard_path, allow_pickle=False) as loaded:
+                present = [k for k in _ROW_KEYS if k in loaded.files]
+                cols = {k: loaded[k] for k in present}
+                n = cols["action_ids"].shape[0]
+                for r in rng.permutation(n):
+                    row = {k: cols[k][int(r)] for k in present}
+                    buffer.append(row)
+                    if len(buffer) >= self.shuffle_buffer:
+                        yield _emit_random()
+        while buffer:
+            yield _emit_random()
+
+
+def collate_transitions(
+    samples: Sequence[Dict[str, np.ndarray]],
+    reward_shaping: str = "raw",
+    placement_values: tuple = _DEFAULT_PLACEMENT_VALUES,
+) -> TrainBatch:
+    """Stack per-row samples into a TrainBatch via the shared array logic."""
+    keys = samples[0].keys()
+    arrays = {k: np.stack([s[k] for s in samples]) for k in keys}
+    return train_batch_from_arrays(arrays, np.arange(len(samples)), reward_shaping, placement_values)
