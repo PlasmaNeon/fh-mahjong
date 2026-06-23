@@ -173,6 +173,9 @@ class LoopConfig:
         "1=checkpoint:{best}",
         "3=random",
     )
+    stream_training: bool = False
+    stream_shuffle_buffer: int = 50000
+    stream_workers: int = 2
     thresholds: GateThresholds = None
 
     def __post_init__(self) -> None:
@@ -300,6 +303,9 @@ def run_iteration(
         init_checkpoint=Path(config.fixed_init) if config.fixed_init else None,
         device=config.device,
         model_config=model_config,
+        stream=config.stream_training,
+        stream_shuffle_buffer=config.stream_shuffle_buffer,
+        stream_workers=config.stream_workers,
     )
     candidate = candidate_dir / f"epoch_{config.epochs:03d}.pt"
 

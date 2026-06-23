@@ -39,6 +39,9 @@ def main() -> None:
     parser.add_argument("--screen-margin", type=float, default=0.05)
     parser.add_argument("--large-loss-eps", type=float, default=0.0)
     parser.add_argument("--positive-eps", type=float, default=0.02)
+    parser.add_argument("--stream-training", action="store_true")
+    parser.add_argument("--stream-shuffle-buffer", type=int, default=50000)
+    parser.add_argument("--stream-workers", type=int, default=2)
     parser.add_argument("--resume", action="store_true")
     add_model_config_args(parser)
     args = parser.parse_args()
@@ -73,6 +76,9 @@ def main() -> None:
         bridge_library_path=args.bridge_lib,
         max_steps_per_episode=args.max_steps_per_episode,
         seat_policy_template=list(args.seat_policy_template),
+        stream_training=args.stream_training,
+        stream_shuffle_buffer=args.stream_shuffle_buffer,
+        stream_workers=args.stream_workers,
         thresholds=GateThresholds(
             screen_margin=args.screen_margin,
             large_loss_eps=args.large_loss_eps,
