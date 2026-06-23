@@ -73,3 +73,36 @@ def test_collate_builds_trainbatch(tmp_path: Path):
     assert batch.action_ids.shape == (4,)
     assert batch.returns.shape == (4,)
     assert batch.next_planes.shape == (4, 39, 42, 1)
+
+
+def test_streaming_replay_buffer_sample_contract_and_epoch_wrap(tmp_path: Path):
+    from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+
+    d = _make_shards(tmp_path, 12, "a", start=0)
+    buf = StreamingReplayBuffer([d], batch_size=4, shuffle_buffer=3, num_workers=0, seed=0)
+    assert len(buf) == 12
+    seen = []
+    for _ in range(6):  # 6 batches of 4 = 2 epochs; must not raise at epoch boundary
+        batch = buf.sample(4)
+        assert batch.action_ids.shape == (4,)
+        seen.extend(int(a) for a in batch.action_ids.tolist())
+    # first epoch (first 3 batches) covers all 12 rows exactly once
+    assert sorted(seen[:12]) == list(range(12))
+
+
+def test_streaming_equivalence_with_array_buffer_returns(tmp_path: Path):
+    from fh_mahjong_ai.buffer import ArrayReplayBuffer
+    from fh_mahjong_ai.storage import read_transition_arrays
+    from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+
+    d = _make_shards(tmp_path, 8, "a", start=0)
+    arrays = read_transition_arrays(d)
+    # in-memory placement returns for every row, keyed by action_id
+    mem = ArrayReplayBuffer(arrays=arrays, indices=np.arange(8), reward_shaping="placement")
+    mem_batch = mem.sample(8, seed=1)
+    mem_by_action = dict(zip(mem_batch.action_ids.tolist(), [round(float(r), 5) for r in mem_batch.returns.tolist()]))
+
+    buf = StreamingReplayBuffer([d], batch_size=8, shuffle_buffer=8, num_workers=0, seed=0, reward_shaping="placement")
+    s_batch = buf.sample(8)
+    s_by_action = dict(zip(s_batch.action_ids.tolist(), [round(float(r), 5) for r in s_batch.returns.tolist()]))
+    assert s_by_action == mem_by_action

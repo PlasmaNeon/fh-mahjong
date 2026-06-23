@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
-from torch.utils.data import IterableDataset, get_worker_info
+from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
 from .buffer import _DEFAULT_PLACEMENT_VALUES, train_batch_from_arrays
 from .storage import SHARDED_TRANSITIONS_MANIFEST
@@ -106,3 +107,48 @@ def collate_transitions(
     keys = samples[0].keys()
     arrays = {k: np.stack([s[k] for s in samples]) for k in keys}
     return train_batch_from_arrays(arrays, np.arange(len(samples)), reward_shaping, placement_values)
+
+
+class StreamingReplayBuffer:
+    """Disk-streaming replay buffer with the ArrayReplayBuffer .sample/__len__ API."""
+
+    def __init__(
+        self,
+        data_paths: Sequence[Path],
+        batch_size: int,
+        shuffle_buffer: int = 50000,
+        num_workers: int = 2,
+        seed: int = 0,
+        reward_shaping: str = "raw",
+        placement_values: tuple = _DEFAULT_PLACEMENT_VALUES,
+    ) -> None:
+        self.batch_size = int(batch_size)
+        self._dataset = TransitionIterableDataset(data_paths, shuffle_buffer=shuffle_buffer, seed=seed)
+        self._loader = DataLoader(
+            self._dataset,
+            batch_size=self.batch_size,
+            num_workers=int(num_workers),
+            collate_fn=partial(
+                collate_transitions,
+                reward_shaping=reward_shaping,
+                placement_values=tuple(placement_values),
+            ),
+            drop_last=True,
+        )
+        self._iter: Optional[Iterator[TrainBatch]] = None
+
+    def __len__(self) -> int:
+        return len(self._dataset)
+
+    def sample(self, batch_size: int, seed: Optional[int] = None) -> TrainBatch:
+        if batch_size != self.batch_size:
+            raise ValueError(
+                f"StreamingReplayBuffer is fixed at batch_size={self.batch_size}, got {batch_size}"
+            )
+        if self._iter is None:
+            self._iter = iter(self._loader)
+        try:
+            return next(self._iter)
+        except StopIteration:
+            self._iter = iter(self._loader)  # next epoch (reshuffled)
+            return next(self._iter)
