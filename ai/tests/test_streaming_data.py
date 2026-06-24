@@ -106,3 +106,16 @@ def test_streaming_equivalence_with_array_buffer_returns(tmp_path: Path):
     s_batch = buf.sample(8)
     s_by_action = dict(zip(s_batch.action_ids.tolist(), [round(float(r), 5) for r in s_batch.returns.tolist()]))
     assert s_by_action == mem_by_action
+
+
+def test_iterable_dataset_rows_own_their_data_not_shard_views(tmp_path: Path):
+    # Regression: rows must be copies, not views into the loaded shard array,
+    # or buffered rows keep whole shards alive and a worker OOMs.
+    from fh_mahjong_ai.streaming_data import TransitionIterableDataset
+
+    d = _make_shards(tmp_path, 8, "a", start=0)
+    ds = TransitionIterableDataset([d], shuffle_buffer=2, seed=0)
+    for s in ds:
+        assert s["planes"].base is None  # owns its data (copy), not a shard view
+        assert s["next_planes"].base is None
+        break
