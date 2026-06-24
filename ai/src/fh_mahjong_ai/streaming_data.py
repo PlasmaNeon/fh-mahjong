@@ -90,7 +90,10 @@ class TransitionIterableDataset(IterableDataset):
                 cols = {k: loaded[k] for k in present}
                 n = cols["action_ids"].shape[0]
                 for r in rng.permutation(n):
-                    row = {k: cols[k][int(r)] for k in present}
+                    # Copy each row so it does not retain a view into the full shard
+                    # array; otherwise buffered rows keep entire shards alive and
+                    # memory grows unbounded (worker OOM).
+                    row = {k: np.array(cols[k][int(r)], copy=True) for k in present}
                     buffer.append(row)
                     if len(buffer) >= self.shuffle_buffer:
                         yield _emit_random()
