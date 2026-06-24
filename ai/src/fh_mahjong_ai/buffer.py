@@ -110,6 +110,89 @@ class ReplayBuffer:
         )
 
 
+def train_batch_from_arrays(
+    arrays: dict[str, np.ndarray],
+    indices: np.ndarray,
+    reward_shaping: str = "raw",
+    placement_values: tuple = _DEFAULT_PLACEMENT_VALUES,
+) -> TrainBatch:
+    """Build a TrainBatch from a shard-style arrays dict at the given row indices.
+
+    Shared by ArrayReplayBuffer.sample and the streaming collate so both produce
+    identical batches.
+    """
+    indices = np.asarray(indices, dtype=np.int64)
+    batch_size = int(indices.shape[0])
+    seats = arrays["seats"][indices].astype(np.int64, copy=False)
+
+    if reward_shaping == "placement":
+        full_terminal = arrays["terminal_rewards"][indices].astype(np.float32, copy=False)
+        shaped = placement_shaped_returns(full_terminal, placement_values)
+        returns = shaped[np.arange(batch_size), seats].astype(np.float32, copy=False)
+    else:
+        returns = arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
+
+    steps_to_done = (
+        arrays["steps_to_done"][indices].astype(np.int32, copy=False)
+        if "steps_to_done" in arrays
+        else np.zeros(batch_size, dtype=np.int32)
+    )
+    rewards = (
+        arrays["rewards"][indices, seats].astype(np.float32, copy=False)
+        if "rewards" in arrays
+        else np.zeros(batch_size, dtype=np.float32)
+    )
+    dones = (
+        np.logical_or(arrays["terminated"][indices], arrays["truncated"][indices]).astype(np.float32)
+        if "terminated" in arrays and "truncated" in arrays
+        else np.zeros(batch_size, dtype=np.float32)
+    )
+    sample_weights = (
+        arrays["sample_weights"][indices].astype(np.float32, copy=False)
+        if "sample_weights" in arrays
+        else np.ones(batch_size, dtype=np.float32)
+    )
+
+    def _opt_ids(key):
+        return (
+            arrays[key][indices].astype(np.int64, copy=False)
+            if key in arrays
+            else np.full(batch_size, -1, dtype=np.int64)
+        )
+
+    def _opt_f32(key):
+        return (
+            arrays[key][indices].astype(np.float32, copy=False)
+            if key in arrays
+            else np.zeros(batch_size, dtype=np.float32)
+        )
+
+    return TrainBatch(
+        planes=arrays["planes"][indices].astype(np.float32, copy=False),
+        scalars=arrays["scalars"][indices].astype(np.float32, copy=False),
+        action_mask=arrays["action_mask"][indices].astype(np.int8, copy=False),
+        action_ids=arrays["action_ids"][indices].astype(np.int64, copy=False),
+        returns=returns,
+        steps_to_done=steps_to_done,
+        next_planes=arrays["next_planes"][indices].astype(np.float32, copy=False)
+        if "next_planes" in arrays
+        else np.empty((batch_size, 0), dtype=np.float32),
+        next_scalars=arrays["next_scalars"][indices].astype(np.float32, copy=False)
+        if "next_scalars" in arrays
+        else np.empty((batch_size, 0), dtype=np.float32),
+        next_action_mask=arrays["next_action_mask"][indices].astype(np.int8, copy=False)
+        if "next_action_mask" in arrays
+        else np.empty((batch_size, 0), dtype=np.int8),
+        rewards=rewards,
+        dones=dones,
+        sample_weights=sample_weights,
+        pairwise_preferred_action_ids=_opt_ids("pairwise_preferred_action_ids"),
+        pairwise_avoided_action_ids=_opt_ids("pairwise_avoided_action_ids"),
+        pairwise_weights=_opt_f32("pairwise_weights"),
+        pairwise_reward_delta_targets=_opt_f32("pairwise_reward_delta_targets"),
+    )
+
+
 @dataclass
 class ArrayReplayBuffer:
     """Replay buffer backed by contiguous NumPy arrays instead of Transition objects."""
@@ -132,82 +215,7 @@ class ArrayReplayBuffer:
         rng = np.random.default_rng(seed)
         positions = rng.choice(len(self), size=batch_size, replace=False)
         indices = self.indices[positions]
-        seats = self.arrays["seats"][indices].astype(np.int64, copy=False)
-
-        if self.reward_shaping == "placement":
-            full_terminal = self.arrays["terminal_rewards"][indices].astype(np.float32, copy=False)
-            shaped = placement_shaped_returns(full_terminal, self.placement_values)
-            returns = shaped[np.arange(indices.shape[0]), seats].astype(np.float32, copy=False)
-        else:
-            returns = self.arrays["terminal_rewards"][indices, seats].astype(np.float32, copy=False)
-        steps_to_done = (
-            self.arrays["steps_to_done"][indices].astype(np.int32, copy=False)
-            if "steps_to_done" in self.arrays
-            else np.zeros(batch_size, dtype=np.int32)
-        )
-        rewards = (
-            self.arrays["rewards"][indices, seats].astype(np.float32, copy=False)
-            if "rewards" in self.arrays
-            else np.zeros(batch_size, dtype=np.float32)
-        )
-        dones = (
-            np.logical_or(
-                self.arrays["terminated"][indices],
-                self.arrays["truncated"][indices],
-            ).astype(np.float32)
-            if "terminated" in self.arrays and "truncated" in self.arrays
-            else np.zeros(batch_size, dtype=np.float32)
-        )
-        sample_weights = (
-            self.arrays["sample_weights"][indices].astype(np.float32, copy=False)
-            if "sample_weights" in self.arrays
-            else np.ones(batch_size, dtype=np.float32)
-        )
-        pairwise_preferred_action_ids = (
-            self.arrays["pairwise_preferred_action_ids"][indices].astype(np.int64, copy=False)
-            if "pairwise_preferred_action_ids" in self.arrays
-            else np.full(batch_size, -1, dtype=np.int64)
-        )
-        pairwise_avoided_action_ids = (
-            self.arrays["pairwise_avoided_action_ids"][indices].astype(np.int64, copy=False)
-            if "pairwise_avoided_action_ids" in self.arrays
-            else np.full(batch_size, -1, dtype=np.int64)
-        )
-        pairwise_weights = (
-            self.arrays["pairwise_weights"][indices].astype(np.float32, copy=False)
-            if "pairwise_weights" in self.arrays
-            else np.zeros(batch_size, dtype=np.float32)
-        )
-        pairwise_reward_delta_targets = (
-            self.arrays["pairwise_reward_delta_targets"][indices].astype(np.float32, copy=False)
-            if "pairwise_reward_delta_targets" in self.arrays
-            else np.zeros(batch_size, dtype=np.float32)
-        )
-
-        return TrainBatch(
-            planes=self.arrays["planes"][indices].astype(np.float32, copy=False),
-            scalars=self.arrays["scalars"][indices].astype(np.float32, copy=False),
-            action_mask=self.arrays["action_mask"][indices].astype(np.int8, copy=False),
-            action_ids=self.arrays["action_ids"][indices].astype(np.int64, copy=False),
-            returns=returns,
-            steps_to_done=steps_to_done,
-            next_planes=self.arrays["next_planes"][indices].astype(np.float32, copy=False)
-            if "next_planes" in self.arrays
-            else np.empty((batch_size, 0), dtype=np.float32),
-            next_scalars=self.arrays["next_scalars"][indices].astype(np.float32, copy=False)
-            if "next_scalars" in self.arrays
-            else np.empty((batch_size, 0), dtype=np.float32),
-            next_action_mask=self.arrays["next_action_mask"][indices].astype(np.int8, copy=False)
-            if "next_action_mask" in self.arrays
-            else np.empty((batch_size, 0), dtype=np.int8),
-            rewards=rewards,
-            dones=dones,
-            sample_weights=sample_weights,
-            pairwise_preferred_action_ids=pairwise_preferred_action_ids,
-            pairwise_avoided_action_ids=pairwise_avoided_action_ids,
-            pairwise_weights=pairwise_weights,
-            pairwise_reward_delta_targets=pairwise_reward_delta_targets,
-        )
+        return train_batch_from_arrays(self.arrays, indices, self.reward_shaping, self.placement_values)
 
 
 @dataclass

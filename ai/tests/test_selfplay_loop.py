@@ -337,3 +337,33 @@ def test_cli_runs_loop_on_mock_bridge(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     cli.main()
     assert (tmp_path / "run" / "ledger.json").exists()
+
+
+def test_run_loop_streaming_training(tmp_path: Path):
+    env, model_cfg = _tiny_env_model()
+    init = tmp_path / "init.pt"
+    save_checkpoint(init, PolicyValueNet(env, model_cfg))
+
+    cfg = LoopConfig(
+        run_dir=tmp_path / "run",
+        fixed_init=str(init),
+        base_data=[],
+        initial_best=str(init),
+        iterations=1,
+        episodes_per_iter=3,
+        screen_seeds=2,
+        confirm_seeds=2,
+        epochs=1,
+        batch_size=4,
+        match_mode="classic",
+        device="cpu",
+        bridge_kind="mock",
+        max_steps_per_episode=None,
+        seat_policy_template=["0=random", "1=random", "2=random", "3=random"],
+        stream_training=True,
+        stream_shuffle_buffer=8,
+        stream_workers=0,
+    )
+    ledger = run_loop(cfg, env, model_cfg)
+    assert ledger.iteration == 1
+    assert (cfg.run_dir / "ledger.json").exists()

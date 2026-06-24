@@ -160,3 +160,33 @@ def test_object_replay_buffer_placement_shaping() -> None:
     shaped.append(transition)
     # seat 0 is second best (1.1 belongs to seat 1) -> placement value 1/3
     assert abs(float(shaped.sample(1, seed=0).returns[0]) - 1.0 / 3.0) < 1e-6
+
+
+def test_train_batch_from_arrays_matches_indices() -> None:
+    from fh_mahjong_ai.buffer import train_batch_from_arrays
+
+    arrays = {
+        "seats": np.asarray([0, 1], dtype=np.int64),
+        "planes": np.zeros((2, 39, 42, 1), dtype=np.float32),
+        "scalars": np.zeros((2, 58), dtype=np.float32),
+        "action_mask": np.ones((2, 204), dtype=np.int8),
+        "action_ids": np.asarray([3, 7], dtype=np.int64),
+        "steps_to_done": np.asarray([1, 0], dtype=np.int32),
+        "terminal_rewards": np.asarray([[1.0, -1.0, 0.0, 0.0], [0.2, 0.8, -0.5, -0.5]], dtype=np.float32),
+        "rewards": np.zeros((2, 4), dtype=np.float32),
+        "terminated": np.asarray([False, True], dtype=np.bool_),
+        "truncated": np.asarray([False, False], dtype=np.bool_),
+        "next_planes": np.zeros((2, 39, 42, 1), dtype=np.float32),
+        "next_scalars": np.zeros((2, 58), dtype=np.float32),
+        "next_action_mask": np.ones((2, 204), dtype=np.int8),
+        "sample_weights": np.asarray([1.0, 2.0], dtype=np.float32),
+    }
+    batch = train_batch_from_arrays(arrays, np.asarray([0, 1]), reward_shaping="raw")
+    assert batch.action_ids.tolist() == [3, 7]
+    np.testing.assert_allclose(batch.returns, [1.0, 0.8], rtol=1e-6)  # terminal_rewards[i, seat_i]
+    assert batch.dones.tolist() == [0.0, 1.0]
+    assert batch.sample_weights.tolist() == [1.0, 2.0]
+
+    shaped = train_batch_from_arrays(arrays, np.asarray([0, 1]), reward_shaping="placement")
+    # row0 seat0 best -> 1.0 ; row1 seat1 best -> 1.0
+    np.testing.assert_allclose(shaped.returns, [1.0, 1.0], rtol=1e-6)
