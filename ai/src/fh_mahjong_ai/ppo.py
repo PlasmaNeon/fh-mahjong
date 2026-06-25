@@ -20,6 +20,7 @@ class PPOConfig:
     minibatch_size: int = 256
     lr: float = 2e-5
     max_grad_norm: float = 1.0
+    normalize_advantages: bool = True
     sample_temperature: float = 1.0
     eval_interval: int = 5
     eval_seeds: int = 80
@@ -75,3 +76,59 @@ def compute_gae(
         advantages[t] = last_adv
     returns = advantages + values
     return advantages, returns
+
+
+def ppo_update(
+    model,
+    optimizer,
+    batch: RolloutBatch,
+    advantages: np.ndarray,
+    returns: np.ndarray,
+    config: PPOConfig,
+) -> dict:
+    device = config.device
+    n = len(batch)
+    planes = torch.from_numpy(np.asarray(batch.planes, dtype=np.float32)).to(device)
+    scalars = torch.from_numpy(np.asarray(batch.scalars, dtype=np.float32)).to(device)
+    action_mask = torch.from_numpy(np.asarray(batch.action_mask, dtype=np.int8)).to(device)
+    actions = torch.from_numpy(np.asarray(batch.actions, dtype=np.int64)).to(device)
+    old_logprobs = torch.from_numpy(np.asarray(batch.old_logprobs, dtype=np.float32)).to(device)
+    adv_t = torch.from_numpy(np.asarray(advantages, dtype=np.float32)).to(device)
+    ret_t = torch.from_numpy(np.asarray(returns, dtype=np.float32)).to(device)
+    if config.normalize_advantages:
+        adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
+
+    last = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "approx_kl": 0.0, "clip_fraction": 0.0}
+    model.train()
+    for _ in range(config.ppo_epochs):
+        perm = torch.randperm(n, device=device)
+        for start in range(0, n, config.minibatch_size):
+            idx = perm[start : start + config.minibatch_size]
+            masked_logits, value = model(planes[idx], scalars[idx], action_mask[idx])
+            dist = masked_policy_distribution(masked_logits)
+            new_logprobs = dist.log_prob(actions[idx])
+            ratio = torch.exp(new_logprobs - old_logprobs[idx])
+            mb_adv = adv_t[idx]
+            surr1 = ratio * mb_adv
+            surr2 = torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * mb_adv
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = torch.nn.functional.mse_loss(value, ret_t[idx])
+            entropy = dist.entropy().mean()
+            loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
+
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            optimizer.step()
+
+            with torch.no_grad():
+                approx_kl = (old_logprobs[idx] - new_logprobs).mean()
+                clip_fraction = (torch.abs(ratio - 1.0) > config.clip_eps).float().mean()
+            last = {
+                "policy_loss": float(policy_loss.item()),
+                "value_loss": float(value_loss.item()),
+                "entropy": float(entropy.item()),
+                "approx_kl": float(approx_kl.item()),
+                "clip_fraction": float(clip_fraction.item()),
+            }
+    return last
