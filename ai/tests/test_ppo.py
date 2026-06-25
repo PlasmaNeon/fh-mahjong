@@ -32,3 +32,23 @@ def test_masked_distribution_single_legal_action_has_zero_entropy():
     dist = masked_policy_distribution(masked_logits)
     assert dist.entropy().item() == pytest.approx(0.0, abs=1e-5)
     assert dist.probs[0, 1].item() == pytest.approx(1.0, abs=1e-6)
+
+
+from fh_mahjong_ai.ppo import compute_gae
+
+
+def test_gae_lambda1_gamma1_single_match_is_monte_carlo():
+    rewards = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    values = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    dones = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    adv, ret = compute_gae(rewards, values, dones, gamma=1.0, gae_lambda=1.0)
+    np.testing.assert_allclose(ret, [6.0, 5.0, 3.0], rtol=1e-6)
+    np.testing.assert_allclose(adv, [6.0, 5.0, 3.0], rtol=1e-6)
+
+
+def test_gae_resets_at_match_boundary():
+    rewards = np.array([1.0, 5.0], dtype=np.float32)
+    values = np.array([0.0, 0.0], dtype=np.float32)
+    dones = np.array([1.0, 1.0], dtype=np.float32)
+    adv, ret = compute_gae(rewards, values, dones, gamma=1.0, gae_lambda=1.0)
+    np.testing.assert_allclose(ret, [1.0, 5.0], rtol=1e-6)

@@ -49,3 +49,29 @@ def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributio
     illegal actions by PolicyValueNet.forward, so illegal probability is ~0 and
     entropy stays finite."""
     return torch.distributions.Categorical(logits=masked_logits)
+
+
+def compute_gae(
+    rewards: np.ndarray,
+    values: np.ndarray,
+    dones: np.ndarray,
+    gamma: float,
+    gae_lambda: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Generalized Advantage Estimation over a flat, time-ordered batch where
+    `dones[t]==1` marks the final step of a match. Boundaries reset both the value
+    bootstrap and the advantage accumulation via the (1-done) factor."""
+    rewards = np.asarray(rewards, dtype=np.float32)
+    values = np.asarray(values, dtype=np.float32)
+    dones = np.asarray(dones, dtype=np.float32)
+    n = rewards.shape[0]
+    advantages = np.zeros(n, dtype=np.float32)
+    last_adv = 0.0
+    for t in range(n - 1, -1, -1):
+        next_nonterminal = 1.0 - dones[t]
+        next_value = values[t + 1] if (t + 1 < n) else 0.0
+        delta = rewards[t] + gamma * next_value * next_nonterminal - values[t]
+        last_adv = delta + gamma * gae_lambda * next_nonterminal * last_adv
+        advantages[t] = last_adv
+    returns = advantages + values
+    return advantages, returns
