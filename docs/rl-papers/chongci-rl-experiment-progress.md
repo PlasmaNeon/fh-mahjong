@@ -15581,6 +15581,74 @@ follow-up so the loop can run far more self-play per iteration, then re-run with
 more iterations; the oracle-auxiliary direction remains the higher-upside
 alternative. The loop itself (PR #85) is sound and ready to scale.
 
+### Experiment: Streamed Big-Batch Loop (memory fixed; more data falsified)
+
+Run:
+`/root/fh-mahjong-runs/stream-loop-20260623-231641`
+
+Question:
+Now that training memory is no longer the wall (streaming replay, PR #88 + the
+row-copy leak fix PR #89), does 1500 episodes/iter let the self-play loop beat the
+promoted anchor? This is the clean re-test the earlier OOM/crash prevented.
+
+Setup:
+`fh-mj-selfplay-loop --stream-training --stream-shuffle-buffer 50000
+--stream-workers 2`, 2 iterations, 1500 episodes/iter, warm-start fixed-init =
+promoted anchor, base-data = anchor's original mix, gate 60-seed screen / 160-seed
+confirm, patience 2, Chongci, cuda.
+
+Result:
+Finished cleanly (rc=0). No candidate promoted.
+
+| iter | decision | candidate screen mean |
+| --- | --- | ---: |
+| anchor (baseline) | — | ~-0.067 screen / -0.0902 confirm |
+| 1 | rejected_screen | -0.4629 |
+| 2 | rejected_screen | -0.5401 |
+
+Two findings:
+
+1. Streaming training works. Both iterations trained the full accumulated dataset
+   (~409 K base + ~1.85 M new transitions per iter) to completion with RAM steady
+   at ~10 GB and zero crashes — versus the prior non-streaming run (OOM rc=137)
+   and the first streamed run (DataLoader-worker leak, fixed in PR #89 by copying
+   rows so buffered samples don't retain whole-shard views). Streaming + the
+   memory fix are validated end to end on real 1500-episode data.
+
+2. More data does NOT beat the anchor — it makes the policy worse, and worse with
+   more accumulated data (iter 1 screen -0.4629, iter 2 -0.5401, both rejected at
+   the cheap screen versus the anchor's ~-0.067). The "the loop only failed
+   because each iteration had too few episodes" hypothesis is decisively
+   falsified.
+
+Decision:
+rejected (no promotion); hypothesis falsified.
+
+Interpretation and consequence for parallel generation:
+This is the clean answer the streaming detour was built to get, and it is
+negative. Likely mechanism: the loop's self-play data composition (anchor in 2
+seats + one random seat + heuristic) is lower quality than the anchor's actual
+training mix (specific teacher policies, no random seat), so fresh IQL on a
+growing pile of it drifts the policy away from the well-tuned anchor — more data =
+more drift = worse. Combined with the earlier negatives (reward shaping,
+warm-start fine-tuning, 300-ep loop), the picture is consistent: offline IQL
+retraining at this data composition/recipe cannot beat the anchor.
+
+Critically, this falsifies the premise of the shelved parallel-generation spec
+(`docs/superpowers/specs/2026-06-22-parallel-selfplay-generation-design.md`):
+generating MORE self-play data faster is pointless when more data degrades the
+policy. Do NOT build parallel generation. The binding issue is data QUALITY /
+training recipe, not data VOLUME or generation speed.
+
+Recommended next directions (none is "more of the same"):
+- Stop and accept the anchor as the current ceiling; the loop/streaming/eval
+  tooling is built and the negative space is well mapped.
+- If pursuing strength, change the DATA RECIPE, not the volume: reproduce the
+  anchor's real training composition (teacher policies instead of a random seat),
+  or curate/filter self-play data quality, before any further scaling.
+- Or pivot to the oracle-auxiliary research direction, which does not depend on
+  growing the offline dataset.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
