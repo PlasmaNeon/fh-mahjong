@@ -6,6 +6,13 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 
+from .bridge import build_bridge
+from .config import EnvConfig
+from .env import MahjongEnv
+from .types import Observation
+
+LEARNING_SEAT = 0
+
 
 @dataclass
 class PPOConfig:
@@ -132,3 +139,111 @@ def ppo_update(
                 "clip_fraction": float(clip_fraction.item()),
             }
     return last
+
+
+def _obs_to_tensors(obs: Observation, device: str):
+    planes = torch.from_numpy(np.asarray(obs.planes, dtype=np.float32)).unsqueeze(0).to(device)
+    scalars = torch.from_numpy(np.asarray(obs.scalars, dtype=np.float32)).unsqueeze(0).to(device)
+    mask = torch.from_numpy(np.asarray(obs.action_mask, dtype=np.int8)).unsqueeze(0).to(device)
+    return planes, scalars, mask
+
+
+def _seat_reward_from_info(info: dict, seat: int) -> float:
+    """Per-hand score delta for `seat` when a hand resolves this step, else 0.0.
+    Reads the round/terminal outcome payouts emitted in StepResult.info."""
+    outcome = info.get("round_outcome") or info.get("terminal_outcome")
+    if not isinstance(outcome, dict):
+        return 0.0
+    payouts = outcome.get("payouts")
+    if isinstance(payouts, (list, tuple)) and len(payouts) > seat:
+        return float(payouts[seat])
+    return 0.0
+
+
+def collect_rollouts(
+    env_config: EnvConfig,
+    policy_model,
+    frozen_anchor,
+    config: PPOConfig,
+    base_seed: int,
+) -> RolloutBatch:
+    """Play `matches_per_iter` full matches; record on-policy experience for the
+    learning seat (samples from the masked policy), with the frozen anchor in the
+    other seats. Per-hand score deltas become rewards; done at match end."""
+    device = config.device
+    cfg = EnvConfig(
+        action_space_size=env_config.action_space_size,
+        plane_shape=env_config.plane_shape,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        learning_seats=(0, 1, 2, 3),
+        auto_play_heuristics=False,
+        max_steps_per_episode=config.max_steps_per_episode,
+        match_mode=config.match_mode,
+    )
+    bridge = build_bridge(cfg)
+    env = MahjongEnv(cfg, bridge=bridge)
+    policy_model.eval()
+    frozen_anchor.eval()
+
+    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
+    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
+
+    try:
+        for m in range(config.matches_per_iter):
+            obs = env.reset(seed=base_seed + m)
+            reset_result = env.last_reset_result
+            if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                continue
+            last_learn_index: Optional[int] = None
+            while True:
+                seat = int(obs.seat)
+                planes, scalars, mask = _obs_to_tensors(obs, device)
+                if seat == LEARNING_SEAT:
+                    with torch.no_grad():
+                        logits, value = policy_model(planes, scalars, mask)
+                        logits = logits / max(config.sample_temperature, 1e-6)
+                        dist = masked_policy_distribution(logits)
+                        action = int(dist.sample()[0].item())
+                        logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                        val = float(value[0].item())
+                    planes_l.append(np.asarray(obs.planes, dtype=np.float32))
+                    scalars_l.append(np.asarray(obs.scalars, dtype=np.float32))
+                    mask_l.append(np.asarray(obs.action_mask, dtype=np.int8))
+                    actions_l.append(action)
+                    logprobs_l.append(logprob)
+                    values_l.append(val)
+                    rewards_l.append(0.0)
+                    dones_l.append(0.0)
+                    last_learn_index = len(actions_l) - 1
+                else:
+                    with torch.no_grad():
+                        logits, _ = frozen_anchor(planes, scalars, mask)
+                        action = int(torch.argmax(logits, dim=1)[0].item())
+                step = env.step(action)
+                if last_learn_index is not None:
+                    rewards_l[last_learn_index] += _seat_reward_from_info(step.info, LEARNING_SEAT)
+                if step.terminated or step.truncated:
+                    if last_learn_index is not None:
+                        dones_l[last_learn_index] = 1.0
+                    break
+                obs = step.observation
+    finally:
+        close = getattr(bridge, "close", None)
+        if callable(close):
+            close()
+
+    if not actions_l:
+        raise RuntimeError("collect_rollouts produced no learning-seat decisions")
+
+    return RolloutBatch(
+        planes=np.stack(planes_l).astype(np.float32),
+        scalars=np.stack(scalars_l).astype(np.float32),
+        action_mask=np.stack(mask_l).astype(np.int8),
+        actions=np.asarray(actions_l, dtype=np.int64),
+        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
+        values=np.asarray(values_l, dtype=np.float32),
+        rewards=np.asarray(rewards_l, dtype=np.float32),
+        dones=np.asarray(dones_l, dtype=np.float32),
+    )

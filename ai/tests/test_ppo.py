@@ -119,3 +119,24 @@ def test_ppo_update_increases_prob_of_positive_advantage_action():
                           torch.ones(1, env.action_space_size, dtype=torch.int8))
         new_lp = float(masked_policy_distribution(logits).log_prob(torch.tensor([2]))[0])
     assert new_lp > old_lp
+
+
+from fh_mahjong_ai.ppo import collect_rollouts
+
+
+def test_collect_rollouts_mock_shapes_and_done_at_match_end():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=123)
+    n = len(batch)
+    assert n > 0
+    for arr in (batch.planes, batch.scalars, batch.action_mask, batch.actions,
+                batch.old_logprobs, batch.values, batch.rewards, batch.dones):
+        assert arr.shape[0] == n
+    assert batch.dones.sum() >= 1
+    assert set(np.unique(batch.dones)).issubset({0.0, 1.0})
