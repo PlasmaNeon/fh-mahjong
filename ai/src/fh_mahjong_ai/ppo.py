@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
 
 from .bridge import build_bridge
-from .config import EnvConfig
+from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
+from .evaluate import evaluate_duplicate_seats
+from .model import PolicyValueNet
+from .storage import load_checkpoint, save_checkpoint
 from .types import Observation
 
 LEARNING_SEAT = 0
@@ -247,3 +251,63 @@ def collect_rollouts(
         rewards=np.asarray(rewards_l, dtype=np.float32),
         dones=np.asarray(dones_l, dtype=np.float32),
     )
+
+
+def train_ppo(
+    env_config: EnvConfig,
+    model_config: ModelConfig,
+    init_checkpoint: Path,
+    checkpoint_dir: Path,
+    config: PPOConfig,
+    base_seed: int = 0,
+    run_eval: bool = True,
+) -> List[dict]:
+    device = config.device
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    model = PolicyValueNet(env_config, model_config).to(device)
+    load_checkpoint(Path(init_checkpoint), model)
+    frozen = PolicyValueNet(env_config, model_config).to(device)
+    load_checkpoint(Path(init_checkpoint), frozen)
+    frozen.eval()
+    for p in frozen.parameters():
+        p.requires_grad_(False)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    history: List[dict] = []
+
+    for iteration in range(1, config.iterations + 1):
+        batch = collect_rollouts(
+            env_config, model, frozen, config,
+            base_seed=base_seed + iteration * config.matches_per_iter,
+        )
+        advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
+        metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+        metrics["iteration"] = iteration
+        metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+        metrics["steps"] = len(batch)
+
+        if run_eval and iteration % config.eval_interval == 0:
+            seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
+            try:
+                report = evaluate_duplicate_seats(
+                    model=model, seeds=seeds, bridge_kind=env_config.bridge_kind,
+                    bridge_library_path=env_config.bridge_library_path, device=device,
+                    large_loss_threshold=-1.0, match_mode=config.match_mode,
+                    max_steps_per_episode=config.max_steps_per_episode,
+                )
+                metrics["eval_mean_reward"] = report["mean_reward"]
+                metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
+                metrics["eval_large_loss_rate"] = report["large_loss_rate"]
+            except Exception as exc:  # eval must not abort training
+                metrics["eval_error"] = str(exc)[:200]
+
+        save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+        history.append(metrics)
+        print(
+            f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+            f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+            f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
+        )
+    return history
