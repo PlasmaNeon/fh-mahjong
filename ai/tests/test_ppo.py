@@ -189,3 +189,13 @@ def test_cli_train_ppo_mock(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     cli.main()
     assert (tmp_path / "ppo" / "iter_001.pt").exists()
+
+
+from fh_mahjong_ai.ppo import _seat_step_reward
+
+
+def test_seat_step_reward_reads_per_seat_vector():
+    # env emits a per-seat reward vector; learning seat 0 picks index 0
+    assert _seat_step_reward(np.array([-1.4, 0.1, 0.1, 1.2], dtype=np.float32), 0) == pytest.approx(-1.4, abs=1e-6)
+    assert _seat_step_reward([0.0, 0.0, 0.0, 0.0], 0) == 0.0
+    assert _seat_step_reward(np.zeros(0, dtype=np.float32), 0) == 0.0  # degenerate -> 0
