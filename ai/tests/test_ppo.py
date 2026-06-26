@@ -4,7 +4,33 @@ import numpy as np
 import pytest
 import torch
 
+from fh_mahjong_ai.evaluate import episode_reward_vector
 from fh_mahjong_ai.ppo import PPOConfig, masked_policy_distribution
+from fh_mahjong_ai.types import Observation, Transition
+
+
+def _dummy_transition(rewards):
+    obs = Observation(seat=0, planes=np.zeros((1, 1, 1), dtype=np.float32),
+                      scalars=np.zeros(1, dtype=np.float32),
+                      action_mask=np.ones(1, dtype=np.int8), metadata={})
+    return Transition(observation=obs, action_id=0,
+                      rewards=np.asarray(rewards, dtype=np.float32),
+                      next_observation=obs, terminated=False, truncated=False, info={})
+
+
+def test_episode_reward_vector_sums_per_step_rewards():
+    episode = [
+        _dummy_transition([0.0, 0.0, 0.0, 0.0]),
+        _dummy_transition([1.5, -0.5, 0.0, -1.0]),
+        _dummy_transition([0.5, 0.0, -0.5, 0.0]),
+    ]
+    total = episode_reward_vector(episode, fallback_rewards=np.zeros(4, dtype=np.float32))
+    np.testing.assert_allclose(total, [2.0, -0.5, -0.5, -1.0], rtol=1e-6)
+
+
+def test_episode_reward_vector_empty_uses_fallback():
+    total = episode_reward_vector([], fallback_rewards=np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32))
+    np.testing.assert_allclose(total, [0.1, 0.2, 0.3, 0.4], rtol=1e-6)
 
 
 def test_ppo_config_defaults():

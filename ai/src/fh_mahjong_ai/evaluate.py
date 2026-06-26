@@ -16,6 +16,21 @@ from .policies import TorchGreedyPolicy
 from .types import Transition
 
 
+def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4) -> np.ndarray:
+    """Total per-seat reward summed over an episode's transitions. With dense
+    per-step rewards this recovers the match outcome; with sparse terminal-only
+    rewards it equals the terminal reward. Empty episodes (reset-terminated) fall
+    back to the provided terminal rewards."""
+    if not episode:
+        return np.asarray(fallback_rewards, dtype=np.float32)
+    total = np.zeros(num_seats, dtype=np.float32)
+    for t in episode:
+        r = np.asarray(t.rewards, dtype=np.float32)
+        n = min(num_seats, r.shape[-1]) if r.ndim >= 1 else 0
+        total[:n] += r[:n]
+    return total
+
+
 def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
     values = [float(reward) for reward in rewards]
     if not values:
@@ -465,7 +480,7 @@ def evaluate_policy_online(
         truncated: bool = False,
     ) -> None:
         nonlocal wins, large_losses
-        reward = float(rewards[learning_seat])
+        reward = float(episode_reward_vector(episode, rewards)[learning_seat])
         seat_rewards.append(reward)
         if reward > 0:
             wins += 1
