@@ -17,6 +17,7 @@ type Env struct {
 	learningSeats map[uint32]bool
 	decisionCount uint64
 	baseSeed      uint64
+	lastScores    []int32
 }
 
 func New(config *pb.EnvConfig) *Env {
@@ -49,6 +50,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 	if err := e.game.Start(); err != nil {
 		return nil, err
 	}
+	e.lastScores = snapshotScores(e.game.State)
 	stepResponse, err := e.advanceToDecision()
 	if err != nil {
 		return nil, err
@@ -319,7 +321,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
 			return &pb.EnvStepResponse{
 				Observation: emptyObservation(e.game.State, e.decisionCount),
-				Rewards:     matchEndRewards(e.game.State),
+				Rewards:     e.scoreDeltaReward(),
 				Terminated:  true,
 			}, nil
 		}
@@ -342,7 +344,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 		if e.config.MaxDecisions > 0 && e.decisionCount >= uint64(e.config.MaxDecisions) {
 			return &pb.EnvStepResponse{
 				Observation: emptyObservation(e.game.State, e.decisionCount),
-				Rewards:     make([]float32, 4),
+				Rewards:     e.scoreDeltaReward(),
 				Truncated:   true,
 			}, nil
 		}
@@ -354,7 +356,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 			}
 			return &pb.EnvStepResponse{
 				Observation: observation,
-				Rewards:     make([]float32, 4),
+				Rewards:     e.scoreDeltaReward(),
 			}, nil
 		}
 
@@ -598,6 +600,45 @@ func roundRewards(state *pb.GameState) []float32 {
 		}
 	}
 	return rewards
+}
+
+func snapshotScores(state *pb.GameState) []int32 {
+	scores := make([]int32, 4)
+	if state == nil {
+		return scores
+	}
+	for i := 0; i < 4 && i < len(state.Players); i++ {
+		if state.Players[i] != nil {
+			scores[i] = state.Players[i].Score
+		}
+	}
+	return scores
+}
+
+func scoreDelta(cur, prev []int32) []float32 {
+	delta := make([]float32, 4)
+	for i := range delta {
+		c, p := int32(0), int32(0)
+		if i < len(cur) {
+			c = cur[i]
+		}
+		if i < len(prev) {
+			p = prev[i]
+		}
+		delta[i] = float32(c-p) / 1000.0
+	}
+	return delta
+}
+
+// scoreDeltaReward returns the per-seat running-score change since the previous
+// decision and advances the snapshot. For classic mode (Score stays 0) this is
+// always zeros; for Chongci it is the dense per-hand reward and telescopes to the
+// match net-change.
+func (e *Env) scoreDeltaReward() []float32 {
+	cur := snapshotScores(e.game.State)
+	delta := scoreDelta(cur, e.lastScores)
+	e.lastScores = cur
+	return delta
 }
 
 func matchEndRewards(state *pb.GameState) []float32 {
