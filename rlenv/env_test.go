@@ -340,6 +340,47 @@ func TestGenerateHeuristicTrajectoryChongciReachesMatchEnd(t *testing.T) {
 	}
 }
 
+func TestGenerateHeuristicTrajectoryChongciTerminalRewardsAreMatchNet(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 777,
+		Config: &pb.EnvConfig{
+			LearningSeats:      []uint32{0, 1, 2, 3},
+			AutoPlayHeuristics: false,
+			MaxDecisions:       8192,
+			MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("expected samples")
+	}
+
+	// Terminal rewards must sum to ~0 across seats (zero-sum net-change) and be
+	// consistent across all samples — the signature of match-net, not a single
+	// hand's per-seat delta.
+	terminal := dataset.Samples[len(dataset.Samples)-1].TerminalRewards
+	if len(terminal) != 4 {
+		t.Fatalf("expected 4 terminal rewards, got %v", terminal)
+	}
+	var total float32
+	for _, r := range terminal {
+		total += r
+	}
+	if math.Abs(float64(total)) > 1e-3 {
+		t.Fatalf("chongci net-change terminal rewards should sum to ~0, got %v (sum %.6f)", terminal, total)
+	}
+	for _, s := range dataset.Samples {
+		if !almostEqualSlices(s.TerminalRewards, terminal) {
+			t.Fatalf("all samples must share the match-net terminal rewards; got %v vs %v", s.TerminalRewards, terminal)
+		}
+	}
+}
+
 func TestChongciStepEmitsDensePerHandReward(t *testing.T) {
 	env := New(&pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},

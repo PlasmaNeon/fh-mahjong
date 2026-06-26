@@ -304,6 +304,13 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 			finalRewards = append([]float32(nil), stepResponse.Rewards...)
 		}
 
+		// Dense per-step rewards now flow through Step; terminal rewards used by
+		// the offline pipeline must remain the match net-change.
+		if env.game.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI &&
+			env.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			finalRewards = matchEndRewards(env.game.State)
+		}
+
 		for _, sample := range episodeSamples {
 			sample.TerminalRewards = append([]float32(nil), finalRewards...)
 			if sample.TerminalOutcome == nil {
