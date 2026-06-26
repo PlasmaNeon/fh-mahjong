@@ -152,15 +152,15 @@ def _obs_to_tensors(obs: Observation, device: str):
     return planes, scalars, mask
 
 
-def _seat_reward_from_info(info: dict, seat: int) -> float:
-    """Per-hand score delta for `seat` when a hand resolves this step, else 0.0.
-    Reads the round/terminal outcome payouts emitted in StepResult.info."""
-    outcome = info.get("round_outcome") or info.get("terminal_outcome")
-    if not isinstance(outcome, dict):
-        return 0.0
-    payouts = outcome.get("payouts")
-    if isinstance(payouts, (list, tuple)) and len(payouts) > seat:
-        return float(payouts[seat])
+def _seat_step_reward(step_rewards, seat: int) -> float:
+    """The env's immediate per-seat reward for this step. For Chongci this is 0
+    until the match ends, where it carries the final net score change / 1000 for
+    each seat; for classic it is the terminal round payout. (The env does not
+    expose per-hand intermediate deltas, so this is a sparse terminal reward; the
+    warm-started value critic + GAE propagate it back over the match.)"""
+    arr = np.asarray(step_rewards, dtype=np.float32)
+    if arr.ndim >= 1 and arr.shape[-1] > seat:
+        return float(arr[seat])
     return 0.0
 
 
@@ -227,7 +227,7 @@ def collect_rollouts(
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
                 if last_learn_index is not None:
-                    rewards_l[last_learn_index] += _seat_reward_from_info(step.info, LEARNING_SEAT)
+                    rewards_l[last_learn_index] += _seat_step_reward(step.rewards, LEARNING_SEAT)
                 if step.terminated or step.truncated:
                     if last_learn_index is not None:
                         dones_l[last_learn_index] = 1.0
