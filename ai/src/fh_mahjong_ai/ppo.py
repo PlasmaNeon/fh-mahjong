@@ -38,6 +38,7 @@ class PPOConfig:
     eval_start_seed: int = 870000
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
+    num_workers: int = 1
     device: str = "cpu"
 
 
@@ -298,37 +299,52 @@ def train_ppo(
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: List[dict] = []
 
-    for iteration in range(1, config.iterations + 1):
-        batch = collect_rollouts(
-            env_config, model, frozen, config,
-            base_seed=base_seed + iteration * config.matches_per_iter,
+    collector: Optional["ParallelRolloutCollector"] = None
+    if config.num_workers > 1:
+        from .parallel_rollouts import ParallelRolloutCollector
+        frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
+        collector = ParallelRolloutCollector(
+            env_config, model_config, frozen_state, config, config.num_workers,
         )
-        advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
-        metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
-        metrics["iteration"] = iteration
-        metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
-        metrics["steps"] = len(batch)
+        collector.start()
 
-        if run_eval and iteration % config.eval_interval == 0:
-            seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
-            try:
-                report = evaluate_duplicate_seats(
-                    model=model, seeds=seeds, bridge_kind=env_config.bridge_kind,
-                    bridge_library_path=env_config.bridge_library_path, device=device,
-                    large_loss_threshold=-1.0, match_mode=config.match_mode,
-                    max_steps_per_episode=config.max_steps_per_episode,
-                )
-                metrics["eval_mean_reward"] = report["mean_reward"]
-                metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
-                metrics["eval_large_loss_rate"] = report["large_loss_rate"]
-            except Exception as exc:  # eval must not abort training
-                metrics["eval_error"] = str(exc)[:200]
+    try:
+        for iteration in range(1, config.iterations + 1):
+            iter_seed = base_seed + iteration * config.matches_per_iter
+            if collector is not None:
+                learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                batch = collector.collect(learner_state, iter_seed, config.matches_per_iter)
+            else:
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
+            advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
+            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics["iteration"] = iteration
+            metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+            metrics["steps"] = len(batch)
 
-        save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
-        history.append(metrics)
-        print(
-            f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
-            f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
-            f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
-        )
+            if run_eval and iteration % config.eval_interval == 0:
+                seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
+                try:
+                    report = evaluate_duplicate_seats(
+                        model=model, seeds=seeds, bridge_kind=env_config.bridge_kind,
+                        bridge_library_path=env_config.bridge_library_path, device=device,
+                        large_loss_threshold=-1.0, match_mode=config.match_mode,
+                        max_steps_per_episode=config.max_steps_per_episode,
+                    )
+                    metrics["eval_mean_reward"] = report["mean_reward"]
+                    metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
+                    metrics["eval_large_loss_rate"] = report["large_loss_rate"]
+                except Exception as exc:  # eval must not abort training
+                    metrics["eval_error"] = str(exc)[:200]
+
+            save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+            history.append(metrics)
+            print(
+                f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+                f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
+            )
+    finally:
+        if collector is not None:
+            collector.close()
     return history
