@@ -148,6 +148,7 @@ def test_ppo_update_increases_prob_of_positive_advantage_action():
 
 
 from fh_mahjong_ai.ppo import collect_rollouts
+from fh_mahjong_ai.ppo import concat_rollout_batches
 
 
 def test_collect_rollouts_mock_shapes_and_done_at_match_end():
@@ -166,6 +167,37 @@ def test_collect_rollouts_mock_shapes_and_done_at_match_end():
         assert arr.shape[0] == n
     assert batch.dones.sum() >= 1
     assert set(np.unique(batch.dones)).issubset({0.0, 1.0})
+
+
+def test_collect_rollouts_is_reproducible_with_same_seed():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=4242)
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=4242)
+    assert len(a) == len(b)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+    np.testing.assert_array_equal(a.actions, b.actions)
+
+
+def test_concat_rollout_batches_preserves_rows_and_dones():
+    env = EnvConfig(action_space_size=4, plane_shape=(2, 3, 1), scalar_features=4)
+    b1 = _synthetic_batch(env, n=5)
+    b2 = _synthetic_batch(env, n=7)
+    b1.dones[-1] = 1.0
+    b2.dones[-1] = 1.0
+    merged = concat_rollout_batches([b1, b2])
+    assert len(merged) == 12
+    assert merged.planes.shape == (12, *env.plane_shape)
+    assert merged.dones.sum() == 2.0
+
+
+def test_concat_rollout_batches_raises_when_all_empty():
+    with pytest.raises(RuntimeError):
+        concat_rollout_batches([])
 
 
 from fh_mahjong_ai.ppo import train_ppo

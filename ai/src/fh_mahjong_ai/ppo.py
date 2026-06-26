@@ -56,6 +56,26 @@ class RolloutBatch:
         return int(self.actions.shape[0])
 
 
+def concat_rollout_batches(batches: List["RolloutBatch"]) -> "RolloutBatch":
+    """Concatenate per-worker rollout batches into one flat batch. Empty batches
+    are skipped; raises if there is nothing to concatenate. Each match is
+    self-contained (dones=1 at its final step), so GAE over the concatenation is
+    correct without any boundary fix-up."""
+    nonempty = [b for b in batches if len(b) > 0]
+    if not nonempty:
+        raise RuntimeError("concat_rollout_batches: no rollout data")
+    return RolloutBatch(
+        planes=np.concatenate([b.planes for b in nonempty], axis=0),
+        scalars=np.concatenate([b.scalars for b in nonempty], axis=0),
+        action_mask=np.concatenate([b.action_mask for b in nonempty], axis=0),
+        actions=np.concatenate([b.actions for b in nonempty], axis=0),
+        old_logprobs=np.concatenate([b.old_logprobs for b in nonempty], axis=0),
+        values=np.concatenate([b.values for b in nonempty], axis=0),
+        rewards=np.concatenate([b.rewards for b in nonempty], axis=0),
+        dones=np.concatenate([b.dones for b in nonempty], axis=0),
+    )
+
+
 def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributions.Categorical:
     """Categorical over actions; logits are already -inf-masked (finfo.min) for
     illegal actions by PolicyValueNet.forward, so illegal probability is ~0 and
@@ -197,6 +217,7 @@ def collect_rollouts(
     try:
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
+            torch.manual_seed(int(base_seed + m))
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
