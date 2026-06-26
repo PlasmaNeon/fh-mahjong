@@ -162,3 +162,30 @@ def test_train_ppo_e2e_mock_writes_checkpoint(tmp_path):
     assert len(metrics) == 2
     assert (tmp_path / "ppo" / "iter_002.pt").exists()
     assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+
+
+def test_cli_train_ppo_mock(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert (tmp_path / "ppo" / "iter_001.pt").exists()
