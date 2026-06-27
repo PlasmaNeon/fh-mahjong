@@ -674,6 +674,33 @@ def test_collect_rollouts_with_pool_is_deterministic():
     np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
 
 
+from fh_mahjong_ai.ppo import build_opponent_nets
+
+
+def test_build_opponent_nets_are_frozen():
+    env_cfg, mcfg = _small_env_model()
+    states = [PolicyValueNet(env_cfg, mcfg).state_dict() for _ in range(3)]
+    nets = build_opponent_nets(env_cfg, mcfg, states, device="cpu")
+    assert len(nets) == 3
+    assert all(not any(p.requires_grad for p in n.parameters()) for n in nets)
+
+
+def test_train_ppo_pool_grows_and_caps(tmp_path):
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    # snapshot every iter, cap at 3 (anchor + 2 snapshots)
+    cfg = PPOConfig(iterations=5, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64,
+                    device="cpu", pool_max_size=3, pool_snapshot_interval=1)
+    metrics = train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=5, run_eval=False)
+    sizes = [m["pool_size"] for m in metrics]
+    assert sizes[0] == 2          # anchor + first snapshot
+    assert max(sizes) == 3        # capped
+    assert sizes[-1] == 3
+
+
 def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monkeypatch):
     import sys
     from fh_mahjong_ai.scripts import train_ppo as cli

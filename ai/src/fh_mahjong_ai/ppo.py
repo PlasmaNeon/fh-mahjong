@@ -299,6 +299,21 @@ def collect_rollouts(
     )
 
 
+def build_opponent_nets(env_config, model_config, pool_states, device="cpu"):
+    """Build a frozen PolicyValueNet for each opponent state_dict in the pool.
+    Shared by the sequential trainer and the parallel workers so both construct
+    opponents identically."""
+    nets = []
+    for state in pool_states:
+        net = PolicyValueNet(env_config, model_config).to(device)
+        net.load_state_dict(state)
+        net.eval()
+        for p in net.parameters():
+            p.requires_grad_(False)
+        nets.append(net)
+    return nets
+
+
 def train_ppo(
     env_config: EnvConfig,
     model_config: ModelConfig,
@@ -326,11 +341,13 @@ def train_ppo(
     history_path = checkpoint_dir / HISTORY_FILENAME
     _write_history_atomic(history_path, history)
 
+    frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
+    pool_states: List[dict] = [frozen_state]  # index 0 = anchor, always kept
+
     collector: Optional["ParallelRolloutCollector"] = None
     try:
         if config.num_workers > 1:
             from .parallel_rollouts import ParallelRolloutCollector
-            frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
             collector = ParallelRolloutCollector(
                 env_config, model_config, frozen_state, config, config.num_workers,
             )
@@ -338,9 +355,19 @@ def train_ppo(
 
         for iteration in range(1, config.iterations + 1):
             iter_seed = base_seed + iteration * config.matches_per_iter
+
+            # Grow the opponent pool with a snapshot of the current learner.
+            if config.pool_max_size > 1 and iteration % config.pool_snapshot_interval == 0:
+                pool_states.append({k: v.detach().cpu() for k, v in model.state_dict().items()})
+                if len(pool_states) > config.pool_max_size:
+                    pool_states.pop(1)  # evict oldest snapshot; keep anchor at index 0
+
             if collector is not None:
                 learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
                 batch = collector.collect(learner_state, iter_seed, config.matches_per_iter)
+            elif config.pool_max_size > 1:
+                opponents = build_opponent_nets(env_config, model_config, pool_states, device)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents)
             else:
                 batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
@@ -348,6 +375,7 @@ def train_ppo(
             metrics["iteration"] = iteration
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
+            metrics["pool_size"] = len(pool_states)
 
             if run_eval and iteration % config.eval_interval == 0:
                 seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
