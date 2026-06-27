@@ -20,6 +20,10 @@ Replaced these previously-duplicated definitions:
 
 Rule: never re-inline `suit*100+value` or re-add a local `cloneTile`/`cloneAction`; use `tiles`.
 Note: the 42-plane index (`tileFaceIndex42`) stays in `rlenv` — it is observation-specific, not shared.
+Note: `rules/fh.go` intentionally keeps its OWN `tileToIndex` (the row above removed the
+`rules/shanten` one only). fh.go's version returns `0` (not `-1`) for flowers/unknown, and its
+callers index `counts[tileToIndex(t)]` WITHOUT a `>= 0` guard — so do NOT replace it with
+`tiles.Index34`, which returns `-1` and would index `counts[-1]` and panic.
 `core/` deliberately does NOT depend on `tiles` (it has no tile-key needs and must stay ruleset-agnostic).
 
 ## Frontend: `web/src/utils/tileModel.ts`
