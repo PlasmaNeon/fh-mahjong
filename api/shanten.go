@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules/shanten"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 type ShantenRequest struct {
@@ -55,18 +56,18 @@ func (s *Server) handleShanten(c *gin.Context) {
 
 	wildSet := make(map[uint32]bool)
 	if req.WildTile != nil {
-		wildSet[uint32(req.WildTile.Suit)*100+req.WildTile.Value] = true
+		wildSet[tiles.KeyOf(req.WildTile.Suit, req.WildTile.Value)] = true
 	}
 
 	// Build counts from hand
 	var counts [34]int
 	numWilds := 0
 	for _, t := range req.ClosedHand {
-		h := uint32(t.Suit)*100 + t.Value
+		h := tiles.KeyOf(t.Suit, t.Value)
 		if wildSet[h] {
 			numWilds++
 		} else {
-			idx := tileToShantenIndex(t.Suit, t.Value)
+			idx := tiles.Index34Of(t.Suit, t.Value)
 			if idx >= 0 {
 				counts[idx]++
 			}
@@ -79,11 +80,11 @@ func (s *Server) handleShanten(c *gin.Context) {
 		drawn := drawRandomTile(counts, numWilds, wildSet)
 		if drawn != nil {
 			drawnTile = drawn
-			h := uint32(drawn.Suit)*100 + drawn.Value
+			h := tiles.KeyOf(drawn.Suit, drawn.Value)
 			if wildSet[h] {
 				numWilds++
 			} else {
-				idx := tileToShantenIndex(drawn.Suit, drawn.Value)
+				idx := tiles.Index34Of(drawn.Suit, drawn.Value)
 				if idx >= 0 {
 					counts[idx]++
 				}
@@ -159,8 +160,8 @@ func drawRandomTile(counts [34]int, numWilds int, wildSet map[uint32]bool) *Calc
 	var pool []candidate
 
 	for idx := 0; idx < 34; idx++ {
-		suit, value := shantenIndexToTile(idx)
-		h := uint32(suit)*100 + value
+		suit, value := tiles.FromIndex34(idx)
+		h := tiles.KeyOf(suit, value)
 		var remaining int
 		if wildSet[h] {
 			remaining = 4 - numWilds
@@ -178,31 +179,4 @@ func drawRandomTile(counts [34]int, numWilds int, wildSet map[uint32]bool) *Calc
 
 	pick := pool[rand.Intn(len(pool))]
 	return &CalcTileInput{Suit: pick.suit, Value: pick.value}
-}
-func tileToShantenIndex(suit pb.Suit, value uint32) int {
-	v := int(value) - 1
-	switch suit {
-	case pb.Suit_SUIT_MAN:
-		return v
-	case pb.Suit_SUIT_PIN:
-		return 9 + v
-	case pb.Suit_SUIT_SOU:
-		return 18 + v
-	case pb.Suit_SUIT_JIHAI:
-		return 27 + v
-	}
-	return -1
-}
-
-func shantenIndexToTile(idx int) (pb.Suit, uint32) {
-	switch {
-	case idx < 9:
-		return pb.Suit_SUIT_MAN, uint32(idx + 1)
-	case idx < 18:
-		return pb.Suit_SUIT_PIN, uint32(idx - 9 + 1)
-	case idx < 27:
-		return pb.Suit_SUIT_SOU, uint32(idx - 18 + 1)
-	default:
-		return pb.Suit_SUIT_JIHAI, uint32(idx - 27 + 1)
-	}
 }
