@@ -341,7 +341,7 @@ def train_ppo(
     history_path = checkpoint_dir / HISTORY_FILENAME
     _write_history_atomic(history_path, history)
 
-    frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
+    frozen_state = {k: v.detach().cpu().clone() for k, v in frozen.state_dict().items()}
     pool_states: List[dict] = [frozen_state]  # index 0 = anchor, always kept
 
     collector: Optional["ParallelRolloutCollector"] = None
@@ -358,7 +358,7 @@ def train_ppo(
 
             # Grow the opponent pool with a snapshot of the current learner.
             if config.pool_max_size > 1 and iteration % config.pool_snapshot_interval == 0:
-                pool_states.append({k: v.detach().cpu() for k, v in model.state_dict().items()})
+                pool_states.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
                 if len(pool_states) > config.pool_max_size:
                     pool_states.pop(1)  # evict oldest snapshot; keep anchor at index 0
 
