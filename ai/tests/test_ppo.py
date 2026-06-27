@@ -701,6 +701,34 @@ def test_train_ppo_pool_grows_and_caps(tmp_path):
     assert sizes[-1] == 3
 
 
+def test_cli_train_ppo_pool_grows(tmp_path, monkeypatch):
+    import json
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "3", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval",
+        "--pool-max-size", "3", "--pool-snapshot-interval", "1",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    history = json.loads((tmp_path / "ppo" / "history.json").read_text())
+    assert history[-1]["pool_size"] >= 2  # pool grew beyond the anchor
+
+
 def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monkeypatch):
     import sys
     from fh_mahjong_ai.scripts import train_ppo as cli
