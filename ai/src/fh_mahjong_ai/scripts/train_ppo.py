@@ -62,7 +62,13 @@ def main() -> None:
         init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
         config=config, base_seed=args.base_seed, run_eval=not args.no_eval,
     )
-    print(f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}")
+    # train_ppo persists history.json atomically after every iteration, so it is
+    # already on disk (and survives interruptions) by the time we get here.
+    history_path = args.checkpoint_dir / "history.json"
+    print(
+        f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}; "
+        f"history written to {history_path}"
+    )
 
 
 if __name__ == "__main__":

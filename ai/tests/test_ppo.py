@@ -217,6 +217,47 @@ from fh_mahjong_ai.ppo import train_ppo
 from fh_mahjong_ai.storage import save_checkpoint
 
 
+def test_train_ppo_persists_history_each_iteration_survives_interruption(tmp_path, monkeypatch):
+    import json
+    import fh_mahjong_ai.ppo as ppo_mod
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    # Simulate a crash partway through iteration 2 (after iteration 1 completed).
+    real_gae = ppo_mod.compute_gae
+    calls = {"n": 0}
+
+    def flaky_gae(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("simulated interruption")
+        return real_gae(*args, **kwargs)
+
+    monkeypatch.setattr(ppo_mod, "compute_gae", flaky_gae)
+
+    ckpt = tmp_path / "ppo"
+    cfg = PPOConfig(iterations=3, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    with pytest.raises(RuntimeError):
+        train_ppo(
+            env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+            checkpoint_dir=ckpt, config=cfg, base_seed=1000, run_eval=False,
+        )
+
+    # The completed iteration's metrics must survive the crash.
+    history_path = ckpt / "history.json"
+    assert history_path.exists()
+    history = json.loads(history_path.read_text())
+    assert len(history) == 1
+    assert history[0]["iteration"] == 1
+    assert np.isfinite(history[0]["policy_loss"])
+    assert (ckpt / "iter_001.pt").exists()
+
+
 def test_train_ppo_e2e_mock_writes_checkpoint(tmp_path):
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
@@ -280,6 +321,12 @@ def test_cli_train_ppo_mock(tmp_path, monkeypatch):
     cli.main()
     assert (tmp_path / "ppo" / "iter_001.pt").exists()
 
+    # history is persisted even with eval disabled, and carries no eval keys
+    import json
+    history = json.loads((tmp_path / "ppo" / "history.json").read_text())
+    assert len(history) == 1
+    assert "eval_mean_reward" not in history[0]
+
 
 def test_cli_train_ppo_parallel_mock(tmp_path, monkeypatch):
     import sys
@@ -306,6 +353,88 @@ def test_cli_train_ppo_parallel_mock(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     cli.main()
     assert (tmp_path / "ppo" / "iter_001.pt").exists()
+
+
+def test_train_ppo_eval_error_recorded_and_logged_single_line(tmp_path, monkeypatch, capsys):
+    import fh_mahjong_ai.ppo as ppo_mod
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    def _boom(*args, **kwargs):
+        raise ValueError("eval blew up\nwith a second line")
+
+    monkeypatch.setattr(ppo_mod, "evaluate_duplicate_seats", _boom)
+
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=1, eval_seeds=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    history = train_ppo(
+        env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1000, run_eval=True,
+    )
+    # eval failure must be recorded, not abort training
+    assert "eval_error" in history[0]
+    assert "eval_mean_reward" not in history[0]
+
+    out = capsys.readouterr().out
+    iter_lines = [ln for ln in out.splitlines() if ln.startswith("iter 1:")]
+    assert len(iter_lines) == 1
+    # the full (multi-line) error message must stay on a single log line
+    assert "eval blew up" in iter_lines[0]
+    assert "with a second line" in iter_lines[0]
+
+
+def test_cli_train_ppo_writes_history_json_with_eval(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    ckpt_dir = tmp_path / "ppo"
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(ckpt_dir),
+        "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64",
+        "--eval-interval", "1", "--eval-seeds", "2", "--eval-start-seed", "870000",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+
+    history_path = ckpt_dir / "history.json"
+    assert history_path.exists()
+    history = json.loads(history_path.read_text())
+    assert isinstance(history, list)
+    assert len(history) == 1
+    entry = history[0]
+    # eval ran on iteration 1 (eval_interval=1); eval metrics must be persisted
+    assert "eval_mean_reward" in entry
+    assert "eval_mean_reward_ci95" in entry
+    assert "eval_large_loss_rate" in entry
+    for key in ("eval_mean_reward", "eval_mean_reward_ci95", "eval_large_loss_rate"):
+        assert np.isfinite(entry[key])
+
+    # eval metrics must also reach the per-iteration training log
+    out = capsys.readouterr().out
+    iter_lines = [ln for ln in out.splitlines() if ln.startswith("iter 1:")]
+    assert len(iter_lines) == 1
+    assert "eval_mean_reward=" in iter_lines[0]
+    assert "eval_ci95=" in iter_lines[0]
 
 
 from fh_mahjong_ai.ppo import _seat_step_reward
