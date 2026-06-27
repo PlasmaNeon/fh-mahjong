@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 func TestHeuristicBotKeepsPairsForSevenPairs(t *testing.T) {
 	policy := NewHeuristicPolicy()
 	state := discardState(
-		tiles(
+		makeTiles(
 			tm(1), tm(1),
 			tm(2), tm(2),
 			tm(3), tm(3),
@@ -31,7 +32,7 @@ func TestHeuristicBotKeepsPairsForSevenPairs(t *testing.T) {
 func TestHeuristicBotKeepsIndependenceShape(t *testing.T) {
 	policy := NewHeuristicPolicy()
 	state := discardState(
-		tiles(
+		makeTiles(
 			tm(1), tm(1), tm(4), tm(7),
 			tp(1), tp(4), tp(7),
 			ts(1), ts(4),
@@ -50,7 +51,7 @@ func TestHeuristicBotKeepsIndependenceShape(t *testing.T) {
 func TestHeuristicBotAvoidsDiscardingWildWhenEquivalent(t *testing.T) {
 	policy := NewHeuristicPolicy()
 	state := discardState(
-		tiles(
+		makeTiles(
 			tz(1), tz(1),
 			tz(2), tz(2),
 			tz(3), tz(3),
@@ -71,7 +72,7 @@ func TestHeuristicBotAvoidsDiscardingWildWhenEquivalent(t *testing.T) {
 
 func TestHeuristicBotPassesPonWhenSevenPairsBest(t *testing.T) {
 	policy := NewHeuristicPolicy()
-	hand := tiles(
+	hand := makeTiles(
 		tm(1), tm(1),
 		tm(2), tm(2),
 		tm(3), tm(3),
@@ -96,7 +97,7 @@ func TestHeuristicBotPassesPonWhenSevenPairsBest(t *testing.T) {
 
 func TestHeuristicBotChoosesPonWhenItImproves(t *testing.T) {
 	policy := NewHeuristicPolicy()
-	hand := tiles(
+	hand := makeTiles(
 		tm(1), tm(1),
 		tm(2), tm(3), tm(4),
 		tm(5), tm(6), tm(7),
@@ -120,7 +121,7 @@ func TestHeuristicBotChoosesPonWhenItImproves(t *testing.T) {
 
 func TestHeuristicBotSkipsWildKan(t *testing.T) {
 	policy := NewHeuristicPolicy()
-	hand := tiles(
+	hand := makeTiles(
 		tz(1), tz(1),
 		tz(2), tz(2),
 		tz(3), tz(3),
@@ -145,7 +146,7 @@ func TestHeuristicBotSkipsWildKan(t *testing.T) {
 func TestHeuristicBotIsDeterministic(t *testing.T) {
 	policy := NewHeuristicPolicy()
 	state := discardState(
-		tiles(
+		makeTiles(
 			tm(1), tm(1),
 			tm(2), tm(2),
 			tm(3), tm(3),
@@ -168,7 +169,7 @@ func TestHeuristicBotIsDeterministic(t *testing.T) {
 
 func TestHeuristicBotDiscardsDrawnTileDuringHaitei(t *testing.T) {
 	policy := NewHeuristicPolicy()
-	hand := tiles(
+	hand := makeTiles(
 		tm(1), tm(1), tm(4), tm(7),
 		tp(1), tp(4), tp(7),
 		ts(1), ts(4),
@@ -225,10 +226,10 @@ func interruptState(hand []*pb.Tile, validActions []*pb.PlayerAction) *pb.GameSt
 	}
 }
 
-func tiles(specs ...*pb.Tile) []*pb.Tile {
+func makeTiles(specs ...*pb.Tile) []*pb.Tile {
 	hand := make([]*pb.Tile, len(specs))
 	for i, tile := range specs {
-		copyTile := cloneTile(tile)
+		copyTile := tiles.CloneTile(tile)
 		if copyTile == nil {
 			continue
 		}
