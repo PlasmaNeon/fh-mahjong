@@ -563,3 +563,76 @@ def test_cli_train_ppo_mlflow_failure_does_not_abort_training(tmp_path, monkeypa
     # tracking self-disabled after the first failure (no repeated attempts/spam)
     assert attempts["log_metrics"] == 1
     assert "MLflow logging failed" in capsys.readouterr().err
+
+
+def _ppo_mlflow_argv(tmp_path, init, iterations):
+    return [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", str(iterations), "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval", "--mlflow",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+
+
+def test_cli_train_ppo_mlflow_init_failure_falls_back_to_untracked(tmp_path, monkeypatch, capsys):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    def boom_start_run(enabled, **kwargs):
+        raise RuntimeError("cannot connect to tracking server")
+
+    def must_not_log(*a, **k):
+        raise AssertionError("logging attempted despite failed MLflow init")
+
+    monkeypatch.setattr(cli, "start_run", boom_start_run)
+    monkeypatch.setattr(cli, "log_params", must_not_log)
+    monkeypatch.setattr(cli, "log_metrics", must_not_log)
+    monkeypatch.setattr(cli, "log_artifact", must_not_log)
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    monkeypatch.setattr(sys, "argv", _ppo_mlflow_argv(tmp_path, init, 2))
+    cli.main()  # must NOT raise despite MLflow init blowing up
+
+    assert (tmp_path / "ppo" / "iter_002.pt").exists()
+    assert "MLflow init failed" in capsys.readouterr().err
+
+
+def test_cli_train_ppo_mlflow_finalization_failure_is_tolerated(tmp_path, monkeypatch, capsys):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    class CMExitRaises:
+        def __enter__(self):
+            return type("R", (), {"info": type("I", (), {"run_id": "x"})()})()
+
+        def __exit__(self, *exc):
+            raise RuntimeError("end_run failed")
+
+    monkeypatch.setattr(cli, "start_run", lambda enabled, **kwargs: CMExitRaises())
+    monkeypatch.setattr(cli, "log_params", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "log_metrics", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "log_artifact", lambda *a, **k: None)
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    monkeypatch.setattr(sys, "argv", _ppo_mlflow_argv(tmp_path, init, 2))
+    cli.main()  # must NOT raise despite MLflow __exit__ blowing up after training
+
+    assert (tmp_path / "ppo" / "iter_002.pt").exists()
+    assert (tmp_path / "ppo" / "history.json").exists()
+    assert "MLflow finalization failed" in capsys.readouterr().err

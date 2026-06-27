@@ -104,14 +104,33 @@ def main() -> None:
         }
         _safe_mlflow(lambda: log_metrics(numeric, step=int(metrics.get("iteration", 0))))
 
-    with start_run(
-        enabled=args.mlflow,
-        experiment_name=args.mlflow_experiment,
-        tracking_uri=args.mlflow_tracking_uri,
-        run_name=args.mlflow_run_name,
-        tags={"algo": "ppo", "match_mode": args.match_mode},
-    ) as mlflow_run:
-        tracking["on"] = mlflow_run is not None
+    # Start/finish the MLflow run defensively: run creation and finalization talk
+    # to the tracking backend and can fail (server down, SQLite lock). Init
+    # failure must fall back to an untracked run (training still starts);
+    # finalization failure must not crash a run that already finished. Real
+    # training errors from train_ppo still propagate.
+    mlflow_cm = None
+    mlflow_run = None
+    if args.mlflow:
+        try:
+            mlflow_cm = start_run(
+                enabled=True,
+                experiment_name=args.mlflow_experiment,
+                tracking_uri=args.mlflow_tracking_uri,
+                run_name=args.mlflow_run_name,
+                tags={"algo": "ppo", "match_mode": args.match_mode},
+            )
+            mlflow_run = mlflow_cm.__enter__()
+        except Exception as exc:  # noqa: BLE001 - tracking init must not block training
+            print(
+                f"warning: MLflow init failed ({exc!r}); continuing without tracking",
+                file=sys.stderr,
+            )
+            mlflow_cm = None
+            mlflow_run = None
+    tracking["on"] = mlflow_run is not None
+
+    try:
         if mlflow_run is not None:
             _safe_mlflow(lambda: log_params({
                 **asdict(config),
@@ -134,7 +153,19 @@ def main() -> None:
             final_ckpt = args.checkpoint_dir / f"iter_{len(history):03d}.pt"
             if final_ckpt.exists():
                 _safe_mlflow(lambda: log_artifact(final_ckpt, artifact_path="checkpoints"))
-            print(f"MLflow run: {mlflow_run.info.run_id}")
+            run_id = getattr(getattr(mlflow_run, "info", None), "run_id", None)
+            if run_id:
+                print(f"MLflow run: {run_id}")
+    finally:
+        if mlflow_cm is not None:
+            try:
+                mlflow_cm.__exit__(None, None, None)
+            except Exception as exc:  # noqa: BLE001 - finalization must not crash a finished run
+                print(
+                    f"warning: MLflow finalization failed ({exc!r})",
+                    file=sys.stderr,
+                )
+
     print(
         f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}; "
         f"history written to {history_path}"
