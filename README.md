@@ -27,15 +27,22 @@ fh-mahjong/
 ├── rules/          # Fenghua (hometown) ruleset plugin
 ├── CLAUDE.md       # Claude Code project context (auto-loaded)
 ├── official_rules.md  # Raw Fenghua rule source
-├── rules.md           # Rules + Go implementation design
-├── technical_design.md # Full system architecture
-└── tasks.md           # Phase-by-phase implementation checklist
+└── rules.md           # Rules + Go implementation design
 ```
 
-## Status
-**Phase 1 complete** — Core definitions, Protobuf schemas, game state machine, Fenghua ruleset with DFS/DP hand evaluation, and unit tests all pass.
+> Per-directory `AGENTS.md` files are the authoritative, up-to-date reference for
+> each package's architecture.
 
-**Phase 2 in progress** — Go WebSocket server, PostgreSQL/Redis, REST API.
+## Status
+**Playable end-to-end.** The core game, backend, and web client are all functional, and a trained RL agent can take a seat.
+
+**Working:**
+- **Engine & rules** — Protobuf schemas, ruleset-agnostic game state machine, and the full Fenghua ruleset (wild tiles, flowers, kong bonuses, 35+ patterns, wait-pattern scoring) with DFS/DP hand evaluation.
+- **Backend** — Gin REST API with JWT/guest auth, gorilla WebSocket rooms, per-match goroutine orchestration, binary Protobuf replay logging, round-end payout flow, and multi-round ready flow.
+- **Frontend** — React 19 client with `/login`, `/lobby`, `/table/:roomId`, `/game/:matchId`, `/calc` rules debugger, and a replay viewer; client-side move validation via the Go → WASM bridge.
+- **AI / RL** — Python RL package (`ai/`) with self-play data generation, BC/AWBC/IQL/offline-Q and PPO training, an MLflow-tracked pipeline, the `rlenv` environment wrapper + 204-action catalog, the `cmd/rlbridge` c-shared bridge, a deterministic heuristic bot, and an HTTP-served RL agent seat with heuristic fallback.
+
+**Partial / future:** Redis-backed matchmaking polish, ELO/leaderboards, and broader deployment work.
 
 ## Quick Start
 ```bash
@@ -87,4 +94,3 @@ and keeps the current model serving.
 ## Rules Reference
 - [official_rules.md](official_rules.md) — Raw source (Fenghua blog transcription)
 - [rules.md](rules.md) — Synthesized scoring reference + Go implementation notes
-- [technical_design.md](technical_design.md) — Full architecture document

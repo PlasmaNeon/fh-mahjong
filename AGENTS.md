@@ -62,8 +62,6 @@ fh-mahjong/
 | `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
 | `official_rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
 | `rules.md` | Synthesized rules + Go implementation design (bridge doc) |
-| `technical_design.md` | Full 4-phase system architecture |
-| `tasks.md` | Phase-by-phase implementation checklist with completion status |
 
 ## Architecture Principles
 
