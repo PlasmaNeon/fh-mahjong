@@ -2,11 +2,26 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from fh_mahjong_ai.config import EnvConfig
+from fh_mahjong_ai.mlflow_tracking import (
+    DEFAULT_EXPERIMENT_NAME,
+    log_artifact,
+    log_metrics,
+    log_params,
+    start_run,
+)
 from fh_mahjong_ai.ppo import PPOConfig, train_ppo
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+
+_MLFLOW_METRIC_KEYS = (
+    "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
+    "mean_reward", "steps", "eval_mean_reward", "eval_mean_reward_ci95",
+    "eval_large_loss_rate",
+)
 
 
 def main() -> None:
@@ -37,6 +52,11 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--base-seed", type=int, default=0)
     parser.add_argument("--no-eval", action="store_true")
+    parser.add_argument("--mlflow", action="store_true",
+                        help="Log PPO params, per-iteration metrics, and artifacts to MLflow")
+    parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
+    parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
+    parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
 
@@ -57,14 +77,98 @@ def main() -> None:
         max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
         device=args.device,
     )
-    history = train_ppo(
-        env_config=env_config, model_config=model_config_from_args(args),
-        init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
-        config=config, base_seed=args.base_seed, run_eval=not args.no_eval,
-    )
-    # train_ppo persists history.json atomically after every iteration, so it is
-    # already on disk (and survives interruptions) by the time we get here.
-    history_path = args.checkpoint_dir / "history.json"
+    # Optional observability must never abort an expensive training run. Guard
+    # every MLflow call: on the first failure (timeout, server outage, SQLite
+    # lock, artifact-store error) warn once and disable further tracking, but let
+    # training continue to completion.
+    tracking = {"on": False}
+
+    def _safe_mlflow(action) -> None:
+        if not tracking["on"]:
+            return
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - tracking must not crash training
+            tracking["on"] = False
+            print(
+                f"warning: MLflow logging failed ({exc!r}); disabling tracking "
+                f"for the rest of the run",
+                file=sys.stderr,
+            )
+
+    def _mlflow_callback(metrics: dict) -> None:
+        numeric = {
+            key: float(metrics[key])
+            for key in _MLFLOW_METRIC_KEYS
+            if isinstance(metrics.get(key), (int, float))
+        }
+        _safe_mlflow(lambda: log_metrics(numeric, step=int(metrics.get("iteration", 0))))
+
+    # Start/finish the MLflow run defensively: run creation and finalization talk
+    # to the tracking backend and can fail (server down, SQLite lock). Init
+    # failure must fall back to an untracked run (training still starts);
+    # finalization failure must not crash a run that already finished. Real
+    # training errors from train_ppo still propagate.
+    mlflow_cm = None
+    mlflow_run = None
+    if args.mlflow:
+        try:
+            mlflow_cm = start_run(
+                enabled=True,
+                experiment_name=args.mlflow_experiment,
+                tracking_uri=args.mlflow_tracking_uri,
+                run_name=args.mlflow_run_name,
+                tags={"algo": "ppo", "match_mode": args.match_mode},
+            )
+            mlflow_run = mlflow_cm.__enter__()
+        except Exception as exc:  # noqa: BLE001 - tracking init must not block training
+            print(
+                f"warning: MLflow init failed ({exc!r}); continuing without tracking",
+                file=sys.stderr,
+            )
+            mlflow_cm = None
+            mlflow_run = None
+    tracking["on"] = mlflow_run is not None
+
+    try:
+        if mlflow_run is not None:
+            _safe_mlflow(lambda: log_params({
+                **asdict(config),
+                "init_checkpoint": str(args.init_checkpoint),
+                "base_seed": args.base_seed,
+                "bridge_kind": args.bridge_kind,
+                "run_eval": not args.no_eval,
+            }))
+        history = train_ppo(
+            env_config=env_config, model_config=model_config_from_args(args),
+            init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
+            config=config, base_seed=args.base_seed, run_eval=not args.no_eval,
+            iteration_callback=_mlflow_callback if mlflow_run is not None else None,
+        )
+        # train_ppo persists history.json atomically after every iteration, so it is
+        # already on disk (and survives interruptions) by the time we get here.
+        history_path = args.checkpoint_dir / "history.json"
+        if mlflow_run is not None:
+            _safe_mlflow(lambda: log_artifact(history_path, artifact_path="reports"))
+            final_ckpt = args.checkpoint_dir / f"iter_{len(history):03d}.pt"
+            if final_ckpt.exists():
+                _safe_mlflow(lambda: log_artifact(final_ckpt, artifact_path="checkpoints"))
+            run_id = getattr(getattr(mlflow_run, "info", None), "run_id", None)
+            if run_id:
+                print(f"MLflow run: {run_id}")
+    finally:
+        if mlflow_cm is not None:
+            # Pass the in-flight exception (if any) so a crashed training run is
+            # finalized as FAILED, not FINISHED; still tolerate a backend error
+            # during finalization itself.
+            try:
+                mlflow_cm.__exit__(*sys.exc_info())
+            except Exception as exc:  # noqa: BLE001 - finalization must not crash a finished run
+                print(
+                    f"warning: MLflow finalization failed ({exc!r})",
+                    file=sys.stderr,
+                )
+
     print(
         f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}; "
         f"history written to {history_path}"

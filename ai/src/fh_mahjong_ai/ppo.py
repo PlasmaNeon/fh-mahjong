@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -295,6 +295,7 @@ def train_ppo(
     config: PPOConfig,
     base_seed: int = 0,
     run_eval: bool = True,
+    iteration_callback: Optional[Callable[[dict], None]] = None,
 ) -> List[dict]:
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
@@ -371,6 +372,10 @@ def train_ppo(
             # Persist after every iteration so an interruption keeps completed
             # iterations' metrics (checkpoints are already saved per iteration).
             _write_history_atomic(history_path, history)
+            # Optional per-iteration hook (e.g. live MLflow logging); kept as a
+            # callback so ppo.py stays decoupled from any tracking backend.
+            if iteration_callback is not None:
+                iteration_callback(metrics)
     finally:
         if collector is not None:
             collector.close()
