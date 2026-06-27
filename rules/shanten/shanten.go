@@ -195,7 +195,16 @@ func maxIndependentSetOverlapDist2(has []int) int {
 	if n == 0 {
 		return 0
 	}
-	dp := make([]int, n)
+	// dp is pure scratch; callers always pass a 9-node suit, so keep it on the
+	// stack to avoid a heap allocation in this extremely hot path (called per
+	// wild-assignment × per candidate discard during observation encoding).
+	var dpArr [9]int
+	var dp []int
+	if n <= len(dpArr) {
+		dp = dpArr[:n]
+	} else {
+		dp = make([]int, n)
+	}
 	dp[0] = has[0]
 	if n > 1 {
 		dp[1] = max(has[0], has[1])
