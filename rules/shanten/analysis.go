@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 const RouteUnavailable = 99
@@ -102,7 +103,7 @@ func analyzeDiscardOptions(closedHand []*pb.Tile, counts [34]int, numWilds int, 
 	options := make([]DiscardOption, 0, len(closedHand))
 
 	for _, tile := range closedHand {
-		key := tileHash(tile.Suit, tile.Value)
+		key := tiles.KeyOf(tile.Suit, tile.Value)
 		if seen[key] {
 			continue
 		}
@@ -112,7 +113,7 @@ func analyzeDiscardOptions(closedHand []*pb.Tile, counts [34]int, numWilds int, 
 		if isWild {
 			numWilds--
 		} else {
-			idx := tileToIndex(tile)
+			idx := tiles.Index34(tile)
 			if idx >= 0 {
 				counts[idx]--
 			}
@@ -134,7 +135,7 @@ func analyzeDiscardOptions(closedHand []*pb.Tile, counts [34]int, numWilds int, 
 		if isWild {
 			numWilds++
 		} else {
-			idx := tileToIndex(tile)
+			idx := tiles.Index34(tile)
 			if idx >= 0 {
 				counts[idx]++
 			}
@@ -161,19 +162,19 @@ func buildCountsFromTiles(closedHand []*pb.Tile, wildTiles []*pb.Tile) ([34]int,
 	ensureTables()
 	wildSet := make(map[uint32]bool)
 	for _, wild := range wildTiles {
-		wildSet[tileHash(wild.Suit, wild.Value)] = true
+		wildSet[tiles.KeyOf(wild.Suit, wild.Value)] = true
 	}
 
 	var counts [34]int
 	numWilds := 0
 	for _, tile := range closedHand {
-		key := tileHash(tile.Suit, tile.Value)
+		key := tiles.KeyOf(tile.Suit, tile.Value)
 		if wildSet[key] {
 			numWilds++
 			continue
 		}
 
-		idx := tileToIndex(tile)
+		idx := tiles.Index34(tile)
 		if idx >= 0 {
 			counts[idx]++
 		}
@@ -191,8 +192,8 @@ func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten
 	totalUseful := 0
 
 	for idx := 0; idx < 34; idx++ {
-		suit, value := indexToTile(idx)
-		key := tileHash(suit, value)
+		suit, value := tiles.FromIndex34(idx)
+		key := tiles.KeyOf(suit, value)
 		remaining := 4 - counts[idx]
 		if wildSet[key] {
 			remaining = 4 - numWilds
@@ -235,19 +236,3 @@ func normalizeShanten(value int) int {
 	return value
 }
 
-func tileHash(suit pb.Suit, value uint32) uint32 {
-	return uint32(suit)*100 + value
-}
-
-func indexToTile(idx int) (pb.Suit, uint32) {
-	switch {
-	case idx < 9:
-		return pb.Suit_SUIT_MAN, uint32(idx + 1)
-	case idx < 18:
-		return pb.Suit_SUIT_PIN, uint32(idx - 9 + 1)
-	case idx < 27:
-		return pb.Suit_SUIT_SOU, uint32(idx - 18 + 1)
-	default:
-		return pb.Suit_SUIT_JIHAI, uint32(idx - 27 + 1)
-	}
-}

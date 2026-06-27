@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 var once sync.Once
@@ -228,42 +229,22 @@ func calcIndependenceWithWilds(counts [34]int, numWilds int) int {
 	return best
 }
 
-// tileToIndex converts a protobuf Tile to the 0-33 index.
-// Returns -1 for flowers (excluded from shanten).
-func tileToIndex(t *pb.Tile) int {
-	if t.Suit == pb.Suit_SUIT_FLOWER {
-		return -1
-	}
-	valOffset := int(t.Value) - 1
-	switch t.Suit {
-	case pb.Suit_SUIT_MAN:
-		return valOffset
-	case pb.Suit_SUIT_PIN:
-		return 9 + valOffset
-	case pb.Suit_SUIT_SOU:
-		return 18 + valOffset
-	case pb.Suit_SUIT_JIHAI:
-		return 27 + valOffset
-	}
-	return -1
-}
-
 // CalculateFromTiles is the high-level API for game integration.
 func CalculateFromTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) int {
 	ensureTables()
 	wildSet := make(map[uint32]bool)
 	for _, w := range wildTiles {
-		wildSet[uint32(w.Suit)*100+w.Value] = true
+		wildSet[tiles.KeyOf(w.Suit, w.Value)] = true
 	}
 
 	var counts [34]int
 	numWilds := 0
 	for _, t := range closedHand {
-		h := uint32(t.Suit)*100 + t.Value
+		h := tiles.KeyOf(t.Suit, t.Value)
 		if wildSet[h] {
 			numWilds++
 		} else {
-			idx := tileToIndex(t)
+			idx := tiles.Index34(t)
 			if idx >= 0 {
 				counts[idx]++
 			}
