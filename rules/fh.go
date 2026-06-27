@@ -691,11 +691,11 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		counts[k] = append(counts[k], t)
 	}
 
-	for _, tiles := range counts {
-		if len(tiles) == 4 {
+	for _, tileGroup := range counts {
+		if len(tileGroup) == 4 {
 			actions = append(actions, &pb.PlayerAction{
 				Type:      pb.ActionType_ACTION_KAN,
-				MeldTiles: tiles,
+				MeldTiles: tileGroup,
 			})
 		}
 	}
