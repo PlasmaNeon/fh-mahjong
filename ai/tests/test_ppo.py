@@ -33,6 +33,19 @@ def test_episode_reward_vector_empty_uses_fallback():
     np.testing.assert_allclose(total, [0.1, 0.2, 0.3, 0.4], rtol=1e-6)
 
 
+def test_episode_reward_vector_adds_reset_reward_for_nonempty_episode():
+    ep = [_dummy_transition([1.0, 0.0, 0.0, -1.0])]
+    total = episode_reward_vector(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                                  reset_rewards=np.array([0.5, 0.0, 0.0, -0.5], dtype=np.float32))
+    np.testing.assert_allclose(total, [1.5, 0.0, 0.0, -1.5], rtol=1e-6)
+
+
+def test_episode_reward_vector_ignores_reset_reward_when_empty():
+    total = episode_reward_vector([], fallback_rewards=np.array([0.2, 0.0, 0.0, -0.2], dtype=np.float32),
+                                  reset_rewards=np.array([9.0, 9.0, 9.0, 9.0], dtype=np.float32))
+    np.testing.assert_allclose(total, [0.2, 0.0, 0.0, -0.2], rtol=1e-6)
+
+
 def test_ppo_config_defaults():
     cfg = PPOConfig()
     assert cfg.gamma == 0.99

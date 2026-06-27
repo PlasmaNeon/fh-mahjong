@@ -174,11 +174,10 @@ def _obs_to_tensors(obs: Observation, device: str):
 
 
 def _seat_step_reward(step_rewards, seat: int) -> float:
-    """The env's immediate per-seat reward for this step. For Chongci this is 0
-    until the match ends, where it carries the final net score change / 1000 for
-    each seat; for classic it is the terminal round payout. (The env does not
-    expose per-hand intermediate deltas, so this is a sparse terminal reward; the
-    warm-started value critic + GAE propagate it back over the match.)"""
+    """The env's immediate per-seat reward for this step. In Chongci this is the
+    per-seat running-score delta accumulated since the previous decision (dense;
+    it telescopes to the match net); for classic it is the terminal round
+    payout."""
     arr = np.asarray(step_rewards, dtype=np.float32)
     if arr.ndim >= 1 and arr.shape[-1] > seat:
         return float(arr[seat])
@@ -300,15 +299,15 @@ def train_ppo(
     history: List[dict] = []
 
     collector: Optional["ParallelRolloutCollector"] = None
-    if config.num_workers > 1:
-        from .parallel_rollouts import ParallelRolloutCollector
-        frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
-        collector = ParallelRolloutCollector(
-            env_config, model_config, frozen_state, config, config.num_workers,
-        )
-        collector.start()
-
     try:
+        if config.num_workers > 1:
+            from .parallel_rollouts import ParallelRolloutCollector
+            frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
+            collector = ParallelRolloutCollector(
+                env_config, model_config, frozen_state, config, config.num_workers,
+            )
+            collector.start()
+
         for iteration in range(1, config.iterations + 1):
             iter_seed = base_seed + iteration * config.matches_per_iter
             if collector is not None:

@@ -71,5 +71,7 @@ def test_collector_close_joins_workers():
     cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
     collector = ParallelRolloutCollector(env_cfg, mcfg, _cpu_state_dict(frozen), cfg, num_workers=2)
     collector.start()
+    procs = list(collector._procs)
     collector.close()
-    assert all(not p.is_alive() for p in collector._procs)
+    assert procs
+    assert all(not p.is_alive() for p in procs)

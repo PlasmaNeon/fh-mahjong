@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import queue
 import traceback
 from dataclasses import replace
 from typing import Dict, List, Optional
@@ -35,7 +36,7 @@ def _worker_loop(env_config, model_config, frozen_state_dict, ppo_config, task_q
         worker_id, learner_state_dict, base_seed, matches = task
         try:
             learner.load_state_dict(learner_state_dict)
-            cfg = replace(ppo_config, matches_per_iter=matches)
+            cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_rollouts(env_config, learner, frozen, cfg, base_seed=base_seed)
             result_q.put((worker_id, batch, None))
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
@@ -86,12 +87,20 @@ class ParallelRolloutCollector:
             dispatched += 1
 
         results: Dict[int, RolloutBatch] = {}
-        for _ in range(dispatched):
-            worker_id, batch, err = self._result_q.get()
+        received = 0
+        while received < dispatched:
+            try:
+                worker_id, batch, err = self._result_q.get(timeout=30.0)
+            except queue.Empty:
+                if any(p.exitcode is not None for p in self._procs):
+                    self.close()
+                    raise RuntimeError("a rollout worker exited unexpectedly during collect")
+                continue
             if err is not None:
                 self.close()
                 raise RuntimeError(f"rollout worker {worker_id} failed:\n{err}")
             results[worker_id] = batch
+            received += 1
         ordered = [results[w] for w in sorted(results)]
         return concat_rollout_batches(ordered)
 
