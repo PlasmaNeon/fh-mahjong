@@ -15649,6 +15649,74 @@ Recommended next directions (none is "more of the same"):
 - Or pivot to the oracle-auxiliary research direction, which does not depend on
   growing the offline dataset.
 
+### Experiment: First Online PPO vs Frozen Anchor (slice 1)
+
+Run:
+`/root/fh-mahjong-runs/ppo-anchor-20260625-194705`
+
+Question:
+The project's first ONLINE/on-policy trainer (`fh-mj-train-ppo`, PR #91 + reward
+fix PR #92). Warm-started from the promoted anchor (policy+value), the learning
+seat plays Chongci vs 3 frozen-anchor seats and learns via masked clipped PPO from
+the per-seat match reward. Can online RL beat the anchor where offline could not?
+
+Setup:
+40 iterations, 16 matches/iter, gamma 0.999, gae_lambda 0.95, lr 2e-5,
+entropy_coef 0.01, ppo_epochs 4, minibatch 256, sample_temperature 1.0, Chongci,
+cuda. Reward = env `step.rewards[seat]` (sparse: 0 until match end, then final net
+score change / 1000 — the env exposes no per-hand deltas). Eval = 120-seed Chongci
+duplicate CI gate; anchor evaluated on the identical seeds.
+
+Pre-flight (important): the original `collect_rollouts` read reward from
+`StepResult.info` round-outcome payouts, which the Go bridge leaves empty, so the
+reward was always 0 (PPO would learn nothing). Fixed in PR #92 to read
+`step.rewards[seat]`; verified non-zero on the bridge before the run.
+
+Result:
+PPO did NOT beat the anchor; it regressed.
+
+| variant | mean_reward | ci95 | large_loss_rate | positive_reward_rate |
+| --- | ---: | ---: | ---: | ---: |
+| anchor | -0.0615 | 0.1040 | 0.2083 | 0.4500 |
+| ppo_final (iter 40) | -0.4238 | 0.0987 | 0.3417 | 0.3229 |
+
+CIs do not overlap; worse on every metric.
+
+Learning curve (rollout mean_reward, learning seat vs 3 frozen anchors; anchor-vs-
+anchor ~ 0): iter1 +0.50, iter2 -0.25, iter3 +0.18, iter20 -0.48, iter40 -0.14 —
+swings +-0.5 with no upward trend, drifting negative. Entropy stayed ~0.07-0.17
+nats (near-deterministic, minimal exploration); approx_kl ~ +-0.008 (updates
+barely moved the policy).
+
+Decision:
+rejected (no promotion). The PPO infrastructure works end to end (rollouts,
+GAE, clipped update, eval gate; no crash), but this configuration degraded the
+policy.
+
+Interpretation (fixable failure mode, not "online RL can't work"):
+Catastrophic signal-to-noise. Three compounding causes:
+1. Tiny batch — 16 matches/iter = only 16 noisy terminal-reward signals; the
+   per-iteration reward variance (+-0.5) swamps the gradient.
+2. Sparse terminal reward over a ~440-step learning-seat horizon — the env emits
+   no per-hand deltas, so almost all credit must flow through the value critic;
+   the direct reward signal is one number per match.
+3. Minimal exploration — the warm-started policy is highly peaked (entropy ~0.1),
+   and entropy_coef 0.01 did not keep it exploring, so PPO mostly drifted under
+   noise rather than discovering better lines.
+Net: 40 noisy updates slowly degraded the anchor.
+
+Recommendations before scaling online RL (do NOT just rerun as-is):
+- Much larger rollouts per update (hundreds of matches) to cut reward variance —
+  this is the highest-leverage fix and it needs faster generation, so the
+  shelved parallel-generation spec is now justified specifically for online RL.
+- Add dense per-hand reward (requires Go env support to emit per-hand score
+  deltas, or reconstruct from visible score scalars) to fix credit assignment.
+- Raise entropy_coef / sample_temperature for real exploration; tune lr; more
+  iterations once signal-to-noise is fixed.
+- Consider the GlobalEV/GRP reward as the critic/return target (Suphx-style).
+The PPO code paths (PR #91/#92) are correct and reusable; this is a
+tuning/throughput/reward-density problem, not a code failure.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
