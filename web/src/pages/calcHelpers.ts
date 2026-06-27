@@ -1,13 +1,19 @@
 import { ActionType, MeldDirection, Suit } from '../proto/game.ts'
+import {
+  TILE_LIBRARY as SHARED_TILE_LIBRARY,
+  formatHand as sharedFormatHand,
+  formatTile as sharedFormatTile,
+  parseHand as sharedParseHand,
+  sameTileValue as sharedSameTileValue,
+  sortBySuitValue,
+  isSuitedTile as sharedIsSuitedTile,
+  type ParseMessages,
+  type TileValue as SharedTileValue,
+  type TileDraft as SharedTileDraft,
+} from '../utils/tileModel'
 
-export interface CalcTileValue {
-  suit: Suit
-  value: number
-}
-
-export interface CalcTileDraft extends CalcTileValue {
-  id: string
-}
+export type CalcTileValue = SharedTileValue
+export type CalcTileDraft = SharedTileDraft
 
 export type CalcKongContextKey = keyof CalcKongFlags | ''
 
@@ -99,12 +105,7 @@ const EMPTY_NORMALIZED_RESPONSE: CalcNormalizedResponse = {
   expectedHandLen: 0,
 }
 
-export const TILE_LIBRARY: CalcTileValue[] = [
-  ...buildSuitTiles(Suit.SUIT_MAN, 9),
-  ...buildSuitTiles(Suit.SUIT_PIN, 9),
-  ...buildSuitTiles(Suit.SUIT_SOU, 9),
-  ...buildSuitTiles(Suit.SUIT_JIHAI, 7),
-]
+export const TILE_LIBRARY: CalcTileValue[] = SHARED_TILE_LIBRARY
 
 export const WIND_OPTIONS = [
   { value: 1, label: 'East' },
@@ -137,14 +138,6 @@ export const DEFAULT_KONG_FLAGS: CalcKongFlags = {
 let nextTileDraftId = 1
 let nextMeldDraftId = 1
 
-function buildSuitTiles(suit: Suit, maxValue: number): CalcTileValue[] {
-  const tiles: CalcTileValue[] = []
-  for (let value = 1; value <= maxValue; value += 1) {
-    tiles.push({ suit, value })
-  }
-  return tiles
-}
-
 export function createTileDraft(tile: CalcTileValue): CalcTileDraft {
   return {
     ...tile,
@@ -168,112 +161,29 @@ export function toTileValue(tile: CalcTileDraft | CalcTileValue): CalcTileValue 
 }
 
 export function sameTileValue(left: CalcTileDraft | CalcTileValue | null, right: CalcTileDraft | CalcTileValue | null): boolean {
-  return Boolean(left && right && left.suit === right.suit && left.value === right.value)
+  return sharedSameTileValue(left, right)
 }
 
 export function sortTiles(tiles: CalcTileDraft[]): CalcTileDraft[] {
-  return [...tiles].sort((left, right) => {
-    const leftOrder = suitSortOrder(left.suit)
-    const rightOrder = suitSortOrder(right.suit)
-    if (leftOrder !== rightOrder) {
-      return leftOrder - rightOrder
-    }
-    return left.value - right.value
-  })
+  return sortBySuitValue(tiles)
 }
 
 export function formatTile(tile: CalcTileValue | CalcTileDraft | null): string {
-  if (!tile) {
-    return ''
-  }
-
-  switch (tile.suit) {
-    case Suit.SUIT_MAN:
-      return `${tile.value}m`
-    case Suit.SUIT_PIN:
-      return `${tile.value}p`
-    case Suit.SUIT_SOU:
-      return `${tile.value}s`
-    case Suit.SUIT_JIHAI:
-      return `${tile.value}z`
-    default:
-      return ''
-  }
+  return sharedFormatTile(tile)
 }
 
 export function formatTehai(tiles: Array<CalcTileDraft | CalcTileValue>): string {
-  if (tiles.length === 0) {
-    return ''
-  }
+  return sharedFormatHand(tiles, { separator: ' ', perTile: true })
+}
 
-  const sorted = [...tiles].sort((left, right) => {
-    const leftOrder = suitSortOrder(left.suit)
-    const rightOrder = suitSortOrder(right.suit)
-    if (leftOrder !== rightOrder) {
-      return leftOrder - rightOrder
-    }
-    return left.value - right.value
-  })
-
-  const groups: string[] = []
-  let currentSuit: Suit | null = null
-  let currentGroup = ''
-
-  sorted.forEach((tile) => {
-    if (currentSuit !== null && tile.suit !== currentSuit) {
-      groups.push(currentGroup)
-      currentGroup = ''
-    }
-    currentGroup += formatTile(tile)
-    currentSuit = tile.suit
-  })
-
-  if (currentGroup) {
-    groups.push(currentGroup)
-  }
-
-  return groups.join(' ')
+const calcParseMessages: ParseMessages = {
+  notation: 'Use canonical tile notation like 1m2m3m 4p5p6p 7z.',
+  unknownSuit: (ch) => `Unknown suit: ${ch.toLowerCase()}`,
+  outOfRange: (digit, ch) => `Tile ${digit}${ch.toLowerCase()} is out of range.`,
 }
 
 export function parseTehaiInput(input: string): { tiles: CalcTileValue[]; errors: string[] } {
-  const trimmed = input.trim()
-  if (!trimmed) {
-    return { tiles: [], errors: [] }
-  }
-
-  const compact = trimmed.replace(/\s+/g, '')
-  const matches = [...compact.matchAll(/([0-9]+)([mpsz])/gi)]
-  const consumed = matches.map((match) => match[0]).join('')
-
-  if (consumed !== compact) {
-    return {
-      tiles: [],
-      errors: ['Use canonical tile notation like 1m2m3m 4p5p6p 7z.'],
-    }
-  }
-
-  const tiles: CalcTileValue[] = []
-  const errors: string[] = []
-
-  matches.forEach((match) => {
-    const digits = match[1]
-    const suitChar = match[2].toLowerCase()
-    digits.split('').forEach((digit: string) => {
-      const value = Number(digit)
-      const suit = charToSuit(suitChar)
-      if (suit === null) {
-        errors.push(`Unknown suit: ${suitChar}`)
-        return
-      }
-      if (!isValueValidForSuit(suit, value)) {
-        errors.push(`Tile ${digit}${suitChar} is out of range.`)
-        return
-      }
-      tiles.push({ suit, value })
-    })
-  })
-
-  return { tiles, errors }
+  return sharedParseHand(input, calcParseMessages, true)
 }
 
 export function parseSingleTileInput(input: string): { tile: CalcTileValue | null; errors: string[] } {
@@ -281,18 +191,13 @@ export function parseSingleTileInput(input: string): { tile: CalcTileValue | nul
   if (!trimmed) {
     return { tile: null, errors: [] }
   }
-
   const parsed = parseTehaiInput(trimmed)
   if (parsed.errors.length > 0) {
     return { tile: null, errors: parsed.errors }
   }
   if (parsed.tiles.length !== 1) {
-    return {
-      tile: null,
-      errors: ['Enter exactly one tile, like 3z or 9s.'],
-    }
+    return { tile: null, errors: ['Enter exactly one tile, like 3z or 9s.'] }
   }
-
   return { tile: parsed.tiles[0], errors: [] }
 }
 
@@ -515,45 +420,8 @@ export function getDirectionLabel(direction: MeldDirection): string {
   }
 }
 
-function suitSortOrder(suit: Suit): number {
-  switch (suit) {
-    case Suit.SUIT_MAN:
-      return 1
-    case Suit.SUIT_PIN:
-      return 2
-    case Suit.SUIT_SOU:
-      return 3
-    case Suit.SUIT_JIHAI:
-      return 4
-    default:
-      return 5
-  }
-}
-
-function charToSuit(char: string): Suit | null {
-  switch (char) {
-    case 'm':
-      return Suit.SUIT_MAN
-    case 'p':
-      return Suit.SUIT_PIN
-    case 's':
-      return Suit.SUIT_SOU
-    case 'z':
-      return Suit.SUIT_JIHAI
-    default:
-      return null
-  }
-}
-
-function isValueValidForSuit(suit: Suit, value: number): boolean {
-  if (suit === Suit.SUIT_JIHAI) {
-    return value >= 1 && value <= 7
-  }
-  return value >= 1 && value <= 9
-}
-
 function isSuitedTile(suit: Suit | undefined): suit is Suit.SUIT_MAN | Suit.SUIT_PIN | Suit.SUIT_SOU {
-  return suit === Suit.SUIT_MAN || suit === Suit.SUIT_PIN || suit === Suit.SUIT_SOU
+  return sharedIsSuitedTile(suit)
 }
 
 function aggregateKongFlags(openMelds: CalcMeldDraft[]): CalcKongFlags {

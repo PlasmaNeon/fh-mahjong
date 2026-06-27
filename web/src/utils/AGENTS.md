@@ -20,3 +20,4 @@ Shared helper functions used across frontend components for mapping tile data to
 
 - SVG assets are in `web/public/Regular_shortnames/` with names like `1m.svg`, `5p.svg`, `9s.svg`, `1z.svg` (East), `chun.svg` (Spring flower), etc.
 - Used by `TileComponent` in `Game.tsx` and by `Calc.tsx`.
+- **tileModel.ts** — shared tile value-model + format/sort/parse primitives. `pages/calcHelpers.ts` and `pages/shantenHelpers.ts` are thin adapters over it; do not re-implement `TILE_LIBRARY`, tile parsing, or suit ordering in page helpers.
