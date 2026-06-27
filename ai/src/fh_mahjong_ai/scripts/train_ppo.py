@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -76,13 +77,32 @@ def main() -> None:
         max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
         device=args.device,
     )
+    # Optional observability must never abort an expensive training run. Guard
+    # every MLflow call: on the first failure (timeout, server outage, SQLite
+    # lock, artifact-store error) warn once and disable further tracking, but let
+    # training continue to completion.
+    tracking = {"on": False}
+
+    def _safe_mlflow(action) -> None:
+        if not tracking["on"]:
+            return
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - tracking must not crash training
+            tracking["on"] = False
+            print(
+                f"warning: MLflow logging failed ({exc!r}); disabling tracking "
+                f"for the rest of the run",
+                file=sys.stderr,
+            )
+
     def _mlflow_callback(metrics: dict) -> None:
         numeric = {
             key: float(metrics[key])
             for key in _MLFLOW_METRIC_KEYS
             if isinstance(metrics.get(key), (int, float))
         }
-        log_metrics(numeric, step=int(metrics.get("iteration", 0)))
+        _safe_mlflow(lambda: log_metrics(numeric, step=int(metrics.get("iteration", 0))))
 
     with start_run(
         enabled=args.mlflow,
@@ -91,14 +111,15 @@ def main() -> None:
         run_name=args.mlflow_run_name,
         tags={"algo": "ppo", "match_mode": args.match_mode},
     ) as mlflow_run:
+        tracking["on"] = mlflow_run is not None
         if mlflow_run is not None:
-            log_params({
+            _safe_mlflow(lambda: log_params({
                 **asdict(config),
                 "init_checkpoint": str(args.init_checkpoint),
                 "base_seed": args.base_seed,
                 "bridge_kind": args.bridge_kind,
                 "run_eval": not args.no_eval,
-            })
+            }))
         history = train_ppo(
             env_config=env_config, model_config=model_config_from_args(args),
             init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
@@ -109,10 +130,10 @@ def main() -> None:
         # already on disk (and survives interruptions) by the time we get here.
         history_path = args.checkpoint_dir / "history.json"
         if mlflow_run is not None:
-            log_artifact(history_path, artifact_path="reports")
+            _safe_mlflow(lambda: log_artifact(history_path, artifact_path="reports"))
             final_ckpt = args.checkpoint_dir / f"iter_{len(history):03d}.pt"
             if final_ckpt.exists():
-                log_artifact(final_ckpt, artifact_path="checkpoints")
+                _safe_mlflow(lambda: log_artifact(final_ckpt, artifact_path="checkpoints"))
             print(f"MLflow run: {mlflow_run.info.run_id}")
     print(
         f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}; "

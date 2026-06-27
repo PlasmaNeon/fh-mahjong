@@ -513,3 +513,53 @@ def test_cli_train_ppo_mlflow_wiring(tmp_path, monkeypatch):
     assert calls["log_params"] == 1
     assert calls["log_metrics"] == 2  # one per iteration via the callback
     assert calls["log_artifact"] >= 1  # history.json (+ final checkpoint)
+
+
+def test_cli_train_ppo_mlflow_failure_does_not_abort_training(tmp_path, monkeypatch, capsys):
+    import contextlib
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    attempts = {"log_metrics": 0}
+
+    @contextlib.contextmanager
+    def fake_start_run(enabled, **kwargs):
+        run = type("R", (), {"info": type("I", (), {"run_id": "x"})()})()
+        yield run if enabled else None
+
+    def boom_log_metrics(*a, **k):
+        attempts["log_metrics"] += 1
+        raise RuntimeError("mlflow backend down")
+
+    monkeypatch.setattr(cli, "start_run", fake_start_run)
+    monkeypatch.setattr(cli, "log_params", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "log_metrics", boom_log_metrics)
+    monkeypatch.setattr(cli, "log_artifact", lambda *a, **k: None)
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "3", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval", "--mlflow",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()  # must NOT raise despite MLflow failing
+
+    # all 3 iterations + checkpoints completed even though tracking blew up
+    assert (tmp_path / "ppo" / "iter_003.pt").exists()
+    assert (tmp_path / "ppo" / "history.json").exists()
+    # tracking self-disabled after the first failure (no repeated attempts/spam)
+    assert attempts["log_metrics"] == 1
+    assert "MLflow logging failed" in capsys.readouterr().err
