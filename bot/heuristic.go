@@ -431,7 +431,6 @@ func tileTypeCounts(hand []*pb.Tile) map[uint32]int {
 	return counts
 }
 
-
 func firstActionOfType(actions []*pb.PlayerAction, actionType pb.ActionType) *pb.PlayerAction {
 	for _, action := range actions {
 		if action.Type == actionType {
@@ -440,8 +439,6 @@ func firstActionOfType(actions []*pb.PlayerAction, actionType pb.ActionType) *pb
 	}
 	return nil
 }
-
-
 
 func compareKanAction(lhs, rhs *pb.PlayerAction) int {
 	if len(lhs.MeldTiles) != len(rhs.MeldTiles) {
