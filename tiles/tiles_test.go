@@ -52,6 +52,34 @@ func TestIndex34RoundTrip(t *testing.T) {
 	}
 }
 
+func TestIndex34OfRejectsOutOfRange(t *testing.T) {
+	cases := []struct {
+		suit  pb.Suit
+		value uint32
+	}{
+		{pb.Suit_SUIT_MAN, 0},   // below minimum (would underflow to -1)
+		{pb.Suit_SUIT_PIN, 0},   // below minimum (would collide with MAN_9 = 8)
+		{pb.Suit_SUIT_MAN, 10},  // above suit max (would collide with PIN_1 = 9)
+		{pb.Suit_SUIT_JIHAI, 8}, // above jihai max (would be 34, off the board)
+		{pb.Suit_SUIT_FLOWER, 3},
+		{pb.Suit_SUIT_UNKNOWN, 1},
+	}
+	for _, c := range cases {
+		if got := Index34Of(c.suit, c.value); got != -1 {
+			t.Fatalf("Index34Of(%v,%d) = %d, want -1", c.suit, c.value, got)
+		}
+	}
+}
+
+func TestFromIndex34RejectsOutOfRange(t *testing.T) {
+	for _, idx := range []int{-1, -100, 34, 99} {
+		suit, value := FromIndex34(idx)
+		if suit != pb.Suit_SUIT_UNKNOWN || value != 0 {
+			t.Fatalf("FromIndex34(%d) = (%v,%d), want (SUIT_UNKNOWN,0)", idx, suit, value)
+		}
+	}
+}
+
 func TestCloneTile(t *testing.T) {
 	src := tile(pb.Suit_SUIT_SOU, 4, 99)
 	dst := CloneTile(src)

@@ -24,18 +24,31 @@ func Key(t *pb.Tile) uint32 {
 }
 
 // Index34Of maps a standard man/pin/sou/jihai tile to its 0-33 index, or -1
-// for flowers and unknown suits.
+// for flowers, unknown suits, and out-of-range values (value < 1, or above the
+// suit's maximum: 9 for man/pin/sou, 7 for jihai). The range guards keep a bad
+// value from silently colliding with another suit's index band.
 func Index34Of(suit pb.Suit, value uint32) int {
+	if value < 1 {
+		return -1
+	}
 	v := int(value) - 1
 	switch suit {
 	case pb.Suit_SUIT_MAN:
-		return v
+		if value <= 9 {
+			return v
+		}
 	case pb.Suit_SUIT_PIN:
-		return 9 + v
+		if value <= 9 {
+			return 9 + v
+		}
 	case pb.Suit_SUIT_SOU:
-		return 18 + v
+		if value <= 9 {
+			return 18 + v
+		}
 	case pb.Suit_SUIT_JIHAI:
-		return 27 + v
+		if value <= 7 {
+			return 27 + v
+		}
 	}
 	return -1
 }
@@ -48,9 +61,12 @@ func Index34(t *pb.Tile) int {
 	return Index34Of(t.Suit, t.Value)
 }
 
-// FromIndex34 is the inverse of Index34Of for indices 0-33.
+// FromIndex34 is the inverse of Index34Of for indices 0-33; any index outside
+// that range yields (SUIT_UNKNOWN, 0).
 func FromIndex34(idx int) (pb.Suit, uint32) {
 	switch {
+	case idx < 0 || idx >= 34:
+		return pb.Suit_SUIT_UNKNOWN, 0
 	case idx < 9:
 		return pb.Suit_SUIT_MAN, uint32(idx + 1)
 	case idx < 18:
