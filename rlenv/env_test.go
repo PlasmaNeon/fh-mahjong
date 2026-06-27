@@ -1,6 +1,7 @@
 package rlenv
 
 import (
+	"math"
 	"testing"
 
 	"github.com/plasma/fh-mahjong/core"
@@ -335,6 +336,113 @@ func TestGenerateHeuristicTrajectoryChongciReachesMatchEnd(t *testing.T) {
 	for _, sample := range dataset.Samples {
 		if !almostEqualSlices(sample.TerminalRewards, last.TerminalRewards) {
 			t.Fatalf("terminal rewards drifted across chongci samples")
+		}
+	}
+}
+
+func TestGenerateHeuristicTrajectoryChongciTerminalRewardsAreMatchNet(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 777,
+		Config: &pb.EnvConfig{
+			LearningSeats:      []uint32{0, 1, 2, 3},
+			AutoPlayHeuristics: false,
+			MaxDecisions:       8192,
+			MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("expected samples")
+	}
+
+	// Terminal rewards must sum to ~0 across seats (zero-sum net-change) and be
+	// consistent across all samples — the signature of match-net, not a single
+	// hand's per-seat delta.
+	terminal := dataset.Samples[len(dataset.Samples)-1].TerminalRewards
+	if len(terminal) != 4 {
+		t.Fatalf("expected 4 terminal rewards, got %v", terminal)
+	}
+	var total float32
+	for _, r := range terminal {
+		total += r
+	}
+	if math.Abs(float64(total)) > 1e-3 {
+		t.Fatalf("chongci net-change terminal rewards should sum to ~0, got %v (sum %.6f)", terminal, total)
+	}
+	for _, s := range dataset.Samples {
+		if !almostEqualSlices(s.TerminalRewards, terminal) {
+			t.Fatalf("all samples must share the match-net terminal rewards; got %v vs %v", s.TerminalRewards, terminal)
+		}
+	}
+}
+
+func TestChongciStepEmitsDensePerHandReward(t *testing.T) {
+	env := New(&pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       8192,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 3},
+	})
+	reset, err := env.Reset(&pb.EnvResetRequest{Seed: 12345, Config: env.config})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	sum := make([]float32, 4)
+	for i, r := range reset.Rewards {
+		sum[i] += r
+	}
+
+	sawNonZeroIntermediate := false
+	obs := reset.Observation
+	terminated := reset.Terminated
+	truncated := reset.Truncated
+	for !terminated && !truncated {
+		seat := obs.Seat
+		action := env.heuristic.ChooseAction(env.game.State, seat)
+		if action == nil {
+			t.Fatalf("nil heuristic action for seat %d", seat)
+		}
+		actionID, ok := encodeAction(env.game.State, seat, action)
+		if !ok {
+			t.Fatalf("cannot encode action for seat %d", seat)
+		}
+		step, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(actionID)})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
+		nonZero := false
+		for i, r := range step.Rewards {
+			sum[i] += r
+			if r != 0 {
+				nonZero = true
+			}
+		}
+		if !step.Terminated && !step.Truncated && nonZero {
+			sawNonZeroIntermediate = true
+		}
+		obs = step.Observation
+		terminated = step.Terminated
+		truncated = step.Truncated
+	}
+
+	if truncated {
+		t.Fatalf("3-hand chongci match should terminate, not truncate")
+	}
+	if !sawNonZeroIntermediate {
+		t.Fatalf("expected at least one non-zero intermediate per-hand reward")
+	}
+
+	net := matchEndRewards(env.game.State)
+	for i := range sum {
+		if math.Abs(float64(sum[i]-net[i])) > 1e-4 {
+			t.Fatalf("seat %d: sum of per-step rewards %.6f != match net %.6f", i, sum[i], net[i])
 		}
 	}
 }

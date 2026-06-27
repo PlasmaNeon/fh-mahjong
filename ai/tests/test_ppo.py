@@ -4,7 +4,46 @@ import numpy as np
 import pytest
 import torch
 
+from fh_mahjong_ai.evaluate import episode_reward_vector
 from fh_mahjong_ai.ppo import PPOConfig, masked_policy_distribution
+from fh_mahjong_ai.types import Observation, Transition
+
+
+def _dummy_transition(rewards):
+    obs = Observation(seat=0, planes=np.zeros((1, 1, 1), dtype=np.float32),
+                      scalars=np.zeros(1, dtype=np.float32),
+                      action_mask=np.ones(1, dtype=np.int8), metadata={})
+    return Transition(observation=obs, action_id=0,
+                      rewards=np.asarray(rewards, dtype=np.float32),
+                      next_observation=obs, terminated=False, truncated=False, info={})
+
+
+def test_episode_reward_vector_sums_per_step_rewards():
+    episode = [
+        _dummy_transition([0.0, 0.0, 0.0, 0.0]),
+        _dummy_transition([1.5, -0.5, 0.0, -1.0]),
+        _dummy_transition([0.5, 0.0, -0.5, 0.0]),
+    ]
+    total = episode_reward_vector(episode, fallback_rewards=np.zeros(4, dtype=np.float32))
+    np.testing.assert_allclose(total, [2.0, -0.5, -0.5, -1.0], rtol=1e-6)
+
+
+def test_episode_reward_vector_empty_uses_fallback():
+    total = episode_reward_vector([], fallback_rewards=np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32))
+    np.testing.assert_allclose(total, [0.1, 0.2, 0.3, 0.4], rtol=1e-6)
+
+
+def test_episode_reward_vector_adds_reset_reward_for_nonempty_episode():
+    ep = [_dummy_transition([1.0, 0.0, 0.0, -1.0])]
+    total = episode_reward_vector(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                                  reset_rewards=np.array([0.5, 0.0, 0.0, -0.5], dtype=np.float32))
+    np.testing.assert_allclose(total, [1.5, 0.0, 0.0, -1.5], rtol=1e-6)
+
+
+def test_episode_reward_vector_ignores_reset_reward_when_empty():
+    total = episode_reward_vector([], fallback_rewards=np.array([0.2, 0.0, 0.0, -0.2], dtype=np.float32),
+                                  reset_rewards=np.array([9.0, 9.0, 9.0, 9.0], dtype=np.float32))
+    np.testing.assert_allclose(total, [0.2, 0.0, 0.0, -0.2], rtol=1e-6)
 
 
 def test_ppo_config_defaults():
@@ -122,6 +161,7 @@ def test_ppo_update_increases_prob_of_positive_advantage_action():
 
 
 from fh_mahjong_ai.ppo import collect_rollouts
+from fh_mahjong_ai.ppo import concat_rollout_batches
 
 
 def test_collect_rollouts_mock_shapes_and_done_at_match_end():
@@ -140,6 +180,37 @@ def test_collect_rollouts_mock_shapes_and_done_at_match_end():
         assert arr.shape[0] == n
     assert batch.dones.sum() >= 1
     assert set(np.unique(batch.dones)).issubset({0.0, 1.0})
+
+
+def test_collect_rollouts_is_reproducible_with_same_seed():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=4242)
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=4242)
+    assert len(a) == len(b)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+    np.testing.assert_array_equal(a.actions, b.actions)
+
+
+def test_concat_rollout_batches_preserves_rows_and_dones():
+    env = EnvConfig(action_space_size=4, plane_shape=(2, 3, 1), scalar_features=4)
+    b1 = _synthetic_batch(env, n=5)
+    b2 = _synthetic_batch(env, n=7)
+    b1.dones[-1] = 1.0
+    b2.dones[-1] = 1.0
+    merged = concat_rollout_batches([b1, b2])
+    assert len(merged) == 12
+    assert merged.planes.shape == (12, *env.plane_shape)
+    assert merged.dones.sum() == 2.0
+
+
+def test_concat_rollout_batches_raises_when_all_empty():
+    with pytest.raises(RuntimeError):
+        concat_rollout_batches([])
 
 
 from fh_mahjong_ai.ppo import train_ppo
@@ -164,6 +235,25 @@ def test_train_ppo_e2e_mock_writes_checkpoint(tmp_path):
     assert all(np.isfinite(m["policy_loss"]) for m in metrics)
 
 
+def test_train_ppo_parallel_mock_writes_checkpoint(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    cfg = PPOConfig(iterations=1, matches_per_iter=4, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64,
+                    device="cpu", num_workers=2)
+    metrics = train_ppo(
+        env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1000, run_eval=False,
+    )
+    assert len(metrics) == 1
+    assert (tmp_path / "ppo" / "iter_001.pt").exists()
+    assert np.isfinite(metrics[0]["policy_loss"])
+
+
 def test_cli_train_ppo_mock(tmp_path, monkeypatch):
     import sys
     from fh_mahjong_ai.scripts import train_ppo as cli
@@ -181,6 +271,33 @@ def test_cli_train_ppo_mock(tmp_path, monkeypatch):
         "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1",
         "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
         "--max-steps-per-episode", "64", "--no-eval",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert (tmp_path / "ppo" / "iter_001.pt").exists()
+
+
+def test_cli_train_ppo_parallel_mock(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "1", "--matches-per-iter", "4", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval", "--num-workers", "2",
         "--model-channels", "8", "--model-residual-blocks", "1",
         "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
         "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",

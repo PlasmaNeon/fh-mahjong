@@ -15,6 +15,8 @@ def main() -> None:
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--matches-per-iter", type=int, default=16)
+    parser.add_argument("--num-workers", type=int, default=1,
+                        help="parallel rollout workers (1 = sequential)")
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-eps", type=float, default=0.2)
@@ -52,7 +54,8 @@ def main() -> None:
         max_grad_norm=args.max_grad_norm, sample_temperature=args.sample_temperature,
         eval_interval=args.eval_interval, eval_seeds=args.eval_seeds,
         eval_start_seed=args.eval_start_seed, match_mode=args.match_mode,
-        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
+        max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
+        device=args.device,
     )
     history = train_ppo(
         env_config=env_config, model_config=model_config_from_args(args),

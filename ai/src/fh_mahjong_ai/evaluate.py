@@ -16,6 +16,26 @@ from .policies import TorchGreedyPolicy
 from .types import Transition
 
 
+def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_rewards=None) -> np.ndarray:
+    """Total per-seat reward summed over an episode's transitions, plus the
+    pre-first-decision reset reward when provided. With dense per-step rewards
+    this recovers the full match outcome; with sparse terminal-only rewards it
+    equals the terminal reward. Empty episodes (reset-terminated) fall back to
+    the provided terminal rewards."""
+    if not episode:
+        return np.asarray(fallback_rewards, dtype=np.float32)
+    total = np.zeros(num_seats, dtype=np.float32)
+    for t in episode:
+        r = np.asarray(t.rewards, dtype=np.float32)
+        n = min(num_seats, r.shape[-1]) if r.ndim >= 1 else 0
+        total[:n] += r[:n]
+    if reset_rewards is not None:
+        rr = np.asarray(reset_rewards, dtype=np.float32)
+        n = min(num_seats, rr.shape[-1]) if rr.ndim >= 1 else 0
+        total[:n] += rr[:n]
+    return total
+
+
 def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
     values = [float(reward) for reward in rewards]
     if not values:
@@ -463,9 +483,10 @@ def evaluate_policy_online(
         choice_infos: Sequence[dict[str, Any]],
         outcome: Optional[dict[str, Any]],
         truncated: bool = False,
+        reset_rewards=None,
     ) -> None:
         nonlocal wins, large_losses
-        reward = float(rewards[learning_seat])
+        reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
         if reward > 0:
             wins += 1
@@ -506,6 +527,10 @@ def evaluate_policy_online(
             episode_choice_infos: list[dict[str, Any]] = []
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
+            episode_reset_rewards = (
+                np.asarray(reset_result.rewards, dtype=np.float32)
+                if reset_result is not None else None
+            )
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 record_episode(
                     seed,
@@ -551,6 +576,7 @@ def evaluate_policy_online(
                         episode_choice_infos,
                         step_result.info.get("round_outcome"),
                         truncated=step_result.truncated,
+                        reset_rewards=episode_reset_rewards,
                     )
                     break
                 if not observation.legal_actions:

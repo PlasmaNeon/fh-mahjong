@@ -38,6 +38,7 @@ class PPOConfig:
     eval_start_seed: int = 870000
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
+    num_workers: int = 1
     device: str = "cpu"
 
 
@@ -54,6 +55,26 @@ class RolloutBatch:
 
     def __len__(self) -> int:
         return int(self.actions.shape[0])
+
+
+def concat_rollout_batches(batches: List["RolloutBatch"]) -> "RolloutBatch":
+    """Concatenate per-worker rollout batches into one flat batch. Empty batches
+    are skipped; raises if there is nothing to concatenate. Each match is
+    self-contained (dones=1 at its final step), so GAE over the concatenation is
+    correct without any boundary fix-up."""
+    nonempty = [b for b in batches if len(b) > 0]
+    if not nonempty:
+        raise RuntimeError("concat_rollout_batches: no rollout data")
+    return RolloutBatch(
+        planes=np.concatenate([b.planes for b in nonempty], axis=0),
+        scalars=np.concatenate([b.scalars for b in nonempty], axis=0),
+        action_mask=np.concatenate([b.action_mask for b in nonempty], axis=0),
+        actions=np.concatenate([b.actions for b in nonempty], axis=0),
+        old_logprobs=np.concatenate([b.old_logprobs for b in nonempty], axis=0),
+        values=np.concatenate([b.values for b in nonempty], axis=0),
+        rewards=np.concatenate([b.rewards for b in nonempty], axis=0),
+        dones=np.concatenate([b.dones for b in nonempty], axis=0),
+    )
 
 
 def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributions.Categorical:
@@ -153,11 +174,10 @@ def _obs_to_tensors(obs: Observation, device: str):
 
 
 def _seat_step_reward(step_rewards, seat: int) -> float:
-    """The env's immediate per-seat reward for this step. For Chongci this is 0
-    until the match ends, where it carries the final net score change / 1000 for
-    each seat; for classic it is the terminal round payout. (The env does not
-    expose per-hand intermediate deltas, so this is a sparse terminal reward; the
-    warm-started value critic + GAE propagate it back over the match.)"""
+    """The env's immediate per-seat reward for this step. In Chongci this is the
+    per-seat running-score delta accumulated since the previous decision (dense;
+    it telescopes to the match net); for classic it is the terminal round
+    payout."""
     arr = np.asarray(step_rewards, dtype=np.float32)
     if arr.ndim >= 1 and arr.shape[-1] > seat:
         return float(arr[seat])
@@ -197,6 +217,7 @@ def collect_rollouts(
     try:
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
+            torch.manual_seed(int(base_seed + m))
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
@@ -277,37 +298,52 @@ def train_ppo(
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: List[dict] = []
 
-    for iteration in range(1, config.iterations + 1):
-        batch = collect_rollouts(
-            env_config, model, frozen, config,
-            base_seed=base_seed + iteration * config.matches_per_iter,
-        )
-        advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
-        metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
-        metrics["iteration"] = iteration
-        metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
-        metrics["steps"] = len(batch)
+    collector: Optional["ParallelRolloutCollector"] = None
+    try:
+        if config.num_workers > 1:
+            from .parallel_rollouts import ParallelRolloutCollector
+            frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
+            collector = ParallelRolloutCollector(
+                env_config, model_config, frozen_state, config, config.num_workers,
+            )
+            collector.start()
 
-        if run_eval and iteration % config.eval_interval == 0:
-            seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
-            try:
-                report = evaluate_duplicate_seats(
-                    model=model, seeds=seeds, bridge_kind=env_config.bridge_kind,
-                    bridge_library_path=env_config.bridge_library_path, device=device,
-                    large_loss_threshold=-1.0, match_mode=config.match_mode,
-                    max_steps_per_episode=config.max_steps_per_episode,
-                )
-                metrics["eval_mean_reward"] = report["mean_reward"]
-                metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
-                metrics["eval_large_loss_rate"] = report["large_loss_rate"]
-            except Exception as exc:  # eval must not abort training
-                metrics["eval_error"] = str(exc)[:200]
+        for iteration in range(1, config.iterations + 1):
+            iter_seed = base_seed + iteration * config.matches_per_iter
+            if collector is not None:
+                learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                batch = collector.collect(learner_state, iter_seed, config.matches_per_iter)
+            else:
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
+            advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
+            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics["iteration"] = iteration
+            metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+            metrics["steps"] = len(batch)
 
-        save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
-        history.append(metrics)
-        print(
-            f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
-            f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
-            f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
-        )
+            if run_eval and iteration % config.eval_interval == 0:
+                seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
+                try:
+                    report = evaluate_duplicate_seats(
+                        model=model, seeds=seeds, bridge_kind=env_config.bridge_kind,
+                        bridge_library_path=env_config.bridge_library_path, device=device,
+                        large_loss_threshold=-1.0, match_mode=config.match_mode,
+                        max_steps_per_episode=config.max_steps_per_episode,
+                    )
+                    metrics["eval_mean_reward"] = report["mean_reward"]
+                    metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
+                    metrics["eval_large_loss_rate"] = report["large_loss_rate"]
+                except Exception as exc:  # eval must not abort training
+                    metrics["eval_error"] = str(exc)[:200]
+
+            save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+            history.append(metrics)
+            print(
+                f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+                f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
+            )
+    finally:
+        if collector is not None:
+            collector.close()
     return history
