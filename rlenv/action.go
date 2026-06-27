@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 const (
@@ -86,7 +87,7 @@ func legalActionMap(state *pb.GameState, seat uint32) (map[int]*pb.PlayerAction,
 		if existing, exists := actions[actionID]; exists {
 			return fmt.Errorf("duplicate action id %d for %v and %v", actionID, existing.Type, action.Type)
 		}
-		actions[actionID] = cloneAction(action)
+		actions[actionID] = tiles.CloneAction(action)
 		return nil
 	}
 
@@ -127,7 +128,7 @@ func legalActionMap(state *pb.GameState, seat uint32) (map[int]*pb.PlayerAction,
 			seen[faceIndex] = true
 			if err := add(DiscardBase+faceIndex, &pb.PlayerAction{
 				Type: pb.ActionType_ACTION_DISCARD,
-				Tile: cloneTile(tile),
+				Tile: tiles.CloneTile(tile),
 			}); err != nil {
 				return nil, err
 			}
@@ -183,7 +184,7 @@ func decodeActionID(state *pb.GameState, seat uint32, actionID int) (*pb.PlayerA
 		sort.Ints(legal)
 		return nil, fmt.Errorf("illegal action id %d for seat %d; legal=%v", actionID, seat, legal)
 	}
-	return cloneAction(action), nil
+	return tiles.CloneAction(action), nil
 }
 
 func DecodeActionID(state *pb.GameState, seat uint32, actionID int) (*pb.PlayerAction, error) {
@@ -308,36 +309,4 @@ func sortedTilesByID(tiles []*pb.Tile) []*pb.Tile {
 		return out[i].Id < out[j].Id
 	})
 	return out
-}
-
-func cloneAction(action *pb.PlayerAction) *pb.PlayerAction {
-	if action == nil {
-		return nil
-	}
-	out := &pb.PlayerAction{
-		Type:           action.Type,
-		Tile:           cloneTile(action.Tile),
-		TargetPlayer:   action.TargetPlayer,
-		IsRobbingKong:  action.IsRobbingKong,
-		IsBottomTile:   action.IsBottomTile,
-		IsBloomingKong: action.IsBloomingKong,
-	}
-	if len(action.MeldTiles) > 0 {
-		out.MeldTiles = make([]*pb.Tile, len(action.MeldTiles))
-		for i, tile := range action.MeldTiles {
-			out.MeldTiles[i] = cloneTile(tile)
-		}
-	}
-	return out
-}
-
-func cloneTile(tile *pb.Tile) *pb.Tile {
-	if tile == nil {
-		return nil
-	}
-	return &pb.Tile{
-		Id:    tile.Id,
-		Suit:  tile.Suit,
-		Value: tile.Value,
-	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 func tileName(t *pb.Tile) string {
@@ -57,7 +58,7 @@ func printHand(closed []*pb.Tile, wilds []*pb.Tile) {
 	wildHashes := make(map[uint32]bool)
 	if len(wilds) > 0 {
 		for _, w := range wilds {
-			wildHashes[uint32(w.Suit)*100+w.Value] = true
+			wildHashes[tiles.KeyOf(w.Suit, w.Value)] = true
 		}
 	}
 
@@ -66,7 +67,7 @@ func printHand(closed []*pb.Tile, wilds []*pb.Tile) {
 	sort.Sort(ByValue(sorted))
 
 	for i, t := range sorted {
-		isWild := wildHashes[uint32(t.Suit)*100+t.Value]
+		isWild := wildHashes[tiles.KeyOf(t.Suit, t.Value)]
 		wildStr := ""
 		if isWild {
 			wildStr = " [WILD]"

@@ -22,3 +22,4 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
 - Flowers are excluded from shanten calculations; wild flowers are counted as wilds instead.
 - `RouteUnavailable` marks routes that are invalid for the current hand shape (for example seven pairs after opening the hand).
 - Discard analysis is keyed by tile type (`suit` + `value`) rather than unique tile ID so API consumers and bots get stable, deterministic options.
+- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.

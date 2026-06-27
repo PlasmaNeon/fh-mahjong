@@ -5,6 +5,7 @@ import (
 
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules/shanten"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 type Policy interface {
@@ -73,7 +74,7 @@ func (p *HeuristicPolicy) chooseTurnKan(player *pb.PlayerState, current shanten.
 			postHand := removeTiles(player.ClosedHand, action.MeldTiles)
 			postRoutes := shanten.AnalyzeFromTiles(postHand, len(player.OpenMelds)+1, wildTiles)
 			if postRoutes.Overall <= current.Routes.Overall {
-				candidate := cloneAction(action)
+				candidate := tiles.CloneAction(action)
 				if best == nil || compareKanAction(candidate, best) < 0 {
 					best = candidate
 				}
@@ -82,7 +83,7 @@ func (p *HeuristicPolicy) chooseTurnKan(player *pb.PlayerState, current shanten.
 		}
 
 		if current.Routes.Overall <= 0 {
-			candidate := cloneAction(action)
+			candidate := tiles.CloneAction(action)
 			if best == nil || compareKanAction(candidate, best) < 0 {
 				best = candidate
 			}
@@ -101,14 +102,14 @@ func (p *HeuristicPolicy) chooseInterruptKan(state *pb.GameState, player *pb.Pla
 		if action.Type != pb.ActionType_ACTION_KAN {
 			continue
 		}
-		tiles := append([]*pb.Tile{}, action.MeldTiles...)
+		kanTiles := append([]*pb.Tile{}, action.MeldTiles...)
 		if state.ActiveDiscard != nil {
-			tiles = append(tiles, state.ActiveDiscard)
+			kanTiles = append(kanTiles, state.ActiveDiscard)
 		}
-		if containsWildTile(tiles, state.WildTiles) {
+		if containsWildTile(kanTiles, state.WildTiles) {
 			continue
 		}
-		return cloneAction(action)
+		return tiles.CloneAction(action)
 	}
 
 	return nil
@@ -143,7 +144,7 @@ func (p *HeuristicPolicy) chooseBestCall(state *pb.GameState, seat uint32, curre
 		}
 
 		candidate := &callCandidate{
-			action:      cloneAction(action),
+			action:      tiles.CloneAction(action),
 			postDiscard: bestDiscard.option,
 		}
 		if bestCandidate == nil || compareCallCandidate(candidate, bestCandidate) < 0 {
@@ -333,7 +334,7 @@ func discardPreferenceScore(counts map[uint32]int, tile shanten.TileType, isWild
 		return -1000
 	}
 
-	key := tileTypeHash(tile.Suit, tile.Value)
+	key := tiles.KeyOf(tile.Suit, tile.Value)
 	count := counts[key]
 
 	if tile.Suit == pb.Suit_SUIT_JIHAI {
@@ -351,10 +352,10 @@ func discardPreferenceScore(counts map[uint32]int, tile shanten.TileType, isWild
 		score -= 15
 	}
 
-	left2 := counts[tileTypeHash(tile.Suit, tile.Value-2)]
-	left1 := counts[tileTypeHash(tile.Suit, tile.Value-1)]
-	right1 := counts[tileTypeHash(tile.Suit, tile.Value+1)]
-	right2 := counts[tileTypeHash(tile.Suit, tile.Value+2)]
+	left2 := counts[tiles.KeyOf(tile.Suit, tile.Value-2)]
+	left1 := counts[tiles.KeyOf(tile.Suit, tile.Value-1)]
+	right1 := counts[tiles.KeyOf(tile.Suit, tile.Value+1)]
+	right2 := counts[tiles.KeyOf(tile.Suit, tile.Value+2)]
 
 	neighbors := left1 + right1
 	extended := left2 + right2
@@ -380,13 +381,13 @@ func discardPreferenceScore(counts map[uint32]int, tile shanten.TileType, isWild
 	return score
 }
 
-func containsWildTile(tiles []*pb.Tile, wildTiles []*pb.Tile) bool {
+func containsWildTile(hand []*pb.Tile, wildTiles []*pb.Tile) bool {
 	wildSet := make(map[uint32]bool, len(wildTiles))
 	for _, tile := range wildTiles {
-		wildSet[tileTypeHash(tile.Suit, tile.Value)] = true
+		wildSet[tiles.KeyOf(tile.Suit, tile.Value)] = true
 	}
-	for _, tile := range tiles {
-		if wildSet[tileTypeHash(tile.Suit, tile.Value)] {
+	for _, tile := range hand {
+		if wildSet[tiles.KeyOf(tile.Suit, tile.Value)] {
 			return true
 		}
 	}
@@ -425,57 +426,18 @@ func removeTiles(hand []*pb.Tile, remove []*pb.Tile) []*pb.Tile {
 func tileTypeCounts(hand []*pb.Tile) map[uint32]int {
 	counts := make(map[uint32]int)
 	for _, tile := range hand {
-		counts[tileTypeHash(tile.Suit, tile.Value)]++
+		counts[tiles.KeyOf(tile.Suit, tile.Value)]++
 	}
 	return counts
-}
-
-func tileTypeHash(suit pb.Suit, value uint32) uint32 {
-	return uint32(suit)*100 + value
 }
 
 func firstActionOfType(actions []*pb.PlayerAction, actionType pb.ActionType) *pb.PlayerAction {
 	for _, action := range actions {
 		if action.Type == actionType {
-			return cloneAction(action)
+			return tiles.CloneAction(action)
 		}
 	}
 	return nil
-}
-
-func cloneAction(action *pb.PlayerAction) *pb.PlayerAction {
-	if action == nil {
-		return nil
-	}
-
-	cloned := &pb.PlayerAction{
-		Type:           action.Type,
-		TargetPlayer:   action.TargetPlayer,
-		IsRobbingKong:  action.IsRobbingKong,
-		IsBottomTile:   action.IsBottomTile,
-		IsBloomingKong: action.IsBloomingKong,
-	}
-	if action.Tile != nil {
-		cloned.Tile = cloneTile(action.Tile)
-	}
-	if len(action.MeldTiles) > 0 {
-		cloned.MeldTiles = make([]*pb.Tile, len(action.MeldTiles))
-		for i, tile := range action.MeldTiles {
-			cloned.MeldTiles[i] = cloneTile(tile)
-		}
-	}
-	return cloned
-}
-
-func cloneTile(tile *pb.Tile) *pb.Tile {
-	if tile == nil {
-		return nil
-	}
-	return &pb.Tile{
-		Id:    tile.Id,
-		Suit:  tile.Suit,
-		Value: tile.Value,
-	}
 }
 
 func compareKanAction(lhs, rhs *pb.PlayerAction) int {

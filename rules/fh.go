@@ -2,6 +2,7 @@ package rules
 
 import (
 	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 // HometownRuleset implements the core.RuleEngine interface.
@@ -81,7 +82,7 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 	wildHashes := make(map[uint32]bool)
 	if state != nil && len(state.WildTiles) > 0 {
 		for _, w := range state.WildTiles {
-			hash := uint32(w.Suit)*100 + w.Value
+			hash := tiles.KeyOf(w.Suit, w.Value)
 			wildHashes[hash] = true
 			if w.Suit == pb.Suit_SUIT_UNKNOWN || w.Suit > pb.Suit_SUIT_JIHAI {
 				isFlowerWild = true
@@ -90,14 +91,14 @@ func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, wi
 	}
 	// Count wild tiles (excluding Ron win tile — it acts as a normal tile)
 	for _, t := range hand {
-		hash := uint32(t.Suit)*100 + t.Value
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			wildsInHand++
 		}
 	}
 	// If Tsumo, the drawn winning tile is part of our concealed hand and counts as wild
 	if isTsumo && winTile != nil {
-		hash := uint32(winTile.Suit)*100 + winTile.Value
+		hash := tiles.KeyOf(winTile.Suit, winTile.Value)
 		if wildHashes[hash] {
 			wildsInHand++
 		}
@@ -504,11 +505,11 @@ func tileToIndex(t *pb.Tile) int {
 // tilesToTehai34 converts a slice of tiles into a [34]int tehai count array (Mortal layout).
 // Wild tiles are counted separately and excluded from the array.
 // Returns (tehai counts, wild tile count).
-func (r *HometownRuleset) tilesToTehai34(tiles []*pb.Tile, wildHashes map[uint32]bool) ([34]int, int) {
+func (r *HometownRuleset) tilesToTehai34(tileSlice []*pb.Tile, wildHashes map[uint32]bool) ([34]int, int) {
 	var counts [34]int
 	wilds := 0
-	for _, t := range tiles {
-		hash := uint32(t.Suit)*100 + t.Value
+	for _, t := range tileSlice {
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			wilds++
 		} else {
@@ -690,11 +691,11 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 		counts[k] = append(counts[k], t)
 	}
 
-	for _, tiles := range counts {
-		if len(tiles) == 4 {
+	for _, tileGroup := range counts {
+		if len(tileGroup) == 4 {
 			actions = append(actions, &pb.PlayerAction{
 				Type:      pb.ActionType_ACTION_KAN,
-				MeldTiles: tiles,
+				MeldTiles: tileGroup,
 			})
 		}
 	}
@@ -872,7 +873,7 @@ func (r *HometownRuleset) countIdenticalFours(hand []*pb.Tile) int {
 	counts := make(map[uint32]int)
 	bombs := 0
 	for _, t := range hand {
-		hash := uint32(t.Suit)*100 + t.Value
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		counts[hash]++
 		if counts[hash] == 4 {
 			bombs++
@@ -987,7 +988,7 @@ func (r *HometownRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*p
 		}
 	}
 	for _, t := range hand {
-		hash := uint32(t.Suit)*100 + t.Value
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			continue // Wild tiles adapt to any jihai
 		}
@@ -1019,7 +1020,7 @@ func (r *HometownRuleset) isPureOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, w
 		}
 	}
 	for _, t := range hand {
-		hash := uint32(t.Suit)*100 + t.Value
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			continue // Wild tile does not constrain the target suit
 		}
@@ -1038,7 +1039,7 @@ func (r *HometownRuleset) isMixedOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, 
 	hasSuit := false
 
 	checkTile := func(t *pb.Tile) bool {
-		hash := uint32(t.Suit)*100 + t.Value
+		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			return true // Wild tile can be any suit — does not break the constraint
 		}
@@ -1129,7 +1130,7 @@ func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wil
 
 	counts, wilds := r.tilesToTehai34(hand, wildHashes)
 	winIdx := tileToIndex(winTile)
-	winHash := uint32(winTile.Suit)*100 + winTile.Value
+	winHash := tiles.KeyOf(winTile.Suit, winTile.Value)
 	winIsWild := wildHashes[winHash]
 
 	// If the hand contains 14 tiles (Tsumo case where winTile was already appended to ClosedHand),
