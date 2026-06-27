@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -16,6 +18,17 @@ from .storage import load_checkpoint, save_checkpoint
 from .types import Observation
 
 LEARNING_SEAT = 0
+
+HISTORY_FILENAME = "history.json"
+
+
+def _write_history_atomic(path: Path, history: List[dict]) -> None:
+    """Persist `history` durably: write to a sibling temp file then atomically
+    replace, so a crash mid-write can never truncate or corrupt the existing
+    history.json."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(history, indent=2))
+    os.replace(tmp, path)
 
 
 @dataclass
@@ -297,6 +310,8 @@ def train_ppo(
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: List[dict] = []
+    history_path = checkpoint_dir / HISTORY_FILENAME
+    _write_history_atomic(history_path, history)
 
     collector: Optional["ParallelRolloutCollector"] = None
     try:
@@ -338,11 +353,24 @@ def train_ppo(
 
             save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
             history.append(metrics)
-            print(
+            line = (
                 f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
                 f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
                 f"approx_kl={metrics['approx_kl']:.4f} mean_reward={metrics['mean_reward']:.4f}"
             )
+            if "eval_mean_reward" in metrics:
+                line += (
+                    f" eval_mean_reward={metrics['eval_mean_reward']:.4f} "
+                    f"eval_ci95={metrics['eval_mean_reward_ci95']:.4f} "
+                    f"eval_large_loss_rate={metrics['eval_large_loss_rate']:.4f}"
+                )
+            elif "eval_error" in metrics:
+                err = " ".join(str(metrics["eval_error"]).split())
+                line += f" eval_error={err}"
+            print(line)
+            # Persist after every iteration so an interruption keeps completed
+            # iterations' metrics (checkpoints are already saved per iteration).
+            _write_history_atomic(history_path, history)
     finally:
         if collector is not None:
             collector.close()
