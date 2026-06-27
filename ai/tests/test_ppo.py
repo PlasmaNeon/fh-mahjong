@@ -636,3 +636,40 @@ def test_cli_train_ppo_mlflow_finalization_failure_is_tolerated(tmp_path, monkey
     assert (tmp_path / "ppo" / "iter_002.pt").exists()
     assert (tmp_path / "ppo" / "history.json").exists()
     assert "MLflow finalization failed" in capsys.readouterr().err
+
+
+def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    seen = {"exc_type": "unset"}
+
+    class RecordingCM:
+        def __enter__(self):
+            return type("R", (), {"info": type("I", (), {"run_id": "x"})()})()
+
+        def __exit__(self, exc_type, exc, tb):
+            seen["exc_type"] = exc_type
+            return False  # do not suppress
+
+    def boom_train(*a, **k):
+        raise RuntimeError("training blew up")
+
+    monkeypatch.setattr(cli, "start_run", lambda enabled, **kwargs: RecordingCM())
+    monkeypatch.setattr(cli, "log_params", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "log_metrics", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "log_artifact", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "train_ppo", boom_train)
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    monkeypatch.setattr(sys, "argv", _ppo_mlflow_argv(tmp_path, init, 2))
+    # real training failure must still propagate...
+    with pytest.raises(RuntimeError, match="training blew up"):
+        cli.main()
+    # ...and MLflow finalization must see it (so the run is marked FAILED, not FINISHED)
+    assert seen["exc_type"] is RuntimeError

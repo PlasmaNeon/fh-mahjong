@@ -158,8 +158,11 @@ def main() -> None:
                 print(f"MLflow run: {run_id}")
     finally:
         if mlflow_cm is not None:
+            # Pass the in-flight exception (if any) so a crashed training run is
+            # finalized as FAILED, not FINISHED; still tolerate a backend error
+            # during finalization itself.
             try:
-                mlflow_cm.__exit__(None, None, None)
+                mlflow_cm.__exit__(*sys.exc_info())
             except Exception as exc:  # noqa: BLE001 - finalization must not crash a finished run
                 print(
                     f"warning: MLflow finalization failed ({exc!r})",
