@@ -737,18 +737,17 @@ def test_pool_snapshot_is_frozen_copy():
     storage with the learner. In-place optimizer steps then silently mutate
     "frozen" opponents, collapsing self-play diversity.
 
-    This test captures a snapshot using the BUGGY expression (no .clone()) so it
-    will FAIL (RED) before the fix is applied.  After the fix adds .clone() the
-    snapshot is an independent copy and the test turns GREEN.
+    This test calls the PRODUCTION helper cpu_state_snapshot so it will FAIL
+    (RED) if .clone() is removed from that helper, and pass GREEN when present.
     """
+    from fh_mahjong_ai.ppo import cpu_state_snapshot
+
     model, _env = _tiny_model()
-    # Capture a snapshot the same way train_ppo does after the fix (.clone() added).
-    # This used to be {k: v.detach().cpu() ...} — no clone — which aliased the live
-    # model on CPU.  The fix adds .clone() so this is now an independent copy.
-    buggy_snapshot = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+    # Use the production capture path so this test gates ppo.py directly.
+    snap = cpu_state_snapshot(model)
 
     # Record snapshot values before mutation.
-    snapshot_before = {k: v.clone() for k, v in buggy_snapshot.items()}
+    before = {k: v.clone() for k, v in snap.items()}
 
     # Mutate the live model in-place (simulates one optimizer step).
     with torch.no_grad():
@@ -756,11 +755,9 @@ def test_pool_snapshot_is_frozen_copy():
             p.add_(1.0)
 
     # The snapshot must NOT have changed — it should be an independent copy.
-    for k, before in snapshot_before.items():
-        after = buggy_snapshot[k]
-        assert torch.equal(before, after), (
-            f"Pool snapshot tensor '{k}' changed after in-place model mutation: "
-            f"snapshot aliases the live model. Fix: add .clone() at capture."
+    for k, b in before.items():
+        assert torch.equal(b, snap[k]), (
+            f"snapshot '{k}' drifted — it aliases the live model"
         )
 
 

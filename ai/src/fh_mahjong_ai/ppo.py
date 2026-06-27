@@ -31,6 +31,13 @@ def _write_history_atomic(path: Path, history: List[dict]) -> None:
     os.replace(tmp, path)
 
 
+def cpu_state_snapshot(model: "torch.nn.Module") -> dict:
+    """Detached CPU COPY of a model's params. The .clone() is required: on a
+    CPU model .cpu() is a no-op and state_dict() returns live references, so
+    without it a 'snapshot' would alias and drift with the live model."""
+    return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+
 @dataclass
 class PPOConfig:
     iterations: int = 50
@@ -341,7 +348,7 @@ def train_ppo(
     history_path = checkpoint_dir / HISTORY_FILENAME
     _write_history_atomic(history_path, history)
 
-    frozen_state = {k: v.detach().cpu().clone() for k, v in frozen.state_dict().items()}
+    frozen_state = cpu_state_snapshot(frozen)
     pool_states: List[dict] = [frozen_state]  # index 0 = anchor, always kept
 
     collector: Optional["ParallelRolloutCollector"] = None
@@ -358,7 +365,7 @@ def train_ppo(
 
             # Grow the opponent pool with a snapshot of the current learner.
             if config.pool_max_size > 1 and iteration % config.pool_snapshot_interval == 0:
-                pool_states.append({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+                pool_states.append(cpu_state_snapshot(model))
                 if len(pool_states) > config.pool_max_size:
                     pool_states.pop(1)  # evict oldest snapshot; keep anchor at index 0
 
