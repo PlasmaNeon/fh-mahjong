@@ -638,6 +638,42 @@ def test_cli_train_ppo_mlflow_finalization_failure_is_tolerated(tmp_path, monkey
     assert "MLflow finalization failed" in capsys.readouterr().err
 
 
+def test_ppo_config_has_pool_defaults():
+    cfg = PPOConfig()
+    assert cfg.pool_max_size == 1
+    assert cfg.pool_snapshot_interval == 10
+
+
+def _small_env_model():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    return env_cfg, mcfg
+
+
+def test_collect_rollouts_pool_size_one_matches_single_anchor():
+    env_cfg, mcfg = _small_env_model()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=321)                      # default path
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=321, opponents=[frozen])  # size-1 pool
+    assert len(a) == len(b)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
+def test_collect_rollouts_with_pool_is_deterministic():
+    env_cfg, mcfg = _small_env_model()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    pool = [PolicyValueNet(env_cfg, mcfg), PolicyValueNet(env_cfg, mcfg), PolicyValueNet(env_cfg, mcfg)]
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, pool[0], cfg, base_seed=77, opponents=pool)
+    b = collect_rollouts(env_cfg, learner, pool[0], cfg, base_seed=77, opponents=pool)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
 def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monkeypatch):
     import sys
     from fh_mahjong_ai.scripts import train_ppo as cli

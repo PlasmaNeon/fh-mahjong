@@ -52,6 +52,8 @@ class PPOConfig:
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
     num_workers: int = 1
+    pool_max_size: int = 1
+    pool_snapshot_interval: int = 10
     device: str = "cpu"
 
 
@@ -203,6 +205,7 @@ def collect_rollouts(
     frozen_anchor,
     config: PPOConfig,
     base_seed: int,
+    opponents: Optional[list] = None,
 ) -> RolloutBatch:
     """Play `matches_per_iter` full matches; record on-policy experience for the
     learning seat (samples from the masked policy), with the frozen anchor in the
@@ -222,7 +225,9 @@ def collect_rollouts(
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)
     policy_model.eval()
-    frozen_anchor.eval()
+    pool = list(opponents) if opponents else [frozen_anchor]
+    for net in pool:
+        net.eval()
 
     planes_l, scalars_l, mask_l, actions_l = [], [], [], []
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
@@ -231,6 +236,12 @@ def collect_rollouts(
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
             torch.manual_seed(int(base_seed + m))
+            # Opponent assignment uses a separate NumPy RNG so it never perturbs
+            # the learner's torch sampling stream (keeps pool-size-1 byte-identical
+            # to the single-anchor path) and stays reproducible across the
+            # sequential and parallel collectors.
+            opp_rng = np.random.default_rng(int(base_seed + m))
+            seat_opponent = {s: pool[int(opp_rng.integers(len(pool)))] for s in (1, 2, 3)}
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
@@ -256,8 +267,9 @@ def collect_rollouts(
                     dones_l.append(0.0)
                     last_learn_index = len(actions_l) - 1
                 else:
+                    net = seat_opponent.get(seat, pool[0])
                     with torch.no_grad():
-                        logits, _ = frozen_anchor(planes, scalars, mask)
+                        logits, _ = net(planes, scalars, mask)
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
                 if last_learn_index is not None:
