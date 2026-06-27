@@ -5,6 +5,7 @@ import (
 
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rules/shanten"
+	"github.com/plasma/fh-mahjong/tiles"
 )
 
 const (
@@ -500,15 +501,14 @@ func bestVisibleDiscardLookahead(analysis shanten.HandAnalysis) *shanten.Discard
 	return &analysis.DiscardOptions[0]
 }
 
-func countWildTiles(tiles []*pb.Tile, wildTiles []*pb.Tile) int {
+func countWildTiles(hand []*pb.Tile, wildTiles []*pb.Tile) int {
 	wildSet := make(map[uint32]bool, len(wildTiles))
 	for _, tile := range wildTiles {
-		wildSet[tileTypeKey(tile)] = true
+		wildSet[tiles.Key(tile)] = true
 	}
-
 	count := 0
-	for _, tile := range tiles {
-		if wildSet[tileTypeKey(tile)] {
+	for _, tile := range hand {
+		if wildSet[tiles.Key(tile)] {
 			count++
 		}
 	}
@@ -671,13 +671,6 @@ func normalizeUsefulTileCount(value int) float32 {
 
 func normalizeRouteDelta(value int) float32 {
 	return clamp01((float32(maxInt(-4, minInt(4, value))) + 4.0) / 8.0)
-}
-
-func tileTypeKey(tile *pb.Tile) uint32 {
-	if tile == nil {
-		return 0
-	}
-	return uint32(tile.Suit)*100 + tile.Value
 }
 
 func clamp01(value float32) float32 {
