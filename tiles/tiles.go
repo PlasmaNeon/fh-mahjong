@@ -63,6 +63,11 @@ func FromIndex34(idx int) (pb.Suit, uint32) {
 }
 
 // CloneTile returns a deep copy of t (id/suit/value); nil yields nil.
+//
+// Fields are enumerated by hand rather than using proto.Clone because this
+// package may import only the project's proto bindings (not the protobuf
+// runtime), per the package's import constraint. Keep the field list in sync
+// with the Tile message in proto/game.proto when it changes.
 func CloneTile(t *pb.Tile) *pb.Tile {
 	if t == nil {
 		return nil
@@ -71,7 +76,9 @@ func CloneTile(t *pb.Tile) *pb.Tile {
 }
 
 // CloneAction returns a deep copy of a, including its Tile and MeldTiles;
-// nil yields nil.
+// nil yields nil. Like CloneTile, the scalar fields are enumerated by hand
+// (proto.Clone is unavailable here) — keep them in sync with the PlayerAction
+// message in proto/game.proto.
 func CloneAction(a *pb.PlayerAction) *pb.PlayerAction {
 	if a == nil {
 		return nil
