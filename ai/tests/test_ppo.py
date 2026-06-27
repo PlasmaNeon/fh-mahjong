@@ -445,3 +445,71 @@ def test_seat_step_reward_reads_per_seat_vector():
     assert _seat_step_reward(np.array([-1.4, 0.1, 0.1, 1.2], dtype=np.float32), 0) == pytest.approx(-1.4, abs=1e-6)
     assert _seat_step_reward([0.0, 0.0, 0.0, 0.0], 0) == 0.0
     assert _seat_step_reward(np.zeros(0, dtype=np.float32), 0) == 0.0  # degenerate -> 0
+
+
+def test_train_ppo_invokes_iteration_callback(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    seen: list = []
+    train_ppo(
+        env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=7, run_eval=False,
+        iteration_callback=lambda m: seen.append(dict(m)),
+    )
+    assert [m["iteration"] for m in seen] == [1, 2]
+    assert all("mean_reward" in m for m in seen)
+
+
+def test_cli_train_ppo_mlflow_wiring(tmp_path, monkeypatch):
+    import contextlib
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    calls = {"start_run": 0, "log_params": 0, "log_metrics": 0, "log_artifact": 0, "enabled": None}
+
+    @contextlib.contextmanager
+    def fake_start_run(enabled, **kwargs):
+        calls["start_run"] += 1
+        calls["enabled"] = enabled
+        if not enabled:
+            yield None
+            return
+        run = type("R", (), {"info": type("I", (), {"run_id": "test-run"})()})()
+        yield run
+
+    monkeypatch.setattr(cli, "start_run", fake_start_run)
+    monkeypatch.setattr(cli, "log_params", lambda *a, **k: calls.__setitem__("log_params", calls["log_params"] + 1))
+    monkeypatch.setattr(cli, "log_metrics", lambda *a, **k: calls.__setitem__("log_metrics", calls["log_metrics"] + 1))
+    monkeypatch.setattr(cli, "log_artifact", lambda *a, **k: calls.__setitem__("log_artifact", calls["log_artifact"] + 1))
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "2", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval", "--mlflow",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+
+    assert calls["enabled"] is True
+    assert calls["log_params"] == 1
+    assert calls["log_metrics"] == 2  # one per iteration via the callback
+    assert calls["log_artifact"] >= 1  # history.json (+ final checkpoint)

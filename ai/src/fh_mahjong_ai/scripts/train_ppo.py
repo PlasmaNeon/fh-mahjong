@@ -2,11 +2,25 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from pathlib import Path
 
 from fh_mahjong_ai.config import EnvConfig
+from fh_mahjong_ai.mlflow_tracking import (
+    DEFAULT_EXPERIMENT_NAME,
+    log_artifact,
+    log_metrics,
+    log_params,
+    start_run,
+)
 from fh_mahjong_ai.ppo import PPOConfig, train_ppo
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+
+_MLFLOW_METRIC_KEYS = (
+    "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
+    "mean_reward", "steps", "eval_mean_reward", "eval_mean_reward_ci95",
+    "eval_large_loss_rate",
+)
 
 
 def main() -> None:
@@ -37,6 +51,11 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--base-seed", type=int, default=0)
     parser.add_argument("--no-eval", action="store_true")
+    parser.add_argument("--mlflow", action="store_true",
+                        help="Log PPO params, per-iteration metrics, and artifacts to MLflow")
+    parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
+    parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
+    parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
 
@@ -57,14 +76,44 @@ def main() -> None:
         max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
         device=args.device,
     )
-    history = train_ppo(
-        env_config=env_config, model_config=model_config_from_args(args),
-        init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
-        config=config, base_seed=args.base_seed, run_eval=not args.no_eval,
-    )
-    # train_ppo persists history.json atomically after every iteration, so it is
-    # already on disk (and survives interruptions) by the time we get here.
-    history_path = args.checkpoint_dir / "history.json"
+    def _mlflow_callback(metrics: dict) -> None:
+        numeric = {
+            key: float(metrics[key])
+            for key in _MLFLOW_METRIC_KEYS
+            if isinstance(metrics.get(key), (int, float))
+        }
+        log_metrics(numeric, step=int(metrics.get("iteration", 0)))
+
+    with start_run(
+        enabled=args.mlflow,
+        experiment_name=args.mlflow_experiment,
+        tracking_uri=args.mlflow_tracking_uri,
+        run_name=args.mlflow_run_name,
+        tags={"algo": "ppo", "match_mode": args.match_mode},
+    ) as mlflow_run:
+        if mlflow_run is not None:
+            log_params({
+                **asdict(config),
+                "init_checkpoint": str(args.init_checkpoint),
+                "base_seed": args.base_seed,
+                "bridge_kind": args.bridge_kind,
+                "run_eval": not args.no_eval,
+            })
+        history = train_ppo(
+            env_config=env_config, model_config=model_config_from_args(args),
+            init_checkpoint=args.init_checkpoint, checkpoint_dir=args.checkpoint_dir,
+            config=config, base_seed=args.base_seed, run_eval=not args.no_eval,
+            iteration_callback=_mlflow_callback if mlflow_run is not None else None,
+        )
+        # train_ppo persists history.json atomically after every iteration, so it is
+        # already on disk (and survives interruptions) by the time we get here.
+        history_path = args.checkpoint_dir / "history.json"
+        if mlflow_run is not None:
+            log_artifact(history_path, artifact_path="reports")
+            final_ckpt = args.checkpoint_dir / f"iter_{len(history):03d}.pt"
+            if final_ckpt.exists():
+                log_artifact(final_ckpt, artifact_path="checkpoints")
+            print(f"MLflow run: {mlflow_run.info.run_id}")
     print(
         f"PPO finished: {len(history)} iterations; checkpoints in {args.checkpoint_dir}; "
         f"history written to {history_path}"
