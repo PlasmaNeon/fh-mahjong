@@ -74,6 +74,10 @@ fh-mahjong/
 5. **WASM for prediction**: Go core compiles to `GOOS=js GOARCH=wasm` for zero-latency client-side action validation.
 6. **c-shared for RL**: Same Go core compiles as `c-shared` library for Python training via `ctypes`/`cffi`.
 
+## Shared Utilities
+
+- `docs/refactoring-notes.md` — shared `tiles` (Go) and `tileModel.ts` (web) modules; where the de-duplicated tile-key/index/clone logic now lives.
+
 ## Naming Conventions & Terminology
 
 ### Suit Names (use these in all code comments and docs)
