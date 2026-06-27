@@ -370,7 +370,7 @@ def train_ppo(
                     pool_states.pop(1)  # evict oldest snapshot; keep anchor at index 0
 
             if collector is not None:
-                learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                learner_state = cpu_state_snapshot(model)
                 batch = collector.collect(learner_state, pool_states, iter_seed, config.matches_per_iter)
             elif config.pool_max_size > 1:
                 opponents = build_opponent_nets(env_config, model_config, pool_states, device)
