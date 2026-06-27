@@ -349,7 +349,7 @@ def train_ppo(
         if config.num_workers > 1:
             from .parallel_rollouts import ParallelRolloutCollector
             collector = ParallelRolloutCollector(
-                env_config, model_config, frozen_state, config, config.num_workers,
+                env_config, model_config, config, config.num_workers,
             )
             collector.start()
 
@@ -364,7 +364,7 @@ def train_ppo(
 
             if collector is not None:
                 learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
-                batch = collector.collect(learner_state, iter_seed, config.matches_per_iter)
+                batch = collector.collect(learner_state, pool_states, iter_seed, config.matches_per_iter)
             elif config.pool_max_size > 1:
                 opponents = build_opponent_nets(env_config, model_config, pool_states, device)
                 batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents)

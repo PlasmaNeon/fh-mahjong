@@ -34,10 +34,10 @@ def test_parallel_matches_sequential_rewards():
 
     seq = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=900)
 
-    collector = ParallelRolloutCollector(env_cfg, mcfg, _cpu_state_dict(frozen), cfg, num_workers=2)
+    collector = ParallelRolloutCollector(env_cfg, mcfg, cfg, num_workers=2)
     collector.start()
     try:
-        par = collector.collect(_cpu_state_dict(learner), base_seed=900, matches_per_iter=4)
+        par = collector.collect(_cpu_state_dict(learner), [_cpu_state_dict(frozen)], base_seed=900, matches_per_iter=4)
     finally:
         collector.close()
 
@@ -52,14 +52,14 @@ def test_collector_propagates_worker_exception():
     frozen = PolicyValueNet(env_cfg, mcfg)
     cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
 
-    collector = ParallelRolloutCollector(env_cfg, mcfg, _cpu_state_dict(frozen), cfg, num_workers=1)
+    collector = ParallelRolloutCollector(env_cfg, mcfg, cfg, num_workers=1)
     collector.start()
     try:
         # A state_dict from an incompatible model shape makes load_state_dict raise in the worker.
         bad = PolicyValueNet(EnvConfig(action_space_size=8, plane_shape=(2, 3, 1), scalar_features=4),
                              _small_model_cfg())
         with pytest.raises(RuntimeError):
-            collector.collect(_cpu_state_dict(bad), base_seed=1, matches_per_iter=2)
+            collector.collect(_cpu_state_dict(bad), [_cpu_state_dict(frozen)], base_seed=1, matches_per_iter=2)
     finally:
         collector.close()
 
@@ -67,11 +67,32 @@ def test_collector_propagates_worker_exception():
 def test_collector_close_joins_workers():
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = _small_model_cfg()
-    frozen = PolicyValueNet(env_cfg, mcfg)
     cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
-    collector = ParallelRolloutCollector(env_cfg, mcfg, _cpu_state_dict(frozen), cfg, num_workers=2)
+    collector = ParallelRolloutCollector(env_cfg, mcfg, cfg, num_workers=2)
     collector.start()
     procs = list(collector._procs)
     collector.close()
     assert procs
     assert all(not p.is_alive() for p in procs)
+
+
+def test_parallel_with_pool_matches_sequential():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = _small_model_cfg()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    pool_nets = [PolicyValueNet(env_cfg, mcfg), PolicyValueNet(env_cfg, mcfg)]
+    pool_states = [_cpu_state_dict(n) for n in pool_nets]
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    seq = collect_rollouts(env_cfg, learner, pool_nets[0], cfg, base_seed=1234, opponents=pool_nets)
+
+    collector = ParallelRolloutCollector(env_cfg, mcfg, cfg, num_workers=2)
+    collector.start()
+    try:
+        par = collector.collect(_cpu_state_dict(learner), pool_states, base_seed=1234, matches_per_iter=4)
+    finally:
+        collector.close()
+
+    assert len(par) == len(seq)
+    assert par.dones.sum() == seq.dones.sum() == 4.0
+    np.testing.assert_allclose(np.sort(par.rewards), np.sort(seq.rewards), rtol=1e-5)
