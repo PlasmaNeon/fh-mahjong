@@ -47,3 +47,6 @@ mlflow.db
 mlflow.db-*
 
 .superpowers/
+
+# stray go build output
+/server
