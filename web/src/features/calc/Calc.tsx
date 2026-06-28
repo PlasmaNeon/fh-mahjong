@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 
-import { getApiUrl, hasConfiguredApiBaseUrl } from '../config'
-import { ActionType, MeldDirection } from '../proto/game.ts'
-import { getTileName, getTileSvgName } from '../utils/tileUtils'
+import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
+import { ActionType, MeldDirection } from '../../proto/game.ts'
+import { getTileName, getTileSvgName } from '../../utils/tileUtils'
 import {
   buildCalcRequestPayload,
   CalcKongContextKey,
