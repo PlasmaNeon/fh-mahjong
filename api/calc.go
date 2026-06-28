@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 type CalcTileInput struct {

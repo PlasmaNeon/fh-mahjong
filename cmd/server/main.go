@@ -12,7 +12,7 @@ import (
 	"github.com/plasma/fh-mahjong/bot/remote"
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules/shanten"
+	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

@@ -7,7 +7,7 @@ import (
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 type Env struct {

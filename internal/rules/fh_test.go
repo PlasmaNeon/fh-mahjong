@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 // --- Utility Functions ---

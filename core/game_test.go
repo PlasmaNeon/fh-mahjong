@@ -5,7 +5,7 @@ import (
 
 	"github.com/plasma/fh-mahjong/core"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules"
+	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 func TestNewGame_ClassicDefault(t *testing.T) {

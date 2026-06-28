@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rules/shanten"
+	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"github.com/plasma/fh-mahjong/tiles"
 )
 
