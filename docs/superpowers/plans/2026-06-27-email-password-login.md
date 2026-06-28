@@ -1066,71 +1066,25 @@ No code change expected. If you adjusted copy, commit it.
 
 ---
 
-### Task 9: Zeabur DB cutover + deploy
+### Task 9: Zeabur deploy + verification
 
 **Files:** none (operational). Uses the deployed `fhmj` project Postgres.
 
-> Authorized in brainstorming: the `users` table is empty, so a one-time drop loses no data. **Re-verify the row count is 0 immediately before dropping.**
+> The schema cutover is now **automated** in `storage.AutoMigrate` (adversarial-review round 2): it migrates an empty legacy table in place, drops the stale `idx_users_username` unique index, and **fails closed** (server aborts at startup with a diagnostic) if the legacy table unexpectedly holds rows. There is no manual `DROP TABLE` step.
 
 - [ ] **Step 1: Merge the PR to main**
 
-Open a PR for this branch and merge it (`gh pr merge <n> --merge`) so Zeabur builds the new backend from `main`. Wait for the `fh-mahjong` service to redeploy and reach RUNNING.
+Merge the PR (`gh pr merge <n> --merge`) so Zeabur builds the new backend from `main`. On boot, `cmd/server/main.go` calls `storage.AutoMigrate`, which performs the cutover automatically. Wait for the `fh-mahjong` service to reach RUNNING (if it fails closed, the logs will show the `refusing to migrate` diagnostic — investigate the DB state rather than forcing).
 
-- [ ] **Step 2: Re-verify the users table is empty, then drop it**
+- [ ] **Step 2: Verify the rebuilt schema**
 
-Create a throwaway program `cmd/dbcutover/main.go` (NOT committed):
-```go
-package main
-
-import (
-	"fmt"
-	"log"
-	"os"
-
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-)
-
-func main() {
-	db, err := gorm.Open(postgres.Open(os.Getenv("DATABASE_URL")),
-		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		log.Fatalf("connect: %v", err)
-	}
-	var n int64
-	db.Raw(`SELECT count(*) FROM users`).Scan(&n)
-	fmt.Printf("users row count before drop: %d\n", n)
-	if n != 0 {
-		log.Fatalf("ABORT: users is not empty (%d rows) — do not drop", n)
-	}
-	if err := db.Exec(`DROP TABLE IF EXISTS users CASCADE`).Error; err != nil {
-		log.Fatalf("drop: %v", err)
-	}
-	fmt.Println("dropped users table")
-}
-```
-Run it with the Zeabur external `DATABASE_URL` (from the `fh-mahjong` service variables):
-```bash
-DATABASE_URL='postgresql://root:<password>@43.134.132.74:32315/zeabur' go run ./cmd/dbcutover
-rm -rf cmd/dbcutover
-```
-Expected: prints `users row count before drop: 0` then `dropped users table`. (If it aborts because the table is non-empty, STOP and reassess — do not force.)
-
-- [ ] **Step 3: Restart the app so AutoMigrate rebuilds the table**
-
-Restart/redeploy the `fh-mahjong` service (Zeabur dashboard → Restart, or push a trivial commit). On boot, `cmd/server/main.go` runs `AutoMigrate`, recreating `users` with the new schema.
-
-- [ ] **Step 4: Verify the rebuilt schema**
-
-Reuse the inspection approach (a throwaway `cmd/dbcheck/main.go` like the one used during brainstorming, or re-add a `Raw` query) to confirm against the prod DB:
+Inspect the prod DB (a throwaway `cmd/dbcheck/main.go` with `Raw` queries, like the one used during brainstorming) to confirm:
 - `users` columns include `email` (NOT NULL) and `username` (NOT NULL).
 - There is a UNIQUE index on `email` and **no** `idx_users_username` unique index.
-- The `id` column has **no** `nextval(...)` default.
 
 Delete the throwaway program afterward; confirm `git status` is clean.
 
-- [ ] **Step 5: Production smoke test**
+- [ ] **Step 3: Production smoke test**
 
 Against the deployed frontend: register a new account, edit it on `/account`, sign out, sign back in. Confirm success. Done.
 

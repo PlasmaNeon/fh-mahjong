@@ -2,6 +2,7 @@ package storage
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -90,12 +91,47 @@ type PaipuRecord struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// AutoMigrate setups the DB schema
+// AutoMigrate brings the schema up to date and safely transitions a legacy
+// username-based users table to the email-based schema.
+//
+// The legacy schema is detected as a `users` table that has no `email` column.
+// If such a table still holds rows we FAIL CLOSED with a diagnostic, because the
+// email-based model has no backfill path and migrating must never silently
+// destroy or half-migrate accounts. An empty legacy table is migrated in place.
+// Finally, any stale unique index on `username` (left by the old schema) is
+// dropped so display names are non-unique as designed. This runs at startup, so
+// a failure surfaces immediately instead of depending on an out-of-band manual
+// step executed at the right moment.
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	m := db.Migrator()
+
+	if m.HasTable(&User{}) && !m.HasColumn(&User{}, "email") {
+		var count int64
+		if err := db.Table("users").Count(&count).Error; err != nil {
+			return fmt.Errorf("inspecting legacy users table: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("refusing to migrate: legacy %q table has %d row(s) and no email column; "+
+				"the email-based schema has no backfill path — migrate or remove that data, then restart", "users", count)
+		}
+		// Empty legacy table: AutoMigrate below adds the email column in place.
+	}
+
+	if err := db.AutoMigrate(
 		&User{},
 		&Match{},
 		&MatchPlayer{},
 		&PaipuRecord{},
-	)
+	); err != nil {
+		return err
+	}
+
+	// Drop the stale unique index on username left by the old schema so display
+	// names can repeat (the new model intentionally has no uniqueIndex on it).
+	if m.HasIndex(&User{}, "idx_users_username") {
+		if err := m.DropIndex(&User{}, "idx_users_username"); err != nil {
+			return fmt.Errorf("dropping stale unique username index: %w", err)
+		}
+	}
+	return nil
 }

@@ -233,26 +233,36 @@ table currently has:
 - `password_hash text NOT NULL`, `rating`, timestamps
 - **0 rows** — empty, so the fresh-start cutover loses no data.
 
-`AutoMigrate` is **additive-only**: it adds the new `email` column + unique index,
-but it will **not** drop the stale `idx_users_username` unique index (display names
-must be non-unique per this design) nor remove the `id` sequence default. Two
-problems if we just deploy:
+GORM's bare `AutoMigrate` is **additive-only**: it adds the new `email` column +
+unique index, but it will **not** drop the stale `idx_users_username` unique index
+(display names must be non-unique per this design) nor the `id` sequence default.
 
-1. Display names would stay DB-unique in prod (wrong).
-2. `id` keeps an unused `nextval` default (harmless cruft — the app sets random ids
-   explicitly via `BeforeCreate`).
+**Cutover is automated in `storage.AutoMigrate` (no manual step).** Rather than a
+hand-run `DROP TABLE` whose correctness depends on running it at the right moment,
+the startup migration handles the transition itself and **fails closed** on anything
+it can't migrate safely:
 
-**Cutover plan (table is empty, so this is safe):**
+1. **Detect the legacy schema** — a `users` table that exists but has **no `email`
+   column**.
+2. **Fail closed if it still holds rows** — return a diagnostic error (the server's
+   `log.Fatalf` then aborts startup) instead of risking data loss, because the
+   email-based model has no backfill path. The deployed table is empty, so this
+   never trips in practice — but it guarantees we never silently destroy or
+   half-migrate accounts created in any gap.
+3. **Migrate an empty legacy table in place** — `AutoMigrate` adds the `email`
+   column + unique index.
+4. **Drop the stale `idx_users_username` unique index** if present, so display names
+   become non-unique as designed.
 
-- **Drop the `users` table once** before/at the new deploy so `AutoMigrate` rebuilds
-  it cleanly: `email` unique + `not null`, `username` non-unique, and `id` as a plain
-  `bigint` PK with **no sequence** (because of `autoIncrement:false`). One-liner,
-  e.g. `DROP TABLE IF EXISTS users CASCADE;` against the Zeabur Postgres.
-  - `match_players` references `user_id` but is also empty; `CASCADE` covers any
-    DB-level FK. (If a real FK exists it is dropped/recreated with the table.)
-- No backward compatibility with username-based login; any future accounts register
-  fresh with email.
-- `AutoMigrate` model list in `internal/storage/db.go` is unchanged (same four models).
+This removes the manual `DROP TABLE` from the deploy runbook entirely: deploying the
+new binary is sufficient, and a misconfigured/unexpected DB state surfaces as an
+immediate, precise startup failure rather than silent corruption. (The leftover `id`
+`nextval` default on the pre-existing empty table is harmless — the app always sets
+random ids via `BeforeCreate`.) No backward compatibility with username-based login.
+
+Covered by tests in `internal/storage/migrate_test.go` (fresh DB allows duplicate
+display names; populated legacy table fails closed; empty legacy table migrates in
+place and drops the stale index).
 
 **Note (optional, out of scope):** the app's `DATABASE_URL` points at the *external*
 Postgres endpoint (`43.134.132.74:32315`). An internal service DSN (`DB_DSN` already
