@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"github.com/plasma/fh-mahjong/tiles"
@@ -97,7 +97,7 @@ func getRealIndex(closed []*pb.Tile, uiIdx int) int {
 
 func main() {
 	fmt.Println("Starting Fenghua Mahjong CLI Demo...")
-	game := core.NewGame("demo-1", &rules.HometownRuleset{}, core.MatchOptions{})
+	game := engine.NewGame("demo-1", &rules.HometownRuleset{}, engine.MatchOptions{})
 	botPolicy := bot.NewHeuristicPolicy()
 	err := game.Start()
 	if err != nil {

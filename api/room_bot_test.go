@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -192,7 +192,7 @@ func TestRoom_ChongciBust_TerminatesViaPhaseMatchEnd(t *testing.T) {
 		BustThreshold: 0,
 		MaxHands:      30,
 	}
-	room := NewRoom("bust-test", nil, nil, WithMatchOptions(core.MatchOptions{
+	room := NewRoom("bust-test", nil, nil, WithMatchOptions(engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: cfg,
 	}))
@@ -243,7 +243,7 @@ func TestRoom_ChongciHandCap_Terminates(t *testing.T) {
 		BustThreshold: 0,
 		MaxHands:      1,            // cap after one hand
 	}
-	room := NewRoom("handcap-test", nil, nil, WithMatchOptions(core.MatchOptions{
+	room := NewRoom("handcap-test", nil, nil, WithMatchOptions(engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: cfg,
 	}))

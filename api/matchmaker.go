@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"gorm.io/gorm"
@@ -449,7 +449,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 		if table.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI && table.ChongciConfig != nil {
 			cfg := *table.ChongciConfig
-			roomOptions = append(roomOptions, WithMatchOptions(core.MatchOptions{
+			roomOptions = append(roomOptions, WithMatchOptions(engine.MatchOptions{
 				Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 				ChongciConfig: &cfg,
 			}))
@@ -508,10 +508,10 @@ func (m *Matchmaker) RoomForTableForTest(tableID string) *Room {
 // defaultMatchOptionsFor returns the canonical MatchOptions for a public
 // queue ruleset key. Returns false if the key has no match-mode mapping
 // (i.e. classic queues fall through to MatchOptions{}).
-func defaultMatchOptionsFor(ruleset string) (core.MatchOptions, bool) {
+func defaultMatchOptionsFor(ruleset string) (engine.MatchOptions, bool) {
 	switch ruleset {
 	case "chongci-fh":
-		return core.MatchOptions{
+		return engine.MatchOptions{
 			Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 			ChongciConfig: &pb.ChongciConfig{
 				StartingScore: 2000,
@@ -520,7 +520,7 @@ func defaultMatchOptionsFor(ruleset string) (core.MatchOptions, bool) {
 			},
 		}, true
 	default:
-		return core.MatchOptions{}, false
+		return engine.MatchOptions{}, false
 	}
 }
 

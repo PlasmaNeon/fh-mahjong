@@ -1,16 +1,16 @@
-package core_test
+package engine_test
 
 import (
 	"testing"
 
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 func TestNewGame_ClassicDefault(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-classic", r, core.MatchOptions{})
+	g := engine.NewGame("test-classic", r, engine.MatchOptions{})
 
 	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
 		t.Fatalf("default MatchMode = %v, want CLASSIC", got)
@@ -27,7 +27,7 @@ func TestNewGame_ClassicDefault(t *testing.T) {
 
 func TestGameInitialization(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r, core.MatchOptions{})
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 
 	if g.State.Phase != pb.GamePhase_PHASE_INIT {
 		t.Errorf("Expected PHASE_INIT, got %v", g.State.Phase)
@@ -39,7 +39,7 @@ func TestGameInitialization(t *testing.T) {
 
 func TestGameStartAndDeal(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r, core.MatchOptions{})
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 
 	err := g.Start()
 	if err != nil {
@@ -65,7 +65,7 @@ func TestGameStartAndDeal(t *testing.T) {
 
 func TestDiscardAction(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r, core.MatchOptions{})
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -99,7 +99,7 @@ func TestDiscardAction(t *testing.T) {
 
 func TestDirectedMelds(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r, core.MatchOptions{})
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -153,7 +153,7 @@ func TestDirectedMelds(t *testing.T) {
 
 func TestDeadWallKanDraw(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-uuid", r, core.MatchOptions{})
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -232,7 +232,7 @@ func TestDeadWallKanDraw(t *testing.T) {
 // blooming bonus is cleared.
 func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-risky-kong", r, core.MatchOptions{})
+	g := engine.NewGame("test-risky-kong", r, engine.MatchOptions{})
 	g.Start()
 
 	seat := g.State.ActivePlayer
@@ -294,7 +294,7 @@ func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
 // that a subsequent discard clears blooming while keeping the persistent budding.
 func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-direct-kong", r, core.MatchOptions{})
+	g := engine.NewGame("test-direct-kong", r, engine.MatchOptions{})
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -344,7 +344,7 @@ func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 
 func TestSetNextDealer_ConsumedOnce(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-override", r, core.MatchOptions{})
+	g := engine.NewGame("test-override", r, engine.MatchOptions{})
 	if err := g.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestNewGame_ChongciInitialization(t *testing.T) {
 		BustThreshold: 0,
 		MaxHands:      50,
 	}
-	g := core.NewGame("test-chongci", r, core.MatchOptions{
+	g := engine.NewGame("test-chongci", r, engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: cfg,
 	})
@@ -438,7 +438,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := &rules.HometownRuleset{}
-			g := core.NewGame("t", r, core.MatchOptions{
+			g := engine.NewGame("t", r, engine.MatchOptions{
 				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 				ChongciConfig: &pb.ChongciConfig{
 					StartingScore: c.startScore,
@@ -466,7 +466,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 
 func TestShouldEndChongciMatch(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000,
@@ -493,7 +493,7 @@ func TestShouldEndChongciMatch(t *testing.T) {
 
 func TestCurrentDealerSeat(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{})
+	g := engine.NewGame("t", r, engine.MatchOptions{})
 	for i := uint32(0); i < 4; i++ {
 		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
 	}
@@ -504,7 +504,7 @@ func TestCurrentDealerSeat(t *testing.T) {
 
 func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000,
@@ -527,7 +527,7 @@ func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
 
 func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000,
@@ -550,7 +550,7 @@ func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
 
 func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000,
@@ -575,7 +575,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
 
 func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000,
@@ -597,7 +597,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
 
 func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{})
+	g := engine.NewGame("t", r, engine.MatchOptions{})
 	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
 
 	g.FinalizeRoundEndForTest()
@@ -615,7 +615,7 @@ func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
 
 func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("t", r, core.MatchOptions{
+	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
 			StartingScore: 2000, BustThreshold: 0, MaxHands: 50,

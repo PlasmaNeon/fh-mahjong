@@ -5,14 +5,14 @@ import (
 	"strings"
 
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 )
 
 type Env struct {
 	config        *pb.EnvConfig
-	game          *core.Game
+	game          *engine.Game
 	heuristic     bot.Policy
 	learningSeats map[uint32]bool
 	decisionCount uint64
@@ -43,8 +43,8 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		seed = request.Seed
 	}
 
-	e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, matchOptionsFromConfig(e.config))
-	e.game.SetWallSeed(core.SeedFromUint64(seed))
+	e.game = engine.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, matchOptionsFromConfig(e.config))
+	e.game.SetWallSeed(engine.SeedFromUint64(seed))
 	e.decisionCount = 0
 	e.baseSeed = seed
 	if err := e.game.Start(); err != nil {
@@ -408,7 +408,7 @@ func (e *Env) readyAllPlayersForNextRound() error {
 		}
 		if e.isFinalReadyBeforeNextRound(seat) {
 			nextHand := uint64(e.game.State.HandNum) + 1
-			e.game.SetWallSeed(core.SeedFromUint64(deriveHandSeed(e.baseSeed, nextHand)))
+			e.game.SetWallSeed(engine.SeedFromUint64(deriveHandSeed(e.baseSeed, nextHand)))
 		}
 		if err := e.game.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
 			return err
@@ -661,11 +661,11 @@ func matchEndRewards(state *pb.GameState) []float32 {
 	return rewards
 }
 
-func matchOptionsFromConfig(config *pb.EnvConfig) core.MatchOptions {
+func matchOptionsFromConfig(config *pb.EnvConfig) engine.MatchOptions {
 	if config == nil || config.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
-		return core.MatchOptions{}
+		return engine.MatchOptions{}
 	}
-	return core.MatchOptions{
+	return engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: cloneChongciConfig(config.ChongciConfig),
 	}

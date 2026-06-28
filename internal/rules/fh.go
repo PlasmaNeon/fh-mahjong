@@ -5,7 +5,7 @@ import (
 	"github.com/plasma/fh-mahjong/tiles"
 )
 
-// HometownRuleset implements the core.RuleEngine interface.
+// HometownRuleset implements the engine.RuleEngine interface.
 type HometownRuleset struct{}
 
 func (r *HometownRuleset) Name() string {

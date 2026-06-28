@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 )
@@ -45,10 +45,10 @@ func main() {
 	fmt.Printf("open http://localhost:3000/replay/%s\n", *matchID)
 }
 
-func generateHeuristicPaipu(matchID string, seed uint64, maxActions int) (*core.Paipu, error) {
-	game := core.NewGame(matchID, &rules.HometownRuleset{}, core.MatchOptions{})
-	game.SetWallSeed(core.SeedFromUint64(seed))
-	game.Recorder = core.NewPaipuRecorder(matchID, "hometown")
+func generateHeuristicPaipu(matchID string, seed uint64, maxActions int) (*engine.Paipu, error) {
+	game := engine.NewGame(matchID, &rules.HometownRuleset{}, engine.MatchOptions{})
+	game.SetWallSeed(engine.SeedFromUint64(seed))
+	game.Recorder = engine.NewPaipuRecorder(matchID, "hometown")
 	for seat := uint32(0); seat < 4; seat++ {
 		game.Recorder.AddPlayer(seat, fmt.Sprintf("Heuristic %d", seat+1), 0)
 	}
@@ -71,7 +71,7 @@ func generateHeuristicPaipu(matchID string, seed uint64, maxActions int) (*core.
 	return nil, fmt.Errorf("round did not finish within %d actions", maxActions)
 }
 
-func playNextHeuristicAction(game *core.Game, policy bot.Policy) error {
+func playNextHeuristicAction(game *engine.Game, policy bot.Policy) error {
 	switch game.State.Phase {
 	case pb.GamePhase_PHASE_PLAYER_TURN:
 		seat := game.State.ActivePlayer

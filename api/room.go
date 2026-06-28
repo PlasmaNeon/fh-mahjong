@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/plasma/fh-mahjong/bot"
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/models"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
@@ -40,7 +40,7 @@ type Room struct {
 	MatchRecord    *models.Match
 	OnShutdown     func()
 
-	Engine *core.Game
+	Engine *engine.Game
 	// BotPolicy is the room-wide default automated-seat policy. Server-side
 	// injection via WithBotPolicy() lets ops swap in a remote AI policy
 	// without per-seat configuration. When unset, the package-level
@@ -59,9 +59,9 @@ type Room struct {
 	PaipuStore      func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 	lastStoredRound uint32
 
-	// matchOptions seeds core.NewGame with match-mode + Chongci config.
+	// matchOptions seeds engine.NewGame with match-mode + Chongci config.
 	// Populated by WithMatchOptions; defaults to MatchOptions{} (classic).
-	matchOptions core.MatchOptions
+	matchOptions engine.MatchOptions
 
 	// botActionDelay is how long the room waits before each bot move in
 	// PHASE_PLAYER_TURN and PHASE_WAIT_DISCARDS so the game has a human
@@ -123,7 +123,7 @@ func WithDisconnectGrace(d time.Duration) RoomOption {
 
 // WithMatchOptions configures the engine constructed by NewRoom with a
 // match-mode + Chongci config. Default is MatchOptions{} (classic).
-func WithMatchOptions(opts core.MatchOptions) RoomOption {
+func WithMatchOptions(opts engine.MatchOptions) RoomOption {
 	return func(r *Room) {
 		r.matchOptions = opts
 	}
@@ -172,8 +172,8 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		opt(room)
 	}
 
-	room.Engine = core.NewGame(matchID, ruleset, room.matchOptions)
-	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
+	room.Engine = engine.NewGame(matchID, ruleset, room.matchOptions)
+	room.Engine.Recorder = engine.NewPaipuRecorder(matchID, "hometown")
 
 	return room
 }
@@ -712,12 +712,12 @@ func (r *Room) storePaipuSnapshot() {
 
 	paipuID := fmt.Sprintf("%s-%d", r.ID, handNum)
 
-	single := core.Paipu{
+	single := engine.Paipu{
 		Version:     cumulative.Version,
 		MatchID:     paipuID,
 		Ruleset:     cumulative.Ruleset,
 		Players:     cumulative.Players,
-		Rounds:      []core.PaipuRound{latestRound},
+		Rounds:      []engine.PaipuRound{latestRound},
 		FinalScores: scores,
 	}
 

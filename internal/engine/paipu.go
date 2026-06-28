@@ -1,4 +1,4 @@
-package core
+package engine
 
 import pb "github.com/plasma/fh-mahjong/proto"
 

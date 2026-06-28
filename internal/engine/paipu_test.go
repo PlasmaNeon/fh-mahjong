@@ -1,9 +1,9 @@
-package core_test
+package engine_test
 
 import (
 	"testing"
 
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 )
@@ -24,7 +24,7 @@ func TestTileFromId(t *testing.T) {
 		{143, pb.Suit_SUIT_FLOWER, 8}, // Bamboo
 	}
 	for _, tc := range tests {
-		suit, value := core.TileFromId(tc.id)
+		suit, value := engine.TileFromId(tc.id)
 		if suit != tc.suit || value != tc.value {
 			t.Errorf("TileFromId(%d) = (%v, %d), want (%v, %d)", tc.id, suit, value, tc.suit, tc.value)
 		}
@@ -36,7 +36,7 @@ func TestTileFromIdConsistency(t *testing.T) {
 	ruleset := &rules.HometownRuleset{}
 	wall := ruleset.GetInitialWall()
 	for _, tile := range wall {
-		suit, value := core.TileFromId(tile.Id)
+		suit, value := engine.TileFromId(tile.Id)
 		if suit != tile.Suit || value != tile.Value {
 			t.Errorf("TileFromId(%d) = (%v, %d), wall has (%v, %d)", tile.Id, suit, value, tile.Suit, tile.Value)
 		}
@@ -44,7 +44,7 @@ func TestTileFromIdConsistency(t *testing.T) {
 }
 
 func TestPaipuRecorderBasicFlow(t *testing.T) {
-	rec := core.NewPaipuRecorder("test-match", "hometown")
+	rec := engine.NewPaipuRecorder("test-match", "hometown")
 
 	// Add players
 	rec.AddPlayer(0, "Alice", 1)
@@ -68,7 +68,7 @@ func TestPaipuRecorderBasicFlow(t *testing.T) {
 	rec.RecordDiscard(1, 8)
 
 	// End round
-	rec.EndRound(&core.PaipuRoundResult{
+	rec.EndRound(&engine.PaipuRoundResult{
 		Type:         "draw",
 		ScoreChanges: []int32{0, 0, 0, 0},
 	})
@@ -92,8 +92,8 @@ func TestPaipuRecorderBasicFlow(t *testing.T) {
 
 func TestPaipuRecorderIntegration(t *testing.T) {
 	ruleset := &rules.HometownRuleset{}
-	g := core.NewGame("test-paipu", ruleset, core.MatchOptions{})
-	g.Recorder = core.NewPaipuRecorder("test-paipu", "hometown")
+	g := engine.NewGame("test-paipu", ruleset, engine.MatchOptions{})
+	g.Recorder = engine.NewPaipuRecorder("test-paipu", "hometown")
 
 	err := g.Start()
 	if err != nil {

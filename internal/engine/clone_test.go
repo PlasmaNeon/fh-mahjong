@@ -1,17 +1,17 @@
-package core_test
+package engine_test
 
 import (
 	"testing"
 
-	"github.com/plasma/fh-mahjong/core"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestCloneForBranchIsolatedFromOriginal(t *testing.T) {
-	g := core.NewGame("clone-original", &rules.HometownRuleset{}, core.MatchOptions{})
-	g.SetWallSeed(core.SeedFromUint64(97))
+	g := engine.NewGame("clone-original", &rules.HometownRuleset{}, engine.MatchOptions{})
+	g.SetWallSeed(engine.SeedFromUint64(97))
 	if err := g.Start(); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
