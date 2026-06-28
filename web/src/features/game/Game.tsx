@@ -308,6 +308,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         handBackCount: player.handSize,
         showClosedHand: player.seat === mySeatId || (player.closedHand?.length ?? 0) > 0,
         drawnTileId: player.drawnTileId,
+        lastDiscardFromDrawn: player.lastDiscardFromDrawn ?? false,
         openMelds: (player.openMelds || []).map((meld: any) => ({
             tiles: meld.tiles || [],
             calledTileId: meld.calledTileId,
@@ -443,8 +444,6 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}
-                        activeDiscardId={gameState.activeDiscard?.id ?? null}
-                        activeDiscardFromDrawn={gameState.activeDiscardFromDrawn ?? false}
                     />
                 </div>
             </div>

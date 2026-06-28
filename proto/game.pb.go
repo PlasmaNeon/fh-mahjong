@@ -647,9 +647,14 @@ type PlayerState struct {
 	// optional prevents Javascript dropping the number 0 (since Tile ID 0 = 1m).
 	DrawnTileId *int32 `protobuf:"varint,17,opt,name=drawn_tile_id,json=drawnTileId,proto3,oneof" json:"drawn_tile_id,omitempty"`
 	// Shanten number for this player's closed hand (-1 = complete, 0 = tenpai, 1+ = further away)
-	Shanten       int32 `protobuf:"varint,18,opt,name=shanten,proto3" json:"shanten,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Shanten int32 `protobuf:"varint,18,opt,name=shanten,proto3" json:"shanten,omitempty"`
+	// True when this player's most recent discard was their just-drawn tile
+	// (tsumogiri). Public info — reveals nothing about concealed tiles. Persists
+	// until the player's next discard (it must outlive ActiveDiscard, which is
+	// cleared on the no-interrupt turn advance before the state is broadcast).
+	LastDiscardFromDrawn bool `protobuf:"varint,19,opt,name=last_discard_from_drawn,json=lastDiscardFromDrawn,proto3" json:"last_discard_from_drawn,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *PlayerState) Reset() {
@@ -808,6 +813,13 @@ func (x *PlayerState) GetShanten() int32 {
 	return 0
 }
 
+func (x *PlayerState) GetLastDiscardFromDrawn() bool {
+	if x != nil {
+		return x.LastDiscardFromDrawn
+	}
+	return false
+}
+
 type GameState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// UUID for the match
@@ -847,12 +859,8 @@ type GameState struct {
 	MatchMode        MatchMode       `protobuf:"varint,21,opt,name=match_mode,json=matchMode,proto3,enum=game.MatchMode" json:"match_mode,omitempty"`
 	ChongciConfig    *ChongciConfig  `protobuf:"bytes,22,opt,name=chongci_config,json=chongciConfig,proto3" json:"chongci_config,omitempty"`      // set iff match_mode == MATCH_MODE_CHONGCI
 	MatchEndResult   *MatchEndResult `protobuf:"bytes,23,opt,name=match_end_result,json=matchEndResult,proto3" json:"match_end_result,omitempty"` // set iff phase == PHASE_MATCH_END
-	// True when active_discard was the discarder's just-drawn tile (tsumogiri).
-	// Public info — reveals nothing about concealed tiles. Transient: valid only
-	// while active_discard is set.
-	ActiveDiscardFromDrawn bool `protobuf:"varint,24,opt,name=active_discard_from_drawn,json=activeDiscardFromDrawn,proto3" json:"active_discard_from_drawn,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GameState) Reset() {
@@ -1030,13 +1038,6 @@ func (x *GameState) GetMatchEndResult() *MatchEndResult {
 		return x.MatchEndResult
 	}
 	return nil
-}
-
-func (x *GameState) GetActiveDiscardFromDrawn() bool {
-	if x != nil {
-		return x.ActiveDiscardFromDrawn
-	}
-	return false
 }
 
 type ScoreEntry struct {
@@ -2601,7 +2602,7 @@ const file_proto_game_proto_rawDesc = "" +
 	".game.TileR\x05tiles\x12>\n" +
 	"\x10called_direction\x18\x03 \x01(\x0e2\x13.game.MeldDirectionR\x0fcalledDirection\x12$\n" +
 	"\x0ecalled_tile_id\x18\x04 \x01(\rR\fcalledTileId\x12\"\n" +
-	"\radded_tile_id\x18\x05 \x01(\rR\vaddedTileId\"\xb3\x06\n" +
+	"\radded_tile_id\x18\x05 \x01(\rR\vaddedTileId\"\xea\x06\n" +
 	"\vPlayerState\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x14\n" +
 	"\x05score\x18\x02 \x01(\x05R\x05score\x12+\n" +
@@ -2627,8 +2628,9 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x18has_blooming_flower_kong\x18\x0f \x01(\bR\x15hasBloomingFlowerKong\x127\n" +
 	"\rvalid_actions\x18\x10 \x03(\v2\x12.game.PlayerActionR\fvalidActions\x12'\n" +
 	"\rdrawn_tile_id\x18\x11 \x01(\x05H\x00R\vdrawnTileId\x88\x01\x01\x12\x18\n" +
-	"\ashanten\x18\x12 \x01(\x05R\ashantenB\x10\n" +
-	"\x0e_drawn_tile_id\"\xf6\x06\n" +
+	"\ashanten\x18\x12 \x01(\x05R\ashanten\x125\n" +
+	"\x17last_discard_from_drawn\x18\x13 \x01(\bR\x14lastDiscardFromDrawnB\x10\n" +
+	"\x0e_drawn_tile_id\"\xbb\x06\n" +
 	"\tGameState\x12\x19\n" +
 	"\bmatch_id\x18\x01 \x01(\tR\amatchId\x12%\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
@@ -2655,8 +2657,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\n" +
 	"match_mode\x18\x15 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
 	"\x0echongci_config\x18\x16 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12>\n" +
-	"\x10match_end_result\x18\x17 \x01(\v2\x14.game.MatchEndResultR\x0ematchEndResult\x129\n" +
-	"\x19active_discard_from_drawn\x18\x18 \x01(\bR\x16activeDiscardFromDrawn\"G\n" +
+	"\x10match_end_result\x18\x17 \x01(\v2\x14.game.MatchEndResultR\x0ematchEndResult\"G\n" +
 	"\n" +
 	"ScoreEntry\x12!\n" +
 	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +

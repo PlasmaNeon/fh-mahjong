@@ -655,20 +655,6 @@ func (g *Game) ProcessPlayerAction(seat uint32, action *pb.PlayerAction) error {
 	}
 }
 
-// setActiveDiscard records the active discard and whether it was the
-// discarder's just-drawn tile (tsumogiri). Keeping both fields in one place
-// guarantees ActiveDiscardFromDrawn never outlives ActiveDiscard.
-func (g *Game) setActiveDiscard(tile *pb.Tile, fromDrawn bool) {
-	g.State.ActiveDiscard = tile
-	g.State.ActiveDiscardFromDrawn = fromDrawn
-}
-
-// clearActiveDiscard clears the active discard and its tsumogiri flag together.
-func (g *Game) clearActiveDiscard() {
-	g.State.ActiveDiscard = nil
-	g.State.ActiveDiscardFromDrawn = false
-}
-
 // handleActiveTurnAction processes normal turn actions like Discard or Tsumo.
 func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) error {
 	// --- Haitei Accept/Refuse ---
@@ -740,9 +726,13 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 
 		player.Discards = append(player.Discards, action.Tile)
 		player.HandSize--
-		fromDrawn := player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
+		// LastDiscardFromDrawn (tsumogiri) must survive the turn advance, so it
+		// lives on the player and is overwritten only by their next discard —
+		// unlike ActiveDiscard, which is cleared the moment no interrupt is
+		// possible (the common no-interrupt path), before the state is broadcast.
+		player.LastDiscardFromDrawn = player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
 		player.DrawnTileId = nil
-		g.setActiveDiscard(action.Tile, fromDrawn)
+		g.State.ActiveDiscard = action.Tile
 
 		if g.Recorder != nil {
 			g.Recorder.RecordDiscard(seat, action.Tile.Id)
@@ -817,7 +807,7 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 			// No one can interrupt, immediately advance turn
 			g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-			g.clearActiveDiscard()
+			g.State.ActiveDiscard = nil
 			g.ExecuteSystemDraw(g.State.ActivePlayer)
 		}
 
@@ -1016,7 +1006,7 @@ func (g *Game) ResolveInterrupts() {
 		// No one interrupted. Next player's turn!
 		g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
 		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-		g.clearActiveDiscard()
+		g.State.ActiveDiscard = nil
 		g.ExecuteSystemDraw(g.State.ActivePlayer)
 		return
 	}
@@ -1027,7 +1017,7 @@ func (g *Game) ResolveInterrupts() {
 	if winningAction == nil {
 		g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
 		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-		g.clearActiveDiscard()
+		g.State.ActiveDiscard = nil
 		g.ExecuteSystemDraw(g.State.ActivePlayer)
 		return
 	}
@@ -1079,7 +1069,7 @@ func (g *Game) ResolveInterrupts() {
 		}
 
 		g.State.ActivePlayer = winnerSeat
-		g.clearActiveDiscard()
+		g.State.ActiveDiscard = nil
 		player.DrawnTileId = nil // Clear drawn tile formatting for steals
 
 		if winningAction.Type == pb.ActionType_ACTION_KAN {
@@ -1123,7 +1113,7 @@ func (g *Game) ResolveInterrupts() {
 			// Should not happen since GetValidInterrupts already checked, but guard
 			g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
 			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-			g.clearActiveDiscard()
+			g.State.ActiveDiscard = nil
 			g.ExecuteSystemDraw(g.State.ActivePlayer)
 			return
 		}
@@ -1302,7 +1292,7 @@ func (g *Game) startNextRound() {
 	g.State.HandNum++
 	g.State.RoundResult = nil
 	g.State.PlayerReady = nil
-	g.clearActiveDiscard()
+	g.State.ActiveDiscard = nil
 
 	// Reset player states (preserve score)
 	for i := 0; i < 4; i++ {
@@ -1310,6 +1300,7 @@ func (g *Game) startNextRound() {
 		p.ClosedHand = make([]*pb.Tile, 0)
 		p.HandSize = 0
 		p.DrawnTileId = nil
+		p.LastDiscardFromDrawn = false
 		p.OpenMelds = make([]*pb.Meld, 0)
 		p.Discards = make([]*pb.Tile, 0)
 		p.FlowerMelds = make([]*pb.Tile, 0)

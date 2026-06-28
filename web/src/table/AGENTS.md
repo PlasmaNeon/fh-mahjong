@@ -29,4 +29,4 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 - The center HUD should stay visually paired with the discard system: size it from the same 6-tile lane footprint and leave a deliberate HUD-to-discard gap rather than letting the trays touch the panel.
 - Keep all four discard-lane shell offsets derived from that same HUD gap variable; do not leave one side on an older fixed stage offset or the panel spacing will drift.
 - Discard pools stay outside `SeatLane`; table-level composition belongs in `TableBoard`, while internal spacing belongs to the lane components themselves.
-- Redacted-opponent discards animate tedashi (random hand-slot origin + drawn-back merge flight) vs tsumogiri (drawn-slot origin) using `GameState.activeDiscardFromDrawn`; full-info/self views are unchanged (tracked by id).
+- Redacted-opponent discards animate tedashi (random hand-slot origin + drawn-back merge flight) vs tsumogiri (drawn-slot origin) using each player's `lastDiscardFromDrawn` flag (looked up by the discarder's seat direction); full-info/self views are unchanged (tracked by id).

@@ -73,11 +73,11 @@ export type PlanTileFlightsParams = {
   isWildTile: (tile: TileLike) => boolean
   // Monotonic key seed so each produced animation gets a unique React key.
   startKey: number
-  // The id of the live active discard, and whether it was the discarder's
-  // just-drawn tile (tsumogiri). Used only for redacted opponents, where the
-  // discard's real id cannot be tracked back to a fake-id hand tile.
-  activeDiscardId?: number | null
-  activeDiscardFromDrawn?: boolean
+  // Per-seat "was that seat's most recent discard a tsumogiri" flags, keyed by
+  // seat direction. Used only for redacted opponents, where the discard's real
+  // id cannot be tracked back to a fake-id hand tile; looked up by the
+  // discarder's direction.
+  fromDrawnByDirection?: Map<SeatLaneDirection, boolean>
   // Injectable RNG for the random tedashi source slot (deterministic in tests).
   random?: () => number
 }
@@ -103,8 +103,7 @@ export function planTileFlights({
   currentHandOrigins,
   isWildTile,
   startKey,
-  activeDiscardId = null,
-  activeDiscardFromDrawn = false,
+  fromDrawnByDirection,
   random = Math.random,
 }: PlanTileFlightsParams): FlyingTileAnimation[] {
   const animations: FlyingTileAnimation[] = []
@@ -125,13 +124,15 @@ export function planTileFlights({
       fromRect = previousSnapshot.rects.get(tileId)
     } else if (currentTile.role === 'discard') {
       const dir = currentTile.direction
-      const isActive = activeDiscardId != null && tileIdsEqual(tileId, activeDiscardId)
+      // The only discard reaching this branch (no tracked previous tile) is the
+      // one just made, so the discarder's most-recent-discard flag describes it.
+      const fromDrawn = fromDrawnByDirection?.get(dir) ?? false
 
-      if (isActive && activeDiscardFromDrawn) {
+      if (fromDrawn) {
         // Tsumogiri: fly the discard straight from the separated drawn slot.
         const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
         if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
-      } else if (isActive) {
+      } else {
         // Tedashi: fly the discard from a RANDOM concealed hand slot, and slide
         // the drawn back into the hand (the "tsumo-hai fills the gap").
         const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')

@@ -1275,6 +1275,7 @@ export const game = $root.game = (() => {
          * @property {Array.<game.IPlayerAction>|undefined} [validActions] PlayerState validActions
          * @property {number|null|undefined} [drawnTileId] PlayerState drawnTileId
          * @property {number|undefined} [shanten] PlayerState shanten
+         * @property {boolean|undefined} [lastDiscardFromDrawn] PlayerState lastDiscardFromDrawn
          */
 
         /**
@@ -1441,6 +1442,14 @@ export const game = $root.game = (() => {
          */
         PlayerState.prototype.shanten = 0;
 
+        /**
+         * PlayerState lastDiscardFromDrawn.
+         * @member {boolean} lastDiscardFromDrawn
+         * @memberof game.PlayerState
+         * @instance
+         */
+        PlayerState.prototype.lastDiscardFromDrawn = false;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
@@ -1515,6 +1524,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 17, wireType 0 =*/136).int32(message.drawnTileId);
             if (message.shanten != null && Object.hasOwnProperty.call(message, "shanten"))
                 writer.uint32(/* id 18, wireType 0 =*/144).int32(message.shanten);
+            if (message.lastDiscardFromDrawn != null && Object.hasOwnProperty.call(message, "lastDiscardFromDrawn"))
+                writer.uint32(/* id 19, wireType 0 =*/152).bool(message.lastDiscardFromDrawn);
             return writer;
         };
 
@@ -1631,6 +1642,10 @@ export const game = $root.game = (() => {
                     }
                 case 18: {
                         message.shanten = reader.int32();
+                        break;
+                    }
+                case 19: {
+                        message.lastDiscardFromDrawn = reader.bool();
                         break;
                     }
                 default:
@@ -1755,6 +1770,9 @@ export const game = $root.game = (() => {
             if (message.shanten != null && message.hasOwnProperty("shanten"))
                 if (!$util.isInteger(message.shanten))
                     return "shanten: integer expected";
+            if (message.lastDiscardFromDrawn != null && message.hasOwnProperty("lastDiscardFromDrawn"))
+                if (typeof message.lastDiscardFromDrawn !== "boolean")
+                    return "lastDiscardFromDrawn: boolean expected";
             return null;
         };
 
@@ -1846,6 +1864,8 @@ export const game = $root.game = (() => {
                 message.drawnTileId = object.drawnTileId | 0;
             if (object.shanten != null)
                 message.shanten = object.shanten | 0;
+            if (object.lastDiscardFromDrawn != null)
+                message.lastDiscardFromDrawn = Boolean(object.lastDiscardFromDrawn);
             return message;
         };
 
@@ -1882,6 +1902,7 @@ export const game = $root.game = (() => {
                 object.hasBloomingRiskyKong = false;
                 object.hasBloomingFlowerKong = false;
                 object.shanten = 0;
+                object.lastDiscardFromDrawn = false;
             }
             if (message.seat != null && message.hasOwnProperty("seat"))
                 object.seat = message.seat;
@@ -1937,6 +1958,8 @@ export const game = $root.game = (() => {
             }
             if (message.shanten != null && message.hasOwnProperty("shanten"))
                 object.shanten = message.shanten;
+            if (message.lastDiscardFromDrawn != null && message.hasOwnProperty("lastDiscardFromDrawn"))
+                object.lastDiscardFromDrawn = message.lastDiscardFromDrawn;
             return object;
         };
 
@@ -2018,7 +2041,6 @@ export const game = $root.game = (() => {
          * @property {game.MatchMode|undefined} [matchMode] GameState matchMode
          * @property {game.IChongciConfig|undefined} [chongciConfig] GameState chongciConfig
          * @property {game.IMatchEndResult|undefined} [matchEndResult] GameState matchEndResult
-         * @property {boolean|undefined} [activeDiscardFromDrawn] GameState activeDiscardFromDrawn
          */
 
         /**
@@ -2208,14 +2230,6 @@ export const game = $root.game = (() => {
         GameState.prototype.matchEndResult = null;
 
         /**
-         * GameState activeDiscardFromDrawn.
-         * @member {boolean} activeDiscardFromDrawn
-         * @memberof game.GameState
-         * @instance
-         */
-        GameState.prototype.activeDiscardFromDrawn = false;
-
-        /**
          * Creates a new GameState instance using the specified properties.
          * @function create
          * @memberof game.GameState
@@ -2287,8 +2301,6 @@ export const game = $root.game = (() => {
                 $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 22, wireType 2 =*/178).fork()).ldelim();
             if (message.matchEndResult != null && Object.hasOwnProperty.call(message, "matchEndResult"))
                 $root.game.MatchEndResult.encode(message.matchEndResult, writer.uint32(/* id 23, wireType 2 =*/186).fork()).ldelim();
-            if (message.activeDiscardFromDrawn != null && Object.hasOwnProperty.call(message, "activeDiscardFromDrawn"))
-                writer.uint32(/* id 24, wireType 0 =*/192).bool(message.activeDiscardFromDrawn);
             return writer;
         };
 
@@ -2418,10 +2430,6 @@ export const game = $root.game = (() => {
                     }
                 case 23: {
                         message.matchEndResult = $root.game.MatchEndResult.decode(reader, reader.uint32());
-                        break;
-                    }
-                case 24: {
-                        message.activeDiscardFromDrawn = reader.bool();
                         break;
                     }
                 default:
@@ -2561,9 +2569,6 @@ export const game = $root.game = (() => {
                 if (error)
                     return "matchEndResult." + error;
             }
-            if (message.activeDiscardFromDrawn != null && message.hasOwnProperty("activeDiscardFromDrawn"))
-                if (typeof message.activeDiscardFromDrawn !== "boolean")
-                    return "activeDiscardFromDrawn: boolean expected";
             return null;
         };
 
@@ -2702,8 +2707,6 @@ export const game = $root.game = (() => {
                     throw TypeError(".game.GameState.matchEndResult: object expected");
                 message.matchEndResult = $root.game.MatchEndResult.fromObject(object.matchEndResult);
             }
-            if (object.activeDiscardFromDrawn != null)
-                message.activeDiscardFromDrawn = Boolean(object.activeDiscardFromDrawn);
             return message;
         };
 
@@ -2744,7 +2747,6 @@ export const game = $root.game = (() => {
                 object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
                 object.chongciConfig = null;
                 object.matchEndResult = null;
-                object.activeDiscardFromDrawn = false;
             }
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
@@ -2797,8 +2799,6 @@ export const game = $root.game = (() => {
                 object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
             if (message.matchEndResult != null && message.hasOwnProperty("matchEndResult"))
                 object.matchEndResult = $root.game.MatchEndResult.toObject(message.matchEndResult, options);
-            if (message.activeDiscardFromDrawn != null && message.hasOwnProperty("activeDiscardFromDrawn"))
-                object.activeDiscardFromDrawn = message.activeDiscardFromDrawn;
             return object;
         };
 

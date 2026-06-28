@@ -654,7 +654,23 @@ func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
 	}
 }
 
-func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
+// emptyOtherHands clears every non-dealer hand so no interrupt is possible,
+// forcing the common no-interrupt path that advances the turn and clears
+// ActiveDiscard before the state is broadcast.
+func emptyOtherHands(g *engine.Game, dealer uint32) {
+	for s := range g.State.Players {
+		if uint32(s) != dealer {
+			g.State.Players[s].ClosedHand = nil
+			g.State.Players[s].HandSize = 0
+		}
+	}
+}
+
+// TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance verifies the tsumogiri
+// marker is set AND survives the no-interrupt turn advance (which clears
+// ActiveDiscard before broadcast). The earlier GameState-scoped flag was
+// dropped on this path, so ordinary discards never animated as tsumogiri.
+func TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance(t *testing.T) {
 	r := &rules.HometownRuleset{}
 	g := engine.NewGame("test-tsumogiri", r, engine.MatchOptions{})
 	g.Start()
@@ -665,7 +681,7 @@ func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 	}
 	drawnID := *g.State.Players[dealer].DrawnTileId
 
-	// Find the drawn tile in the dealer's hand and discard exactly it.
+	// Discard exactly the drawn tile (tsumogiri).
 	var discardTile *pb.Tile
 	for _, tile := range g.State.Players[dealer].ClosedHand {
 		if int32(tile.Id) == drawnID {
@@ -677,11 +693,7 @@ func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 		t.Fatalf("drawn tile id %d not present in dealer hand", drawnID)
 	}
 
-	// Keep the discard live: give South a pong-able pair so play enters WAIT_DISCARDS.
-	south := (dealer + 1) % 4
-	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
-	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
-	g.State.Players[south].ClosedHand = append(g.State.Players[south].ClosedHand, clone1, clone2)
+	emptyOtherHands(g, dealer)
 
 	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
@@ -690,15 +702,21 @@ func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 		t.Fatalf("discard failed: %v", err)
 	}
 
-	if g.State.ActiveDiscard == nil {
-		t.Fatalf("expected active discard to remain set in WAIT_DISCARDS")
+	// Confirm we exercised the no-interrupt advance (ActiveDiscard cleared).
+	if g.State.Phase != pb.GamePhase_PHASE_PLAYER_TURN {
+		t.Fatalf("expected PHASE_PLAYER_TURN after no-interrupt discard, got %v", g.State.Phase)
 	}
-	if !g.State.ActiveDiscardFromDrawn {
-		t.Errorf("expected ActiveDiscardFromDrawn=true for tsumogiri")
+	if g.State.ActiveDiscard != nil {
+		t.Fatalf("expected ActiveDiscard cleared after the no-interrupt advance")
+	}
+	if !g.State.Players[dealer].LastDiscardFromDrawn {
+		t.Errorf("expected LastDiscardFromDrawn=true for tsumogiri to survive the advance")
 	}
 }
 
-func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
+// TestLastDiscardFromDrawn_Tedashi verifies a non-drawn discard records false,
+// also on the no-interrupt path.
+func TestLastDiscardFromDrawn_Tedashi(t *testing.T) {
 	r := &rules.HometownRuleset{}
 	g := engine.NewGame("test-tedashi", r, engine.MatchOptions{})
 	g.Start()
@@ -709,7 +727,7 @@ func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
 	}
 	drawnID := *g.State.Players[dealer].DrawnTileId
 
-	// Discard a tile that is NOT the drawn tile.
+	// Discard a tile that is NOT the drawn tile (tedashi).
 	var discardTile *pb.Tile
 	for _, tile := range g.State.Players[dealer].ClosedHand {
 		if int32(tile.Id) != drawnID {
@@ -721,10 +739,7 @@ func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
 		t.Fatalf("could not find a non-drawn tile to discard")
 	}
 
-	south := (dealer + 1) % 4
-	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
-	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
-	g.State.Players[south].ClosedHand = append(g.State.Players[south].ClosedHand, clone1, clone2)
+	emptyOtherHands(g, dealer)
 
 	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
@@ -733,10 +748,7 @@ func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
 		t.Fatalf("discard failed: %v", err)
 	}
 
-	if g.State.ActiveDiscard == nil {
-		t.Fatalf("expected active discard to remain set in WAIT_DISCARDS")
-	}
-	if g.State.ActiveDiscardFromDrawn {
-		t.Errorf("expected ActiveDiscardFromDrawn=false for tedashi")
+	if g.State.Players[dealer].LastDiscardFromDrawn {
+		t.Errorf("expected LastDiscardFromDrawn=false for tedashi")
 	}
 }

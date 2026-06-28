@@ -33,8 +33,7 @@ describe('planTileFlights — redacted opponent discard', () => {
       currentHandOrigins: new Map(),
       isWildTile: () => false,
       startKey: 0,
-      activeDiscardId: 42,
-      activeDiscardFromDrawn: true,
+      fromDrawnByDirection: new Map([['top', true]]),
     })
     expect(animations).toHaveLength(1)
     expect(animations[0].fromRect.left).toBe(60) // drawn slot
@@ -55,8 +54,7 @@ describe('planTileFlights — redacted opponent discard', () => {
       currentHandOrigins: new Map(),
       isWildTile: () => false,
       startKey: 0,
-      activeDiscardId: 42,
-      activeDiscardFromDrawn: false,
+      fromDrawnByDirection: new Map([['top', false]]),
       random: () => 0, // deterministic: pick the first hand id (1001)
     })
     expect(animations).toHaveLength(2)
@@ -69,19 +67,27 @@ describe('planTileFlights — redacted opponent discard', () => {
     expect(merge.toRect.left).toBe(40) // new in-rail position
   })
 
-  it('falls back to the generic hand origin when no active-discard flag is given', () => {
+  it('falls back to the generic hand origin when the seat has no tracked hand/drawn rects', () => {
+    // No per-tile locations for 'top' (e.g. the opponent's hand rects weren't
+    // captured), only a hand-origin region — so neither the drawn-slot nor a
+    // random hand-slot origin is available and the generic anchor is used.
+    const previousSnapshot: MotionSnapshot = {
+      locations: new Map(),
+      rects: new Map(),
+      handOrigins: new Map([['top', { left: 0, top: 0, width: 80, height: 14 }]]),
+    }
     const currentLocations = new Map<number, TileMotionDescriptor>([
       [42, { tile: tile(42), direction: 'top', role: 'discard' }],
     ])
     const currentRects = new Map<number, TileRect>([[42, PILE]])
     const animations = planTileFlights({
-      previousSnapshot: prevSnapshot(),
+      previousSnapshot,
       currentLocations,
       currentRects,
       currentHandOrigins: new Map(),
       isWildTile: () => false,
       startKey: 0,
-      // no activeDiscardId / activeDiscardFromDrawn
+      fromDrawnByDirection: new Map([['top', false]]),
     })
     expect(animations).toHaveLength(1)
     // centered on the handOrigin region (left 0, width 80) -> 0 + 40 - 5 = 35
@@ -106,8 +112,6 @@ describe('planTileFlights — redacted opponent discard', () => {
       currentHandOrigins: new Map(),
       isWildTile: () => false,
       startKey: 0,
-      activeDiscardId: 5,
-      activeDiscardFromDrawn: false,
     })
     expect(animations).toHaveLength(1)
     expect(animations[0].fromRect.left).toBe(10) // tracked real position, not random/merge

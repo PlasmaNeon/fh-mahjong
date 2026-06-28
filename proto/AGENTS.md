@@ -17,7 +17,7 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - `GamePhase` adds `PHASE_MATCH_END` terminal value
   - `GameState`, `PlayerState`: full match state
   - `GameState` round-debug fields include `dice_sum`, individual `dice1`/`dice2`, `wangpai_stacks`, and live `wangpai_tiles_left`
-  - `GameState.active_discard_from_drawn` (field 24): public, transient tsumogiri marker — true when `active_discard` was the discarder's just-drawn tile; kept in lockstep with `active_discard` via `setActiveDiscard`/`clearActiveDiscard` in `internal/engine/game.go`
+  - `PlayerState.last_discard_from_drawn` (field 19): public tsumogiri marker — true when this player's most recent discard was their just-drawn tile. Persists until their next discard (must outlive `active_discard`, which is cleared on the no-interrupt turn advance before broadcast). Reset at round start.
   - `Meld`, `PlayerAction`: action/meld data
   - `ScoreEntry`, `PlayerPayout`, `RoundResult`, `RoundOutcome`: scoring, payouts, and compact RL round-result metadata
   - RL bridge messages:
