@@ -38,6 +38,12 @@ type AuthResponse struct {
 
 var jwtSecret = []byte(getEnv("JWT_SECRET", "super-secret-key-change-in-prod"))
 
+// dummyPasswordHash equalizes the timing of the unknown-email login path with
+// the wrong-password path: on a lookup miss we still run one bcrypt comparison
+// against this fixed hash, so an attacker cannot distinguish registered emails
+// by response latency. Computed once at startup at the same cost as real hashes.
+var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("fh-login-timing-equalizer"), bcrypt.DefaultCost)
+
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
@@ -135,6 +141,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	var user storage.User
 	if err := h.DB.Where("email = ?", email).First(&user).Error; err != nil {
+		// Equalize timing with the wrong-password path so the unknown-email
+		// case can't be distinguished by latency (anti-enumeration).
+		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}

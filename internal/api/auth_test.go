@@ -10,8 +10,23 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/plasma/fh-mahjong/internal/storage"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// The unknown-email login path must perform one bcrypt comparison against a
+// fixed dummy hash so it cannot be distinguished from the wrong-password path by
+// timing. This anchors that the equalizer hash is a real bcrypt hash at the same
+// cost as stored passwords; a no-op or wrong-cost value would reopen the oracle.
+func TestLoginDummyHashEqualizesTiming(t *testing.T) {
+	cost, err := bcrypt.Cost(dummyPasswordHash)
+	if err != nil {
+		t.Fatalf("dummyPasswordHash is not a valid bcrypt hash: %v", err)
+	}
+	if cost != bcrypt.DefaultCost {
+		t.Fatalf("dummyPasswordHash cost = %d, want DefaultCost %d", cost, bcrypt.DefaultCost)
+	}
+}
 
 func newAuthTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	t.Helper()
