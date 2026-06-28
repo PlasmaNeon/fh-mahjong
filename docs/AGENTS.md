@@ -13,7 +13,7 @@
 
 - When adding a new research note, create a dedicated Markdown file instead of appending unrelated notes into an existing report.
 - Keep the original paper or project website near the top of each note.
-- Keep implementation notes grounded in this repo's architecture: Go simulator in `core/` and `rlenv/`, Python training stack in `ai/`.
+- Keep implementation notes grounded in this repo's architecture: Go simulator in `internal/engine/` and `internal/rl/`, Python training stack in `ai/`.
 - When documenting Python commands for the `ai/` package, use uv commands such as `uv sync --project ai --extra dev` and `uv run --project ai ...`; avoid non-uv package or environment commands.
 - When a Chongci checkpoint is promoted or rejected, update both `ai/checkpoints/best-checkpoints.json` and the progress note with the run directory, seed windows, MLflow run ids, and promotion/rejection rationale.
 - For paired-trace notes, distinguish strict first-divergence counterfactuals from later aligned disagreements. Later disagreements can support risk calibration and data mining, but they are not promotion-gate proof by themselves.

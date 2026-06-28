@@ -97,7 +97,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - `/api/v1/tools/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
 - When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/tools/calc` and `/room/new` work behind the Go server.
 - Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
-- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
+- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
 
 - **server_test.go** — SPA/static serving regression coverage:
   - Built JS asset requests return JavaScript, not `index.html`

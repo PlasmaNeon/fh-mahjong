@@ -1,6 +1,6 @@
 # Refactoring Notes — Duplication Removal (2026-06-27)
 
-## Go: `tiles` package (`github.com/plasma/fh-mahjong/tiles`)
+## Go: `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`)
 
 A leaf package (imports only `proto`) that owns:
 - `Key` / `KeyOf` — canonical tile-type key `suit*100+value`.
@@ -10,21 +10,21 @@ A leaf package (imports only `proto`) that owns:
 Replaced these previously-duplicated definitions:
 | Removed | Was in |
 |---------|--------|
-| `tileToIndex`, inline `*100+value` | `rules/shanten/shanten.go` |
-| `tileHash`, `indexToTile` | `rules/shanten/analysis.go` |
-| 8 inline `*100+value` sites | `rules/fh.go` |
-| `tileToShantenIndex`, `shantenIndexToTile`, inline keys | `api/shanten.go` |
-| `tileTypeHash`, `cloneTile`, `cloneAction` | `bot/heuristic.go` |
-| `cloneTile`, `cloneAction`, `tileTypeKey` | `rlenv/action.go`, `rlenv/observation.go` |
+| `tileToIndex`, inline `*100+value` | `internal/rules/shanten/shanten.go` |
+| `tileHash`, `indexToTile` | `internal/rules/shanten/analysis.go` |
+| 8 inline `*100+value` sites | `internal/rules/fh.go` |
+| `tileToShantenIndex`, `shantenIndexToTile`, inline keys | `internal/api/shanten.go` |
+| `tileTypeHash`, `cloneTile`, `cloneAction` | `internal/bot/heuristic.go` |
+| `cloneTile`, `cloneAction`, `tileTypeKey` | `internal/rl/action.go`, `internal/rl/observation.go` |
 | 2 inline `*100+value` sites | `cmd/cli/main.go` |
 
 Rule: never re-inline `suit*100+value` or re-add a local `cloneTile`/`cloneAction`; use `tiles`.
-Note: the 42-plane index (`tileFaceIndex42`) stays in `rlenv` — it is observation-specific, not shared.
-Note: `rules/fh.go` intentionally keeps its OWN `tileToIndex` (the row above removed the
-`rules/shanten` one only). fh.go's version returns `0` (not `-1`) for flowers/unknown, and its
+Note: the 42-plane index (`tileFaceIndex42`) stays in `internal/rl` — it is observation-specific, not shared.
+Note: `internal/rules/fh.go` intentionally keeps its OWN `tileToIndex` (the row above removed the
+`internal/rules/shanten` one only). fh.go's version returns `0` (not `-1`) for flowers/unknown, and its
 callers index `counts[tileToIndex(t)]` WITHOUT a `>= 0` guard — so do NOT replace it with
 `tiles.Index34`, which returns `-1` and would index `counts[-1]` and panic.
-`core/` deliberately does NOT depend on `tiles` (it has no tile-key needs and must stay ruleset-agnostic).
+`internal/engine/` deliberately does NOT depend on `tiles` (it has no tile-key needs and must stay ruleset-agnostic).
 
 ## Frontend: `web/src/utils/tileModel.ts`
 

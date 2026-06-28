@@ -10,7 +10,7 @@ Bootstraps the full backend: connects to PostgreSQL via GORM, initializes the We
 
 - **main.go** — Server bootstrap:
   - PostgreSQL connection (configurable via env vars or defaults to localhost:5432)
-  - `models.AutoMigrate()` for schema setup
+  - `storage.AutoMigrate()` for schema setup
   - `api.Hub`, `api.Matchmaker` initialization
   - Optional `AI_BOT_POLICY_URL` wiring for Python-served remote AI bots on automated seats, with local heuristic fallback inside the remote policy
   - Route registration via `api.SetupRouter()`

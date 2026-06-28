@@ -26,4 +26,4 @@ This package hosts server-side and CLI bot logic. Policies consume a `GameState`
 - Policies only rely on state already produced by the engine; they do not re-implement rules or mutate the game directly.
 - The same policy should be reused by CLI demos, server-side empty seats, and future RL self-play data generation.
 - Remote AI policies must keep the Go engine as final authority: every returned `action_id` is decoded against current legal actions before it can become a `PlayerAction`.
-- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
+- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.

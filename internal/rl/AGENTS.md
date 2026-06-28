@@ -35,4 +35,4 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 - Heuristic trajectory export keeps immediate step rewards in `TrajectorySample.rewards` and stores final payouts/outcomes separately in `TrajectorySample.terminal_rewards` and `TrajectorySample.terminal_outcome`; Chongci `GenerateHeuristicTrajectory` keeps each sample's `TerminalRewards` equal to `matchEndRewards`, so offline return-shaping remains match net-change based.
 - Branch evaluation through `advanceToTerminalWithHeuristics` is unchanged by Chongci dense per-step rewards.
 - `FLOWER_REVEAL` is treated as a system action and is intentionally excluded from the agent action space.
-- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
+- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
