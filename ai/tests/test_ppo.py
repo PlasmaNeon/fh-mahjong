@@ -274,6 +274,8 @@ def test_train_ppo_e2e_mock_writes_checkpoint(tmp_path):
     assert len(metrics) == 2
     assert (tmp_path / "ppo" / "iter_002.pt").exists()
     assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+    # truncation count is always surfaced (0 here: the mock bridge never truncates)
+    assert all(m["rollout_truncations"] == 0 for m in metrics)
 
 
 def test_train_ppo_parallel_mock_writes_checkpoint(tmp_path):
@@ -428,11 +430,16 @@ def test_cli_train_ppo_writes_history_json_with_eval(tmp_path, monkeypatch, caps
     assert "eval_large_loss_rate" in entry
     for key in ("eval_mean_reward", "eval_mean_reward_ci95", "eval_large_loss_rate"):
         assert np.isfinite(entry[key])
+    # placement is the GRP objective — it must be persisted too
+    assert "eval_mean_placement" in entry
+    assert "eval_mean_placement_ci95" in entry
+    assert np.isfinite(entry["eval_mean_placement"])
 
     # eval metrics must also reach the per-iteration training log
     out = capsys.readouterr().out
     iter_lines = [ln for ln in out.splitlines() if ln.startswith("iter 1:")]
     assert len(iter_lines) == 1
+    assert "eval_mean_placement=" in iter_lines[0]
     assert "eval_mean_reward=" in iter_lines[0]
     assert "eval_ci95=" in iter_lines[0]
 
@@ -703,6 +710,190 @@ def test_train_ppo_rejects_zero_snapshot_interval(tmp_path):
                   checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
 
 
+from fh_mahjong_ai.global_ev import GlobalEVNet
+
+
+class _StubGRP:
+    """Returns g = step * call_count (unbounded increment) so every consecutive
+    GRP delta is exactly `step` — lets us assert exact GRP-delta rewards."""
+    def __init__(self, step=0.25):
+        self._step = step
+        self._i = 0
+    def __call__(self, planes, scalars):
+        import torch
+        v = self._step * self._i
+        self._i += 1
+        return torch.tensor([float(v)])
+    def eval(self):
+        return self
+
+
+def test_ppo_config_grp_defaults():
+    cfg = PPOConfig()
+    assert cfg.grp_checkpoint is None
+    assert len(cfg.grp_placement_values) == 4
+
+
+def test_grp_match_rewards_realized_terminal():
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    g = [0.0, 0.25, 0.5]  # 3 learner decisions
+    # gamma=1: non-final = consecutive g-diffs; final = realized - g_last
+    assert _grp_match_rewards(g, realized=1.0, gamma=1.0) == [0.25, 0.25, 0.5]
+    # single-decision match: only the realized terminal reward
+    assert _grp_match_rewards([0.3], realized=1.0, gamma=1.0) == [0.7]
+
+
+def test_grp_match_rewards_discount_correct():
+    # gamma-correct potential shaping: non-final r_k = gamma*g_{k+1} - g_k
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    g = [0.0, 0.25, 0.5]
+    out = _grp_match_rewards(g, realized=1.0, gamma=0.5)
+    np.testing.assert_allclose(out, [0.5 * 0.25 - 0.0, 0.5 * 0.5 - 0.25, 1.0 - 0.5], rtol=1e-6)
+    # the discounted return telescopes to gamma^(n-1)*realized - g_0
+    gamma = 0.9
+    g2 = [0.1, -0.2, 0.3, 0.4]
+    rs = _grp_match_rewards(g2, realized=1.0, gamma=gamma)
+    disc_return = sum((gamma ** k) * r for k, r in enumerate(rs))
+    expected = (gamma ** (len(g2) - 1)) * 1.0 - g2[0]
+    np.testing.assert_allclose(disc_return, expected, rtol=1e-6)
+
+
+def test_grp_truncation_penalty_horizon_invariant_at_gamma_one():
+    # At gamma == 1 (the enforced GRP objective), the worst-placement truncation
+    # penalty reaches decision 0 undiscounted regardless of match length, so a policy
+    # cannot attenuate the penalty by stalling to a longer horizon.
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    worst = -1.0
+    short = _grp_match_rewards([0.2, 0.5], realized=worst, gamma=1.0)
+    long = _grp_match_rewards([0.2] + [0.5] * 200, realized=worst, gamma=1.0)
+    # undiscounted return from decision 0 telescopes to realized - g_0 for any length
+    np.testing.assert_allclose(sum(short), worst - 0.2, atol=1e-6)
+    np.testing.assert_allclose(sum(long), worst - 0.2, atol=1e-6)
+    # contrast: at gamma=0.99 a long match attenuates the penalty toward ~0
+    long_disc = _grp_match_rewards([0.0] + [0.0] * 200, realized=worst, gamma=0.99)
+    disc_return = sum((0.99 ** k) * r for k, r in enumerate(long_disc))
+    # 0.99^200 ~= 0.134, so the full -1.0 penalty shrinks to ~ -0.13: far from worst.
+    assert -0.3 < disc_return < 0.0
+
+
+def test_collect_rollouts_grp_none_matches_score_reward():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=11)
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=11, grp_model=None)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
+def test_collect_rollouts_grp_reward_is_placement_delta():
+    # mock bridge: GRP returns an increasing sequence; assert intermediate rewards are g_{t+1}-g_t
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    # gamma=1 so the potential shaping reduces to plain g_{t+1}-g_t (= 0.25 here)
+    cfg = PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.25)
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+    # learner decisions in one match -> non-terminal rewards equal consecutive GRP diffs (0.25 each),
+    # except the final decision (realized_placement - g_last). The mock is single learner seat per match.
+    assert len(batch) >= 2
+    # all non-final rewards equal 0.25 (g step), within float tolerance
+    np.testing.assert_allclose(batch.rewards[:-1], 0.25, atol=1e-5)
+    assert batch.dones[-1] == 1.0
+
+
+def _truncate_after(monkeypatch, steps_threshold, only_seed=None):
+    """Monkeypatch the mock bridge so a match returns truncated=True (terminated
+    =False) once it has taken `steps_threshold` steps. If `only_seed` is given,
+    only the match reset with that seed truncates; otherwise every match does."""
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+    from fh_mahjong_ai.types import StepResult
+    orig_reset = MockMahjongBridge.reset
+    orig_step = MockMahjongBridge.step
+    state = {"seed": None, "steps": 0}
+
+    def patched_reset(self, seed=None):
+        state["seed"] = seed
+        state["steps"] = 0
+        return orig_reset(self, seed=seed)
+
+    def patched_step(self, action_id):
+        res = orig_step(self, action_id)
+        state["steps"] += 1
+        if (only_seed is None or state["seed"] == only_seed) and state["steps"] >= steps_threshold:
+            return StepResult(observation=res.observation, rewards=res.rewards,
+                              terminated=False, truncated=True, info=res.info)
+        return res
+
+    monkeypatch.setattr(MockMahjongBridge, "reset", patched_reset)
+    monkeypatch.setattr(MockMahjongBridge, "step", patched_step)
+
+
+def test_collect_rollouts_grp_penalizes_truncated_match(monkeypatch):
+    # A step-limit truncation must be KEPT (not censored) and scored as the worst
+    # placement value, so a stalling policy is penalized rather than able to hide
+    # its bad trajectories; and the truncation is counted.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.0)  # constant g=0 -> terminal reward == realized exactly
+    _truncate_after(monkeypatch, steps_threshold=9)
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+
+    assert batch.truncated_matches == 1
+    assert len(batch) >= 1           # transitions are KEPT, not discarded
+    assert batch.dones[-1] == 1.0
+    # g==0 everywhere -> non-final rewards are gamma*0 - 0 == 0, terminal is the
+    # worst placement value (an explicit adverse outcome), NOT a phantom GRP return.
+    np.testing.assert_allclose(batch.rewards[:-1], 0.0, atol=1e-6)
+    np.testing.assert_allclose(batch.rewards[-1], float(min(cfg.grp_placement_values)), atol=1e-6)
+
+
+def test_collect_rollouts_grp_all_truncated_does_not_abort(monkeypatch):
+    # Even if EVERY match truncates, the run must not raise (no availability
+    # failure): all matches are kept, counted, and scored as the worst placement.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, gamma=1.0, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.0)
+    _truncate_after(monkeypatch, steps_threshold=9)  # every match truncates
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+
+    assert batch.truncated_matches == 3
+    assert int(batch.dones.sum()) == 3          # three kept matches, each a terminal
+    # every kept match is scored worst-placement at its terminal step
+    np.testing.assert_allclose(batch.rewards[batch.dones == 1.0],
+                               float(min(cfg.grp_placement_values)), atol=1e-6)
+
+
+def test_concat_rollout_batches_sums_truncations():
+    from fh_mahjong_ai.ppo import RolloutBatch, concat_rollout_batches
+    def _b(n, trunc):
+        return RolloutBatch(
+            planes=np.zeros((n, 1), np.float32), scalars=np.zeros((n, 1), np.float32),
+            action_mask=np.ones((n, 1), np.int8), actions=np.zeros(n, np.int64),
+            old_logprobs=np.zeros(n, np.float32), values=np.zeros(n, np.float32),
+            rewards=np.zeros(n, np.float32), dones=np.zeros(n, np.float32),
+            truncated_matches=trunc)
+    out = concat_rollout_batches([_b(2, 1), _b(3, 0), _b(1, 2)])
+    assert out.truncated_matches == 3
+    assert len(out) == 6
+
+
 def test_build_opponent_nets_are_frozen():
     env_cfg, mcfg = _small_env_model()
     states = [PolicyValueNet(env_cfg, mcfg).state_dict() for _ in range(3)]
@@ -822,3 +1013,122 @@ def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monke
         cli.main()
     # ...and MLflow finalization must see it (so the run is marked FAILED, not FINISHED)
     assert seen["exc_type"] is RuntimeError
+
+
+def _save_grp_checkpoint(path, env_cfg, mcfg, reward_shaping="placement",
+                         placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)):
+    """Save a GlobalEVNet checkpoint tagged with its training objective, as
+    fh-mj-train-global-ev now does. Default is a valid placement checkpoint."""
+    save_checkpoint(path, GlobalEVNet(env_cfg, mcfg),
+                    metadata={"kind": "global_ev", "reward_shaping": reward_shaping,
+                              "placement_values": list(placement_values)})
+
+
+def test_train_ppo_with_grp_mock(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64,
+                    device="cpu", gamma=1.0, grp_checkpoint=grp)
+    metrics = train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=3, run_eval=False)
+    assert len(metrics) == 2
+    assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+
+
+def test_train_ppo_grp_requires_gamma_one(tmp_path):
+    # The episodic placement objective requires gamma == 1; a discounted gamma must
+    # fail fast (before any expensive setup) rather than silently attenuate the signal.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu", gamma=0.99, grp_checkpoint=grp)
+    with pytest.raises(ValueError, match="gamma == 1.0"):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_load_grp_model_rejects_missing_metadata(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))  # no metadata (legacy)
+    with pytest.raises(ValueError, match="no objective metadata"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu")
+
+
+def test_load_grp_model_rejects_raw_checkpoint(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg, reward_shaping="raw")
+    with pytest.raises(ValueError, match="requires 'placement'"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu")
+
+
+def test_load_grp_model_rejects_placement_values_mismatch(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg, placement_values=(2.0, 1.0, -1.0, -2.0))
+    with pytest.raises(ValueError, match="placement_values"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu",
+                       placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+
+
+def test_load_grp_model_accepts_placement_checkpoint(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
+    model = load_grp_model(env_cfg, mcfg, grp, device="cpu",
+                           placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+    assert not any(p.requires_grad for p in model.parameters())
+
+
+def test_train_ppo_missing_grp_fails_fast(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    # gamma=1.0 so we get past the GRP gamma guard and actually exercise the
+    # missing-file load path this test is named for.
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu", gamma=1.0,
+                    grp_checkpoint=tmp_path / "nope.pt")
+    with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_cli_train_ppo_grp(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"; save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"; _save_grp_checkpoint(grp, env_cfg, mcfg)
+    argv = [
+        "fh-mj-train-ppo", "--init-checkpoint", str(init), "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1", "--minibatch-size", "8",
+        "--match-mode", "classic", "--bridge-kind", "mock", "--max-steps-per-episode", "64", "--no-eval",
+        "--gamma", "1.0", "--grp-checkpoint", str(grp),
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16", "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert (tmp_path / "ppo" / "iter_001.pt").exists()

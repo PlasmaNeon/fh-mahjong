@@ -19,14 +19,17 @@ from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model
 
 _MLFLOW_METRIC_KEYS = (
     "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
-    "mean_reward", "steps", "pool_size", "eval_mean_reward", "eval_mean_reward_ci95",
-    "eval_large_loss_rate",
+    "mean_reward", "steps", "pool_size", "rollout_truncations",
+    "eval_mean_reward", "eval_mean_reward_ci95",
+    "eval_large_loss_rate", "eval_mean_placement", "eval_mean_placement_ci95",
 )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Online self-play PPO fine-tuning")
     parser.add_argument("--init-checkpoint", type=Path, required=True, help="Anchor checkpoint to warm-start (policy+value) and freeze as opponent")
+    parser.add_argument("--grp-checkpoint", type=Path, default=None,
+                        help="Frozen GlobalEVNet GRP checkpoint; reward becomes the placement-value delta")
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--matches-per-iter", type=int, default=16)
@@ -80,6 +83,7 @@ def main() -> None:
         eval_start_seed=args.eval_start_seed, match_mode=args.match_mode,
         max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
         pool_max_size=args.pool_max_size, pool_snapshot_interval=args.pool_snapshot_interval,
+        grp_checkpoint=args.grp_checkpoint,
         device=args.device,
     )
     # Optional observability must never abort an expensive training run. Guard

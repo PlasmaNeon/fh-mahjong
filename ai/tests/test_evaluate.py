@@ -8,6 +8,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.evaluate import (
     action_family,
     compute_action_agreement,
+    episode_placement,
     evaluate_duplicate_seats,
     evaluate_online,
     evaluate_policy_online,
@@ -18,6 +19,14 @@ from fh_mahjong_ai.policies import ActionChoice
 from fh_mahjong_ai.scripts.evaluate import parse_seed_windows
 from fh_mahjong_ai.scripts.evaluate_tail_constrained import parse_family_risk_increases
 from fh_mahjong_ai.types import Observation, StepResult, Transition
+
+
+def _grp_dummy_transition(rewards):
+    o = Observation(seat=0, planes=np.zeros((1, 1, 1), dtype=np.float32),
+                    scalars=np.zeros(1, dtype=np.float32),
+                    action_mask=np.ones(1, dtype=np.int8), metadata={})
+    return Transition(observation=o, action_id=0, rewards=np.asarray(rewards, dtype=np.float32),
+                      next_observation=o, terminated=True, truncated=False, info={})
 
 
 def _obs(seat: int = 0, seed: int = 0) -> Observation:
@@ -384,3 +393,64 @@ class TestEvaluateOnline:
         assert "positive_reward_rate" in report
         assert "action_family_rates" in report
         assert "round_outcome_rates" in report
+
+
+def test_episode_placement_ranks_learning_seat():
+    # learning seat 0 has the highest net -> placement value 1.0
+    ep = [_grp_dummy_transition([3.0, 1.0, -1.0, -3.0])]
+    pv = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
+    val = episode_placement(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                            learning_seat=0, placement_values=pv)
+    assert val == 1.0
+    # learning seat 3 has the lowest -> -1.0
+    val3 = episode_placement(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                             learning_seat=3, placement_values=pv)
+    assert val3 == -1.0
+
+
+def test_episode_placement_includes_reset_reward_in_ranking():
+    # net from steps alone ranks seat 0 LAST; the reset reward lifts it to FIRST,
+    # so placement must rank on the reset-included (true final) net.
+    pv = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
+    ep = [_grp_dummy_transition([0.0, 0.1, 0.2, 0.3])]
+    assert episode_placement(ep, np.zeros(4, dtype=np.float32), 0, pv) == -1.0
+    val = episode_placement(ep, np.zeros(4, dtype=np.float32), 0, pv,
+                            reset_rewards=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+    assert val == 1.0
+
+
+def test_truncated_eval_scored_worst_placement(monkeypatch):
+    # A step-limit truncation in eval is scored the WORST placement (matching the
+    # training reward), not excluded. So a policy cannot lift mean_placement — the
+    # gate metric vs the anchor — by driving losing matches into the step limit.
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+    from fh_mahjong_ai.types import StepResult
+    orig_reset = MockMahjongBridge.reset
+    orig_step = MockMahjongBridge.step
+    state = {"steps": 0}
+
+    def patched_reset(self, seed=None):
+        state["steps"] = 0
+        return orig_reset(self, seed=seed)
+
+    def patched_step(self, action_id):
+        res = orig_step(self, action_id)
+        state["steps"] += 1
+        if state["steps"] >= 5:  # truncate every episode well before max_steps
+            return StepResult(observation=res.observation, rewards=res.rewards,
+                              terminated=False, truncated=True, info=res.info)
+        return res
+
+    monkeypatch.setattr(MockMahjongBridge, "reset", patched_reset)
+    monkeypatch.setattr(MockMahjongBridge, "step", patched_step)
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    report = evaluate_online(model=model, episodes=3, seeds=[1, 2, 3],
+                             bridge_kind="mock", device="cpu")
+    assert report["truncation_count"] == 3
+    # placement now scores every completed episode (no censoring): sample == episodes
+    assert report["placement_count"] == report["episodes"] == 3
+    # every truncated episode gets the worst placement -> mean cannot be inflated
+    assert report["mean_placement"] == -1.0
+    assert all(p == -1.0 for p in report["per_episode_placements"])
+    assert report["truncation_rate"] == 1.0

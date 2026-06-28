@@ -18,13 +18,21 @@ def _split_counts(total: int, workers: int) -> List[int]:
     return [base + (1 if i < rem else 0) for i in range(workers)]
 
 
-def _worker_loop(env_config, model_config, ppo_config, task_q, result_q):
+def _worker_loop(env_config, model_config, ppo_config, grp_state_dict, task_q, result_q):
     import torch
 
     from .model import PolicyValueNet
 
     torch.set_num_threads(1)
     learner = PolicyValueNet(env_config, model_config)
+    grp_model = None
+    if grp_state_dict is not None:
+        from .global_ev import GlobalEVNet
+        grp_model = GlobalEVNet(env_config, model_config)
+        grp_model.load_state_dict(grp_state_dict)
+        grp_model.eval()
+        for p in grp_model.parameters():
+            p.requires_grad_(False)
 
     while True:
         task = task_q.get()
@@ -37,6 +45,7 @@ def _worker_loop(env_config, model_config, ppo_config, task_q, result_q):
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_rollouts(
                 env_config, learner, opponents[0], cfg, base_seed=base_seed, opponents=opponents,
+                grp_model=grp_model,
             )
             result_q.put((worker_id, batch, None))
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
@@ -48,13 +57,15 @@ class ParallelRolloutCollector:
     in parallel (CPU inference) and concatenates them into one RolloutBatch."""
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
-                 ppo_config: PPOConfig, num_workers: int) -> None:
+                 ppo_config: PPOConfig, num_workers: int,
+                 grp_state_dict=None) -> None:
         if num_workers < 1:
             raise ValueError("num_workers must be >= 1")
         self.env_config = env_config
         self.model_config = model_config
         self.ppo_config = ppo_config
         self.num_workers = int(num_workers)
+        self.grp_state_dict = grp_state_dict
         self._ctx = mp.get_context("spawn")
         self._task_q = None
         self._result_q = None
@@ -68,7 +79,7 @@ class ParallelRolloutCollector:
             p = self._ctx.Process(
                 target=_worker_loop,
                 args=(self.env_config, self.model_config, self.ppo_config,
-                      self._task_q, self._result_q),
+                      self.grp_state_dict, self._task_q, self._result_q),
                 daemon=True,
             )
             p.start()

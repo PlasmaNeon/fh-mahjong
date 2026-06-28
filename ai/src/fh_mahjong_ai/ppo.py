@@ -11,8 +11,10 @@ import torch
 
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
+from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .evaluate import evaluate_duplicate_seats
+from .global_ev import GlobalEVNet
 from .model import PolicyValueNet
 from .storage import load_checkpoint, save_checkpoint
 from .types import Observation
@@ -61,6 +63,8 @@ class PPOConfig:
     num_workers: int = 1
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
+    grp_checkpoint: Optional[Path] = None
+    grp_placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
     device: str = "cpu"
 
 
@@ -74,6 +78,7 @@ class RolloutBatch:
     values: np.ndarray
     rewards: np.ndarray
     dones: np.ndarray  # 1.0 at each match's final learning-seat step
+    truncated_matches: int = 0  # matches that hit the step limit (no final standings)
 
     def __len__(self) -> int:
         return int(self.actions.shape[0])
@@ -96,6 +101,7 @@ def concat_rollout_batches(batches: List["RolloutBatch"]) -> "RolloutBatch":
         values=np.concatenate([b.values for b in nonempty], axis=0),
         rewards=np.concatenate([b.rewards for b in nonempty], axis=0),
         dones=np.concatenate([b.dones for b in nonempty], axis=0),
+        truncated_matches=sum(int(b.truncated_matches) for b in nonempty),
     )
 
 
@@ -206,6 +212,29 @@ def _seat_step_reward(step_rewards, seat: int) -> float:
     return 0.0
 
 
+def _grp_match_rewards(match_g, realized, gamma):
+    """Per-decision GRP placement rewards for one match, as discount-correct
+    potential-based shaping (Ng et al.) with potential Φ = GRP placement value:
+    `gamma * g_{k+1} - g_k` for each non-final learner decision, and
+    `realized - g_last` for the final decision (terminal potential = 0). The
+    GAE-discounted return then telescopes to `gamma^(n-1) * realized - g_0` for
+    ANY gamma; the plain `g_{k+1} - g_k` form only telescopes at gamma=1.
+
+    `realized` is the learner's placement value at the terminal: the true final
+    standings for a completed match, or the worst placement value for a step-limit
+    truncation (an explicit adverse outcome — see the caller). The penalty is a
+    fixed constant independent of `g`, so unlike bootstrapping from the frozen
+    GRP's own prediction it cannot be inflated by a stalling policy."""
+    n = len(match_g)
+    out = []
+    for k in range(n):
+        if k + 1 < n:
+            out.append(float(gamma * match_g[k + 1] - match_g[k]))
+        else:
+            out.append(float(realized - match_g[k]))
+    return out
+
+
 def collect_rollouts(
     env_config: EnvConfig,
     policy_model,
@@ -213,6 +242,7 @@ def collect_rollouts(
     config: PPOConfig,
     base_seed: int,
     opponents: Optional[list] = None,
+    grp_model=None,
 ) -> RolloutBatch:
     """Play `matches_per_iter` full matches; record on-policy experience for the
     learning seat (samples from the masked policy), with the frozen anchor in the
@@ -238,6 +268,7 @@ def collect_rollouts(
 
     planes_l, scalars_l, mask_l, actions_l = [], [], [], []
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
+    truncated_matches = 0
 
     try:
         for m in range(config.matches_per_iter):
@@ -253,6 +284,16 @@ def collect_rollouts(
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
             last_learn_index: Optional[int] = None
+            match_indices: list[int] = []   # rewards_l indices for this match (GRP path)
+            match_g: list[float] = []        # GRP placement value at each learner decision
+            cum_net = np.zeros(4, dtype=np.float32)  # per-seat cumulative net (telescopes to match net)
+            if grp_model is not None and reset_result is not None:
+                # Include any score change from reset-time autoplay (a hand resolved
+                # before the learner's first decision) so realized_placement ranks on
+                # the TRUE final net, matching the eval placement + net metrics.
+                rr = np.asarray(reset_result.rewards, dtype=np.float32)
+                if rr.size:
+                    cum_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
             while True:
                 seat = int(obs.seat)
                 planes, scalars, mask = _obs_to_tensors(obs, device)
@@ -273,17 +314,48 @@ def collect_rollouts(
                     rewards_l.append(0.0)
                     dones_l.append(0.0)
                     last_learn_index = len(actions_l) - 1
+                    if grp_model is not None:
+                        with torch.no_grad():
+                            g = float(grp_model(planes, scalars)[0])
+                        match_indices.append(last_learn_index)
+                        match_g.append(g)
                 else:
                     net = seat_opponent.get(seat, pool[0])
                     with torch.no_grad():
                         logits, _ = net(planes, scalars, mask)
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
-                if last_learn_index is not None:
+                if grp_model is not None:
+                    sr = np.asarray(step.rewards, dtype=np.float32)
+                    if sr.size:
+                        cum_net += sr[:4]
+                elif last_learn_index is not None:
                     rewards_l[last_learn_index] += _seat_step_reward(step.rewards, LEARNING_SEAT)
                 if step.terminated or step.truncated:
+                    is_trunc = bool(step.truncated) and not bool(step.terminated)
+                    if is_trunc:
+                        truncated_matches += 1
                     if last_learn_index is not None:
                         dones_l[last_learn_index] = 1.0
+                    if grp_model is not None and match_indices:
+                        # A step-limit truncation has no final standings. Rather than
+                        # discard the match (which lets a stalling policy censor its
+                        # own bad trajectories — survivorship bias — and could abort a
+                        # run if every match truncated) or bootstrap from the frozen
+                        # GRP's own prediction (a phantom gamma^(n-1)*g_last return the
+                        # policy could farm by stalling), score it as an explicit
+                        # adverse outcome: the worst placement value. That penalty is a
+                        # fixed constant independent of the GRP prediction, so it can't
+                        # be inflated; with the gamma == 1 GRP objective (enforced in
+                        # train_ppo) it reaches every decision undiscounted, so stalling
+                        # to a longer horizon cannot attenuate it.
+                        if is_trunc:
+                            realized = float(min(config.grp_placement_values))
+                        else:
+                            realized = float(placement_shaped_returns(
+                                cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
+                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, config.gamma)):
+                            rewards_l[idx] = r
                     break
                 obs = step.observation
     finally:
@@ -303,6 +375,7 @@ def collect_rollouts(
         values=np.asarray(values_l, dtype=np.float32),
         rewards=np.asarray(rewards_l, dtype=np.float32),
         dones=np.asarray(dones_l, dtype=np.float32),
+        truncated_matches=truncated_matches,
     )
 
 
@@ -319,6 +392,49 @@ def build_opponent_nets(env_config, model_config, pool_states, device="cpu"):
             p.requires_grad_(False)
         nets.append(net)
     return nets
+
+
+def load_grp_model(env_config, model_config, grp_checkpoint, device="cpu", placement_values=None):
+    """Load a frozen GlobalEVNet GRP model (same ModelConfig as the policy), rejecting
+    any checkpoint whose training objective is not placement shaping.
+
+    GlobalEVNet's training defaults to RAW terminal net-score targets, which are
+    unbounded and on a different scale than the bounded placement values PPO uses as
+    potentials. A raw-score checkpoint is architecturally identical, so it would load
+    and silently change the reward scale and objective — wasting an entire PPO run.
+    We therefore require the checkpoint to declare `reward_shaping="placement"` in its
+    metadata (written by fh-mj-train-global-ev), with placement values matching the
+    PPO config when provided."""
+    path = Path(grp_checkpoint)
+    payload = torch.load(path, map_location="cpu")
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not metadata or "reward_shaping" not in metadata:
+        raise ValueError(
+            f"GRP checkpoint {path} has no objective metadata; it predates objective "
+            "tagging or was not produced by fh-mj-train-global-ev. Retrain/re-save the "
+            "GlobalEVNet with --reward-shaping placement so the objective can be verified."
+        )
+    shaping = metadata.get("reward_shaping")
+    if shaping != "placement":
+        raise ValueError(
+            f"GRP checkpoint {path} was trained with reward_shaping={shaping!r}, but PPO "
+            "GRP shaping requires 'placement' (bounded placement potentials). Retrain the "
+            "GlobalEVNet with --reward-shaping placement."
+        )
+    if placement_values is not None:
+        ckpt_pv = tuple(round(float(v), 6) for v in metadata.get("placement_values", ()))
+        want_pv = tuple(round(float(v), 6) for v in placement_values)
+        if ckpt_pv != want_pv:
+            raise ValueError(
+                f"GRP checkpoint {path} placement_values {ckpt_pv} != PPO "
+                f"grp_placement_values {want_pv}; the reward scale would mismatch."
+            )
+    grp = GlobalEVNet(env_config, model_config).to(device)
+    load_checkpoint(path, grp)
+    grp.eval()
+    for p in grp.parameters():
+        p.requires_grad_(False)
+    return grp
 
 
 def train_ppo(
@@ -341,9 +457,25 @@ def train_ppo(
             "pool_snapshot_interval must be >= 1 when pool_max_size > 1, "
             f"got {config.pool_snapshot_interval}"
         )
+    # The GRP placement objective is episodic: gamma < 1 discounts the terminal
+    # placement (and the worst-placement truncation penalty) toward zero for long
+    # matches — e.g. 0.99^999 ~= 4e-5 — so a stalling policy could attenuate a loss
+    # and the placement signal would barely reach early decisions. Require gamma == 1
+    # so the placement return telescopes to `realized - g_0` independent of horizon.
+    if config.grp_checkpoint is not None and config.gamma != 1.0:
+        raise ValueError(
+            "GRP placement shaping requires gamma == 1.0 (episodic placement "
+            "objective; gamma < 1 discounts the terminal placement and the "
+            f"truncation penalty toward zero for long matches). Got gamma={config.gamma}."
+        )
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    grp_model = None
+    if config.grp_checkpoint is not None:
+        grp_model = load_grp_model(env_config, model_config, config.grp_checkpoint,
+                                   device, placement_values=config.grp_placement_values)
 
     model = PolicyValueNet(env_config, model_config).to(device)
     load_checkpoint(Path(init_checkpoint), model)
@@ -365,8 +497,11 @@ def train_ppo(
     try:
         if config.num_workers > 1:
             from .parallel_rollouts import ParallelRolloutCollector
+            grp_state = None
+            if grp_model is not None:
+                grp_state = {k: v.detach().cpu() for k, v in grp_model.state_dict().items()}
             collector = ParallelRolloutCollector(
-                env_config, model_config, config, config.num_workers,
+                env_config, model_config, config, config.num_workers, grp_state_dict=grp_state,
             )
             collector.start()
 
@@ -384,15 +519,19 @@ def train_ppo(
                 batch = collector.collect(learner_state, pool_states, iter_seed, config.matches_per_iter)
             elif config.pool_max_size > 1:
                 opponents = build_opponent_nets(env_config, model_config, pool_states, device)
-                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents, grp_model=grp_model)
             else:
-                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, grp_model=grp_model)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
             metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
             metrics["iteration"] = iteration
+            # Under GRP this is the telescoped placement quantity (not net score); eval gate still uses net.
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
             metrics["pool_size"] = len(pool_states)
+            # Surface step-limit truncations so a stalling pathology can never be
+            # silent: truncated matches are kept and scored as the worst placement.
+            metrics["rollout_truncations"] = int(getattr(batch, "truncated_matches", 0))
 
             if run_eval and iteration % config.eval_interval == 0:
                 seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))
@@ -406,6 +545,10 @@ def train_ppo(
                     metrics["eval_mean_reward"] = report["mean_reward"]
                     metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
                     metrics["eval_large_loss_rate"] = report["large_loss_rate"]
+                    # Placement is the GRP objective — capture it so GRP runs can be
+                    # selected/compared on it, not just on net reward.
+                    metrics["eval_mean_placement"] = report.get("mean_placement")
+                    metrics["eval_mean_placement_ci95"] = report.get("mean_placement_ci95")
                 except Exception as exc:  # eval must not abort training
                     metrics["eval_error"] = str(exc)[:200]
 
@@ -422,6 +565,8 @@ def train_ppo(
                     f"eval_ci95={metrics['eval_mean_reward_ci95']:.4f} "
                     f"eval_large_loss_rate={metrics['eval_large_loss_rate']:.4f}"
                 )
+                if metrics.get("eval_mean_placement") is not None:
+                    line += f" eval_mean_placement={metrics['eval_mean_placement']:.4f}"
             elif "eval_error" in metrics:
                 err = " ".join(str(metrics["eval_error"]).split())
                 line += f" eval_error={err}"
