@@ -11,10 +11,10 @@ import (
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
-	"github.com/plasma/fh-mahjong/internal/storage"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
+	"github.com/plasma/fh-mahjong/internal/storage"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
@@ -790,13 +790,31 @@ func (r *Room) rotateObfuscationMapForRound(handNum uint32) {
 	r.TileObfuscationMap = newTileObfuscationMap()
 }
 
-// redactedStateForSeat clones the master state and obfuscates every closed hand
-// that does not belong to viewerSeat (production anti-cheat). Callers must only
-// use it while hands are hidden — see handsRevealed.
-func (r *Room) redactedStateForSeat(master *pb.GameState, viewerSeat uint32) *pb.GameState {
+// redactedStateForSeat clones the master state and hides the information the
+// seat at viewerSeat must not see (production anti-cheat).
+//
+// Opponent discards always have their ids remapped through the obfuscation map,
+// while their faces stay visible (a discard is public the moment it is made).
+// Tile ids encode the face, so the concealed hand must be obfuscated; remapping
+// the discard with the SAME map means a discarded tile keeps the fake id it had
+// while concealed. That lets the client's tile-flight animation fly an opponent
+// discard from its real hand slot instead of the hand center, and keeps discard
+// ids stable across the round-end reveal so revealing hands doesn't churn them
+// (a churn would spawn spurious discard flights over the result screen).
+//
+// When concealHands is true (during play) each opponent's closed hand + drawn
+// tile are also obfuscated and shanten cleared. At round/match end the caller
+// passes false to reveal hands while keeping discards id-stable.
+func (r *Room) redactedStateForSeat(master *pb.GameState, viewerSeat uint32, concealHands bool) *pb.GameState {
 	redacted := proto.Clone(master).(*pb.GameState)
 	for _, p := range redacted.Players {
 		if uint32(p.Seat) == viewerSeat {
+			continue
+		}
+		for _, t := range p.Discards {
+			t.Id = r.TileObfuscationMap[t.Id]
+		}
+		if !concealHands {
 			continue
 		}
 		for j, t := range p.ClosedHand {
@@ -837,8 +855,9 @@ func (r *Room) BroadcastState() []byte {
 	}
 
 	// Production only: rotate the obfuscation map at the start of each new deal,
-	// and reveal all hands once the round/match has ended. Dev sends the raw
-	// master state in every phase, so its behaviour is unchanged.
+	// and reveal all hands once the round/match has ended (discards stay
+	// id-obfuscated either way). Dev sends the raw master state in every phase,
+	// so its behaviour is unchanged.
 	revealAll := handsRevealed(masterState.Phase)
 	if isProd {
 		r.rotateObfuscationMapForRound(masterState.HandNum)
@@ -847,8 +866,8 @@ func (r *Room) BroadcastState() []byte {
 	for seatId, client := range r.Seats {
 		var payload []byte
 
-		if isProd && !revealAll {
-			payload, _ = proto.Marshal(r.redactedStateForSeat(masterState, seatId))
+		if isProd {
+			payload, _ = proto.Marshal(r.redactedStateForSeat(masterState, seatId, !revealAll))
 		} else {
 			payload = rawPayload
 		}
@@ -914,16 +933,12 @@ func (r *Room) SendStateToClient(client *Client) {
 	var payload []byte
 	var err error
 
-	// Keep the obfuscation map in sync with the current deal here too, so this
-	// reconnect path doesn't depend on a BroadcastState having run first. It's a
-	// no-op within a round (same hand number).
 	if isProd {
+		// Keep the obfuscation map in sync with the current deal here too, so this
+		// reconnect path doesn't depend on a BroadcastState having run first. It's
+		// a no-op within a round (same hand number).
 		r.rotateObfuscationMapForRound(masterState.HandNum)
-	}
 
-	// Production redacts opponents' hands during play; dev and the round/match-end
-	// reveal both send the unredacted master state.
-	if isProd && !handsRevealed(masterState.Phase) {
 		var clientSeat uint32
 		var found bool
 		for seat, c := range r.Seats {
@@ -935,7 +950,9 @@ func (r *Room) SendStateToClient(client *Client) {
 		}
 
 		if found {
-			payload, err = proto.Marshal(r.redactedStateForSeat(masterState, clientSeat))
+			// Reveal hands at round/match end, but always keep discards
+			// id-obfuscated so the reveal doesn't churn discard ids.
+			payload, err = proto.Marshal(r.redactedStateForSeat(masterState, clientSeat, !handsRevealed(masterState.Phase)))
 		} else {
 			// Unseated viewer (e.g. spectator): no own hand to preserve, so send
 			// the master state as before rather than guessing a seat.
