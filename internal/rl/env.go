@@ -1,4 +1,4 @@
-package rlenv
+package rl
 
 import (
 	"fmt"

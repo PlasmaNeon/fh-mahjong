@@ -13,7 +13,7 @@ import (
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rlenv"
+	"github.com/plasma/fh-mahjong/internal/rl"
 )
 
 const defaultTimeout = 750 * time.Millisecond
@@ -163,7 +163,7 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
 	}
 
-	observation, err := rlenv.EncodeObservation(state, seat, p.decisionIndex)
+	observation, err := rl.EncodeObservation(state, seat, p.decisionIndex)
 	if err != nil {
 		return nil, policyError{reason: FallbackReasonEncode, err: err}
 	}
@@ -228,14 +228,14 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 			err:    fmt.Errorf("remote policy error: %s", response.Error),
 		}
 	}
-	if response.ActionID < 0 || response.ActionID >= rlenv.ActionSpaceSize {
+	if response.ActionID < 0 || response.ActionID >= rl.ActionSpaceSize {
 		return nil, policyError{
 			reason: FallbackReasonIllegalAction,
 			err:    fmt.Errorf("remote policy returned action id %d outside action space", response.ActionID),
 		}
 	}
 
-	action, err := rlenv.DecodeActionID(state, seat, response.ActionID)
+	action, err := rl.DecodeActionID(state, seat, response.ActionID)
 	if err != nil {
 		return nil, policyError{reason: FallbackReasonIllegalAction, err: err}
 	}
