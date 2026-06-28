@@ -4,29 +4,30 @@ import { useSocket } from '../../contexts/SocketContext';
 import { getApiUrl } from '../../config';
 import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Field, Note } from '../../theme';
 
+type Mode = 'login' | 'register';
+
 export default function Login() {
-    const [username, setUsername] = useState('');
+    const [mode, setMode] = useState<Mode>('login');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [displayName, setDisplayName] = useState('');
     const [error, setError] = useState('');
     const navigate = useNavigate();
     const { connect } = useSocket();
 
-    const handleAuth = async (isLogin: boolean) => {
+    const submit = async () => {
+        setError('');
         try {
-            const endpoint = isLogin ? getApiUrl('/api/v1/auth/login') : getApiUrl('/api/v1/auth/register');
-            const res = await fetch(endpoint, {
+            const isRegister = mode === 'register';
+            const endpoint = isRegister ? '/api/v1/auth/register' : '/api/v1/auth/login';
+            const body = isRegister ? { email, password, displayName } : { email, password };
+            const res = await fetch(getApiUrl(endpoint), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify(body),
             });
-
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Authentication failed');
-
-            if (!isLogin) {
-                alert('Registration successful! Please login.');
-                return;
-            }
 
             localStorage.setItem('fh_token', data.token);
             connect(data.token);
@@ -41,7 +42,7 @@ export default function Login() {
             <Shell>
                 <Card>
                     <PageHeader
-                        title="Login"
+                        title={mode === 'login' ? 'Sign in' : 'Create account'}
                         subtitle="登录 · 奉化麻将"
                         nav={<>
                             <TextLink to="/">Home</TextLink>
@@ -49,15 +50,35 @@ export default function Login() {
                         </>}
                     />
 
-                    <Section title="Account access" subtitle="Login for matchmaking, or register a new account.">
-                        <Field label="Username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" />
-                        <Field label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" style={{ marginTop: '0.85rem' }} />
+                    <Section
+                        title="Account access"
+                        subtitle={mode === 'login'
+                            ? 'Sign in with your email and password.'
+                            : 'Register a new account with your email.'}
+                    >
+                        <Field label="Email" type="email" value={email}
+                            onChange={e => setEmail(e.target.value)} autoComplete="email" />
+
+                        {mode === 'register' && (
+                            <Field label="Display name" value={displayName}
+                                onChange={e => setDisplayName(e.target.value)}
+                                autoComplete="nickname" style={{ marginTop: '0.85rem' }} />
+                        )}
+
+                        <Field label="Password" type="password" value={password}
+                            onChange={e => setPassword(e.target.value)}
+                            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                            style={{ marginTop: '0.85rem' }} />
 
                         {error && <Note tone="error">{error}</Note>}
 
                         <ToolsRow>
-                            <Button variant="primary" onClick={() => handleAuth(true)}>Login</Button>
-                            <Button onClick={() => handleAuth(false)}>Register</Button>
+                            <Button variant="primary" onClick={submit}>
+                                {mode === 'login' ? 'Sign in' : 'Create account'}
+                            </Button>
+                            <Button onClick={() => { setError(''); setMode(mode === 'login' ? 'register' : 'login'); }}>
+                                {mode === 'login' ? 'Need an account?' : 'Have an account?'}
+                            </Button>
                         </ToolsRow>
                     </Section>
                 </Card>
