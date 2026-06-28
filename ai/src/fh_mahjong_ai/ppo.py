@@ -293,7 +293,9 @@ def collect_rollouts(
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
                 if grp_model is not None:
-                    cum_net += np.asarray(step.rewards, dtype=np.float32)[:4] if np.asarray(step.rewards).size else 0.0
+                    sr = np.asarray(step.rewards, dtype=np.float32)
+                    if sr.size:
+                        cum_net += sr[:4]
                 elif last_learn_index is not None:
                     rewards_l[last_learn_index] += _seat_step_reward(step.rewards, LEARNING_SEAT)
                 if step.terminated or step.truncated:
@@ -430,6 +432,7 @@ def train_ppo(
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
             metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
             metrics["iteration"] = iteration
+            # Under GRP this is the telescoped placement quantity (not net score); eval gate still uses net.
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
             metrics["pool_size"] = len(pool_states)

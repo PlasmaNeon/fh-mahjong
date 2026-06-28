@@ -38,7 +38,12 @@ def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_r
 
 
 def episode_placement(episode, fallback_rewards, learning_seat, placement_values) -> float:
-    """The learning seat's placement value (rank) from the episode's per-seat net."""
+    """The learning seat's placement value (rank) from the episode's per-seat net.
+
+    Placement is computed from the per-seat net WITHOUT the reset reward, matching the
+    training-side realized_placement convention in collect_rollouts (the collector's cum_net
+    also excludes the reset reward); for Chongci the reset reward is ~0 so this is immaterial.
+    """
     net = episode_reward_vector(episode, fallback_rewards, num_seats=4)
     shaped = placement_shaped_returns(np.asarray(net, dtype=np.float32)[None, :], placement_values)
     return float(shaped[0, learning_seat])
@@ -598,6 +603,7 @@ def evaluate_policy_online(
 
     completed = len(seat_rewards)
     rewards = reward_summary(seat_rewards)
+    placement_summary = reward_summary(seat_placements)
     positive_reward_count = int(rewards["positive_count"])
     zero_reward_count = int(rewards["zero_count"])
     negative_reward_count = int(rewards["negative_count"])
@@ -636,8 +642,8 @@ def evaluate_policy_online(
         "episodes": completed,
         "per_episode_rewards": seat_rewards,
         "per_episode_placements": seat_placements,
-        "mean_placement": reward_summary(seat_placements)["mean"],
-        "mean_placement_ci95": reward_summary(seat_placements)["ci95"],
+        "mean_placement": placement_summary["mean"],
+        "mean_placement_ci95": placement_summary["ci95"],
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),

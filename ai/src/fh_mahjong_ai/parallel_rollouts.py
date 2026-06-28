@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Dict, List, Optional
 
 from .config import EnvConfig, ModelConfig
-from .ppo import PPOConfig, RolloutBatch, build_opponent_nets, collect_rollouts, concat_rollout_batches, load_grp_model
+from .ppo import PPOConfig, RolloutBatch, build_opponent_nets, collect_rollouts, concat_rollout_batches
 
 
 def _split_counts(total: int, workers: int) -> List[int]:

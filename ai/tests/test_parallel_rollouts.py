@@ -78,9 +78,6 @@ def test_collector_close_joins_workers():
 
 def test_parallel_grp_matches_sequential():
     from fh_mahjong_ai.global_ev import GlobalEVNet
-    from fh_mahjong_ai.ppo import load_grp_model
-    import tempfile, os
-    from fh_mahjong_ai.storage import save_checkpoint
 
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = _small_model_cfg()
@@ -100,6 +97,7 @@ def test_parallel_grp_matches_sequential():
     finally:
         collector.close()
     assert len(par) == len(seq)
+    assert par.dones.sum() == seq.dones.sum()
     np.testing.assert_allclose(np.sort(par.rewards), np.sort(seq.rewards), rtol=1e-5)
 
 
