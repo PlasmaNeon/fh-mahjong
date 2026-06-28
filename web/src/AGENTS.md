@@ -16,7 +16,7 @@ Contains all React components, context providers, custom hooks, and utility func
   - `getApiUrl(path)` uses `VITE_API_BASE_URL` when present, otherwise falls back to same-origin relative paths for local dev
   - `getWebSocketUrl(path)` uses `VITE_WS_BASE_URL` when present, otherwise falls back to browser-origin WebSocket URLs
   - `VITE_WS_BASE_URL` may be supplied as `http(s)` or `ws(s)`; the helper normalizes `http -> ws` and `https -> wss`
-- **pages/privateRoomSession.ts** — Durable private-room session helper:
+- **features/game/privateRoomSession.ts** — Durable private-room session helper:
   - Stores the active guest token, username, and `tableId` in tab-scoped session storage so refreshes reconnect cleanly without making every tab share the same guest identity
   - Drops expired guest JWTs before the UI attempts a reconnect and clears the legacy local-storage key from the short-lived cross-tab experiment
 - **index.css** — Global styles (TailwindCSS + custom classes for tiles, melds, table layout)
@@ -37,7 +37,13 @@ Contains all React components, context providers, custom hooks, and utility func
 ## Subdirectories
 
 - **contexts/** — React context providers (Socket, Game state)
-- **pages/** — Route page components (Login, Lobby, Table, Game, Calc)
+- **features/** — Feature folders, each owning its routes + components + helpers:
+  - `auth/` — Login (route `/login`)
+  - `lobby/` — Home, Lobby, CreateRoom (routes `/`, `/play`, `/room/new`)
+  - `calc/` — Calc + calcHelpers (route `/tools/calc`)
+  - `shanten/` — Shanten + shantenHelpers (route `/tools/shanten`)
+  - `replay/` — Replay + replayEngine + replayTypes (route `/replay/:matchId`)
+  - `game/` — Game, Table, SeatCard, MatchEndOverlay, ExitMatchButton, privateRoomSession, rejoinMatch (routes `/room/:roomId`, `/match/:matchId`)
 - **table/** — Shared tabletop presentation primitives for live play and replay
 - **hooks/** — Custom React hooks (WASM loader)
 - **utils/** — Utility functions (tile name/SVG mapping)
