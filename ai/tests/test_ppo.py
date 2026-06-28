@@ -703,6 +703,61 @@ def test_train_ppo_rejects_zero_snapshot_interval(tmp_path):
                   checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
 
 
+from fh_mahjong_ai.global_ev import GlobalEVNet
+
+
+class _StubGRP:
+    """Returns g = step * call_count (unbounded increment) so every consecutive
+    GRP delta is exactly `step` — lets us assert exact GRP-delta rewards."""
+    def __init__(self, step=0.25):
+        self._step = step
+        self._i = 0
+    def __call__(self, planes, scalars):
+        import torch
+        v = self._step * self._i
+        self._i += 1
+        return torch.tensor([float(v)])
+    def eval(self):
+        return self
+
+
+def test_ppo_config_grp_defaults():
+    cfg = PPOConfig()
+    assert cfg.grp_checkpoint is None
+    assert len(cfg.grp_placement_values) == 4
+
+
+def test_collect_rollouts_grp_none_matches_score_reward():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=11)
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=11, grp_model=None)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
+def test_collect_rollouts_grp_reward_is_placement_delta():
+    # mock bridge: GRP returns an increasing sequence; assert intermediate rewards are g_{t+1}-g_t
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=1, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.25)
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+    # learner decisions in one match -> non-terminal rewards equal consecutive GRP diffs (0.25 each),
+    # except the final decision (realized_placement - g_last). The mock is single learner seat per match.
+    assert len(batch) >= 2
+    # all non-final rewards equal 0.25 (g step), within float tolerance
+    np.testing.assert_allclose(batch.rewards[:-1], 0.25, atol=1e-5)
+    assert batch.dones[-1] == 1.0
+
+
 def test_build_opponent_nets_are_frozen():
     env_cfg, mcfg = _small_env_model()
     states = [PolicyValueNet(env_cfg, mcfg).state_dict() for _ in range(3)]

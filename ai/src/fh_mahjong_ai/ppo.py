@@ -11,6 +11,7 @@ import torch
 
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
+from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .evaluate import evaluate_duplicate_seats
 from .model import PolicyValueNet
@@ -61,6 +62,8 @@ class PPOConfig:
     num_workers: int = 1
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
+    grp_checkpoint: Optional[Path] = None
+    grp_placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
     device: str = "cpu"
 
 
@@ -213,6 +216,7 @@ def collect_rollouts(
     config: PPOConfig,
     base_seed: int,
     opponents: Optional[list] = None,
+    grp_model=None,
 ) -> RolloutBatch:
     """Play `matches_per_iter` full matches; record on-policy experience for the
     learning seat (samples from the masked policy), with the frozen anchor in the
@@ -253,6 +257,9 @@ def collect_rollouts(
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
             last_learn_index: Optional[int] = None
+            match_indices: list[int] = []   # rewards_l indices for this match (GRP path)
+            match_g: list[float] = []        # GRP placement value at each learner decision
+            cum_net = np.zeros(4, dtype=np.float32)  # per-seat cumulative net (telescopes to match net)
             while True:
                 seat = int(obs.seat)
                 planes, scalars, mask = _obs_to_tensors(obs, device)
@@ -273,17 +280,32 @@ def collect_rollouts(
                     rewards_l.append(0.0)
                     dones_l.append(0.0)
                     last_learn_index = len(actions_l) - 1
+                    if grp_model is not None:
+                        with torch.no_grad():
+                            g = float(grp_model(planes, scalars)[0])
+                        match_indices.append(last_learn_index)
+                        match_g.append(g)
                 else:
                     net = seat_opponent.get(seat, pool[0])
                     with torch.no_grad():
                         logits, _ = net(planes, scalars, mask)
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
-                if last_learn_index is not None:
+                if grp_model is not None:
+                    cum_net += np.asarray(step.rewards, dtype=np.float32)[:4] if np.asarray(step.rewards).size else 0.0
+                elif last_learn_index is not None:
                     rewards_l[last_learn_index] += _seat_step_reward(step.rewards, LEARNING_SEAT)
                 if step.terminated or step.truncated:
                     if last_learn_index is not None:
                         dones_l[last_learn_index] = 1.0
+                    if grp_model is not None and match_indices:
+                        realized = float(placement_shaped_returns(
+                            cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
+                        for k, idx in enumerate(match_indices):
+                            if k + 1 < len(match_g):
+                                rewards_l[idx] = match_g[k + 1] - match_g[k]
+                            else:
+                                rewards_l[idx] = realized - match_g[k]
                     break
                 obs = step.observation
     finally:
