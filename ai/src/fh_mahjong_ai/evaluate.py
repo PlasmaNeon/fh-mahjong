@@ -11,6 +11,7 @@ from torch import nn
 from .action_catalog import action_family
 from .bridge import build_bridge
 from .config import EnvConfig
+from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .policies import TorchGreedyPolicy
 from .types import Transition
@@ -34,6 +35,13 @@ def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_r
         n = min(num_seats, rr.shape[-1]) if rr.ndim >= 1 else 0
         total[:n] += rr[:n]
     return total
+
+
+def episode_placement(episode, fallback_rewards, learning_seat, placement_values) -> float:
+    """The learning seat's placement value (rank) from the episode's per-seat net."""
+    net = episode_reward_vector(episode, fallback_rewards, num_seats=4)
+    shaped = placement_shaped_returns(np.asarray(net, dtype=np.float32)[None, :], placement_values)
+    return float(shaped[0, learning_seat])
 
 
 def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
@@ -467,6 +475,7 @@ def evaluate_policy_online(
     env = MahjongEnv(config, bridge)
 
     seat_rewards: List[float] = []
+    seat_placements: list[float] = []
     action_counts: Counter[str] = Counter()
     outcome_counts: Counter[str] = Counter()
     choice_source_counts: Counter[str] = Counter()
@@ -488,6 +497,9 @@ def evaluate_policy_online(
         nonlocal wins, large_losses
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
+        placement = episode_placement(episode, rewards, learning_seat,
+                                      (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+        seat_placements.append(placement)
         if reward > 0:
             wins += 1
         if reward <= resolved_large_loss_threshold:
@@ -623,6 +635,9 @@ def evaluate_policy_online(
         "large_loss_threshold": resolved_large_loss_threshold,
         "episodes": completed,
         "per_episode_rewards": seat_rewards,
+        "per_episode_placements": seat_placements,
+        "mean_placement": reward_summary(seat_placements)["mean"],
+        "mean_placement_ci95": reward_summary(seat_placements)["ci95"],
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
@@ -689,6 +704,7 @@ def evaluate_duplicate_seats_policy(
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
+    all_placements: list[float] = []
     action_counts: Counter[str] = Counter()
     outcome_counts: Counter[str] = Counter()
     choice_source_counts: Counter[str] = Counter()
@@ -716,6 +732,7 @@ def evaluate_duplicate_seats_policy(
         )
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
         action_counts.update(report["action_family_counts"])
         outcome_counts.update(report.get("round_outcome_counts", {}))
         choice_source_counts.update(report.get("policy_choice_counts", {}))
@@ -727,6 +744,7 @@ def evaluate_duplicate_seats_policy(
         completed += int(report["episodes"])
 
     rewards = reward_summary(all_rewards)
+    placements = reward_summary(all_placements)
     seat_summary = {
         str(report["seat"]): {
             "episodes": report["episodes"],
@@ -777,6 +795,9 @@ def evaluate_duplicate_seats_policy(
         "large_loss_threshold": seat_reports[0]["large_loss_threshold"] if seat_reports else None,
         "episodes": completed,
         "per_episode_rewards": all_rewards,
+        "per_episode_placements": all_placements,
+        "mean_placement": placements["mean"],
+        "mean_placement_ci95": placements["ci95"],
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
@@ -816,6 +837,7 @@ def evaluate_duplicate_seats(
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
+    all_placements: list[float] = []
     action_counts: Counter[str] = Counter()
     outcome_counts: Counter[str] = Counter()
     wins = 0
@@ -841,6 +863,7 @@ def evaluate_duplicate_seats(
         )
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
         action_counts.update(report["action_family_counts"])
         outcome_counts.update(report.get("round_outcome_counts", {}))
         episode_summaries.extend(report.get("episode_summaries", []))
@@ -849,6 +872,7 @@ def evaluate_duplicate_seats(
         completed += int(report["episodes"])
 
     rewards = reward_summary(all_rewards)
+    placements = reward_summary(all_placements)
     seat_summary = {
         str(report["seat"]): {
             "episodes": report["episodes"],
@@ -898,6 +922,9 @@ def evaluate_duplicate_seats(
         "large_loss_threshold": seat_reports[0]["large_loss_threshold"] if seat_reports else None,
         "episodes": completed,
         "per_episode_rewards": all_rewards,
+        "per_episode_placements": all_placements,
+        "mean_placement": placements["mean"],
+        "mean_placement_ci95": placements["ci95"],
         "action_family_counts": dict(sorted(action_counts.items())),
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),

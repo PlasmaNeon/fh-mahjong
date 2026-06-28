@@ -8,6 +8,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.evaluate import (
     action_family,
     compute_action_agreement,
+    episode_placement,
     evaluate_duplicate_seats,
     evaluate_online,
     evaluate_policy_online,
@@ -18,6 +19,14 @@ from fh_mahjong_ai.policies import ActionChoice
 from fh_mahjong_ai.scripts.evaluate import parse_seed_windows
 from fh_mahjong_ai.scripts.evaluate_tail_constrained import parse_family_risk_increases
 from fh_mahjong_ai.types import Observation, StepResult, Transition
+
+
+def _grp_dummy_transition(rewards):
+    o = Observation(seat=0, planes=np.zeros((1, 1, 1), dtype=np.float32),
+                    scalars=np.zeros(1, dtype=np.float32),
+                    action_mask=np.ones(1, dtype=np.int8), metadata={})
+    return Transition(observation=o, action_id=0, rewards=np.asarray(rewards, dtype=np.float32),
+                      next_observation=o, terminated=True, truncated=False, info={})
 
 
 def _obs(seat: int = 0, seed: int = 0) -> Observation:
@@ -384,3 +393,16 @@ class TestEvaluateOnline:
         assert "positive_reward_rate" in report
         assert "action_family_rates" in report
         assert "round_outcome_rates" in report
+
+
+def test_episode_placement_ranks_learning_seat():
+    # learning seat 0 has the highest net -> placement value 1.0
+    ep = [_grp_dummy_transition([3.0, 1.0, -1.0, -3.0])]
+    pv = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
+    val = episode_placement(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                            learning_seat=0, placement_values=pv)
+    assert val == 1.0
+    # learning seat 3 has the lowest -> -1.0
+    val3 = episode_placement(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
+                             learning_seat=3, placement_values=pv)
+    assert val3 == -1.0
