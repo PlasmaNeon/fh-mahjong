@@ -10,13 +10,21 @@
 **/.venv
 **/__pycache__
 **/*.pyc
-ai/mlruns
 ai/mlartifacts
 ai/mlflow.db
 
 # Local binaries / scratch
 /server
 *.output
+
+# Host-only tooling, IDE state, scratch, and caches (never needed in a build)
+.DS_Store
+.claude
+.gotmp
+.pytest_cache
+.worktrees
+.superpowers
+.vercel
 
 # Docs and specs are not needed at build time
 docs
