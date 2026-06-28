@@ -1,4 +1,4 @@
-# core/testdata/
+# internal/engine/testdata/
 
 > Deterministic seed files for reproducible game test replays.
 
@@ -12,5 +12,5 @@ Contains binary seed data used by `game_test.go` to create deterministic wall sh
 
 ## Architecture Notes
 
-- Used exclusively by `core/game_test.go` via `os.ReadFile()`.
-- Seeds pair with the MT19937 PRNG in `core/mt19937.go` to guarantee identical wall orderings across runs.
+- Used exclusively by `internal/engine/game_test.go` via `os.ReadFile()`.
+- Seeds pair with the MT19937 PRNG in `internal/engine/mt19937.go` to guarantee identical wall orderings across runs.

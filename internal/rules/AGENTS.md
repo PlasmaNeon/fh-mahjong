@@ -4,7 +4,7 @@
 
 ## Overview
 
-This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin that satisfies the `core.RuleEngine` interface. It contains all region-specific logic: tile deck composition, DFS/DP backtracking hand evaluation for 35+ scoring patterns, wild tile handling, payout calculation, and action/interrupt validation. This is the most complex package in the codebase.
+This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin that satisfies the `engine.RuleEngine` interface. It contains all region-specific logic: tile deck composition, DFS/DP backtracking hand evaluation for 35+ scoring patterns, wild tile handling, payout calculation, and action/interrupt validation. This is the most complex package in the codebase.
 
 ## Key Files
 

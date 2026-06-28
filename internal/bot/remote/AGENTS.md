@@ -1,10 +1,10 @@
-# bot/remote
+# internal/bot/remote
 
 > Remote non-human seat policies.
 
 ## Overview
 
-This package adapts Python-served AI checkpoints to the Go bot policy interface. The Python service returns an `action_id`; this package always decodes that id through `rlenv.DecodeActionID` before returning a `PlayerAction`, so the Go engine remains the final legality authority.
+This package adapts Python-served AI checkpoints to the Go bot policy interface. The Python service returns an `action_id`; this package always decodes that id through `rl.DecodeActionID` before returning a `PlayerAction`, so the Go engine remains the final legality authority.
 
 ## Key Files
 
@@ -13,7 +13,7 @@ This package adapts Python-served AI checkpoints to the Go bot policy interface.
 
 ## Architecture Notes
 
-- This is a subpackage rather than part of `bot/` to avoid an import cycle: `rlenv` already imports `bot`, while remote AI policies need `rlenv` observation/action helpers.
+- This is a subpackage rather than part of `bot/` to avoid an import cycle: `rl` already imports `bot`, while remote AI policies need `rl` observation/action helpers.
 - The fallback policy should remain deterministic and local. Use the shared heuristic policy unless a caller explicitly injects another fallback.
 - Do not trust the Python service for legality. Decode every returned id against the current `GameState` and seat before applying it.
 - Use `HTTPPolicy.Stats()` during live-table checks to verify the remote checkpoint is actually serving actions and not silently falling back to the heuristic path.
