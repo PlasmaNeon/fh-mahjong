@@ -180,14 +180,24 @@ func TestLoginUnknownEmail(t *testing.T) {
 	}
 }
 
+func registerAndToken(t *testing.T, r http.Handler, email, password, name string) string {
+	t.Helper()
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "",
+		map[string]string{"email": email, "password": password, "displayName": name})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register %s: got %d", email, rec.Code)
+	}
+	return decodeAuth(t, rec).Token
+}
+
+// Changing both email and name with the correct current password succeeds; the
+// name change means a fresh token is issued.
 func TestUpdateMeChangesEmailAndName(t *testing.T) {
 	r, _ := newAuthTestRouter(t)
-	reg := map[string]string{"email": "dave@example.com", "password": "hunter2pw", "displayName": "Dave"}
-	regRec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "", reg)
-	token := decodeAuth(t, regRec).Token
+	token := registerAndToken(t, r, "dave@example.com", "hunter2pw", "Dave")
 
 	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
-		map[string]string{"email": "DAVE2@example.com", "displayName": "Dave Two"})
+		map[string]string{"email": "DAVE2@example.com", "displayName": "Dave Two", "currentPassword": "hunter2pw"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -199,22 +209,100 @@ func TestUpdateMeChangesEmailAndName(t *testing.T) {
 		t.Fatalf("name = %q, want Dave Two", out.User.Username)
 	}
 	if out.Token == "" {
-		t.Fatal("expected a fresh token")
+		t.Fatal("expected a fresh token after a display-name change")
+	}
+}
+
+// Changing the login email requires the current password (anti-takeover): a
+// bearer token alone is not enough.
+func TestUpdateMeEmailChangeRequiresCurrentPassword(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "erin@example.com", "hunter2pw", "Erin")
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"email": "erin-new@example.com"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 without current password, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateMeEmailChangeWrongPassword(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "fred@example.com", "hunter2pw", "Fred")
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"email": "fred-new@example.com", "currentPassword": "wrongpass"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with wrong current password, got %d", rec.Code)
+	}
+}
+
+// An email-only change must NOT mint a fresh token: this endpoint can't be used
+// as an unrestricted token-refresh to indefinitely renew a stolen token.
+func TestUpdateMeEmailOnlyChangeDoesNotRenewToken(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "gail@example.com", "hunter2pw", "Gail")
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"email": "gail-new@example.com", "currentPassword": "hunter2pw"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	out := decodeAuth(t, rec)
+	if out.User.Email != "gail-new@example.com" {
+		t.Fatalf("email = %q, want gail-new@example.com", out.User.Email)
+	}
+	if out.Token != "" {
+		t.Fatal("email-only change must not issue a fresh token (no token renewal)")
+	}
+}
+
+// A no-op PATCH is rejected, so it can't serve as a token-refresh either.
+func TestUpdateMeNoOpRejected(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "hank@example.com", "hunter2pw", "Hank")
+
+	// Empty body: no changes.
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token, map[string]string{})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty no-op PATCH, got %d", rec.Code)
+	}
+	// Same values as current: still a no-op.
+	rec = doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"displayName": "Hank"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for same-value no-op PATCH, got %d", rec.Code)
+	}
+}
+
+// A display-name-only change needs no password and re-issues the token.
+func TestUpdateMeDisplayNameChangeReissuesToken(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "ivan@example.com", "hunter2pw", "Ivan")
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"displayName": "Ivan The Great"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	out := decodeAuth(t, rec)
+	if out.User.Username != "Ivan The Great" {
+		t.Fatalf("name = %q, want Ivan The Great", out.User.Username)
+	}
+	if out.Token == "" {
+		t.Fatal("expected a fresh token after a display-name change")
 	}
 }
 
 func TestUpdateMeEmailCollision(t *testing.T) {
 	r, _ := newAuthTestRouter(t)
-	doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "",
-		map[string]string{"email": "taken@example.com", "password": "hunter2pw", "displayName": "Taken"})
-	regRec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "",
-		map[string]string{"email": "mover@example.com", "password": "hunter2pw", "displayName": "Mover"})
-	token := decodeAuth(t, regRec).Token
+	registerAndToken(t, r, "taken@example.com", "hunter2pw", "Taken")
+	token := registerAndToken(t, r, "mover@example.com", "hunter2pw", "Mover")
 
 	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
-		map[string]string{"email": "taken@example.com"})
+		map[string]string{"email": "taken@example.com", "currentPassword": "hunter2pw"})
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d", rec.Code)
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

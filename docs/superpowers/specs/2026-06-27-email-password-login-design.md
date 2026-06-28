@@ -168,24 +168,40 @@ return `AuthResponse`. Invalid email or password → 401 with a single generic
 
 ### Update profile — `PATCH /api/v1/users/me` (protected, NEW)
 
-Request (both fields optional; update only what's provided):
+Request (all fields optional; update only what changed):
 ```go
 type UpdateProfileRequest struct {
-    Email       *string `json:"email"       binding:"omitempty,email"`
-    DisplayName *string `json:"displayName" binding:"omitempty,min=2,max=30"`
+    Email           *string `json:"email"           binding:"omitempty,email"`
+    DisplayName     *string `json:"displayName"     binding:"omitempty,min=2,max=30"`
+    CurrentPassword *string `json:"currentPassword"`
 }
 ```
 Flow:
 1. `DB == nil` → 503. Load the user by `userID` from context; 404 if missing
    (guests have no row → they cannot edit, by design).
-2. If `Email` set: normalize; if changed, check uniqueness excluding self → 409 on
-   conflict; assign.
-3. If `DisplayName` set: assign to `Username`.
-4. Save. Re-issue a fresh 72h token (so the `username` claim reflects a changed
-   display name; `sub` is the stable id, unaffected by email changes).
-5. Return `AuthResponse{Token, User}` (token always re-issued for simplicity).
+2. Resolve the intended changes against the current record (`emailChange`,
+   `nameChange`). **No-op → 400** (`"No changes requested"`) so the endpoint can't be
+   used as a token-refresh.
+3. **If the email changes (changing the login identity): reauthenticate.**
+   `CurrentPassword` is required (→ 400 if absent) and must match via bcrypt
+   (→ 401 on mismatch). This prevents a stolen bearer token from silently taking
+   over the login identity. Then check uniqueness excluding self → 409; assign.
+4. If the display name changes: assign to `Username` (no password required).
+5. Save. **Re-issue a fresh 72h token ONLY when the display name changed** (that's
+   the only thing the `username` claim carries); `sub` is the stable id, so an
+   email-only change does not need — and does not get — a new token. This stops the
+   endpoint from acting as an unrestricted token-refresh that indefinitely renews a
+   stolen token.
+6. Return `AuthResponse` — `Token` is present only when re-issued; `User` always.
 
 Registered in the `protected` group alongside `GET /users/me`.
+
+**Security scope note (adversarial-review round 3):** email-ownership verification
+and stateless-token revocation (session versioning) were considered and
+deliberately left out — the former needs email sending (explicitly out of scope),
+the latter is an architectural change beyond this feature. The reauthentication +
+no-renewal + no-op-rejection hardening above is the accepted middle ground for this
+app's threat model (a stolen bearer token, no payments/PII at stake).
 
 ### Guest login — unchanged
 

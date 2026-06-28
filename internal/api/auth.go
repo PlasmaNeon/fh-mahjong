@@ -164,12 +164,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 type UpdateProfileRequest struct {
-	Email       *string `json:"email" binding:"omitempty,email"`
-	DisplayName *string `json:"displayName" binding:"omitempty,min=2,max=30"`
+	Email           *string `json:"email" binding:"omitempty,email"`
+	DisplayName     *string `json:"displayName" binding:"omitempty,min=2,max=30"`
+	CurrentPassword *string `json:"currentPassword"`
 }
 
 // UpdateMe lets an authenticated account change its email and/or display name.
-// A fresh token is always returned so the `username` claim stays current.
+//
+// Security: changing the login email is a sensitive operation, so it requires
+// reauthentication with the current password — otherwise a stolen bearer token
+// could silently take over the login identity. No-op requests are rejected, and
+// a fresh token is issued ONLY when the display name (carried in the `username`
+// claim) actually changes — so this endpoint can't be abused as an unrestricted
+// token-refresh that indefinitely renews a stolen token.
 func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -188,18 +195,38 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
+	// Resolve the intended changes against the current record.
+	newEmail := ""
+	emailChange := false
 	if req.Email != nil {
-		email := normalizeEmail(*req.Email)
-		if email != user.Email {
-			var other storage.User
-			if err := h.DB.Where("email = ? AND id <> ?", email, user.ID).First(&other).Error; err == nil {
-				c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
-				return
-			}
-			user.Email = email
-		}
+		newEmail = normalizeEmail(*req.Email)
+		emailChange = newEmail != user.Email
 	}
-	if req.DisplayName != nil {
+	nameChange := req.DisplayName != nil && *req.DisplayName != user.Username
+
+	if !emailChange && !nameChange {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No changes requested"})
+		return
+	}
+
+	if emailChange {
+		// Reauthenticate before changing the login identity.
+		if req.CurrentPassword == nil || *req.CurrentPassword == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Current password is required to change email"})
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(*req.CurrentPassword)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Incorrect password"})
+			return
+		}
+		var other storage.User
+		if err := h.DB.Where("email = ? AND id <> ?", newEmail, user.ID).First(&other).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+			return
+		}
+		user.Email = newEmail
+	}
+	if nameChange {
 		user.Username = *req.DisplayName
 	}
 
@@ -208,15 +235,21 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
-	if err != nil {
-		log.Printf("Failed to sign token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
-		return
+	// Only mint a fresh token when the display-name claim it carries changed.
+	resp := AuthResponse{}
+	if nameChange {
+		token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+		if err != nil {
+			log.Printf("Failed to sign token: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+			return
+		}
+		resp.Token = token
 	}
 
 	user.PasswordHash = ""
-	c.JSON(http.StatusOK, AuthResponse{Token: token, User: user})
+	resp.User = user
+	c.JSON(http.StatusOK, resp)
 }
 
 type GuestRequest struct {

@@ -7,6 +7,10 @@ import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Fie
 export default function Account() {
     const [email, setEmail] = useState('');
     const [displayName, setDisplayName] = useState('');
+    const [currentPassword, setCurrentPassword] = useState('');
+    // The values loaded from the server, used to detect what actually changed.
+    const [initialEmail, setInitialEmail] = useState('');
+    const [initialDisplayName, setInitialDisplayName] = useState('');
     const [status, setStatus] = useState('');
     const [error, setError] = useState('');
     const [loaded, setLoaded] = useState(false);
@@ -31,6 +35,8 @@ export default function Account() {
                 const data = await res.json();
                 setEmail(data.email || '');
                 setDisplayName(data.username || '');
+                setInitialEmail(data.email || '');
+                setInitialDisplayName(data.username || '');
                 setLoaded(true);
             } catch (e: any) {
                 setError(e.message || 'Failed to load profile');
@@ -43,10 +49,23 @@ export default function Account() {
         setError(''); setStatus('');
         const token = localStorage.getItem('fh_token');
         if (!token) { navigate('/login'); return; }
+
+        const emailChanged = email.trim() !== '' && email.trim() !== initialEmail;
+        const nameChanged = displayName.trim() !== '' && displayName.trim() !== initialDisplayName;
+        if (!emailChanged && !nameChanged) {
+            setError('No changes to save.');
+            return;
+        }
+        // Changing the login email requires the current password.
+        if (emailChanged && !currentPassword) {
+            setError('Enter your current password to change your email.');
+            return;
+        }
+
         try {
-            const body: { email?: string; displayName?: string } = {};
-            if (email.trim()) body.email = email.trim();
-            if (displayName.trim()) body.displayName = displayName.trim();
+            const body: { email?: string; displayName?: string; currentPassword?: string } = {};
+            if (emailChanged) { body.email = email.trim(); body.currentPassword = currentPassword; }
+            if (nameChanged) body.displayName = displayName.trim();
             const res = await fetch(getApiUrl('/api/v1/users/me'), {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -54,8 +73,14 @@ export default function Account() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to save');
-            localStorage.setItem('fh_token', data.token);
-            connect(data.token);
+            // The server only returns a token when the display name changed.
+            if (data.token) {
+                localStorage.setItem('fh_token', data.token);
+                connect(data.token);
+            }
+            setInitialEmail(data.user?.email ?? email.trim());
+            setInitialDisplayName(data.user?.username ?? displayName.trim());
+            setCurrentPassword('');
             setStatus('Saved.');
         } catch (e: any) {
             setError(e.message || 'Failed to save');
@@ -88,6 +113,9 @@ export default function Account() {
                                 <Field label="Display name" value={displayName}
                                     onChange={e => setDisplayName(e.target.value)}
                                     autoComplete="nickname" style={{ marginTop: '0.85rem' }} />
+                                <Field label="Current password (required to change email)" type="password"
+                                    value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
+                                    autoComplete="current-password" style={{ marginTop: '0.85rem' }} />
                                 {error && <Note tone="error">{error}</Note>}
                                 {status && <Note tone="ok">{status}</Note>}
                                 <ToolsRow>
