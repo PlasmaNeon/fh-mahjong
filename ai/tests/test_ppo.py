@@ -274,6 +274,8 @@ def test_train_ppo_e2e_mock_writes_checkpoint(tmp_path):
     assert len(metrics) == 2
     assert (tmp_path / "ppo" / "iter_002.pt").exists()
     assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+    # truncation count is always surfaced (0 here: the mock bridge never truncates)
+    assert all(m["rollout_truncations"] == 0 for m in metrics)
 
 
 def test_train_ppo_parallel_mock_writes_checkpoint(tmp_path):
@@ -726,18 +728,6 @@ class _StubGRP:
         return self
 
 
-class _StatelessGRP:
-    """Stateless GRP stub: g is a pure function of the observation (like the real
-    frozen net), so the same state yields the same g regardless of how many prior
-    calls occurred. Lets a match's GRP rewards be compared across runs that consumed
-    a different number of earlier GRP calls."""
-    def __call__(self, planes, scalars):
-        import torch
-        return torch.tensor([float(scalars.sum().item())])
-    def eval(self):
-        return self
-
-
 def test_ppo_config_grp_defaults():
     cfg = PPOConfig()
     assert cfg.grp_checkpoint is None
@@ -800,35 +790,12 @@ def test_collect_rollouts_grp_reward_is_placement_delta():
     assert batch.dones[-1] == 1.0
 
 
-def test_collect_rollouts_grp_discards_truncated_match(monkeypatch):
-    # A step-limit truncation in the GRP path must contribute ZERO transitions:
-    # no phantom gamma^(n-1)*g_last return, symmetric with the placement eval which
-    # also ignores truncated matches.
+def _truncate_after(monkeypatch, steps_threshold, only_seed=None):
+    """Monkeypatch the mock bridge so a match returns truncated=True (terminated
+    =False) once it has taken `steps_threshold` steps. If `only_seed` is given,
+    only the match reset with that seed truncates; otherwise every match does."""
     from fh_mahjong_ai.bridge import MockMahjongBridge
     from fh_mahjong_ai.types import StepResult
-    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
-    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
-                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
-    learner = PolicyValueNet(env_cfg, mcfg)
-    frozen = PolicyValueNet(env_cfg, mcfg)
-    cfg = PPOConfig(matches_per_iter=2, gamma=1.0, match_mode="classic",
-                    max_steps_per_episode=64, device="cpu")
-    # Stateless stub: g depends only on the observation, so seed-6's terminal reward
-    # (realized - g_last) is identical whether or not the truncated seed-5 match ran
-    # first. A stateful counter would offset g_last and mask the real comparison.
-    grp = _StatelessGRP()
-
-    # Control: both matches (seeds 5, 6) terminate normally.
-    control = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
-    # Reference: the would-be SURVIVING match alone (seed 6, == match index 1 above).
-    ref = collect_rollouts(
-        env_cfg, learner, frozen,
-        PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic",
-                  max_steps_per_episode=64, device="cpu"),
-        base_seed=6, grp_model=grp)
-
-    # Force ONLY the seed-5 match to truncate (terminated=False, truncated=True)
-    # after a few steps; the seed-6 match still terminates normally.
     orig_reset = MockMahjongBridge.reset
     orig_step = MockMahjongBridge.step
     state = {"seed": None, "steps": 0}
@@ -841,22 +808,72 @@ def test_collect_rollouts_grp_discards_truncated_match(monkeypatch):
     def patched_step(self, action_id):
         res = orig_step(self, action_id)
         state["steps"] += 1
-        if state["seed"] == 5 and state["steps"] >= 9:
+        if (only_seed is None or state["seed"] == only_seed) and state["steps"] >= steps_threshold:
             return StepResult(observation=res.observation, rewards=res.rewards,
                               terminated=False, truncated=True, info=res.info)
         return res
 
     monkeypatch.setattr(MockMahjongBridge, "reset", patched_reset)
     monkeypatch.setattr(MockMahjongBridge, "step", patched_step)
-    mixed = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
 
-    # The seed-5 match DID contribute transitions when it ran to a true end...
-    assert len(control) > len(mixed)
-    # ...but once truncated it contributes nothing: the mixed batch is byte-identical
-    # to the seed-6 survivor alone. No phantom GRP residual leaks in.
-    assert len(mixed) == len(ref)
-    np.testing.assert_array_equal(mixed.actions, ref.actions)
-    np.testing.assert_allclose(mixed.rewards, ref.rewards, rtol=1e-6)
+
+def test_collect_rollouts_grp_penalizes_truncated_match(monkeypatch):
+    # A step-limit truncation must be KEPT (not censored) and scored as the worst
+    # placement value, so a stalling policy is penalized rather than able to hide
+    # its bad trajectories; and the truncation is counted.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.0)  # constant g=0 -> terminal reward == realized exactly
+    _truncate_after(monkeypatch, steps_threshold=9)
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+
+    assert batch.truncated_matches == 1
+    assert len(batch) >= 1           # transitions are KEPT, not discarded
+    assert batch.dones[-1] == 1.0
+    # g==0 everywhere -> non-final rewards are gamma*0 - 0 == 0, terminal is the
+    # worst placement value (an explicit adverse outcome), NOT a phantom GRP return.
+    np.testing.assert_allclose(batch.rewards[:-1], 0.0, atol=1e-6)
+    np.testing.assert_allclose(batch.rewards[-1], float(min(cfg.grp_placement_values)), atol=1e-6)
+
+
+def test_collect_rollouts_grp_all_truncated_does_not_abort(monkeypatch):
+    # Even if EVERY match truncates, the run must not raise (no availability
+    # failure): all matches are kept, counted, and scored as the worst placement.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, gamma=1.0, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    grp = _StubGRP(step=0.0)
+    _truncate_after(monkeypatch, steps_threshold=9)  # every match truncates
+    batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+
+    assert batch.truncated_matches == 3
+    assert int(batch.dones.sum()) == 3          # three kept matches, each a terminal
+    # every kept match is scored worst-placement at its terminal step
+    np.testing.assert_allclose(batch.rewards[batch.dones == 1.0],
+                               float(min(cfg.grp_placement_values)), atol=1e-6)
+
+
+def test_concat_rollout_batches_sums_truncations():
+    from fh_mahjong_ai.ppo import RolloutBatch, concat_rollout_batches
+    def _b(n, trunc):
+        return RolloutBatch(
+            planes=np.zeros((n, 1), np.float32), scalars=np.zeros((n, 1), np.float32),
+            action_mask=np.ones((n, 1), np.int8), actions=np.zeros(n, np.int64),
+            old_logprobs=np.zeros(n, np.float32), values=np.zeros(n, np.float32),
+            rewards=np.zeros(n, np.float32), dones=np.zeros(n, np.float32),
+            truncated_matches=trunc)
+    out = concat_rollout_batches([_b(2, 1), _b(3, 0), _b(1, 2)])
+    assert out.truncated_matches == 3
+    assert len(out) == 6
 
 
 def test_build_opponent_nets_are_frozen():

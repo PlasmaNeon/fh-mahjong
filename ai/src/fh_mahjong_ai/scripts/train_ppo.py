@@ -19,7 +19,8 @@ from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model
 
 _MLFLOW_METRIC_KEYS = (
     "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
-    "mean_reward", "steps", "pool_size", "eval_mean_reward", "eval_mean_reward_ci95",
+    "mean_reward", "steps", "pool_size", "rollout_truncations",
+    "eval_mean_reward", "eval_mean_reward_ci95",
     "eval_large_loss_rate", "eval_mean_placement", "eval_mean_placement_ci95",
 )
 
