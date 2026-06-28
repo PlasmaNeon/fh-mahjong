@@ -27,7 +27,7 @@ type RegisterRequest struct {
 }
 
 type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -119,49 +119,39 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, AuthResponse{Token: token, User: user})
 }
 
-// Login authenticates a user and returns a JWT
+// Login authenticates by email + password and returns a JWT.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	if h.DB == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
 		return
 	}
 
+	email := normalizeEmail(req.Email)
+
 	var user storage.User
-	if err := h.DB.Where("username = ?", req.Username).First(&user).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+	if err := h.DB.Where("email = ?", email).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}
-
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
 		return
 	}
 
-	// Generate JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":      user.ID,
-		"username": user.Username,
-		"exp":      time.Now().Add(time.Hour * 72).Unix(),
-	})
-
-	tokenString, err := token.SignedString(jwtSecret)
+	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
 	if err != nil {
-		log.Printf("Failed to sign token: %v\n", err)
+		log.Printf("Failed to sign token: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
 	user.PasswordHash = ""
-	c.JSON(http.StatusOK, AuthResponse{
-		Token: tokenString,
-		User:  user,
-	})
+	c.JSON(http.StatusOK, AuthResponse{Token: token, User: user})
 }
 
 type GuestRequest struct {

@@ -106,3 +106,41 @@ func TestRegisterValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginAfterRegisterWithEmailNormalization(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	reg := map[string]string{"email": "Bob@Example.com", "password": "hunter2pw", "displayName": "Bob"}
+	if rec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "", reg); rec.Code != http.StatusCreated {
+		t.Fatalf("register: got %d", rec.Code)
+	}
+	// Different case on login still resolves to the same account.
+	login := map[string]string{"email": "bob@example.com", "password": "hunter2pw"}
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", "", login)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	out := decodeAuth(t, rec)
+	if out.Token == "" || out.User.Email != "bob@example.com" {
+		t.Fatalf("unexpected login response: %+v", out.User)
+	}
+}
+
+func TestLoginWrongPassword(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	reg := map[string]string{"email": "carol@example.com", "password": "hunter2pw", "displayName": "Carol"}
+	doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "", reg)
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", "",
+		map[string]string{"email": "carol@example.com", "password": "wrongpass"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestLoginUnknownEmail(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	rec := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", "",
+		map[string]string{"email": "nobody@example.com", "password": "hunter2pw"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
