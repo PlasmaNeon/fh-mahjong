@@ -346,7 +346,9 @@ def collect_rollouts(
                         # policy could farm by stalling), score it as an explicit
                         # adverse outcome: the worst placement value. That penalty is a
                         # fixed constant independent of the GRP prediction, so it can't
-                        # be inflated, and it actively discourages stalling.
+                        # be inflated; with the gamma == 1 GRP objective (enforced in
+                        # train_ppo) it reaches every decision undiscounted, so stalling
+                        # to a longer horizon cannot attenuate it.
                         if is_trunc:
                             realized = float(min(config.grp_placement_values))
                         else:
@@ -392,10 +394,43 @@ def build_opponent_nets(env_config, model_config, pool_states, device="cpu"):
     return nets
 
 
-def load_grp_model(env_config, model_config, grp_checkpoint, device="cpu"):
-    """Load a frozen GlobalEVNet GRP model (same ModelConfig as the policy)."""
+def load_grp_model(env_config, model_config, grp_checkpoint, device="cpu", placement_values=None):
+    """Load a frozen GlobalEVNet GRP model (same ModelConfig as the policy), rejecting
+    any checkpoint whose training objective is not placement shaping.
+
+    GlobalEVNet's training defaults to RAW terminal net-score targets, which are
+    unbounded and on a different scale than the bounded placement values PPO uses as
+    potentials. A raw-score checkpoint is architecturally identical, so it would load
+    and silently change the reward scale and objective — wasting an entire PPO run.
+    We therefore require the checkpoint to declare `reward_shaping="placement"` in its
+    metadata (written by fh-mj-train-global-ev), with placement values matching the
+    PPO config when provided."""
+    path = Path(grp_checkpoint)
+    payload = torch.load(path, map_location="cpu")
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not metadata or "reward_shaping" not in metadata:
+        raise ValueError(
+            f"GRP checkpoint {path} has no objective metadata; it predates objective "
+            "tagging or was not produced by fh-mj-train-global-ev. Retrain/re-save the "
+            "GlobalEVNet with --reward-shaping placement so the objective can be verified."
+        )
+    shaping = metadata.get("reward_shaping")
+    if shaping != "placement":
+        raise ValueError(
+            f"GRP checkpoint {path} was trained with reward_shaping={shaping!r}, but PPO "
+            "GRP shaping requires 'placement' (bounded placement potentials). Retrain the "
+            "GlobalEVNet with --reward-shaping placement."
+        )
+    if placement_values is not None:
+        ckpt_pv = tuple(round(float(v), 6) for v in metadata.get("placement_values", ()))
+        want_pv = tuple(round(float(v), 6) for v in placement_values)
+        if ckpt_pv != want_pv:
+            raise ValueError(
+                f"GRP checkpoint {path} placement_values {ckpt_pv} != PPO "
+                f"grp_placement_values {want_pv}; the reward scale would mismatch."
+            )
     grp = GlobalEVNet(env_config, model_config).to(device)
-    load_checkpoint(Path(grp_checkpoint), grp)
+    load_checkpoint(path, grp)
     grp.eval()
     for p in grp.parameters():
         p.requires_grad_(False)
@@ -422,13 +457,25 @@ def train_ppo(
             "pool_snapshot_interval must be >= 1 when pool_max_size > 1, "
             f"got {config.pool_snapshot_interval}"
         )
+    # The GRP placement objective is episodic: gamma < 1 discounts the terminal
+    # placement (and the worst-placement truncation penalty) toward zero for long
+    # matches — e.g. 0.99^999 ~= 4e-5 — so a stalling policy could attenuate a loss
+    # and the placement signal would barely reach early decisions. Require gamma == 1
+    # so the placement return telescopes to `realized - g_0` independent of horizon.
+    if config.grp_checkpoint is not None and config.gamma != 1.0:
+        raise ValueError(
+            "GRP placement shaping requires gamma == 1.0 (episodic placement "
+            "objective; gamma < 1 discounts the terminal placement and the "
+            f"truncation penalty toward zero for long matches). Got gamma={config.gamma}."
+        )
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     grp_model = None
     if config.grp_checkpoint is not None:
-        grp_model = load_grp_model(env_config, model_config, config.grp_checkpoint, device)
+        grp_model = load_grp_model(env_config, model_config, config.grp_checkpoint,
+                                   device, placement_values=config.grp_placement_values)
 
     model = PolicyValueNet(env_config, model_config).to(device)
     load_checkpoint(Path(init_checkpoint), model)

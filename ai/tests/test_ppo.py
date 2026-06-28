@@ -758,6 +758,24 @@ def test_grp_match_rewards_discount_correct():
     np.testing.assert_allclose(disc_return, expected, rtol=1e-6)
 
 
+def test_grp_truncation_penalty_horizon_invariant_at_gamma_one():
+    # At gamma == 1 (the enforced GRP objective), the worst-placement truncation
+    # penalty reaches decision 0 undiscounted regardless of match length, so a policy
+    # cannot attenuate the penalty by stalling to a longer horizon.
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    worst = -1.0
+    short = _grp_match_rewards([0.2, 0.5], realized=worst, gamma=1.0)
+    long = _grp_match_rewards([0.2] + [0.5] * 200, realized=worst, gamma=1.0)
+    # undiscounted return from decision 0 telescopes to realized - g_0 for any length
+    np.testing.assert_allclose(sum(short), worst - 0.2, atol=1e-6)
+    np.testing.assert_allclose(sum(long), worst - 0.2, atol=1e-6)
+    # contrast: at gamma=0.99 a long match attenuates the penalty toward ~0
+    long_disc = _grp_match_rewards([0.0] + [0.0] * 200, realized=worst, gamma=0.99)
+    disc_return = sum((0.99 ** k) * r for k, r in enumerate(long_disc))
+    # 0.99^200 ~= 0.134, so the full -1.0 penalty shrinks to ~ -0.13: far from worst.
+    assert -0.3 < disc_return < 0.0
+
+
 def test_collect_rollouts_grp_none_matches_score_reward():
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
@@ -997,6 +1015,15 @@ def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monke
     assert seen["exc_type"] is RuntimeError
 
 
+def _save_grp_checkpoint(path, env_cfg, mcfg, reward_shaping="placement",
+                         placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)):
+    """Save a GlobalEVNet checkpoint tagged with its training objective, as
+    fh-mj-train-global-ev now does. Default is a valid placement checkpoint."""
+    save_checkpoint(path, GlobalEVNet(env_cfg, mcfg),
+                    metadata={"kind": "global_ev", "reward_shaping": reward_shaping,
+                              "placement_values": list(placement_values)})
+
+
 def test_train_ppo_with_grp_mock(tmp_path):
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
@@ -1004,14 +1031,69 @@ def test_train_ppo_with_grp_mock(tmp_path):
     init = tmp_path / "anchor.pt"
     save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
     grp = tmp_path / "grp.pt"
-    save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
     cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
                     eval_interval=100, match_mode="classic", max_steps_per_episode=64,
-                    device="cpu", grp_checkpoint=grp)
+                    device="cpu", gamma=1.0, grp_checkpoint=grp)
     metrics = train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
                         checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=3, run_eval=False)
     assert len(metrics) == 2
     assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+
+
+def test_train_ppo_grp_requires_gamma_one(tmp_path):
+    # The episodic placement objective requires gamma == 1; a discounted gamma must
+    # fail fast (before any expensive setup) rather than silently attenuate the signal.
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu", gamma=0.99, grp_checkpoint=grp)
+    with pytest.raises(ValueError, match="gamma == 1.0"):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_load_grp_model_rejects_missing_metadata(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))  # no metadata (legacy)
+    with pytest.raises(ValueError, match="no objective metadata"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu")
+
+
+def test_load_grp_model_rejects_raw_checkpoint(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg, reward_shaping="raw")
+    with pytest.raises(ValueError, match="requires 'placement'"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu")
+
+
+def test_load_grp_model_rejects_placement_values_mismatch(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg, placement_values=(2.0, 1.0, -1.0, -2.0))
+    with pytest.raises(ValueError, match="placement_values"):
+        load_grp_model(env_cfg, mcfg, grp, device="cpu",
+                       placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+
+
+def test_load_grp_model_accepts_placement_checkpoint(tmp_path):
+    from fh_mahjong_ai.ppo import load_grp_model
+    env_cfg, mcfg = _small_env_model()
+    grp = tmp_path / "grp.pt"
+    _save_grp_checkpoint(grp, env_cfg, mcfg)
+    model = load_grp_model(env_cfg, mcfg, grp, device="cpu",
+                           placement_values=(1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+    assert not any(p.requires_grad for p in model.parameters())
 
 
 def test_train_ppo_missing_grp_fails_fast(tmp_path):
@@ -1020,8 +1102,11 @@ def test_train_ppo_missing_grp_fails_fast(tmp_path):
                        scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
     init = tmp_path / "anchor.pt"
     save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    # gamma=1.0 so we get past the GRP gamma guard and actually exercise the
+    # missing-file load path this test is named for.
     cfg = PPOConfig(iterations=1, matches_per_iter=2, match_mode="classic",
-                    max_steps_per_episode=64, device="cpu", grp_checkpoint=tmp_path / "nope.pt")
+                    max_steps_per_episode=64, device="cpu", gamma=1.0,
+                    grp_checkpoint=tmp_path / "nope.pt")
     with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
         train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
                   checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
@@ -1034,12 +1119,12 @@ def test_cli_train_ppo_grp(tmp_path, monkeypatch):
     mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
                        scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
     init = tmp_path / "anchor.pt"; save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
-    grp = tmp_path / "grp.pt"; save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"; _save_grp_checkpoint(grp, env_cfg, mcfg)
     argv = [
         "fh-mj-train-ppo", "--init-checkpoint", str(init), "--checkpoint-dir", str(tmp_path / "ppo"),
         "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1", "--minibatch-size", "8",
         "--match-mode", "classic", "--bridge-kind", "mock", "--max-steps-per-episode", "64", "--no-eval",
-        "--grp-checkpoint", str(grp),
+        "--gamma", "1.0", "--grp-checkpoint", str(grp),
         "--model-channels", "8", "--model-residual-blocks", "1",
         "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
         "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16", "--model-q-hidden-dim", "16",

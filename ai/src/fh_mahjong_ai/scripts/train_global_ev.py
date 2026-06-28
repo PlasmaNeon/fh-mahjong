@@ -241,7 +241,16 @@ def train_global_ev(
             if mlflow_run is not None:
                 log_metrics(row, step=epoch)
             checkpoint_path = checkpoint_dir / f"epoch_{epoch:03d}.pt"
-            save_checkpoint(checkpoint_path, model, optimizer, step=epoch)
+            # Persist the training objective so the PPO GRP loader can reject a
+            # raw-score checkpoint used where placement potentials are required.
+            save_checkpoint(
+                checkpoint_path, model, optimizer, step=epoch,
+                metadata={
+                    "kind": "global_ev",
+                    "reward_shaping": config.reward_shaping,
+                    "placement_values": list(config.placement_values),
+                },
+            )
             if mlflow_run is not None:
                 log_artifact(checkpoint_path, artifact_path="checkpoints")
 

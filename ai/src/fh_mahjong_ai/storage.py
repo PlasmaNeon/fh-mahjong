@@ -88,11 +88,16 @@ class ShardedTransitionWriter:
         self.close()
 
 
-def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0) -> None:
+def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0, metadata: Optional[dict] = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"model": model.state_dict(), "step": step}
     if optimizer is not None:
         payload["optimizer"] = optimizer.state_dict()
+    if metadata is not None:
+        # Provenance/objective tags (e.g. GlobalEVNet reward_shaping) so downstream
+        # loaders can verify a checkpoint matches the objective they expect. Ignored
+        # by load_checkpoint, so this stays backward-compatible.
+        payload["metadata"] = dict(metadata)
     torch.save(payload, path)
 
 
