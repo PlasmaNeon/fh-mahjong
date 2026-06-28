@@ -48,7 +48,8 @@ class ParallelRolloutCollector:
     in parallel (CPU inference) and concatenates them into one RolloutBatch."""
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
-                 ppo_config: PPOConfig, num_workers: int) -> None:
+                 ppo_config: PPOConfig, num_workers: int,
+                 grp_state_dict=None) -> None:
         if num_workers < 1:
             raise ValueError("num_workers must be >= 1")
         self.env_config = env_config

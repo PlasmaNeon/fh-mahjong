@@ -14,6 +14,7 @@ from .config import EnvConfig, ModelConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .evaluate import evaluate_duplicate_seats
+from .global_ev import GlobalEVNet
 from .model import PolicyValueNet
 from .storage import load_checkpoint, save_checkpoint
 from .types import Observation
@@ -343,6 +344,16 @@ def build_opponent_nets(env_config, model_config, pool_states, device="cpu"):
     return nets
 
 
+def load_grp_model(env_config, model_config, grp_checkpoint, device="cpu"):
+    """Load a frozen GlobalEVNet GRP model (same ModelConfig as the policy)."""
+    grp = GlobalEVNet(env_config, model_config).to(device)
+    load_checkpoint(Path(grp_checkpoint), grp)
+    grp.eval()
+    for p in grp.parameters():
+        p.requires_grad_(False)
+    return grp
+
+
 def train_ppo(
     env_config: EnvConfig,
     model_config: ModelConfig,
@@ -367,6 +378,10 @@ def train_ppo(
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    grp_model = None
+    if config.grp_checkpoint is not None:
+        grp_model = load_grp_model(env_config, model_config, config.grp_checkpoint, device)
+
     model = PolicyValueNet(env_config, model_config).to(device)
     load_checkpoint(Path(init_checkpoint), model)
     frozen = PolicyValueNet(env_config, model_config).to(device)
@@ -387,8 +402,11 @@ def train_ppo(
     try:
         if config.num_workers > 1:
             from .parallel_rollouts import ParallelRolloutCollector
+            grp_state = None
+            if grp_model is not None:
+                grp_state = {k: v.detach().cpu() for k, v in grp_model.state_dict().items()}
             collector = ParallelRolloutCollector(
-                env_config, model_config, config, config.num_workers,
+                env_config, model_config, config, config.num_workers, grp_state_dict=grp_state,
             )
             collector.start()
 
@@ -406,9 +424,9 @@ def train_ppo(
                 batch = collector.collect(learner_state, pool_states, iter_seed, config.matches_per_iter)
             elif config.pool_max_size > 1:
                 opponents = build_opponent_nets(env_config, model_config, pool_states, device)
-                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents, grp_model=grp_model)
             else:
-                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, grp_model=grp_model)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
             metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
             metrics["iteration"] = iteration

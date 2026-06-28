@@ -877,3 +877,33 @@ def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monke
         cli.main()
     # ...and MLflow finalization must see it (so the run is marked FAILED, not FINISHED)
     assert seen["exc_type"] is RuntimeError
+
+
+def test_train_ppo_with_grp_mock(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"
+    save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64,
+                    device="cpu", grp_checkpoint=grp)
+    metrics = train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=3, run_eval=False)
+    assert len(metrics) == 2
+    assert all(np.isfinite(m["policy_loss"]) for m in metrics)
+
+
+def test_train_ppo_missing_grp_fails_fast(tmp_path):
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu", grp_checkpoint=tmp_path / "nope.pt")
+    with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
