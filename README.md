@@ -26,8 +26,10 @@ fh-mahjong/
 ├── core/           # Game state machine and RuleEngine interface
 ├── rules/          # Fenghua (hometown) ruleset plugin
 ├── CLAUDE.md       # Claude Code project context (auto-loaded)
-├── official_rules.md  # Raw Fenghua rule source
-└── rules.md           # Rules + Go implementation design
+└── docs/
+    └── rules/
+        ├── official-rules.md  # Raw Fenghua rule source
+        └── rules.md           # Rules + Go implementation design
 ```
 
 > Per-directory `AGENTS.md` files are the authoritative, up-to-date reference for
@@ -92,5 +94,5 @@ or weights incompatible with the current model architecture — returns an error
 and keeps the current model serving.
 
 ## Rules Reference
-- [official_rules.md](official_rules.md) — Raw source (Fenghua blog transcription)
-- [rules.md](rules.md) — Synthesized scoring reference + Go implementation notes
+- [official-rules.md](docs/rules/official-rules.md) — Raw source (Fenghua blog transcription)
+- [rules.md](docs/rules/rules.md) — Synthesized scoring reference + Go implementation notes
