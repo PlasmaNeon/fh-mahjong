@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/plasma/fh-mahjong/bot/remote"
+	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 

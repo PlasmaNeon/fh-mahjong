@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/plasma/fh-mahjong/bot"
+	"github.com/plasma/fh-mahjong/internal/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/rlenv"
 )

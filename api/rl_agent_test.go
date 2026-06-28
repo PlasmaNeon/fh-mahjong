@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/plasma/fh-mahjong/bot"
+	"github.com/plasma/fh-mahjong/internal/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
