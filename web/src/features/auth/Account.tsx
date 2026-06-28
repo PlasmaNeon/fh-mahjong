@@ -44,10 +44,13 @@ export default function Account() {
         const token = localStorage.getItem('fh_token');
         if (!token) { navigate('/login'); return; }
         try {
+            const body: { email?: string; displayName?: string } = {};
+            if (email.trim()) body.email = email.trim();
+            if (displayName.trim()) body.displayName = displayName.trim();
             const res = await fetch(getApiUrl('/api/v1/users/me'), {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ email, displayName }),
+                body: JSON.stringify(body),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to save');

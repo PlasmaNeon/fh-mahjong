@@ -134,6 +134,16 @@ func TestLoginWrongPassword(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
 	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error body: %v (body=%s)", err, rec.Body.String())
+	}
+	const wantMsg = "Invalid email or password"
+	if errBody.Error != wantMsg {
+		t.Fatalf("error message = %q, want %q (anti-enumeration)", errBody.Error, wantMsg)
+	}
 }
 
 func TestLoginUnknownEmail(t *testing.T) {
@@ -142,6 +152,16 @@ func TestLoginUnknownEmail(t *testing.T) {
 		map[string]string{"email": "nobody@example.com", "password": "hunter2pw"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	var errBody struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode error body: %v (body=%s)", err, rec.Body.String())
+	}
+	const wantMsg = "Invalid email or password"
+	if errBody.Error != wantMsg {
+		t.Fatalf("error message = %q, want %q (anti-enumeration)", errBody.Error, wantMsg)
 	}
 }
 
