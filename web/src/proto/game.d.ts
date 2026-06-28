@@ -675,6 +675,9 @@ export namespace game {
 
         /** GameState matchEndResult */
         matchEndResult?: (game.IMatchEndResult|undefined);
+
+        /** GameState activeDiscardFromDrawn */
+        activeDiscardFromDrawn?: (boolean|undefined);
     }
 
     /** Represents a GameState. */
@@ -748,6 +751,9 @@ export namespace game {
 
         /** GameState matchEndResult. */
         public matchEndResult: game.MatchEndResult;
+
+        /** GameState activeDiscardFromDrawn. */
+        public activeDiscardFromDrawn: boolean;
 
         /**
          * Creates a new GameState instance using the specified properties.

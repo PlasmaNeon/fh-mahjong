@@ -26,6 +26,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `startNextRound()` — Reset for next round (keeps scores)
   - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
   - `GameState` now carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
+  - `GameState.ActiveDiscardFromDrawn`: public, transient tsumogiri flag; true when `ActiveDiscard` was the discarder's just-drawn tile. Kept in lockstep with `ActiveDiscard` via `setActiveDiscard`/`clearActiveDiscard` helpers — never set one without the other
   - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`, `wallSeedOverride`
 
 - **paipu.go** — Structured paipu recording support:

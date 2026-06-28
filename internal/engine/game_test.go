@@ -653,3 +653,90 @@ func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
 		t.Fatal("expected error on ready after match end")
 	}
 }
+
+func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-tsumogiri", r, core.MatchOptions{})
+	g.Start()
+
+	dealer := g.State.ActivePlayer
+	if g.State.Players[dealer].DrawnTileId == nil {
+		t.Fatalf("expected dealer to hold a drawn tile after Start()")
+	}
+	drawnID := *g.State.Players[dealer].DrawnTileId
+
+	// Find the drawn tile in the dealer's hand and discard exactly it.
+	var discardTile *pb.Tile
+	for _, tile := range g.State.Players[dealer].ClosedHand {
+		if int32(tile.Id) == drawnID {
+			discardTile = tile
+			break
+		}
+	}
+	if discardTile == nil {
+		t.Fatalf("drawn tile id %d not present in dealer hand", drawnID)
+	}
+
+	// Keep the discard live: give South a pong-able pair so play enters WAIT_DISCARDS.
+	south := (dealer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[south].ClosedHand = append(g.State.Players[south].ClosedHand, clone1, clone2)
+
+	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	if g.State.ActiveDiscard == nil {
+		t.Fatalf("expected active discard to remain set in WAIT_DISCARDS")
+	}
+	if !g.State.ActiveDiscardFromDrawn {
+		t.Errorf("expected ActiveDiscardFromDrawn=true for tsumogiri")
+	}
+}
+
+func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := core.NewGame("test-tedashi", r, core.MatchOptions{})
+	g.Start()
+
+	dealer := g.State.ActivePlayer
+	if g.State.Players[dealer].DrawnTileId == nil {
+		t.Fatalf("expected dealer to hold a drawn tile after Start()")
+	}
+	drawnID := *g.State.Players[dealer].DrawnTileId
+
+	// Discard a tile that is NOT the drawn tile.
+	var discardTile *pb.Tile
+	for _, tile := range g.State.Players[dealer].ClosedHand {
+		if int32(tile.Id) != drawnID {
+			discardTile = tile
+			break
+		}
+	}
+	if discardTile == nil {
+		t.Fatalf("could not find a non-drawn tile to discard")
+	}
+
+	south := (dealer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[south].ClosedHand = append(g.State.Players[south].ClosedHand, clone1, clone2)
+
+	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	if g.State.ActiveDiscard == nil {
+		t.Fatalf("expected active discard to remain set in WAIT_DISCARDS")
+	}
+	if g.State.ActiveDiscardFromDrawn {
+		t.Errorf("expected ActiveDiscardFromDrawn=false for tedashi")
+	}
+}

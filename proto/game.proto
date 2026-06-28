@@ -205,6 +205,11 @@ message GameState {
   MatchMode match_mode = 21;
   ChongciConfig chongci_config = 22;     // set iff match_mode == MATCH_MODE_CHONGCI
   MatchEndResult match_end_result = 23;  // set iff phase == PHASE_MATCH_END
+
+  // True when active_discard was the discarder's just-drawn tile (tsumogiri).
+  // Public info — reveals nothing about concealed tiles. Transient: valid only
+  // while active_discard is set.
+  bool active_discard_from_drawn = 24;
 }
 
 // ---------------------------------------------------------

@@ -2018,6 +2018,7 @@ export const game = $root.game = (() => {
          * @property {game.MatchMode|undefined} [matchMode] GameState matchMode
          * @property {game.IChongciConfig|undefined} [chongciConfig] GameState chongciConfig
          * @property {game.IMatchEndResult|undefined} [matchEndResult] GameState matchEndResult
+         * @property {boolean|undefined} [activeDiscardFromDrawn] GameState activeDiscardFromDrawn
          */
 
         /**
@@ -2207,6 +2208,14 @@ export const game = $root.game = (() => {
         GameState.prototype.matchEndResult = null;
 
         /**
+         * GameState activeDiscardFromDrawn.
+         * @member {boolean} activeDiscardFromDrawn
+         * @memberof game.GameState
+         * @instance
+         */
+        GameState.prototype.activeDiscardFromDrawn = false;
+
+        /**
          * Creates a new GameState instance using the specified properties.
          * @function create
          * @memberof game.GameState
@@ -2278,6 +2287,8 @@ export const game = $root.game = (() => {
                 $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 22, wireType 2 =*/178).fork()).ldelim();
             if (message.matchEndResult != null && Object.hasOwnProperty.call(message, "matchEndResult"))
                 $root.game.MatchEndResult.encode(message.matchEndResult, writer.uint32(/* id 23, wireType 2 =*/186).fork()).ldelim();
+            if (message.activeDiscardFromDrawn != null && Object.hasOwnProperty.call(message, "activeDiscardFromDrawn"))
+                writer.uint32(/* id 24, wireType 0 =*/192).bool(message.activeDiscardFromDrawn);
             return writer;
         };
 
@@ -2407,6 +2418,10 @@ export const game = $root.game = (() => {
                     }
                 case 23: {
                         message.matchEndResult = $root.game.MatchEndResult.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 24: {
+                        message.activeDiscardFromDrawn = reader.bool();
                         break;
                     }
                 default:
@@ -2546,6 +2561,9 @@ export const game = $root.game = (() => {
                 if (error)
                     return "matchEndResult." + error;
             }
+            if (message.activeDiscardFromDrawn != null && message.hasOwnProperty("activeDiscardFromDrawn"))
+                if (typeof message.activeDiscardFromDrawn !== "boolean")
+                    return "activeDiscardFromDrawn: boolean expected";
             return null;
         };
 
@@ -2684,6 +2702,8 @@ export const game = $root.game = (() => {
                     throw TypeError(".game.GameState.matchEndResult: object expected");
                 message.matchEndResult = $root.game.MatchEndResult.fromObject(object.matchEndResult);
             }
+            if (object.activeDiscardFromDrawn != null)
+                message.activeDiscardFromDrawn = Boolean(object.activeDiscardFromDrawn);
             return message;
         };
 
@@ -2724,6 +2744,7 @@ export const game = $root.game = (() => {
                 object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
                 object.chongciConfig = null;
                 object.matchEndResult = null;
+                object.activeDiscardFromDrawn = false;
             }
             if (message.matchId != null && message.hasOwnProperty("matchId"))
                 object.matchId = message.matchId;
@@ -2776,6 +2797,8 @@ export const game = $root.game = (() => {
                 object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
             if (message.matchEndResult != null && message.hasOwnProperty("matchEndResult"))
                 object.matchEndResult = $root.game.MatchEndResult.toObject(message.matchEndResult, options);
+            if (message.activeDiscardFromDrawn != null && message.hasOwnProperty("activeDiscardFromDrawn"))
+                object.activeDiscardFromDrawn = message.activeDiscardFromDrawn;
             return object;
         };
 
