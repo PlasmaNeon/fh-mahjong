@@ -109,6 +109,17 @@ export function planTileFlights({
   const animations: FlyingTileAnimation[] = []
   let key = startKey
 
+  // Count discards newly revealed since the previous snapshot. The per-seat
+  // tsumogiri flag describes only each seat's *latest* discard, so on a
+  // multi-discard delta (e.g. a resync after dropped broadcasts) it can't be
+  // trusted to label an older discard in the batch — those fall back to the
+  // generic origin instead of a (possibly mislabeled) tedashi/tsumogiri origin.
+  let newDiscardCount = 0
+  currentLocations.forEach((t, id) => {
+    if (t.role === 'discard' && !previousSnapshot.locations.has(id)) newDiscardCount += 1
+  })
+  const singleNewDiscard = newDiscardCount === 1
+
   currentLocations.forEach((currentTile, tileId) => {
     const toRect = currentRects.get(tileId)
     if (!toRect) return
@@ -124,15 +135,16 @@ export function planTileFlights({
       fromRect = previousSnapshot.rects.get(tileId)
     } else if (currentTile.role === 'discard') {
       const dir = currentTile.direction
-      // The only discard reaching this branch (no tracked previous tile) is the
-      // one just made, so the discarder's most-recent-discard flag describes it.
+      // A single newly-revealed discard is the one just made, so the discarder's
+      // most-recent-discard flag describes it; skip the special origin on a
+      // multi-discard delta where the flag can't be trusted per older discard.
       const fromDrawn = fromDrawnByDirection?.get(dir) ?? false
 
-      if (fromDrawn) {
+      if (singleNewDiscard && fromDrawn) {
         // Tsumogiri: fly the discard straight from the separated drawn slot.
         const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
         if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
-      } else {
+      } else if (singleNewDiscard) {
         // Tedashi: fly the discard from a RANDOM concealed hand slot, and slide
         // the drawn back into the hand (the "tsumo-hai fills the gap").
         const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
