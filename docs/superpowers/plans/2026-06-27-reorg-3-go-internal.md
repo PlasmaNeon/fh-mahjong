@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move the Go library packages under `internal/` (enforcing module-private boundaries), grouping/renaming them into clear domains: `core→game`, `api→server`, `models→storage`, `rlenv→rl`; `rules` and `bot` keep their names.
+**Goal:** Move the Go library packages under `internal/` (enforcing module-private boundaries), grouping/renaming them into clear domains: `core→engine`, `models→storage`, `rlenv→rl`; `api`, `rules`, and `bot` keep their names.
 
 **Architecture:** Each package is moved with `git mv` (history preserved), then every import path and — for renamed packages — every `package` clause and qualified reference is rewritten across the module. `proto/` and `cmd/` stay at root. Each task ends green: `go build ./... && go vet ./... && go test ./...`.
 
@@ -12,7 +12,7 @@
 
 - Module path is unchanged: `github.com/plasma/fh-mahjong`.
 - Use `git mv`; never delete+recreate.
-- `core/game.go` (→ `internal/game/game.go`) must still never import the rules package — the ruleset-agnostic rule survives unchanged.
+- `core/game.go` (→ `internal/engine/game.go`) must still never import the rules package — the ruleset-agnostic rule survives unchanged.
 - After EVERY task: `go build ./... && go vet ./... && go test ./...` must pass, AND `git diff --stat` reviewed for accidental edits (e.g. a `score.` mangled by a `core` rename — guarded by `\b` but verify).
 - Use **perl** for qualifier renames (`\b` word boundaries); BSD `sed` lacks `\b`.
 
@@ -20,14 +20,16 @@
 
 | Old | New |
 |---|---|
-| `…/core` | `…/internal/game` |
+| `…/core` | `…/internal/engine` |
 | `…/rules`, `…/rules/shanten` | `…/internal/rules`, `…/internal/rules/shanten` |
 | `…/models` | `…/internal/storage` |
 | `…/bot`, `…/bot/remote` | `…/internal/bot`, `…/internal/bot/remote` |
 | `…/rlenv` | `…/internal/rl` |
-| `…/api` | `…/internal/server` |
+| `…/api` | `…/internal/api` |
 
-(`…` = `github.com/plasma/fh-mahjong`.) Package renames: `core→game`, `models→storage`, `rlenv→rl`, `api→server`. `rules`, `shanten`, `bot`, `remote` keep their package names (path-only move).
+(`…` = `github.com/plasma/fh-mahjong`.) Package renames: `core→engine`, `models→storage`, `rlenv→rl`. `api`, `rules`, `shanten`, `bot`, `remote` keep their package names (path-only move).
+
+**Collision guardrails (why these names):** `core` is renamed to `engine`, NOT `game` — proto's Go package is already `package game` (aliased `pb`) and 344 local vars are named `game`. `api` keeps its name, NOT renamed to `server` — `cmd/server/main.go` has a local `server` variable. `engine.`, `storage.`, and `rl.` are confirmed unused as qualifiers (0 collisions).
 
 ---
 
@@ -75,37 +77,38 @@ git commit -m "refactor(go): move rules package under internal/"
 
 ---
 
-### Task 2: Move `core/` → `internal/game/` (rename package `core`→`game`)
+### Task 2: Move `core/` → `internal/engine/` (rename package `core`→`engine`)
 
 **Files:**
-- Move: `core/` → `internal/game/` (carries `core/testdata/`, `core/AGENTS.md`)
-- Modify: importers `api/matchmaker.go`, `api/room.go`, `api/room_bot_test.go`, `cmd/cli/main.go`, `cmd/rlpaipu/main.go`, `internal/rl/...` (rlenv, moved later — at this point still `rlenv/env.go`, `rlenv/env_test.go`), and the package's own `*_test.go` (`package core_test`)
+- Move: `core/` → `internal/engine/` (carries `core/testdata/`, `core/AGENTS.md`)
+- Modify: importers `api/matchmaker.go`, `api/room.go`, `api/room_bot_test.go`, `cmd/cli/main.go`, `cmd/rlpaipu/main.go`, `rlenv/env.go`, `rlenv/env_test.go` (rlenv moves later), and the package's own `*_test.go` (`package core_test`)
 
-**Interfaces:** Produces import path `…/internal/game`, package `game`. Qualifier `core.` → `game.`.
+**Interfaces:** Produces import path `…/internal/engine`, package `engine`. Qualifier `core.` → `engine.`. (Do NOT use `game` — it collides with proto's `package game` and 344 local `game` vars.)
 
 - [ ] **Step 1: Move the tree**
 
 ```bash
-git mv core internal/game
+git mv core internal/engine
 ```
 
 - [ ] **Step 2: Rewrite import paths**
 
 ```bash
-git grep -l 'fh-mahjong/core' -- '*.go' | xargs perl -i -pe 's{fh-mahjong/core}{fh-mahjong/internal/game}g'
+git grep -l 'fh-mahjong/core' -- '*.go' | xargs perl -i -pe 's{fh-mahjong/core}{fh-mahjong/internal/engine}g'
 ```
 
 - [ ] **Step 3: Rename the package clause (incl. external test package)**
 
 ```bash
-perl -i -pe 's/^package core$/package game/; s/^package core_test$/package game_test/' internal/game/*.go
+perl -i -pe 's/^package core$/package engine/; s/^package core_test$/package engine_test/' internal/engine/*.go
 ```
 
-- [ ] **Step 4: Rename qualified references `core.` → `game.` (word-boundary safe)**
+- [ ] **Step 4: Rename qualified references `core.` → `engine.` (word-boundary safe)**
 
 ```bash
-git grep -l '\bcore\.' -- '*.go' | xargs perl -i -pe 's/\bcore\./game./g'
+git grep -l '\bcore\.' -- '*.go' | xargs perl -i -pe 's/\bcore\./engine./g'
 ```
+Note: `\bcore` does not match inside `score` (the `s` is a word char, so there is no boundary before `core`), so `score.` is safe.
 
 - [ ] **Step 5: Build, vet, test**
 
@@ -114,19 +117,19 @@ go build ./... && go vet ./... && go test ./...
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Review diff — confirm no `score.`/field named `core` was mangled**
+- [ ] **Step 6: Review diff — confirm nothing was mangled**
 
 ```bash
-git diff | grep -nE '\bsgame\.|game\.' | head
+git diff | grep -nE 'sengine\.' | head    # expect: no output (no score. mangling)
 git diff --stat
 ```
-Expected: every `game.` change is a real package-qualifier swap; no `sgame.` artifacts.
+Expected: every `engine.` change is a real package-qualifier swap; no `sengine.` artifacts.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add -A
-git commit -m "refactor(go): move core -> internal/game and rename package to game"
+git commit -m "refactor(go): move core -> internal/engine and rename package to engine"
 ```
 
 ---
@@ -263,56 +266,41 @@ git commit -m "refactor(go): move rlenv -> internal/rl and rename package to rl"
 
 ---
 
-### Task 6: Move `api/` → `internal/server/` (rename package `api`→`server`)
+### Task 6: Move `api/` → `internal/api/` (path-only)
 
 **Files:**
-- Move: `api/` → `internal/server/` (carries `api/AGENTS.md`)
-- Modify: importer `cmd/server/main.go` (+ `cmd/server/policy_autostart*.go` if they reference `api.`)
+- Move: `api/` → `internal/api/` (carries `api/AGENTS.md`)
+- Modify: importer `cmd/server/main.go`
 
-**Interfaces:** Produces import path `…/internal/server`, package `server`. Qualifier `api.` → `server.`. `cmd/server` stays `package main`; it imports `…/internal/server` referenced as `server`.
+**Interfaces:** Produces import path `…/internal/api`. Package `api` is unchanged — no `package` clause or qualifier edits. (Do NOT rename to `server`: `cmd/server/main.go` holds a local `server` variable and the binary dir is already `cmd/server`; keep the clean `cmd/server` → `internal/api` split.)
+
+Note: `internal/api/server.go` imports the `web` embed package (`…/web`) and `…/proto`; both paths are unchanged by this move.
 
 - [ ] **Step 1: Move the tree**
 
 ```bash
-git mv api internal/server
+git mv api internal/api
 ```
 
 - [ ] **Step 2: Rewrite import paths**
 
 ```bash
-git grep -l 'fh-mahjong/api' -- '*.go' | xargs perl -i -pe 's{fh-mahjong/api}{fh-mahjong/internal/server}g'
+git grep -l 'fh-mahjong/api' -- '*.go' | xargs perl -i -pe 's{fh-mahjong/api}{fh-mahjong/internal/api}g'
 ```
+(No other package path begins with `api`, and route strings like `"/api/v1"` are not `fh-mahjong/api`, so this is safe.)
 
-- [ ] **Step 3: Rename the package clause (incl. any `_test` variant)**
-
-```bash
-perl -i -pe 's/^package api$/package server/; s/^package api_test$/package server_test/' internal/server/*.go
-```
-
-- [ ] **Step 4: Rename qualified references `api.` → `server.`**
-
-```bash
-git grep -l '\bapi\.' -- '*.go' | xargs perl -i -pe 's/\bapi\./server./g'
-```
-Note: review the diff — `api.` is a common substring in comments/URLs (`/api/v1`). The `\b` guards identifier use, but confirm no doc-comment or route-string `api.` was hit:
-
-```bash
-git diff | grep -n 'server\.' | grep -iE 'v1|http|route|url' 
-```
-Expected: no route strings changed (route literals like `"/api/v1"` have no `.` after `api`, so they are not matched — confirm).
-
-- [ ] **Step 5: Build, vet, test**
+- [ ] **Step 3: Build, vet, test**
 
 ```bash
 go build ./... && go vet ./... && go test ./...
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add -A
-git commit -m "refactor(go): move api -> internal/server and rename package to server"
+git commit -m "refactor(go): move api package under internal/"
 ```
 
 ---
@@ -328,21 +316,21 @@ git commit -m "refactor(go): move api -> internal/server and rename package to s
 - [ ] **Step 1: Update root `AGENTS.md`**
 
 In the Module Map and Key Files table, rewrite paths:
-- `core/` → `internal/game/`, `core/game.go` → `internal/game/game.go`, `core/rules.go` → `internal/game/rules.go`
+- `core/` → `internal/engine/`, `core/game.go` → `internal/engine/game.go`, `core/rules.go` → `internal/engine/rules.go`
 - `rules/` → `internal/rules/`, `rules/fh.go` → `internal/rules/fh.go`
-- `api/` → `internal/server/`
+- `api/` → `internal/api/`
 - `models/` → `internal/storage/`
 - `bot/` → `internal/bot/`, `bot/heuristic.go` → `internal/bot/heuristic.go`
 - `rlenv/` → `internal/rl/`, `rlenv/env.go` → `internal/rl/env.go`, `rlenv/action.go` → `internal/rl/action.go`
-- Architecture Principle 1: "Rulesets implement `RuleEngine` in `rules/`" → "in `internal/rules/`"; the `core.Game`/`internal/game` no-import-rules rule wording.
+- Architecture Principle 1: "Rulesets implement `RuleEngine` in `rules/`" → "in `internal/rules/`"; the `core.Game`/`internal/engine` no-import-rules rule wording.
 
 - [ ] **Step 2: Create `internal/AGENTS.md`**
 
-A short doc mapping: `game` (state machine), `rules` (+`shanten`), `server` (REST+WS), `storage` (GORM), `bot` (+`remote`), `rl` (RL env). Note the `internal/` boundary intent.
+A short doc mapping: `engine` (state machine), `rules` (+`shanten`), `api` (REST+WS), `storage` (GORM), `bot` (+`remote`), `rl` (RL env). Note the `internal/` boundary intent.
 
 - [ ] **Step 3: Update memory index**
 
-In `MEMORY.md`, update Key Files: `core/game.go`→`internal/game/game.go`, `core/rules.go`→`internal/game/rules.go`, `rules/fh.go`→`internal/rules/fh.go`. Note the `core/game.go must never import rules/` rule now reads `internal/game` / `internal/rules`.
+In `MEMORY.md`, update Key Files: `core/game.go`→`internal/engine/game.go`, `core/rules.go`→`internal/engine/rules.go`, `rules/fh.go`→`internal/rules/fh.go`. Note the `core/game.go must never import rules/` rule now reads `internal/engine` / `internal/rules`.
 
 - [ ] **Step 4: Final grep audit — no stale Go paths in tracked files**
 
@@ -375,6 +363,6 @@ git commit -m "docs(go): update AGENTS.md, README, and memory for internal/ layo
 ## Self-Review Notes
 
 - Spec coverage: implements the entire "Go Reorg Detail" section — import-path map, package renames, `git mv`, build/test gate, and the no-import-rules invariant.
-- Type/path consistency: every renamed package's qualifier (`core→game`, `models→storage`, `rlenv→rl`, `api→server`) is rewritten in the same task that moves it, so the tree is green at each commit.
-- The riskiest rename is `api.`→`server.` (common substring); Task 6 Step 4 adds an explicit diff review for route-string false positives. `core.`→`game.` is guarded against `score.` by `\b` plus a Step-6 diff check.
+- Type/path consistency: every renamed package's qualifier (`core→engine`, `models→storage`, `rlenv→rl`) is rewritten in the same task that moves it, so the tree is green at each commit. `api`, `rules`, `bot` are path-only moves (no qualifier edits).
+- Renames were chosen to avoid collisions: `core→engine` (not `game` — clashes with proto's `package game` and 344 local `game` vars); `api` kept (not `server` — clashes with a local `server` var in `cmd/server/main.go`). `core.`→`engine.` is guarded against `score.` by `\b` plus a Step-6 diff check.
 - `proto/` stays at root (cross-language schema source); its generated Go package import path is unchanged, so no proto edits are needed.

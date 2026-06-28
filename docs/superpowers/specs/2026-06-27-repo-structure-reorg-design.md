@@ -45,10 +45,10 @@ fh-mahjong/
 ├── proto/                          stays — cross-language schema source of truth
 ├── cmd/                            stays — server, cli, wasm, rlbridge, rlpaipu
 ├── internal/                       NEW — enforced module-private boundary
-│   ├── game/      ← core/          (package core → game)
+│   ├── engine/    ← core/          (package core → engine)
 │   ├── rules/     ← rules/         (package rules — unchanged)
 │   │   └── shanten/                (package shanten — unchanged)
-│   ├── server/    ← api/           (package api → server)
+│   ├── api/       ← api/           (package api — unchanged; moves under internal/)
 │   ├── storage/   ← models/        (package models → storage)
 │   ├── bot/       ← bot/           (package bot — unchanged)
 │   │   └── remote/                 (package remote — unchanged)
@@ -102,8 +102,8 @@ fh-mahjong/
 
 | Old import path | New import path |
 |---|---|
-| `…/core` | `…/internal/game` |
-| `…/api` | `…/internal/server` |
+| `…/core` | `…/internal/engine` |
+| `…/api` | `…/internal/api` |
 | `…/models` | `…/internal/storage` |
 | `…/rlenv` | `…/internal/rl` |
 | `…/bot` | `…/internal/bot` |
@@ -116,10 +116,19 @@ fh-mahjong/
 
 ### Package-identifier renames
 
-`core → game`, `api → server`, `models → storage`, `rlenv → rl`. Packages
-whose folder name is unchanged (`rules`, `shanten`, `bot`, `remote`) keep their
-identifiers. Every renamed package requires updating its `package` declaration
-and every qualified reference (e.g. `core.Game` → `game.Game`).
+`core → engine`, `models → storage`, `rlenv → rl`. The `api` package keeps its
+name (it moves to `internal/api`; the `cmd/server` binary imports it). Packages
+whose folder name is unchanged (`api`, `rules`, `shanten`, `bot`, `remote`) keep
+their identifiers. Every renamed package requires updating its `package`
+declaration and every qualified reference (e.g. `core.Game` → `engine.Game`).
+
+**Naming note — why not `game`/`server`:** `core` is *not* renamed to `game`
+because proto's generated Go package is already `package game` (imported
+aliased as `pb`) and 344 local variables are named `game` (instances of
+`core.Game`); `engine` avoids both clashes. `api` is *not* renamed to `server`
+because the binary already lives in `cmd/server` and `cmd/server/main.go` holds
+a local `server` variable — keeping `api` gives the clean split `cmd/server`
+(binary) → `internal/api` (handlers).
 
 ### Mechanical procedure
 
@@ -170,7 +179,7 @@ same change:
   `technical_design.md`, `tasks.md`, `user_guide.md` in README, AGENTS.md files,
   and other docs.
 - **User memory index** (`MEMORY.md` and any memory files naming these paths) —
-  update Key Files paths (`core/game.go` → `internal/game/game.go`, etc.).
+  update Key Files paths (`core/game.go` → `internal/engine/game.go`, etc.).
 - **Dockerfile / docker-compose / build scripts** — verify no hardcoded package
   paths break (cmd paths are unchanged, so build targets should be stable).
 
