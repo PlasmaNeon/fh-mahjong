@@ -677,6 +677,19 @@ def test_collect_rollouts_with_pool_is_deterministic():
 from fh_mahjong_ai.ppo import build_opponent_nets
 
 
+def test_train_ppo_rejects_zero_snapshot_interval(tmp_path):
+    # pool_max_size>1 with snapshot_interval 0 would hit iteration % 0; reject early.
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    pool_max_size=3, pool_snapshot_interval=0)
+    with pytest.raises(ValueError, match="pool_snapshot_interval"):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
 def test_build_opponent_nets_are_frozen():
     env_cfg, mcfg = _small_env_model()
     states = [PolicyValueNet(env_cfg, mcfg).state_dict() for _ in range(3)]
