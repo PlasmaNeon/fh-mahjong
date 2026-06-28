@@ -210,6 +210,24 @@ def _seat_step_reward(step_rewards, seat: int) -> float:
     return 0.0
 
 
+def _grp_match_rewards(match_g, realized, truncated):
+    """Per-decision GRP placement-delta rewards for one match: `g_{k+1} - g_k` for
+    each non-final learner decision; the final decision gets `realized - g_last` at
+    a TRUE match end, or `0.0` on a TRUNCATION. A step-limit truncation has no final
+    standings, so we must not fabricate a realized placement from the partial net —
+    the `g` telescoping already bootstraps the return to the GRP value at the cut."""
+    n = len(match_g)
+    out = []
+    for k in range(n):
+        if k + 1 < n:
+            out.append(float(match_g[k + 1] - match_g[k]))
+        elif truncated:
+            out.append(0.0)
+        else:
+            out.append(float(realized - match_g[k]))
+    return out
+
+
 def collect_rollouts(
     env_config: EnvConfig,
     policy_model,
@@ -309,13 +327,13 @@ def collect_rollouts(
                     if last_learn_index is not None:
                         dones_l[last_learn_index] = 1.0
                     if grp_model is not None and match_indices:
-                        realized = float(placement_shaped_returns(
-                            cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
-                        for k, idx in enumerate(match_indices):
-                            if k + 1 < len(match_g):
-                                rewards_l[idx] = match_g[k + 1] - match_g[k]
-                            else:
-                                rewards_l[idx] = realized - match_g[k]
+                        is_trunc = bool(step.truncated) and not bool(step.terminated)
+                        realized = 0.0
+                        if not is_trunc:
+                            realized = float(placement_shaped_returns(
+                                cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
+                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, is_trunc)):
+                            rewards_l[idx] = r
                     break
                 obs = step.observation
     finally:

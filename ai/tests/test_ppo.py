@@ -732,6 +732,18 @@ def test_ppo_config_grp_defaults():
     assert len(cfg.grp_placement_values) == 4
 
 
+def test_grp_match_rewards_terminated_vs_truncated():
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    g = [0.0, 0.25, 0.5]  # 3 learner decisions
+    # terminated: non-final = consecutive g-diffs; final = realized - g_last
+    assert _grp_match_rewards(g, realized=1.0, truncated=False) == [0.25, 0.25, 0.5]
+    # truncated: final = 0.0 (no fabricated realized placement from a partial game)
+    assert _grp_match_rewards(g, realized=1.0, truncated=True) == [0.25, 0.25, 0.0]
+    # single-decision match
+    assert _grp_match_rewards([0.3], realized=1.0, truncated=False) == [0.7]
+    assert _grp_match_rewards([0.3], realized=1.0, truncated=True) == [0.0]
+
+
 def test_collect_rollouts_grp_none_matches_score_reward():
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,

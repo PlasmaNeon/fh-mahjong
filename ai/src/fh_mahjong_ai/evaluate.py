@@ -503,10 +503,14 @@ def evaluate_policy_online(
         nonlocal wins, large_losses
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
-        placement = episode_placement(episode, rewards, learning_seat,
-                                      (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
-                                      reset_rewards=reset_rewards)
-        seat_placements.append(placement)
+        # Placement only has meaning for a true match end. A truncated (step-limit)
+        # episode has no final standings, so exclude it from the placement metric
+        # rather than ranking a partial game.
+        if not truncated:
+            placement = episode_placement(episode, rewards, learning_seat,
+                                          (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+                                          reset_rewards=reset_rewards)
+            seat_placements.append(placement)
         if reward > 0:
             wins += 1
         if reward <= resolved_large_loss_threshold:
