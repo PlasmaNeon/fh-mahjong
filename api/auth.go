@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -31,7 +31,7 @@ type LoginRequest struct {
 
 type AuthResponse struct {
 	Token string      `json:"token"`
-	User  models.User `json:"user"`
+	User  storage.User `json:"user"`
 }
 
 var jwtSecret = []byte(getEnv("JWT_SECRET", "super-secret-key-change-in-prod"))
@@ -57,7 +57,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Check if user exists
-	var existingUser models.User
+	var existingUser storage.User
 	if err := h.DB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
 		return
@@ -70,7 +70,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user := models.User{
+	user := storage.User{
 		Username:     req.Username,
 		PasswordHash: string(hashedPassword),
 		Rating:       1500, // Starting Elo
@@ -99,7 +99,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	var user models.User
+	var user storage.User
 	if err := h.DB.Where("username = ?", req.Username).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
@@ -161,7 +161,7 @@ func (h *AuthHandler) GuestLogin(c *gin.Context) {
 	}
 
 	// We return a mock user object to satisfy the frontend's expectations
-	mockUser := models.User{
+	mockUser := storage.User{
 		ID:       tempUserID,
 		Username: req.Username,
 		Rating:   1500,

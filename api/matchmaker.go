@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"gorm.io/gorm"
 )
@@ -260,7 +260,7 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	matchID := uuid.New().String()
 
 	// 1. Persist the match explicitly to Postgres
-	match := models.Match{
+	match := storage.Match{
 		ID:        matchID,
 		Status:    "in_progress",
 		StartTime: time.Now(),
@@ -429,7 +429,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 
 		matchID = uuid.New().String()
-		match := models.Match{
+		match := storage.Match{
 			ID:        matchID,
 			Status:    "in_progress",
 			StartTime: time.Now(),

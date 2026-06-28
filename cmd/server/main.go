@@ -10,7 +10,7 @@ import (
 	"github.com/plasma/fh-mahjong/api"
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/bot/remote"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"gorm.io/driver/postgres"
@@ -59,7 +59,7 @@ func main() {
 			log.Fatalf("Could not connect to database after 5 attempts: %v", err)
 		}
 		log.Println("Successfully connected to Database. Running migrations...")
-		if err := models.AutoMigrate(db); err != nil {
+		if err := storage.AutoMigrate(db); err != nil {
 			log.Fatalf("Failed to run schema migrations: %v", err)
 		}
 	} else {
@@ -73,7 +73,7 @@ func main() {
 			db = nil
 		} else {
 			log.Println("Connected to local database. Running migrations...")
-			if err := models.AutoMigrate(db); err != nil {
+			if err := storage.AutoMigrate(db); err != nil {
 				log.Fatalf("Failed to run schema migrations: %v", err)
 			}
 		}

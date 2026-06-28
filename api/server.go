@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	"github.com/plasma/fh-mahjong/web"
 	"gorm.io/gorm"
 )
@@ -100,7 +100,7 @@ func (s *Server) StorePaipu(matchID, paipuJSON string) {
 	s.paipuMu.Unlock()
 
 	if s.DB != nil {
-		record := models.PaipuRecord{ID: matchID, Data: paipuJSON}
+		record := storage.PaipuRecord{ID: matchID, Data: paipuJSON}
 		s.DB.Save(&record)
 	}
 }
@@ -338,7 +338,7 @@ func (s *Server) handleGetMe(c *gin.Context) {
 		return
 	}
 
-	var user models.User
+	var user storage.User
 	if err := s.DB.First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return

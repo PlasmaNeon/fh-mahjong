@@ -11,7 +11,7 @@ import (
 
 	"github.com/plasma/fh-mahjong/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
@@ -37,7 +37,7 @@ type Room struct {
 	PrivateTableID string
 	Hub            *Hub
 	DB             *gorm.DB
-	MatchRecord    *models.Match
+	MatchRecord    *storage.Match
 	OnShutdown     func()
 
 	Engine *engine.Game
@@ -229,7 +229,7 @@ func (r *Room) Start() {
 
 			now := time.Now()
 			if r.DB != nil {
-				r.DB.Model(&models.Match{}).Where("id = ?", r.ID).Updates(models.Match{
+				r.DB.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
 					Status:    "completed",
 					EndTime:   &now,
 					ReplayURL: encodedReplay,

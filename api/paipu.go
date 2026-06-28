@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gin-gonic/gin"
-	"github.com/plasma/fh-mahjong/models"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	"gorm.io/gorm"
 )
 
@@ -38,7 +38,7 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 	}
 
 	// Check paipu_records table (per-round paipus)
-	var record models.PaipuRecord
+	var record storage.PaipuRecord
 	if err := s.DB.Where("id = ?", matchID).First(&record).Error; err == nil {
 		c.Data(http.StatusOK, "application/json", []byte(record.Data))
 		return
@@ -49,7 +49,7 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 
 	// Fall back to legacy Match.PaipuJSON, but only for canonical match UUIDs.
 	if _, err := uuid.Parse(matchID); err == nil {
-		var match models.Match
+		var match storage.Match
 		if err := s.DB.Where("id = ?", matchID).First(&match).Error; err == nil {
 			if match.PaipuJSON != "" {
 				c.Data(http.StatusOK, "application/json", []byte(match.PaipuJSON))
