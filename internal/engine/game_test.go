@@ -4,9 +4,26 @@ import (
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
+
+// resolveLoneClaim forces interrupt resolution when a single test-submitted
+// claim would otherwise be left queued. After a discard, the engine only
+// auto-resolves the interrupt window once *every* seat holding a valid
+// interrupt has responded. These tests start from a real (randomly seeded)
+// deal, so another seat occasionally holds a coincidental pon on the discarded
+// tile; the lone claim submitted by the test then never reaches the
+// auto-resolve threshold and the phase stays WAIT_DISCARDS with the claim
+// queued, leaving the meld/flags unset (the source of past flakiness). The
+// submitting seat is always enqueued before that threshold check, so forcing
+// resolution here models the server's wait-window expiry with that seat as the
+// sole claimant — deterministic regardless of the deal.
+func resolveLoneClaim(g *engine.Game) {
+	if g.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+		g.ResolveInterrupts()
+	}
+}
 
 func TestNewGame_ClassicDefault(t *testing.T) {
 	r := &rules.HometownRuleset{}
@@ -131,8 +148,7 @@ func TestDirectedMelds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to interrupt: %v", err)
 	}
-
-	// ResolveInterrupts called automatically when all expected responses are in
+	resolveLoneClaim(g)
 
 	melds := g.State.Players[southSeat].OpenMelds
 	if len(melds) != 1 {
@@ -154,6 +170,16 @@ func TestDirectedMelds(t *testing.T) {
 func TestDeadWallKanDraw(t *testing.T) {
 	r := &rules.HometownRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+	// Pin the deal so the post-kong board state is deterministic. This test makes
+	// several EXACT assertions below — hand size, wall-count drop (1-2), active
+	// player, and phase — and every one of them depends on the dead-wall
+	// supplement tile: a flower supplement auto-reveals and chains extra draws
+	// (breaking the wall-count bound), and a supplement that completes the hand
+	// would end the round (breaking the active-player/phase checks). A fixed seed
+	// makes the supplement a plain, non-winning tile so all four checks hold.
+	// (If a future change to tile definitions shifts this deal, the test fails
+	// loudly with a clear message rather than flaking — re-pin to a clean seed.)
+	g.SetWallSeed(engine.SeedFromUint64(1))
 	g.Start()
 
 	activePlayer := g.State.ActivePlayer
@@ -190,9 +216,7 @@ func TestDeadWallKanDraw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to interrupt Kan: %v", err)
 	}
-
-	// ResolveInterrupts is called automatically inside handleInterruptAction
-	// when all expected responses are received (only south has valid actions).
+	resolveLoneClaim(g)
 
 	// Verify Melds
 	if len(southPlayer.OpenMelds) != 1 {
@@ -319,6 +343,7 @@ func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("direct kan failed: %v", err)
 	}
+	resolveLoneClaim(g)
 
 	if !south.HasBuddingDirectKong {
 		t.Errorf("expected HasBuddingDirectKong=true after direct kong")
