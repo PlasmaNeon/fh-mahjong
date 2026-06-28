@@ -1,4 +1,4 @@
-import type { SeatLaneDirection, TileLike } from './TableScene'
+import type { SeatLaneDirection, TileLike } from './types'
 
 // Pure (React-free) flight planning for tile motion. Given the previous and
 // current board snapshots, decide which tiles should "fly" and from/to where.
@@ -26,6 +26,9 @@ export type FlyingTileAnimation = {
   fromRect: TileRect
   toRect: TileRect
   isWild: boolean
+  // True for the drawn-back "merge into hand" flight on a tedashi (renders a
+  // face-down back instead of the tile face).
+  asBack?: boolean
 }
 
 export type MotionSnapshot = {
@@ -70,6 +73,27 @@ export type PlanTileFlightsParams = {
   isWildTile: (tile: TileLike) => boolean
   // Monotonic key seed so each produced animation gets a unique React key.
   startKey: number
+  // The id of the live active discard, and whether it was the discarder's
+  // just-drawn tile (tsumogiri). Used only for redacted opponents, where the
+  // discard's real id cannot be tracked back to a fake-id hand tile.
+  activeDiscardId?: number | null
+  activeDiscardFromDrawn?: boolean
+  // Injectable RNG for the random tedashi source slot (deterministic in tests).
+  random?: () => number
+}
+
+// Tile ids in a previous snapshot for a given seat direction + role, in
+// insertion order (so an injected RNG can deterministically pick one).
+function prevTileIdsByRole(
+  snapshot: MotionSnapshot,
+  direction: SeatLaneDirection,
+  role: TileMotionRole,
+): number[] {
+  const ids: number[] = []
+  snapshot.locations.forEach((descriptor, id) => {
+    if (descriptor.direction === direction && descriptor.role === role) ids.push(id)
+  })
+  return ids
 }
 
 export function planTileFlights({
@@ -79,6 +103,9 @@ export function planTileFlights({
   currentHandOrigins,
   isWildTile,
   startKey,
+  activeDiscardId = null,
+  activeDiscardFromDrawn = false,
+  random = Math.random,
 }: PlanTileFlightsParams): FlyingTileAnimation[] {
   const animations: FlyingTileAnimation[] = []
   let key = startKey
@@ -97,14 +124,50 @@ export function planTileFlights({
       if (!shouldAnimateTileTransfer(previousTile.role, currentTile.role)) return
       fromRect = previousSnapshot.rects.get(tileId)
     } else if (currentTile.role === 'discard') {
-      // Newly revealed discard from a concealed (opponent) hand: there is no
-      // tracked source tile, so fly from the seat's hand region. Prefer the
-      // pre-discard hand position from the previous snapshot.
-      const origin =
-        previousSnapshot.handOrigins.get(currentTile.direction) ??
-        currentHandOrigins.get(currentTile.direction)
-      if (origin) {
-        fromRect = centerRectOn(origin, toRect)
+      const dir = currentTile.direction
+      const isActive = activeDiscardId != null && tileIdsEqual(tileId, activeDiscardId)
+
+      if (isActive && activeDiscardFromDrawn) {
+        // Tsumogiri: fly the discard straight from the separated drawn slot.
+        const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+        if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
+      } else if (isActive) {
+        // Tedashi: fly the discard from a RANDOM concealed hand slot, and slide
+        // the drawn back into the hand (the "tsumo-hai fills the gap").
+        const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
+        if (handIds.length > 0) {
+          const pick = handIds[Math.floor(random() * handIds.length)]
+          fromRect = previousSnapshot.rects.get(pick)
+        }
+        const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+        if (drawnId != null) {
+          const mergeFrom = previousSnapshot.rects.get(drawnId)
+          const mergeTo = currentRects.get(drawnId) // drawn tile's new in-rail rect
+          const drawnTileObj = previousSnapshot.locations.get(drawnId)?.tile
+          if (mergeFrom && mergeTo && drawnTileObj) {
+            const mergeDist = Math.hypot(mergeTo.left - mergeFrom.left, mergeTo.top - mergeFrom.top)
+            if (mergeDist >= MIN_TRAVEL_DISTANCE) {
+              key += 1
+              animations.push({
+                key,
+                tile: drawnTileObj,
+                direction: dir,
+                fromRect: mergeFrom,
+                toRect: mergeTo,
+                isWild: false,
+                asBack: true,
+              })
+            }
+          }
+        }
+      }
+
+      if (!fromRect) {
+        // Fallback (no flag, or rects unavailable): existing generic-anchor behavior.
+        const origin =
+          previousSnapshot.handOrigins.get(dir) ??
+          currentHandOrigins.get(dir)
+        if (origin) fromRect = centerRectOn(origin, toRect)
       }
     }
 
