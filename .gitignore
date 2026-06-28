@@ -2,7 +2,6 @@
 bin/
 tmp/
 /server
-.DS_Store
 
 # Go
 *.exe
@@ -48,6 +47,3 @@ mlflow.db
 mlflow.db-*
 
 .superpowers/
-
-# stray go build output
-/server
