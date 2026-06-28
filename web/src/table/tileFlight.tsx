@@ -48,7 +48,7 @@ function FloatingTile({
   animation: FlyingTileAnimation
   onComplete: () => void
 }) {
-  const svgName = getTileSvgName(animation.tile)
+  const svgName = animation.asBack ? 'back.svg' : getTileSvgName(animation.tile)
   const rotation = getTileRotation(animation.direction)
 
   return createPortal(
@@ -97,7 +97,7 @@ function FloatingTile({
           >
             <img
               src={`/Regular_shortnames/${svgName}`}
-              alt={getTileName(animation.tile)}
+              alt={animation.asBack ? 'tile back' : getTileName(animation.tile)}
               style={{
                 width: '85%',
                 height: '85%',
@@ -126,6 +126,8 @@ type UseTileFlightParams = {
   seatViews: SeatView[]
   isWildTile: (tile: TileLike) => boolean
   tableRef: RefObject<HTMLElement | null>
+  activeDiscardId?: number | null
+  activeDiscardFromDrawn?: boolean
 }
 
 type UseTileFlightResult = {
@@ -140,6 +142,8 @@ export function useTileFlight({
   seatViews,
   isWildTile,
   tableRef,
+  activeDiscardId = null,
+  activeDiscardFromDrawn = false,
 }: UseTileFlightParams): UseTileFlightResult {
   const previousSnapshotRef = useRef<MotionSnapshot | null>(null)
   const animationKeyRef = useRef(0)
@@ -196,6 +200,8 @@ export function useTileFlight({
         currentHandOrigins,
         isWildTile,
         startKey: animationKeyRef.current,
+        activeDiscardId,
+        activeDiscardFromDrawn,
       })
 
       if (nextAnimations.length > 0) {
@@ -209,7 +215,7 @@ export function useTileFlight({
       rects: currentRects,
       handOrigins: currentHandOrigins,
     }
-  }, [isWildTile, seatViews, tableRef])
+  }, [isWildTile, seatViews, tableRef, activeDiscardId, activeDiscardFromDrawn])
 
   const hiddenTileIds = new Set(flyingTiles.map((animation) => animation.tile.id))
 

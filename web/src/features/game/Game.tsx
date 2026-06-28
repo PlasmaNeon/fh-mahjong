@@ -443,6 +443,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}
+                        activeDiscardId={gameState.activeDiscard?.id ?? null}
+                        activeDiscardFromDrawn={gameState.activeDiscardFromDrawn ?? false}
                     />
                 </div>
             </div>

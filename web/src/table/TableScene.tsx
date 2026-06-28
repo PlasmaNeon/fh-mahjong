@@ -42,6 +42,8 @@ type TableBoardProps = {
   isWildTile?: (tile: TileLike) => boolean
   animateDiscardTileIds?: Set<number>
   callableDiscard?: { seat: number; tileId: number } | null
+  activeDiscardId?: number | null
+  activeDiscardFromDrawn?: boolean
 }
 
 const WIND_KANJI = ['', '東', '南', '西', '北']
@@ -64,6 +66,8 @@ export function TableBoard({
   isWildTile = () => false,
   animateDiscardTileIds,
   callableDiscard = null,
+  activeDiscardId = null,
+  activeDiscardFromDrawn = false,
 }: TableBoardProps) {
   const tableRef = useRef<HTMLDivElement | null>(null)
   const seatViews = useMemo(() => players.map((player) => ({
@@ -71,7 +75,13 @@ export function TableBoard({
     direction: getSeatDirection(player.seat, viewSeat),
   })), [players, viewSeat])
 
-  const { hiddenTileIds, flights } = useTileFlight({ seatViews, isWildTile, tableRef })
+  const { hiddenTileIds, flights } = useTileFlight({
+    seatViews,
+    isWildTile,
+    tableRef,
+    activeDiscardId,
+    activeDiscardFromDrawn,
+  })
 
   return (
     <div className="mahjong-table" ref={tableRef}>
