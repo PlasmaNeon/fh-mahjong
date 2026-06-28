@@ -1,22 +1,54 @@
 package storage
 
 import (
+	"crypto/rand"
+	"math/big"
 	"time"
 
 	"gorm.io/gorm"
 )
 
-// User represents a player account in the system
+// User represents a player account. Email is the login identity; Username is a
+// (non-unique) display name shown at the table.
 type User struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	Username     string    `gorm:"uniqueIndex;not null;size:255" json:"username"`
-	PasswordHash string    `gorm:"not null" json:"-"`          // Never serialize to JSON
-	Rating       int       `gorm:"default:1500" json:"rating"` // Elo rating
+	ID           uint      `gorm:"primaryKey;autoIncrement:false" json:"id"` // random sparse id, app-generated
+	Email        string    `gorm:"uniqueIndex;not null;size:255" json:"email"`
+	Username     string    `gorm:"not null;size:255" json:"username"` // display name (no longer unique)
+	PasswordHash string    `gorm:"not null" json:"-"`
+	Rating       int       `gorm:"default:1500" json:"rating"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 
-	// Relationships
 	Matches []MatchPlayer `gorm:"foreignKey:UserID" json:"-"`
+}
+
+const (
+	userIDMin  = 10000
+	userIDSpan = 90000 // 99999 - 10000 + 1
+)
+
+// generateUserID returns a cryptographically-random id in [10000, 99999]. The
+// range is kept well under 2^53 so the id round-trips exactly through the JWT
+// `sub` claim, which is decoded as a float64.
+func generateUserID() (uint, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(userIDSpan))
+	if err != nil {
+		return 0, err
+	}
+	return uint(n.Int64()) + userIDMin, nil
+}
+
+// BeforeCreate assigns a random sparse id when one isn't already set, so users
+// get non-sequential, unguessable ids instead of an auto-increment sequence.
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.ID == 0 {
+		id, err := generateUserID()
+		if err != nil {
+			return err
+		}
+		u.ID = id
+	}
+	return nil
 }
 
 // Match represents a single game of Mahjong
