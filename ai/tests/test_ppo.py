@@ -735,13 +735,28 @@ def test_ppo_config_grp_defaults():
 def test_grp_match_rewards_terminated_vs_truncated():
     from fh_mahjong_ai.ppo import _grp_match_rewards
     g = [0.0, 0.25, 0.5]  # 3 learner decisions
-    # terminated: non-final = consecutive g-diffs; final = realized - g_last
-    assert _grp_match_rewards(g, realized=1.0, truncated=False) == [0.25, 0.25, 0.5]
+    # gamma=1: non-final = consecutive g-diffs; final = realized - g_last
+    assert _grp_match_rewards(g, realized=1.0, truncated=False, gamma=1.0) == [0.25, 0.25, 0.5]
     # truncated: final = 0.0 (no fabricated realized placement from a partial game)
-    assert _grp_match_rewards(g, realized=1.0, truncated=True) == [0.25, 0.25, 0.0]
+    assert _grp_match_rewards(g, realized=1.0, truncated=True, gamma=1.0) == [0.25, 0.25, 0.0]
     # single-decision match
-    assert _grp_match_rewards([0.3], realized=1.0, truncated=False) == [0.7]
-    assert _grp_match_rewards([0.3], realized=1.0, truncated=True) == [0.0]
+    assert _grp_match_rewards([0.3], realized=1.0, truncated=False, gamma=1.0) == [0.7]
+    assert _grp_match_rewards([0.3], realized=1.0, truncated=True, gamma=1.0) == [0.0]
+
+
+def test_grp_match_rewards_discount_correct():
+    # gamma-correct potential shaping: non-final r_k = gamma*g_{k+1} - g_k
+    from fh_mahjong_ai.ppo import _grp_match_rewards
+    g = [0.0, 0.25, 0.5]
+    out = _grp_match_rewards(g, realized=1.0, truncated=False, gamma=0.5)
+    np.testing.assert_allclose(out, [0.5 * 0.25 - 0.0, 0.5 * 0.5 - 0.25, 1.0 - 0.5], rtol=1e-6)
+    # the discounted return telescopes to gamma^(n-1)*realized - g_0
+    gamma = 0.9
+    g2 = [0.1, -0.2, 0.3, 0.4]
+    rs = _grp_match_rewards(g2, realized=1.0, truncated=False, gamma=gamma)
+    disc_return = sum((gamma ** k) * r for k, r in enumerate(rs))
+    expected = (gamma ** (len(g2) - 1)) * 1.0 - g2[0]
+    np.testing.assert_allclose(disc_return, expected, rtol=1e-6)
 
 
 def test_collect_rollouts_grp_none_matches_score_reward():
@@ -764,7 +779,8 @@ def test_collect_rollouts_grp_reward_is_placement_delta():
                        scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
     learner = PolicyValueNet(env_cfg, mcfg)
     frozen = PolicyValueNet(env_cfg, mcfg)
-    cfg = PPOConfig(matches_per_iter=1, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    # gamma=1 so the potential shaping reduces to plain g_{t+1}-g_t (= 0.25 here)
+    cfg = PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic", max_steps_per_episode=64, device="cpu")
     grp = _StubGRP(step=0.25)
     batch = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
     # learner decisions in one match -> non-terminal rewards equal consecutive GRP diffs (0.25 each),

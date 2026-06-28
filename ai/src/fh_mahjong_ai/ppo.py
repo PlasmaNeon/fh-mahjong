@@ -210,17 +210,22 @@ def _seat_step_reward(step_rewards, seat: int) -> float:
     return 0.0
 
 
-def _grp_match_rewards(match_g, realized, truncated):
-    """Per-decision GRP placement-delta rewards for one match: `g_{k+1} - g_k` for
-    each non-final learner decision; the final decision gets `realized - g_last` at
-    a TRUE match end, or `0.0` on a TRUNCATION. A step-limit truncation has no final
-    standings, so we must not fabricate a realized placement from the partial net —
-    the `g` telescoping already bootstraps the return to the GRP value at the cut."""
+def _grp_match_rewards(match_g, realized, truncated, gamma):
+    """Per-decision GRP placement rewards for one match, as discount-correct
+    potential-based shaping (Ng et al.) with potential Φ = GRP placement value:
+    `gamma * g_{k+1} - g_k` for each non-final learner decision; the final decision
+    gets `realized - g_last` at a TRUE match end (terminal potential = 0), or `0.0`
+    on a TRUNCATION (no final standings — don't fabricate a realized placement).
+
+    The `gamma` factor is what makes the GAE-discounted return telescope to
+    `gamma^(n-1) * realized - g_0` for ANY gamma; the plain `g_{k+1} - g_k` form
+    only telescopes at gamma=1 and would otherwise leave residual intermediate
+    GRP terms in the return."""
     n = len(match_g)
     out = []
     for k in range(n):
         if k + 1 < n:
-            out.append(float(match_g[k + 1] - match_g[k]))
+            out.append(float(gamma * match_g[k + 1] - match_g[k]))
         elif truncated:
             out.append(0.0)
         else:
@@ -332,7 +337,7 @@ def collect_rollouts(
                         if not is_trunc:
                             realized = float(placement_shaped_returns(
                                 cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
-                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, is_trunc)):
+                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, is_trunc, config.gamma)):
                             rewards_l[idx] = r
                     break
                 obs = step.observation
