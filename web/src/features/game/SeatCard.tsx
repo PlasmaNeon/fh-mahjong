@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { game } from '../proto/game';
-import { Button, Note } from '../theme';
+import { game } from '../../proto/game';
+import { Button, Note } from '../../theme';
 
 type SeatConfig = game.ISeatConfig;
 type Difficulty = game.Difficulty;

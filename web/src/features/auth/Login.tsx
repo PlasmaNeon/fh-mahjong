@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSocket } from '../contexts/SocketContext';
-import { getApiUrl } from '../config';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Field, Note } from '../theme';
+import { useSocket } from '../../contexts/SocketContext';
+import { getApiUrl } from '../../config';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Field, Note } from '../../theme';
 
 export default function Login() {
     const [username, setUsername] = useState('');

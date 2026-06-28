@@ -1,9 +1,9 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSocket } from '../contexts/SocketContext';
-import { useGameState } from '../contexts/GameContext';
-import { getApiUrl } from '../config';
+import { useSocket } from '../../contexts/SocketContext';
+import { useGameState } from '../../contexts/GameContext';
+import { getApiUrl } from '../../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import {
     buildRejoinLink,
@@ -15,8 +15,8 @@ import {
 } from './rejoinMatch';
 import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
-import { game } from '../proto/game';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../theme';
+import { game } from '../../proto/game';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;

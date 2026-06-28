@@ -1,4 +1,4 @@
-import { ActionType, MeldDirection, Suit } from '../proto/game.ts'
+import { ActionType, MeldDirection, Suit } from '../../proto/game.ts'
 import {
   TILE_LIBRARY as SHARED_TILE_LIBRARY,
   formatHand as sharedFormatHand,
@@ -10,7 +10,7 @@ import {
   type ParseMessages,
   type TileValue as SharedTileValue,
   type TileDraft as SharedTileDraft,
-} from '../utils/tileModel'
+} from '../../utils/tileModel'
 
 export type CalcTileValue = SharedTileValue
 export type CalcTileDraft = SharedTileDraft

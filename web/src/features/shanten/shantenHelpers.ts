@@ -11,7 +11,7 @@ import {
   type ParseMessages,
   type TileValue as SharedTileValue,
   type TileDraft as SharedTileDraft,
-} from '../utils/tileModel'
+} from '../../utils/tileModel'
 
 export type TileValue = SharedTileValue
 export type TileDraft = SharedTileDraft

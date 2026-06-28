@@ -1,14 +1,14 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getApiUrl } from '../config'
-import { preloadAllTileSvgs } from '../utils/tileUtils'
-import { useGameStageLayout } from '../hooks/useGameStageLayout'
+import { getApiUrl } from '../../config'
+import { preloadAllTileSvgs } from '../../utils/tileUtils'
+import { useGameStageLayout } from '../../hooks/useGameStageLayout'
 import type { Paipu } from './replayTypes'
 import { tileObjectFromId } from './replayTypes'
 import { ReplayEngine, ReplayState } from './replayEngine'
-import { TableBoard, TableRoundResultOverlay } from '../table/TableScene'
-import { LoadingScreen } from '../theme'
+import { TableBoard, TableRoundResultOverlay } from '../../table/TableScene'
+import { LoadingScreen } from '../../theme'
 
 /**
  * Compute calledDirection from seat layout:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getApiUrl } from '../config'
-import { getTileName, getTileSvgName } from '../utils/tileUtils'
+import { getApiUrl } from '../../config'
+import { getTileName, getTileSvgName } from '../../utils/tileUtils'
 import {
   countTiles,
   createDraft,
