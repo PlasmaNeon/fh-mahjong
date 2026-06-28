@@ -18,13 +18,8 @@ RUN go mod download
 
 # Copy the source code
 COPY cmd/ cmd/
-COPY api/ api/
-COPY bot/ bot/
-COPY core/ core/
-COPY models/ models/
+COPY internal/ internal/
 COPY proto/ proto/
-COPY rules/ rules/
-COPY rlenv/ rlenv/
 COPY web/ web/
 
 # Build the Go binary

@@ -18,17 +18,17 @@ import (
 	"unsafe"
 
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/rlenv"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"google.golang.org/protobuf/proto"
 )
 
 var (
-	// envMu only protects the handle table. Individual *rlenv.Env instances are
+	// envMu only protects the handle table. Individual *rl.Env instances are
 	// not safe for concurrent Reset/Step/Close calls; foreign callers must
 	// serialize operations per handle.
 	envMu      sync.Mutex
 	nextHandle uint64 = 1
-	envs              = make(map[uint64]*rlenv.Env)
+	envs              = make(map[uint64]*rl.Env)
 )
 
 func main() {}
@@ -47,7 +47,7 @@ func FHEnvNew(configPtr *C.char, configLen C.int) C.uint64_t {
 
 	handle := nextHandle
 	nextHandle++
-	envs[handle] = rlenv.New(config)
+	envs[handle] = rl.New(config)
 	return C.uint64_t(handle)
 }
 
@@ -130,7 +130,7 @@ func FHGenerateHeuristicTrajectory(requestPtr *C.char, requestLen C.int) C.FHByt
 		}
 	}
 
-	env := rlenv.New(nil)
+	env := rl.New(nil)
 	response, err := env.GenerateHeuristicTrajectory(request)
 	if err != nil {
 		return errorResult(err)
@@ -145,7 +145,7 @@ func FHFree(ptr unsafe.Pointer) {
 	}
 }
 
-func lookupEnv(handle uint64) (*rlenv.Env, error) {
+func lookupEnv(handle uint64) (*rl.Env, error) {
 	envMu.Lock()
 	defer envMu.Unlock()
 

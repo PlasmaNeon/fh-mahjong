@@ -10,7 +10,7 @@ This directory contains the Python-side RL stack. Go remains the authoritative s
 
 - **pyproject.toml** — Python package metadata and dependencies for the RL stack.
 - **src/fh_mahjong_ai/config.py** — Dataclass configs for environment, model, training, advantage-weighted BC, discrete IQL, offline Q-learning, and self-play.
-- **src/fh_mahjong_ai/action_catalog.py** — Python labels and family helpers for the Go bridge's fixed 204-action catalog, using the same backend tile-face order as `rlenv/action.go`.
+- **src/fh_mahjong_ai/action_catalog.py** — Python labels and family helpers for the Go bridge's fixed 204-action catalog, using the same backend tile-face order as `internal/rl/action.go`.
 - **src/fh_mahjong_ai/mlflow_tracking.py** — Shared MLflow setup/logging helpers for training and inference/evaluation scripts.
   - Metric keys are sanitized before logging so nested report bucket names remain accepted by MLflow.
 - **src/fh_mahjong_ai/checkpoint_manifest.py** — Loader/resolver for tracked best-checkpoint metadata in `ai/checkpoints/best-checkpoints.json`; binary checkpoint files stay outside git. Serving can resolve the classic current checkpoint with `current` and the Chongci current checkpoint with `current_chongci`.

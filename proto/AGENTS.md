@@ -53,4 +53,4 @@ protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 
 - Proto enum names (CHII, PON, KAN) are kept as-is in generated code. Use chii/pon/kan only in comments and docs.
 - `--null-semantics` is required for JS bindings so `optional` proto3 fields decode as `null` when unset (important for `drawn_tile_id` which can be `0`).
-- Imported by: `core/`, `rules/`, `api/`, `cmd/`, `rlenv/`, `web/src/proto/`, `ai/src/fh_mahjong_ai/generated/`.
+- Imported by: `internal/engine/`, `internal/rules/`, `internal/api/`, `cmd/`, `internal/rl/`, `web/src/proto/`, `ai/src/fh_mahjong_ai/generated/`.

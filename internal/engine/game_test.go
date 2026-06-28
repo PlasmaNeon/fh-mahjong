@@ -1,0 +1,630 @@
+package engine_test
+
+import (
+	"testing"
+
+	"github.com/plasma/fh-mahjong/internal/engine"
+	pb "github.com/plasma/fh-mahjong/proto"
+	"github.com/plasma/fh-mahjong/internal/rules"
+)
+
+func TestNewGame_ClassicDefault(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-classic", r, engine.MatchOptions{})
+
+	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("default MatchMode = %v, want CLASSIC", got)
+	}
+	if g.State.ChongciConfig != nil {
+		t.Fatalf("classic-mode ChongciConfig should be nil, got %+v", g.State.ChongciConfig)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 0 {
+			t.Fatalf("classic seat %d Score = %d, want 0", i, p.Score)
+		}
+	}
+}
+
+func TestGameInitialization(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+
+	if g.State.Phase != pb.GamePhase_PHASE_INIT {
+		t.Errorf("Expected PHASE_INIT, got %v", g.State.Phase)
+	}
+	if len(g.State.Players) != 4 {
+		t.Errorf("Expected 4 players, got %d", len(g.State.Players))
+	}
+}
+
+func TestGameStartAndDeal(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+
+	err := g.Start()
+	if err != nil {
+		t.Fatalf("Failed to start game: %v", err)
+	}
+
+	if g.State.Phase != pb.GamePhase_PHASE_PLAYER_TURN {
+		t.Errorf("Expected PHASE_PLAYER_TURN, got %v", g.State.Phase)
+	}
+
+	dealer := g.State.ActivePlayer
+	for i := 0; i < 4; i++ {
+		// Dealer (East) draws a tile on turn start, so dealer has 14
+		expectedSize := uint32(13)
+		if uint32(i) == dealer {
+			expectedSize = 14
+		}
+		if g.State.Players[i].HandSize != expectedSize {
+			t.Errorf("Player %d expected hand size %d, got %d", i, expectedSize, g.State.Players[i].HandSize)
+		}
+	}
+}
+
+func TestDiscardAction(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	playerHand := g.State.Players[activePlayer].ClosedHand
+	discardTile := playerHand[0] // pick the first tile to discard
+
+	// Inject a matching pair into South's hand so the game recognizes a VALID PONG interrupt and enters PHASE_WAIT_DISCARDS
+	southSeat := (activePlayer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+
+	action := &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}
+
+	err := g.ProcessPlayerAction(activePlayer, action)
+	if err != nil {
+		t.Fatalf("Failed to process discard: %v", err)
+	}
+
+	if g.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		t.Errorf("Expected PHASE_WAIT_DISCARDS after discard, got %v", g.State.Phase)
+	}
+
+	if len(g.State.Players[activePlayer].Discards) != 1 {
+		t.Errorf("Expected player %d to have 1 discard, got %d", activePlayer, len(g.State.Players[activePlayer].Discards))
+	}
+}
+
+func TestDirectedMelds(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	playerHand := g.State.Players[activePlayer].ClosedHand
+	discardTile := playerHand[0]
+
+	// Inject a pair into next player's hand BEFORE discarding so GetValidInterrupts sees the Pon
+	southSeat := (activePlayer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+
+	err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	})
+	if err != nil {
+		t.Fatalf("Failed to discard: %v", err)
+	}
+
+	if g.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		t.Fatalf("Expected PHASE_WAIT_DISCARDS after discard with valid interrupts, got %v", g.State.Phase)
+	}
+
+	err = g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_PON,
+		MeldTiles: []*pb.Tile{clone1, clone2},
+	})
+	if err != nil {
+		t.Fatalf("Failed to interrupt: %v", err)
+	}
+
+	// ResolveInterrupts called automatically when all expected responses are in
+
+	melds := g.State.Players[southSeat].OpenMelds
+	if len(melds) != 1 {
+		t.Fatalf("Expected 1 open meld, got %d", len(melds))
+	}
+
+	meld := melds[0]
+	// Direction = (discarder - claimer + 4) % 4
+	expectedDir := pb.MeldDirection((activePlayer - southSeat + 4) % 4)
+	if meld.CalledDirection != expectedDir {
+		t.Errorf("Expected direction %v, got %v", expectedDir, meld.CalledDirection)
+	}
+
+	if meld.CalledTileId != discardTile.Id {
+		t.Errorf("Expected called tile ID %d, got %d", discardTile.Id, meld.CalledTileId)
+	}
+}
+
+func TestDeadWallKanDraw(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	playerHand := g.State.Players[activePlayer].ClosedHand
+	discardTile := playerHand[0]
+
+	southSeat := (activePlayer + 1) % 4
+	// South MUST already hold 3 matching tiles to trigger the waiting window for a valid Kan.
+	clone1 := &pb.Tile{Id: discardTile.Id + 100, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 200, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone3 := &pb.Tile{Id: discardTile.Id + 300, Suit: discardTile.Suit, Value: discardTile.Value}
+
+	southPlayer := g.State.Players[southSeat]
+	southPlayer.ClosedHand = append(southPlayer.ClosedHand, clone1, clone2, clone3)
+	initialHandSize := len(southPlayer.ClosedHand)
+	initialWallCount := g.State.WallCount
+
+	// Player 0 discards a tile
+	err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	})
+	if err != nil {
+		t.Fatalf("Failed to discard: %v", err)
+	}
+	// South has already had the triplet injected before the discard.
+	// Proceed directly to the Kan call.
+
+	// South calls Kan on the discard
+	err = g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: []*pb.Tile{clone1, clone2, clone3},
+	})
+	if err != nil {
+		t.Fatalf("Failed to interrupt Kan: %v", err)
+	}
+
+	// ResolveInterrupts is called automatically inside handleInterruptAction
+	// when all expected responses are received (only south has valid actions).
+
+	// Verify Melds
+	if len(southPlayer.OpenMelds) != 1 {
+		t.Fatalf("Expected 1 open meld for South player")
+	}
+	if southPlayer.OpenMelds[0].Type != pb.ActionType_ACTION_KAN {
+		t.Errorf("Expected MELD type KAN")
+	}
+
+	// Verify Dead Wall Draw functionality
+	// Hand size should have decreased by 3 (the meld tiles removed)
+	// and increased by 1 (the dead wall draw). Total: initial - 2
+	expectedHandSize := initialHandSize - 2
+	if len(southPlayer.ClosedHand) != expectedHandSize {
+		t.Errorf("Expected hand size %d, got %d", expectedHandSize, len(southPlayer.ClosedHand))
+	}
+
+	// Wall count drops by at least 1 for the dead-wall draw. It may drop by 2
+	// if the supplement tile is a non-wild flower and auto-reveals immediately.
+	if g.State.WallCount > initialWallCount-1 || g.State.WallCount < initialWallCount-2 {
+		t.Errorf("Expected wall count to drop by 1 or 2 from %d, got %d", initialWallCount, g.State.WallCount)
+	}
+
+	// It should now be South player's turn to discard
+	if g.State.ActivePlayer != southSeat {
+		t.Errorf("Expected active player %d, got %d", southSeat, g.State.ActivePlayer)
+	}
+	if g.State.Phase != pb.GamePhase_PHASE_PLAYER_TURN {
+		t.Errorf("Expected phase PHASE_PLAYER_TURN after Kan, got %v", g.State.Phase)
+	}
+}
+
+// TestRiskyKongUpgrade_BuddingAndAddedTile verifies that upgrading an open pon
+// to a kong (加杠 / risky kong) marks the budding bonus, optimistically marks the
+// blooming bonus from the dead-wall draw, records the added tile for UI stacking,
+// and that the budding bonus persists across a (non-winning) discard while the
+// blooming bonus is cleared.
+func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-risky-kong", r, engine.MatchOptions{})
+	g.Start()
+
+	seat := g.State.ActivePlayer
+	player := g.State.Players[seat]
+
+	// Existing open pon (one tile called from another player) of 8p, plus the 4th
+	// 8p still in the closed hand to upgrade with.
+	suit, value := pb.Suit_SUIT_PIN, uint32(8)
+	called := &pb.Tile{Id: 9003, Suit: suit, Value: value}
+	added := &pb.Tile{Id: 9004, Suit: suit, Value: value}
+	player.OpenMelds = append(player.OpenMelds, &pb.Meld{
+		Type:            pb.ActionType_ACTION_PON,
+		Tiles:           []*pb.Tile{{Id: 9001, Suit: suit, Value: value}, {Id: 9002, Suit: suit, Value: value}, called},
+		CalledDirection: pb.MeldDirection(1),
+		CalledTileId:    called.Id,
+	})
+	player.ClosedHand = append(player.ClosedHand, added)
+
+	if err := g.ProcessPlayerAction(seat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: []*pb.Tile{added},
+	}); err != nil {
+		t.Fatalf("upgrade kan failed: %v", err)
+	}
+
+	meld := player.OpenMelds[0]
+	if meld.Type != pb.ActionType_ACTION_KAN {
+		t.Fatalf("expected pon upgraded to KAN, got %v", meld.Type)
+	}
+	if meld.AddedTileId != added.Id {
+		t.Errorf("expected AddedTileId %d, got %d", added.Id, meld.AddedTileId)
+	}
+	if !player.HasBuddingRiskyKong {
+		t.Errorf("expected HasBuddingRiskyKong=true after upgrade")
+	}
+	if !player.HasBloomingRiskyKong {
+		t.Errorf("expected HasBloomingRiskyKong=true (optimistic) after dead-wall draw")
+	}
+
+	// Discarding (i.e. not winning on the supplementary tile) clears blooming but
+	// keeps budding — the kong still scores when the hand is eventually won.
+	discard := player.ClosedHand[len(player.ClosedHand)-1]
+	if err := g.ProcessPlayerAction(seat, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discard,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if player.HasBloomingRiskyKong {
+		t.Errorf("expected HasBloomingRiskyKong cleared after discard")
+	}
+	if !player.HasBuddingRiskyKong {
+		t.Errorf("expected HasBuddingRiskyKong to persist after discard")
+	}
+}
+
+// TestDirectKong_BuddingPersistsAcrossDiscard verifies that claiming a discard to
+// form a kong (直杠 / direct kong) sets the budding+blooming direct-kong flags, and
+// that a subsequent discard clears blooming while keeping the persistent budding.
+func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-direct-kong", r, engine.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	discardTile := g.State.Players[activePlayer].ClosedHand[0]
+
+	southSeat := (activePlayer + 1) % 4
+	south := g.State.Players[southSeat]
+	c1 := &pb.Tile{Id: discardTile.Id + 100, Suit: discardTile.Suit, Value: discardTile.Value}
+	c2 := &pb.Tile{Id: discardTile.Id + 200, Suit: discardTile.Suit, Value: discardTile.Value}
+	c3 := &pb.Tile{Id: discardTile.Id + 300, Suit: discardTile.Suit, Value: discardTile.Value}
+	south.ClosedHand = append(south.ClosedHand, c1, c2, c3)
+
+	if err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if err := g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type:      pb.ActionType_ACTION_KAN,
+		MeldTiles: []*pb.Tile{c1, c2, c3},
+	}); err != nil {
+		t.Fatalf("direct kan failed: %v", err)
+	}
+
+	if !south.HasBuddingDirectKong {
+		t.Errorf("expected HasBuddingDirectKong=true after direct kong")
+	}
+	if !south.HasBloomingDirectKong {
+		t.Errorf("expected HasBloomingDirectKong=true (optimistic) after dead-wall draw")
+	}
+
+	discard2 := south.ClosedHand[len(south.ClosedHand)-1]
+	if err := g.ProcessPlayerAction(southSeat, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discard2,
+	}); err != nil {
+		t.Fatalf("south discard failed: %v", err)
+	}
+	if south.HasBloomingDirectKong {
+		t.Errorf("expected HasBloomingDirectKong cleared after discard")
+	}
+	if !south.HasBuddingDirectKong {
+		t.Errorf("expected HasBuddingDirectKong to persist after discard")
+	}
+}
+
+func TestSetNextDealer_ConsumedOnce(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-override", r, engine.MatchOptions{})
+	if err := g.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Confirm there is exactly one East-wind seat after Start.
+	eastCount := 0
+	for _, p := range g.State.Players {
+		if p.SeatWind == 1 {
+			eastCount++
+		}
+	}
+	if eastCount != 1 {
+		t.Fatalf("after Start, expected exactly one East seat, got %d", eastCount)
+	}
+
+	// Override the next dealer and re-deal.
+	g.SetNextDealer(2)
+	g.DealForNextHand()
+
+	if g.State.Players[2].SeatWind != 1 {
+		t.Fatalf("after SetNextDealer(2), seat 2 SeatWind = %d, want 1 (East)", g.State.Players[2].SeatWind)
+	}
+
+	// Override is single-shot — running 20 more deals should produce at least one non-2 dealer.
+	sawOther := false
+	for i := 0; i < 20 && !sawOther; i++ {
+		g.DealForNextHand()
+		if g.State.Players[2].SeatWind != 1 {
+			sawOther = true
+		}
+	}
+	if !sawOther {
+		t.Fatalf("override leaked: seat 2 was dealer for 20 consecutive deals")
+	}
+}
+
+func TestNewGame_ChongciInitialization(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	cfg := &pb.ChongciConfig{
+		StartingScore: 2000,
+		BustThreshold: 0,
+		MaxHands:      50,
+	}
+	g := engine.NewGame("test-chongci", r, engine.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: cfg,
+	})
+
+	if g.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("MatchMode = %v, want CHONGCI", g.State.MatchMode)
+	}
+	if g.State.ChongciConfig == nil {
+		t.Fatalf("ChongciConfig is nil")
+	}
+	if got := g.State.ChongciConfig.StartingScore; got != 2000 {
+		t.Fatalf("ChongciConfig.StartingScore = %d, want 2000", got)
+	}
+	for i, p := range g.State.Players {
+		if p.Score != 2000 {
+			t.Fatalf("chongci seat %d Score = %d, want 2000", i, p.Score)
+		}
+	}
+}
+
+func TestComputeMatchEndResult_Standings(t *testing.T) {
+	cases := []struct {
+		name       string
+		scores     [4]int32
+		startScore int32
+		wantRanks  [4]uint32 // indexed by seat
+	}{
+		{
+			name:       "all distinct",
+			scores:     [4]int32{1500, 3000, -200, 1700},
+			startScore: 2000,
+			wantRanks:  [4]uint32{3, 1, 4, 2},
+		},
+		{
+			name:       "two-way tie for first",
+			scores:     [4]int32{3000, 3000, 1000, -1000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 3, 4},
+		},
+		{
+			name:       "four-way tie",
+			scores:     [4]int32{2000, 2000, 2000, 2000},
+			startScore: 2000,
+			wantRanks:  [4]uint32{1, 1, 1, 1},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &rules.HometownRuleset{}
+			g := engine.NewGame("t", r, engine.MatchOptions{
+				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+				ChongciConfig: &pb.ChongciConfig{
+					StartingScore: c.startScore,
+					BustThreshold: 0,
+					MaxHands:      0,
+				},
+			})
+			for i, s := range c.scores {
+				g.State.Players[i].Score = s
+			}
+			result := g.ComputeMatchEndResultForTest("bust")
+			if result == nil || len(result.Standings) != 4 {
+				t.Fatalf("nil or wrong-length standings: %+v", result)
+			}
+			gotRanks := [4]uint32{}
+			for _, s := range result.Standings {
+				gotRanks[s.Seat] = s.Rank
+			}
+			if gotRanks != c.wantRanks {
+				t.Fatalf("ranks = %v, want %v", gotRanks, c.wantRanks)
+			}
+		})
+	}
+}
+
+func TestShouldEndChongciMatch(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+
+	if g.ShouldEndChongciMatchForTest() {
+		t.Fatal("unexpected end on healthy state")
+	}
+
+	g.State.Players[1].Score = 0
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected bust on score == 0 with threshold 0")
+	}
+
+	g.State.Players[1].Score = 1500
+	g.State.HandNum = 3
+	if !g.ShouldEndChongciMatchForTest() {
+		t.Fatal("expected hand_cap on HandNum == MaxHands")
+	}
+}
+
+func TestCurrentDealerSeat(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
+	}
+	if got := g.CurrentDealerSeatForTest(); got != 2 {
+		t.Fatalf("CurrentDealerSeat = %d, want 2", got)
+	}
+}
+
+func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.Players[3].Score = -300
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 1, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult == nil || g.State.MatchEndResult.Reason != "bust" {
+		t.Fatalf("MatchEndResult = %+v, want reason=bust", g.State.MatchEndResult)
+	}
+}
+
+func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      3,
+		},
+	})
+	g.State.HandNum = 3
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = %v, want PHASE_MATCH_END", g.State.Phase)
+	}
+	if g.State.MatchEndResult.Reason != "hand_cap" {
+		t.Fatalf("Reason = %q, want hand_cap", g.State.MatchEndResult.Reason)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 2 {
+		t.Fatalf("nextDealerOverride = %v, want pointer-to-2", got)
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("Phase = PHASE_MATCH_END, expected continue")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}
+
+func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
+		},
+	})
+	for i := uint32(0); i < 4; i++ {
+		g.State.Players[i].SeatWind = ((i + 3) % 4) + 1 // East at seat 1
+	}
+	g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+
+	g.FinalizeRoundEndForTest()
+
+	if got := g.NextDealerOverrideForTest(); got == nil || *got != 1 {
+		t.Fatalf("draw renchan: nextDealerOverride = %v, want pointer-to-1", got)
+	}
+}
+
+func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{})
+	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
+
+	g.FinalizeRoundEndForTest()
+
+	if g.NextDealerOverrideForTest() != nil {
+		t.Fatal("classic mode must not set next-dealer override")
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatal("classic mode must not transition to PHASE_MATCH_END")
+	}
+	if len(g.State.PlayerReady) != 4 {
+		t.Fatalf("classic PlayerReady not armed: %v", g.State.PlayerReady)
+	}
+}
+
+func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("t", r, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 2000, BustThreshold: 0, MaxHands: 50,
+		},
+	})
+	g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	err := g.HandleReadyActionForTest(0)
+	if err == nil {
+		t.Fatal("expected error on ready after match end")
+	}
+}

@@ -26,13 +26,14 @@ This project implements a full-stack Mahjong game with a plugin-based ruleset ar
 ```
 fh-mahjong/
 ├── ai/             Python RL package (training loop, model code, replay buffers, bridge abstraction)
-├── bot/            Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
 ├── proto/          Protobuf schemas (single source of truth)
-├── core/           Game state machine + RuleEngine interface
-├── rlenv/          Deterministic RL environment wrapper, observation encoder, and action catalog
-├── rules/          Fenghua ruleset plugin (scoring, hand eval)
-├── models/         GORM database models (User, Match)
-├── api/            REST API + WebSocket server
+├── internal/
+│   ├── engine/     Game state machine + RuleEngine interface
+│   ├── rules/      Fenghua ruleset plugin (scoring, hand eval)
+│   ├── api/        REST API + WebSocket server
+│   ├── storage/    GORM database models (User, Match)
+│   ├── bot/        Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
+│   └── rl/         Deterministic RL environment wrapper, observation encoder, and action catalog
 ├── cmd/
 │   ├── server/     Production HTTP server entry point
 │   ├── cli/        CLI debugging tool
@@ -52,12 +53,12 @@ fh-mahjong/
 | File | Purpose |
 |------|---------|
 | `proto/game.proto` | Single source of truth for all cross-language data structures |
-| `core/game.go` | `Game` struct — state machine driver for a single match |
-| `core/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
-| `rules/fh.go` | `HometownRuleset` — full Fenghua scoring and hand evaluation |
-| `bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
-| `rlenv/env.go` | Deterministic reset/step wrapper that advances the Go engine to the next RL decision point |
-| `rlenv/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |
+| `internal/engine/game.go` | `Game` struct — state machine driver for a single match |
+| `internal/engine/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
+| `internal/rules/fh.go` | `HometownRuleset` — full Fenghua scoring and hand evaluation |
+| `internal/bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
+| `internal/rl/env.go` | Deterministic reset/step wrapper that advances the Go engine to the next RL decision point |
+| `internal/rl/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |
 | `cmd/rlbridge/main.go` | c-shared bridge exposing protobuf-based `reset`, `step`, and heuristic trajectory export |
 | `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
 | `docs/rules/official-rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
@@ -65,7 +66,7 @@ fh-mahjong/
 
 ## Architecture Principles
 
-1. **Plugin Ruleset**: `core.Game` is ruleset-agnostic. Rulesets implement `RuleEngine` in `rules/`.
+1. **Plugin Ruleset**: `engine.Game` is ruleset-agnostic. Rulesets implement `RuleEngine` in `internal/rules/`. `internal/engine` must never import `internal/rules/`.
 2. **Protobuf-First**: All game state flows as Protobuf between Go backend, TypeScript frontend, and Python AI.
 3. **Double Validation**: Client predicts via WASM; server re-validates every action.
 4. **Phase Lifecycle**: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END.
@@ -142,9 +143,9 @@ Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use 
    ```bash
    protoc --go_out=. --go_opt=paths=source_relative proto/game.proto
    ```
-2. **Interface before implementation**: If new ruleset capabilities are needed, update the `RuleEngine` interface in `core/rules.go` first, then implement in `rules/fh.go`.
-3. **Test everything in the rules package**: Hand evaluation logic in `rules/fh.go` must have a corresponding test case in `rules/fh_test.go`.
-4. **State machine is ruleset-agnostic**: `core/game.go` must never import `rules/`. All ruleset logic flows through the `RuleEngine` interface.
+2. **Interface before implementation**: If new ruleset capabilities are needed, update the `RuleEngine` interface in `internal/engine/rules.go` first, then implement in `internal/rules/fh.go`.
+3. **Test everything in the rules package**: Hand evaluation logic in `internal/rules/fh.go` must have a corresponding test case in `internal/rules/fh_test.go`.
+4. **State machine is ruleset-agnostic**: `internal/engine/game.go` must never import `internal/rules/`. All ruleset logic flows through the `RuleEngine` interface.
 5. **Run tests before marking done**:
    ```bash
    go test ./...
