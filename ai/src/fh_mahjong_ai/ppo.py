@@ -331,8 +331,11 @@ def train_ppo(
     run_eval: bool = True,
     iteration_callback: Optional[Callable[[dict], None]] = None,
 ) -> List[dict]:
-    # Reject invalid pool config up front rather than dividing by zero on the
-    # first snapshot iteration (which would abort an expensive configured run).
+    # Reject invalid pool config up front rather than silently running a different
+    # configuration (anchor-only) or dividing by zero on the first snapshot
+    # iteration — either would waste an expensive configured run.
+    if config.pool_max_size < 1:
+        raise ValueError(f"pool_max_size must be >= 1, got {config.pool_max_size}")
     if config.pool_max_size > 1 and config.pool_snapshot_interval < 1:
         raise ValueError(
             "pool_snapshot_interval must be >= 1 when pool_max_size > 1, "
