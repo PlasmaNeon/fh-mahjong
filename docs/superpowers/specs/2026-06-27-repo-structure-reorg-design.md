@@ -76,10 +76,10 @@ fh-mahjong/
 │   ├── rules/
 │   │   ├── official-rules.md   ← official_rules.md
 │   │   └── rules.md            ← rules.md
-│   ├── technical-design.md     ← technical_design.md
-│   ├── user-guide.md           ← user_guide.md
-│   ├── tasks.md                ← tasks.md
 │   └── rl-papers/  superpowers/   (stay)
+│   # NOTE: technical_design.md, user_guide.md, tasks.md were independently
+│   # removed from main as stale (commit 20c43d7) before PR1 landed, so they
+│   # are NOT relocated — only official_rules.md + rules.md move.
 └── testdata/                       left in place (referenced by tests via path)
 ```
 

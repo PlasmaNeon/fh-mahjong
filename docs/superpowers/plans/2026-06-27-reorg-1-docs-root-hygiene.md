@@ -50,6 +50,11 @@ git commit -m "docs: move Fenghua rules docs into docs/rules/"
 
 ### Task 2: Move remaining root docs into `docs/`
 
+> **Superseded during rebase:** `main` independently removed `technical_design.md`,
+> `user_guide.md`, and `tasks.md` as stale inception docs (commit `20c43d7`)
+> before this PR landed. This task is therefore a no-op — those files no longer
+> exist to move. PR 1 relocates only `official_rules.md` + `rules.md` (Task 1).
+
 **Files:**
 - Move: `technical_design.md` → `docs/technical-design.md`
 - Move: `user_guide.md` → `docs/user-guide.md`
