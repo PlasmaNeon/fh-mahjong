@@ -656,7 +656,7 @@ func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
 
 func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-tsumogiri", r, core.MatchOptions{})
+	g := engine.NewGame("test-tsumogiri", r, engine.MatchOptions{})
 	g.Start()
 
 	dealer := g.State.ActivePlayer
@@ -700,7 +700,7 @@ func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 
 func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
 	r := &rules.HometownRuleset{}
-	g := core.NewGame("test-tedashi", r, core.MatchOptions{})
+	g := engine.NewGame("test-tedashi", r, engine.MatchOptions{})
 	g.Start()
 
 	dealer := g.State.ActivePlayer
