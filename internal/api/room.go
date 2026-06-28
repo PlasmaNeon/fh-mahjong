@@ -70,6 +70,12 @@ type Room struct {
 	botActionDelay time.Duration
 
 	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
+	// obfMapHandNum tracks the hand number the current obfuscation map was
+	// generated for. When a new deal begins, the map is rotated so that real
+	// tile IDs revealed at round end can't be correlated to the fake IDs used
+	// in later rounds. Touched only on the room goroutine (BroadcastState /
+	// SendStateToClient).
+	obfMapHandNum uint32
 
 	ActionQueue      chan ClientAction
 	Shutdown         chan bool
@@ -144,12 +150,6 @@ func WithBotActionDelay(d time.Duration) RoomOption {
 func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 	ruleset := &rules.HometownRuleset{}
 
-	obfMap := make(map[uint32]uint32)
-	fakeIDs := rand.Perm(144)
-	for i := 0; i < 144; i++ {
-		obfMap[uint32(i)] = uint32(fakeIDs[i]) + 1000
-	}
-
 	room := &Room{
 		ID:                 matchID,
 		Hub:                hub,
@@ -157,7 +157,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		SeatOwners:         make(map[uint32]uint),
-		TileObfuscationMap: obfMap,
+		TileObfuscationMap: newTileObfuscationMap(),
 		ActionQueue:        make(chan ClientAction),
 		Shutdown:           make(chan bool),
 		InterruptChan:      make(chan bool, 1),
@@ -757,6 +757,65 @@ func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {
 	return dst
 }
 
+// newTileObfuscationMap returns a fresh random tile-id -> fake-id permutation
+// used to redact opponents' closed hands in production. Fake IDs are offset by
+// 1000 so they never collide with real tile IDs (0-143).
+func newTileObfuscationMap() map[uint32]uint32 {
+	obfMap := make(map[uint32]uint32, 144)
+	fakeIDs := rand.Perm(144)
+	for i := 0; i < 144; i++ {
+		obfMap[uint32(i)] = uint32(fakeIDs[i]) + 1000
+	}
+	return obfMap
+}
+
+// handsRevealed reports whether every player's closed hand should be shown to
+// everyone. Once a round (or the whole match) has ended, opponents' hands are
+// revealed so players can see the result; during play they stay obfuscated.
+func handsRevealed(phase pb.GamePhase) bool {
+	return phase == pb.GamePhase_PHASE_ROUND_END || phase == pb.GamePhase_PHASE_MATCH_END
+}
+
+// rotateObfuscationMapForRound regenerates the obfuscation map when a new deal
+// begins (detected via the hand number changing). Revealing real tiles at round
+// end would otherwise let a client pair the fake IDs it saw mid-round with the
+// real IDs shown at the reveal; a fresh map each round makes that knowledge
+// useless for subsequent rounds. The map stays stable within a round so opponent
+// tiles keep consistent fake IDs across broadcasts (tile-flight relies on this).
+func (r *Room) rotateObfuscationMapForRound(handNum uint32) {
+	if handNum == r.obfMapHandNum {
+		return
+	}
+	r.obfMapHandNum = handNum
+	r.TileObfuscationMap = newTileObfuscationMap()
+}
+
+// redactedStateForSeat clones the master state and obfuscates every closed hand
+// that does not belong to viewerSeat (production anti-cheat). Callers must only
+// use it while hands are hidden — see handsRevealed.
+func (r *Room) redactedStateForSeat(master *pb.GameState, viewerSeat uint32) *pb.GameState {
+	redacted := proto.Clone(master).(*pb.GameState)
+	for _, p := range redacted.Players {
+		if uint32(p.Seat) == viewerSeat {
+			continue
+		}
+		for j, t := range p.ClosedHand {
+			fakeID := r.TileObfuscationMap[t.Id]
+			p.ClosedHand[j] = &pb.Tile{
+				Id:    fakeID,
+				Suit:  pb.Suit_SUIT_UNKNOWN,
+				Value: 0,
+			}
+		}
+		if p.DrawnTileId != nil {
+			fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
+			p.DrawnTileId = &fakeID
+		}
+		p.Shanten = 0
+	}
+	return redacted
+}
+
 // BroadcastState serializes the master GameState Protobuf and sends it to all connected players
 func (r *Room) BroadcastState() []byte {
 	masterState := r.Engine.State
@@ -777,29 +836,19 @@ func (r *Room) BroadcastState() []byte {
 		return nil
 	}
 
+	// Production only: rotate the obfuscation map at the start of each new deal,
+	// and reveal all hands once the round/match has ended. Dev sends the raw
+	// master state in every phase, so its behaviour is unchanged.
+	revealAll := handsRevealed(masterState.Phase)
+	if isProd {
+		r.rotateObfuscationMapForRound(masterState.HandNum)
+	}
+
 	for seatId, client := range r.Seats {
 		var payload []byte
 
-		if isProd {
-			redactedState := proto.Clone(masterState).(*pb.GameState)
-			for _, p := range redactedState.Players {
-				if uint32(p.Seat) != seatId {
-					for j, t := range p.ClosedHand {
-						fakeID := r.TileObfuscationMap[t.Id]
-						p.ClosedHand[j] = &pb.Tile{
-							Id:    fakeID,
-							Suit:  pb.Suit_SUIT_UNKNOWN,
-							Value: 0,
-						}
-					}
-					if p.DrawnTileId != nil {
-						fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
-						p.DrawnTileId = &fakeID
-					}
-					p.Shanten = 0
-				}
-			}
-			payload, _ = proto.Marshal(redactedState)
+		if isProd && !revealAll {
+			payload, _ = proto.Marshal(r.redactedStateForSeat(masterState, seatId))
 		} else {
 			payload = rawPayload
 		}
@@ -865,9 +914,16 @@ func (r *Room) SendStateToClient(client *Client) {
 	var payload []byte
 	var err error
 
+	// Keep the obfuscation map in sync with the current deal here too, so this
+	// reconnect path doesn't depend on a BroadcastState having run first. It's a
+	// no-op within a round (same hand number).
 	if isProd {
-		redactedState := proto.Clone(masterState).(*pb.GameState)
+		r.rotateObfuscationMapForRound(masterState.HandNum)
+	}
 
+	// Production redacts opponents' hands during play; dev and the round/match-end
+	// reveal both send the unredacted master state.
+	if isProd && !handsRevealed(masterState.Phase) {
 		var clientSeat uint32
 		var found bool
 		for seat, c := range r.Seats {
@@ -879,25 +935,12 @@ func (r *Room) SendStateToClient(client *Client) {
 		}
 
 		if found {
-			for _, p := range redactedState.Players {
-				if uint32(p.Seat) != clientSeat {
-					for j, t := range p.ClosedHand {
-						fakeID := r.TileObfuscationMap[t.Id]
-						p.ClosedHand[j] = &pb.Tile{
-							Id:    fakeID,
-							Suit:  pb.Suit_SUIT_UNKNOWN,
-							Value: 0,
-						}
-					}
-					if p.DrawnTileId != nil {
-						fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
-						p.DrawnTileId = &fakeID
-					}
-					p.Shanten = 0
-				}
-			}
+			payload, err = proto.Marshal(r.redactedStateForSeat(masterState, clientSeat))
+		} else {
+			// Unseated viewer (e.g. spectator): no own hand to preserve, so send
+			// the master state as before rather than guessing a seat.
+			payload, err = proto.Marshal(masterState)
 		}
-		payload, err = proto.Marshal(redactedState)
 	} else {
 		payload, err = proto.Marshal(masterState)
 	}
