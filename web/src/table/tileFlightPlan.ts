@@ -136,8 +136,9 @@ export function planTileFlights({
         // the drawn back into the hand (the "tsumo-hai fills the gap").
         const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
         if (handIds.length > 0) {
-          const pick = handIds[Math.floor(random() * handIds.length)]
-          fromRect = previousSnapshot.rects.get(pick)
+          // Clamp guards against an injected RNG returning exactly 1.0 (Math.random is [0,1)).
+          const index = Math.min(handIds.length - 1, Math.floor(random() * handIds.length))
+          fromRect = previousSnapshot.rects.get(handIds[index])
         }
         const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
         if (drawnId != null) {

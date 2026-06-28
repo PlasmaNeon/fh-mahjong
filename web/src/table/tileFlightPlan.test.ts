@@ -111,5 +111,6 @@ describe('planTileFlights — redacted opponent discard', () => {
     })
     expect(animations).toHaveLength(1)
     expect(animations[0].fromRect.left).toBe(10) // tracked real position, not random/merge
+    expect(animations[0].asBack).toBeFalsy() // no merge flight leaked onto the tracked path
   })
 })
