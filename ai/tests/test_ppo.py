@@ -907,3 +907,25 @@ def test_train_ppo_missing_grp_fails_fast(tmp_path):
     with pytest.raises((FileNotFoundError, RuntimeError, ValueError)):
         train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
                   checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_cli_train_ppo_grp(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    init = tmp_path / "anchor.pt"; save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    grp = tmp_path / "grp.pt"; save_checkpoint(grp, GlobalEVNet(env_cfg, mcfg))
+    argv = [
+        "fh-mj-train-ppo", "--init-checkpoint", str(init), "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "1", "--matches-per-iter", "2", "--ppo-epochs", "1", "--minibatch-size", "8",
+        "--match-mode", "classic", "--bridge-kind", "mock", "--max-steps-per-episode", "64", "--no-eval",
+        "--grp-checkpoint", str(grp),
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16", "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert (tmp_path / "ppo" / "iter_001.pt").exists()
