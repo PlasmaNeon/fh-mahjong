@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +42,21 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func normalizeEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// issueToken builds a signed HS256 JWT carrying the user id (sub), display name
+// (username) and an expiry. Used by Login, Register, GuestLogin and UpdateMe.
+func issueToken(id uint, username string, ttl time.Duration) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":      id,
+		"username": username,
+		"exp":      time.Now().Add(ttl).Unix(),
+	})
+	return token.SignedString(jwtSecret)
 }
 
 // Register creates a new user account
@@ -146,14 +162,7 @@ func (h *AuthHandler) GuestLogin(c *gin.Context) {
 	rand.Seed(time.Now().UnixNano())
 	tempUserID := uint(9000000 + rand.Intn(1000000))
 
-	// Generate a standard JWT token for this guest
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":      tempUserID,
-		"username": req.Username,
-		"exp":      time.Now().Add(time.Hour * 24).Unix(),
-	})
-
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := issueToken(tempUserID, req.Username, 24*time.Hour)
 	if err != nil {
 		log.Printf("Failed to sign guest token: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
