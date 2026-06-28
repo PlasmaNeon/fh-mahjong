@@ -95,22 +95,25 @@ describe('planTileFlights — redacted opponent discard', () => {
     expect(animations[0].asBack).toBeFalsy()
   })
 
-  it('suppresses tedashi/tsumogiri on a multi-discard delta (dropped-broadcast resync)', () => {
-    // 'top' has a drawn-slot rect, so a SINGLE tsumogiri discard would fly from
-    // left 60. Here TWO discards appear at once, so the per-seat flag can't be
-    // trusted per older discard and 'top' must fall back to its generic origin.
+  it('suppresses tedashi origin AND the drawn-back merge flight on a multi-discard resync', () => {
+    // 'top' has hand + drawn rects, so a SINGLE tedashi discard would fly from a
+    // random hand slot (10) AND emit an asBack merge flight (drawn 60 -> 40).
+    // With TWO discards in the delta the per-seat flag can't be trusted, so 'top'
+    // falls back to its generic origin and no merge flight is produced.
     const previousSnapshot: MotionSnapshot = {
       locations: new Map<number, TileMotionDescriptor>([
+        [1001, { tile: tile(1001), direction: 'top', role: 'hand' }],
         [1009, { tile: tile(1009), direction: 'top', role: 'drawn' }],
       ]),
-      rects: new Map<number, TileRect>([[1009, rect(60)]]),
+      rects: new Map<number, TileRect>([[1001, rect(10)], [1009, rect(60)]]),
       handOrigins: new Map([['top', { left: 0, top: 0, width: 80, height: 14 }]]),
     }
     const currentLocations = new Map<number, TileMotionDescriptor>([
       [42, { tile: tile(42), direction: 'top', role: 'discard' }],
       [43, { tile: tile(43), direction: 'left', role: 'discard' }],
+      [1009, { tile: tile(1009), direction: 'top', role: 'hand' }], // drawn merged into rail
     ])
-    const currentRects = new Map<number, TileRect>([[42, PILE], [43, PILE]])
+    const currentRects = new Map<number, TileRect>([[42, PILE], [43, PILE], [1009, rect(40)]])
     const animations = planTileFlights({
       previousSnapshot,
       currentLocations,
@@ -118,11 +121,12 @@ describe('planTileFlights — redacted opponent discard', () => {
       currentHandOrigins: new Map(),
       isWildTile: () => false,
       startKey: 0,
-      fromDrawnByDirection: new Map([['top', true]]), // would be tsumogiri if single
+      fromDrawnByDirection: new Map([['top', false]]), // tedashi
+      random: () => 0,
     })
+    expect(animations.every((a) => !a.asBack)).toBe(true) // merge flight suppressed
     const topDiscard = animations.find((a) => a.tile.id === 42)!
-    expect(topDiscard.fromRect.left).toBe(35) // generic anchor, NOT the drawn slot (60)
-    expect(animations.every((a) => !a.asBack)).toBe(true)
+    expect(topDiscard.fromRect.left).toBe(35) // generic anchor, NOT a random hand slot (10)
   })
 
   it('tracked tiles (self) still fly from their real previous position', () => {

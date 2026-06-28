@@ -741,6 +741,10 @@ func TestLastDiscardFromDrawn_Tedashi(t *testing.T) {
 
 	emptyOtherHands(g, dealer)
 
+	// Pre-set true so the assertion proves the tedashi discard OVERWRITES the
+	// marker to false, not merely that it defaults to false.
+	g.State.Players[dealer].LastDiscardFromDrawn = true
+
 	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
 		Type: pb.ActionType_ACTION_DISCARD,
 		Tile: discardTile,
