@@ -21,8 +21,9 @@ type AuthHandler struct {
 }
 
 type RegisterRequest struct {
-	Username string `json:"username" binding:"required,min=3,max=30"`
-	Password string `json:"password" binding:"required,min=8"`
+	Email       string `json:"email" binding:"required,email"`
+	Password    string `json:"password" binding:"required,min=8"`
+	DisplayName string `json:"displayName" binding:"required,min=2,max=30"`
 }
 
 type LoginRequest struct {
@@ -59,47 +60,63 @@ func issueToken(id uint, username string, ttl time.Duration) (string, error) {
 	return token.SignedString(jwtSecret)
 }
 
-// Register creates a new user account
+// Register creates an account keyed by email and auto-logs the user in.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
 	if h.DB == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
 		return
 	}
 
-	// Check if user exists
-	var existingUser storage.User
-	if err := h.DB.Where("username = ?", req.Username).First(&existingUser).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
+	email := normalizeEmail(req.Email)
+
+	var existing storage.User
+	if err := h.DB.Where("email = ?", email).First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
 		return
 	}
 
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 		return
 	}
 
 	user := storage.User{
-		Username:     req.Username,
-		PasswordHash: string(hashedPassword),
-		Rating:       1500, // Starting Elo
+		Email:        email,
+		Username:     req.DisplayName,
+		PasswordHash: string(hashed),
+		Rating:       1500,
 	}
 
-	if err := h.DB.Create(&user).Error; err != nil {
+	// Random ids can (astronomically rarely) collide on the PK; retry a few times,
+	// zeroing the id so BeforeCreate regenerates it.
+	var createErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		user.ID = 0
+		createErr = h.DB.Create(&user).Error
+		if createErr == nil {
+			break
+		}
+	}
+	if createErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
 
-	// Make sure we never return the hash
+	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+	if err != nil {
+		log.Printf("Failed to sign token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
 	user.PasswordHash = ""
-	c.JSON(http.StatusCreated, user)
+	c.JSON(http.StatusCreated, AuthResponse{Token: token, User: user})
 }
 
 // Login authenticates a user and returns a JWT
