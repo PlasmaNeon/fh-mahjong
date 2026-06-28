@@ -428,11 +428,16 @@ def test_cli_train_ppo_writes_history_json_with_eval(tmp_path, monkeypatch, caps
     assert "eval_large_loss_rate" in entry
     for key in ("eval_mean_reward", "eval_mean_reward_ci95", "eval_large_loss_rate"):
         assert np.isfinite(entry[key])
+    # placement is the GRP objective — it must be persisted too
+    assert "eval_mean_placement" in entry
+    assert "eval_mean_placement_ci95" in entry
+    assert np.isfinite(entry["eval_mean_placement"])
 
     # eval metrics must also reach the per-iteration training log
     out = capsys.readouterr().out
     iter_lines = [ln for ln in out.splitlines() if ln.startswith("iter 1:")]
     assert len(iter_lines) == 1
+    assert "eval_mean_placement=" in iter_lines[0]
     assert "eval_mean_reward=" in iter_lines[0]
     assert "eval_ci95=" in iter_lines[0]
 

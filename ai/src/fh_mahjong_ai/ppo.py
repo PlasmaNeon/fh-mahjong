@@ -449,6 +449,10 @@ def train_ppo(
                     metrics["eval_mean_reward"] = report["mean_reward"]
                     metrics["eval_mean_reward_ci95"] = report["mean_reward_ci95"]
                     metrics["eval_large_loss_rate"] = report["large_loss_rate"]
+                    # Placement is the GRP objective — capture it so GRP runs can be
+                    # selected/compared on it, not just on net reward.
+                    metrics["eval_mean_placement"] = report.get("mean_placement")
+                    metrics["eval_mean_placement_ci95"] = report.get("mean_placement_ci95")
                 except Exception as exc:  # eval must not abort training
                     metrics["eval_error"] = str(exc)[:200]
 
@@ -465,6 +469,8 @@ def train_ppo(
                     f"eval_ci95={metrics['eval_mean_reward_ci95']:.4f} "
                     f"eval_large_loss_rate={metrics['eval_large_loss_rate']:.4f}"
                 )
+                if metrics.get("eval_mean_placement") is not None:
+                    line += f" eval_mean_placement={metrics['eval_mean_placement']:.4f}"
             elif "eval_error" in metrics:
                 err = " ".join(str(metrics["eval_error"]).split())
                 line += f" eval_error={err}"
