@@ -406,3 +406,14 @@ def test_episode_placement_ranks_learning_seat():
     val3 = episode_placement(ep, fallback_rewards=np.zeros(4, dtype=np.float32),
                              learning_seat=3, placement_values=pv)
     assert val3 == -1.0
+
+
+def test_episode_placement_includes_reset_reward_in_ranking():
+    # net from steps alone ranks seat 0 LAST; the reset reward lifts it to FIRST,
+    # so placement must rank on the reset-included (true final) net.
+    pv = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
+    ep = [_grp_dummy_transition([0.0, 0.1, 0.2, 0.3])]
+    assert episode_placement(ep, np.zeros(4, dtype=np.float32), 0, pv) == -1.0
+    val = episode_placement(ep, np.zeros(4, dtype=np.float32), 0, pv,
+                            reset_rewards=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+    assert val == 1.0

@@ -261,6 +261,13 @@ def collect_rollouts(
             match_indices: list[int] = []   # rewards_l indices for this match (GRP path)
             match_g: list[float] = []        # GRP placement value at each learner decision
             cum_net = np.zeros(4, dtype=np.float32)  # per-seat cumulative net (telescopes to match net)
+            if grp_model is not None and reset_result is not None:
+                # Include any score change from reset-time autoplay (a hand resolved
+                # before the learner's first decision) so realized_placement ranks on
+                # the TRUE final net, matching the eval placement + net metrics.
+                rr = np.asarray(reset_result.rewards, dtype=np.float32)
+                if rr.size:
+                    cum_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
             while True:
                 seat = int(obs.seat)
                 planes, scalars, mask = _obs_to_tensors(obs, device)

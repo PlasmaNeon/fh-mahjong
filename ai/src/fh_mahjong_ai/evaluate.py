@@ -37,14 +37,15 @@ def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_r
     return total
 
 
-def episode_placement(episode, fallback_rewards, learning_seat, placement_values) -> float:
+def episode_placement(episode, fallback_rewards, learning_seat, placement_values, reset_rewards=None) -> float:
     """The learning seat's placement value (rank) from the episode's per-seat net.
 
-    Placement is computed from the per-seat net WITHOUT the reset reward, matching the
-    training-side realized_placement convention in collect_rollouts (the collector's cum_net
-    also excludes the reset reward); for Chongci the reset reward is ~0 so this is immaterial.
+    Includes the reset reward (score from any reset-time autoplay before the
+    learning seat's first decision) so placement ranks on the TRUE final net —
+    matching both the net `mean_reward` metric and the training-side
+    realized_placement (collect_rollouts seeds cum_net with the reset reward).
     """
-    net = episode_reward_vector(episode, fallback_rewards, num_seats=4)
+    net = episode_reward_vector(episode, fallback_rewards, num_seats=4, reset_rewards=reset_rewards)
     shaped = placement_shaped_returns(np.asarray(net, dtype=np.float32)[None, :], placement_values)
     return float(shaped[0, learning_seat])
 
@@ -503,7 +504,8 @@ def evaluate_policy_online(
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
         placement = episode_placement(episode, rewards, learning_seat,
-                                      (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0))
+                                      (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0),
+                                      reset_rewards=reset_rewards)
         seat_placements.append(placement)
         if reward > 0:
             wins += 1
