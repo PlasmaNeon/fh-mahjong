@@ -417,3 +417,40 @@ def test_episode_placement_includes_reset_reward_in_ranking():
     val = episode_placement(ep, np.zeros(4, dtype=np.float32), 0, pv,
                             reset_rewards=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
     assert val == 1.0
+
+
+def test_truncated_eval_scored_worst_placement(monkeypatch):
+    # A step-limit truncation in eval is scored the WORST placement (matching the
+    # training reward), not excluded. So a policy cannot lift mean_placement — the
+    # gate metric vs the anchor — by driving losing matches into the step limit.
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+    from fh_mahjong_ai.types import StepResult
+    orig_reset = MockMahjongBridge.reset
+    orig_step = MockMahjongBridge.step
+    state = {"steps": 0}
+
+    def patched_reset(self, seed=None):
+        state["steps"] = 0
+        return orig_reset(self, seed=seed)
+
+    def patched_step(self, action_id):
+        res = orig_step(self, action_id)
+        state["steps"] += 1
+        if state["steps"] >= 5:  # truncate every episode well before max_steps
+            return StepResult(observation=res.observation, rewards=res.rewards,
+                              terminated=False, truncated=True, info=res.info)
+        return res
+
+    monkeypatch.setattr(MockMahjongBridge, "reset", patched_reset)
+    monkeypatch.setattr(MockMahjongBridge, "step", patched_step)
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    report = evaluate_online(model=model, episodes=3, seeds=[1, 2, 3],
+                             bridge_kind="mock", device="cpu")
+    assert report["truncation_count"] == 3
+    # placement now scores every completed episode (no censoring): sample == episodes
+    assert report["placement_count"] == report["episodes"] == 3
+    # every truncated episode gets the worst placement -> mean cannot be inflated
+    assert report["mean_placement"] == -1.0
+    assert all(p == -1.0 for p in report["per_episode_placements"])
+    assert report["truncation_rate"] == 1.0
