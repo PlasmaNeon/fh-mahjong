@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/plasma/fh-mahjong/api"
+	"github.com/plasma/fh-mahjong/internal/api"
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	"github.com/plasma/fh-mahjong/internal/storage"
