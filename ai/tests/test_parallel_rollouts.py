@@ -76,6 +76,33 @@ def test_collector_close_joins_workers():
     assert all(not p.is_alive() for p in procs)
 
 
+def test_parallel_grp_matches_sequential():
+    from fh_mahjong_ai.global_ev import GlobalEVNet
+    from fh_mahjong_ai.ppo import load_grp_model
+    import tempfile, os
+    from fh_mahjong_ai.storage import save_checkpoint
+
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = _small_model_cfg()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    grp_net = GlobalEVNet(env_cfg, mcfg)
+    grp_state = {k: v.detach().cpu() for k, v in grp_net.state_dict().items()}
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    grp_net.eval()
+    seq = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=222, grp_model=grp_net)
+
+    collector = ParallelRolloutCollector(env_cfg, mcfg, cfg, num_workers=2, grp_state_dict=grp_state)
+    collector.start()
+    try:
+        par = collector.collect(_cpu_state_dict(learner), [_cpu_state_dict(frozen)], base_seed=222, matches_per_iter=4)
+    finally:
+        collector.close()
+    assert len(par) == len(seq)
+    np.testing.assert_allclose(np.sort(par.rewards), np.sort(seq.rewards), rtol=1e-5)
+
+
 def test_parallel_with_pool_matches_sequential():
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
     mcfg = _small_model_cfg()
