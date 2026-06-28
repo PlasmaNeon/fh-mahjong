@@ -8,7 +8,7 @@ import Table from './pages/Table'
 import Game from './pages/Game'
 import Calc from './features/calc/Calc'
 import Shanten from './features/shanten/Shanten'
-import Replay from './pages/Replay'
+import Replay from './features/replay/Replay'
 import CreateRoom from './features/lobby/CreateRoom'
 
 function App() {
