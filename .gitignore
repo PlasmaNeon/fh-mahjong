@@ -1,6 +1,7 @@
 # Build output and vendor
 bin/
 tmp/
+/server
 .DS_Store
 
 # Go

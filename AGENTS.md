@@ -60,8 +60,8 @@ fh-mahjong/
 | `rlenv/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |
 | `cmd/rlbridge/main.go` | c-shared bridge exposing protobuf-based `reset`, `step`, and heuristic trajectory export |
 | `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
-| `official_rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
-| `rules.md` | Synthesized rules + Go implementation design (bridge doc) |
+| `docs/rules/official-rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
+| `docs/rules/rules.md` | Synthesized rules + Go implementation design (bridge doc) |
 
 ## Architecture Principles
 
@@ -134,7 +134,7 @@ Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use 
 - **Payout**: Tsumo → each of 3 losers pays (S×2); Ron → discarder pays (S×2), other two pay (S×1)
 - **Base point** (坐台): Always +1. Tsumo: +1. Common win (朋胡): +1.
 - Wild tile scoring: 0 wilds (+1), 1 wild (+1), 2 wilds (+2), 3 normal wilds (+150), 3 flower wilds (+300)
-- Full scoring reference: `official_rules.md` and `rules.md`
+- Full scoring reference: `docs/rules/official-rules.md` and `docs/rules/rules.md`
 
 ## Core Development Workflow
 
