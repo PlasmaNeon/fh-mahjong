@@ -12,9 +12,10 @@ Every non-game page uses the shared "ledger" theme from `web/src/theme/` (IBM Pl
 
 ### `auth/`
 
-Authentication pages. Route: `/login`.
+Authentication pages. Routes: `/login`, `/account`.
 
-- **Login.tsx** — Registration and login form. Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage. On login, navigates to `/play`. Includes a direct entry link to `/room/new`.
+- **Login.tsx** — Email/password sign-in and registration form (toggle between modes). Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage. On login, navigates to `/play`. Includes a direct entry link to `/room/new`.
+- **Account.tsx** — Account settings page (`/account`). Lets real accounts edit their email and display name; on save stores the returned JWT and calls `connect(newToken)` to refresh the socket. Guests (404/503 from `GET /api/v1/users/me`) see a notice directing them to the sign-in page instead of the form. Linked from the lobby nav (`/play`).
 
 ### `lobby/`
 

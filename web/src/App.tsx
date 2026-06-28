@@ -10,6 +10,7 @@ import Calc from './features/calc/Calc'
 import Shanten from './features/shanten/Shanten'
 import Replay from './features/replay/Replay'
 import CreateRoom from './features/lobby/CreateRoom'
+import Account from './features/auth/Account'
 
 function App() {
     return (
@@ -21,6 +22,7 @@ function App() {
                             <Route path="/" element={<Home />} />
                             <Route path="/login" element={<Login />} />
                             <Route path="/play" element={<Lobby />} />
+                            <Route path="/account" element={<Account />} />
                             <Route path="/room/new" element={<CreateRoom />} />
                             <Route path="/room/:roomId" element={<Table />} />
                             <Route path="/match/:matchId" element={<Game />} />

@@ -58,6 +58,7 @@ export default function Lobby() {
                         subtitle="实时匹配 · Hometown rules"
                         nav={<>
                             <TextLink to="/">Home</TextLink>
+                            <TextLink to="/account">Account</TextLink>
                             <TextLink to="/room/new">Private room →</TextLink>
                         </>}
                     />
