@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../theme';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../../theme';
 
 function makeRoomId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

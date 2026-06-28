@@ -1,15 +1,15 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { SocketProvider } from './contexts/SocketContext'
 import { GameProvider } from './contexts/GameContext'
-import Home from './pages/Home'
+import Home from './features/lobby/Home'
 import Login from './features/auth/Login'
-import Lobby from './pages/Lobby'
+import Lobby from './features/lobby/Lobby'
 import Table from './pages/Table'
 import Game from './pages/Game'
 import Calc from './pages/Calc'
 import Shanten from './pages/Shanten'
 import Replay from './pages/Replay'
-import CreateRoom from './pages/CreateRoom'
+import CreateRoom from './features/lobby/CreateRoom'
 
 function App() {
     return (

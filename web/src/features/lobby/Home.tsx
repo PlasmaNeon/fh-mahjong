@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, ButtonLink, TextLink, Note } from '../theme'
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, ButtonLink, TextLink, Note } from '../../theme'
 
 // Decode the username from the stored JWT, if present, so the account link
 // reflects logged-in state without a network call.

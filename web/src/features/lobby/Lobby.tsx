@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSocket } from '../contexts/SocketContext';
-import { useGameState } from '../contexts/GameContext';
-import { getApiUrl } from '../config';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../theme';
+import { useSocket } from '../../contexts/SocketContext';
+import { useGameState } from '../../contexts/GameContext';
+import { getApiUrl } from '../../config';
+import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, ButtonLink, TextLink, Note } from '../../theme';
 
 export default function Lobby() {
     const [isQueuing, setIsQueuing] = useState(false);
