@@ -31,6 +31,13 @@ def _write_history_atomic(path: Path, history: List[dict]) -> None:
     os.replace(tmp, path)
 
 
+def cpu_state_snapshot(model: "torch.nn.Module") -> dict:
+    """Detached CPU COPY of a model's params. The .clone() is required: on a
+    CPU model .cpu() is a no-op and state_dict() returns live references, so
+    without it a 'snapshot' would alias and drift with the live model."""
+    return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+
 @dataclass
 class PPOConfig:
     iterations: int = 50
@@ -52,6 +59,8 @@ class PPOConfig:
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
     num_workers: int = 1
+    pool_max_size: int = 1
+    pool_snapshot_interval: int = 10
     device: str = "cpu"
 
 
@@ -203,6 +212,7 @@ def collect_rollouts(
     frozen_anchor,
     config: PPOConfig,
     base_seed: int,
+    opponents: Optional[list] = None,
 ) -> RolloutBatch:
     """Play `matches_per_iter` full matches; record on-policy experience for the
     learning seat (samples from the masked policy), with the frozen anchor in the
@@ -222,7 +232,9 @@ def collect_rollouts(
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)
     policy_model.eval()
-    frozen_anchor.eval()
+    pool = list(opponents) if opponents else [frozen_anchor]
+    for net in pool:
+        net.eval()
 
     planes_l, scalars_l, mask_l, actions_l = [], [], [], []
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
@@ -231,6 +243,12 @@ def collect_rollouts(
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
             torch.manual_seed(int(base_seed + m))
+            # Opponent assignment uses a separate NumPy RNG so it never perturbs
+            # the learner's torch sampling stream (keeps pool-size-1 byte-identical
+            # to the single-anchor path) and stays reproducible across the
+            # sequential and parallel collectors.
+            opp_rng = np.random.default_rng(int(base_seed + m))
+            seat_opponent = {s: pool[int(opp_rng.integers(len(pool)))] for s in (1, 2, 3)}
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
@@ -256,8 +274,9 @@ def collect_rollouts(
                     dones_l.append(0.0)
                     last_learn_index = len(actions_l) - 1
                 else:
+                    net = seat_opponent.get(seat, pool[0])
                     with torch.no_grad():
-                        logits, _ = frozen_anchor(planes, scalars, mask)
+                        logits, _ = net(planes, scalars, mask)
                         action = int(torch.argmax(logits, dim=1)[0].item())
                 step = env.step(action)
                 if last_learn_index is not None:
@@ -287,6 +306,21 @@ def collect_rollouts(
     )
 
 
+def build_opponent_nets(env_config, model_config, pool_states, device="cpu"):
+    """Build a frozen PolicyValueNet for each opponent state_dict in the pool.
+    Shared by the sequential trainer and the parallel workers so both construct
+    opponents identically."""
+    nets = []
+    for state in pool_states:
+        net = PolicyValueNet(env_config, model_config).to(device)
+        net.load_state_dict(state)
+        net.eval()
+        for p in net.parameters():
+            p.requires_grad_(False)
+        nets.append(net)
+    return nets
+
+
 def train_ppo(
     env_config: EnvConfig,
     model_config: ModelConfig,
@@ -297,6 +331,16 @@ def train_ppo(
     run_eval: bool = True,
     iteration_callback: Optional[Callable[[dict], None]] = None,
 ) -> List[dict]:
+    # Reject invalid pool config up front rather than silently running a different
+    # configuration (anchor-only) or dividing by zero on the first snapshot
+    # iteration — either would waste an expensive configured run.
+    if config.pool_max_size < 1:
+        raise ValueError(f"pool_max_size must be >= 1, got {config.pool_max_size}")
+    if config.pool_max_size > 1 and config.pool_snapshot_interval < 1:
+        raise ValueError(
+            "pool_snapshot_interval must be >= 1 when pool_max_size > 1, "
+            f"got {config.pool_snapshot_interval}"
+        )
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -314,21 +358,33 @@ def train_ppo(
     history_path = checkpoint_dir / HISTORY_FILENAME
     _write_history_atomic(history_path, history)
 
+    frozen_state = cpu_state_snapshot(frozen)
+    pool_states: List[dict] = [frozen_state]  # index 0 = anchor, always kept
+
     collector: Optional["ParallelRolloutCollector"] = None
     try:
         if config.num_workers > 1:
             from .parallel_rollouts import ParallelRolloutCollector
-            frozen_state = {k: v.detach().cpu() for k, v in frozen.state_dict().items()}
             collector = ParallelRolloutCollector(
-                env_config, model_config, frozen_state, config, config.num_workers,
+                env_config, model_config, config, config.num_workers,
             )
             collector.start()
 
         for iteration in range(1, config.iterations + 1):
             iter_seed = base_seed + iteration * config.matches_per_iter
+
+            # Grow the opponent pool with a snapshot of the current learner.
+            if config.pool_max_size > 1 and iteration % config.pool_snapshot_interval == 0:
+                pool_states.append(cpu_state_snapshot(model))
+                if len(pool_states) > config.pool_max_size:
+                    pool_states.pop(1)  # evict oldest snapshot; keep anchor at index 0
+
             if collector is not None:
-                learner_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
-                batch = collector.collect(learner_state, iter_seed, config.matches_per_iter)
+                learner_state = cpu_state_snapshot(model)
+                batch = collector.collect(learner_state, pool_states, iter_seed, config.matches_per_iter)
+            elif config.pool_max_size > 1:
+                opponents = build_opponent_nets(env_config, model_config, pool_states, device)
+                batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed, opponents=opponents)
             else:
                 batch = collect_rollouts(env_config, model, frozen, config, base_seed=iter_seed)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones, config.gamma, config.gae_lambda)
@@ -336,6 +392,7 @@ def train_ppo(
             metrics["iteration"] = iteration
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
+            metrics["pool_size"] = len(pool_states)
 
             if run_eval and iteration % config.eval_interval == 0:
                 seeds = list(range(config.eval_start_seed, config.eval_start_seed + config.eval_seeds))

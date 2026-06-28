@@ -638,6 +638,155 @@ def test_cli_train_ppo_mlflow_finalization_failure_is_tolerated(tmp_path, monkey
     assert "MLflow finalization failed" in capsys.readouterr().err
 
 
+def test_ppo_config_has_pool_defaults():
+    cfg = PPOConfig()
+    assert cfg.pool_max_size == 1
+    assert cfg.pool_snapshot_interval == 10
+
+
+def _small_env_model():
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    return env_cfg, mcfg
+
+
+def test_collect_rollouts_pool_size_one_matches_single_anchor():
+    env_cfg, mcfg = _small_env_model()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=3, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=321)                      # default path
+    b = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=321, opponents=[frozen])  # size-1 pool
+    assert len(a) == len(b)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
+def test_collect_rollouts_with_pool_is_deterministic():
+    env_cfg, mcfg = _small_env_model()
+    learner = PolicyValueNet(env_cfg, mcfg)
+    pool = [PolicyValueNet(env_cfg, mcfg), PolicyValueNet(env_cfg, mcfg), PolicyValueNet(env_cfg, mcfg)]
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    a = collect_rollouts(env_cfg, learner, pool[0], cfg, base_seed=77, opponents=pool)
+    b = collect_rollouts(env_cfg, learner, pool[0], cfg, base_seed=77, opponents=pool)
+    np.testing.assert_array_equal(a.actions, b.actions)
+    np.testing.assert_allclose(a.rewards, b.rewards, rtol=1e-6)
+
+
+from fh_mahjong_ai.ppo import build_opponent_nets
+
+
+def test_train_ppo_rejects_nonpositive_pool_max_size(tmp_path):
+    # pool_max_size < 1 must fail fast, not silently run anchor-only.
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    pool_max_size=0)
+    with pytest.raises(ValueError, match="pool_max_size"):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_train_ppo_rejects_zero_snapshot_interval(tmp_path):
+    # pool_max_size>1 with snapshot_interval 0 would hit iteration % 0; reject early.
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    pool_max_size=3, pool_snapshot_interval=0)
+    with pytest.raises(ValueError, match="pool_snapshot_interval"):
+        train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                  checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=1, run_eval=False)
+
+
+def test_build_opponent_nets_are_frozen():
+    env_cfg, mcfg = _small_env_model()
+    states = [PolicyValueNet(env_cfg, mcfg).state_dict() for _ in range(3)]
+    nets = build_opponent_nets(env_cfg, mcfg, states, device="cpu")
+    assert len(nets) == 3
+    assert all(not any(p.requires_grad for p in n.parameters()) for n in nets)
+
+
+def test_train_ppo_pool_grows_and_caps(tmp_path):
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+    # snapshot every iter, cap at 3 (anchor + 2 snapshots)
+    cfg = PPOConfig(iterations=5, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    eval_interval=100, match_mode="classic", max_steps_per_episode=64,
+                    device="cpu", pool_max_size=3, pool_snapshot_interval=1)
+    metrics = train_ppo(env_config=env_cfg, model_config=mcfg, init_checkpoint=init,
+                        checkpoint_dir=tmp_path / "ppo", config=cfg, base_seed=5, run_eval=False)
+    sizes = [m["pool_size"] for m in metrics]
+    assert sizes[0] == 2          # anchor + first snapshot
+    assert max(sizes) == 3        # capped
+    assert sizes[-1] == 3
+
+
+def test_cli_train_ppo_pool_grows(tmp_path, monkeypatch):
+    import json
+    import sys
+    from fh_mahjong_ai.scripts import train_ppo as cli
+
+    env_cfg, mcfg = _small_env_model()
+    init = tmp_path / "anchor.pt"
+    save_checkpoint(init, PolicyValueNet(env_cfg, mcfg))
+
+    argv = [
+        "fh-mj-train-ppo",
+        "--init-checkpoint", str(init),
+        "--checkpoint-dir", str(tmp_path / "ppo"),
+        "--iterations", "3", "--matches-per-iter", "2", "--ppo-epochs", "1",
+        "--minibatch-size", "8", "--match-mode", "classic", "--bridge-kind", "mock",
+        "--max-steps-per-episode", "64", "--no-eval",
+        "--pool-max-size", "3", "--pool-snapshot-interval", "1",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    history = json.loads((tmp_path / "ppo" / "history.json").read_text())
+    assert history[-1]["pool_size"] >= 2  # pool grew beyond the anchor
+
+
+def test_pool_snapshot_is_frozen_copy():
+    """Regression: pool snapshot must be an independent copy, not a live alias.
+
+    On CPU, state_dict() returns live references to model parameters and .cpu()
+    is a no-op, so a snapshot captured as {k: v.detach().cpu() ...} shares
+    storage with the learner. In-place optimizer steps then silently mutate
+    "frozen" opponents, collapsing self-play diversity.
+
+    This test calls the PRODUCTION helper cpu_state_snapshot so it will FAIL
+    (RED) if .clone() is removed from that helper, and pass GREEN when present.
+    """
+    from fh_mahjong_ai.ppo import cpu_state_snapshot
+
+    model, _env = _tiny_model()
+    # Use the production capture path so this test gates ppo.py directly.
+    snap = cpu_state_snapshot(model)
+
+    # Record snapshot values before mutation.
+    before = {k: v.clone() for k, v in snap.items()}
+
+    # Mutate the live model in-place (simulates one optimizer step).
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(1.0)
+
+    # The snapshot must NOT have changed — it should be an independent copy.
+    for k, b in before.items():
+        assert torch.equal(b, snap[k]), (
+            f"snapshot '{k}' drifted — it aliases the live model"
+        )
+
+
 def test_cli_train_ppo_mlflow_marks_failed_run_on_training_error(tmp_path, monkeypatch):
     import sys
     from fh_mahjong_ai.scripts import train_ppo as cli

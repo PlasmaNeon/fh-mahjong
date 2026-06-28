@@ -19,7 +19,7 @@ from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model
 
 _MLFLOW_METRIC_KEYS = (
     "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
-    "mean_reward", "steps", "eval_mean_reward", "eval_mean_reward_ci95",
+    "mean_reward", "steps", "pool_size", "eval_mean_reward", "eval_mean_reward_ci95",
     "eval_large_loss_rate",
 )
 
@@ -32,6 +32,10 @@ def main() -> None:
     parser.add_argument("--matches-per-iter", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=1,
                         help="parallel rollout workers (1 = sequential)")
+    parser.add_argument("--pool-max-size", type=int, default=1,
+                        help="opponent pool size: anchor + past-self snapshots (1 = single anchor)")
+    parser.add_argument("--pool-snapshot-interval", type=int, default=10,
+                        help="add a learner snapshot to the opponent pool every N iterations")
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-eps", type=float, default=0.2)
@@ -75,6 +79,7 @@ def main() -> None:
         eval_interval=args.eval_interval, eval_seeds=args.eval_seeds,
         eval_start_seed=args.eval_start_seed, match_mode=args.match_mode,
         max_steps_per_episode=args.max_steps_per_episode, num_workers=args.num_workers,
+        pool_max_size=args.pool_max_size, pool_snapshot_interval=args.pool_snapshot_interval,
         device=args.device,
     )
     # Optional observability must never abort an expensive training run. Guard

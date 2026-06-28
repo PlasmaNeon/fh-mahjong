@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Dict, List, Optional
 
 from .config import EnvConfig, ModelConfig
-from .ppo import PPOConfig, RolloutBatch, collect_rollouts, concat_rollout_batches
+from .ppo import PPOConfig, RolloutBatch, build_opponent_nets, collect_rollouts, concat_rollout_batches
 
 
 def _split_counts(total: int, workers: int) -> List[int]:
@@ -18,26 +18,26 @@ def _split_counts(total: int, workers: int) -> List[int]:
     return [base + (1 if i < rem else 0) for i in range(workers)]
 
 
-def _worker_loop(env_config, model_config, frozen_state_dict, ppo_config, task_q, result_q):
+def _worker_loop(env_config, model_config, ppo_config, task_q, result_q):
     import torch
 
     from .model import PolicyValueNet
 
     torch.set_num_threads(1)
     learner = PolicyValueNet(env_config, model_config)
-    frozen = PolicyValueNet(env_config, model_config)
-    frozen.load_state_dict(frozen_state_dict)
-    frozen.eval()
 
     while True:
         task = task_q.get()
         if task is None:
             return
-        worker_id, learner_state_dict, base_seed, matches = task
+        worker_id, learner_state_dict, pool_states, base_seed, matches = task
         try:
             learner.load_state_dict(learner_state_dict)
+            opponents = build_opponent_nets(env_config, model_config, pool_states, device="cpu")
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
-            batch = collect_rollouts(env_config, learner, frozen, cfg, base_seed=base_seed)
+            batch = collect_rollouts(
+                env_config, learner, opponents[0], cfg, base_seed=base_seed, opponents=opponents,
+            )
             result_q.put((worker_id, batch, None))
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
@@ -48,12 +48,11 @@ class ParallelRolloutCollector:
     in parallel (CPU inference) and concatenates them into one RolloutBatch."""
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
-                 frozen_state_dict, ppo_config: PPOConfig, num_workers: int) -> None:
+                 ppo_config: PPOConfig, num_workers: int) -> None:
         if num_workers < 1:
             raise ValueError("num_workers must be >= 1")
         self.env_config = env_config
         self.model_config = model_config
-        self.frozen_state_dict = frozen_state_dict
         self.ppo_config = ppo_config
         self.num_workers = int(num_workers)
         self._ctx = mp.get_context("spawn")
@@ -68,21 +67,21 @@ class ParallelRolloutCollector:
         for _ in range(self.num_workers):
             p = self._ctx.Process(
                 target=_worker_loop,
-                args=(self.env_config, self.model_config, self.frozen_state_dict,
-                      self.ppo_config, self._task_q, self._result_q),
+                args=(self.env_config, self.model_config, self.ppo_config,
+                      self._task_q, self._result_q),
                 daemon=True,
             )
             p.start()
             self._procs.append(p)
 
-    def collect(self, learner_state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
+    def collect(self, learner_state_dict, pool_states, base_seed: int, matches_per_iter: int) -> RolloutBatch:
         counts = _split_counts(matches_per_iter, self.num_workers)
         offset = 0
         dispatched = 0
         for worker_id, count in enumerate(counts):
             if count == 0:
                 continue
-            self._task_q.put((worker_id, learner_state_dict, int(base_seed + offset), int(count)))
+            self._task_q.put((worker_id, learner_state_dict, pool_states, int(base_seed + offset), int(count)))
             offset += count
             dispatched += 1
 
