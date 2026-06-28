@@ -280,6 +280,18 @@ Covered by tests in `internal/storage/migrate_test.go` (fresh DB allows duplicat
 display names; populated legacy table fails closed; empty legacy table migrates in
 place and drops the stale index).
 
+**Accepted design decision (adversarial-review round 4):** failing closed on a
+*populated* legacy table means deploying over a non-empty username-only database
+would abort startup rather than boot. This is intentional and accepted, because:
+(a) the deployed prod `users` table is **empty**, so the fail-closed branch never
+triggers in practice; (b) the only alternatives for a populated legacy table are
+silent data loss or a half-migrated/corrupt schema, which are worse; and (c) a
+username→email **backfill is impossible to automate** — legacy accounts have no
+email to derive a login identity from, so there is no automated upgrade path by the
+nature of this schema change. A hypothetical populated legacy database would require
+a one-off, interactive email-collection migration, which is out of scope for this
+fresh-start feature. Failing closed with a precise diagnostic is the safe default.
+
 **Note (optional, out of scope):** the app's `DATABASE_URL` points at the *external*
 Postgres endpoint (`43.134.132.74:32315`). An internal service DSN (`DB_DSN` already
 exists on the service: `host=service-…0a231 …`) would keep DB traffic on Zeabur's
