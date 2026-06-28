@@ -7,7 +7,7 @@ import Lobby from './features/lobby/Lobby'
 import Table from './pages/Table'
 import Game from './pages/Game'
 import Calc from './features/calc/Calc'
-import Shanten from './pages/Shanten'
+import Shanten from './features/shanten/Shanten'
 import Replay from './pages/Replay'
 import CreateRoom from './features/lobby/CreateRoom'
 
