@@ -1,10 +1,10 @@
-# models/
+# internal/storage/
 
 > GORM database models for PostgreSQL persistence.
 
 ## Overview
 
-Defines the database schema for user accounts and match history using GORM (Go ORM). These models are used by the `api/` package for user registration, authentication, and match record keeping.
+Defines the database schema for user accounts and match history using GORM (Go ORM). These models are used by the `internal/api/` package for user registration, authentication, and match record keeping.
 
 ## Key Files
 
@@ -16,6 +16,6 @@ Defines the database schema for user accounts and match history using GORM (Go O
 
 ## Architecture Notes
 
-- Used by `api/auth.go` for user CRUD and `api/room.go` / `api/paipu.go` for match replay persistence and retrieval.
+- Used by `internal/api/auth.go` for user CRUD and `internal/api/room.go` / `internal/api/paipu.go` for match replay persistence and retrieval.
 - PostgreSQL connection is established in `cmd/server/main.go` and passed through.
 - Rating system and match history are Phase 3 features (not yet fully implemented).

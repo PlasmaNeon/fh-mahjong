@@ -1,10 +1,10 @@
-# api/
+# internal/api/
 
 > REST API + WebSocket server — authentication, game rooms, matchmaking, and real-time state sync.
 
 ## Overview
 
-This package implements the network layer: HTTP routes via Gin, WebSocket connections via gorilla/websocket, JWT authentication, and the room/matchmaker orchestration that connects players to game instances. It is stateless with respect to game logic — all game mutations are delegated to `core.Game`.
+This package implements the network layer: HTTP routes via Gin, WebSocket connections via gorilla/websocket, JWT authentication, and the room/matchmaker orchestration that connects players to game instances. It is stateless with respect to game logic — all game mutations are delegated to `engine.Game`.
 
 ## Key Files
 
@@ -33,11 +33,11 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Binary Protobuf message protocol
 
 - **room.go** — Single match room orchestration:
-  - `Room` struct — 4 `Client` seats + 1 `core.Game` engine
+  - `Room` struct — 4 `Client` seats + 1 `engine.Game` engine
   - `BotPolicy` — room-wide default automated-seat policy. Injected via `WithBotPolicy()` for server-wide swaps (e.g. remote AI for all seats).
   - `WithBotPolicy()` — room option for injecting a non-default automated-seat policy while keeping the heuristic default
   - `SeatPolicies` — per-seat override map. Populated by the matchmaker from the host's `PrivateTable` seat config; falls through to `BotPolicy` (then heuristic) when a seat is missing.
-  - Initializes `core.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
+  - Initializes `engine.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
   - `advanceAutomatedSeats()` — Plays through missing-seat turns, interrupt responses, and round-end `READY` actions for automated seats, with a circuit-breaker to avoid runaway automation loops
@@ -86,7 +86,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 ## Architecture Notes
 
-- All game actions flow: Client → WebSocket → Room.ActionQueue → core.Game.ProcessPlayerAction() → BroadcastState()
+- All game actions flow: Client → WebSocket → Room.ActionQueue → engine.Game.ProcessPlayerAction() → BroadcastState()
 - The room processes actions sequentially via a single goroutine (no mutex needed for game state).
 - Seats with no connected `Room.Seats` entry are treated as automated seats and act through the same authoritative engine path instead of being hard-coded to `PASS`.
 - Replay persistence has two outputs: the binary protobuf replay blob (`ReplayURL`) and the structured paipu JSON (`PaipuJSON`).

@@ -1,4 +1,4 @@
-# core/
+# internal/engine/
 
 > Game state machine engine and the RuleEngine interface contract.
 
@@ -52,7 +52,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 
 ## Architecture Notes
 
-- **CRITICAL**: `core/` must NEVER import `rules/`. The dependency flows one way: `rules/` implements `core.RuleEngine`.
+- **CRITICAL**: `internal/engine` must NEVER import `internal/rules/`. The dependency flows one way: `internal/rules/` implements `engine.RuleEngine`.
 - `Game.State` is a `*pb.GameState` (Protobuf). All state mutations happen here; the API layer just serializes and broadcasts.
-- Paipu recording lives in `core/` so replay exports observe the same authoritative transitions the live engine uses.
+- Paipu recording lives in `internal/engine/` so replay exports observe the same authoritative transitions the live engine uses.
 - The interrupt system uses a map queue + timer. The room layer starts the timer; `ResolveInterrupts()` can be called either when all responses arrive or when the timer fires.

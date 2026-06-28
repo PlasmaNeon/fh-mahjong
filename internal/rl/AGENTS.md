@@ -1,4 +1,4 @@
-# rlenv/
+# internal/rl/
 
 > Deterministic RL environment wrapper around the Go game engine.
 
@@ -13,14 +13,14 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 - **env.go** — `Env` wrapper with deterministic `Reset`, `Step`, `EvaluateBranches`, and `GenerateHeuristicTrajectory`.
   - Terminal responses include `RoundOutcome` metadata for winner, win type, discarder, draw flag, score, and payouts.
   - In Chongci mode, `Env.Step` / `advanceToDecision` returns a dense per-step reward from `scoreDeltaReward`: the acting seat's running-score delta since the previous decision, which telescopes exactly to the match net-change.
-  - `EvaluateBranches` clones the live `core.Game`, applies each candidate action from the current learning-seat decision, then lets deterministic heuristics finish the branch to create same-state counterfactual labels without mutating the live environment.
+  - `EvaluateBranches` clones the live `engine.Game`, applies each candidate action from the current learning-seat decision, then lets deterministic heuristics finish the branch to create same-state counterfactual labels without mutating the live environment.
   - Branch requests can stop at the next round end for multi-hand modes, returning hand payout labels from the current visible match context instead of rolling every candidate to full Chongci match end.
 - **action_test.go** — Fixed action/tile-index mapping tests; tile faces follow the backend shanten order `man, pin, sou, jihai, flower`.
 - **env_test.go** — Determinism, action round-trip, hidden-information, and trajectory-export tests.
 
 ## Architecture Notes
 
-- `rlenv/` wraps `core.Game`; it must not fork rules or state-transition logic.
+- `internal/rl/` wraps `engine.Game`; it must not fork rules or state-transition logic.
 - Non-learning seats are automated through the shared Go heuristic bot when `auto_play_heuristics` is enabled.
 - `EnvConfig.match_mode = MATCH_MODE_CHONGCI` starts the core engine with Chongci options and treats `PHASE_MATCH_END` as the terminal RL state.
 - During Chongci generation/evaluation, `advanceToDecision()` auto-acks `ROUND_END` ready gates so an episode can span multiple hands until bust or hand cap.

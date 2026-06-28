@@ -1,4 +1,4 @@
-# rules/
+# internal/rules/
 
 > Fenghua (奉化) ruleset plugin — full hand evaluation, scoring, and payout logic.
 
@@ -16,7 +16,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
   - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
-  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Non-wild flower handling is owned by `core.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
+  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Non-wild flower handling is owned by `engine.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
   - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1), with same-priority ties resolved by ascending seat for deterministic RL replay
   - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
@@ -34,7 +34,7 @@ This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin th
 
 ## Architecture Notes
 
-- Implements `core.RuleEngine` — imported by `core/` via interface, never directly.
+- Implements `engine.RuleEngine` — imported by `internal/engine/` via interface, never directly.
 - Scoring uses a route-based approach: Independence, Seven Pairs, and Standard are evaluated independently; the highest-scoring route wins.
 - Wild tiles (搭) are tracked via hash maps. The `tilesToTehai34` helper converts tile lists to a 34-element frequency array for DP evaluation.
 - The live game sometimes evaluates tsumo hands as 14-tile concealed hands with no explicit `winTile`; wait-pattern scoring therefore depends on `DrawnTileId` being carried in `PlayerState`.
