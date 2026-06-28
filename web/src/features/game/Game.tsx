@@ -1,17 +1,17 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSocket } from '../contexts/SocketContext';
-import { useGameState } from '../contexts/GameContext';
-import { game } from '../proto/game';
-import { useGameStageLayout } from '../hooks/useGameStageLayout';
+import { useSocket } from '../../contexts/SocketContext';
+import { useGameState } from '../../contexts/GameContext';
+import { game } from '../../proto/game';
+import { useGameStageLayout } from '../../hooks/useGameStageLayout';
 import { getPrivateRoomToken, loadPrivateRoomSession } from './privateRoomSession';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
-import { preloadAllTileSvgs } from '../utils/tileUtils';
-import { TableBoard, TableRoundResultOverlay, TileComponent } from '../table/TableScene';
+import { preloadAllTileSvgs } from '../../utils/tileUtils';
+import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
-import { LoadingScreen } from '../theme';
+import { LoadingScreen } from '../../theme';
 
 export default function Game() {
     const { matchId } = useParams();

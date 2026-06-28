@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useNavigate } from 'react-router-dom';
-import { game } from '../proto/game';
+import { game } from '../../proto/game';
 
 type Props = {
     state: game.IGameState;
