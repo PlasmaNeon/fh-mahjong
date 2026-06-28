@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/tiles"
+	"github.com/plasma/fh-mahjong/internal/tiles"
 )
 
 const RouteUnavailable = 99

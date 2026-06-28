@@ -14,6 +14,7 @@ All Go library packages live here, enforcing Go's `internal/` visibility boundar
 | `bot` | `…/internal/bot` | Deterministic heuristic bot policies used by CLI, empty seats, and RL bootstrapping. |
 | `bot/remote` | `…/internal/bot/remote` | HTTP client wrapper that drives an external policy server (e.g. Python RL model) as a bot player. |
 | `rl` | `…/internal/rl` | Deterministic RL environment wrapper (`Env`), observation encoder, and fixed 204-action catalog. |
+| `tiles` | `…/internal/tiles` | Shared low-level tile helpers (keying, cloning) used across engine, rules, bot, and rl. |
 
 ## Invariants
 

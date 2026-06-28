@@ -2,7 +2,7 @@ package rules
 
 import (
 	pb "github.com/plasma/fh-mahjong/proto"
-	"github.com/plasma/fh-mahjong/tiles"
+	"github.com/plasma/fh-mahjong/internal/tiles"
 )
 
 // HometownRuleset implements the engine.RuleEngine interface.

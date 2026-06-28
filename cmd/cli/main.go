@@ -13,7 +13,7 @@ import (
 	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
-	"github.com/plasma/fh-mahjong/tiles"
+	"github.com/plasma/fh-mahjong/internal/tiles"
 )
 
 func tileName(t *pb.Tile) string {
