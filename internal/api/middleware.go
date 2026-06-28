@@ -50,6 +50,11 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Attach to context for downstream handlers
 		c.Set("userID", userID)
 		c.Set("username", username)
+		// Expose the original token expiry so handlers that re-issue a token (e.g.
+		// profile update) can preserve it instead of extending the lifetime.
+		if exp, ok := claims["exp"].(float64); ok {
+			c.Set("tokenExp", int64(exp))
+		}
 
 		c.Next()
 	}

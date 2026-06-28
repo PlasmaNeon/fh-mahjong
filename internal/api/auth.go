@@ -56,12 +56,20 @@ func normalizeEmail(s string) string {
 }
 
 // issueToken builds a signed HS256 JWT carrying the user id (sub), display name
-// (username) and an expiry. Used by Login, Register, GuestLogin and UpdateMe.
+// (username) and an expiry `ttl` from now. Used by Login, Register and GuestLogin.
 func issueToken(id uint, username string, ttl time.Duration) (string, error) {
+	return issueTokenWithExpiry(id, username, time.Now().Add(ttl).Unix())
+}
+
+// issueTokenWithExpiry builds the same JWT but at an explicit absolute expiry.
+// UpdateMe uses it to refresh the `username` claim after a display-name change
+// WITHOUT extending the lifetime, so the endpoint can't be used to indefinitely
+// renew a stolen token by alternating display names.
+func issueTokenWithExpiry(id uint, username string, expUnix int64) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":      id,
 		"username": username,
-		"exp":      time.Now().Add(ttl).Unix(),
+		"exp":      expUnix,
 	})
 	return token.SignedString(jwtSecret)
 }
@@ -235,10 +243,18 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	// Only mint a fresh token when the display-name claim it carries changed.
+	// Only mint a fresh token when the display-name claim it carries changed — and
+	// preserve the ORIGINAL token's expiry so a rename refreshes the claim without
+	// extending the lifetime (otherwise alternating names would renew indefinitely).
 	resp := AuthResponse{}
 	if nameChange {
-		token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+		exp := time.Now().Add(72 * time.Hour).Unix()
+		if v, ok := c.Get("tokenExp"); ok {
+			if origExp, ok := v.(int64); ok {
+				exp = origExp
+			}
+		}
+		token, err := issueTokenWithExpiry(user.ID, user.Username, exp)
 		if err != nil {
 			log.Printf("Failed to sign token: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})

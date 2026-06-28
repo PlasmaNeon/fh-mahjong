@@ -9,10 +9,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+func parseTokenExp(t *testing.T, tokenStr string) int64 {
+	t.Helper()
+	tok, err := jwt.Parse(tokenStr, func(*jwt.Token) (interface{}, error) { return jwtSecret, nil })
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	return int64(tok.Claims.(jwt.MapClaims)["exp"].(float64))
+}
 
 // The unknown-email login path must perform one bcrypt comparison against a
 // fixed dummy hash so it cannot be distinguished from the wrong-password path by
@@ -312,5 +322,37 @@ func TestUpdateMeRequiresAuth(t *testing.T) {
 		map[string]string{"displayName": "Nope"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without token, got %d", rec.Code)
+	}
+}
+
+// Adversarial: a stolen token must not be renewable by alternating display names.
+// Each rename refreshes the username claim but must preserve the original expiry,
+// so the token lifetime cannot be extended.
+func TestUpdateMeRenameDoesNotExtendTokenExpiry(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	token := registerAndToken(t, r, "jade@example.com", "hunter2pw", "Jade")
+	origExp := parseTokenExp(t, token)
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"displayName": "Jade A"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename A: got %d (%s)", rec.Code, rec.Body.String())
+	}
+	tok2 := decodeAuth(t, rec).Token
+	if tok2 == "" {
+		t.Fatal("expected a refreshed token on rename")
+	}
+	if got := parseTokenExp(t, tok2); got != origExp {
+		t.Fatalf("rename extended expiry: orig %d, new %d", origExp, got)
+	}
+
+	// Alternate the name again using the refreshed token — still no extension.
+	rec = doJSON(t, r, http.MethodPatch, "/api/v1/users/me", tok2,
+		map[string]string{"displayName": "Jade B"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename B: got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := parseTokenExp(t, decodeAuth(t, rec).Token); got != origExp {
+		t.Fatalf("second rename extended expiry: orig %d, new %d", origExp, got)
 	}
 }
