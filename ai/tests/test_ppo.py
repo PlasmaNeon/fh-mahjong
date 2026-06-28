@@ -726,34 +726,43 @@ class _StubGRP:
         return self
 
 
+class _StatelessGRP:
+    """Stateless GRP stub: g is a pure function of the observation (like the real
+    frozen net), so the same state yields the same g regardless of how many prior
+    calls occurred. Lets a match's GRP rewards be compared across runs that consumed
+    a different number of earlier GRP calls."""
+    def __call__(self, planes, scalars):
+        import torch
+        return torch.tensor([float(scalars.sum().item())])
+    def eval(self):
+        return self
+
+
 def test_ppo_config_grp_defaults():
     cfg = PPOConfig()
     assert cfg.grp_checkpoint is None
     assert len(cfg.grp_placement_values) == 4
 
 
-def test_grp_match_rewards_terminated_vs_truncated():
+def test_grp_match_rewards_realized_terminal():
     from fh_mahjong_ai.ppo import _grp_match_rewards
     g = [0.0, 0.25, 0.5]  # 3 learner decisions
     # gamma=1: non-final = consecutive g-diffs; final = realized - g_last
-    assert _grp_match_rewards(g, realized=1.0, truncated=False, gamma=1.0) == [0.25, 0.25, 0.5]
-    # truncated: final = 0.0 (no fabricated realized placement from a partial game)
-    assert _grp_match_rewards(g, realized=1.0, truncated=True, gamma=1.0) == [0.25, 0.25, 0.0]
-    # single-decision match
-    assert _grp_match_rewards([0.3], realized=1.0, truncated=False, gamma=1.0) == [0.7]
-    assert _grp_match_rewards([0.3], realized=1.0, truncated=True, gamma=1.0) == [0.0]
+    assert _grp_match_rewards(g, realized=1.0, gamma=1.0) == [0.25, 0.25, 0.5]
+    # single-decision match: only the realized terminal reward
+    assert _grp_match_rewards([0.3], realized=1.0, gamma=1.0) == [0.7]
 
 
 def test_grp_match_rewards_discount_correct():
     # gamma-correct potential shaping: non-final r_k = gamma*g_{k+1} - g_k
     from fh_mahjong_ai.ppo import _grp_match_rewards
     g = [0.0, 0.25, 0.5]
-    out = _grp_match_rewards(g, realized=1.0, truncated=False, gamma=0.5)
+    out = _grp_match_rewards(g, realized=1.0, gamma=0.5)
     np.testing.assert_allclose(out, [0.5 * 0.25 - 0.0, 0.5 * 0.5 - 0.25, 1.0 - 0.5], rtol=1e-6)
     # the discounted return telescopes to gamma^(n-1)*realized - g_0
     gamma = 0.9
     g2 = [0.1, -0.2, 0.3, 0.4]
-    rs = _grp_match_rewards(g2, realized=1.0, truncated=False, gamma=gamma)
+    rs = _grp_match_rewards(g2, realized=1.0, gamma=gamma)
     disc_return = sum((gamma ** k) * r for k, r in enumerate(rs))
     expected = (gamma ** (len(g2) - 1)) * 1.0 - g2[0]
     np.testing.assert_allclose(disc_return, expected, rtol=1e-6)
@@ -789,6 +798,65 @@ def test_collect_rollouts_grp_reward_is_placement_delta():
     # all non-final rewards equal 0.25 (g step), within float tolerance
     np.testing.assert_allclose(batch.rewards[:-1], 0.25, atol=1e-5)
     assert batch.dones[-1] == 1.0
+
+
+def test_collect_rollouts_grp_discards_truncated_match(monkeypatch):
+    # A step-limit truncation in the GRP path must contribute ZERO transitions:
+    # no phantom gamma^(n-1)*g_last return, symmetric with the placement eval which
+    # also ignores truncated matches.
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+    from fh_mahjong_ai.types import StepResult
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64)
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    learner = PolicyValueNet(env_cfg, mcfg)
+    frozen = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, gamma=1.0, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu")
+    # Stateless stub: g depends only on the observation, so seed-6's terminal reward
+    # (realized - g_last) is identical whether or not the truncated seed-5 match ran
+    # first. A stateful counter would offset g_last and mask the real comparison.
+    grp = _StatelessGRP()
+
+    # Control: both matches (seeds 5, 6) terminate normally.
+    control = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+    # Reference: the would-be SURVIVING match alone (seed 6, == match index 1 above).
+    ref = collect_rollouts(
+        env_cfg, learner, frozen,
+        PPOConfig(matches_per_iter=1, gamma=1.0, match_mode="classic",
+                  max_steps_per_episode=64, device="cpu"),
+        base_seed=6, grp_model=grp)
+
+    # Force ONLY the seed-5 match to truncate (terminated=False, truncated=True)
+    # after a few steps; the seed-6 match still terminates normally.
+    orig_reset = MockMahjongBridge.reset
+    orig_step = MockMahjongBridge.step
+    state = {"seed": None, "steps": 0}
+
+    def patched_reset(self, seed=None):
+        state["seed"] = seed
+        state["steps"] = 0
+        return orig_reset(self, seed=seed)
+
+    def patched_step(self, action_id):
+        res = orig_step(self, action_id)
+        state["steps"] += 1
+        if state["seed"] == 5 and state["steps"] >= 9:
+            return StepResult(observation=res.observation, rewards=res.rewards,
+                              terminated=False, truncated=True, info=res.info)
+        return res
+
+    monkeypatch.setattr(MockMahjongBridge, "reset", patched_reset)
+    monkeypatch.setattr(MockMahjongBridge, "step", patched_step)
+    mixed = collect_rollouts(env_cfg, learner, frozen, cfg, base_seed=5, grp_model=grp)
+
+    # The seed-5 match DID contribute transitions when it ran to a true end...
+    assert len(control) > len(mixed)
+    # ...but once truncated it contributes nothing: the mixed batch is byte-identical
+    # to the seed-6 survivor alone. No phantom GRP residual leaks in.
+    assert len(mixed) == len(ref)
+    np.testing.assert_array_equal(mixed.actions, ref.actions)
+    np.testing.assert_allclose(mixed.rewards, ref.rewards, rtol=1e-6)
 
 
 def test_build_opponent_nets_are_frozen():

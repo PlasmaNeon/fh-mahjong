@@ -210,24 +210,25 @@ def _seat_step_reward(step_rewards, seat: int) -> float:
     return 0.0
 
 
-def _grp_match_rewards(match_g, realized, truncated, gamma):
-    """Per-decision GRP placement rewards for one match, as discount-correct
-    potential-based shaping (Ng et al.) with potential Φ = GRP placement value:
-    `gamma * g_{k+1} - g_k` for each non-final learner decision; the final decision
-    gets `realized - g_last` at a TRUE match end (terminal potential = 0), or `0.0`
-    on a TRUNCATION (no final standings — don't fabricate a realized placement).
+def _grp_match_rewards(match_g, realized, gamma):
+    """Per-decision GRP placement rewards for one FULLY REALIZED match, as
+    discount-correct potential-based shaping (Ng et al.) with potential
+    Φ = GRP placement value: `gamma * g_{k+1} - g_k` for each non-final learner
+    decision, and `realized - g_last` for the final decision (terminal potential
+    = 0). The GAE-discounted return then telescopes to `gamma^(n-1) * realized - g_0`
+    for ANY gamma; the plain `g_{k+1} - g_k` form only telescopes at gamma=1.
 
-    The `gamma` factor is what makes the GAE-discounted return telescope to
-    `gamma^(n-1) * realized - g_0` for ANY gamma; the plain `g_{k+1} - g_k` form
-    only telescopes at gamma=1 and would otherwise leave residual intermediate
-    GRP terms in the return."""
+    Truncated matches (step-limit cut, no final standings) never reach here — the
+    caller discards their transitions. Bootstrapping a truncation from the frozen
+    GRP's own prediction would credit a phantom `gamma^(n-1) * g_last` return with
+    no realized placement, rewarding a policy for steering into GRP-overvalued
+    states and then stalling (an exploit the placement eval, which also ignores
+    truncations, could not catch)."""
     n = len(match_g)
     out = []
     for k in range(n):
         if k + 1 < n:
             out.append(float(gamma * match_g[k + 1] - match_g[k]))
-        elif truncated:
-            out.append(0.0)
         else:
             out.append(float(realized - match_g[k]))
     return out
@@ -281,6 +282,11 @@ def collect_rollouts(
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
             last_learn_index: Optional[int] = None
+            # Length of the per-seat lists before this match's learner decisions.
+            # They grow in lockstep (one append each per learner decision) and a
+            # match's decisions are a contiguous suffix, so a single length lets the
+            # GRP path discard a truncated match by rolling every list back to here.
+            match_start_len = len(actions_l)
             match_indices: list[int] = []   # rewards_l indices for this match (GRP path)
             match_g: list[float] = []        # GRP placement value at each learner decision
             cum_net = np.zeros(4, dtype=np.float32)  # per-seat cumulative net (telescopes to match net)
@@ -329,15 +335,25 @@ def collect_rollouts(
                 elif last_learn_index is not None:
                     rewards_l[last_learn_index] += _seat_step_reward(step.rewards, LEARNING_SEAT)
                 if step.terminated or step.truncated:
+                    is_trunc = bool(step.truncated) and not bool(step.terminated)
+                    if grp_model is not None and is_trunc:
+                        # A step-limit truncation has no final standings, so the GRP
+                        # shaping has no realized placement to telescope to. Discard
+                        # this match's learner transitions entirely rather than
+                        # bootstrap from the frozen GRP's own prediction (which would
+                        # credit a phantom gamma^(n-1)*g_last return and let the policy
+                        # farm GRP-overvalued states by stalling). Symmetric with the
+                        # placement eval, which also ignores truncated matches.
+                        for lst in (planes_l, scalars_l, mask_l, actions_l,
+                                    logprobs_l, values_l, rewards_l, dones_l):
+                            del lst[match_start_len:]
+                        break
                     if last_learn_index is not None:
                         dones_l[last_learn_index] = 1.0
                     if grp_model is not None and match_indices:
-                        is_trunc = bool(step.truncated) and not bool(step.terminated)
-                        realized = 0.0
-                        if not is_trunc:
-                            realized = float(placement_shaped_returns(
-                                cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
-                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, is_trunc, config.gamma)):
+                        realized = float(placement_shaped_returns(
+                            cum_net[None, :], config.grp_placement_values)[0, LEARNING_SEAT])
+                        for idx, r in zip(match_indices, _grp_match_rewards(match_g, realized, config.gamma)):
                             rewards_l[idx] = r
                     break
                 obs = step.observation
