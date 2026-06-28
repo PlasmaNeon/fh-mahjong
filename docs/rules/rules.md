@@ -66,7 +66,7 @@ Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The sta
 4. **Dead Wall (Back) Draws:** For a Kong or Flower replacement, players draw from the tail of the wall going backward. Back-draws always take the **top tile** of the last available stack first, then the **bottom tile**, skipping the wild indicator. If many Kongs occur and all wangpai tiles are consumed, Kong draws can continue — all tiles in the wall may be used.
 5. **Haitei (Last Tile):** The tile physically under the wild indicator is the haitei tile. When normal draws are exhausted, the active player may choose to **accept or refuse** the haitei tile (before seeing it). If accepted: can only Tsumo or Discard; other players can only Ron (no Chii/Pon/Kan). If refused: ryuukyoku. If the haitei tile was already consumed by a Kong draw, the game is ryuukyoku when normal draws exhaust.
 
-## 4. Complete Scoring Reference (from official_rules.md)
+## 4. Complete Scoring Reference (from official-rules.md)
 
 ### Base & Universal Bonuses
 - **Base Point (坐台)**: +1 (Always awarded on all wins).
