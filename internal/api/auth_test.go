@@ -27,7 +27,7 @@ func newAuthTestRouter(t *testing.T) (*gin.Engine, *gorm.DB) {
 	r := gin.New()
 	r.POST("/api/v1/auth/register", h.Register)
 	r.POST("/api/v1/auth/login", h.Login)
-	// NOTE: the PATCH /users/me route is added to this harness in Task 5.
+	r.PATCH("/api/v1/users/me", AuthMiddleware(), h.UpdateMe)
 	return r, db
 }
 
@@ -142,5 +142,52 @@ func TestLoginUnknownEmail(t *testing.T) {
 		map[string]string{"email": "nobody@example.com", "password": "hunter2pw"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestUpdateMeChangesEmailAndName(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	reg := map[string]string{"email": "dave@example.com", "password": "hunter2pw", "displayName": "Dave"}
+	regRec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "", reg)
+	token := decodeAuth(t, regRec).Token
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"email": "DAVE2@example.com", "displayName": "Dave Two"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	out := decodeAuth(t, rec)
+	if out.User.Email != "dave2@example.com" {
+		t.Fatalf("email = %q, want dave2@example.com", out.User.Email)
+	}
+	if out.User.Username != "Dave Two" {
+		t.Fatalf("name = %q, want Dave Two", out.User.Username)
+	}
+	if out.Token == "" {
+		t.Fatal("expected a fresh token")
+	}
+}
+
+func TestUpdateMeEmailCollision(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "",
+		map[string]string{"email": "taken@example.com", "password": "hunter2pw", "displayName": "Taken"})
+	regRec := doJSON(t, r, http.MethodPost, "/api/v1/auth/register", "",
+		map[string]string{"email": "mover@example.com", "password": "hunter2pw", "displayName": "Mover"})
+	token := decodeAuth(t, regRec).Token
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", token,
+		map[string]string{"email": "taken@example.com"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+}
+
+func TestUpdateMeRequiresAuth(t *testing.T) {
+	r, _ := newAuthTestRouter(t)
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/me", "",
+		map[string]string{"displayName": "Nope"})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", rec.Code)
 	}
 }

@@ -154,6 +154,62 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, AuthResponse{Token: token, User: user})
 }
 
+type UpdateProfileRequest struct {
+	Email       *string `json:"email" binding:"omitempty,email"`
+	DisplayName *string `json:"displayName" binding:"omitempty,min=2,max=30"`
+}
+
+// UpdateMe lets an authenticated account change its email and/or display name.
+// A fresh token is always returned so the `username` claim stays current.
+func (h *AuthHandler) UpdateMe(c *gin.Context) {
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled."})
+		return
+	}
+
+	uid, _ := c.Get("userID")
+	var user storage.User
+	if err := h.DB.First(&user, uid).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if req.Email != nil {
+		email := normalizeEmail(*req.Email)
+		if email != user.Email {
+			var other storage.User
+			if err := h.DB.Where("email = ? AND id <> ?", email, user.ID).First(&other).Error; err == nil {
+				c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+				return
+			}
+			user.Email = email
+		}
+	}
+	if req.DisplayName != nil {
+		user.Username = *req.DisplayName
+	}
+
+	if err := h.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		return
+	}
+
+	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+	if err != nil {
+		log.Printf("Failed to sign token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	user.PasswordHash = ""
+	c.JSON(http.StatusOK, AuthResponse{Token: token, User: user})
+}
+
 type GuestRequest struct {
 	Username string `json:"username" binding:"required"`
 }

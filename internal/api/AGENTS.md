@@ -11,7 +11,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
   - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `/api/v1/ws`
-  - Protected room routes (JWT required):
+  - Protected routes (JWT required):
+    - `PATCH /api/v1/users/me` — update email/display name; returns fresh token
     - `/api/v1/rooms/:roomId` (GET) — read current seat config.
     - `/api/v1/rooms/:roomId/join` (POST) — claim a seat.
     - `/api/v1/rooms/:roomId/seat` (POST, host-only) — assign or clear an AI seat.
@@ -22,10 +23,11 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 
-- **auth.go** — JWT authentication handlers:
-  - `Register()` — Create user with bcrypt password hash
-  - `Login()` — Authenticate and return JWT
-  - `GuestLogin()` — Anonymous play with auto-generated credentials
+- **auth.go** — JWT authentication handlers (email+password auth; email is the unique identity, `Username` is the display name):
+  - `Register()` — Create account keyed by email (normalized to lowercase); bcrypt password hash; auto-logs in and returns `AuthResponse` (201)
+  - `Login()` — Authenticate by email+password; returns `AuthResponse` (200)
+  - `UpdateMe()` — `PATCH /api/v1/users/me` (protected): updates email and/or display name; email uniqueness is checked excluding self → **409** on conflict; **404** if no DB row; always returns a fresh 72h token in `AuthResponse` (200) so the `username` JWT claim stays current
+  - `GuestLogin()` — Anonymous play with auto-generated credentials (unchanged)
 
 - **ws.go** — WebSocket upgrade and client management:
   - `Hub` struct — Manages all active WebSocket clients
