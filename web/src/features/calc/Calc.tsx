@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
-import { ActionType, MeldDirection } from '../../proto/game.ts'
+import { game } from '../../proto/game'
 import { getTileName, getTileSvgName } from '../../utils/tileUtils'
 import {
   buildCalcRequestPayload,
@@ -173,16 +173,16 @@ const KONG_FLAG_OPTIONS: Array<{ key: keyof CalcKongFlags; label: string }> = [
 ]
 
 const MELD_TYPE_OPTIONS = [
-  { value: ActionType.ACTION_CHII, label: 'Chii' },
-  { value: ActionType.ACTION_PON, label: 'Pon' },
-  { value: ActionType.ACTION_KAN, label: 'Kan' },
+  { value: game.ActionType.ACTION_CHII, label: 'Chii' },
+  { value: game.ActionType.ACTION_PON, label: 'Pon' },
+  { value: game.ActionType.ACTION_KAN, label: 'Kan' },
 ]
 
 const MELD_DIRECTION_OPTIONS = [
-  { value: MeldDirection.MELD_DIRECTION_UNKNOWN, label: 'Self' },
-  { value: MeldDirection.MELD_DIRECTION_RIGHT, label: 'Right' },
-  { value: MeldDirection.MELD_DIRECTION_ACROSS, label: 'Across' },
-  { value: MeldDirection.MELD_DIRECTION_LEFT, label: 'Left' },
+  { value: game.MeldDirection.MELD_DIRECTION_UNKNOWN, label: 'Self' },
+  { value: game.MeldDirection.MELD_DIRECTION_RIGHT, label: 'Right' },
+  { value: game.MeldDirection.MELD_DIRECTION_ACROSS, label: 'Across' },
+  { value: game.MeldDirection.MELD_DIRECTION_LEFT, label: 'Left' },
 ]
 
 // ─── Tile component ───
@@ -291,7 +291,7 @@ async function readResponsePayload(response: Response): Promise<unknown> {
   }
 }
 
-function getMeldLabelForLang(type: ActionType, lang: Lang): string {
+function getMeldLabelForLang(type: game.ActionType, lang: Lang): string {
   const label = getMeldLabel(type)
   if (lang === 'en') return label
   switch (label) {
@@ -302,7 +302,7 @@ function getMeldLabelForLang(type: ActionType, lang: Lang): string {
   }
 }
 
-function getDirectionLabelForLang(direction: MeldDirection, lang: Lang): string {
+function getDirectionLabelForLang(direction: game.MeldDirection, lang: Lang): string {
   const label = getDirectionLabel(direction)
   if (lang === 'en') return label
   switch (label) {
@@ -466,14 +466,14 @@ export default function Calc() {
     clearServerState()
   }
 
-  const addMeld = (type: ActionType) => {
+  const addMeld = (type: game.ActionType) => {
     const nextMeld = createMeldDraft(type)
     setOpenMelds((current) => [...current, nextMeld])
     setActiveMeldId(nextMeld.id)
     clearServerState()
   }
 
-  const updateMeldType = (meldId: string, type: ActionType) => {
+  const updateMeldType = (meldId: string, type: game.ActionType) => {
     setOpenMelds((current) =>
       current.map((meld) => {
         if (meld.id !== meldId) return meld
@@ -482,15 +482,15 @@ export default function Calc() {
         const nextCalledTileIndex = nextTiles.length === 0 ? 0 : Math.min(meld.calledTileIndex, nextTiles.length - 1)
         return {
           ...meld, type, tiles: nextTiles, calledTileIndex: nextCalledTileIndex,
-          calledDirection: type === ActionType.ACTION_CHII ? MeldDirection.MELD_DIRECTION_LEFT : meld.calledDirection,
-          kongContext: type === ActionType.ACTION_KAN ? meld.kongContext : '',
+          calledDirection: type === game.ActionType.ACTION_CHII ? game.MeldDirection.MELD_DIRECTION_LEFT : meld.calledDirection,
+          kongContext: type === game.ActionType.ACTION_KAN ? meld.kongContext : '',
         }
       }),
     )
     clearServerState()
   }
 
-  const updateMeldDirection = (meldId: string, direction: MeldDirection) => {
+  const updateMeldDirection = (meldId: string, direction: game.MeldDirection) => {
     setOpenMelds((current) =>
       current.map((meld) => (meld.id === meldId ? { ...meld, calledDirection: direction } : meld)),
     )
@@ -508,7 +508,7 @@ export default function Calc() {
     setOpenMelds((current) =>
       current.map((meld) => (
         meld.id === meldId
-          ? { ...meld, tiles: [], calledTileIndex: 0, kongContext: meld.type === ActionType.ACTION_KAN ? '' : meld.kongContext }
+          ? { ...meld, tiles: [], calledTileIndex: 0, kongContext: meld.type === game.ActionType.ACTION_KAN ? '' : meld.kongContext }
           : meld
       )),
     )
@@ -534,11 +534,11 @@ export default function Calc() {
   const updateMeldKongContext = (meldId: string, value: CalcKongContextKey) => {
     setOpenMelds((current) =>
       current.map((meld) => {
-        if (meld.id !== meldId || meld.type !== ActionType.ACTION_KAN) return meld
+        if (meld.id !== meldId || meld.type !== game.ActionType.ACTION_KAN) return meld
         const isClosedKong = value === 'hasBuddingClosedKong' || value === 'hasBloomingClosedKong'
         return {
           ...meld, kongContext: value,
-          calledDirection: isClosedKong ? MeldDirection.MELD_DIRECTION_UNKNOWN : meld.calledDirection,
+          calledDirection: isClosedKong ? game.MeldDirection.MELD_DIRECTION_UNKNOWN : meld.calledDirection,
         }
       }),
     )
@@ -833,7 +833,7 @@ export default function Calc() {
                         <select
                           className="ldg-select"
                           value={meld.type}
-                          onChange={(event) => updateMeldType(meld.id, Number(event.target.value) as ActionType)}
+                          onChange={(event) => updateMeldType(meld.id, Number(event.target.value) as game.ActionType)}
                         >
                           {MELD_TYPE_OPTIONS.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -848,10 +848,10 @@ export default function Calc() {
                         <select
                           className="ldg-select"
                           value={meld.calledDirection}
-                          onChange={(event) => updateMeldDirection(meld.id, Number(event.target.value) as MeldDirection)}
+                          onChange={(event) => updateMeldDirection(meld.id, Number(event.target.value) as game.MeldDirection)}
                           disabled={
-                            meld.type === ActionType.ACTION_CHII ||
-                            (meld.type === ActionType.ACTION_KAN &&
+                            meld.type === game.ActionType.ACTION_CHII ||
+                            (meld.type === game.ActionType.ACTION_KAN &&
                               (meld.kongContext === 'hasBuddingClosedKong' || meld.kongContext === 'hasBloomingClosedKong'))
                           }
                         >
@@ -897,7 +897,7 @@ export default function Calc() {
                       </div>
                     )}
 
-                    {meld.type === ActionType.ACTION_KAN && (
+                    {meld.type === game.ActionType.ACTION_KAN && (
                       <div className="ldg-field" style={{ marginTop: '0.75rem' }}>
                         <label className="ldg-field__label">{text.kanContext}</label>
                         <select

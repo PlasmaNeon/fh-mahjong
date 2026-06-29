@@ -1,7 +1,7 @@
-import { Suit } from '../proto/game.ts'
+import { game } from '../proto/game'
 
 export interface TileValue {
-  suit: Suit
+  suit: game.Suit
   value: number
 }
 
@@ -9,7 +9,7 @@ export interface TileDraft extends TileValue {
   id: string
 }
 
-export function buildSuitTiles(suit: Suit, maxValue: number): TileValue[] {
+export function buildSuitTiles(suit: game.Suit, maxValue: number): TileValue[] {
   const tiles: TileValue[] = []
   for (let value = 1; value <= maxValue; value += 1) {
     tiles.push({ suit, value })
@@ -18,54 +18,54 @@ export function buildSuitTiles(suit: Suit, maxValue: number): TileValue[] {
 }
 
 export const TILE_LIBRARY: TileValue[] = [
-  ...buildSuitTiles(Suit.SUIT_MAN, 9),
-  ...buildSuitTiles(Suit.SUIT_PIN, 9),
-  ...buildSuitTiles(Suit.SUIT_SOU, 9),
-  ...buildSuitTiles(Suit.SUIT_JIHAI, 7),
+  ...buildSuitTiles(game.Suit.SUIT_MAN, 9),
+  ...buildSuitTiles(game.Suit.SUIT_PIN, 9),
+  ...buildSuitTiles(game.Suit.SUIT_SOU, 9),
+  ...buildSuitTiles(game.Suit.SUIT_JIHAI, 7),
 ]
 
-export function suitOrder(suit: Suit): number {
+export function suitOrder(suit: game.Suit): number {
   switch (suit) {
-    case Suit.SUIT_MAN: return 0
-    case Suit.SUIT_PIN: return 1
-    case Suit.SUIT_SOU: return 2
-    case Suit.SUIT_JIHAI: return 3
+    case game.Suit.SUIT_MAN: return 0
+    case game.Suit.SUIT_PIN: return 1
+    case game.Suit.SUIT_SOU: return 2
+    case game.Suit.SUIT_JIHAI: return 3
     default: return 9
   }
 }
 
-export function suitChar(suit: Suit): string {
+export function suitChar(suit: game.Suit): string {
   switch (suit) {
-    case Suit.SUIT_MAN: return 'm'
-    case Suit.SUIT_PIN: return 'p'
-    case Suit.SUIT_SOU: return 's'
-    case Suit.SUIT_JIHAI: return 'z'
+    case game.Suit.SUIT_MAN: return 'm'
+    case game.Suit.SUIT_PIN: return 'p'
+    case game.Suit.SUIT_SOU: return 's'
+    case game.Suit.SUIT_JIHAI: return 'z'
     default: return '?'
   }
 }
 
-export function charToSuit(char: string): Suit | null {
+export function charToSuit(char: string): game.Suit | null {
   switch (char) {
-    case 'm': return Suit.SUIT_MAN
-    case 'p': return Suit.SUIT_PIN
-    case 's': return Suit.SUIT_SOU
-    case 'z': return Suit.SUIT_JIHAI
+    case 'm': return game.Suit.SUIT_MAN
+    case 'p': return game.Suit.SUIT_PIN
+    case 's': return game.Suit.SUIT_SOU
+    case 'z': return game.Suit.SUIT_JIHAI
     default: return null
   }
 }
 
-export function maxValueForSuit(suit: Suit): number {
-  return suit === Suit.SUIT_JIHAI ? 7 : 9
+export function maxValueForSuit(suit: game.Suit): number {
+  return suit === game.Suit.SUIT_JIHAI ? 7 : 9
 }
 
-export function isValueValidForSuit(suit: Suit, value: number): boolean {
+export function isValueValidForSuit(suit: game.Suit, value: number): boolean {
   return value >= 1 && value <= maxValueForSuit(suit)
 }
 
 export function isSuitedTile(
-  suit: Suit | undefined,
-): suit is Suit.SUIT_MAN | Suit.SUIT_PIN | Suit.SUIT_SOU {
-  return suit === Suit.SUIT_MAN || suit === Suit.SUIT_PIN || suit === Suit.SUIT_SOU
+  suit: game.Suit | undefined,
+): suit is game.Suit.SUIT_MAN | game.Suit.SUIT_PIN | game.Suit.SUIT_SOU {
+  return suit === game.Suit.SUIT_MAN || suit === game.Suit.SUIT_PIN || suit === game.Suit.SUIT_SOU
 }
 
 export function sameTileValue(a: TileValue | null, b: TileValue | null): boolean {
@@ -101,7 +101,7 @@ export function formatHand(tiles: TileValue[], options: FormatHandOptions = {}):
   if (tiles.length === 0) return ''
   const sorted = sortBySuitValue(tiles)
   const groups: string[] = []
-  let currentSuit: Suit | null = null
+  let currentSuit: game.Suit | null = null
   let currentGroup = ''
   for (const tile of sorted) {
     if (currentSuit !== null && tile.suit !== currentSuit) {
