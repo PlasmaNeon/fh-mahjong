@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Suit } from '../proto/game.ts'
+import { game } from '../proto/game'
 import {
   TILE_LIBRARY,
   formatTile,
@@ -21,19 +21,19 @@ const messages: ParseMessages = {
 describe('tileModel', () => {
   it('builds the 34-tile library', () => {
     expect(TILE_LIBRARY).toHaveLength(34)
-    expect(TILE_LIBRARY[0]).toEqual({ suit: Suit.SUIT_MAN, value: 1 })
+    expect(TILE_LIBRARY[0]).toEqual({ suit: game.Suit.SUIT_MAN, value: 1 })
   })
 
   it('formats a single tile', () => {
-    expect(formatTile({ suit: Suit.SUIT_PIN, value: 5 })).toBe('5p')
+    expect(formatTile({ suit: game.Suit.SUIT_PIN, value: 5 })).toBe('5p')
     expect(formatTile(null)).toBe('')
   })
 
   it('formats a hand compact (no separator) and per-tile (spaced)', () => {
     const hand = [
-      { suit: Suit.SUIT_PIN, value: 4 },
-      { suit: Suit.SUIT_MAN, value: 1 },
-      { suit: Suit.SUIT_MAN, value: 2 },
+      { suit: game.Suit.SUIT_PIN, value: 4 },
+      { suit: game.Suit.SUIT_MAN, value: 1 },
+      { suit: game.Suit.SUIT_MAN, value: 2 },
     ]
     expect(formatHand(hand)).toBe('12m4p')
     expect(formatHand(hand, { separator: ' ', perTile: true })).toBe('1m2m 4p')
@@ -41,14 +41,14 @@ describe('tileModel', () => {
 
   it('sorts man < pin < sou < jihai then by value', () => {
     const sorted = sortBySuitValue([
-      { suit: Suit.SUIT_JIHAI, value: 1 },
-      { suit: Suit.SUIT_MAN, value: 3 },
-      { suit: Suit.SUIT_MAN, value: 1 },
+      { suit: game.Suit.SUIT_JIHAI, value: 1 },
+      { suit: game.Suit.SUIT_MAN, value: 3 },
+      { suit: game.Suit.SUIT_MAN, value: 1 },
     ])
     expect(sorted.map((t) => `${t.value}-${t.suit}`)).toEqual([
-      `1-${Suit.SUIT_MAN}`,
-      `3-${Suit.SUIT_MAN}`,
-      `1-${Suit.SUIT_JIHAI}`,
+      `1-${game.Suit.SUIT_MAN}`,
+      `3-${game.Suit.SUIT_MAN}`,
+      `1-${game.Suit.SUIT_JIHAI}`,
     ])
   })
 
@@ -66,20 +66,20 @@ describe('tileModel', () => {
 
   it('collectAll=true keeps valid tiles and all errors', () => {
     const r = parseHand('1z9z', messages, true)
-    expect(r.tiles).toEqual([{ suit: Suit.SUIT_JIHAI, value: 1 }])
+    expect(r.tiles).toEqual([{ suit: game.Suit.SUIT_JIHAI, value: 1 }])
     expect(r.errors).toEqual(['Tile 9z out of range'])
   })
 
   it('counts tiles and computes remaining', () => {
     const used = countTiles([
-      { suit: Suit.SUIT_SOU, value: 5 },
-      { suit: Suit.SUIT_SOU, value: 5 },
+      { suit: game.Suit.SUIT_SOU, value: 5 },
+      { suit: game.Suit.SUIT_SOU, value: 5 },
     ])
-    expect(remainingCount({ suit: Suit.SUIT_SOU, value: 5 }, used)).toBe(2)
+    expect(remainingCount({ suit: game.Suit.SUIT_SOU, value: 5 }, used)).toBe(2)
   })
 
   it('sameTileValue compares by face', () => {
-    expect(sameTileValue({ suit: Suit.SUIT_MAN, value: 1 }, { suit: Suit.SUIT_MAN, value: 1 })).toBe(true)
-    expect(sameTileValue({ suit: Suit.SUIT_MAN, value: 1 }, null)).toBe(false)
+    expect(sameTileValue({ suit: game.Suit.SUIT_MAN, value: 1 }, { suit: game.Suit.SUIT_MAN, value: 1 })).toBe(true)
+    expect(sameTileValue({ suit: game.Suit.SUIT_MAN, value: 1 }, null)).toBe(false)
   })
 })

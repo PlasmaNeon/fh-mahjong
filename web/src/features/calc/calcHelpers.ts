@@ -1,4 +1,4 @@
-import { ActionType, MeldDirection, Suit } from '../../proto/game.ts'
+import { game } from '../../proto/game'
 import {
   TILE_LIBRARY as SHARED_TILE_LIBRARY,
   formatHand as sharedFormatHand,
@@ -19,10 +19,10 @@ export type CalcKongContextKey = keyof CalcKongFlags | ''
 
 export interface CalcMeldDraft {
   id: string
-  type: ActionType
+  type: game.ActionType
   tiles: CalcTileDraft[]
   calledTileIndex: number
-  calledDirection: MeldDirection
+  calledDirection: game.MeldDirection
   kongContext: CalcKongContextKey
 }
 
@@ -41,10 +41,10 @@ export interface CalcRequestPayload {
   winTile: CalcTileValue | null
   wildTile: CalcTileValue | null
   openMelds: Array<{
-    type: ActionType
+    type: game.ActionType
     tiles: CalcTileValue[]
     calledTileIndex: number
-    calledDirection: MeldDirection
+    calledDirection: game.MeldDirection
     kongFlags: CalcKongFlags
   }>
   flowerMelds: number[]
@@ -145,13 +145,13 @@ export function createTileDraft(tile: CalcTileValue): CalcTileDraft {
   }
 }
 
-export function createMeldDraft(type: ActionType = ActionType.ACTION_CHII): CalcMeldDraft {
+export function createMeldDraft(type: game.ActionType = game.ActionType.ACTION_CHII): CalcMeldDraft {
   return {
     id: `meld-${nextMeldDraftId++}`,
     type,
     tiles: [],
     calledTileIndex: 0,
-    calledDirection: MeldDirection.MELD_DIRECTION_LEFT,
+    calledDirection: game.MeldDirection.MELD_DIRECTION_LEFT,
     kongContext: '',
   }
 }
@@ -205,8 +205,8 @@ export function expectedClosedHandSize(openMeldsCount: number): number {
   return 13 - (3 * openMeldsCount)
 }
 
-export function meldRequiredTileCount(type: ActionType): number {
-  return type === ActionType.ACTION_KAN ? 4 : 3
+export function meldRequiredTileCount(type: game.ActionType): number {
+  return type === game.ActionType.ACTION_KAN ? 4 : 3
 }
 
 export function validateMeldShape(meld: CalcMeldDraft): string | null {
@@ -218,7 +218,7 @@ export function validateMeldShape(meld: CalcMeldDraft): string | null {
     return `${getMeldLabel(meld.type)} called tile index is out of range.`
   }
 
-  if (meld.type === ActionType.ACTION_CHII) {
+  if (meld.type === game.ActionType.ACTION_CHII) {
     const suit = meld.tiles[0]?.suit
     if (!isSuitedTile(suit)) {
       return 'Chii tiles must be man, pin, or sou.'
@@ -392,42 +392,42 @@ export function normalizeCalcErrorResponse(payload: unknown): CalcErrorResponse 
   }
 }
 
-export function getMeldLabel(type: ActionType): string {
+export function getMeldLabel(type: game.ActionType): string {
   switch (type) {
-    case ActionType.ACTION_CHII:
+    case game.ActionType.ACTION_CHII:
       return 'Chii'
-    case ActionType.ACTION_PON:
+    case game.ActionType.ACTION_PON:
       return 'Pon'
-    case ActionType.ACTION_KAN:
+    case game.ActionType.ACTION_KAN:
       return 'Kan'
     default:
       return 'Meld'
   }
 }
 
-export function getDirectionLabel(direction: MeldDirection): string {
+export function getDirectionLabel(direction: game.MeldDirection): string {
   switch (direction) {
-    case MeldDirection.MELD_DIRECTION_UNKNOWN:
+    case game.MeldDirection.MELD_DIRECTION_UNKNOWN:
       return 'Self'
-    case MeldDirection.MELD_DIRECTION_RIGHT:
+    case game.MeldDirection.MELD_DIRECTION_RIGHT:
       return 'Right'
-    case MeldDirection.MELD_DIRECTION_ACROSS:
+    case game.MeldDirection.MELD_DIRECTION_ACROSS:
       return 'Across'
-    case MeldDirection.MELD_DIRECTION_LEFT:
+    case game.MeldDirection.MELD_DIRECTION_LEFT:
       return 'Left'
     default:
       return 'Unknown'
   }
 }
 
-function isSuitedTile(suit: Suit | undefined): suit is Suit.SUIT_MAN | Suit.SUIT_PIN | Suit.SUIT_SOU {
+function isSuitedTile(suit: game.Suit | undefined): suit is game.Suit.SUIT_MAN | game.Suit.SUIT_PIN | game.Suit.SUIT_SOU {
   return sharedIsSuitedTile(suit)
 }
 
 function aggregateKongFlags(openMelds: CalcMeldDraft[]): CalcKongFlags {
   return openMelds.reduce<CalcKongFlags>(
     (mergedFlags, meld) => {
-      if (meld.type !== ActionType.ACTION_KAN) {
+      if (meld.type !== game.ActionType.ACTION_KAN) {
         return mergedFlags
       }
 
