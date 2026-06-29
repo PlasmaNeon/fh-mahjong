@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -16,7 +18,8 @@ from fh_mahjong_ai.evaluate import (
 )
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import ActionChoice
-from fh_mahjong_ai.scripts.evaluate import parse_seed_windows
+from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+from fh_mahjong_ai.scripts.evaluate import parse_seed_windows, resolve_max_steps_per_episode
 from fh_mahjong_ai.scripts.evaluate_tail_constrained import parse_family_risk_increases
 from fh_mahjong_ai.types import Observation, StepResult, Transition
 
@@ -454,3 +457,150 @@ def test_truncated_eval_scored_worst_placement(monkeypatch):
     assert report["mean_placement"] == -1.0
     assert all(p == -1.0 for p in report["per_episode_placements"])
     assert report["truncation_rate"] == 1.0
+
+
+class _FakeChongciMatchBridge:
+    """Mimics the Go chongci env's step-limit semantics for eval tests.
+
+    A full chongci match runs ``MATCH_DECISIONS`` decisions -- more than the
+    classic ``EnvConfig`` cap of 256 -- and then ends with ``PHASE_MATCH_END``,
+    which the Go env reports as ``Terminated``. If the bridge decision cap
+    (``config.max_steps_per_episode``) is reached first, the Go env reports
+    ``Truncated`` instead (internal/rl/env.go sets ``Truncated`` only at the
+    step limit). This fake reproduces exactly that branch so the eval CLI's
+    per-mode step-cap default can be exercised end to end.
+    """
+
+    MATCH_DECISIONS = 300
+
+    def __init__(self, config: EnvConfig) -> None:
+        self.config = config
+        self.last_reset_result: StepResult | None = None
+        self._steps = 0
+
+    def _observe(self) -> Observation:
+        channels, height, width = self.config.plane_shape
+        mask = np.zeros(self.config.action_space_size, dtype=np.int8)
+        mask[5:15] = 1  # some legal discard actions
+        return Observation(
+            seat=0,
+            planes=np.zeros((channels, height, width), dtype=np.float32),
+            scalars=np.zeros(self.config.scalar_features, dtype=np.float32),
+            action_mask=mask,
+        )
+
+    def reset(self, seed: int | None = None) -> Observation:
+        self._steps = 0
+        observation = self._observe()
+        self.last_reset_result = StepResult(
+            observation=observation,
+            rewards=np.zeros(4, dtype=np.float32),
+            terminated=False,
+            truncated=False,
+            info={"reset": True},
+        )
+        return observation
+
+    def step(self, action_id: int) -> StepResult:
+        self._steps += 1
+        terminal_rewards = np.asarray([0.4, 0.1, -0.2, -0.3], dtype=np.float32)
+        if self._steps >= self.config.max_steps_per_episode:
+            # Step-limit reached before the match ended -> Go env truncates.
+            return StepResult(self._observe(), terminal_rewards, terminated=False, truncated=True, info={})
+        if self._steps >= self.MATCH_DECISIONS:
+            # Natural PHASE_MATCH_END -> Go env terminates.
+            return StepResult(self._observe(), terminal_rewards, terminated=True, truncated=False, info={})
+        return StepResult(self._observe(), np.zeros(4, dtype=np.float32), terminated=False, truncated=False, info={})
+
+    def close(self) -> None:
+        return None
+
+
+def _truncation_rate(report: dict) -> float:
+    summaries = report["episode_summaries"]
+    return sum(1 for summary in summaries if summary["truncated"]) / len(summaries)
+
+
+class TestChongciMaxStepsDefault:
+    def test_resolve_defaults_chongci_to_training_budget(self) -> None:
+        # Classic mode is unchanged: an unset cap falls through to EnvConfig's default.
+        assert resolve_max_steps_per_episode("classic", None) is None
+        # Chongci with no flag gets a budget large enough to reach MATCH_END.
+        assert resolve_max_steps_per_episode("chongci", None) == 4000
+        # An explicit flag always wins, in either mode.
+        assert resolve_max_steps_per_episode("chongci", 50) == 50
+        assert resolve_max_steps_per_episode("classic", 512) == 512
+
+    def test_chongci_default_terminates_without_truncation(self, monkeypatch) -> None:
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", _FakeChongciMatchBridge)
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+
+        report = evaluate_duplicate_seats(
+            model=model,
+            seeds=[1],
+            seats=(0, 1),
+            bridge_kind="go",
+            device="cpu",
+            match_mode="chongci",
+            max_steps_per_episode=resolve_max_steps_per_episode("chongci", None),
+        )
+
+        assert _truncation_rate(report) == 0.0
+        assert report["round_outcome_counts"].get("match_truncated", 0) == 0
+        assert report["round_outcome_counts"]["match_end"] == report["episodes"]
+
+    def test_explicit_low_cap_still_truncates(self, monkeypatch) -> None:
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", _FakeChongciMatchBridge)
+        model = PolicyValueNet(EnvConfig(), ModelConfig())
+
+        report = evaluate_duplicate_seats(
+            model=model,
+            seeds=[1],
+            seats=(0, 1),
+            bridge_kind="go",
+            device="cpu",
+            match_mode="chongci",
+            max_steps_per_episode=resolve_max_steps_per_episode("chongci", 50),
+        )
+
+        assert _truncation_rate(report) == 1.0
+        assert report["round_outcome_counts"].get("match_end", 0) == 0
+        assert report["round_outcome_counts"]["match_truncated"] == report["episodes"]
+
+    def test_main_wires_resolved_cap_into_eval(self, monkeypatch) -> None:
+        # Guards the CLI wiring: main() must forward the *resolved* cap, not the
+        # raw argparse value. Without this, a regression that passed
+        # args.max_steps_per_episode straight through would silently reintroduce
+        # the 256-step chongci truncation while every resolver unit test stayed green.
+        captured: dict = {}
+
+        def fake_duplicate_seats(**kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            return {
+                "match_mode": kwargs["match_mode"],
+                "episodes": 1,
+                "avg_reward": 0.0,
+                "positive_reward_count": 0,
+                "positive_reward_rate": 0.0,
+                "win_count": 0,
+                "win_rate": 0.0,
+                "large_loss_rate": 0.0,
+            }
+
+        monkeypatch.setattr(evaluate_cli, "load_checkpoint", lambda *args, **kwargs: 0)
+        monkeypatch.setattr(evaluate_cli, "evaluate_duplicate_seats", fake_duplicate_seats)
+
+        base_argv = ["fh-mj-evaluate", "--checkpoint", "ckpt.pt", "--online-episodes", "1", "--duplicate-seats"]
+
+        monkeypatch.setattr(sys, "argv", base_argv + ["--match-mode", "chongci"])
+        evaluate_cli.main()
+        assert captured["max_steps_per_episode"] == 4000
+
+        monkeypatch.setattr(sys, "argv", base_argv + ["--match-mode", "classic"])
+        evaluate_cli.main()
+        assert captured["max_steps_per_episode"] is None
+
+        monkeypatch.setattr(sys, "argv", base_argv + ["--match-mode", "chongci", "--max-steps-per-episode", "123"])
+        evaluate_cli.main()
+        assert captured["max_steps_per_episode"] == 123

@@ -16,9 +16,30 @@ from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model
 from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint
 
 
+# A full chongci match (up to 50 hands) needs far more decisions than the
+# classic EnvConfig default of 256, so an unset cap silently truncates every
+# match. Default chongci to the PPO training budget (train_ppo.py) instead.
+CHONGCI_DEFAULT_MAX_STEPS = 4000
+
+
 def write_evaluation_report(path: Path, report: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | None) -> int | None:
+    """Pick the bridge decision cap when ``--max-steps-per-episode`` is unset.
+
+    An explicit value always wins. When unset, classic mode keeps falling
+    through to ``EnvConfig``'s 256-step default, while chongci gets a budget
+    large enough to reach ``PHASE_MATCH_END`` so matches terminate (with real
+    standings) instead of being truncated at the step limit.
+    """
+    if max_steps_per_episode is not None:
+        return max_steps_per_episode
+    if match_mode == "chongci":
+        return CHONGCI_DEFAULT_MAX_STEPS
+    return None
 
 
 def parse_seed_windows(values: list[str], episodes: int, start_seed: int) -> list[int]:
@@ -59,7 +80,7 @@ def main() -> None:
         "--max-steps-per-episode",
         type=int,
         default=None,
-        help="Bridge decision cap per online episode; defaults to EnvConfig",
+        help="Bridge decision cap per online episode; default 256 (classic) or 4000 (chongci)",
     )
     parser.add_argument(
         "--large-loss-threshold",
@@ -76,6 +97,8 @@ def main() -> None:
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
+
+    max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
     model_config = model_config_from_args(args)
     model = PolicyValueNet(EnvConfig(), model_config)
@@ -125,7 +148,7 @@ def main() -> None:
                     "chongci_starting_score": args.chongci_starting_score,
                     "chongci_bust_threshold": args.chongci_bust_threshold,
                     "chongci_max_hands": args.chongci_max_hands,
-                    "max_steps_per_episode": args.max_steps_per_episode,
+                    "max_steps_per_episode": max_steps_per_episode,
                     "large_loss_threshold": args.large_loss_threshold,
                     **model_config_params(model_config),
                 }
@@ -167,7 +190,7 @@ def main() -> None:
                     chongci_starting_score=args.chongci_starting_score,
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
-                    max_steps_per_episode=args.max_steps_per_episode,
+                    max_steps_per_episode=max_steps_per_episode,
                 )
             else:
                 online_report = evaluate_online(
@@ -182,7 +205,7 @@ def main() -> None:
                     chongci_starting_score=args.chongci_starting_score,
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
-                    max_steps_per_episode=args.max_steps_per_episode,
+                    max_steps_per_episode=max_steps_per_episode,
                 )
             final_report["online"] = online_report
             print(f"  Match Mode:  {online_report['match_mode']}")
