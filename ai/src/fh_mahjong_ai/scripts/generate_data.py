@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fh_mahjong_ai.bridge import build_bridge
+from fh_mahjong_ai.bridge import BridgeError, build_bridge
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.data import backfill_returns
 from fh_mahjong_ai.env import MahjongEnv
@@ -17,6 +17,14 @@ from fh_mahjong_ai.policies import RandomMaskedPolicy
 from fh_mahjong_ai.storage import ShardedTransitionWriter, write_transitions_jsonl
 from fh_mahjong_ai.trainer import collect_episode
 from fh_mahjong_ai.types import Transition
+
+# Episodes per bridge export request when the caller does not specify one.
+# Each Go bridge call returns the whole chunk's TrajectoryDataset as a single
+# protobuf payload across the ctypes boundary, whose length is carried in a
+# 32-bit field. A large chunk (~hundreds of chongci episodes) can exceed 2 GiB
+# and get silently truncated to empty, so we cap the default chunk so big
+# --episodes requests auto-chunk into bounded, safe payloads.
+DEFAULT_CHUNK_SIZE = 20
 
 
 def generate_dataset(
@@ -26,7 +34,7 @@ def generate_dataset(
     bridge_kind: str = "go",
     bridge_library_path: Optional[Path] = None,
     manifest_path: Optional[Path] = None,
-    chunk_size: Optional[int] = None,
+    chunk_size: Optional[int] = DEFAULT_CHUNK_SIZE,
     output_format: str = "jsonl",
     shard_size: int = 50_000,
     compressed_shards: bool = False,
@@ -88,6 +96,16 @@ def generate_dataset(
                     start_seed=chunk_seed,
                 )
                 offset_episode_indices(transitions, episode_offset)
+
+            if chunk_episodes > 0 and len(transitions) == 0:
+                raise BridgeError(
+                    f"chunk {chunk_index} generated 0 transitions for "
+                    f"{chunk_episodes} episodes (seeds {chunk_seed}.."
+                    f"{chunk_seed + chunk_episodes - 1}). This usually means the "
+                    f"bridge return payload exceeded its 32-bit size limit and was "
+                    f"silently truncated; lower --chunk-size (currently "
+                    f"{effective_chunk_size})."
+                )
 
             backfill_returns(transitions)
             if normalized_output_format == "jsonl":
@@ -305,8 +323,12 @@ def main() -> None:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=1000,
-        help="Episodes per bridge export request (0 disables chunking)",
+        default=DEFAULT_CHUNK_SIZE,
+        help=(
+            "Episodes per bridge export request. Small chunks keep the per-call "
+            "payload under the bridge's 32-bit size limit; 0 disables chunking "
+            "(unsafe for large --episodes)."
+        ),
     )
     args = parser.parse_args()
 

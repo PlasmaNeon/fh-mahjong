@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from fh_mahjong_ai.scripts.generate_data import generate_dataset
+from fh_mahjong_ai.bridge import BridgeError
+from fh_mahjong_ai.scripts import generate_data
+from fh_mahjong_ai.scripts.generate_data import DEFAULT_CHUNK_SIZE, generate_dataset
 from fh_mahjong_ai.storage import read_transitions, read_transitions_jsonl
 
 
@@ -64,6 +67,62 @@ def test_generate_dataset_mock_chunked_uses_global_episode_indices(tmp_path: Pat
     manifest_payload = json.loads(output.with_suffix(".manifest.json").read_text())
     assert manifest_payload["dataset"]["chunk_size"] == 2
     assert len(manifest_payload["dataset"]["chunks"]) == 3
+
+
+def test_generate_dataset_auto_chunks_large_episode_counts(tmp_path: Path) -> None:
+    # Regression for the silent zero-transition bug: a large episode count must
+    # auto-chunk into bounded per-call payloads (never one oversized bridge
+    # call) and still yield transitions + a non-empty manifest.
+    output = tmp_path / "data.jsonl"
+    stats = generate_dataset(
+        episodes=40,
+        start_seed=1,
+        output_path=output,
+        bridge_kind="mock",
+        bridge_library_path=None,
+    )
+
+    # No explicit chunk_size -> capped default, so 40 episodes span 2 chunks.
+    assert DEFAULT_CHUNK_SIZE == 20
+    assert stats["chunk_size"] == 20
+    assert [chunk["episodes"] for chunk in stats["chunks"]] == [20, 20]
+    assert stats["transitions"] > 0
+
+    manifest = output.with_suffix(".manifest.json")
+    assert manifest.exists()
+    manifest_payload = json.loads(manifest.read_text())
+    assert manifest_payload["dataset"]["transitions"] == stats["transitions"]
+    assert manifest_payload["dataset"]["transitions"] > 0
+    assert manifest_payload["dataset"]["episodes"] == 40
+
+
+def test_generate_dataset_raises_when_chunk_returns_no_transitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Simulates the oversized-payload bridge failure where the Go bridge return
+    # is silently truncated to empty. The generator must fail loudly instead of
+    # writing an empty manifest and reporting success.
+    class _EmptyBridge:
+        def generate_heuristic_trajectories(self, episodes: int, start_seed: int = 1):
+            return []
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(generate_data, "build_bridge", lambda config: _EmptyBridge())
+
+    output = tmp_path / "data.jsonl"
+    with pytest.raises(BridgeError, match="0 transitions"):
+        generate_dataset(
+            episodes=4,
+            start_seed=1,
+            output_path=output,
+            bridge_kind="go",
+            bridge_library_path=None,
+        )
+
+    # No success manifest should be written for a failed generation.
+    assert not output.with_suffix(".manifest.json").exists()
 
 
 def test_generate_dataset_mock_can_write_npz_shards(tmp_path: Path) -> None:
