@@ -73,6 +73,7 @@ func (s *Server) setupRoutes() {
 		protected.Use(AuthMiddleware())
 		{
 			protected.GET("/users/me", s.handleGetMe)
+			protected.PATCH("/users/me", authHandler.UpdateMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
 
 			protected.GET("/rooms/:roomId", s.handlePrivateTableGet)
