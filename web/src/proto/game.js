@@ -4319,6 +4319,7 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [maxDecisions] EnvConfig maxDecisions
          * @property {game.MatchMode|undefined} [matchMode] EnvConfig matchMode
          * @property {game.IChongciConfig|undefined} [chongciConfig] EnvConfig chongciConfig
+         * @property {boolean|undefined} [oracleObservation] EnvConfig oracleObservation
          */
 
         /**
@@ -4378,6 +4379,14 @@ export const game = $root.game = (() => {
         EnvConfig.prototype.chongciConfig = null;
 
         /**
+         * EnvConfig oracleObservation.
+         * @member {boolean} oracleObservation
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.oracleObservation = false;
+
+        /**
          * Creates a new EnvConfig instance using the specified properties.
          * @function create
          * @memberof game.EnvConfig
@@ -4415,6 +4424,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 4, wireType 0 =*/32).int32(message.matchMode);
             if (message.chongciConfig != null && Object.hasOwnProperty.call(message, "chongciConfig"))
                 $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
+            if (message.oracleObservation != null && Object.hasOwnProperty.call(message, "oracleObservation"))
+                writer.uint32(/* id 6, wireType 0 =*/48).bool(message.oracleObservation);
             return writer;
         };
 
@@ -4476,6 +4487,10 @@ export const game = $root.game = (() => {
                     }
                 case 5: {
                         message.chongciConfig = $root.game.ChongciConfig.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 6: {
+                        message.oracleObservation = reader.bool();
                         break;
                     }
                 default:
@@ -4540,6 +4555,9 @@ export const game = $root.game = (() => {
                 if (error)
                     return "chongciConfig." + error;
             }
+            if (message.oracleObservation != null && message.hasOwnProperty("oracleObservation"))
+                if (typeof message.oracleObservation !== "boolean")
+                    return "oracleObservation: boolean expected";
             return null;
         };
 
@@ -4591,6 +4609,8 @@ export const game = $root.game = (() => {
                     throw TypeError(".game.EnvConfig.chongciConfig: object expected");
                 message.chongciConfig = $root.game.ChongciConfig.fromObject(object.chongciConfig);
             }
+            if (object.oracleObservation != null)
+                message.oracleObservation = Boolean(object.oracleObservation);
             return message;
         };
 
@@ -4614,6 +4634,7 @@ export const game = $root.game = (() => {
                 object.maxDecisions = 0;
                 object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
                 object.chongciConfig = null;
+                object.oracleObservation = false;
             }
             if (message.learningSeats && message.learningSeats.length) {
                 object.learningSeats = [];
@@ -4628,6 +4649,8 @@ export const game = $root.game = (() => {
                 object.matchMode = options.enums === String ? $root.game.MatchMode[message.matchMode] === undefined ? message.matchMode : $root.game.MatchMode[message.matchMode] : message.matchMode;
             if (message.chongciConfig != null && message.hasOwnProperty("chongciConfig"))
                 object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
+            if (message.oracleObservation != null && message.hasOwnProperty("oracleObservation"))
+                object.oracleObservation = message.oracleObservation;
             return object;
         };
 

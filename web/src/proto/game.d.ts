@@ -1334,6 +1334,9 @@ export namespace game {
 
         /** EnvConfig chongciConfig */
         chongciConfig?: (game.IChongciConfig|undefined);
+
+        /** EnvConfig oracleObservation */
+        oracleObservation?: (boolean|undefined);
     }
 
     /** Represents an EnvConfig. */
@@ -1359,6 +1362,9 @@ export namespace game {
 
         /** EnvConfig chongciConfig. */
         public chongciConfig: game.ChongciConfig;
+
+        /** EnvConfig oracleObservation. */
+        public oracleObservation: boolean;
 
         /**
          * Creates a new EnvConfig instance using the specified properties.

@@ -1,0 +1,147 @@
+"""Oracle-guiding helpers (Phase 1): build a perfect-information policy
+warm-started from the 39-channel anchor."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from .bridge import build_bridge
+from .config import EnvConfig, ModelConfig
+from .env import MahjongEnv
+from .model import PolicyValueNet
+from .ppo import (
+    RolloutBatch, PPOConfig, compute_gae, ppo_update, masked_policy_distribution,
+    _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
+)
+from .storage import load_compatible_checkpoint, save_checkpoint
+
+
+def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
+                       anchor_checkpoint: Path, device: str = "cpu") -> PolicyValueNet:
+    """Build a 51-channel oracle `PolicyValueNet` warm-started from the 39-channel
+    anchor. Every layer except the first plane conv is loaded by shape
+    (`load_compatible_checkpoint` skips the 39->51 conv); the input conv is then
+    initialized so the oracle equals the anchor when the 12 oracle channels are 0:
+    the anchor's weights occupy the first 39 input channels and the new 12 are
+    zeroed."""
+    oracle = PolicyValueNet(env_config, model_config).to(device)
+    # Load all same-shape tensors (skips plane_stem.0.weight: [C,39,3,3] vs [C,51,3,3]).
+    load_compatible_checkpoint(Path(anchor_checkpoint), oracle)
+    # Read the anchor's input conv weight directly from the checkpoint.
+    payload = torch.load(Path(anchor_checkpoint), map_location="cpu")
+    anchor_w = payload["model"]["plane_stem.0.weight"]  # [C, 39, 3, 3]
+    base = anchor_w.shape[1]  # 39
+    with torch.no_grad():
+        w = oracle.plane_stem[0].weight
+        w.zero_()
+        w[:, :base].copy_(anchor_w.to(w.device))
+    oracle.eval()
+    return oracle
+
+
+def collect_oracle_rollouts(env_config: EnvConfig, model: PolicyValueNet,
+                            config: PPOConfig, base_seed: int) -> RolloutBatch:
+    """Single-seat PPO rollouts: the oracle is the only learning seat; the env
+    auto-plays heuristic opponents. Records the learner's decisions with dense
+    per-hand score-delta reward; done=1 at match end."""
+    device = config.device
+    cfg = EnvConfig(
+        action_space_size=env_config.action_space_size,
+        plane_shape=env_config.plane_shape,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        learning_seats=(LEARNING_SEAT,),
+        auto_play_heuristics=True,
+        max_steps_per_episode=config.max_steps_per_episode,
+        match_mode=config.match_mode,
+        oracle_observation=env_config.oracle_observation,
+    )
+    bridge = build_bridge(cfg)
+    env = MahjongEnv(cfg, bridge=bridge)
+    model.eval()
+    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
+    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
+    try:
+        for m in range(config.matches_per_iter):
+            obs = env.reset(seed=base_seed + m)
+            torch.manual_seed(int(base_seed + m))
+            reset_result = env.last_reset_result
+            if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                continue
+            last_idx = None
+            while True:
+                planes, scalars, mask = _obs_to_tensors(obs, device)
+                with torch.no_grad():
+                    logits, value = model(planes, scalars, mask)
+                    logits = logits / max(config.sample_temperature, 1e-6)
+                    dist = masked_policy_distribution(logits)
+                    action = int(dist.sample()[0].item())
+                    logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                    val = float(value[0].item())
+                planes_l.append(np.asarray(obs.planes, dtype=np.float32))
+                scalars_l.append(np.asarray(obs.scalars, dtype=np.float32))
+                mask_l.append(np.asarray(obs.action_mask, dtype=np.int8))
+                actions_l.append(action)
+                logprobs_l.append(logprob)
+                values_l.append(val)
+                rewards_l.append(0.0)
+                dones_l.append(0.0)
+                last_idx = len(actions_l) - 1
+                step = env.step(action)
+                if last_idx is not None:
+                    rewards_l[last_idx] += _seat_step_reward(step.rewards, LEARNING_SEAT)
+                if step.terminated or step.truncated:
+                    if last_idx is not None:
+                        dones_l[last_idx] = 1.0
+                    break
+                obs = step.observation
+    finally:
+        close = getattr(bridge, "close", None)
+        if callable(close):
+            close()
+    if not actions_l:
+        raise RuntimeError("collect_oracle_rollouts produced no learning-seat decisions")
+    return RolloutBatch(
+        planes=np.stack(planes_l).astype(np.float32),
+        scalars=np.stack(scalars_l).astype(np.float32),
+        action_mask=np.stack(mask_l).astype(np.int8),
+        actions=np.asarray(actions_l, dtype=np.int64),
+        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
+        values=np.asarray(values_l, dtype=np.float32),
+        rewards=np.asarray(rewards_l, dtype=np.float32),
+        dones=np.asarray(dones_l, dtype=np.float32),
+    )
+
+
+def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,
+                 checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
+                 run_eval: bool = False) -> list[dict]:
+    """Warm-start a 51ch oracle from the anchor and train it single-seat vs the
+    env's heuristic with dense score reward (reuses compute_gae + ppo_update)."""
+    device = config.device
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)
+    model.train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    history: list[dict] = []
+    for iteration in range(1, config.iterations + 1):
+        iter_seed = base_seed + iteration * config.matches_per_iter
+        batch = collect_oracle_rollouts(env_config, model, config, base_seed=iter_seed)
+        advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
+                                          config.gamma, config.gae_lambda)
+        metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+        metrics["iteration"] = iteration
+        metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+        metrics["steps"] = len(batch)
+        save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+        history.append(metrics)
+        (checkpoint_dir / "history.json").write_text(json.dumps(history))
+        print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+              f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+              f"mean_reward={metrics['mean_reward']:.4f}")
+    return history

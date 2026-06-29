@@ -9,6 +9,7 @@ description = "Python RL training stack for Fenghua Mahjong"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "grpcio-tools>=1.81.1",
   "mlflow>=3.0",
   "numpy>=2.0",
   "protobuf>=5.0",
@@ -56,6 +57,7 @@ fh-mj-serving-smoke = "fh_mahjong_ai.scripts.serving_smoke:main"
 fh-mj-pipeline = "fh_mahjong_ai.scripts.run_pipeline:main"
 fh-mj-selfplay-loop = "fh_mahjong_ai.scripts.selfplay_loop:main"
 fh-mj-train-ppo = "fh_mahjong_ai.scripts.train_ppo:main"
+fh-mj-train-oracle = "fh_mahjong_ai.scripts.train_oracle:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

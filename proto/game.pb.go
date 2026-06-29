@@ -1356,8 +1356,11 @@ type EnvConfig struct {
 	MaxDecisions       uint32                 `protobuf:"varint,3,opt,name=max_decisions,json=maxDecisions,proto3" json:"max_decisions,omitempty"`
 	MatchMode          MatchMode              `protobuf:"varint,4,opt,name=match_mode,json=matchMode,proto3,enum=game.MatchMode" json:"match_mode,omitempty"`
 	ChongciConfig      *ChongciConfig         `protobuf:"bytes,5,opt,name=chongci_config,json=chongciConfig,proto3" json:"chongci_config,omitempty"` // set iff match_mode == MATCH_MODE_CHONGCI
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// When true the observation appends the three opponents' concealed (closed)
+	// hands as extra planes (39 -> 51 channels). Perfect-information oracle mode.
+	OracleObservation bool `protobuf:"varint,6,opt,name=oracle_observation,json=oracleObservation,proto3" json:"oracle_observation,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *EnvConfig) Reset() {
@@ -1423,6 +1426,13 @@ func (x *EnvConfig) GetChongciConfig() *ChongciConfig {
 		return x.ChongciConfig
 	}
 	return nil
+}
+
+func (x *EnvConfig) GetOracleObservation() bool {
+	if x != nil {
+		return x.OracleObservation
+	}
+	return false
 }
 
 type SeatObservation struct {
@@ -2697,14 +2707,15 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0ediscarder_seat\x18\x04 \x01(\rR\rdiscarderSeat\x12\x1f\n" +
 	"\vtotal_score\x18\x05 \x01(\x05R\n" +
 	"totalScore\x12,\n" +
-	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xf5\x01\n" +
+	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xa4\x02\n" +
 	"\tEnvConfig\x12%\n" +
 	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
 	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
 	"\rmax_decisions\x18\x03 \x01(\rR\fmaxDecisions\x12.\n" +
 	"\n" +
 	"match_mode\x18\x04 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
-	"\x0echongci_config\x18\x05 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\"\x82\x03\n" +
+	"\x0echongci_config\x18\x05 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12-\n" +
+	"\x12oracle_observation\x18\x06 \x01(\bR\x11oracleObservation\"\x82\x03\n" +
 	"\x0fSeatObservation\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
 	"\x06planes\x18\x02 \x03(\x02R\x06planes\x12%\n" +

@@ -283,6 +283,7 @@ class CtypesGoBridge(MahjongBridge):
             max_decisions=int(self.config.max_steps_per_episode),
         )
         message.learning_seats.extend(int(seat) for seat in self.config.learning_seats)
+        message.oracle_observation = bool(self.config.oracle_observation)
         if self.config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
             message.chongci_config.starting_score = int(self.config.chongci_starting_score)

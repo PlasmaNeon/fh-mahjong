@@ -20,6 +20,14 @@ class EnvConfig:
     chongci_starting_score: int = 2000
     chongci_bust_threshold: int = 0
     chongci_max_hands: int = 50
+    oracle_observation: bool = False
+
+    def __post_init__(self) -> None:
+        # Oracle mode appends the 3 opponents' closed hands (39 -> 51 channels);
+        # resolve plane_shape so callers don't have to remember the channel count.
+        # An explicitly-set non-default plane_shape is respected.
+        if self.oracle_observation and tuple(self.plane_shape) == (39, 42, 1):
+            self.plane_shape = (51, 42, 1)
 
 
 @dataclass

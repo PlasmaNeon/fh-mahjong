@@ -8,7 +8,7 @@ from unittest import mock
 import numpy as np
 
 from fh_mahjong_ai import bridge as bridge_module
-from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge, MockMahjongBridge
+from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge, CtypesGoBridge as GoMahjongBridge, MockMahjongBridge
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.generated.proto import game_pb2
 from fh_mahjong_ai.types import Observation
@@ -239,6 +239,38 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(fake_library.last_new_config.chongci_config.starting_score, 3000)
         self.assertEqual(fake_library.last_new_config.chongci_config.bust_threshold, -100)
         self.assertEqual(fake_library.last_new_config.chongci_config.max_hands, 12)
+
+
+def test_envconfig_proto_has_oracle_observation_flag():
+    from fh_mahjong_ai.generated.proto import game_pb2
+    msg = game_pb2.EnvConfig(oracle_observation=True)
+    assert msg.oracle_observation is True
+    assert game_pb2.EnvConfig().oracle_observation is False
+
+
+def test_envconfig_oracle_resolves_plane_shape_and_serializes():
+    from fh_mahjong_ai.config import EnvConfig
+    # default oracle off -> 39ch, byte-identical default
+    assert EnvConfig().oracle_observation is False
+    assert EnvConfig().plane_shape == (39, 42, 1)
+    # oracle on -> plane_shape auto-resolves to 51ch
+    cfg = EnvConfig(oracle_observation=True)
+    assert cfg.plane_shape == (51, 42, 1)
+    # explicit plane_shape is respected (not overridden)
+    cfg2 = EnvConfig(oracle_observation=True, plane_shape=(60, 42, 1))
+    assert cfg2.plane_shape == (60, 42, 1)
+    # the flag is serialized into the proto EnvConfig message
+    msg = GoMahjongBridge.__new__(GoMahjongBridge)
+    msg.config = cfg
+    built = msg._config_message()
+    assert built.oracle_observation is True
+
+
+def test_envconfig_default_is_39_channels():
+    from fh_mahjong_ai.config import EnvConfig
+    cfg = EnvConfig()
+    assert cfg.plane_shape == (39, 42, 1)
+    assert cfg.oracle_observation is False
 
 
 if __name__ == "__main__":
