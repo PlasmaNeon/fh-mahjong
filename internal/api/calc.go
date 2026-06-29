@@ -231,10 +231,11 @@ func buildCalcEvaluation(req CalcRequest) (*calcEvaluation, []string) {
 			tiles = append(tiles, makeTile(tile))
 		}
 
+		calledID := tiles[meld.CalledTileIndex].Id
 		openMelds = append(openMelds, &pb.Meld{
 			Type:            meld.Type,
 			Tiles:           tiles,
-			CalledTileId:    tiles[meld.CalledTileIndex].Id,
+			CalledTileId:    &calledID,
 			CalledDirection: meld.CalledDirection,
 		})
 	}

@@ -40,6 +40,30 @@ describe('reorderMeldTiles', () => {
     }
     expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([10, 11, 12])
   })
+  it('keeps the tile with id 0 inline when there is no added tile', () => {
+    // Regression: tile id 0 is a real tile (the first 1s). An unset added_tile_id
+    // arrives as null/undefined (proto optional), NOT 0, so the id-0 tile must
+    // stay in the inline row instead of being pulled out as a phantom 加杠 tile.
+    const meld: MeldLike = { tiles: [t(0), t(1), t(2)], calledTileId: 2, calledDirection: 1 }
+    expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([0, 1, 2])
+  })
+  it('honors a real added tile whose id is 0', () => {
+    // pon(1,2,called=3) upgraded with added=0 (the first 1s). addedTileId is
+    // explicitly 0 here, so the id-0 tile is correctly excluded (rendered stacked).
+    const meld: MeldLike = {
+      tiles: [t(1), t(2), t(3), t(0)],
+      calledTileId: 3,
+      calledDirection: 1,
+      addedTileId: 0,
+    }
+    expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([1, 2, 3])
+  })
+  it('does not reorder a concealed meld whose called id defaults to null', () => {
+    // Concealed kong: called_tile_id unset → null (not 0), so the id-0 tile is not
+    // mistaken for the called tile and the meld keeps its natural order.
+    const meld: MeldLike = { tiles: [t(0), t(1), t(2), t(3)], calledTileId: null, calledDirection: 0 }
+    expect(reorderMeldTiles(meld).map((x) => x.id)).toEqual([0, 1, 2, 3])
+  })
 })
 
 describe('orderMelds', () => {
