@@ -8,7 +8,7 @@ from unittest import mock
 import numpy as np
 
 from fh_mahjong_ai import bridge as bridge_module
-from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge, MockMahjongBridge
+from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge, CtypesGoBridge as GoMahjongBridge, MockMahjongBridge
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.generated.proto import game_pb2
 from fh_mahjong_ai.types import Observation
@@ -250,7 +250,6 @@ def test_envconfig_proto_has_oracle_observation_flag():
 
 def test_envconfig_oracle_resolves_plane_shape_and_serializes():
     from fh_mahjong_ai.config import EnvConfig
-    from fh_mahjong_ai.bridge import GoMahjongBridge
     # default oracle off -> 39ch, byte-identical default
     assert EnvConfig().oracle_observation is False
     assert EnvConfig().plane_shape == (39, 42, 1)

@@ -426,7 +426,3 @@ def build_bridge(config: EnvConfig) -> MahjongBridge:
     if config.bridge_kind == "go":
         return CtypesGoBridge(config)
     raise BridgeError(f"unknown bridge kind: {config.bridge_kind}")
-
-
-# Alias so tests and downstream code can import GoMahjongBridge as a stable name.
-GoMahjongBridge = CtypesGoBridge
