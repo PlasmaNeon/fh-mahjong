@@ -15,15 +15,23 @@ const (
 	ObservationScalarCount   = 58
 	maxInt32                 = int32(^uint32(0) >> 1)
 	chongciLargeLossPoints   = int32(1000)
+
+	// Oracle mode appends the three opponents' closed-hand threshold planes
+	// (3 opponents x 4 threshold planes) after the 39 base channels.
+	OracleObservationPlaneChannels = ObservationPlaneChannels + 12 // 51
 )
 
-func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
+func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, oracle bool) (*pb.SeatObservation, error) {
 	mask, err := actionMask(state, seat)
 	if err != nil {
 		return nil, err
 	}
 
-	planes := make([]float32, ObservationPlaneChannels*ObservationPlaneHeight*ObservationPlaneWidth)
+	channels := ObservationPlaneChannels
+	if oracle {
+		channels = OracleObservationPlaneChannels
+	}
+	planes := make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth)
 	scalars := make([]float32, ObservationScalarCount)
 
 	self := state.Players[seat]
@@ -139,10 +147,22 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 	scalars[41] = legalDiscardDangerRange(state, seat, mask)
 	setMatchContextScalars(scalars, state, seat)
 
+	if oracle {
+		// Append the three opponents' concealed hands, relative to `seat`,
+		// mirroring the self closed-hand threshold encoding. right=+1, across=+2, left=+3.
+		setThresholdPlanes(planes, 39, faceCountsFromTiles(right.ClosedHand))
+		setThresholdPlanes(planes, 43, faceCountsFromTiles(across.ClosedHand))
+		setThresholdPlanes(planes, 47, faceCountsFromTiles(left.ClosedHand))
+	}
+
+	planeChannels := uint32(ObservationPlaneChannels)
+	if oracle {
+		planeChannels = uint32(OracleObservationPlaneChannels)
+	}
 	return &pb.SeatObservation{
 		Seat:            seat,
 		Planes:          planes,
-		PlaneChannels:   ObservationPlaneChannels,
+		PlaneChannels:   planeChannels,
 		PlaneHeight:     ObservationPlaneHeight,
 		PlaneWidth:      ObservationPlaneWidth,
 		Scalars:         scalars,
@@ -155,10 +175,10 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 }
 
 func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
-	return encodeObservation(state, seat, decisionIndex)
+	return encodeObservation(state, seat, decisionIndex, false)
 }
 
-func emptyObservation(state *pb.GameState, decisionIndex uint64) *pb.SeatObservation {
+func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool) *pb.SeatObservation {
 	activePlayer := uint32(0)
 	phase := pb.GamePhase_PHASE_INIT
 	if state != nil {
@@ -166,10 +186,14 @@ func emptyObservation(state *pb.GameState, decisionIndex uint64) *pb.SeatObserva
 		phase = state.Phase
 	}
 
+	channels := ObservationPlaneChannels
+	if oracle {
+		channels = OracleObservationPlaneChannels
+	}
 	return &pb.SeatObservation{
 		Seat:            activePlayer,
-		Planes:          make([]float32, ObservationPlaneChannels*ObservationPlaneHeight*ObservationPlaneWidth),
-		PlaneChannels:   ObservationPlaneChannels,
+		Planes:          make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth),
+		PlaneChannels:   uint32(channels),
 		PlaneHeight:     ObservationPlaneHeight,
 		PlaneWidth:      ObservationPlaneWidth,
 		Scalars:         make([]float32, ObservationScalarCount),
