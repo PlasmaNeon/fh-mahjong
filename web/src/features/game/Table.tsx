@@ -2,9 +2,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
-import { useGameState } from '../../contexts/GameContext';
 import { getApiUrl } from '../../config';
 import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
+import { roomActiveRedirectMatchId } from './roomNavigation';
 import {
     buildRejoinLink,
     clearLeftMatchMarker,
@@ -35,9 +35,15 @@ export default function Table() {
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
-    const { gameState } = useGameState();
 
     const myUserId = useMyUserId(guestToken);
+
+    // The left-match marker is stored globally; only honor it for the room it
+    // actually belongs to, so a leave in one room never suppresses connect /
+    // redirect (or shows the Rejoin banner) in a different room. This is the
+    // same object reference as `leftMarker` or null, so it is stable across
+    // renders and safe in effect dependency lists.
+    const roomLeftMarker = leftMarker && leftMarker.roomId === roomId ? leftMarker : null;
 
     // A cross-device rejoin link arrives as /room/:roomId?token=<jwt>. Save the
     // token as our session, strip it from the URL (don't leave a bearer secret
@@ -61,25 +67,21 @@ export default function Table() {
     }, [roomId]);
 
     useEffect(() => {
-        if (leftMarker) return; // player intentionally left — show Rejoin, don't bounce back
-        if (gameState && gameState.matchId) {
-            navigate(`/match/${gameState.matchId}`);
-        }
-    }, [gameState, navigate, leftMarker]);
-
-    useEffect(() => {
         const stored = loadPrivateRoomSession(roomId);
         if (!stored) return;
         // Always restore identity so the room screen (and the Rejoin banner)
         // render after an intentional leave.
         setGuestToken(stored.token);
         setUsername(stored.username);
-        // But if the player intentionally left, stay disconnected so the bot
-        // keeps their seat — only auto-connect in the normal flow.
-        if (!leftMarker && !isConnected) {
+        // But if the player intentionally left THIS room, stay disconnected so
+        // the bot keeps their seat — only auto-connect in the normal flow.
+        // Don't gate on isConnected: a socket from a *previous* room may still
+        // be open, and connect() must run so it can swap to this room's token
+        // (it is idempotent when the token is unchanged).
+        if (!roomLeftMarker) {
             connect(stored.token);
         }
-    }, [connect, isConnected, roomId, leftMarker]);
+    }, [connect, roomId, roomLeftMarker]);
 
     const handleAuthFailure = useCallback(() => {
         clearPrivateRoomSession(roomId);
@@ -88,43 +90,77 @@ export default function Table() {
         setError('Your private room session expired. Enter your name again.');
     }, [roomId]);
 
-    const fetchTableState = useCallback(async () => {
+    const fetchTableState = useCallback(async (signal?: AbortSignal) => {
         if (!roomId || !guestToken) return;
         try {
             const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}`), {
                 headers: { Authorization: `Bearer ${guestToken}` },
+                signal,
             });
+            // Bail if this request was for a room we've since navigated away
+            // from — a stale response must never write cross-room state.
+            if (signal?.aborted) return;
             if (res.status === 401) {
                 handleAuthFailure();
                 return;
             }
             if (res.ok) {
-                setTableState(await res.json());
+                const data = await res.json();
+                if (signal?.aborted) return;
+                // Redirect into the live match ONLY when THIS room reports one
+                // (status === 'active'). This is room-scoped, so opening a
+                // different room link never bounces into a previous game.
+                const matchId = roomActiveRedirectMatchId(data, leftMarker, roomId);
+                if (matchId) {
+                    navigate(`/match/${matchId}`);
+                    return;
+                }
+                // Active room the player intentionally left: keep showing the
+                // Rejoin banner. Capture the live match id first — a cross-device
+                // rejoin link (/room/:id?token=) starts the marker with an empty
+                // matchId, and this is the only payload carrying it, so the
+                // Rejoin button would otherwise have nowhere to navigate. Don't
+                // store the active-status payload as a table state (it has no
+                // seats and would trip the marker-clear).
+                if (data?.status === 'active') {
+                    if (roomLeftMarker && !roomLeftMarker.matchId && data.matchId) {
+                        const updated = { roomId: roomId as string, matchId: data.matchId };
+                        saveLeftMatchMarker(updated);
+                        setLeftMarker(updated);
+                    }
+                    return;
+                }
+                setTableState(data as PrivateTableState);
             }
         } catch (err) {
+            if ((err as any)?.name === 'AbortError') return;
             console.error('fetch table state failed', err);
         }
-    }, [guestToken, roomId, handleAuthFailure]);
+    }, [guestToken, roomId, handleAuthFailure, leftMarker, navigate]);
 
-    useEffect(() => { fetchTableState(); }, [fetchTableState]);
+    useEffect(() => {
+        const controller = new AbortController();
+        fetchTableState(controller.signal);
+        return () => controller.abort();
+    }, [fetchTableState]);
 
     // If the match ended (or the room is back to configuring) while we were
     // away, drop the marker so the normal room screen shows instead of Rejoin.
     useEffect(() => {
-        if (leftMarker && tableState && tableState.state !== 'started') {
+        if (roomLeftMarker && tableState && tableState.state !== 'started') {
             clearLeftMatchMarker();
             setLeftMarker(null);
         }
-    }, [leftMarker, tableState]);
+    }, [roomLeftMarker, tableState]);
 
     const handleRejoin = useCallback(() => {
         const session = loadPrivateRoomSession(roomId);
-        const matchId = leftMarker?.matchId || (tableState as any)?.matchId;
+        const matchId = roomLeftMarker?.matchId || (tableState as any)?.matchId;
         clearLeftMatchMarker();
         setLeftMarker(null);
         if (session?.token) connect(session.token);
         if (matchId) navigate(`/match/${matchId}`);
-    }, [connect, navigate, roomId, leftMarker, tableState]);
+    }, [connect, navigate, roomId, roomLeftMarker, tableState]);
 
     const copyRejoinLink = useCallback(async () => {
         const token = loadPrivateRoomSession(roomId)?.token;
@@ -172,7 +208,7 @@ export default function Table() {
                 const data = JSON.parse(e.data);
                 if (data.type === 'lobby_update' && data.room === roomId && data.state) {
                     setTableState(data.state as PrivateTableState);
-                    if (!leftMarker && data.state.state === 'started' && data.state.matchId) {
+                    if (!roomLeftMarker && data.state.state === 'started' && data.state.matchId) {
                         navigate(`/match/${data.state.matchId}`);
                     }
                 }
@@ -183,7 +219,7 @@ export default function Table() {
 
         socket.addEventListener('message', handle);
         return () => socket.removeEventListener('message', handle);
-    }, [socket, isConnected, roomId, navigate, leftMarker]);
+    }, [socket, isConnected, roomId, navigate, roomLeftMarker]);
 
     const performJoin = useCallback(async (token: string) => {
         if (!roomId) return;
@@ -376,7 +412,7 @@ export default function Table() {
     return (
         <Page>
             <Shell wide>
-                {leftMarker && (
+                {roomLeftMarker && (
                     <Card>
                         <Section
                             title="Match in progress"
