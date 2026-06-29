@@ -604,3 +604,40 @@ class TestChongciMaxStepsDefault:
         monkeypatch.setattr(sys, "argv", base_argv + ["--match-mode", "chongci", "--max-steps-per-episode", "123"])
         evaluate_cli.main()
         assert captured["max_steps_per_episode"] == 123
+
+
+def test_evaluate_cli_oracle_builds_51ch(tmp_path, monkeypatch):
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+    from fh_mahjong_ai.storage import save_checkpoint
+
+    mcfg = ModelConfig(
+        channels=8,
+        residual_blocks=1,
+        plane_feature_dim=16,
+        scalar_hidden_dim=16,
+        trunk_hidden_dim=16,
+        value_hidden_dim=16,
+        q_hidden_dim=16,
+    )
+    ckpt = tmp_path / "oracle.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(oracle_observation=True), mcfg))
+    # Inject the mock bridge so no Go library is needed.
+    monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge", MockMahjongBridge)
+    argv = [
+        "fh-mj-evaluate",
+        "--checkpoint", str(ckpt),
+        "--online-episodes", "1",
+        "--match-mode", "classic",
+        "--oracle",
+        "--model-channels", "8",
+        "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16",
+        "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16",
+        "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+        "--report-output", str(tmp_path / "rep.json"),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    evaluate_cli.main()  # must not raise; 51ch model + 51ch mock obs are consistent
+    assert (tmp_path / "rep.json").exists()

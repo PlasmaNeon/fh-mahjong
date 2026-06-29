@@ -461,6 +461,7 @@ def evaluate_policy_online(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
+    oracle_observation: bool = False,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
 
@@ -481,6 +482,7 @@ def evaluate_policy_online(
         chongci_starting_score=chongci_starting_score,
         chongci_bust_threshold=chongci_bust_threshold,
         chongci_max_hands=chongci_max_hands,
+        oracle_observation=oracle_observation,
     )
     if max_steps_per_episode is not None:
         config.max_steps_per_episode = int(max_steps_per_episode)
@@ -698,6 +700,7 @@ def evaluate_online(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
+    oracle_observation: bool = False,
 ) -> Dict[str, Any]:
     """Run a model's greedy policy for one seat against heuristic opponents."""
     policy = TorchGreedyPolicy(model, device=device)
@@ -714,6 +717,7 @@ def evaluate_online(
         chongci_bust_threshold=chongci_bust_threshold,
         chongci_max_hands=chongci_max_hands,
         max_steps_per_episode=max_steps_per_episode,
+        oracle_observation=oracle_observation,
     )
 
 
@@ -729,6 +733,7 @@ def evaluate_duplicate_seats_policy(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
+    oracle_observation: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate a policy factory with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
@@ -761,6 +766,7 @@ def evaluate_duplicate_seats_policy(
             chongci_bust_threshold=chongci_bust_threshold,
             chongci_max_hands=chongci_max_hands,
             max_steps_per_episode=max_steps_per_episode,
+            oracle_observation=oracle_observation,
         )
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -867,6 +873,7 @@ def evaluate_duplicate_seats(
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
+    oracle_observation: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate the same seeds with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
@@ -897,6 +904,7 @@ def evaluate_duplicate_seats(
             chongci_bust_threshold=chongci_bust_threshold,
             chongci_max_hands=chongci_max_hands,
             max_steps_per_episode=max_steps_per_episode,
+            oracle_observation=oracle_observation,
         )
         seat_reports.append(report)
         all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])

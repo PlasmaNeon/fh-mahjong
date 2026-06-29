@@ -91,6 +91,7 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
+    parser.add_argument("--oracle", action="store_true", help="perfect-information oracle eval (51ch observation)")
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
@@ -101,7 +102,7 @@ def main() -> None:
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
     model_config = model_config_from_args(args)
-    model = PolicyValueNet(EnvConfig(), model_config)
+    model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
     step = load_checkpoint(args.checkpoint, model)
     model.to(args.device)
     print(f"Loaded checkpoint from epoch {step}")
@@ -191,6 +192,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=args.oracle,
                 )
             else:
                 online_report = evaluate_online(
@@ -206,6 +208,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=args.oracle,
                 )
             final_report["online"] = online_report
             print(f"  Match Mode:  {online_report['match_mode']}")
