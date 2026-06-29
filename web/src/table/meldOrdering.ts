@@ -32,3 +32,15 @@ export function reorderMeldTiles(meld: MeldLike) {
 export function orderMelds(melds: MeldLike[], _direction: SeatLaneDirection): MeldLike[] {
   return [...melds]
 }
+
+// The live seat lays its open-meld zone out `row-reverse` (`.zone-melds` in
+// index.css): formation order [m0, m1, ...] renders with the first-formed meld on
+// the far-from-hand end and newer melds growing inward toward the closed hand. The
+// round-result recap instead renders melds in a plain left-to-right `row`
+// (`.round-result-melds-divider`), so without reversing it would show the melds in
+// the opposite order from the hand the player actually held. Reverse the formation
+// order here so the recap mirrors the seat — and, since it derives only from the
+// shared round result, every player sees the same order.
+export function orderMeldsForRecap(melds: MeldLike[]): MeldLike[] {
+  return [...melds].reverse()
+}

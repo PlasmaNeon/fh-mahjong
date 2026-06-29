@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tileIdsEqual, reorderMeldTiles, orderMelds } from './meldOrdering'
+import { tileIdsEqual, reorderMeldTiles, orderMelds, orderMeldsForRecap } from './meldOrdering'
 import type { MeldLike } from './types'
 
 const t = (id: number) => ({ id, suit: 0, value: id })
@@ -54,6 +54,24 @@ describe('orderMelds', () => {
   it('does not mutate the input', () => {
     const input = [a, b, c]
     orderMelds(input, 'bottom')
+    expect(input).toEqual([a, b, c])
+  })
+})
+
+describe('orderMeldsForRecap', () => {
+  const a: MeldLike = { tiles: [t(1)] }
+  const b: MeldLike = { tiles: [t(2)] }
+  const c: MeldLike = { tiles: [t(3)] }
+  it('reverses formation order so the recap mirrors the seat (row-reverse zone)', () => {
+    expect(orderMeldsForRecap([a, b, c])).toEqual([c, b, a])
+  })
+  it('handles empty and single-meld hands', () => {
+    expect(orderMeldsForRecap([])).toEqual([])
+    expect(orderMeldsForRecap([a])).toEqual([a])
+  })
+  it('does not mutate the input', () => {
+    const input = [a, b, c]
+    orderMeldsForRecap(input)
     expect(input).toEqual([a, b, c])
   })
 })
