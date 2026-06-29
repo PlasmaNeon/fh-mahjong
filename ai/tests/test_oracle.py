@@ -12,6 +12,43 @@ def _mcfg():
                        scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
 
 
+def test_collect_oracle_rollouts_single_seat_mock():
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.ppo import PPOConfig
+    from fh_mahjong_ai.oracle import collect_oracle_rollouts
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)  # 51ch
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    batch = collect_oracle_rollouts(env_cfg, model, cfg, base_seed=3)
+    assert len(batch) >= 2
+    assert batch.dones.sum() == 2          # one terminal per match
+    assert batch.planes.shape[1] == 51     # oracle channels
+
+
+def test_train_oracle_runs_on_mock_and_writes_checkpoint(tmp_path):
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.ppo import PPOConfig
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.oracle import train_oracle
+    mcfg = _mcfg()
+    # 39ch anchor checkpoint to warm-start from
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu")
+    history = train_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                           checkpoint_dir=tmp_path / "oracle", config=cfg, base_seed=1, run_eval=False)
+    assert len(history) == 2
+    assert (tmp_path / "oracle" / "iter_002.pt").exists()
+    assert all(np.isfinite(h["policy_loss"]) for h in history)
+
+
 def test_oracle_warmstart_matches_anchor_when_oracle_channels_zero(tmp_path):
     mcfg = _mcfg()
     anchor_env = EnvConfig()  # 39ch
