@@ -264,6 +264,9 @@ message EnvConfig {
   uint32 max_decisions = 3;
   MatchMode match_mode = 4;
   ChongciConfig chongci_config = 5; // set iff match_mode == MATCH_MODE_CHONGCI
+  // When true the observation appends the three opponents' concealed (closed)
+  // hands as extra planes (39 -> 51 channels). Perfect-information oracle mode.
+  bool oracle_observation = 6;
 }
 
 message SeatObservation {

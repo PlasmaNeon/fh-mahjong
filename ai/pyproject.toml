@@ -9,6 +9,7 @@ description = "Python RL training stack for Fenghua Mahjong"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "grpcio-tools>=1.81.1",
   "mlflow>=3.0",
   "numpy>=2.0",
   "protobuf>=5.0",

@@ -241,5 +241,12 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(fake_library.last_new_config.chongci_config.max_hands, 12)
 
 
+def test_envconfig_proto_has_oracle_observation_flag():
+    from fh_mahjong_ai.generated.proto import game_pb2
+    msg = game_pb2.EnvConfig(oracle_observation=True)
+    assert msg.oracle_observation is True
+    assert game_pb2.EnvConfig().oracle_observation is False
+
+
 if __name__ == "__main__":
     unittest.main()
