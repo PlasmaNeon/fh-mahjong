@@ -49,6 +49,11 @@ Python bindings:
 mkdir -p ai/src/fh_mahjong_ai/generated
 protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 ```
+The Python runtime is pinned at `protobuf>=5.0` and currently runs the 6.x line,
+so the generated `game_pb2.py` must target a **major-6** runtime. A standalone
+`protoc` from the 35.x line emits 7.x gencode (incompatible). Generate with a
+major-6 toolchain instead, e.g. `pip install "protobuf>=6,<7" grpcio-tools` then
+`python -m grpc_tools.protoc --python_out=ai/src/fh_mahjong_ai/generated --proto_path=. proto/game.proto`.
 
 ## Architecture Notes
 
