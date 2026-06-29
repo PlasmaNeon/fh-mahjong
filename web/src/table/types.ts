@@ -8,6 +8,17 @@ export type TileLike = {
   value: number
 }
 
+// Suit 0 (SUIT_UNKNOWN) marks a tile the server anonymized for an opponent's
+// concealed hand: an identical face-down back whose id is a per-broadcast
+// throwaway (the obfuscation map is re-randomized every broadcast for security,
+// see internal/api/room.go). Such ids are NOT stable across renders, so the UI
+// keys these tiles by hand slot rather than by id to avoid remount churn (their
+// data-board-tile-id still rotates, which is fine — it's only read within a
+// single frame for the discard-flight source rect).
+export function isAnonymousTile(tile: Pick<TileLike, 'suit'>): boolean {
+  return tile.suit === 0
+}
+
 export type MeldLike = {
   tiles: TileLike[]
   calledTileId?: number | null

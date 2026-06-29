@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { TileComponent } from '../Tile'
 import { computeStableDisplayOrder } from '../handOrdering'
 import { tileIdsEqual } from '../meldOrdering'
+import { isAnonymousTile } from '../types'
 import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type ClosedHandProps = {
@@ -34,6 +35,13 @@ export function ClosedHand({
   const handTiles = player.closedHand || []
   const handBackCount = player.handBackCount ?? handTiles.length
 
+  // In production an opponent's concealed hand arrives anonymized: identical
+  // face-down backs whose obfuscated ids are re-randomized every broadcast. Key
+  // those by hand slot so per-broadcast rotation doesn't remount/reorder the row
+  // every frame. We still emit their (volatile) data-board-tile-id so the
+  // discard-flight planner can read this frame's hand-slot rects.
+  const isAnonymous = !isSelf && handTiles.length > 0 && isAnonymousTile(handTiles[0])
+
   const hasDrawnTile = player.drawnTileId != null
   const baseTiles = [...handTiles]
   let drawnTile: TileLike | null = null
@@ -56,7 +64,10 @@ export function ClosedHand({
     .map((id) => baseTileMap.get(id))
     .filter((t): t is TileLike => t != null)
 
-  const renderHandTile = (tile: TileLike, { isCurrentDrawnSlot = false }: { isCurrentDrawnSlot?: boolean } = {}) => {
+  const renderHandTile = (
+    tile: TileLike,
+    { isCurrentDrawnSlot = false, slotKey }: { isCurrentDrawnSlot?: boolean; slotKey?: string } = {},
+  ) => {
     // True only on the render right after a discard, for the tile that was just
     // drawn and is now merging into the row from the separate drawn slot.
     const isMergingDrawnTile = isSelf && lastDrawnTileId.current === tile.id && !hasDrawnTile
@@ -71,7 +82,7 @@ export function ClosedHand({
         // pivot where framer mis-projects the layout delta and tiles jitter, so
         // they render statically (see fix #76).
         layoutId={isSelf ? `closed-hand-tile-${tile.id}` : undefined}
-        key={tile.id}
+        key={slotKey ?? tile.id}
         style={{
           // The merging tile slides over its neighbours, so keep it on top.
           zIndex: isMergingDrawnTile ? 30 : 10,
@@ -103,7 +114,9 @@ export function ClosedHand({
       <div className="seat-hand seat-hand--bottom">
         <div className="seat-hand__tiles seat-hand__tiles--bottom" data-seat-hand-origin={direction}>
           {showClosedHand ? (
-            sortedBaseTiles.map((tile) => renderHandTile(tile))
+            isAnonymous
+              ? baseTiles.map((tile, index) => renderHandTile(tile, { slotKey: `slot-${index}` }))
+              : sortedBaseTiles.map((tile) => renderHandTile(tile))
           ) : (
             Array(handBackCount).fill(null).map((_, index) => (
               <div key={`back-${index}`} className="pov-bottom small">
@@ -128,7 +141,10 @@ export function ClosedHand({
                 y: { duration: 0.22, ease: 'easeOut' },
               }}
             >
-              {renderHandTile(drawnTile, { isCurrentDrawnSlot: true })}
+              {renderHandTile(drawnTile, {
+                isCurrentDrawnSlot: true,
+                slotKey: isAnonymous ? 'drawn-slot' : undefined,
+              })}
             </motion.div>
           </div>
         )}

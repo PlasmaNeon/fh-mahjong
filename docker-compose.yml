@@ -65,6 +65,10 @@ services:
       RL_AGENT_POLICY_URL: "http://policy:8765/act"
       RL_AGENT_AUTOSTART: "0"
       PORT: "8080"
+      # Local dev god-view: reveal every hand. LOCAL-only convenience (Zeabur
+      # deploys via the Dockerfile, which never sets this) — must never be set in
+      # a deployed environment. Override to "0" to test redaction locally.
+      MAHJONG_DEV_REVEAL_HANDS: "${MAHJONG_DEV_REVEAL_HANDS:-1}"
     ports:
       - "8080:8080"
     depends_on:
