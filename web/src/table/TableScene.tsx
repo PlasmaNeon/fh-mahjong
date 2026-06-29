@@ -6,6 +6,7 @@ import { useTileFlight } from './tileFlight'
 import { sortTiles } from './handOrdering'
 import { PlayerSeat } from './seat/PlayerSeat'
 import { OpenMelds } from './seat/OpenMelds'
+import { orderMeldsForRecap } from './meldOrdering'
 import type {
   SeatLaneDirection,
   TileLike,
@@ -138,7 +139,7 @@ export function TableRoundResultOverlay({
   const breakdown = result.breakdown || []
   const payouts = result.payouts || []
   const closedHand = sortTiles(result.closedHand || [])
-  const winningMelds = result.winningMelds || []
+  const winningMelds = orderMeldsForRecap(result.winningMelds || [])
   const flowers = result.flowers || []
 
   return (
