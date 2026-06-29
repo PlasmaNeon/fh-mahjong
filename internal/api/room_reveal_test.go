@@ -53,7 +53,7 @@ func seatPlayer(st *pb.GameState, seat uint32) *pb.PlayerState {
 func revealRoom(t *testing.T, phase pb.GamePhase) *Room {
 	t.Helper()
 	shanten.Prewarm()
-	t.Setenv("ZEABUR", "1") // force the production redaction path
+	t.Setenv(revealAllHandsEnv, "") // force the fail-closed (redacting) path
 
 	r := NewRoom("reveal-test", nil, nil)
 	r.Engine.State = &pb.GameState{
@@ -129,11 +129,11 @@ func TestSendStateToClientRedactsDuringPlay(t *testing.T) {
 	assertOpponentRedacted(t, recvState(t, r.Seats[0].Send))
 }
 
-// Dev mode (ZEABUR unset) must be completely unchanged: opponents are visible in
+// The debug god-view opt-in (MAHJONG_DEV_REVEAL_HANDS=1) reveals opponents in
 // every phase, including normal play.
 func TestDevModeRevealsOpponentDuringPlay(t *testing.T) {
 	shanten.Prewarm()
-	t.Setenv("ZEABUR", "") // dev: isProd == false
+	t.Setenv(revealAllHandsEnv, "1") // explicit god-view opt-in
 
 	r := NewRoom("dev-reveal-test", nil, nil)
 	r.Engine.State = &pb.GameState{
@@ -192,56 +192,73 @@ func TestBroadcastRedactsThenRevealsOpponentDrawnTile(t *testing.T) {
 	}
 }
 
-// The obfuscation map must be regenerated each round so that real tile ids
-// revealed at round end can't be correlated to fake ids used in later rounds.
-func TestObfuscationMapRegeneratesEachRound(t *testing.T) {
-	r := revealRoom(t, pb.GamePhase_PHASE_PLAYER_TURN)
-
+// opponentHandIDs decodes one broadcast for seat 0 and returns seat 1's
+// concealed (fake) tile ids in order.
+func opponentHandIDs(t *testing.T, r *Room) []uint32 {
+	t.Helper()
 	r.BroadcastState()
-	_ = recvState(t, r.Seats[0].Send)
-
-	before := make(map[uint32]uint32, len(r.TileObfuscationMap))
-	for k, v := range r.TileObfuscationMap {
-		before[k] = v
+	st := recvState(t, r.Seats[0].Send)
+	opp := seatPlayer(st, 1)
+	ids := make([]uint32, 0, len(opp.ClosedHand))
+	for _, tile := range opp.ClosedHand {
+		ids = append(ids, tile.Id)
 	}
+	return ids
+}
 
-	// New deal: hand number advances.
-	r.Engine.State.HandNum = 2
-	r.BroadcastState()
-	_ = recvState(t, r.Seats[0].Send)
-
-	identical := true
-	for k, v := range before {
-		if r.TileObfuscationMap[k] != v {
-			identical = false
-			break
+func sameIDs(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
 		}
 	}
-	if identical {
-		t.Fatal("expected obfuscation map to be regenerated for a new round, but it was unchanged")
+	return true
+}
+
+// The obfuscation map must be re-randomized every broadcast (not per deal), so a
+// concealed tile never keeps a stable fake id within a hand. This defeats both
+// cross-turn tracking of a tile and de-anonymizing the map from revealed
+// discards. Two broadcasts of the SAME state must yield different fake ids.
+func TestObfuscationRotatesEveryBroadcast(t *testing.T) {
+	r := revealRoom(t, pb.GamePhase_PHASE_PLAYER_TURN)
+
+	first := opponentHandIDs(t, r)
+	second := opponentHandIDs(t, r) // same hand number, same state
+
+	if len(first) == 0 {
+		t.Fatal("expected opponent to hold concealed tiles")
+	}
+	for _, id := range first {
+		if id < 1000 {
+			t.Fatalf("expected obfuscated fake id (>=1000), got %d", id)
+		}
+	}
+	if sameIDs(first, second) {
+		t.Fatalf("obfuscation did not rotate between broadcasts: %v", first)
 	}
 }
 
-// Within a single round the obfuscation map must stay stable, so opponent tiles
-// keep consistent fake ids across broadcasts (tile-flight animations rely on it).
-func TestObfuscationMapStableWithinRound(t *testing.T) {
-	r := revealRoom(t, pb.GamePhase_PHASE_PLAYER_TURN)
+// Redaction must NOT depend on any deploy-specific env var: with the god-view
+// opt-out absent, opponents are obfuscated even though ZEABUR is unset.
+func TestRedactionDefaultsClosedWithoutEnv(t *testing.T) {
+	shanten.Prewarm()
+	t.Setenv(revealAllHandsEnv, "")
+	t.Setenv("ZEABUR", "") // the old gate; must no longer matter
+
+	r := NewRoom("default-closed-test", nil, nil)
+	r.Engine.State = &pb.GameState{
+		Phase:   pb.GamePhase_PHASE_PLAYER_TURN,
+		HandNum: 1,
+		Players: []*pb.PlayerState{
+			{Seat: 0, ClosedHand: manHand(0), HandSize: 9},
+			{Seat: 1, ClosedHand: manHand(9), HandSize: 9},
+		},
+	}
+	r.Seats[0] = &Client{UserID: 100, Send: make(chan []byte, 4)}
 
 	r.BroadcastState()
-	_ = recvState(t, r.Seats[0].Send)
-
-	before := make(map[uint32]uint32, len(r.TileObfuscationMap))
-	for k, v := range r.TileObfuscationMap {
-		before[k] = v
-	}
-
-	// Same hand number => same round => map unchanged.
-	r.BroadcastState()
-	_ = recvState(t, r.Seats[0].Send)
-
-	for k, v := range before {
-		if r.TileObfuscationMap[k] != v {
-			t.Fatalf("obfuscation map changed within the same round at key %d: %d -> %d", k, v, r.TileObfuscationMap[k])
-		}
-	}
+	assertOpponentRedacted(t, recvState(t, r.Seats[0].Send))
 }

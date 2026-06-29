@@ -69,14 +69,6 @@ type Room struct {
 	// hands is unaffected.
 	botActionDelay time.Duration
 
-	TileObfuscationMap map[uint32]uint32 // maps real tile IDs to fake IDs for redacting closed hands
-	// obfMapHandNum tracks the hand number the current obfuscation map was
-	// generated for. When a new deal begins, the map is rotated so that real
-	// tile IDs revealed at round end can't be correlated to the fake IDs used
-	// in later rounds. Touched only on the room goroutine (BroadcastState /
-	// SendStateToClient).
-	obfMapHandNum uint32
-
 	ActionQueue      chan ClientAction
 	Shutdown         chan bool
 	InterruptChan    chan bool
@@ -157,7 +149,6 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		SeatPolicies:       make(map[uint32]bot.Policy),
 		Seats:              make(map[uint32]*Client),
 		SeatOwners:         make(map[uint32]uint),
-		TileObfuscationMap: newTileObfuscationMap(),
 		ActionQueue:        make(chan ClientAction),
 		Shutdown:           make(chan bool),
 		InterruptChan:      make(chan bool, 1),
@@ -757,16 +748,45 @@ func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {
 	return dst
 }
 
-// newTileObfuscationMap returns a fresh random tile-id -> fake-id permutation
-// used to redact opponents' closed hands in production. Fake IDs are offset by
-// 1000 so they never collide with real tile IDs (0-143).
-func newTileObfuscationMap() map[uint32]uint32 {
-	obfMap := make(map[uint32]uint32, 144)
+// invalidRecipientSeat is a seat value no real player ever holds (seats are
+// 0-3). Passing it to redactedStateForSeat hides every player's concealed hand,
+// the safe default for a viewer we can't map to a seat.
+const invalidRecipientSeat = ^uint32(0)
+
+// revealAllHandsEnv is the ONLY switch that disables client-state redaction.
+// Redaction is fail-closed: on for every broadcast unless an operator explicitly
+// opts into the all-hands debug god-view. Never set this in a deployed
+// environment — it exposes every concealed hand, opponents' pending-call tiles,
+// and the deal seed to all clients. `make dev`/docker-compose set it locally;
+// Zeabur deploys via the Dockerfile, which never sets it.
+const revealAllHandsEnv = "MAHJONG_DEV_REVEAL_HANDS"
+
+// revealAllHands reports whether the local debug god-view is explicitly enabled.
+// Anything other than the exact opt-in keeps redaction on, so a missing or
+// misconfigured env var fails safe (redacted) rather than open.
+func revealAllHands() bool {
+	return os.Getenv(revealAllHandsEnv) == "1"
+}
+
+// newTileObfuscation returns a fresh random real-tile-id -> fake-id mapping for
+// a single broadcast. Fake IDs are offset by 1000 so they never collide with a
+// real tile id (0-143); that keeps a revealed discard (real id) from matching
+// any in-hand fake id.
+//
+// A NEW permutation is generated on every broadcast, on purpose. A map fixed for
+// the whole hand let an inspecting opponent client (1) track a concealed tile
+// across turns by its stable fake id, and (2) de-anonymize the map by
+// correlating each revealed discard with the fake id that left an opponent's
+// hand. Re-randomizing per broadcast removes any stable handle to track or
+// correlate. Opponent hands render as anonymous backs keyed by hand slot, so the
+// frontend tolerates the volatile id (see web/src/table/seat/ClosedHand.tsx).
+func newTileObfuscation() map[uint32]uint32 {
+	obf := make(map[uint32]uint32, 144)
 	fakeIDs := rand.Perm(144)
-	for i := 0; i < 144; i++ {
-		obfMap[uint32(i)] = uint32(fakeIDs[i]) + 1000
+	for realID := 0; realID < 144; realID++ {
+		obf[uint32(realID)] = uint32(fakeIDs[realID]) + 1000
 	}
-	return obfMap
+	return obf
 }
 
 // handsRevealed reports whether every player's closed hand should be shown to
@@ -776,57 +796,48 @@ func handsRevealed(phase pb.GamePhase) bool {
 	return phase == pb.GamePhase_PHASE_ROUND_END || phase == pb.GamePhase_PHASE_MATCH_END
 }
 
-// rotateObfuscationMapForRound regenerates the obfuscation map when a new deal
-// begins (detected via the hand number changing). Revealing real tiles at round
-// end would otherwise let a client pair the fake IDs it saw mid-round with the
-// real IDs shown at the reveal; a fresh map each round makes that knowledge
-// useless for subsequent rounds. The map stays stable within a round so opponent
-// tiles keep consistent fake IDs across broadcasts (tile-flight relies on this).
-func (r *Room) rotateObfuscationMapForRound(handNum uint32) {
-	if handNum == r.obfMapHandNum {
-		return
-	}
-	r.obfMapHandNum = handNum
-	r.TileObfuscationMap = newTileObfuscationMap()
-}
-
-// redactedStateForSeat clones the master state and hides the information the
-// seat at viewerSeat must not see (production anti-cheat).
+// redactedStateForSeat returns a deep clone of master that hides what the seat
+// at viewerSeat must not see (production anti-cheat). It generates a fresh
+// obfuscation map per call, so calling it once per recipient per broadcast means
+// no fake id persists across broadcasts — defeating cross-turn tracking of a
+// concealed tile and de-anonymizing the map from revealed discards.
 //
-// Opponent discards always have their ids remapped through the obfuscation map,
-// while their faces stay visible (a discard is public the moment it is made).
-// Tile ids encode the face, so the concealed hand must be obfuscated; remapping
-// the discard with the SAME map means a discarded tile keeps the fake id it had
-// while concealed. That lets the client's tile-flight animation fly an opponent
-// discard from its real hand slot instead of the hand center, and keeps discard
-// ids stable across the round-end reveal so revealing hands doesn't churn them
-// (a churn would spawn spurious discard flights over the result screen).
+// For every seat other than viewerSeat: valid_actions is dropped (its meld tiles
+// would expose the concealed tiles backing a pon/chii/kan), and when concealHands
+// is true (during play) the closed hand + drawn tile are obfuscated
+// (SUIT_UNKNOWN/value 0 + a fake id) and shanten cleared. At round/match end the
+// caller passes concealHands=false to reveal hands. Discards keep their REAL ids
+// and faces (public the moment made); per-broadcast rotation means a real discard
+// id can't be correlated to any concealed fake id, so the client animates an
+// opponent discard from a random hand slot (tedashi) or the drawn slot
+// (tsumogiri) via the public last_discard_from_drawn flag, not the real tile.
 //
-// When concealHands is true (during play) each opponent's closed hand + drawn
-// tile are also obfuscated and shanten cleared. At round/match end the caller
-// passes false to reveal hands while keeping discards id-stable.
-func (r *Room) redactedStateForSeat(master *pb.GameState, viewerSeat uint32, concealHands bool) *pb.GameState {
+// The top-level wall_seed is cleared for everyone: it deterministically
+// reconstructs the entire deal and would defeat redaction outright. The master is
+// never mutated, so the caller can reuse it across recipients and the replay log.
+func redactedStateForSeat(master *pb.GameState, viewerSeat uint32, concealHands bool) *pb.GameState {
+	obf := newTileObfuscation()
 	redacted := proto.Clone(master).(*pb.GameState)
+	redacted.WallSeed = ""
 	for _, p := range redacted.Players {
 		if uint32(p.Seat) == viewerSeat {
 			continue
 		}
-		for _, t := range p.Discards {
-			t.Id = r.TileObfuscationMap[t.Id]
-		}
+		// Only the recipient needs its own valid_actions (to render buttons);
+		// another seat's call options embed its real concealed tiles.
+		p.ValidActions = nil
 		if !concealHands {
 			continue
 		}
 		for j, t := range p.ClosedHand {
-			fakeID := r.TileObfuscationMap[t.Id]
 			p.ClosedHand[j] = &pb.Tile{
-				Id:    fakeID,
+				Id:    obf[t.Id],
 				Suit:  pb.Suit_SUIT_UNKNOWN,
 				Value: 0,
 			}
 		}
 		if p.DrawnTileId != nil {
-			fakeID := int32(r.TileObfuscationMap[uint32(*p.DrawnTileId)])
+			fakeID := int32(obf[uint32(*p.DrawnTileId)])
 			p.DrawnTileId = &fakeID
 		}
 		p.Shanten = 0
@@ -837,7 +848,8 @@ func (r *Room) redactedStateForSeat(master *pb.GameState, viewerSeat uint32, con
 // BroadcastState serializes the master GameState Protobuf and sends it to all connected players
 func (r *Room) BroadcastState() []byte {
 	masterState := r.Engine.State
-	isProd := os.Getenv("ZEABUR") != ""
+	// Fail closed: redact unless the debug god-view is explicitly opted into.
+	redactHands := !revealAllHands()
 
 	// Compute shanten for each player
 	for _, p := range masterState.Players {
@@ -854,20 +866,16 @@ func (r *Room) BroadcastState() []byte {
 		return nil
 	}
 
-	// Production only: rotate the obfuscation map at the start of each new deal,
-	// and reveal all hands once the round/match has ended (discards stay
-	// id-obfuscated either way). Dev sends the raw master state in every phase,
-	// so its behaviour is unchanged.
+	// Reveal all hands once the round/match has ended so players see the result;
+	// during play opponents' hands stay obfuscated. A fresh obfuscation map is
+	// generated per recipient inside redactedStateForSeat (per-broadcast rotation).
 	revealAll := handsRevealed(masterState.Phase)
-	if isProd {
-		r.rotateObfuscationMapForRound(masterState.HandNum)
-	}
 
 	for seatId, client := range r.Seats {
 		var payload []byte
 
-		if isProd {
-			payload, _ = proto.Marshal(r.redactedStateForSeat(masterState, seatId, !revealAll))
+		if redactHands {
+			payload, _ = proto.Marshal(redactedStateForSeat(masterState, seatId, !revealAll))
 		} else {
 			payload = rawPayload
 		}
@@ -919,7 +927,8 @@ func (r *Room) CheckMatchEndShutdownForTest() { r.checkMatchEndShutdown() }
 // SendStateToClient sends the serialized GameState Protobuf strictly to one single connected player (used for reconnects)
 func (r *Room) SendStateToClient(client *Client) {
 	masterState := r.Engine.State
-	isProd := os.Getenv("ZEABUR") != ""
+	// Fail closed: redact unless the debug god-view is explicitly opted into.
+	redactHands := !revealAllHands()
 
 	// Compute shanten for each player
 	for _, p := range masterState.Players {
@@ -933,31 +942,19 @@ func (r *Room) SendStateToClient(client *Client) {
 	var payload []byte
 	var err error
 
-	if isProd {
-		// Keep the obfuscation map in sync with the current deal here too, so this
-		// reconnect path doesn't depend on a BroadcastState having run first. It's
-		// a no-op within a round (same hand number).
-		r.rotateObfuscationMapForRound(masterState.HandNum)
-
-		var clientSeat uint32
-		var found bool
+	if redactHands {
+		// Default to a seat no player holds so an unmappable viewer (e.g. a
+		// spectator) sees every hand hidden rather than the full state.
+		clientSeat := invalidRecipientSeat
 		for seat, c := range r.Seats {
 			if c.UserID == client.UserID {
 				clientSeat = seat
-				found = true
 				break
 			}
 		}
 
-		if found {
-			// Reveal hands at round/match end, but always keep discards
-			// id-obfuscated so the reveal doesn't churn discard ids.
-			payload, err = proto.Marshal(r.redactedStateForSeat(masterState, clientSeat, !handsRevealed(masterState.Phase)))
-		} else {
-			// Unseated viewer (e.g. spectator): no own hand to preserve, so send
-			// the master state as before rather than guessing a seat.
-			payload, err = proto.Marshal(masterState)
-		}
+		// Reveal hands at round/match end; obfuscation is freshly rotated per call.
+		payload, err = proto.Marshal(redactedStateForSeat(masterState, clientSeat, !handsRevealed(masterState.Phase)))
 	} else {
 		payload, err = proto.Marshal(masterState)
 	}
