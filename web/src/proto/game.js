@@ -837,8 +837,8 @@ export const game = $root.game = (() => {
          * @property {game.ActionType|undefined} [type] Meld type
          * @property {Array.<game.ITile>|undefined} [tiles] Meld tiles
          * @property {game.MeldDirection|undefined} [calledDirection] Meld calledDirection
-         * @property {number|undefined} [calledTileId] Meld calledTileId
-         * @property {number|undefined} [addedTileId] Meld addedTileId
+         * @property {number|null|undefined} [calledTileId] Meld calledTileId
+         * @property {number|null|undefined} [addedTileId] Meld addedTileId
          */
 
         /**
@@ -883,19 +883,34 @@ export const game = $root.game = (() => {
 
         /**
          * Meld calledTileId.
-         * @member {number} calledTileId
+         * @member {number|null} calledTileId
          * @memberof game.Meld
          * @instance
          */
-        Meld.prototype.calledTileId = 0;
+        Meld.prototype.calledTileId = null;
 
         /**
          * Meld addedTileId.
-         * @member {number} addedTileId
+         * @member {number|null} addedTileId
          * @memberof game.Meld
          * @instance
          */
-        Meld.prototype.addedTileId = 0;
+        Meld.prototype.addedTileId = null;
+
+        // OneOf field names bound to virtual getters and setters
+        let $oneOfFields;
+
+        // Virtual OneOf for proto3 optional field
+        Object.defineProperty(Meld.prototype, "_calledTileId", {
+            get: $util.oneOfGetter($oneOfFields = ["calledTileId"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+
+        // Virtual OneOf for proto3 optional field
+        Object.defineProperty(Meld.prototype, "_addedTileId", {
+            get: $util.oneOfGetter($oneOfFields = ["addedTileId"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
 
         /**
          * Creates a new Meld instance using the specified properties.
@@ -1025,6 +1040,7 @@ export const game = $root.game = (() => {
         Meld.verify = function verify(message) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            let properties = {};
             if (message.type != null && message.hasOwnProperty("type"))
                 switch (message.type) {
                 default:
@@ -1063,12 +1079,16 @@ export const game = $root.game = (() => {
                 case 3:
                     break;
                 }
-            if (message.calledTileId != null && message.hasOwnProperty("calledTileId"))
+            if (message.calledTileId != null && message.hasOwnProperty("calledTileId")) {
+                properties._calledTileId = 1;
                 if (!$util.isInteger(message.calledTileId))
                     return "calledTileId: integer expected";
-            if (message.addedTileId != null && message.hasOwnProperty("addedTileId"))
+            }
+            if (message.addedTileId != null && message.hasOwnProperty("addedTileId")) {
+                properties._addedTileId = 1;
                 if (!$util.isInteger(message.addedTileId))
                     return "addedTileId: integer expected";
+            }
             return null;
         };
 
@@ -1203,8 +1223,6 @@ export const game = $root.game = (() => {
             if (options.defaults) {
                 object.type = options.enums === String ? "ACTION_UNKNOWN" : 0;
                 object.calledDirection = options.enums === String ? "MELD_DIRECTION_UNKNOWN" : 0;
-                object.calledTileId = 0;
-                object.addedTileId = 0;
             }
             if (message.type != null && message.hasOwnProperty("type"))
                 object.type = options.enums === String ? $root.game.ActionType[message.type] === undefined ? message.type : $root.game.ActionType[message.type] : message.type;
@@ -1215,10 +1233,16 @@ export const game = $root.game = (() => {
             }
             if (message.calledDirection != null && message.hasOwnProperty("calledDirection"))
                 object.calledDirection = options.enums === String ? $root.game.MeldDirection[message.calledDirection] === undefined ? message.calledDirection : $root.game.MeldDirection[message.calledDirection] : message.calledDirection;
-            if (message.calledTileId != null && message.hasOwnProperty("calledTileId"))
+            if (message.calledTileId != null && message.hasOwnProperty("calledTileId")) {
                 object.calledTileId = message.calledTileId;
-            if (message.addedTileId != null && message.hasOwnProperty("addedTileId"))
+                if (options.oneofs)
+                    object._calledTileId = "calledTileId";
+            }
+            if (message.addedTileId != null && message.hasOwnProperty("addedTileId")) {
                 object.addedTileId = message.addedTileId;
+                if (options.oneofs)
+                    object._addedTileId = "addedTileId";
+            }
             return object;
         };
 

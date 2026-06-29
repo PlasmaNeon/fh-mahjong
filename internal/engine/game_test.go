@@ -162,8 +162,15 @@ func TestDirectedMelds(t *testing.T) {
 		t.Errorf("Expected direction %v, got %v", expectedDir, meld.CalledDirection)
 	}
 
-	if meld.CalledTileId != discardTile.Id {
-		t.Errorf("Expected called tile ID %d, got %d", discardTile.Id, meld.CalledTileId)
+	if meld.CalledTileId == nil || *meld.CalledTileId != discardTile.Id {
+		t.Errorf("Expected called tile ID %d, got %v", discardTile.Id, meld.CalledTileId)
+	}
+
+	// A plain pon is not an added/risky kong: AddedTileId must stay unset (nil),
+	// not default to 0. Tile id 0 is a real tile (the first 1s), so a 0 here would
+	// make the UI mis-render a pon containing that tile as a stacked 加杠.
+	if meld.AddedTileId != nil {
+		t.Errorf("Expected AddedTileId to be nil for a plain pon, got %v", *meld.AddedTileId)
 	}
 }
 
@@ -271,7 +278,7 @@ func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
 		Type:            pb.ActionType_ACTION_PON,
 		Tiles:           []*pb.Tile{{Id: 9001, Suit: suit, Value: value}, {Id: 9002, Suit: suit, Value: value}, called},
 		CalledDirection: pb.MeldDirection(1),
-		CalledTileId:    called.Id,
+		CalledTileId:    &called.Id,
 	})
 	player.ClosedHand = append(player.ClosedHand, added)
 
@@ -286,8 +293,8 @@ func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
 	if meld.Type != pb.ActionType_ACTION_KAN {
 		t.Fatalf("expected pon upgraded to KAN, got %v", meld.Type)
 	}
-	if meld.AddedTileId != added.Id {
-		t.Errorf("expected AddedTileId %d, got %d", added.Id, meld.AddedTileId)
+	if meld.AddedTileId == nil || *meld.AddedTileId != added.Id {
+		t.Errorf("expected AddedTileId %d, got %v", added.Id, meld.AddedTileId)
 	}
 	if !player.HasBuddingRiskyKong {
 		t.Errorf("expected HasBuddingRiskyKong=true after upgrade")

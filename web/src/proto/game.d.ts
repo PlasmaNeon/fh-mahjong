@@ -293,10 +293,10 @@ export namespace game {
         calledDirection?: (game.MeldDirection|undefined);
 
         /** Meld calledTileId */
-        calledTileId?: (number|undefined);
+        calledTileId?: (number|null|undefined);
 
         /** Meld addedTileId */
-        addedTileId?: (number|undefined);
+        addedTileId?: (number|null|undefined);
     }
 
     /** Represents a Meld. */
@@ -318,10 +318,10 @@ export namespace game {
         public calledDirection: game.MeldDirection;
 
         /** Meld calledTileId. */
-        public calledTileId: number;
+        public calledTileId: (number|null);
 
         /** Meld addedTileId. */
-        public addedTileId: number;
+        public addedTileId: (number|null);
 
         /**
          * Creates a new Meld instance using the specified properties.

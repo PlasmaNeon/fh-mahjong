@@ -98,8 +98,8 @@ func TestBuildCalcEvaluation_PreservesCalledTileAndContext(t *testing.T) {
 	if len(eval.openMelds) != 1 {
 		t.Fatalf("expected 1 open meld, got %d", len(eval.openMelds))
 	}
-	if eval.openMelds[0].CalledTileId != eval.openMelds[0].Tiles[1].Id {
-		t.Fatalf("called tile id mismatch: want %d got %d", eval.openMelds[0].Tiles[1].Id, eval.openMelds[0].CalledTileId)
+	if eval.openMelds[0].CalledTileId == nil || *eval.openMelds[0].CalledTileId != eval.openMelds[0].Tiles[1].Id {
+		t.Fatalf("called tile id mismatch: want %d got %v", eval.openMelds[0].Tiles[1].Id, eval.openMelds[0].CalledTileId)
 	}
 	if got := len(eval.state.Players[0].FlowerMelds); got != 2 {
 		t.Fatalf("expected 2 flower melds, got %d", got)

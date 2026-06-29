@@ -842,7 +842,8 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 					m.Tiles = append(m.Tiles, action.MeldTiles...)
 					// Record the tile stacked on top of the originally-called tile so
 					// the UI can render the "risky kong" (加杠) stacked look.
-					m.AddedTileId = action.MeldTiles[0].Id
+					addedID := action.MeldTiles[0].Id
+					m.AddedTileId = &addedID
 					upgraded = true
 					break
 				}
@@ -1027,11 +1028,12 @@ func (g *Game) ResolveInterrupts() {
 		discarder := g.State.ActivePlayer
 		direction := pb.MeldDirection((discarder - winnerSeat + 4) % 4)
 
+		calledID := g.State.ActiveDiscard.Id
 		meld := &pb.Meld{
 			Type:            winningAction.Type,
 			Tiles:           append(winningAction.MeldTiles, g.State.ActiveDiscard),
 			CalledDirection: direction,
-			CalledTileId:    g.State.ActiveDiscard.Id,
+			CalledTileId:    &calledID,
 		}
 
 		player := g.State.Players[winnerSeat]
