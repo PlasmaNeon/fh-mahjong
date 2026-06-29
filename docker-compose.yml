@@ -65,6 +65,11 @@ services:
       RL_AGENT_POLICY_URL: "http://policy:8765/act"
       RL_AGENT_AUTOSTART: "0"
       PORT: "8080"
+      # NOTE: redaction is fail-closed and intentionally NOT disabled here — this
+      # service runs the production Dockerfile image, so it must mirror prod and
+      # keep opponent hands hidden. For the local all-hands debug god-view use
+      # `make dev` (go run) instead; never set MAHJONG_DEV_REVEAL_HANDS in a
+      # container/compose config that could be deployed.
     ports:
       - "8080:8080"
     depends_on:
