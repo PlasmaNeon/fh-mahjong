@@ -75,3 +75,31 @@ def test_oracle_warmstart_matches_anchor_when_oracle_channels_zero(tmp_path):
         la, _ = anchor(torch.from_numpy(planes39), torch.from_numpy(scalars), torch.from_numpy(mask))
         lo, _ = oracle(torch.from_numpy(planes51), torch.from_numpy(scalars), torch.from_numpy(mask))
     assert torch.allclose(la, lo, atol=1e-5)
+
+
+def test_parallel_oracle_matches_sequential():
+    # Parallel single-seat oracle collection over disjoint seed blocks must equal
+    # the sequential run on the same seeds (same matches, order-independent rewards).
+    from fh_mahjong_ai.config import EnvConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.ppo import PPOConfig
+    from fh_mahjong_ai.oracle import collect_oracle_rollouts, ParallelOracleCollector
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    seq = collect_oracle_rollouts(env_cfg, model, cfg, base_seed=222)
+
+    collector = ParallelOracleCollector(env_cfg, mcfg, cfg, num_workers=2)
+    collector.start()
+    try:
+        state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+        par = collector.collect(state, base_seed=222, matches_per_iter=4)
+    finally:
+        collector.close()
+
+    assert len(par) == len(seq)
+    assert par.dones.sum() == seq.dones.sum()
+    np.testing.assert_allclose(np.sort(par.rewards), np.sort(seq.rewards), rtol=1e-5)

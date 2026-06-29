@@ -3,6 +3,10 @@ warm-started from the 39-channel anchor."""
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
+import queue as _queue
+import traceback
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -12,9 +16,10 @@ from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
 from .model import PolicyValueNet
+from .parallel_rollouts import _split_counts
 from .ppo import (
-    RolloutBatch, PPOConfig, compute_gae, ppo_update, masked_policy_distribution,
-    _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
+    RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
+    masked_policy_distribution, _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
 )
 from .storage import load_compatible_checkpoint, save_checkpoint
 
@@ -117,6 +122,106 @@ def collect_oracle_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     )
 
 
+def _oracle_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
+    import torch as _torch
+
+    from .model import PolicyValueNet as _PVN
+
+    _torch.set_num_threads(1)
+    model = _PVN(env_config, model_config)
+    while True:
+        task = task_q.get()
+        if task is None:
+            return
+        worker_id, state_dict, base_seed, matches = task
+        try:
+            model.load_state_dict(state_dict)
+            cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
+            batch = collect_oracle_rollouts(env_config, model, cfg, base_seed=base_seed)
+            result_q.put((worker_id, batch, None))
+        except Exception:  # noqa: BLE001 - report any worker failure to the parent
+            result_q.put((worker_id, None, traceback.format_exc()))
+
+
+class ParallelOracleCollector:
+    """Persistent spawn-context worker pool for single-seat oracle rollouts (CPU
+    inference), concatenated into one RolloutBatch. Mirrors ParallelRolloutCollector
+    but has no opponent pool — the env auto-plays the heuristic opponents, so each
+    worker only ships/loads the learner state. Seed blocks are contiguous and
+    disjoint (base_seed + cumulative offset), so the union equals the sequential
+    run's seed range and the concatenation is the same set of matches."""
+
+    def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
+                 ppo_config: PPOConfig, num_workers: int) -> None:
+        if num_workers < 1:
+            raise ValueError("num_workers must be >= 1")
+        self.env_config = env_config
+        self.model_config = model_config
+        self.ppo_config = ppo_config
+        self.num_workers = int(num_workers)
+        self._ctx = mp.get_context("spawn")
+        self._task_q = None
+        self._result_q = None
+        self._procs = []
+
+    def start(self) -> None:
+        self._task_q = self._ctx.Queue()
+        self._result_q = self._ctx.Queue()
+        self._procs = []
+        for _ in range(self.num_workers):
+            p = self._ctx.Process(
+                target=_oracle_worker_loop,
+                args=(self.env_config, self.model_config, self.ppo_config,
+                      self._task_q, self._result_q),
+                daemon=True,
+            )
+            p.start()
+            self._procs.append(p)
+
+    def collect(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
+        counts = _split_counts(matches_per_iter, self.num_workers)
+        offset = 0
+        dispatched = 0
+        for worker_id, count in enumerate(counts):
+            if count == 0:
+                continue
+            self._task_q.put((worker_id, state_dict, int(base_seed + offset), int(count)))
+            offset += count
+            dispatched += 1
+
+        results: dict = {}
+        received = 0
+        while received < dispatched:
+            try:
+                worker_id, batch, err = self._result_q.get(timeout=30.0)
+            except _queue.Empty:
+                if any(p.exitcode is not None for p in self._procs):
+                    self.close()
+                    raise RuntimeError("an oracle rollout worker exited unexpectedly during collect")
+                continue
+            if err is not None:
+                self.close()
+                raise RuntimeError(f"oracle rollout worker {worker_id} failed:\n{err}")
+            results[worker_id] = batch
+            received += 1
+        ordered = [results[w] for w in sorted(results)]
+        return concat_rollout_batches(ordered)
+
+    def close(self) -> None:
+        if not self._procs:
+            return
+        for _ in self._procs:
+            try:
+                self._task_q.put(None)
+            except Exception:  # noqa: BLE001
+                pass
+        for p in self._procs:
+            p.join(timeout=10)
+            if p.is_alive():
+                p.terminate()
+        self._procs = []
+
+
 def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,
                  checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
                  run_eval: bool = False) -> list[dict]:
@@ -129,19 +234,34 @@ def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkp
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: list[dict] = []
-    for iteration in range(1, config.iterations + 1):
-        iter_seed = base_seed + iteration * config.matches_per_iter
-        batch = collect_oracle_rollouts(env_config, model, config, base_seed=iter_seed)
-        advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
-                                          config.gamma, config.gae_lambda)
-        metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
-        metrics["iteration"] = iteration
-        metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
-        metrics["steps"] = len(batch)
-        save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
-        history.append(metrics)
-        (checkpoint_dir / "history.json").write_text(json.dumps(history))
-        print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
-              f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
-              f"mean_reward={metrics['mean_reward']:.4f}")
+    # Parallel single-seat collection (CPU-inference workers) when num_workers > 1;
+    # the GPU update stays in the parent. The env is CPU-bound on shanten search, so
+    # this is the main throughput lever (mirrors the PPO ParallelRolloutCollector).
+    collector = None
+    if getattr(config, "num_workers", 1) > 1:
+        collector = ParallelOracleCollector(env_config, model_config, config, config.num_workers)
+        collector.start()
+    try:
+        for iteration in range(1, config.iterations + 1):
+            iter_seed = base_seed + iteration * config.matches_per_iter
+            if collector is not None:
+                state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                batch = collector.collect(state, iter_seed, config.matches_per_iter)
+            else:
+                batch = collect_oracle_rollouts(env_config, model, config, base_seed=iter_seed)
+            advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
+                                              config.gamma, config.gae_lambda)
+            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics["iteration"] = iteration
+            metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+            metrics["steps"] = len(batch)
+            save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+            history.append(metrics)
+            (checkpoint_dir / "history.json").write_text(json.dumps(history))
+            print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+                  f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                  f"mean_reward={metrics['mean_reward']:.4f}")
+    finally:
+        if collector is not None:
+            collector.close()
     return history
