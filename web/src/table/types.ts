@@ -26,6 +26,9 @@ export type PlayerTableView = {
   handBackCount?: number
   showClosedHand?: boolean
   drawnTileId?: number | null
+  // Whether this player's most recent discard was their just-drawn tile
+  // (tsumogiri). Drives the redacted-opponent discard animation.
+  lastDiscardFromDrawn?: boolean
   openMelds?: MeldLike[]
   flowerMelds?: TileLike[]
   discards?: TileLike[]

@@ -71,7 +71,11 @@ export function TableBoard({
     direction: getSeatDirection(player.seat, viewSeat),
   })), [players, viewSeat])
 
-  const { hiddenTileIds, flights } = useTileFlight({ seatViews, isWildTile, tableRef })
+  const { hiddenTileIds, flights } = useTileFlight({
+    seatViews,
+    isWildTile,
+    tableRef,
+  })
 
   return (
     <div className="mahjong-table" ref={tableRef}>

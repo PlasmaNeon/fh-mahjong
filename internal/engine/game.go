@@ -726,6 +726,11 @@ func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) erro
 
 		player.Discards = append(player.Discards, action.Tile)
 		player.HandSize--
+		// LastDiscardFromDrawn (tsumogiri) must survive the turn advance, so it
+		// lives on the player and is overwritten only by their next discard —
+		// unlike ActiveDiscard, which is cleared the moment no interrupt is
+		// possible (the common no-interrupt path), before the state is broadcast.
+		player.LastDiscardFromDrawn = player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
 		player.DrawnTileId = nil
 		g.State.ActiveDiscard = action.Tile
 
@@ -1295,6 +1300,7 @@ func (g *Game) startNextRound() {
 		p.ClosedHand = make([]*pb.Tile, 0)
 		p.HandSize = 0
 		p.DrawnTileId = nil
+		p.LastDiscardFromDrawn = false
 		p.OpenMelds = make([]*pb.Meld, 0)
 		p.Discards = make([]*pb.Tile, 0)
 		p.FlowerMelds = make([]*pb.Tile, 0)

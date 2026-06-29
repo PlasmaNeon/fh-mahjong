@@ -653,3 +653,106 @@ func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
 		t.Fatal("expected error on ready after match end")
 	}
 }
+
+// emptyOtherHands clears every non-dealer hand so no interrupt is possible,
+// forcing the common no-interrupt path that advances the turn and clears
+// ActiveDiscard before the state is broadcast.
+func emptyOtherHands(g *engine.Game, dealer uint32) {
+	for s := range g.State.Players {
+		if uint32(s) != dealer {
+			g.State.Players[s].ClosedHand = nil
+			g.State.Players[s].HandSize = 0
+		}
+	}
+}
+
+// TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance verifies the tsumogiri
+// marker is set AND survives the no-interrupt turn advance (which clears
+// ActiveDiscard before broadcast). The earlier GameState-scoped flag was
+// dropped on this path, so ordinary discards never animated as tsumogiri.
+func TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-tsumogiri", r, engine.MatchOptions{})
+	g.Start()
+
+	dealer := g.State.ActivePlayer
+	if g.State.Players[dealer].DrawnTileId == nil {
+		t.Fatalf("expected dealer to hold a drawn tile after Start()")
+	}
+	drawnID := *g.State.Players[dealer].DrawnTileId
+
+	// Discard exactly the drawn tile (tsumogiri).
+	var discardTile *pb.Tile
+	for _, tile := range g.State.Players[dealer].ClosedHand {
+		if int32(tile.Id) == drawnID {
+			discardTile = tile
+			break
+		}
+	}
+	if discardTile == nil {
+		t.Fatalf("drawn tile id %d not present in dealer hand", drawnID)
+	}
+
+	emptyOtherHands(g, dealer)
+
+	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	// Confirm we exercised the no-interrupt advance (ActiveDiscard cleared).
+	if g.State.Phase != pb.GamePhase_PHASE_PLAYER_TURN {
+		t.Fatalf("expected PHASE_PLAYER_TURN after no-interrupt discard, got %v", g.State.Phase)
+	}
+	if g.State.ActiveDiscard != nil {
+		t.Fatalf("expected ActiveDiscard cleared after the no-interrupt advance")
+	}
+	if !g.State.Players[dealer].LastDiscardFromDrawn {
+		t.Errorf("expected LastDiscardFromDrawn=true for tsumogiri to survive the advance")
+	}
+}
+
+// TestLastDiscardFromDrawn_Tedashi verifies a non-drawn discard records false,
+// also on the no-interrupt path.
+func TestLastDiscardFromDrawn_Tedashi(t *testing.T) {
+	r := &rules.HometownRuleset{}
+	g := engine.NewGame("test-tedashi", r, engine.MatchOptions{})
+	g.Start()
+
+	dealer := g.State.ActivePlayer
+	if g.State.Players[dealer].DrawnTileId == nil {
+		t.Fatalf("expected dealer to hold a drawn tile after Start()")
+	}
+	drawnID := *g.State.Players[dealer].DrawnTileId
+
+	// Discard a tile that is NOT the drawn tile (tedashi).
+	var discardTile *pb.Tile
+	for _, tile := range g.State.Players[dealer].ClosedHand {
+		if int32(tile.Id) != drawnID {
+			discardTile = tile
+			break
+		}
+	}
+	if discardTile == nil {
+		t.Fatalf("could not find a non-drawn tile to discard")
+	}
+
+	emptyOtherHands(g, dealer)
+
+	// Pre-set true so the assertion proves the tedashi discard OVERWRITES the
+	// marker to false, not merely that it defaults to false.
+	g.State.Players[dealer].LastDiscardFromDrawn = true
+
+	if err := g.ProcessPlayerAction(dealer, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD,
+		Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	if g.State.Players[dealer].LastDiscardFromDrawn {
+		t.Errorf("expected LastDiscardFromDrawn=false for tedashi")
+	}
+}

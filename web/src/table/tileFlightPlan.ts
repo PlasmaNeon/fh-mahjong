@@ -1,4 +1,4 @@
-import type { SeatLaneDirection, TileLike } from './TableScene'
+import type { SeatLaneDirection, TileLike } from './types'
 
 // Pure (React-free) flight planning for tile motion. Given the previous and
 // current board snapshots, decide which tiles should "fly" and from/to where.
@@ -26,6 +26,9 @@ export type FlyingTileAnimation = {
   fromRect: TileRect
   toRect: TileRect
   isWild: boolean
+  // True for the drawn-back "merge into hand" flight on a tedashi (renders a
+  // face-down back instead of the tile face).
+  asBack?: boolean
 }
 
 export type MotionSnapshot = {
@@ -70,6 +73,27 @@ export type PlanTileFlightsParams = {
   isWildTile: (tile: TileLike) => boolean
   // Monotonic key seed so each produced animation gets a unique React key.
   startKey: number
+  // Per-seat "was that seat's most recent discard a tsumogiri" flags, keyed by
+  // seat direction. Used only for redacted opponents, where the discard's real
+  // id cannot be tracked back to a fake-id hand tile; looked up by the
+  // discarder's direction.
+  fromDrawnByDirection?: Map<SeatLaneDirection, boolean>
+  // Injectable RNG for the random tedashi source slot (deterministic in tests).
+  random?: () => number
+}
+
+// Tile ids in a previous snapshot for a given seat direction + role, in
+// insertion order (so an injected RNG can deterministically pick one).
+function prevTileIdsByRole(
+  snapshot: MotionSnapshot,
+  direction: SeatLaneDirection,
+  role: TileMotionRole,
+): number[] {
+  const ids: number[] = []
+  snapshot.locations.forEach((descriptor, id) => {
+    if (descriptor.direction === direction && descriptor.role === role) ids.push(id)
+  })
+  return ids
 }
 
 export function planTileFlights({
@@ -79,9 +103,22 @@ export function planTileFlights({
   currentHandOrigins,
   isWildTile,
   startKey,
+  fromDrawnByDirection,
+  random = Math.random,
 }: PlanTileFlightsParams): FlyingTileAnimation[] {
   const animations: FlyingTileAnimation[] = []
   let key = startKey
+
+  // Count discards newly revealed since the previous snapshot. The per-seat
+  // tsumogiri flag describes only each seat's *latest* discard, so on a
+  // multi-discard delta (e.g. a resync after dropped broadcasts) it can't be
+  // trusted to label an older discard in the batch — those fall back to the
+  // generic origin instead of a (possibly mislabeled) tedashi/tsumogiri origin.
+  let newDiscardCount = 0
+  currentLocations.forEach((t, id) => {
+    if (t.role === 'discard' && !previousSnapshot.locations.has(id)) newDiscardCount += 1
+  })
+  const singleNewDiscard = newDiscardCount === 1
 
   currentLocations.forEach((currentTile, tileId) => {
     const toRect = currentRects.get(tileId)
@@ -97,14 +134,54 @@ export function planTileFlights({
       if (!shouldAnimateTileTransfer(previousTile.role, currentTile.role)) return
       fromRect = previousSnapshot.rects.get(tileId)
     } else if (currentTile.role === 'discard') {
-      // Newly revealed discard from a concealed (opponent) hand: there is no
-      // tracked source tile, so fly from the seat's hand region. Prefer the
-      // pre-discard hand position from the previous snapshot.
-      const origin =
-        previousSnapshot.handOrigins.get(currentTile.direction) ??
-        currentHandOrigins.get(currentTile.direction)
-      if (origin) {
-        fromRect = centerRectOn(origin, toRect)
+      const dir = currentTile.direction
+      // A single newly-revealed discard is the one just made, so the discarder's
+      // most-recent-discard flag describes it; skip the special origin on a
+      // multi-discard delta where the flag can't be trusted per older discard.
+      const fromDrawn = fromDrawnByDirection?.get(dir) ?? false
+
+      if (singleNewDiscard && fromDrawn) {
+        // Tsumogiri: fly the discard straight from the separated drawn slot.
+        const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+        if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
+      } else if (singleNewDiscard) {
+        // Tedashi: fly the discard from a RANDOM concealed hand slot, and slide
+        // the drawn back into the hand (the "tsumo-hai fills the gap").
+        const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
+        if (handIds.length > 0) {
+          // Clamp guards against an injected RNG returning exactly 1.0 (Math.random is [0,1)).
+          const index = Math.min(handIds.length - 1, Math.floor(random() * handIds.length))
+          fromRect = previousSnapshot.rects.get(handIds[index])
+        }
+        const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+        if (drawnId != null) {
+          const mergeFrom = previousSnapshot.rects.get(drawnId)
+          const mergeTo = currentRects.get(drawnId) // drawn tile's new in-rail rect
+          const drawnTileObj = previousSnapshot.locations.get(drawnId)?.tile
+          if (mergeFrom && mergeTo && drawnTileObj) {
+            const mergeDist = Math.hypot(mergeTo.left - mergeFrom.left, mergeTo.top - mergeFrom.top)
+            if (mergeDist >= MIN_TRAVEL_DISTANCE) {
+              key += 1
+              animations.push({
+                key,
+                tile: drawnTileObj,
+                direction: dir,
+                fromRect: mergeFrom,
+                toRect: mergeTo,
+                isWild: false,
+                asBack: true,
+              })
+            }
+          }
+        }
+      }
+
+      if (!fromRect) {
+        // Fallback (no flag, or rects unavailable): existing generic-anchor behavior.
+        const origin =
+          previousSnapshot.handOrigins.get(dir) ??
+          currentHandOrigins.get(dir)
+        if (origin) fromRect = centerRectOn(origin, toRect)
       }
     }
 

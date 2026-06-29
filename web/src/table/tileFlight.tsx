@@ -48,7 +48,7 @@ function FloatingTile({
   animation: FlyingTileAnimation
   onComplete: () => void
 }) {
-  const svgName = getTileSvgName(animation.tile)
+  const svgName = animation.asBack ? 'back.svg' : getTileSvgName(animation.tile)
   const rotation = getTileRotation(animation.direction)
 
   return createPortal(
@@ -97,7 +97,7 @@ function FloatingTile({
           >
             <img
               src={`/Regular_shortnames/${svgName}`}
-              alt={getTileName(animation.tile)}
+              alt={animation.asBack ? 'tile back' : getTileName(animation.tile)}
               style={{
                 width: '85%',
                 height: '85%',
@@ -147,8 +147,12 @@ export function useTileFlight({
 
   useLayoutEffect(() => {
     const currentLocations = new Map<number, TileMotionDescriptor>()
+    // Per-seat tsumogiri flag (was the seat's most recent discard its drawn
+    // tile), looked up by the planner using the discarder's direction.
+    const fromDrawnByDirection = new Map<SeatLaneDirection, boolean>()
 
     seatViews.forEach(({ player, direction }) => {
+      fromDrawnByDirection.set(direction, player.lastDiscardFromDrawn ?? false)
       const showClosedHand = player.showClosedHand !== false
       if (showClosedHand) {
         (player.closedHand || []).forEach((tile) => {
@@ -196,6 +200,7 @@ export function useTileFlight({
         currentHandOrigins,
         isWildTile,
         startKey: animationKeyRef.current,
+        fromDrawnByDirection,
       })
 
       if (nextAnimations.length > 0) {

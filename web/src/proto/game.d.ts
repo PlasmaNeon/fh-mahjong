@@ -457,6 +457,9 @@ export namespace game {
 
         /** PlayerState shanten */
         shanten?: (number|undefined);
+
+        /** PlayerState lastDiscardFromDrawn */
+        lastDiscardFromDrawn?: (boolean|undefined);
     }
 
     /** Represents a PlayerState. */
@@ -521,6 +524,9 @@ export namespace game {
 
         /** PlayerState shanten. */
         public shanten: number;
+
+        /** PlayerState lastDiscardFromDrawn. */
+        public lastDiscardFromDrawn: boolean;
 
         /**
          * Creates a new PlayerState instance using the specified properties.
