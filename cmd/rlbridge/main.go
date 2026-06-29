@@ -14,11 +14,13 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"sync"
 	"unsafe"
 
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rl"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -167,6 +169,17 @@ func marshalResult(message proto.Message) C.FHBytesResult {
 	data, err := proto.Marshal(message)
 	if err != nil {
 		return errorResult(err)
+	}
+
+	// The FHBytesResult.len field is a 32-bit C int. A payload of 2 GiB or more
+	// would overflow it (wrapping to a negative or truncated length), which the
+	// Python side reads as an empty result, silently dropping the data. Fail
+	// loudly instead so callers reduce their per-call batch/chunk size.
+	if len(data) > math.MaxInt32 {
+		return errorResult(fmt.Errorf(
+			"bridge payload %d bytes exceeds 32-bit return limit (%d); reduce the per-call batch/chunk size",
+			len(data), math.MaxInt32,
+		))
 	}
 
 	return C.FHBytesResult{
