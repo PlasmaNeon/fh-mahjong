@@ -20,6 +20,7 @@ from .parallel_rollouts import _split_counts
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
     masked_policy_distribution, _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
+    cpu_state_snapshot,
 )
 from .storage import load_compatible_checkpoint, save_checkpoint
 
@@ -466,7 +467,7 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: list[dict] = []
     collector = None
-    if getattr(config, "num_workers", 1) > 1:
+    if config.num_workers > 1:
         collector = ParallelSelfplayCollector(env_config, model_config, config, config.num_workers)
         collector.start()
     try:
@@ -474,7 +475,7 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
             delta = feature_dropout_schedule(iteration, config.iterations)
             iter_seed = base_seed + iteration * config.matches_per_iter
             if collector is not None:
-                state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                state = cpu_state_snapshot(model)
                 batch = collector.collect(state, iter_seed, config.matches_per_iter, delta)
             else:
                 batch = collect_selfplay_rollouts(env_config, model, config, base_seed=iter_seed, drop_prob=delta)
@@ -520,7 +521,7 @@ def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkp
         for iteration in range(1, config.iterations + 1):
             iter_seed = base_seed + iteration * config.matches_per_iter
             if collector is not None:
-                state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                state = cpu_state_snapshot(model)
                 batch = collector.collect(state, iter_seed, config.matches_per_iter)
             else:
                 batch = collect_oracle_rollouts(env_config, model, config, base_seed=iter_seed)
