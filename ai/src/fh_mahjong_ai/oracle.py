@@ -47,6 +47,21 @@ def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
     return oracle
 
 
+def feature_dropout_schedule(iteration: int, iterations: int,
+                             hold_start_frac: float = 0.2, ramp_frac: float = 0.6) -> float:
+    """Suphx feature-dropout probability delta for a 1-based `iteration` of
+    `iterations`: 0 (full perfect info) for the first `hold_start_frac`, a linear
+    ramp 0->1 over the next `ramp_frac`, then 1 (pure public-info student)."""
+    if iterations <= 1:
+        return 1.0
+    frac = (iteration - 1) / (iterations - 1)  # 0..1 over the run
+    if frac <= hold_start_frac:
+        return 0.0
+    if frac >= hold_start_frac + ramp_frac:
+        return 1.0
+    return float((frac - hold_start_frac) / ramp_frac)
+
+
 def collect_oracle_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                             config: PPOConfig, base_seed: int) -> RolloutBatch:
     """Single-seat PPO rollouts: the oracle is the only learning seat; the env
