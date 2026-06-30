@@ -20,9 +20,13 @@ export function useGameStageLayout(options: StageLayoutOptions = {}) {
         let frameId = 0;
 
         const updateBounds = () => {
-            const rect = element.getBoundingClientRect();
-            const nextWidth = Math.max(Math.floor(rect.width), 1);
-            const nextHeight = Math.max(Math.floor(rect.height), 1);
+            // offsetWidth/Height are layout-box sizes, unaffected by CSS transforms.
+            // getBoundingClientRect() would return the post-transform AABB, which is
+            // wrong under the phone-portrait .stage-rotator rotate(90deg): it reports
+            // the portrait viewport instead of the rotated landscape box, scaling the
+            // board from the short side into a tiny letterboxed panel.
+            const nextWidth = Math.max(element.offsetWidth, 1);
+            const nextHeight = Math.max(element.offsetHeight, 1);
 
             setBounds((previous) => {
                 if (previous.width === nextWidth && previous.height === nextHeight) {

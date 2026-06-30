@@ -1363,6 +1363,17 @@ body {
   height: 100dvh;
 }
 
+/* Replay places the rotator beside a fixed-width control panel, so the rotator
+   (not the shell inside it) must be the flex item that takes the remaining
+   space. A class — not inline styles — so the phone-portrait media query below
+   still overrides width/height. */
+.stage-rotator--replay {
+  flex: 1 1 0%;
+  min-width: 0;
+  width: auto;
+  height: 100%;
+}
+
 @media (pointer: coarse) and (orientation: portrait) and (max-width: 600px) {
   .stage-rotator {
     position: fixed;
