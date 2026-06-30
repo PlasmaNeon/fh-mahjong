@@ -92,6 +92,7 @@ def main() -> None:
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--oracle", action="store_true", help="perfect-information oracle eval (51ch observation)")
+    parser.add_argument("--from-oracle", action="store_true", help="checkpoint is a 51ch oracle/self-play net; extract the deployable 39ch student and eval non-oracle")
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
@@ -102,8 +103,14 @@ def main() -> None:
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
     model_config = model_config_from_args(args)
-    model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
-    step = load_checkpoint(args.checkpoint, model)
+    if args.from_oracle:
+        from fh_mahjong_ai.oracle import extract_deployable_student
+        oracle_net = PolicyValueNet(EnvConfig(oracle_observation=True), model_config)
+        step = load_checkpoint(args.checkpoint, oracle_net)
+        model = extract_deployable_student(oracle_net, EnvConfig(), model_config)
+    else:
+        model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
+        step = load_checkpoint(args.checkpoint, model)
     model.to(args.device)
     print(f"Loaded checkpoint from epoch {step}")
 
