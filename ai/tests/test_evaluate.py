@@ -606,6 +606,69 @@ class TestChongciMaxStepsDefault:
         assert captured["max_steps_per_episode"] == 123
 
 
+def test_evaluate_cli_from_oracle_extracts_39ch(tmp_path, monkeypatch):
+    import sys
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    # a 51ch oracle-style checkpoint
+    ckpt = tmp_path / "selfplay.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(oracle_observation=True), mcfg))
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt), "--from-oracle",
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16", "--model-q-hidden-dim", "16",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                        lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+    ev.main()  # must not raise: a 39ch student runs in the non-oracle (39ch) eval
+    assert (tmp_path / "rep.json").exists()
+
+
+def test_evaluate_cli_oracle_and_from_oracle_together_no_shape_mismatch(tmp_path, monkeypatch):
+    """--oracle --from-oracle together must not crash with a shape mismatch.
+
+    The model is extracted as a 39ch student (from-oracle), so the eval env must
+    also use 39ch observations (oracle_observation=False). The guard
+    ``eval_oracle = args.oracle and not args.from_oracle`` ensures this.
+    """
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    ckpt = tmp_path / "oracle.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(oracle_observation=True), mcfg))
+
+    argv = [
+        "fh-mj-evaluate",
+        "--checkpoint", str(ckpt),
+        "--from-oracle",  # extract 39ch student
+        "--oracle",       # historically caused 51ch env with 39ch model -> crash
+        "--online-episodes", "1",
+        "--match-mode", "classic",
+        "--model-channels", "8", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+        "--report-output", str(tmp_path / "rep.json"),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(
+        "fh_mahjong_ai.evaluate.build_bridge",
+        lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg),
+    )
+    ev.main()  # must not raise; 39ch student runs in the non-oracle (39ch) eval
+    assert (tmp_path / "rep.json").exists()
+
+
 def test_evaluate_cli_oracle_builds_51ch(tmp_path, monkeypatch):
     from fh_mahjong_ai.bridge import MockMahjongBridge
     from fh_mahjong_ai.storage import save_checkpoint

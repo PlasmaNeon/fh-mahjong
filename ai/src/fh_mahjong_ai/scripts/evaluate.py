@@ -92,6 +92,7 @@ def main() -> None:
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--oracle", action="store_true", help="perfect-information oracle eval (51ch observation)")
+    parser.add_argument("--from-oracle", action="store_true", help="checkpoint is a 51ch oracle/self-play net; extract the deployable 39ch student and eval non-oracle")
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
@@ -100,10 +101,18 @@ def main() -> None:
     args = parser.parse_args()
 
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
+    # When --from-oracle is set the model is a 39ch student; eval must also use 39ch obs.
+    eval_oracle = args.oracle and not args.from_oracle
 
     model_config = model_config_from_args(args)
-    model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
-    step = load_checkpoint(args.checkpoint, model)
+    if args.from_oracle:
+        from fh_mahjong_ai.oracle import extract_deployable_student
+        oracle_net = PolicyValueNet(EnvConfig(oracle_observation=True), model_config)
+        step = load_checkpoint(args.checkpoint, oracle_net)
+        model = extract_deployable_student(oracle_net, EnvConfig(), model_config)
+    else:
+        model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
+        step = load_checkpoint(args.checkpoint, model)
     model.to(args.device)
     print(f"Loaded checkpoint from epoch {step}")
 
@@ -192,7 +201,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
-                    oracle_observation=args.oracle,
+                    oracle_observation=eval_oracle,
                 )
             else:
                 online_report = evaluate_online(
@@ -208,7 +217,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
-                    oracle_observation=args.oracle,
+                    oracle_observation=eval_oracle,
                 )
             final_report["online"] = online_report
             print(f"  Match Mode:  {online_report['match_mode']}")
