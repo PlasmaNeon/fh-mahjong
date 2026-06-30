@@ -47,6 +47,34 @@ def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
     return oracle
 
 
+def extract_deployable_student(oracle_model: PolicyValueNet, env_config_39ch: EnvConfig,
+                               model_config: ModelConfig) -> PolicyValueNet:
+    """Extract the deployable 39-channel policy from a trained 51-channel net. Copy
+    every tensor except the first plane conv, and set the 39ch input conv to the
+    51ch net's `plane_stem[0].weight[:, :39]`. By construction the student's output
+    on a 39ch observation equals the 51ch net's output on that observation
+    zero-padded to 51ch (the oracle channels contribute zero when their input is 0).
+    Inverse of `build_oracle_model`."""
+    oracle_w = oracle_model.plane_stem[0].weight  # [C, 51, 3, 3]
+    in_ch = oracle_w.shape[1]
+    if in_ch != 51:
+        raise ValueError(f"expected a 51-channel oracle net, got input conv with {in_ch} channels")
+    student = PolicyValueNet(env_config_39ch, model_config)
+    src = oracle_model.state_dict()
+    dst = student.state_dict()
+    merged = dict(dst)
+    for key, val in src.items():
+        if key == "plane_stem.0.weight":
+            continue  # shape mismatch [C,51,..] vs [C,39,..]; set explicitly below
+        if key in dst and val.shape == dst[key].shape:
+            merged[key] = val
+    student.load_state_dict(merged)
+    with torch.no_grad():
+        student.plane_stem[0].weight.copy_(oracle_w[:, :39].to(student.plane_stem[0].weight.device))
+    student.eval()
+    return student
+
+
 def feature_dropout_schedule(iteration: int, iterations: int,
                              hold_start_frac: float = 0.2, ramp_frac: float = 0.6) -> float:
     """Suphx feature-dropout probability delta for a 1-based `iteration` of
