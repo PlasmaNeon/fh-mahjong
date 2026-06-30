@@ -1413,7 +1413,7 @@ body {
   --discard-top-top: 112px;
   --discard-side-edge: 264px;
   --discard-bottom-bottom: 250px;
-  --action-left: 1106px;
+  --action-left: calc(50% + 306px);
   --action-bottom: 124px;
   --seat-bottom-height: 96px;
   --seat-top-height: 84px;
