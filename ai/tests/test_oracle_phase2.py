@@ -90,6 +90,23 @@ def test_collect_selfplay_credits_all_seats_at_match_end():
     assert sp.dones.sum() > ss.dones.sum()  # multiple seats credited per match
 
 
+def test_train_selfplay_oracle_runs_on_mock(tmp_path):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))   # 39ch anchor
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu")
+    history = train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                                    checkpoint_dir=tmp_path / "sp", config=cfg, base_seed=1, run_eval=False)
+    assert len(history) == 2
+    assert (tmp_path / "sp" / "iter_002.pt").exists()
+    assert all("delta" in h for h in history)
+    assert history[0]["delta"] == 0.0 and history[-1]["delta"] == 1.0
+
+
 def test_parallel_selfplay_matches_sequential():
     from fh_mahjong_ai.oracle import collect_selfplay_rollouts, ParallelSelfplayCollector
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,

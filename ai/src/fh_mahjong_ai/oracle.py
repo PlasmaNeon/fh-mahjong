@@ -450,6 +450,53 @@ class ParallelSelfplayCollector:
         self._procs = []
 
 
+def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,
+                          checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
+                          run_eval: bool = False) -> list[dict]:
+    """All-4 self-play feature-dropout training. Warm-start a 51ch net from the
+    anchor; each iteration set delta from feature_dropout_schedule, collect self-play
+    rollouts with that mask probability, then compute_gae + ppo_update. Saves the
+    51ch checkpoint per iter (extract the deployable 39ch student post-hoc / at eval
+    time)."""
+    device = config.device
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)
+    model.train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    history: list[dict] = []
+    collector = None
+    if getattr(config, "num_workers", 1) > 1:
+        collector = ParallelSelfplayCollector(env_config, model_config, config, config.num_workers)
+        collector.start()
+    try:
+        for iteration in range(1, config.iterations + 1):
+            delta = feature_dropout_schedule(iteration, config.iterations)
+            iter_seed = base_seed + iteration * config.matches_per_iter
+            if collector is not None:
+                state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+                batch = collector.collect(state, iter_seed, config.matches_per_iter, delta)
+            else:
+                batch = collect_selfplay_rollouts(env_config, model, config, base_seed=iter_seed, drop_prob=delta)
+            advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
+                                              config.gamma, config.gae_lambda)
+            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics["iteration"] = iteration
+            metrics["delta"] = delta
+            metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+            metrics["steps"] = len(batch)
+            save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+            history.append(metrics)
+            (checkpoint_dir / "history.json").write_text(json.dumps(history))
+            print(f"iter {iteration}: delta={delta:.3f} policy_loss={metrics['policy_loss']:.4f} "
+                  f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                  f"mean_reward={metrics['mean_reward']:.4f}")
+    finally:
+        if collector is not None:
+            collector.close()
+    return history
+
+
 def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,
                  checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
                  run_eval: bool = False) -> list[dict]:
