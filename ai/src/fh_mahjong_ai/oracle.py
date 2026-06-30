@@ -165,6 +165,95 @@ def collect_oracle_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     )
 
 
+def collect_selfplay_rollouts(env_config: EnvConfig, model: PolicyValueNet,
+                              config: PPOConfig, base_seed: int, drop_prob: float) -> RolloutBatch:
+    """Symmetric self-play PPO rollouts: all four seats are the SAME `model`, each
+    sampling on-policy; every seat's transitions are recorded. Feature-dropout: with
+    probability `drop_prob`, the 12 oracle channels (planes 39..50) of the obs the
+    model sees are zeroed AND the masked obs is recorded (so the PPO update matches
+    what the policy acted on). Each seat's dense per-hand score delta is credited to
+    that seat's last decision so its reward telescopes to its match net; `done=1` at
+    each seat's final decision."""
+    device = config.device
+    cfg = EnvConfig(
+        action_space_size=env_config.action_space_size,
+        plane_shape=env_config.plane_shape,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        learning_seats=(0, 1, 2, 3),
+        auto_play_heuristics=False,
+        max_steps_per_episode=config.max_steps_per_episode,
+        match_mode=config.match_mode,
+        oracle_observation=env_config.oracle_observation,
+    )
+    bridge = build_bridge(cfg)
+    env = MahjongEnv(cfg, bridge=bridge)
+    model.eval()
+    oracle_lo, oracle_hi = 39, 51  # oracle channels to mask
+    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
+    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
+    try:
+        for m in range(config.matches_per_iter):
+            obs = env.reset(seed=base_seed + m)
+            torch.manual_seed(int(base_seed + m))
+            mask_rng = np.random.default_rng(base_seed + m)  # seeded -> parallel == sequential
+            reset_result = env.last_reset_result
+            if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                continue
+            last_idx = [None, None, None, None]  # per-seat last recorded decision index
+            while True:
+                seat = int(obs.seat)
+                planes_np = np.asarray(obs.planes, dtype=np.float32).copy()
+                if planes_np.shape[0] >= oracle_hi and mask_rng.random() < drop_prob:
+                    planes_np[oracle_lo:oracle_hi] = 0.0  # feature-dropout
+                planes = torch.from_numpy(planes_np).unsqueeze(0).to(device)
+                scalars = torch.from_numpy(np.asarray(obs.scalars, dtype=np.float32)).unsqueeze(0).to(device)
+                amask = torch.from_numpy(np.asarray(obs.action_mask, dtype=np.int8)).unsqueeze(0).to(device)
+                with torch.no_grad():
+                    logits, value = model(planes, scalars, amask)
+                    logits = logits / max(config.sample_temperature, 1e-6)
+                    dist = masked_policy_distribution(logits)
+                    action = int(dist.sample()[0].item())
+                    logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                    val = float(value[0].item())
+                planes_l.append(planes_np)  # record the MASKED obs
+                scalars_l.append(np.asarray(obs.scalars, dtype=np.float32))
+                mask_l.append(np.asarray(obs.action_mask, dtype=np.int8))
+                actions_l.append(action)
+                logprobs_l.append(logprob)
+                values_l.append(val)
+                rewards_l.append(0.0)
+                dones_l.append(0.0)
+                last_idx[seat] = len(actions_l) - 1
+                step = env.step(action)
+                for k in range(4):
+                    if last_idx[k] is not None:
+                        rewards_l[last_idx[k]] += _seat_step_reward(step.rewards, k)
+                if step.terminated or step.truncated:
+                    for k in range(4):
+                        if last_idx[k] is not None:
+                            dones_l[last_idx[k]] = 1.0
+                    break
+                obs = step.observation
+    finally:
+        close = getattr(bridge, "close", None)
+        if callable(close):
+            close()
+    if not actions_l:
+        raise RuntimeError("collect_selfplay_rollouts produced no decisions")
+    return RolloutBatch(
+        planes=np.stack(planes_l).astype(np.float32),
+        scalars=np.stack(scalars_l).astype(np.float32),
+        action_mask=np.stack(mask_l).astype(np.int8),
+        actions=np.asarray(actions_l, dtype=np.int64),
+        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
+        values=np.asarray(values_l, dtype=np.float32),
+        rewards=np.asarray(rewards_l, dtype=np.float32),
+        dones=np.asarray(dones_l, dtype=np.float32),
+    )
+
+
 def _oracle_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
     import torch as _torch
 

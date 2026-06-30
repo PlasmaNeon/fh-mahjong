@@ -52,3 +52,39 @@ def test_feature_dropout_schedule():
     # the first 20% hold at 0, the final 20% hold at 1
     assert feature_dropout_schedule(10, T) == 0.0   # iter 10 / 50 = 0.2 boundary still 0
     assert feature_dropout_schedule(45, T) == 1.0   # within the final-20% hold
+
+
+def test_collect_selfplay_records_all_seats_and_masks():
+    from fh_mahjong_ai.oracle import collect_selfplay_rollouts
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
+
+    # drop_prob=1.0 -> every recorded obs has the 12 oracle channels (39..50) zeroed
+    masked = collect_selfplay_rollouts(env_cfg, model, cfg, base_seed=5, drop_prob=1.0)
+    assert masked.planes.shape[1] == 51
+    assert np.count_nonzero(masked.planes[:, 39:51, :, :]) == 0
+    assert masked.dones.sum() >= 1
+
+    # drop_prob=0.0 -> oracle channels carry the opponents' hands (nonzero somewhere)
+    full = collect_selfplay_rollouts(env_cfg, model, cfg, base_seed=5, drop_prob=0.0)
+    assert np.count_nonzero(full.planes[:, 39:51, :, :]) > 0
+
+
+def test_collect_selfplay_credits_all_seats_at_match_end():
+    # Self-play credits a terminal (done=1) to EACH seat's last decision, vs the
+    # single-seat collector's one terminal per match. (On the mock bridge there is no
+    # Go-side auto-play, so both record every decision; the robust difference is the
+    # number of terminals, not the transition count.)
+    from fh_mahjong_ai.oracle import collect_selfplay_rollouts, collect_oracle_rollouts
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    sp = collect_selfplay_rollouts(env_cfg, model, cfg, base_seed=9, drop_prob=0.0)
+    ss = collect_oracle_rollouts(env_cfg, model, cfg, base_seed=9)
+    assert ss.dones.sum() == 2            # one terminal per match
+    assert sp.dones.sum() > ss.dones.sum()  # multiple seats credited per match
