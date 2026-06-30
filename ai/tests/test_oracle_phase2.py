@@ -88,3 +88,23 @@ def test_collect_selfplay_credits_all_seats_at_match_end():
     ss = collect_oracle_rollouts(env_cfg, model, cfg, base_seed=9)
     assert ss.dones.sum() == 2            # one terminal per match
     assert sp.dones.sum() > ss.dones.sum()  # multiple seats credited per match
+
+
+def test_parallel_selfplay_matches_sequential():
+    from fh_mahjong_ai.oracle import collect_selfplay_rollouts, ParallelSelfplayCollector
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=4, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    seq = collect_selfplay_rollouts(env_cfg, model, cfg, base_seed=222, drop_prob=0.5)
+    collector = ParallelSelfplayCollector(env_cfg, mcfg, cfg, num_workers=2)
+    collector.start()
+    try:
+        state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+        par = collector.collect(state, base_seed=222, matches_per_iter=4, drop_prob=0.5)
+    finally:
+        collector.close()
+    assert len(par) == len(seq)
+    assert par.dones.sum() == seq.dones.sum()
+    np.testing.assert_allclose(np.sort(par.rewards), np.sort(seq.rewards), rtol=1e-5)

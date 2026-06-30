@@ -354,6 +354,102 @@ class ParallelOracleCollector:
         self._procs = []
 
 
+def _selfplay_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
+    import torch as _torch
+
+    from .model import PolicyValueNet as _PVN
+
+    _torch.set_num_threads(1)
+    model = _PVN(env_config, model_config)
+    while True:
+        task = task_q.get()
+        if task is None:
+            return
+        worker_id, state_dict, base_seed, matches, drop_prob = task
+        try:
+            model.load_state_dict(state_dict)
+            cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
+            batch = collect_selfplay_rollouts(env_config, model, cfg, base_seed=base_seed, drop_prob=drop_prob)
+            result_q.put((worker_id, batch, None))
+        except Exception:  # noqa: BLE001
+            result_q.put((worker_id, None, traceback.format_exc()))
+
+
+class ParallelSelfplayCollector:
+    """Spawn-context worker pool for all-4 self-play feature-dropout rollouts,
+    concatenated into one RolloutBatch. Mirrors ParallelOracleCollector; the task
+    additionally carries the feature-dropout probability `drop_prob`."""
+
+    def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
+                 ppo_config: PPOConfig, num_workers: int) -> None:
+        if num_workers < 1:
+            raise ValueError("num_workers must be >= 1")
+        self.env_config = env_config
+        self.model_config = model_config
+        self.ppo_config = ppo_config
+        self.num_workers = int(num_workers)
+        self._ctx = mp.get_context("spawn")
+        self._task_q = None
+        self._result_q = None
+        self._procs = []
+
+    def start(self) -> None:
+        self._task_q = self._ctx.Queue()
+        self._result_q = self._ctx.Queue()
+        self._procs = []
+        for _ in range(self.num_workers):
+            p = self._ctx.Process(
+                target=_selfplay_worker_loop,
+                args=(self.env_config, self.model_config, self.ppo_config,
+                      self._task_q, self._result_q),
+                daemon=True,
+            )
+            p.start()
+            self._procs.append(p)
+
+    def collect(self, state_dict, base_seed: int, matches_per_iter: int, drop_prob: float) -> RolloutBatch:
+        counts = _split_counts(matches_per_iter, self.num_workers)
+        offset = 0
+        dispatched = 0
+        for worker_id, count in enumerate(counts):
+            if count == 0:
+                continue
+            self._task_q.put((worker_id, state_dict, int(base_seed + offset), int(count), float(drop_prob)))
+            offset += count
+            dispatched += 1
+        results: dict = {}
+        received = 0
+        while received < dispatched:
+            try:
+                worker_id, batch, err = self._result_q.get(timeout=30.0)
+            except _queue.Empty:
+                if any(p.exitcode is not None for p in self._procs):
+                    self.close()
+                    raise RuntimeError("a self-play rollout worker exited unexpectedly during collect")
+                continue
+            if err is not None:
+                self.close()
+                raise RuntimeError(f"self-play rollout worker {worker_id} failed:\n{err}")
+            results[worker_id] = batch
+            received += 1
+        ordered = [results[w] for w in sorted(results)]
+        return concat_rollout_batches(ordered)
+
+    def close(self) -> None:
+        if not self._procs:
+            return
+        for _ in self._procs:
+            try:
+                self._task_q.put(None)
+            except Exception:  # noqa: BLE001
+                pass
+        for p in self._procs:
+            p.join(timeout=10)
+            if p.is_alive():
+                p.terminate()
+        self._procs = []
+
+
 def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,
                  checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
                  run_eval: bool = False) -> list[dict]:
