@@ -257,11 +257,27 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 }
 
 func (s *Server) handlePrivateTableGet(c *gin.Context) {
+	userID, _ := c.Get("userID")
 	tableID := c.Param("roomId")
 	if s.Matchmaker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
 		return
 	}
+
+	// A started match is removed from the configuring registry, so the active
+	// state must be reported here too. This is the room-scoped signal the
+	// waiting-room page relies on to rejoin the live match — and crucially it
+	// is scoped to THIS tableID, so opening a different room link never leaks
+	// (and never redirects into) another room's match.
+	if activeTable, isActive, isParticipant := s.Matchmaker.IsPrivateTableParticipant(tableID, userID.(uint)); isActive {
+		if isParticipant {
+			c.JSON(http.StatusOK, gin.H{"status": "active", "room": tableID, "matchId": activeTable.MatchID})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "This private table is already in an active game", "status": "active", "room": tableID, "matchId": activeTable.MatchID})
+		return
+	}
+
 	table := s.Matchmaker.GetConfiguringPrivateTable(tableID)
 	if table == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "table not found"})

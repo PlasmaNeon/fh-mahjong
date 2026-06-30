@@ -21,6 +21,12 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [mySeatId, setMySeatId] = useState<number | null>(null);
 
     useEffect(() => {
+        // A new (or absent) socket means a new connection/room. Drop any state
+        // from the previous one so a freshly-opened room never inherits the old
+        // game — this is what let distinct room links show the same game.
+        setGameState(null);
+        setMySeatId(null);
+
         if (!socket) return;
 
         const handleMessage = async (event: MessageEvent) => {
