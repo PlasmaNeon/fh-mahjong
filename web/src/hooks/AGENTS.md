@@ -14,16 +14,21 @@ Contains reusable React hooks for the application. Currently focused on WASM int
   - Exposes hand evaluation and action validation functions to React components
   - Returns loading state and callable functions
 
-- **useGameStageLayout.ts** — Hook for the live game’s fixed-stage layout:
-  - Observes the available shell size with `ResizeObserver`
-  - Also remeasures on `window.resize` / `visualViewport.resize` and schedules the actual DOM read on the next animation frame so flex-layout changes settle before scale is recomputed
-  - Tracks the mounted shell node via a callback ref instead of assuming the ref exists on the first render, so routes that initially show a loading state (for example replay) still start measuring once the real stage shell appears
-  - Computes a uniform scale for the 1600x900 landscape game board
-  - Returns stage dimensions, scaled bounds, and centered offsets so `Game.tsx` can keep the whole table locked to one coordinate system during resize/orientation changes
+- **computeStageLayout.ts** — Pure (DOM-free, unit-tested in `computeStageLayout.test.ts`) helper that maps an available width/height to the stage layout:
+  - Fixed design height (`STAGE_BASE_HEIGHT = 900`); design width = `900 × clamp(windowAspect, 16/9, STAGE_MAX_ASPECT = 2.39)`; then `scale = min(availW/stageWidth, availH/stageHeight)`
+  - So the board fills a *band* of landscape ratios (16:9 up to ~21:9) by spreading wider rather than pillarboxing; pillarboxes only past the cap; fills width + letterboxes height below 16:9
+  - Exports `computeStageLayout`, the `StageLayout`/`StageLayoutOptions` types, and the `STAGE_BASE_HEIGHT`/`STAGE_MIN_ASPECT`/`STAGE_MAX_ASPECT` constants
+
+- **useGameStageLayout.ts** — React hook wrapping `computeStageLayout` for the live game / replay stage:
+  - Observes the shell size with `ResizeObserver`; also remeasures on `window.resize` / `visualViewport.resize` / `orientationchange`, scheduling the DOM read on the next animation frame so flex-layout changes settle before scale is recomputed
+  - Measures `element.offsetWidth/offsetHeight` (layout box, **transform-agnostic**) — NOT `getBoundingClientRect()`, whose post-transform AABB would mis-measure the phone-portrait `.stage-rotator` rotate(90deg) as the portrait viewport and shrink the board. Keep measurement transform-agnostic.
+  - Tracks the mounted shell node via a callback ref instead of assuming the ref exists on first render, so routes that start in a loading state (e.g. replay) still begin measuring once the real shell appears
+  - Returns stage dimensions, scaled bounds, and centered offsets so `Game.tsx`/`Replay.tsx` keep the whole table on one coordinate system across resize/orientation/rotation
 
 ## Architecture Notes
 
 - The WASM module is compiled from `cmd/wasm/main.go`.
 - Loading is async — components should check the loading state before calling WASM functions.
 - Used for client-side prediction (zero-latency feedback); server always re-validates.
-- `useGameStageLayout.ts` is intentionally live-game-specific rather than a generic layout hook; it exists to stop seat/hand/discard drift by scaling a fixed DOM stage as one unit instead of reflowing each region from viewport units, and it should prefer post-layout remeasurement over immediate resize-event reads when flex shells or side panels are involved.
+- `useGameStageLayout.ts` is intentionally game/replay-specific rather than a generic layout hook; it stops seat/hand/discard drift by scaling a fixed-height, aspect-flexible DOM stage as one unit instead of reflowing each region from viewport units, and it should prefer post-layout remeasurement over immediate resize-event reads when flex shells or side panels are involved.
+- Phones in portrait get forced landscape via the `.stage-rotator` wrapper (CSS in `web/src/index.css`, gated `(pointer: coarse) and (orientation: portrait) and (max-width: 600px)`). Because that wraps and rotates the measured shell, the hook must read the untransformed layout box (`offsetWidth/offsetHeight`). The replay route opts out of the rotation (`.stage-rotator--replay`) so its control panel stays accessible.

@@ -1375,7 +1375,10 @@ body {
 }
 
 @media (pointer: coarse) and (orientation: portrait) and (max-width: 600px) {
-  .stage-rotator {
+  /* Replay (--replay) opts out: its rotator sits beside a control panel, and
+     going position:fixed full-screen would cover those controls. Only the
+     live-game rotator force-rotates. */
+  .stage-rotator:not(.stage-rotator--replay) {
     position: fixed;
     top: 50%;
     left: 50%;
