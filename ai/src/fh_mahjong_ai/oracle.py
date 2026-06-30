@@ -202,7 +202,14 @@ def collect_selfplay_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
-            last_idx = [None, None, None, None]  # per-seat last recorded decision index
+            # Per-seat trajectory buffers: each is a list-of-lists indexed by seat 0..3.
+            seat_planes:   list[list] = [[], [], [], []]
+            seat_scalars:  list[list] = [[], [], [], []]
+            seat_masks:    list[list] = [[], [], [], []]
+            seat_actions:  list[list] = [[], [], [], []]
+            seat_logprobs: list[list] = [[], [], [], []]
+            seat_values:   list[list] = [[], [], [], []]
+            seat_rewards:  list[list] = [[], [], [], []]
             while True:
                 seat = int(obs.seat)
                 planes_np = np.asarray(obs.planes, dtype=np.float32).copy()
@@ -218,25 +225,34 @@ def collect_selfplay_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                     action = int(dist.sample()[0].item())
                     logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
                     val = float(value[0].item())
-                planes_l.append(planes_np)  # record the MASKED obs
-                scalars_l.append(np.asarray(obs.scalars, dtype=np.float32))
-                mask_l.append(np.asarray(obs.action_mask, dtype=np.int8))
-                actions_l.append(action)
-                logprobs_l.append(logprob)
-                values_l.append(val)
-                rewards_l.append(0.0)
-                dones_l.append(0.0)
-                last_idx[seat] = len(actions_l) - 1
+                seat_planes[seat].append(planes_np)  # record the MASKED obs
+                seat_scalars[seat].append(np.asarray(obs.scalars, dtype=np.float32))
+                seat_masks[seat].append(np.asarray(obs.action_mask, dtype=np.int8))
+                seat_actions[seat].append(action)
+                seat_logprobs[seat].append(logprob)
+                seat_values[seat].append(val)
+                seat_rewards[seat].append(0.0)
                 step = env.step(action)
+                # Credit each seat's score delta to ITS current last decision.
                 for k in range(4):
-                    if last_idx[k] is not None:
-                        rewards_l[last_idx[k]] += _seat_step_reward(step.rewards, k)
+                    if seat_rewards[k]:
+                        seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
                 if step.terminated or step.truncated:
-                    for k in range(4):
-                        if last_idx[k] is not None:
-                            dones_l[last_idx[k]] = 1.0
                     break
                 obs = step.observation
+            # At match end: emit each seat's trajectory as a contiguous block ending in done=1.
+            for k in range(4):
+                n = len(seat_actions[k])
+                if n == 0:
+                    continue
+                planes_l.extend(seat_planes[k])
+                scalars_l.extend(seat_scalars[k])
+                mask_l.extend(seat_masks[k])
+                actions_l.extend(seat_actions[k])
+                logprobs_l.extend(seat_logprobs[k])
+                values_l.extend(seat_values[k])
+                rewards_l.extend(seat_rewards[k])
+                dones_l.extend([0.0] * (n - 1) + [1.0])
     finally:
         close = getattr(bridge, "close", None)
         if callable(close):

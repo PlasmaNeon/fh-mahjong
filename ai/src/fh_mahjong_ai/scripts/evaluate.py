@@ -101,6 +101,8 @@ def main() -> None:
     args = parser.parse_args()
 
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
+    # When --from-oracle is set the model is a 39ch student; eval must also use 39ch obs.
+    eval_oracle = args.oracle and not args.from_oracle
 
     model_config = model_config_from_args(args)
     if args.from_oracle:
@@ -199,7 +201,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
-                    oracle_observation=args.oracle,
+                    oracle_observation=eval_oracle,
                 )
             else:
                 online_report = evaluate_online(
@@ -215,7 +217,7 @@ def main() -> None:
                     chongci_bust_threshold=args.chongci_bust_threshold,
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
-                    oracle_observation=args.oracle,
+                    oracle_observation=eval_oracle,
                 )
             final_report["online"] = online_report
             print(f"  Match Mode:  {online_report['match_mode']}")

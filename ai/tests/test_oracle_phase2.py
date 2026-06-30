@@ -107,6 +107,44 @@ def test_train_selfplay_oracle_runs_on_mock(tmp_path):
     assert history[0]["delta"] == 0.0 and history[-1]["delta"] == 1.0
 
 
+def test_selfplay_trajectories_are_seat_contiguous():
+    """Each done-segment in the flat buffer must belong to a single seat.
+
+    After the per-seat-contiguous fix every segment is one seat's per-match
+    trajectory (~1/8 of the total buffer for 2 matches × 4 seats). In the buggy
+    interleaved version the first segment spanned multiple seats (roughly 3/4 of
+    one match). We assert two things:
+      1. No single segment exceeds 40% of total transitions.
+      2. The number of segments (== dones.sum()) is >= 4 (one per seat per match).
+    """
+    from fh_mahjong_ai.oracle import collect_selfplay_rollouts
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    mcfg = _mcfg()
+    model = PolicyValueNet(env_cfg, mcfg)
+    cfg = PPOConfig(matches_per_iter=2, match_mode="classic", max_steps_per_episode=64, device="cpu")
+    batch = collect_selfplay_rollouts(env_cfg, model, cfg, base_seed=42, drop_prob=0.0)
+
+    dones = batch.dones
+    total = len(dones)
+    # Split into segments at each done==1 boundary.
+    segments = []
+    start = 0
+    for i in range(total):
+        if dones[i] == 1.0:
+            segments.append(i - start + 1)
+            start = i + 1
+    # There must be at least 4 segments (one per seat per match, 2 matches × 4 seats = 8).
+    assert len(segments) >= 4, f"expected >= 4 segments, got {len(segments)}"
+    # No single segment should dominate the buffer (>40%): the buggy interleaved
+    # version had a first segment that was ~75% of the buffer.
+    max_seg = max(segments)
+    assert max_seg / total <= 0.40, (
+        f"largest segment is {max_seg}/{total} = {max_seg/total:.1%} > 40%; "
+        "trajectories appear to still be interleaved across seats"
+    )
+
+
 def test_parallel_selfplay_matches_sequential():
     from fh_mahjong_ai.oracle import collect_selfplay_rollouts, ParallelSelfplayCollector
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
