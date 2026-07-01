@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planTileFlights, type MotionSnapshot, type TileMotionDescriptor, type TileRect } from './tileFlightPlan'
-import { hiddenHandSlotsByDirection } from './tileFlightPlan'
+import { planTileFlights, hiddenHandSlotsByDirection, type MotionSnapshot, type TileMotionDescriptor, type TileRect } from './tileFlightPlan'
 import type { TileLike } from './types'
 
 const tile = (id: number): TileLike => ({ id, suit: 0, value: 0 })
@@ -68,9 +67,38 @@ describe('planTileFlights — redacted opponent discard', () => {
     // Drawn back slides from the drawn slot INTO the same gap rect (no current-id lookup).
     expect(merge.fromRect.left).toBe(60)
     expect(merge.toRect.left).toBe(10)
+    expect(merge.asBack).toBe(true)
     expect(merge.tile.id).toBe(1009)
     // The chosen rail slot is flagged for hiding during the flight.
     expect(merge.hideHandSlot).toEqual({ direction: 'top', index: 0 })
+  })
+
+  it('tedashi: discard flies from the LAST hand slot when random returns 0.99', () => {
+    // Math.floor(0.99 * 3) === 2 → hand tile 1003 @ left 30
+    const currentLocations = new Map<number, TileMotionDescriptor>([
+      [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+    ])
+    const currentRects = new Map<number, TileRect>([[42, PILE]])
+    const animations = planTileFlights({
+      previousSnapshot: prevSnapshot(),
+      currentLocations,
+      currentRects,
+      currentHandOrigins: new Map(),
+      isWildTile: () => false,
+      startKey: 0,
+      fromDrawnByDirection: new Map([['top', false]]),
+      random: () => 0.99, // deterministic: pick the last hand slot (1003 @ left 30)
+    })
+    expect(animations).toHaveLength(2)
+    const discard = animations.find((a) => a.tile.id === 42)!
+    const merge = animations.find((a) => a.asBack)!
+    // Discard leaves the chosen gap slot.
+    expect(discard.fromRect.left).toBe(30)
+    // Drawn back slides from the drawn slot INTO the same gap rect.
+    expect(merge.toRect.left).toBe(30)
+    expect(merge.asBack).toBe(true)
+    // The chosen rail slot (index 2) is flagged for hiding during the flight.
+    expect(merge.hideHandSlot).toEqual({ direction: 'top', index: 2 })
   })
 
   it('tedashi with no preceding draw: discard flies, but no merge/gap', () => {
