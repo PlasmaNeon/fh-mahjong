@@ -163,6 +163,9 @@ export function planTileFlights({
 
     const previousTile = previousSnapshot.locations.get(tileId)
     let fromRect: TileRect | undefined
+    // Set for a tedashi discard: the concealed rail slot to blank while the
+    // discard flies, so the gap is visible whether or not a drawn tile fills it.
+    let hideHandSlot: { direction: SeatLaneDirection; index: number } | undefined
 
     if (previousTile) {
       // The viewer's own tiles are tracked across renders by id, so we know
@@ -182,11 +185,13 @@ export function planTileFlights({
         const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
         if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
       } else if (singleNewDiscard) {
-        // Tedashi: the discard leaves a random concealed hand slot (the "gap"),
-        // and the drawn back slides from the drawn slot into that SAME gap. Both
-        // the gap origin and the merge target are read from the PREVIOUS
-        // snapshot, so this works even though production re-randomizes opponent
-        // tile ids every broadcast (no current-frame id lookup).
+        // Tedashi: the discard leaves a random concealed hand slot (the "gap").
+        // Blank that slot for the discard's own flight so the gap is visible for
+        // EVERY tedashi — including a pon/chii discard, which has no drawn tile.
+        // When the player did draw this turn, also slide the drawn back into the
+        // gap to fill it; otherwise the gap simply closes as the rail reflows.
+        // Everything is read from the PREVIOUS snapshot, so it survives the
+        // per-broadcast id rotation (no current-frame id lookup).
         const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
         if (handIds.length > 0) {
           // Clamp guards against an injected RNG returning exactly 1.0 (Math.random is [0,1)).
@@ -194,27 +199,60 @@ export function planTileFlights({
           const gapRect = previousSnapshot.rects.get(handIds[slotIndex])
           fromRect = gapRect
 
-          // Slide the drawn back into the vacated gap and blank that slot for the
-          // flight. Only when a drawn tile is present (a real tedashi-after-draw),
-          // which keeps the rail count — and so slot positions — stable across
-          // the discard.
-          const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
-          const mergeFrom = drawnId != null ? previousSnapshot.rects.get(drawnId) : undefined
-          const drawnTileObj = drawnId != null ? previousSnapshot.locations.get(drawnId)?.tile : undefined
-          if (mergeFrom && gapRect && drawnTileObj) {
-            const mergeDist = Math.hypot(gapRect.left - mergeFrom.left, gapRect.top - mergeFrom.top)
-            if (mergeDist >= MIN_TRAVEL_DISTANCE) {
-              key += 1
-              animations.push({
-                key,
-                tile: drawnTileObj,
-                direction: dir,
-                fromRect: mergeFrom,
-                toRect: gapRect,
-                isWild: false,
-                asBack: true,
-                hideHandSlot: { direction: dir, index: slotIndex },
-              })
+          if (gapRect) {
+            // The current rail may be one shorter than the previous snapshot (a
+            // pon/chii discard doesn't draw a replacement), so clamp the blanked
+            // slot to the current hand length to keep it on a rendered tile.
+            let currentHandCount = 0
+            currentLocations.forEach((t) => {
+              if (t.direction === dir && t.role === 'hand') currentHandCount += 1
+            })
+            const hideIndex = currentHandCount > 0 ? Math.min(slotIndex, currentHandCount - 1) : slotIndex
+            hideHandSlot = { direction: dir, index: hideIndex }
+
+            const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+            const mergeFrom = drawnId != null ? previousSnapshot.rects.get(drawnId) : undefined
+            const drawnTileObj = drawnId != null ? previousSnapshot.locations.get(drawnId)?.tile : undefined
+            if (mergeFrom && drawnTileObj) {
+              // Normal/kan tedashi: slide the drawn back into the gap to fill it.
+              const mergeDist = Math.hypot(gapRect.left - mergeFrom.left, gapRect.top - mergeFrom.top)
+              if (mergeDist >= MIN_TRAVEL_DISTANCE) {
+                key += 1
+                animations.push({
+                  key,
+                  tile: drawnTileObj,
+                  direction: dir,
+                  fromRect: mergeFrom,
+                  toRect: gapRect,
+                  isWild: false,
+                  asBack: true,
+                })
+              }
+            } else if (currentHandCount > 0) {
+              // Pon/chii tedashi (no draw): collapse the concealed hand — every
+              // back to the right of the gap slides one slot left to close it, so
+              // the hand tightens up. Purely cosmetic (identical face-down backs),
+              // driven by previous-snapshot slot rects rather than real tile ids;
+              // each sliding back also blanks the current slot it lands on so the
+              // real (already-reflowed) rail doesn't show through the animation.
+              for (let i = slotIndex + 1; i < handIds.length; i += 1) {
+                const slideFrom = previousSnapshot.rects.get(handIds[i])
+                const slideTo = previousSnapshot.rects.get(handIds[i - 1])
+                const backTile = previousSnapshot.locations.get(handIds[i])?.tile
+                const landIndex = i - 1
+                if (!slideFrom || !slideTo || !backTile || landIndex > currentHandCount - 1) continue
+                key += 1
+                animations.push({
+                  key,
+                  tile: backTile,
+                  direction: dir,
+                  fromRect: slideFrom,
+                  toRect: slideTo,
+                  isWild: false,
+                  asBack: true,
+                  hideHandSlot: { direction: dir, index: landIndex },
+                })
+              }
             }
           }
         }
@@ -242,6 +280,7 @@ export function planTileFlights({
       fromRect,
       toRect,
       isWild: isWildTile(currentTile.tile),
+      hideHandSlot,
     })
   })
 
