@@ -211,7 +211,7 @@ export default function Replay() {
         style={stageShellStyle}
       >
         <div className="game-stage-frame" style={stageFrameStyle}>
-          <div className="game-stage" style={stageStyle}>
+          <div className="game-stage" data-compact={stageLayout.compact ? 'true' : undefined} style={stageStyle}>
             <TableBoard
               viewSeat={viewSeat}
               players={playerViews}
