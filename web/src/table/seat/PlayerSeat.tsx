@@ -9,6 +9,7 @@ type PlayerSeatProps = {
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
+  hiddenSlots?: Set<number>
   animateDiscardTileIds?: Set<number>
   callableDiscard?: { seat: number; tileId: number } | null
 }
@@ -20,6 +21,7 @@ export function PlayerSeat({
   onDiscard,
   isWildTile = () => false,
   hiddenTileIds,
+  hiddenSlots,
   animateDiscardTileIds,
   callableDiscard,
 }: PlayerSeatProps) {
@@ -47,6 +49,7 @@ export function PlayerSeat({
           onDiscard={onDiscard}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
+          hiddenSlots={hiddenSlots}
         />
       </div>
     </>

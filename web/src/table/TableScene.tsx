@@ -72,7 +72,7 @@ export function TableBoard({
     direction: getSeatDirection(player.seat, viewSeat),
   })), [players, viewSeat])
 
-  const { hiddenTileIds, flights } = useTileFlight({
+  const { hiddenTileIds, hiddenHandSlots, flights } = useTileFlight({
     seatViews,
     isWildTile,
     tableRef,
@@ -117,6 +117,7 @@ export function TableBoard({
           onDiscard={onDiscard}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
+          hiddenSlots={hiddenHandSlots.get(direction)}
           animateDiscardTileIds={animateDiscardTileIds}
           callableDiscard={callableDiscard}
         />
