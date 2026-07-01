@@ -18,12 +18,16 @@
         "paired_placement_ci95": 0.0676,
         "large_loss_rate": 0.165,
         "anchor_large_loss_rate": 0.208,
-        "verdict": "BEATS (CI excludes 0)"
+        "verdict": "BEATS (CI excludes 0)",
+        "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json",
+        "from_oracle_report_path": "/root/fh-mahjong-runs/sp-gate/eval-student050.json",
+        "anchor_report_path": "/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json"
       }
     ],
     "promotion_gate": {
       "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline)",
-      "result": "paired_diff +0.1639 +/-0.0676 vs anchor -0.0528; large_loss 0.165 vs 0.208; robust across delta=1 tail (iters 40/44/47/50 all BEAT)."
+      "result": "paired_diff +0.1639 +/-0.0676 vs anchor -0.0528; large_loss 0.165 vs 0.208; robust across delta=1 tail (iters 40/44/47/50 all BEAT).",
+      "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json"
     },
     "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt",
     "previous_best_id": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
@@ -301,6 +305,41 @@
     }
   },
   "fallbacks": [
+    {
+      "checkpoint_path": "/root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/checkpoints/bc/epoch_020.pt",
+      "evaluation": [
+        {
+          "deal_in_rate": 0.124,
+          "label": "duplicate_1000_seed15000",
+          "mean_reward": -0.0027919996064156294,
+          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed15000/bc20_duplicate_1000_seed15000.json",
+          "seats": 4000,
+          "start_seed": 15000,
+          "win_rate": 0.243
+        },
+        {
+          "deal_in_rate": 0.116,
+          "label": "duplicate_1000_seed17000",
+          "mean_reward": -0.002195000182837248,
+          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed17000/bc20_duplicate_1000_seed17000.json",
+          "seats": 4000,
+          "start_seed": 17000,
+          "win_rate": 0.24375
+        },
+        {
+          "deal_in_rate": 0.12,
+          "label": "combined_duplicate_2000_seed15000_17000",
+          "mean_reward": -0.0024934998750686644,
+          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed15000 and /root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed17000",
+          "seats": 8000,
+          "start_seed": 15000,
+          "win_rate": 0.243375
+        }
+      ],
+      "id": "bc20_lookahead_50k_epoch020",
+      "method": "behavior_cloning",
+      "source_dataset": "/root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/heuristic-50000-npz"
+    },
     {
       "checkpoint_path": "/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt",
       "data_generation": {
@@ -1933,41 +1972,6 @@
         "target_mode": "mc",
         "temperature": 3.0
       }
-    },
-    {
-      "checkpoint_path": "/root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/checkpoints/bc/epoch_020.pt",
-      "evaluation": [
-        {
-          "deal_in_rate": 0.124,
-          "label": "duplicate_1000_seed15000",
-          "mean_reward": -0.0027919996064156294,
-          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed15000/bc20_duplicate_1000_seed15000.json",
-          "seats": 4000,
-          "start_seed": 15000,
-          "win_rate": 0.243
-        },
-        {
-          "deal_in_rate": 0.116,
-          "label": "duplicate_1000_seed17000",
-          "mean_reward": -0.002195000182837248,
-          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed17000/bc20_duplicate_1000_seed17000.json",
-          "seats": 4000,
-          "start_seed": 17000,
-          "win_rate": 0.24375
-        },
-        {
-          "deal_in_rate": 0.12,
-          "label": "combined_duplicate_2000_seed15000_17000",
-          "mean_reward": -0.0024934998750686644,
-          "report_path": "/root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed15000 and /root/fh-mahjong-runs/reward-next-ev-20260519-003157/reports_gate_seed17000",
-          "seats": 8000,
-          "start_seed": 15000,
-          "win_rate": 0.243375
-        }
-      ],
-      "id": "bc20_lookahead_50k_epoch020",
-      "method": "behavior_cloning",
-      "source_dataset": "/root/fh-mahjong-runs/lookahead-bc-50k-20260517-000302/heuristic-50000-npz"
     }
   ],
   "rejected_candidates": [
@@ -4165,5 +4169,5 @@
     "promotion_rule": "reward-trained checkpoint must beat the BC fallback on mean_reward across independent 1000-seed windows without regressing deal-in rate; win rate is tracked as a secondary metric.",
     "serving_validation": "Python returns an action_id from visible SeatObservation inputs; Go must still decode and validate the action_id against current legal actions before applying it."
   },
-  "updated_at": "2026-06-30T19:02:05.101892+00:00"
+  "updated_at": "2026-07-01T04:39:39.330003+00:00"
 }
