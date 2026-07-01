@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planTileFlights, hiddenHandSlotsByDirection, type MotionSnapshot, type TileMotionDescriptor, type TileRect } from './tileFlightPlan'
+import { planTileFlights, hiddenHandSlotsByDirection, hiddenTileIdsFromAnimations, type MotionSnapshot, type TileMotionDescriptor, type TileRect } from './tileFlightPlan'
 import type { TileLike } from './types'
 
 const tile = (id: number): TileLike => ({ id, suit: 0, value: 0 })
@@ -236,5 +236,24 @@ describe('hiddenHandSlotsByDirection', () => {
 
   it('returns an empty map when no animation hides a slot', () => {
     expect(hiddenHandSlotsByDirection([anim({})]).size).toBe(0)
+  })
+})
+
+describe('hiddenTileIdsFromAnimations', () => {
+  const anim = (over: Partial<import('./tileFlightPlan').FlyingTileAnimation>): import('./tileFlightPlan').FlyingTileAnimation => ({
+    key: 1, tile: tile(1), direction: 'top', fromRect: rect(0), toRect: rect(0), isWild: false, ...over,
+  })
+
+  it('includes normal flight ids but excludes asBack merge flights (stale fake ids)', () => {
+    // The asBack drawn-back merge carries a previous-broadcast fake id; the gap it
+    // fills is hidden via hideHandSlot, so its stale id must NOT reach hiddenTileIds
+    // (per-broadcast rotation could reuse it for an unrelated current concealed tile).
+    const ids = hiddenTileIdsFromAnimations([
+      anim({ tile: tile(42) }), // discard (real id) -> hides the pond tile
+      anim({ tile: tile(1009), asBack: true, hideHandSlot: { direction: 'top', index: 0 } }),
+    ])
+    expect(ids.has(42)).toBe(true)
+    expect(ids.has(1009)).toBe(false)
+    expect(ids.size).toBe(1)
   })
 })

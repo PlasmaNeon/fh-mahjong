@@ -118,6 +118,21 @@ export function hiddenHandSlotsByDirection(
   return map
 }
 
+// Tile ids whose settled position should stay hidden while their flight is
+// airborne. `asBack` merge flights (the tedashi drawn-back slide) are excluded:
+// their `tile.id` is a stale previous-broadcast fake id, and in production those
+// ids are re-randomized every broadcast, so feeding it here could blank an
+// unrelated current concealed tile that the new obfuscation map assigned the same
+// fake id. The merge's gap is hidden via `hideHandSlot` instead.
+export function hiddenTileIdsFromAnimations(animations: FlyingTileAnimation[]): Set<number> {
+  const ids = new Set<number>()
+  for (const animation of animations) {
+    if (animation.asBack) continue
+    ids.add(animation.tile.id)
+  }
+  return ids
+}
+
 export function planTileFlights({
   previousSnapshot,
   currentLocations,

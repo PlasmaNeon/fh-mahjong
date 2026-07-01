@@ -7,6 +7,7 @@ import type { PlayerTableView, SeatLaneDirection, TileLike } from './TableScene'
 import {
   planTileFlights,
   hiddenHandSlotsByDirection,
+  hiddenTileIdsFromAnimations,
   tileIdsEqual,
   type FlyingTileAnimation,
   type MotionSnapshot,
@@ -251,7 +252,7 @@ export function useTileFlight({
     }
   }, [isWildTile, seatViews, tableRef])
 
-  const hiddenTileIds = new Set(flyingTiles.map((animation) => animation.tile.id))
+  const hiddenTileIds = hiddenTileIdsFromAnimations(flyingTiles)
   const hiddenHandSlots = hiddenHandSlotsByDirection(flyingTiles)
 
   // In phone-portrait the board is CSS-rotated; render the overlay inside a
