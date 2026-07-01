@@ -11,6 +11,7 @@ type SeatBundleProps = {
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
+  hiddenSlots?: Set<number>
 }
 
 // Canonical (bottom-orientation) bundle: a fixed-width box that pins the closed
@@ -25,6 +26,7 @@ export function SeatBundle({
   onDiscard,
   isWildTile = () => false,
   hiddenTileIds,
+  hiddenSlots,
 }: SeatBundleProps) {
   const flowers = player.flowerMelds || []
   const melds = player.openMelds || []
@@ -40,6 +42,7 @@ export function SeatBundle({
         onDiscard={onDiscard}
         isWildTile={isWildTile}
         hiddenTileIds={hiddenTileIds}
+        hiddenSlots={hiddenSlots}
       />
       {hasExposed && (
         <div className="seat-bundle__exposed">

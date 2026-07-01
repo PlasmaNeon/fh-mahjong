@@ -6,6 +6,8 @@ import { getTileName, getTileSvgName } from '../utils/tileUtils'
 import type { PlayerTableView, SeatLaneDirection, TileLike } from './TableScene'
 import {
   planTileFlights,
+  hiddenHandSlotsByDirection,
+  hiddenTileIdsFromAnimations,
   tileIdsEqual,
   type FlyingTileAnimation,
   type MotionSnapshot,
@@ -163,6 +165,9 @@ type UseTileFlightResult = {
   // Tile ids currently airborne; their settled positions stay hidden until the
   // flight overlay lands.
   hiddenTileIds: Set<number>
+  // Per-direction concealed rail slot indices to blank while a tedashi drawn-back
+  // flight is airborne (opponent gap fill).
+  hiddenHandSlots: Map<SeatLaneDirection, Set<number>>
   // Portal overlay rendering every in-flight tile.
   flights: ReactNode
 }
@@ -247,7 +252,8 @@ export function useTileFlight({
     }
   }, [isWildTile, seatViews, tableRef])
 
-  const hiddenTileIds = new Set(flyingTiles.map((animation) => animation.tile.id))
+  const hiddenTileIds = hiddenTileIdsFromAnimations(flyingTiles)
+  const hiddenHandSlots = hiddenHandSlotsByDirection(flyingTiles)
 
   // In phone-portrait the board is CSS-rotated; render the overlay inside a
   // wrapper with the same transform and feed it rotator-local rects. Otherwise
@@ -299,5 +305,5 @@ export function useTileFlight({
           document.body,
         )
 
-  return { hiddenTileIds, flights }
+  return { hiddenTileIds, hiddenHandSlots, flights }
 }

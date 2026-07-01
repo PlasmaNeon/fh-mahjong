@@ -29,6 +29,9 @@ export type FlyingTileAnimation = {
   // True for the drawn-back "merge into hand" flight on a tedashi (renders a
   // face-down back instead of the tile face).
   asBack?: boolean
+  // When set, the seat's concealed rail slot at `index` is blanked for the
+  // flight's duration so the tedashi gap is visible while the drawn back fills it.
+  hideHandSlot?: { direction: SeatLaneDirection; index: number }
 }
 
 export type MotionSnapshot = {
@@ -96,6 +99,40 @@ function prevTileIdsByRole(
   return ids
 }
 
+// Collect the per-direction concealed rail slot indices that should be blanked
+// while their tedashi flights are airborne (see FlyingTileAnimation.hideHandSlot).
+export function hiddenHandSlotsByDirection(
+  animations: FlyingTileAnimation[],
+): Map<SeatLaneDirection, Set<number>> {
+  const map = new Map<SeatLaneDirection, Set<number>>()
+  for (const animation of animations) {
+    if (!animation.hideHandSlot) continue
+    const { direction, index } = animation.hideHandSlot
+    let set = map.get(direction)
+    if (!set) {
+      set = new Set<number>()
+      map.set(direction, set)
+    }
+    set.add(index)
+  }
+  return map
+}
+
+// Tile ids whose settled position should stay hidden while their flight is
+// airborne. `asBack` merge flights (the tedashi drawn-back slide) are excluded:
+// their `tile.id` is a stale previous-broadcast fake id, and in production those
+// ids are re-randomized every broadcast, so feeding it here could blank an
+// unrelated current concealed tile that the new obfuscation map assigned the same
+// fake id. The merge's gap is hidden via `hideHandSlot` instead.
+export function hiddenTileIdsFromAnimations(animations: FlyingTileAnimation[]): Set<number> {
+  const ids = new Set<number>()
+  for (const animation of animations) {
+    if (animation.asBack) continue
+    ids.add(animation.tile.id)
+  }
+  return ids
+}
+
 export function planTileFlights({
   previousSnapshot,
   currentLocations,
@@ -145,21 +182,27 @@ export function planTileFlights({
         const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
         if (drawnId != null) fromRect = previousSnapshot.rects.get(drawnId)
       } else if (singleNewDiscard) {
-        // Tedashi: fly the discard from a RANDOM concealed hand slot, and slide
-        // the drawn back into the hand (the "tsumo-hai fills the gap").
+        // Tedashi: the discard leaves a random concealed hand slot (the "gap"),
+        // and the drawn back slides from the drawn slot into that SAME gap. Both
+        // the gap origin and the merge target are read from the PREVIOUS
+        // snapshot, so this works even though production re-randomizes opponent
+        // tile ids every broadcast (no current-frame id lookup).
         const handIds = prevTileIdsByRole(previousSnapshot, dir, 'hand')
         if (handIds.length > 0) {
           // Clamp guards against an injected RNG returning exactly 1.0 (Math.random is [0,1)).
-          const index = Math.min(handIds.length - 1, Math.floor(random() * handIds.length))
-          fromRect = previousSnapshot.rects.get(handIds[index])
-        }
-        const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
-        if (drawnId != null) {
-          const mergeFrom = previousSnapshot.rects.get(drawnId)
-          const mergeTo = currentRects.get(drawnId) // drawn tile's new in-rail rect
-          const drawnTileObj = previousSnapshot.locations.get(drawnId)?.tile
-          if (mergeFrom && mergeTo && drawnTileObj) {
-            const mergeDist = Math.hypot(mergeTo.left - mergeFrom.left, mergeTo.top - mergeFrom.top)
+          const slotIndex = Math.min(handIds.length - 1, Math.floor(random() * handIds.length))
+          const gapRect = previousSnapshot.rects.get(handIds[slotIndex])
+          fromRect = gapRect
+
+          // Slide the drawn back into the vacated gap and blank that slot for the
+          // flight. Only when a drawn tile is present (a real tedashi-after-draw),
+          // which keeps the rail count — and so slot positions — stable across
+          // the discard.
+          const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
+          const mergeFrom = drawnId != null ? previousSnapshot.rects.get(drawnId) : undefined
+          const drawnTileObj = drawnId != null ? previousSnapshot.locations.get(drawnId)?.tile : undefined
+          if (mergeFrom && gapRect && drawnTileObj) {
+            const mergeDist = Math.hypot(gapRect.left - mergeFrom.left, gapRect.top - mergeFrom.top)
             if (mergeDist >= MIN_TRAVEL_DISTANCE) {
               key += 1
               animations.push({
@@ -167,9 +210,10 @@ export function planTileFlights({
                 tile: drawnTileObj,
                 direction: dir,
                 fromRect: mergeFrom,
-                toRect: mergeTo,
+                toRect: gapRect,
                 isWild: false,
                 asBack: true,
+                hideHandSlot: { direction: dir, index: slotIndex },
               })
             }
           }

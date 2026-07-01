@@ -14,6 +14,7 @@ type ClosedHandProps = {
   onDiscard?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
+  hiddenSlots?: Set<number>
 }
 
 // Canonical (bottom-orientation) draw-in offset; the bundle's rotation reorients
@@ -28,6 +29,7 @@ export function ClosedHand({
   onDiscard,
   isWildTile = () => false,
   hiddenTileIds,
+  hiddenSlots,
 }: ClosedHandProps) {
   const lastDrawnTileId = useRef<number | null>(null)
   const displayOrderRef = useRef<number[] | null>(null)
@@ -66,12 +68,13 @@ export function ClosedHand({
 
   const renderHandTile = (
     tile: TileLike,
-    { isCurrentDrawnSlot = false, slotKey }: { isCurrentDrawnSlot?: boolean; slotKey?: string } = {},
+    { isCurrentDrawnSlot = false, slotKey, hiddenSlot = false }:
+      { isCurrentDrawnSlot?: boolean; slotKey?: string; hiddenSlot?: boolean } = {},
   ) => {
     // True only on the render right after a discard, for the tile that was just
     // drawn and is now merging into the row from the separate drawn slot.
     const isMergingDrawnTile = isSelf && lastDrawnTileId.current === tile.id && !hasDrawnTile
-    const isHiddenByOverlay = hiddenTileIds?.has(tile.id) ?? false
+    const isHiddenByOverlay = (hiddenTileIds?.has(tile.id) ?? false) || hiddenSlot
 
     return (
       <motion.div
@@ -115,7 +118,9 @@ export function ClosedHand({
         <div className="seat-hand__tiles seat-hand__tiles--bottom" data-seat-hand-origin={direction}>
           {showClosedHand ? (
             isAnonymous
-              ? baseTiles.map((tile, index) => renderHandTile(tile, { slotKey: `slot-${index}` }))
+              ? baseTiles.map((tile, index) =>
+                  renderHandTile(tile, { slotKey: `slot-${index}`, hiddenSlot: hiddenSlots?.has(index) ?? false }),
+                )
               : sortedBaseTiles.map((tile) => renderHandTile(tile))
           ) : (
             Array(handBackCount).fill(null).map((_, index) => (
