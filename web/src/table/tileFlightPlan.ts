@@ -99,6 +99,25 @@ function prevTileIdsByRole(
   return ids
 }
 
+// Collect the per-direction concealed rail slot indices that should be blanked
+// while their tedashi flights are airborne (see FlyingTileAnimation.hideHandSlot).
+export function hiddenHandSlotsByDirection(
+  animations: FlyingTileAnimation[],
+): Map<SeatLaneDirection, Set<number>> {
+  const map = new Map<SeatLaneDirection, Set<number>>()
+  for (const animation of animations) {
+    if (!animation.hideHandSlot) continue
+    const { direction, index } = animation.hideHandSlot
+    let set = map.get(direction)
+    if (!set) {
+      set = new Set<number>()
+      map.set(direction, set)
+    }
+    set.add(index)
+  }
+  return map
+}
+
 export function planTileFlights({
   previousSnapshot,
   currentLocations,

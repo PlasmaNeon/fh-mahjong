@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { planTileFlights, type MotionSnapshot, type TileMotionDescriptor, type TileRect } from './tileFlightPlan'
+import { hiddenHandSlotsByDirection } from './tileFlightPlan'
 import type { TileLike } from './types'
 
 const tile = (id: number): TileLike => ({ id, suit: 0, value: 0 })
@@ -185,5 +186,27 @@ describe('planTileFlights — redacted opponent discard', () => {
     expect(animations).toHaveLength(1)
     expect(animations[0].fromRect.left).toBe(10) // tracked real position, not random/merge
     expect(animations[0].asBack).toBeFalsy() // no merge flight leaked onto the tracked path
+  })
+})
+
+describe('hiddenHandSlotsByDirection', () => {
+  const anim = (over: Partial<import('./tileFlightPlan').FlyingTileAnimation>): import('./tileFlightPlan').FlyingTileAnimation => ({
+    key: 1, tile: tile(1), direction: 'top', fromRect: rect(0), toRect: rect(0), isWild: false, ...over,
+  })
+
+  it('collects hideHandSlot indices grouped by direction', () => {
+    const map = hiddenHandSlotsByDirection([
+      anim({ hideHandSlot: { direction: 'top', index: 2 } }),
+      anim({ hideHandSlot: { direction: 'top', index: 5 } }),
+      anim({ hideHandSlot: { direction: 'left', index: 1 } }),
+      anim({}), // no hideHandSlot -> ignored
+    ])
+    expect([...(map.get('top') ?? [])].sort()).toEqual([2, 5])
+    expect([...(map.get('left') ?? [])]).toEqual([1])
+    expect(map.has('right')).toBe(false)
+  })
+
+  it('returns an empty map when no animation hides a slot', () => {
+    expect(hiddenHandSlotsByDirection([anim({})]).size).toBe(0)
   })
 })
