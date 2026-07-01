@@ -399,6 +399,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     };
 
     return (
+        <div className="stage-rotator">
         <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
             {gameState?.phase !== 5 && roomId && (
                 <ExitMatchButton roomId={roomId} onConfirmLeave={handleLeaveMatch} />
@@ -448,6 +449,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                 </div>
             </div>
             <TableRoundResultOverlay result={roundResultView} isWildTile={isWildTile} />
+        </div>
         </div>
     );
 }

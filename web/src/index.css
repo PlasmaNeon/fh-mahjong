@@ -1358,11 +1358,43 @@ body {
 }
 
 /* Fixed-stage live game layout */
+.stage-rotator {
+  width: 100%;
+  height: 100dvh;
+}
+
+/* Replay places the rotator beside a fixed-width control panel, so the rotator
+   (not the shell inside it) must be the flex item that takes the remaining
+   space. A class — not inline styles — so the phone-portrait media query below
+   still overrides width/height. */
+.stage-rotator--replay {
+  flex: 1 1 0%;
+  min-width: 0;
+  width: auto;
+  height: 100%;
+}
+
+@media (pointer: coarse) and (orientation: portrait) and (max-width: 600px) {
+  /* Replay (--replay) opts out: its rotator sits beside a control panel, and
+     going position:fixed full-screen would cover those controls. Only the
+     live-game rotator force-rotates. */
+  .stage-rotator:not(.stage-rotator--replay) {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 100dvh;
+    height: 100dvw;
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center center;
+    overflow: hidden;
+  }
+}
+
 .game-stage-shell {
   position: relative;
   width: 100%;
-  min-height: 100dvh;
-  height: 100dvh;
+  min-height: 100%;
+  height: 100%;
   overflow: hidden;
   box-sizing: border-box;
   display: flex;
@@ -1413,7 +1445,7 @@ body {
   --discard-top-top: 112px;
   --discard-side-edge: 264px;
   --discard-bottom-bottom: 250px;
-  --action-left: 1106px;
+  --action-left: calc(50% + 306px);
   --action-bottom: 124px;
   --seat-bottom-height: 96px;
   --seat-top-height: 84px;

@@ -204,17 +204,11 @@ export default function Replay() {
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       {/* Table — uses same game-stage scaling system as Game.tsx */}
+      <div className="stage-rotator stage-rotator--replay">
       <div
         className="game-stage-shell"
         ref={stageLayout.containerRef}
-        style={{
-          ...stageShellStyle,
-          flex: '1 1 0%',
-          width: 'auto',
-          minWidth: 0,
-          height: '100%',
-          minHeight: 'unset',
-        }}
+        style={stageShellStyle}
       >
         <div className="game-stage-frame" style={stageFrameStyle}>
           <div className="game-stage" style={stageStyle}>
@@ -229,6 +223,7 @@ export default function Replay() {
           </div>
         </div>
         <TableRoundResultOverlay result={roundResultView} isWildTile={isWild} />
+      </div>
       </div>
 
       {/* Control Panel */}

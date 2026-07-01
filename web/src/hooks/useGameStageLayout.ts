@@ -1,24 +1,15 @@
 import { useLayoutEffect, useState } from 'react';
 import type { RefCallback } from 'react';
-
-type GameStageLayoutOptions = {
-    stageWidth?: number;
-    stageHeight?: number;
-};
+import { computeStageLayout, type StageLayoutOptions } from './computeStageLayout';
 
 type StageBounds = {
     width: number;
     height: number;
 };
 
-export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
-    const stageWidth = options.stageWidth ?? 1600;
-    const stageHeight = options.stageHeight ?? 900;
+export function useGameStageLayout(options: StageLayoutOptions = {}) {
     const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
-    const [bounds, setBounds] = useState<StageBounds>({
-        width: stageWidth,
-        height: stageHeight,
-    });
+    const [bounds, setBounds] = useState<StageBounds>({ width: 1600, height: 900 });
 
     useLayoutEffect(() => {
         const element = containerElement;
@@ -29,19 +20,19 @@ export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
         let frameId = 0;
 
         const updateBounds = () => {
-            const rect = element.getBoundingClientRect();
-            const nextWidth = Math.max(Math.floor(rect.width), 1);
-            const nextHeight = Math.max(Math.floor(rect.height), 1);
+            // offsetWidth/Height are layout-box sizes, unaffected by CSS transforms.
+            // getBoundingClientRect() would return the post-transform AABB, which is
+            // wrong under the phone-portrait .stage-rotator rotate(90deg): it reports
+            // the portrait viewport instead of the rotated landscape box, scaling the
+            // board from the short side into a tiny letterboxed panel.
+            const nextWidth = Math.max(element.offsetWidth, 1);
+            const nextHeight = Math.max(element.offsetHeight, 1);
 
             setBounds((previous) => {
                 if (previous.width === nextWidth && previous.height === nextHeight) {
                     return previous;
                 }
-
-                return {
-                    width: nextWidth,
-                    height: nextHeight,
-                };
+                return { width: nextWidth, height: nextHeight };
             });
         };
 
@@ -49,7 +40,6 @@ export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
             if (frameId) {
                 cancelAnimationFrame(frameId);
             }
-
             frameId = requestAnimationFrame(() => {
                 frameId = 0;
                 updateBounds();
@@ -80,22 +70,14 @@ export function useGameStageLayout(options: GameStageLayoutOptions = {}) {
             window.removeEventListener('resize', scheduleUpdateBounds);
             window.removeEventListener('orientationchange', scheduleUpdateBounds);
         };
-    }, [containerElement, stageWidth, stageHeight]);
+    }, [containerElement]);
 
-    const scale = Math.min(bounds.width / stageWidth, bounds.height / stageHeight);
-    const scaledWidth = stageWidth * scale;
-    const scaledHeight = stageHeight * scale;
+    const layout = computeStageLayout(bounds.width, bounds.height, options);
 
     return {
         containerRef: setContainerElement as RefCallback<HTMLDivElement>,
-        stageWidth,
-        stageHeight,
         availableWidth: bounds.width,
         availableHeight: bounds.height,
-        scale,
-        scaledWidth,
-        scaledHeight,
-        offsetX: Math.max((bounds.width - scaledWidth) / 2, 0),
-        offsetY: Math.max((bounds.height - scaledHeight) / 2, 0),
+        ...layout,
     };
 }
