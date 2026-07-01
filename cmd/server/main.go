@@ -133,7 +133,7 @@ func main() {
 		installSignalCleanup(maybeStartPolicyServer(rlPolicyURL))
 	}
 
-	go matchmaker.StartQueueWatcher("hometown")
+	go matchmaker.StartQueueWatcher("fenghua")
 	go matchmaker.StartQueueWatcher("chongci-fh")
 
 	// Initialize Server

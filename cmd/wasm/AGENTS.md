@@ -11,7 +11,7 @@ Compiles the Go game engine to WebAssembly (`GOOS=js GOARCH=wasm`) so the browse
 - **main.go** — WASM entry point:
   - Exports Go functions to JavaScript via `syscall/js`
   - Exposes hand evaluation and valid action checking
-  - Bridges `rules.HometownRuleset` to browser JS
+  - Bridges `rules.FenghuaRuleset` to browser JS
 
 ## Architecture Notes
 

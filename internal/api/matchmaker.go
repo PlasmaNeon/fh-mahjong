@@ -167,8 +167,24 @@ func (m *Matchmaker) rlAgentAvailable() bool {
 	return m != nil && m.RLAgentAvailable != nil && m.RLAgentAvailable()
 }
 
+// legacyRulesetAliases maps deprecated ruleset queue keys to their current
+// canonical name, so clients that still send an old key match into the right
+// queue. "hometown" was renamed to "fenghua" in 2026-06.
+var legacyRulesetAliases = map[string]string{
+	"hometown": "fenghua",
+}
+
+// canonicalRuleset resolves a possibly-legacy ruleset key to its current name.
+func canonicalRuleset(ruleset string) string {
+	if canonical, ok := legacyRulesetAliases[ruleset]; ok {
+		return canonical
+	}
+	return ruleset
+}
+
 // JoinQueue adds a user to the matchmaking queue
 func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
+	ruleset = canonicalRuleset(ruleset)
 	queueKey := "queue:" + ruleset
 
 	// Add user to the in-memory queue
@@ -257,6 +273,7 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 }
 
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
+	ruleset = canonicalRuleset(ruleset)
 	matchID := uuid.New().String()
 
 	// 1. Persist the match explicitly to Postgres
@@ -433,7 +450,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			ID:        matchID,
 			Status:    "in_progress",
 			StartTime: time.Now(),
-			Ruleset:   "hometown",
+			Ruleset:   "fenghua",
 		}
 		if m.DB != nil {
 			if dberr := m.DB.Create(&match).Error; dberr != nil {

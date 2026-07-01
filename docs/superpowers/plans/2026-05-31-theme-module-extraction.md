@@ -488,7 +488,7 @@ export default function Home() {
                         scoring and shanten tools.
                     </Note>
 
-                    <Section title="Play" subtitle="Live hometown-rules matchmaking">
+                    <Section title="Play" subtitle="Live Fenghua-rules matchmaking">
                         <ToolsRow>
                             <ButtonLink to="/play" variant="primary">Find Match →</ButtonLink>
                         </ToolsRow>
@@ -650,7 +650,7 @@ export default function Lobby() {
         }
     }, [isConnected, gameState, navigate, connect]);
 
-    const joinQueue = async (ruleset: 'hometown' | 'chongci-fh' = 'hometown') => {
+    const joinQueue = async (ruleset: 'fenghua' | 'chongci-fh' = 'fenghua') => {
         const token = localStorage.getItem('fh_token');
         if (!token) return navigate('/login');
 
@@ -682,7 +682,7 @@ export default function Lobby() {
                 <Card>
                     <PageHeader
                         title="Play"
-                        subtitle="实时匹配 · Hometown rules"
+                        subtitle="实时匹配 · Fenghua rules"
                         nav={<>
                             <TextLink to="/">Home</TextLink>
                             <TextLink to="/room/new">Private room →</TextLink>
@@ -699,7 +699,7 @@ export default function Lobby() {
                             </Note>
                         ) : (
                             <ToolsRow>
-                                <Button variant="primary" disabled={!isConnected} onClick={() => joinQueue('hometown')}>Find Match</Button>
+                                <Button variant="primary" disabled={!isConnected} onClick={() => joinQueue('fenghua')}>Find Match</Button>
                                 <Button disabled={!isConnected} onClick={() => joinQueue('chongci-fh')}>Quick Match · Chongci</Button>
                                 <ButtonLink to="/room/new">Private Room</ButtonLink>
                             </ToolsRow>

@@ -205,7 +205,7 @@ Open `core/game_test.go` and add a new test in the package:
 
 ```go
 func TestNewGame_ClassicDefault(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("test-classic", r, core.MatchOptions{})
 
 	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
@@ -307,9 +307,9 @@ Update each call site to add `core.MatchOptions{}` (or `MatchOptions{}` inside t
 - `core/flower_auto_reveal_test.go` (3 sites): `g := NewGame("test-auto-flower", &flowerAutoRevealRules{}, MatchOptions{})`
 - `core/paipu_test.go` (1 site): `g := core.NewGame("test-paipu", ruleset, core.MatchOptions{})`
 - `api/room.go:87`: `Engine: core.NewGame(matchID, ruleset, core.MatchOptions{}),`
-- `rlenv/env.go:43`: `e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, core.MatchOptions{})`
-- `cmd/cli/main.go:99`: `game := core.NewGame("demo-1", &rules.HometownRuleset{}, core.MatchOptions{})`
-- `cmd/rlpaipu/main.go:49`: `game := core.NewGame(matchID, &rules.HometownRuleset{}, core.MatchOptions{})`
+- `rlenv/env.go:43`: `e.game = core.NewGame(fmt.Sprintf("rl-%d", seed), &rules.FenghuaRuleset{}, core.MatchOptions{})`
+- `cmd/cli/main.go:99`: `game := core.NewGame("demo-1", &rules.FenghuaRuleset{}, core.MatchOptions{})`
+- `cmd/rlpaipu/main.go:49`: `game := core.NewGame(matchID, &rules.FenghuaRuleset{}, core.MatchOptions{})`
 
 - [ ] **Step 5: Run the targeted test and the full module.**
 
@@ -341,7 +341,7 @@ Append to `core/game_test.go`:
 
 ```go
 func TestSetNextDealer_ConsumedOnce(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("test-override", r, core.MatchOptions{})
 	if err := g.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -547,7 +547,7 @@ Append to `core/game_test.go`:
 
 ```go
 func TestNewGame_ChongciInitialization(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	cfg := &pb.ChongciConfig{
 		StartingScore: 2000,
 		BustThreshold: 0,
@@ -678,7 +678,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &rules.HometownRuleset{}
+			r := &rules.FenghuaRuleset{}
 			g := core.NewGame("t", r, core.MatchOptions{
 				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 				ChongciConfig: &pb.ChongciConfig{
@@ -706,7 +706,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 }
 
 func TestShouldEndChongciMatch(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -736,7 +736,7 @@ func TestShouldEndChongciMatch(t *testing.T) {
 }
 
 func TestCurrentDealerSeat(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{})
 	for i := uint32(0); i < 4; i++ {
 		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
@@ -883,7 +883,7 @@ Append to `core/game_test.go`:
 
 ```go
 func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -906,7 +906,7 @@ func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -929,7 +929,7 @@ func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -955,7 +955,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -978,7 +978,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{})
 	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
 
@@ -1085,7 +1085,7 @@ Append to `core/game_test.go`:
 
 ```go
 func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("t", r, core.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -1720,7 +1720,7 @@ for _, opt := range opts {
 	opt(room)
 }
 room.Engine = core.NewGame(matchID, ruleset, room.matchOptions)
-room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
+room.Engine.Recorder = core.NewPaipuRecorder(matchID, "fenghua")
 return room
 ```
 
@@ -1864,12 +1864,12 @@ func TestCreateMatch_ChongciRulesetThreadsMatchOptions(t *testing.T) {
 	}
 }
 
-func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
+func TestCreateMatch_FenghuaRulesetKeepsClassic(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
 
-	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "hometown", "")
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "fenghua", "")
 
 	bind := <-hub.BindRoom
 	if bind.Room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
@@ -1886,10 +1886,10 @@ func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
 - [ ] **Step 2: Run the tests, confirm they fail.**
 
 ```bash
-go test ./api -run "TestCreateMatch_ChongciRulesetThreadsMatchOptions|TestCreateMatch_HometownRulesetKeepsClassic"
+go test ./api -run "TestCreateMatch_ChongciRulesetThreadsMatchOptions|TestCreateMatch_FenghuaRulesetKeepsClassic"
 ```
 
-Expected: the chongci one FAILs (today's `createMatch` ignores ruleset for match-mode purposes); the hometown one likely PASSes already if the engine still defaults to CLASSIC.
+Expected: the chongci one FAILs (today's `createMatch` ignores ruleset for match-mode purposes); the fenghua one likely PASSes already if the engine still defaults to CLASSIC.
 
 - [ ] **Step 3: Map ruleset to `MatchOptions` in `createMatch`.**
 
@@ -1934,7 +1934,7 @@ func defaultMatchOptionsFor(ruleset string) (core.MatchOptions, bool) {
 In `cmd/server/main.go`, locate the existing watcher start (line 78):
 
 ```go
-go matchmaker.StartQueueWatcher("hometown")
+go matchmaker.StartQueueWatcher("fenghua")
 ```
 
 Add directly below:
@@ -1946,7 +1946,7 @@ go matchmaker.StartQueueWatcher("chongci-fh")
 - [ ] **Step 5: Run the tests, confirm they pass.**
 
 ```bash
-go test ./api -run "TestCreateMatch_ChongciRulesetThreadsMatchOptions|TestCreateMatch_HometownRulesetKeepsClassic"
+go test ./api -run "TestCreateMatch_ChongciRulesetThreadsMatchOptions|TestCreateMatch_FenghuaRulesetKeepsClassic"
 go test ./...
 ```
 
@@ -2333,7 +2333,7 @@ git commit -m "web(table): match-mode picker with chongci settings"
 
 - [ ] **Step 1: Locate the existing "Quick Match" button.**
 
-Open `web/src/pages/Lobby.tsx`. Find the existing button that calls `POST /api/v1/matchmaking/join` with `ruleset: "hometown"`. Note its surrounding markup so the new button matches the visual style.
+Open `web/src/pages/Lobby.tsx`. Find the existing button that calls `POST /api/v1/matchmaking/join` with `ruleset: "fenghua"`. Note its surrounding markup so the new button matches the visual style.
 
 - [ ] **Step 2: Add a parallel button.**
 

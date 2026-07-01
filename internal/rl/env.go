@@ -43,7 +43,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		seed = request.Seed
 	}
 
-	e.game = engine.NewGame(fmt.Sprintf("rl-%d", seed), &rules.HometownRuleset{}, matchOptionsFromConfig(e.config))
+	e.game = engine.NewGame(fmt.Sprintf("rl-%d", seed), &rules.FenghuaRuleset{}, matchOptionsFromConfig(e.config))
 	e.game.SetWallSeed(engine.SeedFromUint64(seed))
 	e.decisionCount = 0
 	e.baseSeed = seed

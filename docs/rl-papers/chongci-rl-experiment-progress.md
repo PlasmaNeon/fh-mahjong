@@ -943,7 +943,7 @@ gameplay resolution rather than broad random reset failure.
 
 Fix 2:
 
-`rules.HometownRuleset.ResolveInterruptPriority()` iterated over a Go map.
+`rules.FenghuaRuleset.ResolveInterruptPriority()` iterated over a Go map.
 When two interrupt actions had the same priority, the winner could depend on
 randomized map iteration order. The fix scans seats `0..3` and resolves
 same-priority ties by ascending seat.

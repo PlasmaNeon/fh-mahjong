@@ -44,7 +44,7 @@
 ---
 
 ## 1. Overview
-The "Hometown" rules based on Fenghua (Zhejiang) Mahjong feature a rich and complex point (S) scoring system primarily centered around **Wild Tiles**, specific **Bonus/Penalty liabilities**, and a massive list of **Special Patterns** (Independence, Loner, Seven Pairs).
+The Fenghua (Zhejiang) Mahjong rules feature a rich and complex point (S) scoring system primarily centered around **Wild Tiles**, specific **Bonus/Penalty liabilities**, and a massive list of **Special Patterns** (Independence, Loner, Seven Pairs).
 
 ## 2. Core Differences from Standard Rules
 1. **Tiles**: Uses the full 136 standard tiles, plus 8 Flower tiles (Seasons/Flowers). Total 144.
@@ -146,9 +146,9 @@ If Player A discards 4 tiles that are all claimed by Player B, and B wins, A pay
 
 ---
 
-## 5. Comprehensive Rules Evaluation Design in Go (`rules/hometown.go`)
+## 5. Comprehensive Rules Evaluation Design in Go (`rules/fh.go`)
 
-To implement the "Hometown" rules exactly as described in the official rules, we need a complete evaluation pipeline capable of checking over 35 specific scoring patterns, wait conditions, and liability scenarios. 
+To implement the Fenghua rules exactly as described in the official rules, we need a complete evaluation pipeline capable of checking over 35 specific scoring patterns, wait conditions, and liability scenarios. 
 
 ### A. GameState Extensions (`proto/game.proto`)
 The `GameState` and `PlayerState` must be expanded to track:

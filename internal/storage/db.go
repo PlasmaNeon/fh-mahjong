@@ -60,7 +60,7 @@ type Match struct {
 	EndTime   *time.Time `json:"endTime,omitempty"`
 
 	// Important Fenghua Settings
-	Ruleset   string `gorm:"size:100;not null;default:'hometown'" json:"ruleset"`
+	Ruleset   string `gorm:"size:100;not null;default:'fenghua'" json:"ruleset"`
 	WallSeed  string `gorm:"type:text" json:"wallSeed,omitempty"` // For verifying replays
 	ReplayURL string `gorm:"type:text" json:"replayUrl,omitempty"`
 	PaipuJSON string `gorm:"type:text" json:"paipuJson,omitempty"`
@@ -132,6 +132,12 @@ func AutoMigrate(db *gorm.DB) error {
 		if err := m.DropIndex(&User{}, "idx_users_username"); err != nil {
 			return fmt.Errorf("dropping stale unique username index: %w", err)
 		}
+	}
+
+	// Backfill the legacy ruleset key: "hometown" was renamed to "fenghua" in
+	// 2026-06. Idempotent — only touches rows that still hold the old value.
+	if err := db.Model(&Match{}).Where("ruleset = ?", "hometown").Update("ruleset", "fenghua").Error; err != nil {
+		return fmt.Errorf("backfilling legacy ruleset key: %w", err)
 	}
 	return nil
 }

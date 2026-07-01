@@ -5,14 +5,14 @@ import (
 	"github.com/plasma/fh-mahjong/internal/tiles"
 )
 
-// HometownRuleset implements the engine.RuleEngine interface.
-type HometownRuleset struct{}
+// FenghuaRuleset implements the engine.RuleEngine interface.
+type FenghuaRuleset struct{}
 
-func (r *HometownRuleset) Name() string {
-	return "Hometown Custom Rules"
+func (r *FenghuaRuleset) Name() string {
+	return "Fenghua Rules"
 }
 
-func (r *HometownRuleset) GetInitialWall() []*pb.Tile {
+func (r *FenghuaRuleset) GetInitialWall() []*pb.Tile {
 	var wall []*pb.Tile
 	idCount := uint32(0)
 
@@ -60,7 +60,7 @@ func (r *HometownRuleset) GetInitialWall() []*pb.Tile {
 	return wall
 }
 
-func (r *HometownRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, []*pb.ScoreEntry, bool) {
+func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, []*pb.ScoreEntry, bool) {
 	effectiveWinTile := winTile
 	if isTsumo && effectiveWinTile == nil {
 		effectiveWinTile = resolveTsumoWinTile(hand, state, playerSeat)
@@ -411,7 +411,7 @@ func isRewardPattern(name string) bool {
 // CalculatePayouts computes per-player payment amounts based on Fenghua rules.
 // Tsumo: each of 3 losers pays S×2, winner receives S×6.
 // Ron: discarder pays S×2, other two pay S×1, winner receives S×4.
-func (r *HometownRuleset) CalculatePayouts(totalScore int32, winType pb.ActionType, winnerSeat uint32, discarderSeat uint32) []*pb.PlayerPayout {
+func (r *FenghuaRuleset) CalculatePayouts(totalScore int32, winType pb.ActionType, winnerSeat uint32, discarderSeat uint32) []*pb.PlayerPayout {
 	payouts := make([]*pb.PlayerPayout, 4)
 	S := totalScore
 
@@ -439,7 +439,7 @@ func (r *HometownRuleset) CalculatePayouts(totalScore int32, winType pb.ActionTy
 }
 
 // isIndependence checks for strictly 14 disconnected tiles (no pairs, no melds, no partial runs).
-func (r *HometownRuleset) isIndependence(hand []*pb.Tile, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isIndependence(hand []*pb.Tile, wildHashes map[uint32]bool) bool {
 	if len(hand) != 14 {
 		return false
 	}
@@ -471,7 +471,7 @@ func (r *HometownRuleset) isIndependence(hand []*pb.Tile, wildHashes map[uint32]
 }
 
 // isSevenPairs checks for exactly 7 pairs.
-func (r *HometownRuleset) isSevenPairs(hand []*pb.Tile, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isSevenPairs(hand []*pb.Tile, wildHashes map[uint32]bool) bool {
 	if len(hand) != 14 {
 		return false
 	}
@@ -505,7 +505,7 @@ func tileToIndex(t *pb.Tile) int {
 // tilesToTehai34 converts a slice of tiles into a [34]int tehai count array (Mortal layout).
 // Wild tiles are counted separately and excluded from the array.
 // Returns (tehai counts, wild tile count).
-func (r *HometownRuleset) tilesToTehai34(tileSlice []*pb.Tile, wildHashes map[uint32]bool) ([34]int, int) {
+func (r *FenghuaRuleset) tilesToTehai34(tileSlice []*pb.Tile, wildHashes map[uint32]bool) ([34]int, int) {
 	var counts [34]int
 	wilds := 0
 	for _, t := range tileSlice {
@@ -522,7 +522,7 @@ func (r *HometownRuleset) tilesToTehai34(tileSlice []*pb.Tile, wildHashes map[ui
 // canFormStandardHand determines if the tiles can form 4 melds (chii/pon/kan) and 1 pair.
 // Uses a flat-array DFS/DP backtracking approach (Mortal-style tehai) with wild tile substitution.
 // allowChow=false forces pon-only evaluation (for all-pon hand detection).
-func (r *HometownRuleset) canFormStandardHand(hand []*pb.Tile, wildHashes map[uint32]bool, allowChow bool) bool {
+func (r *FenghuaRuleset) canFormStandardHand(hand []*pb.Tile, wildHashes map[uint32]bool, allowChow bool) bool {
 	if len(hand)%3 != 2 {
 		return false
 	}
@@ -552,7 +552,7 @@ func (r *HometownRuleset) canFormStandardHand(hand []*pb.Tile, wildHashes map[ui
 // checkMeldsFast is the recursive DFS helper for standard hand evaluation.
 // Tries to form pon (triplets) and chii (sequences) consuming all tiles in the tehai array.
 // Wild tiles substitute freely for any missing tile in a meld.
-func (r *HometownRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds int, allowChow bool) bool {
+func (r *FenghuaRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds int, allowChow bool) bool {
 	if wilds < 0 {
 		return false
 	}
@@ -628,7 +628,7 @@ func (r *HometownRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds in
 	return true
 }
 
-func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction {
+func (r *FenghuaRuleset) GetValidActions(state *pb.GameState, playerSeat uint32) []*pb.PlayerAction {
 	var actions []*pb.PlayerAction
 
 	player := state.Players[playerSeat]
@@ -717,7 +717,7 @@ func (r *HometownRuleset) GetValidActions(state *pb.GameState, playerSeat uint32
 	return actions
 }
 
-func (r *HometownRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []*pb.PlayerAction {
+func (r *FenghuaRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []*pb.PlayerAction {
 	var actions []*pb.PlayerAction
 	player := state.Players[playerSeat]
 	discarderSeat := state.ActivePlayer
@@ -817,7 +817,7 @@ func (r *HometownRuleset) GetValidInterrupts(state *pb.GameState, discardedTile 
 	return actions
 }
 
-func (r *HometownRuleset) ResolveInterruptPriority(actions map[uint32]*pb.PlayerAction) (uint32, *pb.PlayerAction) {
+func (r *FenghuaRuleset) ResolveInterruptPriority(actions map[uint32]*pb.PlayerAction) (uint32, *pb.PlayerAction) {
 	// Simple priority resolution: RON > KONG/PONG > CHOW
 	var prioritySeat uint32
 	var highestAction *pb.PlayerAction
@@ -848,7 +848,7 @@ func (r *HometownRuleset) ResolveInterruptPriority(actions map[uint32]*pb.Player
 
 // --- Helpers for Fenghua Special Patterns ---
 
-func (r *HometownRuleset) hasAllSevenHonors(hand []*pb.Tile) bool {
+func (r *FenghuaRuleset) hasAllSevenHonors(hand []*pb.Tile) bool {
 	honorCounts := make(map[uint32]bool)
 	for _, t := range hand {
 		if t.Suit == pb.Suit_SUIT_JIHAI {
@@ -858,7 +858,7 @@ func (r *HometownRuleset) hasAllSevenHonors(hand []*pb.Tile) bool {
 	return len(honorCounts) == 7
 }
 
-func (r *HometownRuleset) isMissingASuit(hand []*pb.Tile) bool {
+func (r *FenghuaRuleset) isMissingASuit(hand []*pb.Tile) bool {
 	suits := make(map[pb.Suit]bool)
 	for _, t := range hand {
 		if t.Suit != pb.Suit_SUIT_JIHAI {
@@ -869,7 +869,7 @@ func (r *HometownRuleset) isMissingASuit(hand []*pb.Tile) bool {
 	return len(suits) < 3
 }
 
-func (r *HometownRuleset) countIdenticalFours(hand []*pb.Tile) int {
+func (r *FenghuaRuleset) countIdenticalFours(hand []*pb.Tile) int {
 	counts := make(map[uint32]int)
 	bombs := 0
 	for _, t := range hand {
@@ -882,7 +882,7 @@ func (r *HometownRuleset) countIdenticalFours(hand []*pb.Tile) int {
 	return bombs
 }
 
-func (r *HometownRuleset) isAllPung(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isAllPung(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	// Open melds must all be pon or kan — any chii disqualifies.
 	for _, m := range openMelds {
 		if m.Type == pb.ActionType_ACTION_CHII {
@@ -895,7 +895,7 @@ func (r *HometownRuleset) isAllPung(hand []*pb.Tile, openMelds []*pb.Meld, wildH
 
 // isAllChow checks for Common Win (朋胡): Four runs (sequences) and a pair of eyes.
 // All open melds must be CHII and closed hand must decompose into chow-only melds + a pair.
-func (r *HometownRuleset) isAllChow(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isAllChow(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	// Open melds must all be chii — any pon/kan disqualifies.
 	for _, m := range openMelds {
 		if m.Type != pb.ActionType_ACTION_CHII {
@@ -925,7 +925,7 @@ func (r *HometownRuleset) isAllChow(hand []*pb.Tile, openMelds []*pb.Meld, wildH
 }
 
 // checkChowOnlyMelds is a DFS helper that tries to consume all tiles using only chow (sequence) melds.
-func (r *HometownRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wilds int) bool {
+func (r *FenghuaRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wilds int) bool {
 	if wilds < 0 {
 		return false
 	}
@@ -979,7 +979,7 @@ func (r *HometownRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wild
 	return true
 }
 
-func (r *HometownRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	for _, m := range openMelds {
 		for _, t := range m.Tiles {
 			if t.Suit != pb.Suit_SUIT_JIHAI {
@@ -999,7 +999,7 @@ func (r *HometownRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*p
 	return true
 }
 
-func (r *HometownRuleset) isCompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isCompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	if !r.isUncompletedAllHonors(hand, openMelds, wildHashes) {
 		return false
 	}
@@ -1008,7 +1008,7 @@ func (r *HometownRuleset) isCompletedAllHonors(hand []*pb.Tile, openMelds []*pb.
 
 // isPureOneSuit checks for 清一色: all tiles from exactly one numbered suit (man/pin/sou, no jihai).
 // Wild tiles are transparent — they do not break the suit constraint.
-func (r *HometownRuleset) isPureOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isPureOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	var targetSuit pb.Suit = pb.Suit_SUIT_UNKNOWN
 	for _, m := range openMelds {
 		for _, t := range m.Tiles {
@@ -1033,7 +1033,7 @@ func (r *HometownRuleset) isPureOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, w
 	return targetSuit != pb.Suit_SUIT_JIHAI && targetSuit != pb.Suit_SUIT_UNKNOWN
 }
 
-func (r *HometownRuleset) isMixedOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+func (r *FenghuaRuleset) isMixedOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
 	var targetSuit pb.Suit = pb.Suit_SUIT_UNKNOWN
 	hasHonors := false
 	hasSuit := false
@@ -1074,7 +1074,7 @@ func (r *HometownRuleset) isMixedOneSuit(hand []*pb.Tile, openMelds []*pb.Meld, 
 
 // countDragonPungs counts pon bonuses for dragon tiles (中发白碰出).
 // Dragons: 5z=Haku(白), 6z=Hatsu(発), 7z=Chun(中). Each dragon pon awards +1.
-func (r *HometownRuleset) countDragonPungs(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) int32 {
+func (r *FenghuaRuleset) countDragonPungs(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) int32 {
 	var points int32
 	for _, dragonVal := range []uint32{5, 6, 7} {
 		if r.hasPungOfValue(hand, openMelds, pb.Suit_SUIT_JIHAI, dragonVal) {
@@ -1085,7 +1085,7 @@ func (r *HometownRuleset) countDragonPungs(hand []*pb.Tile, openMelds []*pb.Meld
 }
 
 // hasPungOfValue checks if a pon (3+ tiles) of the given suit+value exists in hand or open melds.
-func (r *HometownRuleset) hasPungOfValue(hand []*pb.Tile, openMelds []*pb.Meld, suit pb.Suit, value uint32) bool {
+func (r *FenghuaRuleset) hasPungOfValue(hand []*pb.Tile, openMelds []*pb.Meld, suit pb.Suit, value uint32) bool {
 	count := 0
 	for _, t := range hand {
 		if t.Suit == suit && t.Value == value {
@@ -1123,7 +1123,7 @@ func getFlowerBonuses(myFlowers []*pb.Tile, playerSeat uint32, state *pb.GameSta
 //  2. Pair call (对倒): Two pairs in hand; waiting for either to become a pon.
 //  3. Gap wait (嵌): Waiting for the middle tile of a chii (e.g. 1s3s waiting for 2s).
 //  4. Edge wait (边): Waiting for 3 to complete 1,2 or for 7 to complete 8,9 in any suited tile.
-func (r *HometownRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wildHashes map[uint32]bool) int {
+func (r *FenghuaRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wildHashes map[uint32]bool) int {
 	if winTile == nil {
 		return 0
 	}

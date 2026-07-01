@@ -3,7 +3,7 @@
 A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang custom rules** — a regional variant with rich scoring, wild tiles, and 35+ special hand patterns.
 
 ## Features
-- **Custom Hometown Rules**: Full implementation of Fenghua Mahjong rules including wild tiles (搭), independence hands (大大胡), and complex payout liabilities.
+- **Custom Fenghua Rules**: Full implementation of Fenghua Mahjong rules including wild tiles (搭), independence hands (大大胡), and complex payout liabilities.
 - **Plugin Ruleset Architecture**: The `engine.Game` state machine is ruleset-agnostic. New rulesets implement the `RuleEngine` interface without touching the game loop.
 - **Cross-Platform Web**: Planned React/TypeScript frontend with WebAssembly for zero-latency client-side validation.
 - **Match Replays**: Every match serialized to Protobuf binary streams for replay and AI analysis.
@@ -24,7 +24,7 @@ A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang
 fh-mahjong/
 ├── proto/          # Protobuf schemas (game.proto) — source of truth for all types
 ├── internal/engine/  # Game state machine and RuleEngine interface
-├── internal/rules/  # Fenghua (hometown) ruleset plugin
+├── internal/rules/  # Fenghua ruleset plugin
 ├── CLAUDE.md       # Claude Code project context (auto-loaded)
 └── docs/
     └── rules/

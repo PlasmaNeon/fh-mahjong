@@ -10,7 +10,7 @@ import (
 )
 
 func TestCloneForBranchIsolatedFromOriginal(t *testing.T) {
-	g := engine.NewGame("clone-original", &rules.HometownRuleset{}, engine.MatchOptions{})
+	g := engine.NewGame("clone-original", &rules.FenghuaRuleset{}, engine.MatchOptions{})
 	g.SetWallSeed(engine.SeedFromUint64(97))
 	if err := g.Start(); err != nil {
 		t.Fatalf("start failed: %v", err)

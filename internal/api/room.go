@@ -140,7 +140,7 @@ func WithBotActionDelay(d time.Duration) RoomOption {
 
 // NewRoom creates a new match
 func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
-	ruleset := &rules.HometownRuleset{}
+	ruleset := &rules.FenghuaRuleset{}
 
 	room := &Room{
 		ID:                 matchID,
@@ -164,7 +164,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 	}
 
 	room.Engine = engine.NewGame(matchID, ruleset, room.matchOptions)
-	room.Engine.Recorder = engine.NewPaipuRecorder(matchID, "hometown")
+	room.Engine.Recorder = engine.NewPaipuRecorder(matchID, "fenghua")
 
 	return room
 }

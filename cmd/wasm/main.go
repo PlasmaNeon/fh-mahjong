@@ -12,8 +12,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// The global instance of our hometown ruleset for fast local validation
-var hometownRuleset = &rules.HometownRuleset{}
+// The global instance of our Fenghua ruleset for fast local validation
+var fenghuaRuleset = &rules.FenghuaRuleset{}
 
 func main() {
 	c := make(chan struct{}, 0)
@@ -56,7 +56,7 @@ func mahjongGetValidActions(this js.Value, args []js.Value) interface{} {
 	}
 
 	// 3. Query the RuleEngine
-	validActions := hometownRuleset.GetValidActions(&state, playerSeat)
+	validActions := fenghuaRuleset.GetValidActions(&state, playerSeat)
 
 	// 4. Return as JS Array
 	jsArr := js.Global().Get("Array").New(len(validActions))
