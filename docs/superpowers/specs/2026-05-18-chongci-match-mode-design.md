@@ -36,7 +36,7 @@ start, and when the match terminates.
 
 ## Non-Goals
 
-- No new tile-scoring rules. Fenghua hometown rules govern each hand
+- No new tile-scoring rules. Fenghua rules govern each hand
   exactly as today.
 - No "rematch with same players" button. End-of-match overlay has a single
   `Leave` action.
@@ -79,7 +79,7 @@ start, and when the match terminates.
 
 1. Lobby exposes a second "Quick Match — Chongci" button.
 2. Clicking it enqueues the player on `queue:chongci-fh` (parallel to the
-   existing `queue:hometown`).
+   existing `queue:fenghua`).
 3. When four players are matched, a Chongci match is constructed with
    `{starting_score: 2000, bust_threshold: 0, max_hands: 50}`.
 4. The in-game and end-of-match experience is identical to the private-
@@ -291,18 +291,18 @@ and `RoomBind` dispatch are unchanged.
 ### Public queue (`api/matchmaker.go`)
 
 The existing `JoinQueue(userID, ruleset)` already keys by ruleset string.
-A new ruleset key `"chongci-fh"` is registered alongside `"hometown"`,
+A new ruleset key `"chongci-fh"` is registered alongside `"fenghua"`,
 and `cmd/server` starts a `StartQueueWatcher("chongci-fh")` for it.
 
 `createMatch` gains an internal lookup that maps the queue key to
 `MatchOptions`:
 
-- `"hometown"` → `MatchOptions{Mode: CLASSIC}` (call sites unchanged).
+- `"fenghua"` → `MatchOptions{Mode: CLASSIC}` (call sites unchanged).
 - `"chongci-fh"` → `MatchOptions{Mode: CHONGCI, ChongciConfig:
   defaultChongciConfig()}` where defaults are `{starting_score: 2000,
   bust_threshold: 0, max_hands: 50}`.
 
-`models.Match.Ruleset` stores the queue key (`"hometown"` or
+`models.Match.Ruleset` stores the queue key (`"fenghua"` or
 `"chongci-fh"`) — sufficient to identify the mode on replay reload.
 
 ### Room (`api/room.go`)
@@ -483,7 +483,7 @@ No new automated test framework. Manual verification:
 - `models.Match.Ruleset` gains a new accepted value (`"chongci-fh"`); no
   schema change since the column is already a free-form string.
 - No data migration is required for existing matches; they were
-  recorded with `Ruleset == "hometown"` and replay back with classic
+  recorded with `Ruleset == "fenghua"` and replay back with classic
   semantics.
 
 ## Future Extensions (out of scope here)

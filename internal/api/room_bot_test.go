@@ -53,7 +53,7 @@ func TestMatchmakerCreateMatchUsesBotPolicyFactory(t *testing.T) {
 		return stubPolicy{}
 	}
 
-	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "hometown", "")
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "fenghua", "")
 
 	if !factoryCalled {
 		t.Fatal("expected bot policy factory to be called")
@@ -153,12 +153,12 @@ func TestCreateMatch_ChongciRulesetThreadsMatchOptions(t *testing.T) {
 	}
 }
 
-func TestCreateMatch_HometownRulesetKeepsClassic(t *testing.T) {
+func TestCreateMatch_FenghuaRulesetKeepsClassic(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
 
-	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "hometown", "")
+	matchmaker.createMatch([]string{"1", "2", "3", "4"}, "fenghua", "")
 
 	bind := <-hub.BindRoom
 	if bind.Room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {

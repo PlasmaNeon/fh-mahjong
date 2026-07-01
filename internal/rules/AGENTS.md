@@ -4,11 +4,11 @@
 
 ## Overview
 
-This package implements `HometownRuleset`, the Fenghua Mahjong ruleset plugin that satisfies the `engine.RuleEngine` interface. It contains all region-specific logic: tile deck composition, DFS/DP backtracking hand evaluation for 35+ scoring patterns, wild tile handling, payout calculation, and action/interrupt validation. This is the most complex package in the codebase.
+This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin that satisfies the `engine.RuleEngine` interface. It contains all region-specific logic: tile deck composition, DFS/DP backtracking hand evaluation for 35+ scoring patterns, wild tile handling, payout calculation, and action/interrupt validation. This is the most complex package in the codebase.
 
 ## Key Files
 
-- **fh.go** — `HometownRuleset` struct implementing all `RuleEngine` methods:
+- **fh.go** — `FenghuaRuleset` struct implementing all `RuleEngine` methods:
   - `GetInitialWall()` — 144 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z) + 8 unique flower tiles (1=Spring, 2=Summer, 3=Autumn, 4=Winter, 5=Plum, 6=Orchid, 7=Chrysanthemum, 8=Bamboo)
   - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). Evaluates three mutually exclusive routes:
     1. **Independence** (大大胡): 14 disconnected tiles, base 50 + stackable bonuses

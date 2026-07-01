@@ -371,7 +371,7 @@ git commit -m "refactor(shanten): use shared tiles package for key/index"
 
 **Interfaces:**
 - Consumes: `tiles.KeyOf`.
-- Produces: no signature changes to `HometownRuleset`.
+- Produces: no signature changes to `FenghuaRuleset`.
 
 - [ ] **Step 1: Record baseline**
 

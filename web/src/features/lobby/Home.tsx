@@ -44,7 +44,7 @@ export default function Home() {
                         scoring and shanten tools.
                     </Note>
 
-                    <Section title="Play" subtitle="Live hometown-rules matchmaking">
+                    <Section title="Play" subtitle="Live Fenghua-rules matchmaking">
                         <ToolsRow>
                             <ButtonLink to="/play" variant="primary">Find Match →</ButtonLink>
                         </ToolsRow>

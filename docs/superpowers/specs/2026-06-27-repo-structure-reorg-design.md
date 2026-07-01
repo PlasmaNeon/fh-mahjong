@@ -30,7 +30,7 @@ enforce architectural boundaries:
 
 - **No module-path rename.** `github.com/plasma/fh-mahjong` stays.
 - **No code-symbol renames** beyond Go package identifiers that must change to
-  match a renamed folder (e.g. `HometownRuleset` keeps its name).
+  match a renamed folder (e.g. `FenghuaRuleset` keeps its name).
 - **No proto-binding consolidation.** The dual `web/src/proto/` binding styles
   are a separate code migration, noted below but out of scope here.
 - **No behavioral changes.** This is a pure move/rename; `go test ./...` and the

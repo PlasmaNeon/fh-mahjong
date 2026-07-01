@@ -46,9 +46,9 @@ func main() {
 }
 
 func generateHeuristicPaipu(matchID string, seed uint64, maxActions int) (*engine.Paipu, error) {
-	game := engine.NewGame(matchID, &rules.HometownRuleset{}, engine.MatchOptions{})
+	game := engine.NewGame(matchID, &rules.FenghuaRuleset{}, engine.MatchOptions{})
 	game.SetWallSeed(engine.SeedFromUint64(seed))
-	game.Recorder = engine.NewPaipuRecorder(matchID, "hometown")
+	game.Recorder = engine.NewPaipuRecorder(matchID, "fenghua")
 	for seat := uint32(0); seat < 4; seat++ {
 		game.Recorder.AddPlayer(seat, fmt.Sprintf("Heuristic %d", seat+1), 0)
 	}

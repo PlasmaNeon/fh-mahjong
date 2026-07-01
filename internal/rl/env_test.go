@@ -587,7 +587,7 @@ func TestAdvanceToDecisionResolvesReadyInterruptWindowWithoutAutoplay(t *testing
 	}
 
 	env := New(config)
-	env.game = engine.NewGame("ready-interrupt-window", &rules.HometownRuleset{}, engine.MatchOptions{})
+	env.game = engine.NewGame("ready-interrupt-window", &rules.FenghuaRuleset{}, engine.MatchOptions{})
 	env.game.SetWallSeed(engine.SeedFromUint64(101))
 	if err := env.game.Start(); err != nil {
 		t.Fatalf("start failed: %v", err)

@@ -109,7 +109,7 @@ func (s *Server) handleCalc(c *gin.Context) {
 		return
 	}
 
-	rs := &rules.HometownRuleset{}
+	rs := &rules.FenghuaRuleset{}
 	score, entries, canWin := rs.EvaluateHand(eval.closedHand, eval.openMelds, eval.winTile, eval.state, 0, req.IsTsumo)
 	score, entries, canWin = applyExtraKongBonuses(score, entries, canWin, req.IsTsumo, eval.kongCounts)
 

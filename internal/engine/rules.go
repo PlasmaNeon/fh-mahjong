@@ -6,7 +6,7 @@ import (
 
 // The RuleEngine defines the strict interface every ruleset plugin must follow.
 // By abstracting the rules, the core state machine (game.go) operates independently
-// of how hands are evaluated, allowing easy switching between Hometown rules, Riichi, etc.
+// of how hands are evaluated, allowing easy switching between Fenghua rules, Riichi, etc.
 type RuleEngine interface {
 	// Name returns the identifier for this ruleset plugin.
 	Name() string

@@ -26,7 +26,7 @@ func resolveLoneClaim(g *engine.Game) {
 }
 
 func TestNewGame_ClassicDefault(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-classic", r, engine.MatchOptions{})
 
 	if got := g.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
@@ -43,7 +43,7 @@ func TestNewGame_ClassicDefault(t *testing.T) {
 }
 
 func TestGameInitialization(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 
 	if g.State.Phase != pb.GamePhase_PHASE_INIT {
@@ -55,7 +55,7 @@ func TestGameInitialization(t *testing.T) {
 }
 
 func TestGameStartAndDeal(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 
 	err := g.Start()
@@ -81,7 +81,7 @@ func TestGameStartAndDeal(t *testing.T) {
 }
 
 func TestDiscardAction(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	g.Start()
 
@@ -115,7 +115,7 @@ func TestDiscardAction(t *testing.T) {
 }
 
 func TestDirectedMelds(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	g.Start()
 
@@ -175,7 +175,7 @@ func TestDirectedMelds(t *testing.T) {
 }
 
 func TestDeadWallKanDraw(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
 	// Pin the deal so the post-kong board state is deterministic. This test makes
 	// several EXACT assertions below — hand size, wall-count drop (1-2), active
@@ -262,7 +262,7 @@ func TestDeadWallKanDraw(t *testing.T) {
 // and that the budding bonus persists across a (non-winning) discard while the
 // blooming bonus is cleared.
 func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-risky-kong", r, engine.MatchOptions{})
 	g.Start()
 
@@ -324,7 +324,7 @@ func TestRiskyKongUpgrade_BuddingAndAddedTile(t *testing.T) {
 // form a kong (直杠 / direct kong) sets the budding+blooming direct-kong flags, and
 // that a subsequent discard clears blooming while keeping the persistent budding.
 func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-direct-kong", r, engine.MatchOptions{})
 	g.Start()
 
@@ -375,7 +375,7 @@ func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 }
 
 func TestSetNextDealer_ConsumedOnce(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-override", r, engine.MatchOptions{})
 	if err := g.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -414,7 +414,7 @@ func TestSetNextDealer_ConsumedOnce(t *testing.T) {
 }
 
 func TestNewGame_ChongciInitialization(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	cfg := &pb.ChongciConfig{
 		StartingScore: 2000,
 		BustThreshold: 0,
@@ -469,7 +469,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &rules.HometownRuleset{}
+			r := &rules.FenghuaRuleset{}
 			g := engine.NewGame("t", r, engine.MatchOptions{
 				Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 				ChongciConfig: &pb.ChongciConfig{
@@ -497,7 +497,7 @@ func TestComputeMatchEndResult_Standings(t *testing.T) {
 }
 
 func TestShouldEndChongciMatch(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -524,7 +524,7 @@ func TestShouldEndChongciMatch(t *testing.T) {
 }
 
 func TestCurrentDealerSeat(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{})
 	for i := uint32(0); i < 4; i++ {
 		g.State.Players[i].SeatWind = ((i + 2) % 4) + 1 // East lands at seat 2
@@ -535,7 +535,7 @@ func TestCurrentDealerSeat(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -558,7 +558,7 @@ func TestFinalizeRoundEnd_ChongciBust(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -581,7 +581,7 @@ func TestFinalizeRoundEnd_ChongciHandCap(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -606,7 +606,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Win(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -628,7 +628,7 @@ func TestFinalizeRoundEnd_DealerSuccession_Draw(t *testing.T) {
 }
 
 func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{})
 	g.State.RoundResult = &pb.RoundResult{WinnerSeat: 2, IsDraw: false}
 
@@ -646,7 +646,7 @@ func TestFinalizeRoundEnd_ClassicUnchanged(t *testing.T) {
 }
 
 func TestHandleReadyAction_RejectedAfterMatchEnd(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("t", r, engine.MatchOptions{
 		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: &pb.ChongciConfig{
@@ -678,7 +678,7 @@ func emptyOtherHands(g *engine.Game, dealer uint32) {
 // ActiveDiscard before broadcast). The earlier GameState-scoped flag was
 // dropped on this path, so ordinary discards never animated as tsumogiri.
 func TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-tsumogiri", r, engine.MatchOptions{})
 	g.Start()
 
@@ -724,7 +724,7 @@ func TestLastDiscardFromDrawn_TsumogiriSurvivesAdvance(t *testing.T) {
 // TestLastDiscardFromDrawn_Tedashi verifies a non-drawn discard records false,
 // also on the no-interrupt path.
 func TestLastDiscardFromDrawn_Tedashi(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-tedashi", r, engine.MatchOptions{})
 	g.Start()
 

@@ -74,7 +74,7 @@ Append to `core/game_test.go` (external `core_test` package, matching the existi
 
 ```go
 func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("test-tsumogiri", r, core.MatchOptions{})
 	g.Start()
 
@@ -118,7 +118,7 @@ func TestActiveDiscardFromDrawn_Tsumogiri(t *testing.T) {
 }
 
 func TestActiveDiscardFromDrawn_Tedashi(t *testing.T) {
-	r := &rules.HometownRuleset{}
+	r := &rules.FenghuaRuleset{}
 	g := core.NewGame("test-tedashi", r, core.MatchOptions{})
 	g.Start()
 

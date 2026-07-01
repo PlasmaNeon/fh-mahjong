@@ -55,7 +55,7 @@ fh-mahjong/
 | `proto/game.proto` | Single source of truth for all cross-language data structures |
 | `internal/engine/game.go` | `Game` struct — state machine driver for a single match |
 | `internal/engine/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
-| `internal/rules/fh.go` | `HometownRuleset` — full Fenghua scoring and hand evaluation |
+| `internal/rules/fh.go` | `FenghuaRuleset` — full Fenghua scoring and hand evaluation |
 | `internal/bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
 | `internal/rl/env.go` | Deterministic reset/step wrapper that advances the Go engine to the next RL decision point |
 | `internal/rl/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |

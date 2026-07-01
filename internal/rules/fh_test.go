@@ -18,8 +18,8 @@ func wildState(suit pb.Suit, value uint32) *pb.GameState {
 
 // --- Non-Scoring Tests ---
 
-func TestHometownRuleset_InitialWall(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_InitialWall(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 	wall := r.GetInitialWall()
 	// 3 suits * 9 values * 4 tiles = 108, 7 jihai * 4 tiles = 28, 8 flowers = 8 → Total = 144
 	if len(wall) != 144 {
@@ -27,8 +27,8 @@ func TestHometownRuleset_InitialWall(t *testing.T) {
 	}
 }
 
-func TestHometownRuleset_Priority(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_Priority(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 	actions := map[uint32]*pb.PlayerAction{
 		1: {Type: pb.ActionType_ACTION_CHII},
 		2: {Type: pb.ActionType_ACTION_RON},
@@ -42,8 +42,8 @@ func TestHometownRuleset_Priority(t *testing.T) {
 	}
 }
 
-func TestHometownRuleset_PriorityTieBreaksBySeat(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_PriorityTieBreaksBySeat(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 	actions := map[uint32]*pb.PlayerAction{
 		3: {Type: pb.ActionType_ACTION_PON},
 		1: {Type: pb.ActionType_ACTION_PON},
@@ -63,8 +63,8 @@ func TestHometownRuleset_PriorityTieBreaksBySeat(t *testing.T) {
 // --- Variant: Common Win (朋胡) ---
 // Standard 4 melds + 1 pair, no special patterns.
 // Scoring: Base(1) + WildBonus + Common(1) + [Tsumo(1)] + [SingleWait(1)]
-func TestHometownRuleset_CommonWin(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_CommonWin(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: chii(2s3s4s), chii(4p5p6p), chii(7m8m9m), chii(1m2m3m), pair(3z)
 	// 3 suits + jihai → not pure/mixed one suit; all runs → Common Win applies.
@@ -141,8 +141,8 @@ func TestHometownRuleset_CommonWin(t *testing.T) {
 // --- Variant: Independence (大大胡) ---
 // 14 unique disconnected tiles. No pairs, no melds.
 // Scoring: Base(1) + WildBonus + Independence(50) + [Tsumo(1)]
-func TestHometownRuleset_Independence(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_Independence(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// 1s4s7s, 2p5p8p, 3m6m9m, 1z2z3z4z + winTile=5z(Haku/白)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -212,8 +212,8 @@ func TestHometownRuleset_Independence(t *testing.T) {
 // --- Variant: Straight Seven Pairs (七对头 - 无搭) ---
 // 7 pairs, no wild tiles → 150 points.
 // With wild tiles → Wild Seven Pairs, 50 points.
-func TestHometownRuleset_SevenPairs(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_SevenPairs(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// 7 pairs: 1s1s, 2s2s, 3p3p, 4p4p, 5m5m, 6m6m, 1z(+winTile 1z)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -279,8 +279,8 @@ func TestHometownRuleset_SevenPairs(t *testing.T) {
 
 // --- Variant: Closed Bomb (暗炸) ---
 // Seven Pairs containing 4 identical tiles (a "bomb"). Closed = Tsumo (not claimed).
-func TestHometownRuleset_ClosedBomb(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_ClosedBomb(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// 4x1s (bomb), 2p2p, 3p3p, 5p5p, 6p6p, 4p + win4p
 	mkHand := func(wilds int) []*pb.Tile {
@@ -346,8 +346,8 @@ func TestHometownRuleset_ClosedBomb(t *testing.T) {
 
 // --- Variant: Straight Loner (大吊车) ---
 // 4 open melds + 1 tile in hand, winning tile completes pair (single wait).
-func TestHometownRuleset_Loner(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_Loner(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Open melds: chii(1p2p3p), chii(4p5p6p), chii(7p8p9p), pon(1m1m1m)
 	openMelds := []*pb.Meld{
@@ -392,8 +392,8 @@ func TestHometownRuleset_Loner(t *testing.T) {
 // --- Variant: All Pon (大对对) ---
 // 4 pon/kan + 1 pair, no chii. Straight (no wild) = 100, Wild = 50.
 // Win tile 2z is a single wait (单吊).
-func TestHometownRuleset_AllPung(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_AllPung(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// pon(1s), pon(2p), pon(3m), pon(1z), pair(2z)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -460,8 +460,8 @@ func TestHometownRuleset_AllPung(t *testing.T) {
 // --- Variant: Mixed One Suit (混一色) ---
 // All tiles from one numbered suit (sou) + jihai. 70 points.
 // Win tile 5z is a single wait (单吊).
-func TestHometownRuleset_MixedOneSuit(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_MixedOneSuit(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// pon(1s), pon(2s), pon(3s), chii(7s8s9s), pair(5z)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -530,8 +530,8 @@ func TestHometownRuleset_MixedOneSuit(t *testing.T) {
 // All tiles from exactly one numbered suit (no jihai). 150 points.
 // Hand: chii(1s2s3s), chii(4s5s6s), chii(7s8s9s), pon(1s), pair(5s).
 // Win tile 5s completes a gap wait (嵌): hand has 4s6s waiting for 5s.
-func TestHometownRuleset_PureOneSuit(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_PureOneSuit(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// chii(1s2s3s), chii(4s5s6s), chii(7s8s9s), pon(1s), pair(5s)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -598,8 +598,8 @@ func TestHometownRuleset_PureOneSuit(t *testing.T) {
 // --- Variant: Completed All Jihai (清老头) ---
 // All tiles are jihai + forms valid standard hand (all pon). 800 points.
 // Win tile 5z is a single wait (单吊).
-func TestHometownRuleset_CompletedAllHonors(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_CompletedAllHonors(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// pon(1z), pon(2z), pon(3z), pon(4z), pair(5z)
 	mkHand := func(wilds int) []*pb.Tile {
@@ -664,8 +664,8 @@ func TestHometownRuleset_CompletedAllHonors(t *testing.T) {
 }
 
 // --- Variant: Flower Wildcard Grouping Test ---
-func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_FlowerWildTile_Group(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// If indicator is 8 (Bamboo/Plant), WildTiles are 5(Plum), 6(Orchid), 7(Chrysanthemum).
 	// We pass a state with these 3 wild tiles.
@@ -726,8 +726,8 @@ func TestHometownRuleset_FlowerWildTile_Group(t *testing.T) {
 }
 
 // --- Variant: Flower Bonus (4 Flowers = 150 pts) ---
-func TestHometownRuleset_FlowerBonus(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_FlowerBonus(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: chii(2s3s4s), chii(4p5p6p), chii(7m8m9m), pon(1z), single(4z)
 	// Wild = 9s
@@ -803,8 +803,8 @@ func TestHometownRuleset_FlowerBonus(t *testing.T) {
 
 // --- Variant: Dragon Pung (中发白碰出) ---
 // +1 for each dragon pon (5z=Hatsu/発, 6z=Chun/中, 7z=Haku/白).
-func TestHometownRuleset_DragonPung(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_DragonPung(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: pon(5z/Hatsu), chii(1s2s3s), chii(4p5p6p), chii(7m8m9m), single(1z)
 	// Wild = 9s
@@ -871,8 +871,8 @@ func TestHometownRuleset_DragonPung(t *testing.T) {
 }
 
 // --- Variant: Wind Pung (位风/圈风/正风) ---
-func TestHometownRuleset_WindPung(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_WindPung(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: pon(East/1z), chii(1s2s3s), chii(4p5p6p), chii(7m8m9m), pair(2z)
 	// Wait: 2z (pair call)
@@ -932,8 +932,8 @@ func TestHometownRuleset_WindPung(t *testing.T) {
 }
 
 // --- Variant: Own Flower (花) +2 ---
-func TestHometownRuleset_OwnFlower(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_OwnFlower(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: chii(2s3s4s), chii(4p5p6p), chii(7m8m9m), pon(2z), single(3z)
 	// Wait: 3z (single wait)
@@ -985,8 +985,8 @@ func TestHometownRuleset_OwnFlower(t *testing.T) {
 }
 
 // --- Variant: Kong Bonuses ---
-func TestHometownRuleset_KongBonuses(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_KongBonuses(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Base hand: chii(2s3s4s), chii(4p5p6p), chii(7m8m9m), pon(2z), single(3z)
 	// Wait: 3z (single wait)
@@ -1097,8 +1097,8 @@ func TestHometownRuleset_KongBonuses(t *testing.T) {
 
 // --- Variant: Wait Patterns (边，嵌，单吊, 对倒) ---
 // Extra +1 for specific wait patterns.
-func TestHometownRuleset_WaitPatterns(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_WaitPatterns(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	t.Run("Single Pair Wait (单吊)", func(t *testing.T) {
 		// 13 tiles: chii(1s2s3s), chii(4p5p6p), chii(7m8m9m), pon(1z), single(2z).
@@ -1251,8 +1251,8 @@ func TestHometownRuleset_WaitPatterns(t *testing.T) {
 }
 
 // --- Variant: Uncompleted Eight Flowers (八花直胡) ---
-func TestHometownRuleset_UncompletedEightFlowers(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_UncompletedEightFlowers(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Hand does NOT form a valid majhong hand (junk hand).
 	// But player has 8 flowers.
@@ -1293,8 +1293,8 @@ func TestHometownRuleset_UncompletedEightFlowers(t *testing.T) {
 // awarded but must NOT satisfy the 4-point Ron minimum. The minimum has
 // to come from base + structural patterns (Common Win, wild bonuses,
 // pungs, suits, etc.).
-func TestHometownRuleset_RonMinimum_RewardBonusesExcluded(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_RonMinimum_RewardBonusesExcluded(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Common-win hand: 1m2m3m, 4p5p6p, 7m8m9m, 1m2m3m + pair 3z. Wait on 3z.
 	// Patterns when winning: Base(1) + NoWild(1) + Common(1) + SingleWait(1) = 4
@@ -1427,8 +1427,8 @@ func TestHometownRuleset_RonMinimum_RewardBonusesExcluded(t *testing.T) {
 // but Tsumo must NOT be offered because the completing tile came from another
 // seat's discard, not from a self-draw. The engine clears DrawnTileId on a
 // steal; GetValidActions must respect that gate.
-func TestHometownRuleset_GetValidActions_TsumoRequiresDraw(t *testing.T) {
-	r := &rules.HometownRuleset{}
+func TestFenghuaRuleset_GetValidActions_TsumoRequiresDraw(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
 
 	// Build a state where ClosedHand+OpenMelds is a complete winning shape:
 	//   open melds (3 chii): 1s2s3s, 4p5p6p, 7m8m9m

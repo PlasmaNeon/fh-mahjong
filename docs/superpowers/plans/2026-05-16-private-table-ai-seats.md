@@ -277,7 +277,7 @@ In `api/room.go`, the `NewRoom` function currently initializes `BotPolicy: bot.N
 
 ```go
 func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
-	ruleset := &rules.HometownRuleset{}
+	ruleset := &rules.FenghuaRuleset{}
 
 	obfMap := make(map[uint32]uint32)
 	fakeIDs := rand.Perm(144)
@@ -299,7 +299,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB) *Room {
 		TimerResolveChan:   make(chan bool, 1),
 	}
 
-	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "hometown")
+	room.Engine.Recorder = core.NewPaipuRecorder(matchID, "fenghua")
 
 	return room
 }
@@ -761,7 +761,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		ID:        matchID,
 		Status:    "in_progress",
 		StartTime: time.Now(),
-		Ruleset:   "hometown",
+		Ruleset:   "fenghua",
 	}
 	if m.DB != nil {
 		if err := m.DB.Create(&match).Error; err != nil {
