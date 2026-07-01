@@ -1,9 +1,24 @@
 import { describe, it, expect } from 'vitest'
-import { computeStageLayout, STAGE_MAX_ASPECT } from './computeStageLayout'
+import { computeStageLayout, STAGE_MAX_ASPECT, STAGE_COMPACT_BASE_HEIGHT } from './computeStageLayout'
 
 const near = (a: number, b: number, eps = 0.5) => Math.abs(a - b) <= eps
 
 describe('computeStageLayout', () => {
+  it('uses the shorter compact design on short (phone) stages, full design otherwise', () => {
+    const tall = computeStageLayout(1600, 900)
+    expect(tall.compact).toBe(false)
+    expect(tall.stageHeight).toBe(900)
+
+    // Rotated phone landscape height ~390: compact design → bigger scale, still fills.
+    const phone = computeStageLayout(844, 390)
+    expect(phone.compact).toBe(true)
+    expect(phone.stageHeight).toBe(STAGE_COMPACT_BASE_HEIGHT)
+    expect(phone.scale).toBeGreaterThan(390 / 900)
+    expect(near(phone.offsetX, 0)).toBe(true)
+    expect(near(phone.offsetY, 0)).toBe(true)
+  })
+
+
   it('matches 16:9 exactly with no bars', () => {
     const l = computeStageLayout(1600, 900)
     expect(l.stageWidth).toBe(1600)

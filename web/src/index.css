@@ -1473,6 +1473,23 @@ body {
     linear-gradient(145deg, #0b5b43 0%, #074c38 48%, #053826 100%);
 }
 
+/* Compact layout for short stages (phones) — paired with STAGE_COMPACT_BASE_HEIGHT
+   in computeStageLayout.ts, applied when the hook sets data-compact on .game-stage.
+   The shorter compact design scales the whole board up, so the self hand
+   (--tile-width/height, left untouched) gets bigger. To make the shorter design
+   fit without clipping, tighten the center + opponent/discard tiles in DESIGN px:
+   shrinking --tile-small-* also shrinks --discard-lane-size / --center-hud-size
+   (calc refs), and those tiles end up ~the same on-screen size after the scale-up.
+   TUNE these together with STAGE_COMPACT_BASE_HEIGHT: clips -> raise base height
+   or shrink these more; too cramped -> the opposite; self tiles still too small
+   -> lower STAGE_COMPACT_BASE_HEIGHT and shrink these further. */
+.game-stage[data-compact="true"] .mahjong-table {
+  --tile-small-width: 24px;
+  --tile-small-height: 34px;
+  --discard-hud-gap: 6px;
+  --bundle-edge-offset: 16px;
+}
+
 .game-stage .wild-tile-corner {
   top: var(--wild-tile-top);
   left: var(--wild-tile-left);
