@@ -41,17 +41,49 @@ function getTileRotation(direction: SeatLaneDirection) {
   return 0
 }
 
+// Phones in portrait render the whole board CSS-rotated 90deg (the .stage-rotator
+// wrapper in index.css, same media query). The flight overlay otherwise portals
+// to document.body — outside that transform — so a flying tile would be missing
+// the stage's rotation and appear to "rotate twice". When rotated we render the
+// overlay inside a wrapper that reproduces .stage-rotator's transform and map
+// each screen rect into that wrapper's local coordinate space.
+const PHONE_PORTRAIT_QUERY = '(pointer: coarse) and (orientation: portrait) and (max-width: 600px)'
+
+function isPhonePortrait(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(PHONE_PORTRAIT_QUERY).matches
+  )
+}
+
+// Inverse of .stage-rotator's `translate(-50%,-50%) rotate(90deg)` about the
+// viewport centre. For a 90deg turn it reduces to a rect swap:
+//   screen (l,t,w,h) -> local { left: t, top: innerWidth - l - w, width: h, height: w }
+// so a tile placed at the returned local rect inside an identically-transformed
+// wrapper lands exactly on its settled counterpart, correctly oriented.
+function toRotatorLocalRect(rect: TileRect): TileRect {
+  return {
+    left: rect.top,
+    top: window.innerWidth - rect.left - rect.width,
+    width: rect.height,
+    height: rect.width,
+  }
+}
+
 function FloatingTile({
   animation,
+  positioned,
   onComplete,
 }: {
   animation: FlyingTileAnimation
+  positioned: 'fixed' | 'absolute'
   onComplete: () => void
 }) {
   const svgName = animation.asBack ? 'back.svg' : getTileSvgName(animation.tile)
   const rotation = getTileRotation(animation.direction)
 
-  return createPortal(
+  return (
     <motion.div
       initial={{
         left: animation.fromRect.left,
@@ -68,7 +100,7 @@ function FloatingTile({
       transition={{ duration: 0.22, ease: 'easeInOut' }}
       onAnimationComplete={onComplete}
       style={{
-        position: 'fixed',
+        position: positioned,
         pointerEvents: 'none',
         zIndex: 500,
       }}
@@ -112,8 +144,7 @@ function FloatingTile({
           </div>
         </div>
       </div>
-    </motion.div>,
-    document.body
+    </motion.div>
   )
 }
 
@@ -218,15 +249,55 @@ export function useTileFlight({
 
   const hiddenTileIds = new Set(flyingTiles.map((animation) => animation.tile.id))
 
-  const flights = flyingTiles.map((animation) => (
+  // In phone-portrait the board is CSS-rotated; render the overlay inside a
+  // wrapper with the same transform and feed it rotator-local rects. Otherwise
+  // (desktop / iPad / landscape) the overlay stays in viewport space as before.
+  const phonePortrait = isPhonePortrait()
+
+  const tileNodes = flyingTiles.map((animation) => (
     <FloatingTile
       key={animation.key}
-      animation={animation}
+      animation={
+        phonePortrait
+          ? {
+              ...animation,
+              fromRect: toRotatorLocalRect(animation.fromRect),
+              toRect: toRotatorLocalRect(animation.toRect),
+            }
+          : animation
+      }
+      positioned={phonePortrait ? 'absolute' : 'fixed'}
       onComplete={() => {
         setFlyingTiles((existing) => existing.filter((item) => item.key !== animation.key))
       }}
     />
   ))
+
+  const flights =
+    flyingTiles.length === 0
+      ? null
+      : createPortal(
+          phonePortrait ? (
+            <div
+              style={{
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                width: '100dvh',
+                height: '100dvw',
+                transform: 'translate(-50%, -50%) rotate(90deg)',
+                transformOrigin: 'center center',
+                pointerEvents: 'none',
+                zIndex: 500,
+              }}
+            >
+              {tileNodes}
+            </div>
+          ) : (
+            <>{tileNodes}</>
+          ),
+          document.body,
+        )
 
   return { hiddenTileIds, flights }
 }
