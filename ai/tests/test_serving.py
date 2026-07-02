@@ -187,3 +187,45 @@ def test_observation_from_json_validates_shapes() -> None:
     assert observation.seat == 1
     assert observation.planes.shape == (39, 42, 1)
     assert observation.action_mask.shape == (204,)
+
+
+def test_infer_model_config_recovers_architecture_variants() -> None:
+    from fh_mahjong_ai.model import infer_model_config
+
+    for config in (
+        ModelConfig(),
+        ModelConfig(residual_blocks=4),
+        ModelConfig(channels=64, residual_blocks=3, plane_feature_dim=128, scalar_hidden_dim=96,
+                    trunk_hidden_dim=192, value_hidden_dim=64, q_hidden_dim=128),
+        ModelConfig(dueling_q=False),
+        ModelConfig(pool_planes=True),
+        ModelConfig(channel_attention=True, channel_attention_ratio=8),
+    ):
+        model = PolicyValueNet(EnvConfig(), config)
+        inferred = infer_model_config(model.state_dict())
+        for field in ("channels", "residual_blocks", "plane_feature_dim", "scalar_hidden_dim",
+                      "trunk_hidden_dim", "value_hidden_dim", "q_hidden_dim", "pool_planes",
+                      "channel_attention", "channel_attention_ratio", "dueling_q"):
+            assert getattr(inferred, field) == getattr(config, field), (
+                f"{field}: inferred {getattr(inferred, field)} != {getattr(config, field)} for {config}"
+            )
+
+
+def test_checkpoint_policy_loads_non_default_architecture(tmp_path: Path) -> None:
+    config = ModelConfig(residual_blocks=4)
+    env_config = EnvConfig()
+    model = PolicyValueNet(env_config, config)
+    checkpoint_path = tmp_path / "deep4.pt"
+    save_checkpoint(checkpoint_path, model)
+
+    policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+
+    channels, height, width = env_config.plane_shape
+    planes = torch.zeros((1, channels, height, width))
+    scalars = torch.zeros((1, env_config.scalar_features))
+    mask = torch.ones((1, env_config.action_space_size))
+    model.eval()
+    with torch.no_grad():
+        expected_logits, _ = model(planes, scalars, mask)
+        actual_logits, _ = policy.model(planes, scalars, mask)
+    assert torch.allclose(expected_logits, actual_logits, atol=1e-6)

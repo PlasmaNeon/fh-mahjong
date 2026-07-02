@@ -211,3 +211,40 @@ class DuelingQHead(nn.Module):
             if final_layer.weight.shape == policy_head.weight.shape:
                 final_layer.weight.copy_(policy_head.weight)
                 final_layer.bias.copy_(policy_head.bias)
+
+
+def infer_model_config(state_dict: dict[str, Tensor]) -> ModelConfig:
+    """Recover the ModelConfig of a saved PolicyValueNet from its state dict.
+
+    Checkpoints produced by different runs vary in depth/width/heads, and the
+    architecture is fully determined by tensor shapes — loaders must not
+    assume ModelConfig defaults.
+    """
+    defaults = ModelConfig()
+    channels = int(state_dict["plane_stem.0.weight"].shape[0])
+    block_indices = {
+        int(key.split(".")[1]) for key in state_dict if key.startswith("plane_blocks.")
+    }
+    attention_key = "plane_blocks.0.channel_attention.shared_mlp.0.weight"
+    channel_attention = attention_key in state_dict
+    if channel_attention:
+        hidden = int(state_dict[attention_key].shape[0])
+        channel_attention_ratio = max(1, channels // hidden)
+    else:
+        channel_attention_ratio = defaults.channel_attention_ratio
+    dueling_q = "q_head.value_head.0.weight" in state_dict
+    return ModelConfig(
+        channels=channels,
+        residual_blocks=max(block_indices) + 1 if block_indices else 0,
+        plane_feature_dim=int(state_dict["plane_head.0.weight"].shape[0]),
+        scalar_hidden_dim=int(state_dict["scalar_encoder.0.weight"].shape[0]),
+        trunk_hidden_dim=int(state_dict["trunk.0.weight"].shape[0]),
+        value_hidden_dim=int(state_dict["value_head.0.weight"].shape[0]),
+        q_hidden_dim=int(state_dict["q_head.value_head.0.weight"].shape[0])
+        if dueling_q
+        else defaults.q_hidden_dim,
+        pool_planes=int(state_dict["plane_head.0.weight"].shape[1]) == channels,
+        channel_attention=channel_attention,
+        channel_attention_ratio=channel_attention_ratio,
+        dueling_q=dueling_q,
+    )

@@ -11,8 +11,8 @@ import torch
 from .action_catalog import action_family
 from .bridge import build_bridge
 from .checkpoint_manifest import DEFAULT_MANIFEST_PATH, load_checkpoint_manifest, resolve_checkpoint_path
-from .config import EnvConfig, ModelConfig
-from .model import PolicyValueNet
+from .config import EnvConfig
+from .model import PolicyValueNet, infer_model_config
 from .storage import load_checkpoint
 from .types import Observation
 
@@ -62,7 +62,10 @@ class CheckpointPolicy:
         sample_action_family: str = "all",
         seed: int = 1,
     ) -> "CheckpointPolicy":
-        model = PolicyValueNet(EnvConfig(), ModelConfig())
+        # Architecture varies across promoted checkpoints (e.g. residual-block
+        # depth); recover it from the saved tensors instead of assuming defaults.
+        saved_state = torch.load(checkpoint_path, map_location="cpu")["model"]
+        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state))
         step = load_checkpoint(checkpoint_path, model)
         model.to(device)
         return cls(
