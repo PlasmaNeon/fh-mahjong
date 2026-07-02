@@ -3,8 +3,8 @@ package rules_test
 import (
 	"testing"
 
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 // --- Utility Functions ---
@@ -659,6 +659,123 @@ func TestFenghuaRuleset_CompletedAllHonors(t *testing.T) {
 		s, _, ok := r.EvaluateHand(mkHand(3), nil, winTile, ws, 0, true)
 		if !ok || s != 1003 {
 			t.Errorf("want 1003, got %d (canWin=%v)", s, ok)
+		}
+	})
+}
+
+// --- Variant: Uncompleted All Jihai (乱老头) size guard ---
+// 乱老头 skips structural checks, so it must enforce the 14-tile winning size
+// itself. An undersized all-honor/wild hand (e.g. an empty hand plus a lone
+// wild or jihai discard, as produced by engine tests that clear opponent
+// hands) must not count as a win.
+func TestFenghuaRuleset_UncompletedAllHonors_SizeGuard(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	ws := wildState(pb.Suit_SUIT_MAN, 5) // wild = 5m
+
+	t.Run("empty hand + wild discard is not a win", func(t *testing.T) {
+		winTile := &pb.Tile{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 5} // the wild itself
+		_, _, ok := r.EvaluateHand(nil, nil, winTile, ws, 0, false)
+		if ok {
+			t.Errorf("expected canWin=false for empty hand + wild discard")
+		}
+	})
+	t.Run("empty hand + jihai discard is not a win", func(t *testing.T) {
+		winTile := &pb.Tile{Id: 11, Suit: pb.Suit_SUIT_JIHAI, Value: 1}
+		_, _, ok := r.EvaluateHand(nil, nil, winTile, ws, 0, false)
+		if ok {
+			t.Errorf("expected canWin=false for empty hand + jihai discard")
+		}
+	})
+	t.Run("empty hand gets no Ron interrupt on a wild discard", func(t *testing.T) {
+		state := wildState(pb.Suit_SUIT_MAN, 5)
+		state.ActivePlayer = 0
+		state.Players = []*pb.PlayerState{{}, {}, {}, {}}
+		discard := &pb.Tile{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 5}
+		actions := r.GetValidInterrupts(state, discard, 1)
+		if len(actions) != 0 {
+			t.Errorf("expected no interrupts for empty hand, got %v", actions)
+		}
+	})
+	t.Run("undersized pair is not a standard win", func(t *testing.T) {
+		hand := []*pb.Tile{{Id: 20, Suit: pb.Suit_SUIT_MAN, Value: 1}}
+		winTile := &pb.Tile{Id: 21, Suit: pb.Suit_SUIT_MAN, Value: 1}
+		_, _, ok := r.EvaluateHand(hand, nil, winTile, nil, 0, false)
+		if ok {
+			t.Errorf("expected canWin=false for a two-tile pair")
+		}
+	})
+	t.Run("full 14-tile unstructured all-jihai hand still wins", func(t *testing.T) {
+		// 1z1z1z 2z2z2z 3z3z3z 4z4z 5z 6z + 7z: all jihai, but no standard
+		// structure (three leftover singles can't form a meld) and not seven
+		// pairs — only 乱老头 applies.
+		hand := []*pb.Tile{}
+		id := uint32(1)
+		for v := uint32(1); v <= 3; v++ {
+			for i := 0; i < 3; i++ {
+				hand = append(hand, &pb.Tile{Id: id, Suit: pb.Suit_SUIT_JIHAI, Value: v})
+				id++
+			}
+		}
+		hand = append(hand,
+			&pb.Tile{Id: id, Suit: pb.Suit_SUIT_JIHAI, Value: 4},
+			&pb.Tile{Id: id + 1, Suit: pb.Suit_SUIT_JIHAI, Value: 4},
+			&pb.Tile{Id: id + 2, Suit: pb.Suit_SUIT_JIHAI, Value: 5},
+			&pb.Tile{Id: id + 3, Suit: pb.Suit_SUIT_JIHAI, Value: 6},
+		)
+		winTile := &pb.Tile{Id: 99, Suit: pb.Suit_SUIT_JIHAI, Value: 7}
+		_, entries, ok := r.EvaluateHand(hand, nil, winTile, ws, 0, false)
+		if !ok {
+			t.Fatalf("expected canWin=true for 14-tile all-jihai hand")
+		}
+		found := false
+		for _, e := range entries {
+			if e.PatternName == "Uncompleted All Honors (乱老头)" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 乱老头 entry, got %v", entries)
+		}
+	})
+	t.Run("kong counts as three effective tiles", func(t *testing.T) {
+		// The four physical tiles in this closed kan represent one three-tile
+		// component. Ten concealed tiles plus the Ron tile therefore produce
+		// the required effective count: 11 + 3 = 14.
+		openMelds := []*pb.Meld{{
+			Type: pb.ActionType_ACTION_KAN,
+			Tiles: []*pb.Tile{
+				{Id: 30, Suit: pb.Suit_SUIT_JIHAI, Value: 7},
+				{Id: 31, Suit: pb.Suit_SUIT_JIHAI, Value: 7},
+				{Id: 32, Suit: pb.Suit_SUIT_JIHAI, Value: 7},
+				{Id: 33, Suit: pb.Suit_SUIT_JIHAI, Value: 7},
+			},
+			CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN,
+		}}
+		hand := []*pb.Tile{
+			{Id: 40, Suit: pb.Suit_SUIT_JIHAI, Value: 1},
+			{Id: 41, Suit: pb.Suit_SUIT_JIHAI, Value: 1},
+			{Id: 42, Suit: pb.Suit_SUIT_JIHAI, Value: 1},
+			{Id: 43, Suit: pb.Suit_SUIT_JIHAI, Value: 2},
+			{Id: 44, Suit: pb.Suit_SUIT_JIHAI, Value: 2},
+			{Id: 45, Suit: pb.Suit_SUIT_JIHAI, Value: 2},
+			{Id: 46, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+			{Id: 47, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+			{Id: 48, Suit: pb.Suit_SUIT_JIHAI, Value: 4},
+			{Id: 49, Suit: pb.Suit_SUIT_JIHAI, Value: 5},
+		}
+		winTile := &pb.Tile{Id: 50, Suit: pb.Suit_SUIT_JIHAI, Value: 6}
+		_, entries, ok := r.EvaluateHand(hand, openMelds, winTile, nil, 0, false)
+		if !ok {
+			t.Fatalf("expected canWin=true with one kan and 11 concealed tiles")
+		}
+		found := false
+		for _, e := range entries {
+			if e.PatternName == "Uncompleted All Honors (乱老头)" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected 乱老头 entry, got %v", entries)
 		}
 	})
 }
