@@ -42,9 +42,12 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Initializes `engine.PaipuRecorder`, registers all 4 seats at room start, and uses placeholder bot names for automated seats so paipu exports always have complete player metadata
   - `ActionQueue` channel — Serializes player actions
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
-  - `advanceAutomatedSeats()` — Plays through missing-seat turns, interrupt responses, and round-end `READY` actions for automated seats, with a circuit-breaker to avoid runaway automation loops
   - `BroadcastState()` — Serializes `GameState` Protobuf to all connected players
   - Replay recording (appends state snapshots to binary blob)
+- **room_bot.go** — Automated-seat ("bot") driving for a `Room` (same package, split out of room.go for focus):
+  - `advanceAutomatedSeats()` / `advanceAutomatedSeatsN()` — Play through missing-seat turns, interrupt responses, and round-end `READY` actions, with a circuit-breaker (`maxAutomatedSeatIterations`) to avoid runaway automation loops
+  - `botWorkPending()` / `maybeScheduleBotTick()` — Decide when a paced bot step is due and arm a single delayed tick, keeping the room loop responsive to reconnects
+  - `isAutomatedSeat()`, `sleepBotThink()`, `policyForSeat()` — seat automation predicate, human-pace delay, and the per-seat → room-default → heuristic policy fallback (`fallbackHeuristicPolicy`)
 
 - **paipu.go** — Read-only paipu API:
   - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
