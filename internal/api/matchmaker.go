@@ -33,7 +33,10 @@ var (
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
 )
 
-// InMemoryQueue simulates Redis lists
+// InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
+// semantics (RPush/LRange/LPopCount). Matchmaking is in-memory by design while
+// the server is single-process; a Redis-backed implementation would only be
+// needed if the server ever runs multi-instance.
 type InMemoryQueue struct {
 	mu    sync.Mutex
 	lists map[string][]string
@@ -247,7 +250,7 @@ func (m *Matchmaker) unregisterActivePrivateTable(tableID string) {
 	delete(m.activePrivateTables, tableID)
 }
 
-// StartQueueWatcher starts a background goroutine to poll Redis for 4 players
+// StartQueueWatcher starts a background goroutine to poll the queue for 4 players
 func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 	queueKey := "queue:" + ruleset
 	log.Printf("Matchmaker polling queue '%s'...", queueKey)
@@ -317,7 +320,7 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	var userIDs []uint
 	for _, idStr := range playerIDs {
 		var uid uint
-		// Simple conversion, assuming IDs are pure numeric strings or standard uints in redis
+		// Simple conversion, assuming IDs are pure numeric strings or standard uints in the queue
 		// If these were Postgres UUIDs, we'd handle it differently, but our IDs are uint representations
 		fmt.Sscanf(idStr, "%d", &uid)
 		userIDs = append(userIDs, uid)

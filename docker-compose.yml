@@ -12,19 +12,10 @@ services:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: fh_mahjong_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    restart: unless-stopped
-
   # Python policy server for the private-room RL agent.
   # Enabled via a profile: `docker compose --profile rl up` (policy only) or
   # `docker compose --profile full up` (policy + Go backend). The default
-  # `docker compose up` still brings up only db + redis.
+  # `docker compose up` still brings up only db.
   #
   # The model checkpoint is NOT in the repo — provide a real .pt file:
   #   RL_CHECKPOINT_DIR=/abs/path/to/checkpoints RL_CHECKPOINT_FILE=epoch_006.pt \
@@ -82,4 +73,3 @@ services:
 
 volumes:
   pgdata:
-  redisdata:

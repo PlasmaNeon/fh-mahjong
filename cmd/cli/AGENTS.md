@@ -15,6 +15,6 @@ A command-line utility for testing hand evaluation and scoring without running t
 
 ## Architecture Notes
 
-- Does not require PostgreSQL, Redis, or any network connectivity.
+- Does not require PostgreSQL or any network connectivity.
 - Directly imports `internal/engine/`, `internal/rules/`, `proto/`, and the shared `internal/bot/` package.
 - Run with `go run cmd/cli/main.go`.

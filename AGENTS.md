@@ -15,7 +15,6 @@ This project implements a full-stack Mahjong game with a plugin-based ruleset ar
 | HTTP/WS Server | Gin + gorilla/websocket |
 | Auth | JWT + bcrypt |
 | Database | PostgreSQL 15, GORM |
-| Cache | Redis 7 |
 | Frontend | React 19, TypeScript, Vite 7 |
 | Styling | TailwindCSS 4 |
 | Animation | Framer Motion 12 |
