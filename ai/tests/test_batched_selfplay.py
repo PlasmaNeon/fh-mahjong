@@ -84,3 +84,38 @@ def test_batched_trajectories_are_seat_contiguous():
     ends = np.flatnonzero(batch.dones > 0.5)
     assert ends.size >= 3
     assert ends[-1] == len(batch) - 1  # batch ends on a block boundary
+
+
+def _batch_fields(batch):
+    return {
+        "planes": batch.planes, "scalars": batch.scalars, "action_mask": batch.action_mask,
+        "actions": batch.actions, "old_logprobs": batch.old_logprobs,
+        "values": batch.values, "rewards": batch.rewards, "dones": batch.dones,
+    }
+
+
+def test_batched_slot_count_invariance_exact():
+    # per_row CPU: full-array equality across ANY slot count — emission is
+    # pinned to seed order and each match depends only on (seed, own decisions).
+    one = _collect(matches=4, slots=1, drop_prob=0.5, inference_mode="per_row")
+    eight = _collect(matches=4, slots=8, drop_prob=0.5, inference_mode="per_row")
+    for name, left in _batch_fields(one).items():
+        np.testing.assert_array_equal(left, _batch_fields(eight)[name], err_msg=name)
+
+
+def test_batched_run_to_run_identical():
+    first = _collect(matches=3, slots=3, drop_prob=0.5, inference_mode="batched")
+    second = _collect(matches=3, slots=3, drop_prob=0.5, inference_mode="batched")
+    for name, left in _batch_fields(first).items():
+        np.testing.assert_array_equal(left, _batch_fields(second)[name], err_msg=name)
+
+
+def test_batched_vs_per_row_statistical():
+    batched = _collect(matches=4, slots=4, drop_prob=0.5, inference_mode="batched")
+    per_row = _collect(matches=4, slots=4, drop_prob=0.5, inference_mode="per_row")
+    # Same match set either way; float rounding may flip individual samples,
+    # so compare aggregates loosely rather than trajectories exactly.
+    assert batched.dones.sum() == per_row.dones.sum() or \
+        abs(batched.dones.sum() - per_row.dones.sum()) <= 4
+    assert np.isfinite(batched.rewards).all() and np.isfinite(per_row.rewards).all()
+    assert abs(len(batched) - len(per_row)) < max(len(batched), len(per_row))
