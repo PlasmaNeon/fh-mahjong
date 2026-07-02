@@ -42,12 +42,18 @@ describe('planTileFlights — redacted opponent discard', () => {
   })
 
   it('tedashi: discard flies from a random hand slot + drawn back slides into that gap (id-rotation safe)', () => {
-    // Drawn tile 1009 is NOT present in the current frame under its old id
-    // (production re-randomizes opponent ids every broadcast).
+    // No previous id survives into the current frame (production re-randomizes
+    // opponent ids every broadcast): the rail re-renders as 3 backs with fresh
+    // ids, and drawn tile 1009 is gone (merged into the rail under a new id).
     const currentLocations = new Map<number, TileMotionDescriptor>([
       [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+      [2001, { tile: tile(2001), direction: 'top', role: 'hand' }],
+      [2002, { tile: tile(2002), direction: 'top', role: 'hand' }],
+      [2003, { tile: tile(2003), direction: 'top', role: 'hand' }],
     ])
-    const currentRects = new Map<number, TileRect>([[42, PILE]])
+    const currentRects = new Map<number, TileRect>([
+      [42, PILE], [2001, rect(10)], [2002, rect(20)], [2003, rect(30)],
+    ])
     const animations = planTileFlights({
       previousSnapshot: prevSnapshot(),
       currentLocations,
@@ -61,24 +67,31 @@ describe('planTileFlights — redacted opponent discard', () => {
     expect(animations).toHaveLength(2)
     const discard = animations.find((a) => a.tile.id === 42)!
     const merge = animations.find((a) => a.asBack)!
-    // Discard leaves the chosen gap slot.
+    // Discard leaves the chosen gap slot AND flags it for blanking (the gap shows).
     expect(discard.fromRect.left).toBe(10)
     expect(discard.toRect.left).toBe(200)
+    expect(discard.hideHandSlot).toEqual({ direction: 'top', index: 0 })
     // Drawn back slides from the drawn slot INTO the same gap rect (no current-id lookup).
     expect(merge.fromRect.left).toBe(60)
     expect(merge.toRect.left).toBe(10)
     expect(merge.asBack).toBe(true)
     expect(merge.tile.id).toBe(1009)
-    // The chosen rail slot is flagged for hiding during the flight.
-    expect(merge.hideHandSlot).toEqual({ direction: 'top', index: 0 })
+    // The gap-blank rides on the discard flight, not the merge.
+    expect(merge.hideHandSlot).toBeUndefined()
   })
 
   it('tedashi: discard flies from the LAST hand slot when random returns 0.99', () => {
-    // Math.floor(0.99 * 3) === 2 → hand tile 1003 @ left 30
+    // Math.floor(0.99 * 3) === 2 → hand tile 1003 @ left 30. The current rail
+    // re-renders as 3 backs with fresh rotated ids (drawn merged, discard gone).
     const currentLocations = new Map<number, TileMotionDescriptor>([
       [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+      [2001, { tile: tile(2001), direction: 'top', role: 'hand' }],
+      [2002, { tile: tile(2002), direction: 'top', role: 'hand' }],
+      [2003, { tile: tile(2003), direction: 'top', role: 'hand' }],
     ])
-    const currentRects = new Map<number, TileRect>([[42, PILE]])
+    const currentRects = new Map<number, TileRect>([
+      [42, PILE], [2001, rect(10)], [2002, rect(20)], [2003, rect(30)],
+    ])
     const animations = planTileFlights({
       previousSnapshot: prevSnapshot(),
       currentLocations,
@@ -92,17 +105,18 @@ describe('planTileFlights — redacted opponent discard', () => {
     expect(animations).toHaveLength(2)
     const discard = animations.find((a) => a.tile.id === 42)!
     const merge = animations.find((a) => a.asBack)!
-    // Discard leaves the chosen gap slot.
+    // Discard leaves the chosen gap slot AND flags it (index 2) for blanking.
     expect(discard.fromRect.left).toBe(30)
+    expect(discard.hideHandSlot).toEqual({ direction: 'top', index: 2 })
     // Drawn back slides from the drawn slot INTO the same gap rect.
     expect(merge.toRect.left).toBe(30)
     expect(merge.asBack).toBe(true)
-    // The chosen rail slot (index 2) is flagged for hiding during the flight.
-    expect(merge.hideHandSlot).toEqual({ direction: 'top', index: 2 })
+    expect(merge.hideHandSlot).toBeUndefined()
   })
 
-  it('tedashi with no preceding draw: discard flies, but no merge/gap', () => {
-    // Opponent discarding after a pon (no drawn tile in the previous snapshot).
+  it('tedashi after a pon (no draw): gap opens and the remaining back slides in', () => {
+    // Opponent discarding after a pon: prev 2 concealed backs, no drawn tile.
+    // Current: 1 back (fresh rotated id) + the discard.
     const previousSnapshot: MotionSnapshot = {
       locations: new Map<number, TileMotionDescriptor>([
         [1001, { tile: tile(1001), direction: 'top', role: 'hand' }],
@@ -113,8 +127,9 @@ describe('planTileFlights — redacted opponent discard', () => {
     }
     const currentLocations = new Map<number, TileMotionDescriptor>([
       [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+      [2001, { tile: tile(2001), direction: 'top', role: 'hand' }],
     ])
-    const currentRects = new Map<number, TileRect>([[42, PILE]])
+    const currentRects = new Map<number, TileRect>([[42, PILE], [2001, rect(10)]])
     const animations = planTileFlights({
       previousSnapshot,
       currentLocations,
@@ -125,10 +140,98 @@ describe('planTileFlights — redacted opponent discard', () => {
       fromDrawnByDirection: new Map([['top', false]]),
       random: () => 0,
     })
+    expect(animations).toHaveLength(2)
+    const discard = animations.find((a) => a.tile.id === 42)!
+    const slide = animations.find((a) => a.asBack)!
+    // The gap shows at the vacated slot while the neighbour slides in to close it.
+    expect(discard.fromRect.left).toBe(10)
+    expect(discard.hideHandSlot).toEqual({ direction: 'top', index: 0 })
+    expect(slide.fromRect.left).toBe(20)
+    expect(slide.toRect.left).toBe(10)
+    expect(slide.hideHandSlot).toEqual({ direction: 'top', index: 0 })
+  })
+
+  it('tedashi after a pon from the END slot: tile flies from the rail end, no blank', () => {
+    // Pon-state (previous): 3 concealed backs, no drawn tile. RNG picks the LAST
+    // slot, so the rail simply ends where the gap was — nothing needs to slide and
+    // no current slot should be blanked (the old clamp blanked the current
+    // rightmost back, making an unrelated tile blink out and pop back).
+    const previousSnapshot: MotionSnapshot = {
+      locations: new Map<number, TileMotionDescriptor>([
+        [1001, { tile: tile(1001), direction: 'top', role: 'hand' }],
+        [1002, { tile: tile(1002), direction: 'top', role: 'hand' }],
+        [1003, { tile: tile(1003), direction: 'top', role: 'hand' }],
+      ]),
+      rects: new Map<number, TileRect>([[1001, rect(10)], [1002, rect(20)], [1003, rect(30)]]),
+      handOrigins: new Map([['top', { left: 0, top: 0, width: 80, height: 14 }]]),
+    }
+    const currentLocations = new Map<number, TileMotionDescriptor>([
+      [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+      [2001, { tile: tile(2001), direction: 'top', role: 'hand' }],
+      [2002, { tile: tile(2002), direction: 'top', role: 'hand' }],
+    ])
+    const currentRects = new Map<number, TileRect>([[42, PILE], [2001, rect(10)], [2002, rect(20)]])
+    const animations = planTileFlights({
+      previousSnapshot,
+      currentLocations,
+      currentRects,
+      currentHandOrigins: new Map(),
+      isWildTile: () => false,
+      startKey: 0,
+      fromDrawnByDirection: new Map([['top', false]]),
+      random: () => 0.99, // picks the LAST previous hand slot (index 2)
+    })
+    // No drawn tile and an end gap -> only the discard flight, nothing blanked.
     expect(animations).toHaveLength(1)
     expect(animations[0].asBack).toBeFalsy()
+    expect(animations[0].fromRect.left).toBe(30) // departs from the old rail end
     expect(animations[0].hideHandSlot).toBeUndefined()
-    expect(animations[0].fromRect.left).toBe(10) // still from a hand slot
+  })
+
+  it('tedashi after a pon: the hand collapses — backs slide left to close the gap', () => {
+    // Pon-state (previous): 4 concealed backs at slots 0..3, no drawn tile.
+    const previousSnapshot: MotionSnapshot = {
+      locations: new Map<number, TileMotionDescriptor>([
+        [1001, { tile: tile(1001), direction: 'top', role: 'hand' }],
+        [1002, { tile: tile(1002), direction: 'top', role: 'hand' }],
+        [1003, { tile: tile(1003), direction: 'top', role: 'hand' }],
+        [1004, { tile: tile(1004), direction: 'top', role: 'hand' }],
+      ]),
+      rects: new Map<number, TileRect>([[1001, rect(10)], [1002, rect(20)], [1003, rect(30)], [1004, rect(40)]]),
+      handOrigins: new Map([['top', { left: 0, top: 0, width: 80, height: 14 }]]),
+    }
+    // Current: 3 concealed backs (fresh rotated ids) + the discard.
+    const currentLocations = new Map<number, TileMotionDescriptor>([
+      [42, { tile: tile(42), direction: 'top', role: 'discard' }],
+      [2001, { tile: tile(2001), direction: 'top', role: 'hand' }],
+      [2002, { tile: tile(2002), direction: 'top', role: 'hand' }],
+      [2003, { tile: tile(2003), direction: 'top', role: 'hand' }],
+    ])
+    const currentRects = new Map<number, TileRect>([[42, PILE], [2001, rect(10)], [2002, rect(20)], [2003, rect(30)]])
+    const animations = planTileFlights({
+      previousSnapshot,
+      currentLocations,
+      currentRects,
+      currentHandOrigins: new Map(),
+      isWildTile: () => false,
+      startKey: 0,
+      fromDrawnByDirection: new Map([['top', false]]),
+      random: () => 0, // gap at slot 0
+    })
+    // Discard from slot 0 + a cosmetic collapse of the 3 backs to its right.
+    const discard = animations.find((a) => a.tile.id === 42)!
+    expect(discard.fromRect.left).toBe(10)
+    expect(discard.hideHandSlot).toEqual({ direction: 'top', index: 0 })
+    // Each back to the right slides one slot left (40->30, 30->20, 20->10) and
+    // blanks the current slot it lands on.
+    const slides = animations.filter((a) => a.asBack)
+    expect(slides.map((s) => [s.fromRect.left, s.toRect.left])).toEqual([[20, 10], [30, 20], [40, 30]])
+    expect(slides.map((s) => s.hideHandSlot)).toEqual([
+      { direction: 'top', index: 0 },
+      { direction: 'top', index: 1 },
+      { direction: 'top', index: 2 },
+    ])
+    expect(animations).toHaveLength(4) // 1 discard + 3 sliding backs
   })
 
   it('falls back to the generic hand origin when the seat has no tracked hand/drawn rects', () => {
