@@ -225,7 +225,7 @@ server and the Go `server` service is pointed at it:
   `${RL_CHECKPOINT_DIR}` → `/checkpoints:ro`, has a `/healthz` healthcheck, and
   publishes 8765. `server` (profile `full`) builds the Go image and sets
   `RL_AGENT_POLICY_URL=http://policy:8765/act` + `RL_AGENT_AUTOSTART=0`. The
-  default `docker compose up` is unchanged (db + redis only);
+  default `docker compose up` is unchanged (db only);
   `docker compose --profile full up` brings up the wired stack.
 - A new env var **`RL_AGENT_POLICY_URL`** points only the RL path at a dedicated
   policy server, independent of `AI_BOT_POLICY_URL` — so matchmaking-bot behavior
