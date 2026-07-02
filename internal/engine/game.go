@@ -9,7 +9,18 @@ import (
 	"time"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"google.golang.org/protobuf/proto"
 )
+
+// CloneChongciConfig returns a deep copy of cfg (nil-safe). Use this instead
+// of dereferencing-and-copying the struct, which copies the embedded protobuf
+// MessageState mutex (flagged by go vet).
+func CloneChongciConfig(cfg *pb.ChongciConfig) *pb.ChongciConfig {
+	if cfg == nil {
+		return nil
+	}
+	return proto.Clone(cfg).(*pb.ChongciConfig)
+}
 
 // Game is the central state machine driver for a single Mahjong match.
 type Game struct {
@@ -81,8 +92,7 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 		}
 		startingScore = opts.ChongciConfig.StartingScore
 		// Store a copy so future engine mutations cannot leak back to the caller.
-		cfgCopy := *opts.ChongciConfig
-		g.State.ChongciConfig = &cfgCopy
+		g.State.ChongciConfig = CloneChongciConfig(opts.ChongciConfig)
 	}
 
 	for i := 0; i < 4; i++ {

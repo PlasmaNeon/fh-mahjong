@@ -250,7 +250,7 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 			AutoPlayHeuristics: false,
 			MaxDecisions:       config.MaxDecisions,
 			MatchMode:          config.MatchMode,
-			ChongciConfig:      cloneChongciConfig(config.ChongciConfig),
+			ChongciConfig:      engine.CloneChongciConfig(config.ChongciConfig),
 		})
 
 		resetResponse, err := env.Reset(&pb.EnvResetRequest{
@@ -570,7 +570,7 @@ func normalizeConfig(config *pb.EnvConfig) *pb.EnvConfig {
 		AutoPlayHeuristics: config.AutoPlayHeuristics,
 		MaxDecisions:       config.MaxDecisions,
 		MatchMode:          config.MatchMode,
-		ChongciConfig:      cloneChongciConfig(config.ChongciConfig),
+		ChongciConfig:      engine.CloneChongciConfig(config.ChongciConfig),
 		OracleObservation:  config.OracleObservation,
 	}
 	if len(normalized.LearningSeats) == 0 {
@@ -668,16 +668,8 @@ func matchOptionsFromConfig(config *pb.EnvConfig) engine.MatchOptions {
 	}
 	return engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
-		ChongciConfig: cloneChongciConfig(config.ChongciConfig),
+		ChongciConfig: engine.CloneChongciConfig(config.ChongciConfig),
 	}
-}
-
-func cloneChongciConfig(config *pb.ChongciConfig) *pb.ChongciConfig {
-	if config == nil {
-		return nil
-	}
-	cloned := *config
-	return &cloned
 }
 
 func roundOutcome(state *pb.GameState) *pb.RoundOutcome {
