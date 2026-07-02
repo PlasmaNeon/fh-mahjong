@@ -36,6 +36,7 @@ This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin tha
 
 - Implements `engine.RuleEngine` — imported by `internal/engine/` via interface, never directly.
 - Scoring uses a route-based approach: Independence, Seven Pairs, and Standard are evaluated independently; the highest-scoring route wins.
+- Normal winning routes require `len(fullHand) + 3*len(openMelds) == 14`; every open meld, including a four-tile kan, represents one three-tile component because the supplementary draw restores the concealed-hand count. Eight Flowers remains the explicit incomplete-hand exception.
 - Wild tiles (搭) are tracked via hash maps. The `tilesToTehai34` helper converts tile lists to a 34-element frequency array for DP evaluation.
 - The live game sometimes evaluates tsumo hands as 14-tile concealed hands with no explicit `winTile`; wait-pattern scoring therefore depends on `DrawnTileId` being carried in `PlayerState`.
 - Ron requires ≥4 points total; Tsumo has no minimum.

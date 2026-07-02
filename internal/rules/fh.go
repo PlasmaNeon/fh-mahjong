@@ -1,8 +1,8 @@
 package rules
 
 import (
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/tiles"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 // FenghuaRuleset implements the engine.RuleEngine interface.
@@ -113,9 +113,13 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	// --- 3. Evaluate High-Level Hand Structures (Mutually Exclusive Cores) ---
 	canWin := false
 
-	isIndependence := len(openMelds) == 0 && r.isIndependence(fullHand, wildHashes)
-	isSevenPairs := len(openMelds) == 0 && r.isSevenPairs(fullHand, wildHashes)
-	isStandard := r.canFormStandardHand(fullHand, wildHashes, true)
+	// Open melds, including kongs, each replace one three-tile component of
+	// the winning shape. Kong replacement draws keep this effective count at
+	// 14 even though the meld itself contains four physical tiles.
+	hasWinningTileCount := len(fullHand)+3*len(openMelds) == 14
+	isIndependence := hasWinningTileCount && len(openMelds) == 0 && r.isIndependence(fullHand, wildHashes)
+	isSevenPairs := hasWinningTileCount && len(openMelds) == 0 && r.isSevenPairs(fullHand, wildHashes)
+	isStandard := hasWinningTileCount && r.canFormStandardHand(fullHand, wildHashes, true)
 
 	// --- 1.5. Calculate Tame Wild (还搭) ---
 	isTame := false
@@ -980,6 +984,13 @@ func (r *FenghuaRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wilds
 }
 
 func (r *FenghuaRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
+	// 乱老头 ignores meld structure, so it must enforce the 14-tile winning
+	// size itself (each open meld stands in for 3 tiles; kong replacements
+	// keep the arithmetic intact). Without this, a short all-honor/wild
+	// hand — e.g. an empty hand plus a lone wild discard — counts as a win.
+	if len(hand)+3*len(openMelds) != 14 {
+		return false
+	}
 	for _, m := range openMelds {
 		for _, t := range m.Tiles {
 			if t.Suit != pb.Suit_SUIT_JIHAI {
