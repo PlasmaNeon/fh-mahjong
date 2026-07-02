@@ -110,6 +110,8 @@ class PPOConfig:
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
     num_workers: int = 1
+    collector: str = "process"   # "process" (spawn workers) | "batched" (env pool + batched forward)
+    pool_slots: int = 128        # concurrent env-pool slots for collector="batched"
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None

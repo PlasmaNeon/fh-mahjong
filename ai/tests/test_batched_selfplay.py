@@ -119,3 +119,28 @@ def test_batched_vs_per_row_statistical():
         abs(batched.dones.sum() - per_row.dones.sum()) <= 4
     assert np.isfinite(batched.rewards).all() and np.isfinite(per_row.rewards).all()
     assert abs(len(batched) - len(per_row)) < max(len(batched), len(per_row))
+
+
+def test_train_selfplay_oracle_batched_collector(tmp_path):
+    import json
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    from fh_mahjong_ai.storage import save_checkpoint
+
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    torch.manual_seed(0)
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = _env_cfg()
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, match_mode="classic",
+                    max_steps_per_episode=64, device="cpu",
+                    collector="batched", pool_slots=2)
+
+    history = train_selfplay_oracle(env_config=env_cfg, model_config=mcfg,
+                                    anchor_checkpoint=anchor,
+                                    checkpoint_dir=tmp_path / "ckpt",
+                                    config=cfg, base_seed=100, run_eval=False)
+
+    assert len(history) == 2
+    assert all("delta" in row for row in history)
+    assert (tmp_path / "ckpt" / "iter_002.pt").exists()
+    assert "delta" in json.loads((tmp_path / "ckpt" / "history.json").read_text())[0]

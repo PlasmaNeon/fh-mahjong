@@ -483,14 +483,22 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: list[dict] = []
     collector = None
-    if config.num_workers > 1:
+    pool = None
+    if config.collector == "batched":
+        from .batched_selfplay import collect_selfplay_rollouts_batched
+        from .envpool import make_selfplay_pool
+        pool = make_selfplay_pool(env_config, config, config.pool_slots)
+    elif config.num_workers > 1:
         collector = ParallelSelfplayCollector(env_config, model_config, config, config.num_workers)
         collector.start()
     try:
         for iteration in range(1, config.iterations + 1):
             delta = feature_dropout_schedule(iteration, config.iterations)
             iter_seed = base_seed + iteration * config.matches_per_iter
-            if collector is not None:
+            if pool is not None:
+                batch = collect_selfplay_rollouts_batched(
+                    env_config, model, config, base_seed=iter_seed, drop_prob=delta, pool=pool)
+            elif collector is not None:
                 state = cpu_state_snapshot(model)
                 batch = collector.collect(state, iter_seed, config.matches_per_iter, delta)
             else:
@@ -511,6 +519,8 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
     finally:
         if collector is not None:
             collector.close()
+        if pool is not None:
+            pool.close()
     return history
 
 
