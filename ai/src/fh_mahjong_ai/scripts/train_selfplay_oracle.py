@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from fh_mahjong_ai.config import EnvConfig
-from fh_mahjong_ai.ppo import PPOConfig
+from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
 from fh_mahjong_ai.oracle import train_selfplay_oracle
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
 
@@ -14,8 +14,9 @@ def main() -> None:
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--matches-per-iter", type=int, default=256)
-    p.add_argument("--num-workers", type=int, default=1,
-                   help="parallel self-play rollout workers (1 = sequential)")
+    p.add_argument("--num-workers", type=int, default=default_num_workers(),
+                   help="parallel self-play rollout workers (1 = sequential); default is "
+                        "core-aware (rollout throughput is core-bound, not memory-bound)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--entropy-coef", type=float, default=0.0)

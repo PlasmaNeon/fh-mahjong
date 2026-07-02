@@ -40,6 +40,20 @@ def cpu_state_snapshot(model: "torch.nn.Module") -> dict:
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
 
+def default_num_workers() -> int:
+    """Hardware-aware default for parallel self-play rollout workers.
+
+    Profiling showed rollout throughput is CPU-core-bound, not memory-bound
+    (~380MB/worker, so ~13% RAM at 10 workers on a 24-core/31GB box). Throughput
+    scales near-linearly to ~8 workers and keeps climbing with a knee near 16
+    (0.61/0.91/1.03 matches/s at 8/16/20). Default to core count minus headroom
+    for the main process and the OS, capped so large machines stay sane; override
+    with --num-workers.
+    """
+    cores = os.cpu_count() or 4
+    return max(1, min(16, cores - 8))
+
+
 @dataclass
 class PPOConfig:
     iterations: int = 50
