@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rl"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 const defaultTimeout = 750 * time.Millisecond

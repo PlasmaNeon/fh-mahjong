@@ -71,9 +71,9 @@ func TestBuildCalcEvaluation_PreservesCalledTileAndContext(t *testing.T) {
 			calcTile(pb.Suit_SUIT_MAN, 3),
 			calcTile(pb.Suit_SUIT_JIHAI, 3),
 		},
-		WinTile:  &CalcTileInput{Suit: pb.Suit_SUIT_JIHAI, Value: 3},
-		IsTsumo:  false,
-		SeatWind: 1,
+		WinTile:        &CalcTileInput{Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+		IsTsumo:        false,
+		SeatWind:       1,
 		PrevailingWind: 2,
 		OpenMelds: []CalcMeldInput{
 			{

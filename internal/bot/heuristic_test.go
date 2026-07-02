@@ -3,8 +3,8 @@ package bot
 import (
 	"testing"
 
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/tiles"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 func TestHeuristicBotKeepsPairsForSevenPairs(t *testing.T) {

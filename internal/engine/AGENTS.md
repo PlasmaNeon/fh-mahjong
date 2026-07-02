@@ -45,7 +45,6 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 - **mt19937.go** — Mersenne Twister PRNG for deterministic, reproducible wall shuffles (supports 108, 136, and 144 tile walls)
   - `SeedFromUint64()` expands a compact uint64 seed into the full MT19937 state for RL/test callers, consuming both 32-bit halves from each SplitMix64 output
 - **game_test.go** — Unit tests for game loop phases
-- **dump_test.go** — Debug helpers
 
 ## Subdirectories
 

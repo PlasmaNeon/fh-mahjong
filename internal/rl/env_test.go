@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 )
 

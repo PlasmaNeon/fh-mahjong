@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"gorm.io/gorm"
 )
