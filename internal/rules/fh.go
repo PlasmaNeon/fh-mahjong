@@ -105,9 +105,9 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	}
 
 	// Base point (坐台) — always awarded
-	entries = append(entries, &pb.ScoreEntry{PatternName: "Base Point (坐台)", Points: 1})
+	entries = append(entries, NewScoreEntry(PatternBasePoint, 1))
 	if isTsumo {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Tsumo (自摸)", Points: 1})
+		entries = append(entries, NewScoreEntry(PatternTsumo, 1))
 	}
 
 	// --- 3. Evaluate High-Level Hand Structures (Mutually Exclusive Cores) ---
@@ -134,20 +134,20 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 
 	// --- 2. Wild Tile Point Bonuses ---
 	if wildsInHand == 0 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "No Wild Tiles (无搭)", Points: 1})
+		entries = append(entries, NewScoreEntry(PatternNoWildTiles, 1))
 	} else if wildsInHand == 1 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "One Wild Tile (一搭)", Points: 1})
+		entries = append(entries, NewScoreEntry(PatternOneWildTile, 1))
 	} else if wildsInHand == 2 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Two Wild Tiles (二搭)", Points: 2})
+		entries = append(entries, NewScoreEntry(PatternTwoWildTiles, 2))
 	} else if wildsInHand == 3 {
 		if isFlowerWild {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Three Flower Wild Tiles (三花三百搭)", Points: 300})
+			entries = append(entries, NewScoreEntry(PatternThreeFlowerWildTiles, 300))
 		} else {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Three Normal Wild Tiles (普通三百搭)", Points: 150})
+			entries = append(entries, NewScoreEntry(PatternThreeNormalWildTiles, 150))
 		}
 	}
 	if isTame {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Tame Wild Tiles (还搭)", Points: 1})
+		entries = append(entries, NewScoreEntry(PatternTameWildTiles, 1))
 	}
 
 	// --- Structural route evaluation (pick highest-scoring route) ---
@@ -161,18 +161,18 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		canWin = true
 		re := make([]*pb.ScoreEntry, 0)
 		// Base Independence is always +50
-		re = append(re, &pb.ScoreEntry{PatternName: "Independence (大大胡)", Points: 50})
+		re = append(re, NewScoreEntry(PatternIndependence, 50))
 		// Seven Stars bonus stacks on top (closed +100, open +50)
 		if r.hasAllSevenHonors(fullHand) {
 			if isTsumo {
-				re = append(re, &pb.ScoreEntry{PatternName: "Closed Seven Stars (暗七星)", Points: 100})
+				re = append(re, NewScoreEntry(PatternClosedSevenStars, 100))
 			} else {
-				re = append(re, &pb.ScoreEntry{PatternName: "Open Seven Stars (明七星)", Points: 50})
+				re = append(re, NewScoreEntry(PatternOpenSevenStars, 50))
 			}
 		}
 		// Without-suit bonus stacks independently (+100), combinable with Seven Stars
 		if r.isMissingASuit(fullHand) {
-			re = append(re, &pb.ScoreEntry{PatternName: "Independence Without Suit (缺色)", Points: 100})
+			re = append(re, NewScoreEntry(PatternIndependenceMissingSuit, 100))
 		}
 		routeTotal := int32(0)
 		for _, e := range re {
@@ -189,15 +189,15 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		canWin = true
 		re := make([]*pb.ScoreEntry, 0)
 		if wildsInHand == 0 {
-			re = append(re, &pb.ScoreEntry{PatternName: "Straight Seven Pairs (七对头无搭)", Points: 150})
+			re = append(re, NewScoreEntry(PatternStraightSevenPairs, 150))
 		} else {
-			re = append(re, &pb.ScoreEntry{PatternName: "Wild Seven Pairs (七对头有搭)", Points: 50})
+			re = append(re, NewScoreEntry(PatternWildSevenPairs, 50))
 		}
 		if bombCount := r.countIdenticalFours(fullHand); bombCount > 0 {
 			if isTsumo {
-				re = append(re, &pb.ScoreEntry{PatternName: "Closed Bomb (暗炸)", Points: 100})
+				re = append(re, NewScoreEntry(PatternClosedBomb, 100))
 			} else {
-				re = append(re, &pb.ScoreEntry{PatternName: "Open Bomb (明炸)", Points: 50})
+				re = append(re, NewScoreEntry(PatternOpenBomb, 50))
 			}
 		}
 		routeTotal := int32(0)
@@ -221,27 +221,27 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		// Common Win (朋胡): four runs (sequences) and a pair of eyes.
 		// Excluded when pure/mixed one-suit patterns apply (those are scored separately).
 		if isAllChow && !isPureSuit && !isMixedSuit {
-			re = append(re, &pb.ScoreEntry{PatternName: "Common Win (朋胡)", Points: 1})
+			re = append(re, NewScoreEntry(PatternCommonWin, 1))
 		}
 
 		// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
 		hasSingleCall := effectiveWinTile != nil && r.evalWaitPattern(hand, effectiveWinTile, wildHashes) > 0
 		if hasSingleCall {
-			re = append(re, &pb.ScoreEntry{PatternName: "Single/Pair Call (边嵌单吊对倒)", Points: 1})
+			re = append(re, NewScoreEntry(PatternSinglePairCall, 1))
 		}
 		if len(openMelds) == 4 {
 			if wildsInHand == 0 {
-				re = append(re, &pb.ScoreEntry{PatternName: "Straight Loner (大吊车无搭)", Points: 100})
+				re = append(re, NewScoreEntry(PatternStraightLoner, 100))
 			} else {
-				re = append(re, &pb.ScoreEntry{PatternName: "Wild Loner (大吊车有搭)", Points: 50})
+				re = append(re, NewScoreEntry(PatternWildLoner, 50))
 			}
 		}
 
 		if isAllPung {
 			if wildsInHand == 0 {
-				re = append(re, &pb.ScoreEntry{PatternName: "Straight All Pung (大对对无搭)", Points: 100})
+				re = append(re, NewScoreEntry(PatternStraightAllPung, 100))
 			} else {
-				re = append(re, &pb.ScoreEntry{PatternName: "Wild All Pung (大对对有搭)", Points: 50})
+				re = append(re, NewScoreEntry(PatternWildAllPung, 50))
 			}
 		}
 
@@ -263,15 +263,15 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	if !canWin {
 		if r.isUncompletedAllHonors(fullHand, openMelds, wildHashes) {
 			canWin = true
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Uncompleted All Honors (乱老头)", Points: 400})
+			entries = append(entries, NewScoreEntry(PatternUncompletedAllHonors, 400))
 		}
 	} else {
 		if r.isCompletedAllHonors(fullHand, openMelds, wildHashes) {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Completed All Honors (清老头)", Points: 800})
+			entries = append(entries, NewScoreEntry(PatternCompletedAllHonors, 800))
 		} else if r.isPureOneSuit(fullHand, openMelds, wildHashes) {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Pure One Suit (清一色)", Points: 150})
+			entries = append(entries, NewScoreEntry(PatternPureOneSuit, 150))
 		} else if r.isMixedOneSuit(fullHand, openMelds, wildHashes) {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Mixed One Suit (混一色)", Points: 70})
+			entries = append(entries, NewScoreEntry(PatternMixedOneSuit, 70))
 		}
 	}
 
@@ -291,17 +291,17 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 			canWin = true
 			// Override: clear all previous entries, it's just 400 + own flower
 			entries = []*pb.ScoreEntry{}
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Uncompleted Eight Flowers (八花直胡)", Points: 400})
+			entries = append(entries, NewScoreEntry(PatternUncompletedEightFlowers, 400))
 		} else {
-			entries = append(entries, &pb.ScoreEntry{PatternName: "Completed Eight Flowers (八花搓胡)", Points: 800})
+			entries = append(entries, NewScoreEntry(PatternCompletedEightFlowers, 800))
 		}
 	} else if len(myFlowers) >= 4 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Four Flowers (四花)", Points: 150})
+		entries = append(entries, NewScoreEntry(PatternFourFlowers, 150))
 	}
 
 	flowerBonus := getFlowerBonuses(myFlowers, playerSeat, state)
 	if flowerBonus > 0 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Own Flower (花)", Points: flowerBonus})
+		entries = append(entries, NewScoreEntry(PatternOwnFlower, flowerBonus))
 	}
 
 	if !canWin {
@@ -311,7 +311,7 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	// --- 4. Dragon Pon Bonuses (中发白碰出) ---
 	dragonPoints := r.countDragonPungs(fullHand, openMelds, wildHashes)
 	if dragonPoints > 0 {
-		entries = append(entries, &pb.ScoreEntry{PatternName: "Dragon Pung (中发白碰出)", Points: dragonPoints})
+		entries = append(entries, NewScoreEntry(PatternDragonPung, dragonPoints))
 	}
 
 	// --- 5. Wind Pon Bonuses (位风/圈风/正风) ---
@@ -324,15 +324,15 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		if seatWind > 0 {
 			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, seatWind) {
 				if seatWind == prevailingWind {
-					entries = append(entries, &pb.ScoreEntry{PatternName: "Right Wind (正风)", Points: 2})
+					entries = append(entries, NewScoreEntry(PatternRightWind, 2))
 				} else {
-					entries = append(entries, &pb.ScoreEntry{PatternName: "Seat Wind (位风)", Points: 1})
+					entries = append(entries, NewScoreEntry(PatternSeatWind, 1))
 				}
 			}
 		}
 		if prevailingWind > 0 && prevailingWind != seatWind {
 			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, prevailingWind) {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Prevailing Wind (圈风)", Points: 1})
+				entries = append(entries, NewScoreEntry(PatternPrevailingWind, 1))
 			}
 		}
 	}
@@ -345,22 +345,22 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 			// that bloomed (won on its supplementary tile) scores the blooming
 			// bonus only, never both.
 			if ps.HasBloomingDirectKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Direct Kong (直杠开花)", Points: 100})
+				entries = append(entries, NewScoreEntry(PatternBloomingDirectKong, 100))
 			} else if ps.HasBuddingDirectKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Direct Kong (直杠不开花)", Points: 50})
+				entries = append(entries, NewScoreEntry(PatternBuddingDirectKong, 50))
 			}
 			if ps.HasBloomingClosedKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Closed Kong (暗杠开花)", Points: 150})
+				entries = append(entries, NewScoreEntry(PatternBloomingClosedKong, 150))
 			} else if ps.HasBuddingClosedKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Closed Kong (暗杠不开花)", Points: 100})
+				entries = append(entries, NewScoreEntry(PatternBuddingClosedKong, 100))
 			}
 			if ps.HasBloomingRiskyKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Risky Kong (风险杠开花)", Points: 200})
+				entries = append(entries, NewScoreEntry(PatternBloomingRiskyKong, 200))
 			} else if ps.HasBuddingRiskyKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Budding Risky Kong (风险杠不开花)", Points: 100})
+				entries = append(entries, NewScoreEntry(PatternBuddingRiskyKong, 100))
 			}
 			if ps.HasBloomingFlowerKong {
-				entries = append(entries, &pb.ScoreEntry{PatternName: "Blooming Flower Kong (花杠杠开)", Points: 50})
+				entries = append(entries, NewScoreEntry(PatternBloomingFlowerKong, 50))
 			}
 		}
 	}
@@ -380,7 +380,7 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	if !isTsumo {
 		qualifying := int32(0)
 		for _, e := range entries {
-			if isRewardPattern(e.PatternName) {
+			if isRewardPattern(e) {
 				continue
 			}
 			qualifying += e.Points
@@ -395,21 +395,10 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 
 // isRewardPattern reports whether a scoring entry is a "reward" bonus
 // (flower collection, kan completion) that is awarded but does not count
-// toward the 4-point Ron minimum.
-func isRewardPattern(name string) bool {
-	switch name {
-	case "Four Flowers (四花)",
-		"Own Flower (花)",
-		"Budding Direct Kong (直杠不开花)",
-		"Blooming Direct Kong (直杠开花)",
-		"Budding Closed Kong (暗杠不开花)",
-		"Blooming Closed Kong (暗杠开花)",
-		"Budding Risky Kong (风险杠不开花)",
-		"Blooming Risky Kong (风险杠开花)",
-		"Blooming Flower Kong (花杠杠开)":
-		return true
-	}
-	return false
+// toward the 4-point Ron minimum. Classified by stable pattern id, never by
+// display name — see rewardPatternIds in patterns.go.
+func isRewardPattern(entry *pb.ScoreEntry) bool {
+	return rewardPatternIds[entry.PatternId]
 }
 
 // CalculatePayouts computes per-player payment amounts based on Fenghua rules.

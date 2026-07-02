@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 type CalcTileInput struct {
@@ -47,16 +47,17 @@ type CalcRequest struct {
 }
 
 type CalcScoreEntry struct {
+	PatternID   string `json:"patternId"`
 	PatternName string `json:"patternName"`
 	Points      int32  `json:"points"`
 }
 
 type CalcNormalizedMeld struct {
-	Type            string `json:"type"`
-	Tiles           string `json:"tiles"`
-	CalledTile      string `json:"calledTile"`
-	CalledTileIndex int    `json:"calledTileIndex"`
-	CalledDirection string `json:"calledDirection"`
+	Type            string   `json:"type"`
+	Tiles           string   `json:"tiles"`
+	CalledTile      string   `json:"calledTile"`
+	CalledTileIndex int      `json:"calledTileIndex"`
+	CalledDirection string   `json:"calledDirection"`
 	KongFlags       []string `json:"kongFlags"`
 }
 
@@ -116,15 +117,16 @@ func (s *Server) handleCalc(c *gin.Context) {
 	responseEntries := make([]CalcScoreEntry, 0, len(entries))
 	for _, entry := range entries {
 		responseEntries = append(responseEntries, CalcScoreEntry{
+			PatternID:   entry.PatternId,
 			PatternName: entry.PatternName,
 			Points:      entry.Points,
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"canWin":    canWin,
-		"score":     score,
-		"entries":   responseEntries,
+		"canWin":     canWin,
+		"score":      score,
+		"entries":    responseEntries,
 		"normalized": eval.normalized,
 	})
 }
@@ -256,15 +258,15 @@ func buildCalcEvaluation(req CalcRequest) (*calcEvaluation, []string) {
 	}
 
 	player := &pb.PlayerState{
-		SeatWind:               req.SeatWind,
-		FlowerMelds:            flowerMelds,
-		HasBuddingDirectKong:   false,
-		HasBloomingDirectKong:  false,
-		HasBuddingClosedKong:   false,
-		HasBloomingClosedKong:  false,
-		HasBuddingRiskyKong:    false,
-		HasBloomingRiskyKong:   false,
-		HasBloomingFlowerKong:  false,
+		SeatWind:              req.SeatWind,
+		FlowerMelds:           flowerMelds,
+		HasBuddingDirectKong:  false,
+		HasBloomingDirectKong: false,
+		HasBuddingClosedKong:  false,
+		HasBloomingClosedKong: false,
+		HasBuddingRiskyKong:   false,
+		HasBloomingRiskyKong:  false,
+		HasBloomingFlowerKong: false,
 	}
 
 	kongCounts := countKongFlags(req)
@@ -545,13 +547,13 @@ func addKongFlags(counts *CalcKongFlagCounts, flags CalcKongFlags) {
 }
 
 func applyExtraKongBonuses(score int32, entries []*pb.ScoreEntry, canWin bool, isTsumo bool, counts CalcKongFlagCounts) (int32, []*pb.ScoreEntry, bool) {
-	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingDirectKong, "Budding Direct Kong (直杠不开花)", 50)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingDirectKong, "Blooming Direct Kong (直杠开花)", 100)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingClosedKong, "Budding Closed Kong (暗杠不开花)", 100)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingClosedKong, "Blooming Closed Kong (暗杠开花)", 150)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingRiskyKong, "Budding Risky Kong (风险杠不开花)", 100)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingRiskyKong, "Blooming Risky Kong (风险杠开花)", 200)
-	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingFlowerKong, "Blooming Flower Kong (花杠杠开)", 50)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingDirectKong, rules.PatternBuddingDirectKong, 50)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingDirectKong, rules.PatternBloomingDirectKong, 100)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingClosedKong, rules.PatternBuddingClosedKong, 100)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingClosedKong, rules.PatternBloomingClosedKong, 150)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBuddingRiskyKong, rules.PatternBuddingRiskyKong, 100)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingRiskyKong, rules.PatternBloomingRiskyKong, 200)
+	score, entries = addExtraKongEntries(score, entries, counts.HasBloomingFlowerKong, rules.PatternBloomingFlowerKong, 50)
 
 	if !isTsumo && !canWin && len(entries) > 0 && score >= 4 {
 		canWin = true
@@ -560,9 +562,9 @@ func applyExtraKongBonuses(score int32, entries []*pb.ScoreEntry, canWin bool, i
 	return score, entries, canWin
 }
 
-func addExtraKongEntries(score int32, entries []*pb.ScoreEntry, count int, patternName string, points int32) (int32, []*pb.ScoreEntry) {
+func addExtraKongEntries(score int32, entries []*pb.ScoreEntry, count int, patternID string, points int32) (int32, []*pb.ScoreEntry) {
 	for i := 1; i < count; i++ {
-		entries = append(entries, &pb.ScoreEntry{PatternName: patternName, Points: points})
+		entries = append(entries, rules.NewScoreEntry(patternID, points))
 		score += points
 	}
 	return score, entries

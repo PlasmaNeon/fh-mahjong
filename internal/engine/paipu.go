@@ -40,6 +40,9 @@ type PaipuMeld struct {
 }
 
 type PaipuBreakdown struct {
+	// Id is the stable pattern identifier (ScoreEntry.pattern_id). Empty in
+	// paipu recorded before it existed; Name remains the display fallback.
+	Id     string `json:"id,omitempty"`
 	Name   string `json:"name"`
 	Points int32  `json:"points"`
 }

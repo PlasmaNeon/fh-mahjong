@@ -223,8 +223,12 @@ message GameState {
 // ---------------------------------------------------------
 
 message ScoreEntry {
-  string pattern_name = 1;  // e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
+  string pattern_name = 1;  // display-only, e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
   int32 points = 2;
+  // Stable snake_case identifier (e.g. "base_point", "pure_one_suit").
+  // Logic and localization must key off this, never pattern_name, so display
+  // strings can change freely. Empty in replays recorded before it existed.
+  string pattern_id = 3;
 }
 
 message PlayerPayout {
