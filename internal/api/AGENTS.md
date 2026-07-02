@@ -81,6 +81,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **middleware.go** — JWT token validation middleware for protected routes
 
+- **response.go** — `respondError(c, status, msg)` / `abortError(c, status, msg)` — the single point for the API's `{"error": msg}` response shape. Handlers use `respondError` (`c.JSON`); middleware uses `abortError` (`c.AbortWithStatusJSON`, short-circuits the chain). Responses that carry extra keys beyond `error` stay inline.
+
 - **calc.go** — Hand evaluation API endpoint (stateless scoring calculator):
   - Accepts structured calculator payloads: closed hand, win tile, single wild tile type, open melds, flower melds, winds, tsumo/ron, and kong bonus flags
   - Open meld rows can carry per-kan kong flags; repeated flag selections across multiple kan melds are counted and stacked in the calculator response

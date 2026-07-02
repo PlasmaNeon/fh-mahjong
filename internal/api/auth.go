@@ -78,11 +78,11 @@ func issueTokenWithExpiry(id uint, username string, expUnix int64) (string, erro
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if h.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled. Please use 'Guest Login'.")
 		return
 	}
 
@@ -90,13 +90,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	var existing storage.User
 	if err := h.DB.Where("email = ?", email).First(&existing).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+		respondError(c, http.StatusConflict, "Email already registered")
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		respondError(c, http.StatusInternalServerError, "Failed to hash password")
 		return
 	}
 
@@ -118,14 +118,14 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		}
 	}
 	if createErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		respondError(c, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
 
 	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
 	if err != nil {
 		log.Printf("Failed to sign token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		respondError(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
 
@@ -137,11 +137,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if h.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Please use 'Guest Login'."})
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled. Please use 'Guest Login'.")
 		return
 	}
 
@@ -152,18 +152,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		// Equalize timing with the wrong-password path so the unknown-email
 		// case can't be distinguished by latency (anti-enumeration).
 		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		respondError(c, http.StatusUnauthorized, "Invalid email or password")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		respondError(c, http.StatusUnauthorized, "Invalid email or password")
 		return
 	}
 
 	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
 	if err != nil {
 		log.Printf("Failed to sign token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		respondError(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
 
@@ -188,18 +188,18 @@ type UpdateProfileRequest struct {
 func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if h.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled."})
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled.")
 		return
 	}
 
 	uid, _ := c.Get("userID")
 	var user storage.User
 	if err := h.DB.First(&user, uid).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		respondError(c, http.StatusNotFound, "User not found")
 		return
 	}
 
@@ -213,23 +213,23 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	nameChange := req.DisplayName != nil && *req.DisplayName != user.Username
 
 	if !emailChange && !nameChange {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No changes requested"})
+		respondError(c, http.StatusBadRequest, "No changes requested")
 		return
 	}
 
 	if emailChange {
 		// Reauthenticate before changing the login identity.
 		if req.CurrentPassword == nil || *req.CurrentPassword == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Current password is required to change email"})
+			respondError(c, http.StatusBadRequest, "Current password is required to change email")
 			return
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(*req.CurrentPassword)); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Incorrect password"})
+			respondError(c, http.StatusUnauthorized, "Incorrect password")
 			return
 		}
 		var other storage.User
 		if err := h.DB.Where("email = ? AND id <> ?", newEmail, user.ID).First(&other).Error; err == nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "Email already registered"})
+			respondError(c, http.StatusConflict, "Email already registered")
 			return
 		}
 		user.Email = newEmail
@@ -239,7 +239,7 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	}
 
 	if err := h.DB.Save(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		respondError(c, http.StatusInternalServerError, "Failed to update profile")
 		return
 	}
 
@@ -257,7 +257,7 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		token, err := issueTokenWithExpiry(user.ID, user.Username, exp)
 		if err != nil {
 			log.Printf("Failed to sign token: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+			respondError(c, http.StatusInternalServerError, "Failed to generate token")
 			return
 		}
 		resp.Token = token
@@ -275,7 +275,7 @@ type GuestRequest struct {
 func (h *AuthHandler) GuestLogin(c *gin.Context) {
 	var req GuestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -286,7 +286,7 @@ func (h *AuthHandler) GuestLogin(c *gin.Context) {
 	tokenString, err := issueToken(tempUserID, req.Username, 24*time.Hour)
 	if err != nil {
 		log.Printf("Failed to sign guest token: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		respondError(c, http.StatusInternalServerError, "Failed to generate token")
 		return
 	}
 

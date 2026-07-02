@@ -38,19 +38,19 @@ type ShantenResponse struct {
 func (s *Server) handleShanten(c *gin.Context) {
 	var req ShantenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		respondError(c, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	if req.OpenMelds < 0 || req.OpenMelds > 4 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "openMelds must be 0-4"})
+		respondError(c, http.StatusBadRequest, "openMelds must be 0-4")
 		return
 	}
 
 	expectedBase := 13 - 3*req.OpenMelds
 	handSize := len(req.ClosedHand)
 	if handSize != expectedBase && handSize != expectedBase+1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Closed hand must be 13 or 14 tiles (minus 3 per open meld)"})
+		respondError(c, http.StatusBadRequest, "Closed hand must be 13 or 14 tiles (minus 3 per open meld)")
 		return
 	}
 
