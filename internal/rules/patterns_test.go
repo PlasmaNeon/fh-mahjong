@@ -57,3 +57,15 @@ func TestPatternRegistry(t *testing.T) {
 		}
 	})
 }
+
+func TestEvalWaitPatternRejectsUnindexableWinTile(t *testing.T) {
+	hand := make([]*pb.Tile, 13)
+	for i := range hand {
+		hand[i] = &pb.Tile{Suit: pb.Suit_SUIT_MAN, Value: uint32(i%9 + 1)}
+	}
+
+	r := &FenghuaRuleset{}
+	if got := r.evalWaitPattern(hand, &pb.Tile{Suit: pb.Suit_SUIT_FLOWER, Value: 1}, nil); got != 0 {
+		t.Fatalf("evalWaitPattern(flower win tile) = %d, want 0", got)
+	}
+}

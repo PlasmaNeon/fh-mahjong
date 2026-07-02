@@ -1,9 +1,9 @@
-import { getSuitOrder } from '../utils/tileUtils'
+import { suitOrder } from '../utils/tileModel'
 import type { TileLike } from './types'
 
 export function compareTileSortKey(a: TileLike, b: TileLike) {
-  const suitA = getSuitOrder(a.suit)
-  const suitB = getSuitOrder(b.suit)
+  const suitA = suitOrder(a.suit)
+  const suitB = suitOrder(b.suit)
   if (suitA !== suitB) return suitA - suitB
   return a.value - b.value
 }

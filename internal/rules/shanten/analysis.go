@@ -160,10 +160,7 @@ func analyzeDiscardOptions(closedHand []*pb.Tile, counts [34]int, numWilds int, 
 
 func buildCountsFromTiles(closedHand []*pb.Tile, wildTiles []*pb.Tile) ([34]int, int, map[uint32]bool) {
 	ensureTables()
-	wildSet := make(map[uint32]bool)
-	for _, wild := range wildTiles {
-		wildSet[tiles.KeyOf(wild.Suit, wild.Value)] = true
-	}
+	wildSet := tiles.WildSet(wildTiles)
 
 	var counts [34]int
 	numWilds := 0

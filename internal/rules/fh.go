@@ -77,25 +77,18 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 	entries := make([]*pb.ScoreEntry, 0)
 
 	// --- 1. Identify Wild Tiles & Tame State ---
-	wildsInHand := 0
 	isFlowerWild := false
 	wildHashes := make(map[uint32]bool)
-	if state != nil && len(state.WildTiles) > 0 {
+	if state != nil {
+		wildHashes = tiles.WildSet(state.WildTiles)
 		for _, w := range state.WildTiles {
-			hash := tiles.KeyOf(w.Suit, w.Value)
-			wildHashes[hash] = true
 			if w.Suit == pb.Suit_SUIT_UNKNOWN || w.Suit > pb.Suit_SUIT_JIHAI {
 				isFlowerWild = true
 			}
 		}
 	}
 	// Count wild tiles (excluding Ron win tile — it acts as a normal tile)
-	for _, t := range hand {
-		hash := tiles.KeyOf(t.Suit, t.Value)
-		if wildHashes[hash] {
-			wildsInHand++
-		}
-	}
+	wildsInHand := tiles.CountWilds(hand, wildHashes)
 	// If Tsumo, the drawn winning tile is part of our concealed hand and counts as wild
 	if isTsumo && winTile != nil {
 		hash := tiles.KeyOf(winTile.Suit, winTile.Value)
@@ -477,24 +470,6 @@ func (r *FenghuaRuleset) isSevenPairs(hand []*pb.Tile, wildHashes map[uint32]boo
 	return wilds >= singles
 }
 
-// tileToIndex converts a tile to a Mortal-aligned 0-33 index for tehai array processing.
-// Layout: man(0-8), pin(9-17), sou(18-26), jihai(27-33)
-// Proto names: SUIT_MAN=man, SUIT_PIN=pin, SUIT_SOU=sou, SUIT_JIHAI=jihai
-func tileToIndex(t *pb.Tile) int {
-	valOffset := int(t.Value) - 1
-	switch t.Suit {
-	case pb.Suit_SUIT_MAN: // man (万子) 1m-9m → 0-8
-		return valOffset
-	case pb.Suit_SUIT_PIN: // pin (筒子) 1p-9p → 9-17
-		return 9 + valOffset
-	case pb.Suit_SUIT_SOU: // sou (索子) 1s-9s → 18-26
-		return 18 + valOffset
-	case pb.Suit_SUIT_JIHAI: // jihai (字牌) 1z-7z → 27-33
-		return 27 + valOffset
-	}
-	return 0
-}
-
 // tilesToTehai34 converts a slice of tiles into a [34]int tehai count array (Mortal layout).
 // Wild tiles are counted separately and excluded from the array.
 // Returns (tehai counts, wild tile count).
@@ -505,8 +480,8 @@ func (r *FenghuaRuleset) tilesToTehai34(tileSlice []*pb.Tile, wildHashes map[uin
 		hash := tiles.KeyOf(t.Suit, t.Value)
 		if wildHashes[hash] {
 			wilds++
-		} else {
-			counts[tileToIndex(t)]++
+		} else if idx := tiles.Index34(t); idx >= 0 {
+			counts[idx]++
 		}
 	}
 	return counts, wilds
@@ -1129,7 +1104,10 @@ func (r *FenghuaRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wild
 	}
 
 	counts, wilds := r.tilesToTehai34(hand, wildHashes)
-	winIdx := tileToIndex(winTile)
+	winIdx := tiles.Index34(winTile)
+	if winIdx < 0 {
+		return 0
+	}
 	winHash := tiles.KeyOf(winTile.Suit, winTile.Value)
 	winIsWild := wildHashes[winHash]
 
@@ -1138,7 +1116,7 @@ func (r *FenghuaRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wild
 	if len(hand) == 14 {
 		if winIsWild {
 			wilds--
-		} else if counts[winIdx] > 0 {
+		} else if winIdx >= 0 && counts[winIdx] > 0 {
 			counts[winIdx]--
 		} else {
 			return 0 // Malformed hand
@@ -1232,8 +1210,11 @@ func (r *FenghuaRuleset) evalWaitPattern(hand []*pb.Tile, winTile *pb.Tile, wild
 		testCounts := counts
 		testWilds := wilds
 
-		idxA := tileToIndex(&pb.Tile{Suit: winTile.Suit, Value: valA})
-		idxB := tileToIndex(&pb.Tile{Suit: winTile.Suit, Value: valB})
+		idxA := tiles.Index34Of(winTile.Suit, valA)
+		idxB := tiles.Index34Of(winTile.Suit, valB)
+		if idxA < 0 || idxB < 0 {
+			return false
+		}
 
 		neededWilds := 0
 		if testCounts[idxA] > 0 {

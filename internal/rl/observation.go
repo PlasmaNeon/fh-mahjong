@@ -526,17 +526,7 @@ func bestVisibleDiscardLookahead(analysis shanten.HandAnalysis) *shanten.Discard
 }
 
 func countWildTiles(hand []*pb.Tile, wildTiles []*pb.Tile) int {
-	wildSet := make(map[uint32]bool, len(wildTiles))
-	for _, tile := range wildTiles {
-		wildSet[tiles.Key(tile)] = true
-	}
-	count := 0
-	for _, tile := range hand {
-		if wildSet[tiles.Key(tile)] {
-			count++
-		}
-	}
-	return count
+	return tiles.CountWilds(hand, tiles.WildSet(wildTiles))
 }
 
 func tileFromType(tileType shanten.TileType) *pb.Tile {

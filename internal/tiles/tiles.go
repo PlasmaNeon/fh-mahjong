@@ -78,6 +78,30 @@ func FromIndex34(idx int) (pb.Suit, uint32) {
 	}
 }
 
+// WildSet builds a face-key lookup (see KeyOf) for a round's wild tiles.
+// Nil tiles are skipped; a nil or empty slice yields an empty, non-nil map.
+func WildSet(wilds []*pb.Tile) map[uint32]bool {
+	set := make(map[uint32]bool, len(wilds))
+	for _, w := range wilds {
+		if w == nil {
+			continue
+		}
+		set[KeyOf(w.Suit, w.Value)] = true
+	}
+	return set
+}
+
+// CountWilds returns how many tiles in hand match the wild set by face.
+func CountWilds(hand []*pb.Tile, wildSet map[uint32]bool) int {
+	count := 0
+	for _, t := range hand {
+		if t != nil && wildSet[KeyOf(t.Suit, t.Value)] {
+			count++
+		}
+	}
+	return count
+}
+
 // CloneTile returns a deep copy of t (id/suit/value); nil yields nil.
 //
 // Fields are enumerated by hand rather than using proto.Clone because this

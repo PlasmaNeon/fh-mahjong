@@ -61,7 +61,7 @@ describe('sortTiles', () => {
       { id: 1, suit: 3, value: 9 }, // man 9
       { id: 3, suit: 3, value: 9 }, // man 9 (higher id -> after id1)
     ])
-    // getSuitOrder: MAN(3)=1, PIN(2)=2 -> man before pin
+    // suitOrder: MAN(3)=0, PIN(2)=1 -> man before pin
     expect(sorted.map((x) => x.id)).toEqual([1, 3, 2])
   })
 })

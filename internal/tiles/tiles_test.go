@@ -120,3 +120,35 @@ func TestCloneActionDeepCopiesTiles(t *testing.T) {
 		t.Fatal("CloneAction(nil) != nil")
 	}
 }
+
+func TestWildSetAndCountWilds(t *testing.T) {
+	wilds := []*pb.Tile{
+		tile(pb.Suit_SUIT_MAN, 5, 0),
+		tile(pb.Suit_SUIT_FLOWER, 6, 1),
+		nil,
+	}
+	set := WildSet(wilds)
+	if len(set) != 2 {
+		t.Fatalf("WildSet size = %d, want 2 (nil skipped)", len(set))
+	}
+	if !set[KeyOf(pb.Suit_SUIT_MAN, 5)] || !set[KeyOf(pb.Suit_SUIT_FLOWER, 6)] {
+		t.Fatal("WildSet missing expected faces")
+	}
+	if empty := WildSet(nil); empty == nil || len(empty) != 0 {
+		t.Fatalf("WildSet(nil) = %v, want empty non-nil map", empty)
+	}
+
+	hand := []*pb.Tile{
+		tile(pb.Suit_SUIT_MAN, 5, 10),    // wild
+		tile(pb.Suit_SUIT_MAN, 5, 11),    // wild (same face, different id)
+		tile(pb.Suit_SUIT_PIN, 5, 12),    // not wild (face key includes suit)
+		tile(pb.Suit_SUIT_FLOWER, 6, 13), // wild flower
+		nil,
+	}
+	if got := CountWilds(hand, set); got != 3 {
+		t.Fatalf("CountWilds = %d, want 3", got)
+	}
+	if got := CountWilds(hand, WildSet(nil)); got != 0 {
+		t.Fatalf("CountWilds with empty set = %d, want 0", got)
+	}
+}
