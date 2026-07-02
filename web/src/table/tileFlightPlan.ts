@@ -201,14 +201,18 @@ export function planTileFlights({
 
           if (gapRect) {
             // The current rail may be one shorter than the previous snapshot (a
-            // pon/chii discard doesn't draw a replacement), so clamp the blanked
-            // slot to the current hand length to keep it on a rendered tile.
+            // pon/chii discard doesn't draw a replacement). Blank the gap slot only
+            // if it still exists on the current rail: an end-slot gap means the
+            // rail already ends where the tile departed, so there is nothing to
+            // blank — clamping onto the current rightmost back would make an
+            // unrelated tile blink out and pop back.
             let currentHandCount = 0
             currentLocations.forEach((t) => {
               if (t.direction === dir && t.role === 'hand') currentHandCount += 1
             })
-            const hideIndex = currentHandCount > 0 ? Math.min(slotIndex, currentHandCount - 1) : slotIndex
-            hideHandSlot = { direction: dir, index: hideIndex }
+            if (slotIndex <= currentHandCount - 1) {
+              hideHandSlot = { direction: dir, index: slotIndex }
+            }
 
             const drawnId = prevTileIdsByRole(previousSnapshot, dir, 'drawn')[0]
             const mergeFrom = drawnId != null ? previousSnapshot.rects.get(drawnId) : undefined
