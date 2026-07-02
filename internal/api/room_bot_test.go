@@ -241,7 +241,7 @@ func TestRoom_ChongciHandCap_Terminates(t *testing.T) {
 	cfg := &pb.ChongciConfig{
 		StartingScore: 10_000_000, // intentionally high so nobody busts
 		BustThreshold: 0,
-		MaxHands:      1,            // cap after one hand
+		MaxHands:      1, // cap after one hand
 	}
 	room := NewRoom("handcap-test", nil, nil, WithMatchOptions(engine.MatchOptions{
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,

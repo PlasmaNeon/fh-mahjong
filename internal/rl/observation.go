@@ -3,9 +3,9 @@ package rl
 import (
 	"math"
 
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"github.com/plasma/fh-mahjong/internal/tiles"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 const (

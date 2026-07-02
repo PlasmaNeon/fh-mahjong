@@ -3,8 +3,8 @@ package shanten
 import (
 	"sort"
 
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/tiles"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 const RouteUnavailable = 99
@@ -235,4 +235,3 @@ func normalizeShanten(value int) int {
 	}
 	return value
 }
-

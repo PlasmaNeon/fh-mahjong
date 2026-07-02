@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	pb "github.com/plasma/fh-mahjong/proto"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
+	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 )
 
