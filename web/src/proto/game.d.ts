@@ -1,66 +1,55 @@
 import * as $protobuf from "protobufjs";
 import Long = require("long");
-
 /** Namespace game. */
 export namespace game {
 
     /** Suit enum. */
     enum Suit {
-
-        /** SUIT_UNKNOWN value */
         SUIT_UNKNOWN = 0,
-
-        /** SUIT_SOU value */
         SUIT_SOU = 1,
-
-        /** SUIT_PIN value */
         SUIT_PIN = 2,
-
-        /** SUIT_MAN value */
         SUIT_MAN = 3,
-
-        /** SUIT_JIHAI value */
         SUIT_JIHAI = 4,
-
-        /** SUIT_FLOWER value */
         SUIT_FLOWER = 5
     }
 
-    /**
-     * Properties of a Tile.
-     * @deprecated Use game.Tile.$Properties instead.
-     */
-    interface ITile extends game.Tile.$Properties {
+    /** Properties of a Tile. */
+    interface ITile {
+
+        /** Tile id */
+        id?: (number|undefined);
+
+        /** Tile suit */
+        suit?: (game.Suit|undefined);
+
+        /** Tile value */
+        value?: (number|undefined);
     }
 
     /** Represents a Tile. */
-    class Tile {
+    class Tile implements ITile {
 
         /**
          * Constructs a new Tile.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.Tile.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ITile);
 
         /** Tile id. */
-        id: number;
+        public id: number;
 
         /** Tile suit. */
-        suit: game.Suit;
+        public suit: game.Suit;
 
         /** Tile value. */
-        value: number;
+        public value: number;
 
         /**
          * Creates a new Tile instance using the specified properties.
          * @param [properties] Properties to set
          * @returns Tile instance
          */
-        static create(properties: game.Tile.$Shape): game.Tile & game.Tile.$Shape;
-        static create(properties?: game.Tile.$Properties): game.Tile;
+        public static create(properties?: game.ITile): game.Tile;
 
         /**
          * Encodes the specified Tile message. Does not implicitly {@link game.Tile.verify|verify} messages.
@@ -68,7 +57,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.Tile.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ITile, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified Tile message, length delimited. Does not implicitly {@link game.Tile.verify|verify} messages.
@@ -76,40 +65,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.Tile.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ITile, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a Tile message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.Tile & game.Tile.$Shape} Tile
+         * @returns Tile
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.Tile & game.Tile.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.Tile;
 
         /**
          * Decodes a Tile message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.Tile & game.Tile.$Shape} Tile
+         * @returns Tile
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.Tile & game.Tile.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.Tile;
 
         /**
          * Verifies a Tile message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a Tile message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns Tile
          */
-        static fromObject(object: { [k: string]: any }): game.Tile;
+        public static fromObject(object: { [k: string]: any }): game.Tile;
 
         /**
          * Creates a plain object from a Tile message. Also converts values to other types if specified.
@@ -117,134 +106,100 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.Tile, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.Tile, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this Tile to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for Tile
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for Tile
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace Tile {
-
-        /** Properties of a Tile. */
-        interface $Properties {
-
-            /** Tile id */
-            id?: number;
-
-            /** Tile suit */
-            suit?: game.Suit;
-
-            /** Tile value */
-            value?: number;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a Tile. */
-        type $Shape = game.Tile.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** ActionType enum. */
     enum ActionType {
-
-        /** ACTION_UNKNOWN value */
         ACTION_UNKNOWN = 0,
-
-        /** ACTION_DRAW value */
         ACTION_DRAW = 1,
-
-        /** ACTION_DISCARD value */
         ACTION_DISCARD = 2,
-
-        /** ACTION_CHII value */
         ACTION_CHII = 3,
-
-        /** ACTION_PON value */
         ACTION_PON = 4,
-
-        /** ACTION_KAN value */
         ACTION_KAN = 5,
-
-        /** ACTION_TSUMO value */
         ACTION_TSUMO = 6,
-
-        /** ACTION_RON value */
         ACTION_RON = 7,
-
-        /** ACTION_PASS value */
         ACTION_PASS = 8,
-
-        /** ACTION_FLOWER_REVEAL value */
         ACTION_FLOWER_REVEAL = 9,
-
-        /** ACTION_READY value */
         ACTION_READY = 10,
-
-        /** ACTION_ACCEPT_HAITEI value */
         ACTION_ACCEPT_HAITEI = 11,
-
-        /** ACTION_REFUSE_HAITEI value */
         ACTION_REFUSE_HAITEI = 12
     }
 
-    /**
-     * Properties of a PlayerAction.
-     * @deprecated Use game.PlayerAction.$Properties instead.
-     */
-    interface IPlayerAction extends game.PlayerAction.$Properties {
+    /** Properties of a PlayerAction. */
+    interface IPlayerAction {
+
+        /** PlayerAction type */
+        type?: (game.ActionType|undefined);
+
+        /** PlayerAction tile */
+        tile?: (game.ITile|undefined);
+
+        /** PlayerAction meldTiles */
+        meldTiles?: (game.ITile[]|undefined);
+
+        /** PlayerAction targetPlayer */
+        targetPlayer?: (number|undefined);
+
+        /** PlayerAction isRobbingKong */
+        isRobbingKong?: (boolean|undefined);
+
+        /** PlayerAction isBottomTile */
+        isBottomTile?: (boolean|undefined);
+
+        /** PlayerAction isBloomingKong */
+        isBloomingKong?: (boolean|undefined);
     }
 
     /** Represents a PlayerAction. */
-    class PlayerAction {
+    class PlayerAction implements IPlayerAction {
 
         /**
          * Constructs a new PlayerAction.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.PlayerAction.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IPlayerAction);
 
         /** PlayerAction type. */
-        type: game.ActionType;
+        public type: game.ActionType;
 
         /** PlayerAction tile. */
-        tile: game.Tile;
+        public tile: game.Tile;
 
         /** PlayerAction meldTiles. */
-        meldTiles: game.Tile[];
+        public meldTiles: game.Tile[];
 
         /** PlayerAction targetPlayer. */
-        targetPlayer: number;
+        public targetPlayer: number;
 
         /** PlayerAction isRobbingKong. */
-        isRobbingKong: boolean;
+        public isRobbingKong: boolean;
 
         /** PlayerAction isBottomTile. */
-        isBottomTile: boolean;
+        public isBottomTile: boolean;
 
         /** PlayerAction isBloomingKong. */
-        isBloomingKong: boolean;
+        public isBloomingKong: boolean;
 
         /**
          * Creates a new PlayerAction instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PlayerAction instance
          */
-        static create(properties: game.PlayerAction.$Shape): game.PlayerAction & game.PlayerAction.$Shape;
-        static create(properties?: game.PlayerAction.$Properties): game.PlayerAction;
+        public static create(properties?: game.IPlayerAction): game.PlayerAction;
 
         /**
          * Encodes the specified PlayerAction message. Does not implicitly {@link game.PlayerAction.verify|verify} messages.
@@ -252,7 +207,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.PlayerAction.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IPlayerAction, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PlayerAction message, length delimited. Does not implicitly {@link game.PlayerAction.verify|verify} messages.
@@ -260,40 +215,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.PlayerAction.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IPlayerAction, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PlayerAction message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.PlayerAction & game.PlayerAction.$Shape} PlayerAction
+         * @returns PlayerAction
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerAction & game.PlayerAction.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerAction;
 
         /**
          * Decodes a PlayerAction message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.PlayerAction & game.PlayerAction.$Shape} PlayerAction
+         * @returns PlayerAction
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerAction & game.PlayerAction.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerAction;
 
         /**
          * Verifies a PlayerAction message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PlayerAction message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PlayerAction
          */
-        static fromObject(object: { [k: string]: any }): game.PlayerAction;
+        public static fromObject(object: { [k: string]: any }): game.PlayerAction;
 
         /**
          * Creates a plain object from a PlayerAction message. Also converts values to other types if specified.
@@ -301,113 +256,79 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.PlayerAction, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.PlayerAction, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PlayerAction to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PlayerAction
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PlayerAction
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace PlayerAction {
-
-        /** Properties of a PlayerAction. */
-        interface $Properties {
-
-            /** PlayerAction type */
-            type?: game.ActionType;
-
-            /** PlayerAction tile */
-            tile?: game.Tile.$Properties;
-
-            /** PlayerAction meldTiles */
-            meldTiles?: game.Tile.$Properties[];
-
-            /** PlayerAction targetPlayer */
-            targetPlayer?: number;
-
-            /** PlayerAction isRobbingKong */
-            isRobbingKong?: boolean;
-
-            /** PlayerAction isBottomTile */
-            isBottomTile?: boolean;
-
-            /** PlayerAction isBloomingKong */
-            isBloomingKong?: boolean;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PlayerAction. */
-        type $Shape = game.PlayerAction.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** MeldDirection enum. */
     enum MeldDirection {
-
-        /** MELD_DIRECTION_UNKNOWN value */
         MELD_DIRECTION_UNKNOWN = 0,
-
-        /** MELD_DIRECTION_RIGHT value */
         MELD_DIRECTION_RIGHT = 1,
-
-        /** MELD_DIRECTION_ACROSS value */
         MELD_DIRECTION_ACROSS = 2,
-
-        /** MELD_DIRECTION_LEFT value */
         MELD_DIRECTION_LEFT = 3
     }
 
-    /**
-     * Properties of a Meld.
-     * @deprecated Use game.Meld.$Properties instead.
-     */
-    interface IMeld extends game.Meld.$Properties {
+    /** Properties of a Meld. */
+    interface IMeld {
+
+        /** Meld type */
+        type?: (game.ActionType|undefined);
+
+        /** Meld tiles */
+        tiles?: (game.ITile[]|undefined);
+
+        /** Meld calledDirection */
+        calledDirection?: (game.MeldDirection|undefined);
+
+        /** Meld calledTileId */
+        calledTileId?: (number|null|undefined);
+
+        /** Meld addedTileId */
+        addedTileId?: (number|null|undefined);
     }
 
     /** Represents a Meld. */
-    class Meld {
+    class Meld implements IMeld {
 
         /**
          * Constructs a new Meld.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.Meld.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IMeld);
 
         /** Meld type. */
-        type: game.ActionType;
+        public type: game.ActionType;
 
         /** Meld tiles. */
-        tiles: game.Tile[];
+        public tiles: game.Tile[];
 
         /** Meld calledDirection. */
-        calledDirection: game.MeldDirection;
+        public calledDirection: game.MeldDirection;
 
         /** Meld calledTileId. */
-        calledTileId: (number|null);
+        public calledTileId: (number|null);
 
         /** Meld addedTileId. */
-        addedTileId: (number|null);
+        public addedTileId: (number|null);
 
         /**
          * Creates a new Meld instance using the specified properties.
          * @param [properties] Properties to set
          * @returns Meld instance
          */
-        static create(properties: game.Meld.$Shape): game.Meld & game.Meld.$Shape;
-        static create(properties?: game.Meld.$Properties): game.Meld;
+        public static create(properties?: game.IMeld): game.Meld;
 
         /**
          * Encodes the specified Meld message. Does not implicitly {@link game.Meld.verify|verify} messages.
@@ -415,7 +336,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.Meld.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IMeld, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified Meld message, length delimited. Does not implicitly {@link game.Meld.verify|verify} messages.
@@ -423,40 +344,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.Meld.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IMeld, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a Meld message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.Meld & game.Meld.$Shape} Meld
+         * @returns Meld
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.Meld & game.Meld.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.Meld;
 
         /**
          * Decodes a Meld message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.Meld & game.Meld.$Shape} Meld
+         * @returns Meld
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.Meld & game.Meld.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.Meld;
 
         /**
          * Verifies a Meld message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a Meld message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns Meld
          */
-        static fromObject(object: { [k: string]: any }): game.Meld;
+        public static fromObject(object: { [k: string]: any }): game.Meld;
 
         /**
          * Creates a plain object from a Meld message. Also converts values to other types if specified.
@@ -464,133 +385,155 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.Meld, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.Meld, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this Meld to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for Meld
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for Meld
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace Meld {
+    /** Properties of a PlayerState. */
+    interface IPlayerState {
 
-        /** Properties of a Meld. */
-        interface $Properties {
+        /** PlayerState seat */
+        seat?: (number|undefined);
 
-            /** Meld type */
-            type?: game.ActionType;
+        /** PlayerState score */
+        score?: (number|undefined);
 
-            /** Meld tiles */
-            tiles?: game.Tile.$Properties[];
+        /** PlayerState closedHand */
+        closedHand?: (game.ITile[]|undefined);
 
-            /** Meld calledDirection */
-            calledDirection?: game.MeldDirection;
+        /** PlayerState handSize */
+        handSize?: (number|undefined);
 
-            /** Meld calledTileId */
-            calledTileId?: (number|null);
+        /** PlayerState openMelds */
+        openMelds?: (game.IMeld[]|undefined);
 
-            /** Meld addedTileId */
-            addedTileId?: (number|null);
+        /** PlayerState discards */
+        discards?: (game.ITile[]|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** PlayerState seatWind */
+        seatWind?: (number|undefined);
 
-        /** Shape of a Meld. */
-        type $Shape = game.Meld.$Properties;
-    }
+        /** PlayerState flowerMelds */
+        flowerMelds?: (game.ITile[]|undefined);
 
-    /**
-     * Properties of a PlayerState.
-     * @deprecated Use game.PlayerState.$Properties instead.
-     */
-    interface IPlayerState extends game.PlayerState.$Properties {
+        /** PlayerState hasBuddingDirectKong */
+        hasBuddingDirectKong?: (boolean|undefined);
+
+        /** PlayerState hasBloomingDirectKong */
+        hasBloomingDirectKong?: (boolean|undefined);
+
+        /** PlayerState hasBuddingClosedKong */
+        hasBuddingClosedKong?: (boolean|undefined);
+
+        /** PlayerState hasBloomingClosedKong */
+        hasBloomingClosedKong?: (boolean|undefined);
+
+        /** PlayerState hasBuddingRiskyKong */
+        hasBuddingRiskyKong?: (boolean|undefined);
+
+        /** PlayerState hasBloomingRiskyKong */
+        hasBloomingRiskyKong?: (boolean|undefined);
+
+        /** PlayerState hasBloomingFlowerKong */
+        hasBloomingFlowerKong?: (boolean|undefined);
+
+        /** PlayerState validActions */
+        validActions?: (game.IPlayerAction[]|undefined);
+
+        /** PlayerState drawnTileId */
+        drawnTileId?: (number|null|undefined);
+
+        /** PlayerState shanten */
+        shanten?: (number|undefined);
+
+        /** PlayerState lastDiscardFromDrawn */
+        lastDiscardFromDrawn?: (boolean|undefined);
     }
 
     /** Represents a PlayerState. */
-    class PlayerState {
+    class PlayerState implements IPlayerState {
 
         /**
          * Constructs a new PlayerState.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.PlayerState.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IPlayerState);
 
         /** PlayerState seat. */
-        seat: number;
+        public seat: number;
 
         /** PlayerState score. */
-        score: number;
+        public score: number;
 
         /** PlayerState closedHand. */
-        closedHand: game.Tile[];
+        public closedHand: game.Tile[];
 
         /** PlayerState handSize. */
-        handSize: number;
+        public handSize: number;
 
         /** PlayerState openMelds. */
-        openMelds: game.Meld[];
+        public openMelds: game.Meld[];
 
         /** PlayerState discards. */
-        discards: game.Tile[];
+        public discards: game.Tile[];
 
         /** PlayerState seatWind. */
-        seatWind: number;
+        public seatWind: number;
 
         /** PlayerState flowerMelds. */
-        flowerMelds: game.Tile[];
+        public flowerMelds: game.Tile[];
 
         /** PlayerState hasBuddingDirectKong. */
-        hasBuddingDirectKong: boolean;
+        public hasBuddingDirectKong: boolean;
 
         /** PlayerState hasBloomingDirectKong. */
-        hasBloomingDirectKong: boolean;
+        public hasBloomingDirectKong: boolean;
 
         /** PlayerState hasBuddingClosedKong. */
-        hasBuddingClosedKong: boolean;
+        public hasBuddingClosedKong: boolean;
 
         /** PlayerState hasBloomingClosedKong. */
-        hasBloomingClosedKong: boolean;
+        public hasBloomingClosedKong: boolean;
 
         /** PlayerState hasBuddingRiskyKong. */
-        hasBuddingRiskyKong: boolean;
+        public hasBuddingRiskyKong: boolean;
 
         /** PlayerState hasBloomingRiskyKong. */
-        hasBloomingRiskyKong: boolean;
+        public hasBloomingRiskyKong: boolean;
 
         /** PlayerState hasBloomingFlowerKong. */
-        hasBloomingFlowerKong: boolean;
+        public hasBloomingFlowerKong: boolean;
 
         /** PlayerState validActions. */
-        validActions: game.PlayerAction[];
+        public validActions: game.PlayerAction[];
 
         /** PlayerState drawnTileId. */
-        drawnTileId: (number|null);
+        public drawnTileId: (number|null);
 
         /** PlayerState shanten. */
-        shanten: number;
+        public shanten: number;
 
         /** PlayerState lastDiscardFromDrawn. */
-        lastDiscardFromDrawn: boolean;
+        public lastDiscardFromDrawn: boolean;
 
         /**
          * Creates a new PlayerState instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PlayerState instance
          */
-        static create(properties: game.PlayerState.$Shape): game.PlayerState & game.PlayerState.$Shape;
-        static create(properties?: game.PlayerState.$Properties): game.PlayerState;
+        public static create(properties?: game.IPlayerState): game.PlayerState;
 
         /**
          * Encodes the specified PlayerState message. Does not implicitly {@link game.PlayerState.verify|verify} messages.
@@ -598,7 +541,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.PlayerState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IPlayerState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PlayerState message, length delimited. Does not implicitly {@link game.PlayerState.verify|verify} messages.
@@ -606,40 +549,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.PlayerState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IPlayerState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PlayerState message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.PlayerState & game.PlayerState.$Shape} PlayerState
+         * @returns PlayerState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerState & game.PlayerState.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerState;
 
         /**
          * Decodes a PlayerState message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.PlayerState & game.PlayerState.$Shape} PlayerState
+         * @returns PlayerState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerState & game.PlayerState.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerState;
 
         /**
          * Verifies a PlayerState message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PlayerState message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PlayerState
          */
-        static fromObject(object: { [k: string]: any }): game.PlayerState;
+        public static fromObject(object: { [k: string]: any }): game.PlayerState;
 
         /**
          * Creates a plain object from a PlayerState message. Also converts values to other types if specified.
@@ -647,203 +590,177 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.PlayerState, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.PlayerState, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PlayerState to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PlayerState
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PlayerState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace PlayerState {
-
-        /** Properties of a PlayerState. */
-        interface $Properties {
-
-            /** PlayerState seat */
-            seat?: number;
-
-            /** PlayerState score */
-            score?: number;
-
-            /** PlayerState closedHand */
-            closedHand?: game.Tile.$Properties[];
-
-            /** PlayerState handSize */
-            handSize?: number;
-
-            /** PlayerState openMelds */
-            openMelds?: game.Meld.$Properties[];
-
-            /** PlayerState discards */
-            discards?: game.Tile.$Properties[];
-
-            /** PlayerState seatWind */
-            seatWind?: number;
-
-            /** PlayerState flowerMelds */
-            flowerMelds?: game.Tile.$Properties[];
-
-            /** PlayerState hasBuddingDirectKong */
-            hasBuddingDirectKong?: boolean;
-
-            /** PlayerState hasBloomingDirectKong */
-            hasBloomingDirectKong?: boolean;
-
-            /** PlayerState hasBuddingClosedKong */
-            hasBuddingClosedKong?: boolean;
-
-            /** PlayerState hasBloomingClosedKong */
-            hasBloomingClosedKong?: boolean;
-
-            /** PlayerState hasBuddingRiskyKong */
-            hasBuddingRiskyKong?: boolean;
-
-            /** PlayerState hasBloomingRiskyKong */
-            hasBloomingRiskyKong?: boolean;
-
-            /** PlayerState hasBloomingFlowerKong */
-            hasBloomingFlowerKong?: boolean;
-
-            /** PlayerState validActions */
-            validActions?: game.PlayerAction.$Properties[];
-
-            /** PlayerState drawnTileId */
-            drawnTileId?: (number|null);
-
-            /** PlayerState shanten */
-            shanten?: number;
-
-            /** PlayerState lastDiscardFromDrawn */
-            lastDiscardFromDrawn?: boolean;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PlayerState. */
-        type $Shape = game.PlayerState.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** GamePhase enum. */
     enum GamePhase {
-
-        /** PHASE_INIT value */
         PHASE_INIT = 0,
-
-        /** PHASE_DEAL value */
         PHASE_DEAL = 1,
-
-        /** PHASE_PLAYER_TURN value */
         PHASE_PLAYER_TURN = 2,
-
-        /** PHASE_WAIT_DISCARDS value */
         PHASE_WAIT_DISCARDS = 3,
-
-        /** PHASE_ROUND_END value */
         PHASE_ROUND_END = 4,
-
-        /** PHASE_MATCH_END value */
         PHASE_MATCH_END = 5
     }
 
-    /**
-     * Properties of a GameState.
-     * @deprecated Use game.GameState.$Properties instead.
-     */
-    interface IGameState extends game.GameState.$Properties {
+    /** Properties of a GameState. */
+    interface IGameState {
+
+        /** GameState matchId */
+        matchId?: (string|undefined);
+
+        /** GameState phase */
+        phase?: (game.GamePhase|undefined);
+
+        /** GameState activePlayer */
+        activePlayer?: (number|undefined);
+
+        /** GameState players */
+        players?: (game.IPlayerState[]|undefined);
+
+        /** GameState wallCount */
+        wallCount?: (number|undefined);
+
+        /** GameState handNum */
+        handNum?: (number|undefined);
+
+        /** GameState activeDiscard */
+        activeDiscard?: (game.ITile|undefined);
+
+        /** GameState wildTiles */
+        wildTiles?: (game.ITile[]|undefined);
+
+        /** GameState prevailingWind */
+        prevailingWind?: (number|undefined);
+
+        /** GameState wallSeed */
+        wallSeed?: (string|undefined);
+
+        /** GameState roundResult */
+        roundResult?: (game.IRoundResult|undefined);
+
+        /** GameState playerReady */
+        playerReady?: (boolean[]|undefined);
+
+        /** GameState diceSum */
+        diceSum?: (number|undefined);
+
+        /** GameState wangpaiStacks */
+        wangpaiStacks?: (number|undefined);
+
+        /** GameState isHaitei */
+        isHaitei?: (boolean|undefined);
+
+        /** GameState dice1 */
+        dice1?: (number|undefined);
+
+        /** GameState dice2 */
+        dice2?: (number|undefined);
+
+        /** GameState wangpaiTilesLeft */
+        wangpaiTilesLeft?: (number|undefined);
+
+        /** GameState matchMode */
+        matchMode?: (game.MatchMode|undefined);
+
+        /** GameState chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
+
+        /** GameState matchEndResult */
+        matchEndResult?: (game.IMatchEndResult|undefined);
     }
 
     /** Represents a GameState. */
-    class GameState {
+    class GameState implements IGameState {
 
         /**
          * Constructs a new GameState.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.GameState.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IGameState);
 
         /** GameState matchId. */
-        matchId: string;
+        public matchId: string;
 
         /** GameState phase. */
-        phase: game.GamePhase;
+        public phase: game.GamePhase;
 
         /** GameState activePlayer. */
-        activePlayer: number;
+        public activePlayer: number;
 
         /** GameState players. */
-        players: game.PlayerState[];
+        public players: game.PlayerState[];
 
         /** GameState wallCount. */
-        wallCount: number;
+        public wallCount: number;
 
         /** GameState handNum. */
-        handNum: number;
+        public handNum: number;
 
         /** GameState activeDiscard. */
-        activeDiscard: game.Tile;
+        public activeDiscard: game.Tile;
 
         /** GameState wildTiles. */
-        wildTiles: game.Tile[];
+        public wildTiles: game.Tile[];
 
         /** GameState prevailingWind. */
-        prevailingWind: number;
+        public prevailingWind: number;
 
         /** GameState wallSeed. */
-        wallSeed: string;
+        public wallSeed: string;
 
         /** GameState roundResult. */
-        roundResult: game.RoundResult;
+        public roundResult: game.RoundResult;
 
         /** GameState playerReady. */
-        playerReady: boolean[];
+        public playerReady: boolean[];
 
         /** GameState diceSum. */
-        diceSum: number;
+        public diceSum: number;
 
         /** GameState wangpaiStacks. */
-        wangpaiStacks: number;
+        public wangpaiStacks: number;
 
         /** GameState isHaitei. */
-        isHaitei: boolean;
+        public isHaitei: boolean;
 
         /** GameState dice1. */
-        dice1: number;
+        public dice1: number;
 
         /** GameState dice2. */
-        dice2: number;
+        public dice2: number;
 
         /** GameState wangpaiTilesLeft. */
-        wangpaiTilesLeft: number;
+        public wangpaiTilesLeft: number;
 
         /** GameState matchMode. */
-        matchMode: game.MatchMode;
+        public matchMode: game.MatchMode;
 
         /** GameState chongciConfig. */
-        chongciConfig: game.ChongciConfig;
+        public chongciConfig: game.ChongciConfig;
 
         /** GameState matchEndResult. */
-        matchEndResult: game.MatchEndResult;
+        public matchEndResult: game.MatchEndResult;
 
         /**
          * Creates a new GameState instance using the specified properties.
          * @param [properties] Properties to set
          * @returns GameState instance
          */
-        static create(properties: game.GameState.$Shape): game.GameState & game.GameState.$Shape;
-        static create(properties?: game.GameState.$Properties): game.GameState;
+        public static create(properties?: game.IGameState): game.GameState;
 
         /**
          * Encodes the specified GameState message. Does not implicitly {@link game.GameState.verify|verify} messages.
@@ -851,7 +768,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.GameState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IGameState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified GameState message, length delimited. Does not implicitly {@link game.GameState.verify|verify} messages.
@@ -859,40 +776,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.GameState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IGameState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a GameState message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.GameState & game.GameState.$Shape} GameState
+         * @returns GameState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.GameState & game.GameState.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.GameState;
 
         /**
          * Decodes a GameState message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.GameState & game.GameState.$Shape} GameState
+         * @returns GameState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.GameState & game.GameState.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.GameState;
 
         /**
          * Verifies a GameState message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a GameState message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns GameState
          */
-        static fromObject(object: { [k: string]: any }): game.GameState;
+        public static fromObject(object: { [k: string]: any }): game.GameState;
 
         /**
          * Creates a plain object from a GameState message. Also converts values to other types if specified.
@@ -900,133 +817,59 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.GameState, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.GameState, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this GameState to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for GameState
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for GameState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace GameState {
+    /** Properties of a ScoreEntry. */
+    interface IScoreEntry {
 
-        /** Properties of a GameState. */
-        interface $Properties {
+        /** ScoreEntry patternName */
+        patternName?: (string|undefined);
 
-            /** GameState matchId */
-            matchId?: string;
+        /** ScoreEntry points */
+        points?: (number|undefined);
 
-            /** GameState phase */
-            phase?: game.GamePhase;
-
-            /** GameState activePlayer */
-            activePlayer?: number;
-
-            /** GameState players */
-            players?: game.PlayerState.$Properties[];
-
-            /** GameState wallCount */
-            wallCount?: number;
-
-            /** GameState handNum */
-            handNum?: number;
-
-            /** GameState activeDiscard */
-            activeDiscard?: game.Tile.$Properties;
-
-            /** GameState wildTiles */
-            wildTiles?: game.Tile.$Properties[];
-
-            /** GameState prevailingWind */
-            prevailingWind?: number;
-
-            /** GameState wallSeed */
-            wallSeed?: string;
-
-            /** GameState roundResult */
-            roundResult?: game.RoundResult.$Properties;
-
-            /** GameState playerReady */
-            playerReady?: boolean[];
-
-            /** GameState diceSum */
-            diceSum?: number;
-
-            /** GameState wangpaiStacks */
-            wangpaiStacks?: number;
-
-            /** GameState isHaitei */
-            isHaitei?: boolean;
-
-            /** GameState dice1 */
-            dice1?: number;
-
-            /** GameState dice2 */
-            dice2?: number;
-
-            /** GameState wangpaiTilesLeft */
-            wangpaiTilesLeft?: number;
-
-            /** GameState matchMode */
-            matchMode?: game.MatchMode;
-
-            /** GameState chongciConfig */
-            chongciConfig?: game.ChongciConfig.$Properties;
-
-            /** GameState matchEndResult */
-            matchEndResult?: game.MatchEndResult.$Properties;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a GameState. */
-        type $Shape = game.GameState.$Properties;
-    }
-
-    /**
-     * Properties of a ScoreEntry.
-     * @deprecated Use game.ScoreEntry.$Properties instead.
-     */
-    interface IScoreEntry extends game.ScoreEntry.$Properties {
+        /** ScoreEntry patternId */
+        patternId?: (string|undefined);
     }
 
     /** Represents a ScoreEntry. */
-    class ScoreEntry {
+    class ScoreEntry implements IScoreEntry {
 
         /**
          * Constructs a new ScoreEntry.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.ScoreEntry.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IScoreEntry);
 
         /** ScoreEntry patternName. */
-        patternName: string;
+        public patternName: string;
 
         /** ScoreEntry points. */
-        points: number;
+        public points: number;
 
         /** ScoreEntry patternId. */
-        patternId: string;
+        public patternId: string;
 
         /**
          * Creates a new ScoreEntry instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ScoreEntry instance
          */
-        static create(properties: game.ScoreEntry.$Shape): game.ScoreEntry & game.ScoreEntry.$Shape;
-        static create(properties?: game.ScoreEntry.$Properties): game.ScoreEntry;
+        public static create(properties?: game.IScoreEntry): game.ScoreEntry;
 
         /**
          * Encodes the specified ScoreEntry message. Does not implicitly {@link game.ScoreEntry.verify|verify} messages.
@@ -1034,7 +877,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.ScoreEntry.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IScoreEntry, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ScoreEntry message, length delimited. Does not implicitly {@link game.ScoreEntry.verify|verify} messages.
@@ -1042,40 +885,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.ScoreEntry.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IScoreEntry, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ScoreEntry message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.ScoreEntry & game.ScoreEntry.$Shape} ScoreEntry
+         * @returns ScoreEntry
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ScoreEntry & game.ScoreEntry.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ScoreEntry;
 
         /**
          * Decodes a ScoreEntry message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.ScoreEntry & game.ScoreEntry.$Shape} ScoreEntry
+         * @returns ScoreEntry
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ScoreEntry & game.ScoreEntry.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ScoreEntry;
 
         /**
          * Verifies a ScoreEntry message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ScoreEntry message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ScoreEntry
          */
-        static fromObject(object: { [k: string]: any }): game.ScoreEntry;
+        public static fromObject(object: { [k: string]: any }): game.ScoreEntry;
 
         /**
          * Creates a plain object from a ScoreEntry message. Also converts values to other types if specified.
@@ -1083,76 +926,53 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.ScoreEntry, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.ScoreEntry, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ScoreEntry to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ScoreEntry
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ScoreEntry
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ScoreEntry {
+    /** Properties of a PlayerPayout. */
+    interface IPlayerPayout {
 
-        /** Properties of a ScoreEntry. */
-        interface $Properties {
+        /** PlayerPayout seat */
+        seat?: (number|undefined);
 
-            /** ScoreEntry patternName */
-            patternName?: string;
-
-            /** ScoreEntry points */
-            points?: number;
-
-            /** ScoreEntry patternId */
-            patternId?: string;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a ScoreEntry. */
-        type $Shape = game.ScoreEntry.$Properties;
-    }
-
-    /**
-     * Properties of a PlayerPayout.
-     * @deprecated Use game.PlayerPayout.$Properties instead.
-     */
-    interface IPlayerPayout extends game.PlayerPayout.$Properties {
+        /** PlayerPayout amount */
+        amount?: (number|undefined);
     }
 
     /** Represents a PlayerPayout. */
-    class PlayerPayout {
+    class PlayerPayout implements IPlayerPayout {
 
         /**
          * Constructs a new PlayerPayout.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.PlayerPayout.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IPlayerPayout);
 
         /** PlayerPayout seat. */
-        seat: number;
+        public seat: number;
 
         /** PlayerPayout amount. */
-        amount: number;
+        public amount: number;
 
         /**
          * Creates a new PlayerPayout instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PlayerPayout instance
          */
-        static create(properties: game.PlayerPayout.$Shape): game.PlayerPayout & game.PlayerPayout.$Shape;
-        static create(properties?: game.PlayerPayout.$Properties): game.PlayerPayout;
+        public static create(properties?: game.IPlayerPayout): game.PlayerPayout;
 
         /**
          * Encodes the specified PlayerPayout message. Does not implicitly {@link game.PlayerPayout.verify|verify} messages.
@@ -1160,7 +980,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.PlayerPayout.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IPlayerPayout, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PlayerPayout message, length delimited. Does not implicitly {@link game.PlayerPayout.verify|verify} messages.
@@ -1168,40 +988,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.PlayerPayout.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IPlayerPayout, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PlayerPayout message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.PlayerPayout & game.PlayerPayout.$Shape} PlayerPayout
+         * @returns PlayerPayout
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerPayout & game.PlayerPayout.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerPayout;
 
         /**
          * Decodes a PlayerPayout message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.PlayerPayout & game.PlayerPayout.$Shape} PlayerPayout
+         * @returns PlayerPayout
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerPayout & game.PlayerPayout.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerPayout;
 
         /**
          * Verifies a PlayerPayout message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PlayerPayout message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PlayerPayout
          */
-        static fromObject(object: { [k: string]: any }): game.PlayerPayout;
+        public static fromObject(object: { [k: string]: any }): game.PlayerPayout;
 
         /**
          * Creates a plain object from a PlayerPayout message. Also converts values to other types if specified.
@@ -1209,97 +1029,101 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.PlayerPayout, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.PlayerPayout, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PlayerPayout to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PlayerPayout
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PlayerPayout
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace PlayerPayout {
+    /** Properties of a RoundResult. */
+    interface IRoundResult {
 
-        /** Properties of a PlayerPayout. */
-        interface $Properties {
+        /** RoundResult winnerSeat */
+        winnerSeat?: (number|undefined);
 
-            /** PlayerPayout seat */
-            seat?: number;
+        /** RoundResult winType */
+        winType?: (game.ActionType|undefined);
 
-            /** PlayerPayout amount */
-            amount?: number;
+        /** RoundResult discarderSeat */
+        discarderSeat?: (number|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** RoundResult winningHand */
+        winningHand?: (game.ITile[]|undefined);
 
-        /** Shape of a PlayerPayout. */
-        type $Shape = game.PlayerPayout.$Properties;
-    }
+        /** RoundResult winningMelds */
+        winningMelds?: (game.IMeld[]|undefined);
 
-    /**
-     * Properties of a RoundResult.
-     * @deprecated Use game.RoundResult.$Properties instead.
-     */
-    interface IRoundResult extends game.RoundResult.$Properties {
+        /** RoundResult winTile */
+        winTile?: (game.ITile|undefined);
+
+        /** RoundResult breakdown */
+        breakdown?: (game.IScoreEntry[]|undefined);
+
+        /** RoundResult totalScore */
+        totalScore?: (number|undefined);
+
+        /** RoundResult payouts */
+        payouts?: (game.IPlayerPayout[]|undefined);
+
+        /** RoundResult isDraw */
+        isDraw?: (boolean|undefined);
     }
 
     /** Represents a RoundResult. */
-    class RoundResult {
+    class RoundResult implements IRoundResult {
 
         /**
          * Constructs a new RoundResult.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.RoundResult.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IRoundResult);
 
         /** RoundResult winnerSeat. */
-        winnerSeat: number;
+        public winnerSeat: number;
 
         /** RoundResult winType. */
-        winType: game.ActionType;
+        public winType: game.ActionType;
 
         /** RoundResult discarderSeat. */
-        discarderSeat: number;
+        public discarderSeat: number;
 
         /** RoundResult winningHand. */
-        winningHand: game.Tile[];
+        public winningHand: game.Tile[];
 
         /** RoundResult winningMelds. */
-        winningMelds: game.Meld[];
+        public winningMelds: game.Meld[];
 
         /** RoundResult winTile. */
-        winTile: game.Tile;
+        public winTile: game.Tile;
 
         /** RoundResult breakdown. */
-        breakdown: game.ScoreEntry[];
+        public breakdown: game.ScoreEntry[];
 
         /** RoundResult totalScore. */
-        totalScore: number;
+        public totalScore: number;
 
         /** RoundResult payouts. */
-        payouts: game.PlayerPayout[];
+        public payouts: game.PlayerPayout[];
 
         /** RoundResult isDraw. */
-        isDraw: boolean;
+        public isDraw: boolean;
 
         /**
          * Creates a new RoundResult instance using the specified properties.
          * @param [properties] Properties to set
          * @returns RoundResult instance
          */
-        static create(properties: game.RoundResult.$Shape): game.RoundResult & game.RoundResult.$Shape;
-        static create(properties?: game.RoundResult.$Properties): game.RoundResult;
+        public static create(properties?: game.IRoundResult): game.RoundResult;
 
         /**
          * Encodes the specified RoundResult message. Does not implicitly {@link game.RoundResult.verify|verify} messages.
@@ -1307,7 +1131,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.RoundResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IRoundResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified RoundResult message, length delimited. Does not implicitly {@link game.RoundResult.verify|verify} messages.
@@ -1315,40 +1139,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.RoundResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IRoundResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a RoundResult message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.RoundResult & game.RoundResult.$Shape} RoundResult
+         * @returns RoundResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundResult & game.RoundResult.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundResult;
 
         /**
          * Decodes a RoundResult message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.RoundResult & game.RoundResult.$Shape} RoundResult
+         * @returns RoundResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundResult & game.RoundResult.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundResult;
 
         /**
          * Verifies a RoundResult message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a RoundResult message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns RoundResult
          */
-        static fromObject(object: { [k: string]: any }): game.RoundResult;
+        public static fromObject(object: { [k: string]: any }): game.RoundResult;
 
         /**
          * Creates a plain object from a RoundResult message. Also converts values to other types if specified.
@@ -1356,109 +1180,77 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.RoundResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.RoundResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this RoundResult to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for RoundResult
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for RoundResult
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace RoundResult {
+    /** Properties of a RoundOutcome. */
+    interface IRoundOutcome {
 
-        /** Properties of a RoundResult. */
-        interface $Properties {
+        /** RoundOutcome isDraw */
+        isDraw?: (boolean|undefined);
 
-            /** RoundResult winnerSeat */
-            winnerSeat?: number;
+        /** RoundOutcome winnerSeat */
+        winnerSeat?: (number|undefined);
 
-            /** RoundResult winType */
-            winType?: game.ActionType;
+        /** RoundOutcome winType */
+        winType?: (game.ActionType|undefined);
 
-            /** RoundResult discarderSeat */
-            discarderSeat?: number;
+        /** RoundOutcome discarderSeat */
+        discarderSeat?: (number|undefined);
 
-            /** RoundResult winningHand */
-            winningHand?: game.Tile.$Properties[];
+        /** RoundOutcome totalScore */
+        totalScore?: (number|undefined);
 
-            /** RoundResult winningMelds */
-            winningMelds?: game.Meld.$Properties[];
-
-            /** RoundResult winTile */
-            winTile?: game.Tile.$Properties;
-
-            /** RoundResult breakdown */
-            breakdown?: game.ScoreEntry.$Properties[];
-
-            /** RoundResult totalScore */
-            totalScore?: number;
-
-            /** RoundResult payouts */
-            payouts?: game.PlayerPayout.$Properties[];
-
-            /** RoundResult isDraw */
-            isDraw?: boolean;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a RoundResult. */
-        type $Shape = game.RoundResult.$Properties;
-    }
-
-    /**
-     * Properties of a RoundOutcome.
-     * @deprecated Use game.RoundOutcome.$Properties instead.
-     */
-    interface IRoundOutcome extends game.RoundOutcome.$Properties {
+        /** RoundOutcome payouts */
+        payouts?: (game.IPlayerPayout[]|undefined);
     }
 
     /** Represents a RoundOutcome. */
-    class RoundOutcome {
+    class RoundOutcome implements IRoundOutcome {
 
         /**
          * Constructs a new RoundOutcome.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.RoundOutcome.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IRoundOutcome);
 
         /** RoundOutcome isDraw. */
-        isDraw: boolean;
+        public isDraw: boolean;
 
         /** RoundOutcome winnerSeat. */
-        winnerSeat: number;
+        public winnerSeat: number;
 
         /** RoundOutcome winType. */
-        winType: game.ActionType;
+        public winType: game.ActionType;
 
         /** RoundOutcome discarderSeat. */
-        discarderSeat: number;
+        public discarderSeat: number;
 
         /** RoundOutcome totalScore. */
-        totalScore: number;
+        public totalScore: number;
 
         /** RoundOutcome payouts. */
-        payouts: game.PlayerPayout[];
+        public payouts: game.PlayerPayout[];
 
         /**
          * Creates a new RoundOutcome instance using the specified properties.
          * @param [properties] Properties to set
          * @returns RoundOutcome instance
          */
-        static create(properties: game.RoundOutcome.$Shape): game.RoundOutcome & game.RoundOutcome.$Shape;
-        static create(properties?: game.RoundOutcome.$Properties): game.RoundOutcome;
+        public static create(properties?: game.IRoundOutcome): game.RoundOutcome;
 
         /**
          * Encodes the specified RoundOutcome message. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
@@ -1466,7 +1258,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.RoundOutcome.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IRoundOutcome, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified RoundOutcome message, length delimited. Does not implicitly {@link game.RoundOutcome.verify|verify} messages.
@@ -1474,40 +1266,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.RoundOutcome.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IRoundOutcome, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a RoundOutcome message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.RoundOutcome & game.RoundOutcome.$Shape} RoundOutcome
+         * @returns RoundOutcome
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundOutcome & game.RoundOutcome.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RoundOutcome;
 
         /**
          * Decodes a RoundOutcome message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.RoundOutcome & game.RoundOutcome.$Shape} RoundOutcome
+         * @returns RoundOutcome
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundOutcome & game.RoundOutcome.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RoundOutcome;
 
         /**
          * Verifies a RoundOutcome message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a RoundOutcome message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns RoundOutcome
          */
-        static fromObject(object: { [k: string]: any }): game.RoundOutcome;
+        public static fromObject(object: { [k: string]: any }): game.RoundOutcome;
 
         /**
          * Creates a plain object from a RoundOutcome message. Also converts values to other types if specified.
@@ -1515,97 +1307,77 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.RoundOutcome, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.RoundOutcome, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this RoundOutcome to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for RoundOutcome
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for RoundOutcome
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace RoundOutcome {
+    /** Properties of an EnvConfig. */
+    interface IEnvConfig {
 
-        /** Properties of a RoundOutcome. */
-        interface $Properties {
+        /** EnvConfig learningSeats */
+        learningSeats?: (number[]|undefined);
 
-            /** RoundOutcome isDraw */
-            isDraw?: boolean;
+        /** EnvConfig autoPlayHeuristics */
+        autoPlayHeuristics?: (boolean|undefined);
 
-            /** RoundOutcome winnerSeat */
-            winnerSeat?: number;
+        /** EnvConfig maxDecisions */
+        maxDecisions?: (number|undefined);
 
-            /** RoundOutcome winType */
-            winType?: game.ActionType;
+        /** EnvConfig matchMode */
+        matchMode?: (game.MatchMode|undefined);
 
-            /** RoundOutcome discarderSeat */
-            discarderSeat?: number;
+        /** EnvConfig chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
 
-            /** RoundOutcome totalScore */
-            totalScore?: number;
-
-            /** RoundOutcome payouts */
-            payouts?: game.PlayerPayout.$Properties[];
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a RoundOutcome. */
-        type $Shape = game.RoundOutcome.$Properties;
-    }
-
-    /**
-     * Properties of an EnvConfig.
-     * @deprecated Use game.EnvConfig.$Properties instead.
-     */
-    interface IEnvConfig extends game.EnvConfig.$Properties {
+        /** EnvConfig oracleObservation */
+        oracleObservation?: (boolean|undefined);
     }
 
     /** Represents an EnvConfig. */
-    class EnvConfig {
+    class EnvConfig implements IEnvConfig {
 
         /**
          * Constructs a new EnvConfig.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.EnvConfig.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IEnvConfig);
 
         /** EnvConfig learningSeats. */
-        learningSeats: number[];
+        public learningSeats: number[];
 
         /** EnvConfig autoPlayHeuristics. */
-        autoPlayHeuristics: boolean;
+        public autoPlayHeuristics: boolean;
 
         /** EnvConfig maxDecisions. */
-        maxDecisions: number;
+        public maxDecisions: number;
 
         /** EnvConfig matchMode. */
-        matchMode: game.MatchMode;
+        public matchMode: game.MatchMode;
 
         /** EnvConfig chongciConfig. */
-        chongciConfig: game.ChongciConfig;
+        public chongciConfig: game.ChongciConfig;
 
         /** EnvConfig oracleObservation. */
-        oracleObservation: boolean;
+        public oracleObservation: boolean;
 
         /**
          * Creates a new EnvConfig instance using the specified properties.
          * @param [properties] Properties to set
          * @returns EnvConfig instance
          */
-        static create(properties: game.EnvConfig.$Shape): game.EnvConfig & game.EnvConfig.$Shape;
-        static create(properties?: game.EnvConfig.$Properties): game.EnvConfig;
+        public static create(properties?: game.IEnvConfig): game.EnvConfig;
 
         /**
          * Encodes the specified EnvConfig message. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
@@ -1613,7 +1385,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.EnvConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IEnvConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified EnvConfig message, length delimited. Does not implicitly {@link game.EnvConfig.verify|verify} messages.
@@ -1621,40 +1393,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.EnvConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IEnvConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an EnvConfig message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.EnvConfig & game.EnvConfig.$Shape} EnvConfig
+         * @returns EnvConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvConfig & game.EnvConfig.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvConfig;
 
         /**
          * Decodes an EnvConfig message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.EnvConfig & game.EnvConfig.$Shape} EnvConfig
+         * @returns EnvConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvConfig & game.EnvConfig.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvConfig;
 
         /**
          * Verifies an EnvConfig message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an EnvConfig message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns EnvConfig
          */
-        static fromObject(object: { [k: string]: any }): game.EnvConfig;
+        public static fromObject(object: { [k: string]: any }): game.EnvConfig;
 
         /**
          * Creates a plain object from an EnvConfig message. Also converts values to other types if specified.
@@ -1662,112 +1434,107 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.EnvConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.EnvConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this EnvConfig to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for EnvConfig
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for EnvConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace EnvConfig {
+    /** Properties of a SeatObservation. */
+    interface ISeatObservation {
 
-        /** Properties of an EnvConfig. */
-        interface $Properties {
+        /** SeatObservation seat */
+        seat?: (number|undefined);
 
-            /** EnvConfig learningSeats */
-            learningSeats?: number[];
+        /** SeatObservation planes */
+        planes?: (number[]|undefined);
 
-            /** EnvConfig autoPlayHeuristics */
-            autoPlayHeuristics?: boolean;
+        /** SeatObservation planeChannels */
+        planeChannels?: (number|undefined);
 
-            /** EnvConfig maxDecisions */
-            maxDecisions?: number;
+        /** SeatObservation planeHeight */
+        planeHeight?: (number|undefined);
 
-            /** EnvConfig matchMode */
-            matchMode?: game.MatchMode;
+        /** SeatObservation planeWidth */
+        planeWidth?: (number|undefined);
 
-            /** EnvConfig chongciConfig */
-            chongciConfig?: game.ChongciConfig.$Properties;
+        /** SeatObservation scalars */
+        scalars?: (number[]|undefined);
 
-            /** EnvConfig oracleObservation */
-            oracleObservation?: boolean;
+        /** SeatObservation actionMask */
+        actionMask?: (Uint8Array|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** SeatObservation actionSpaceSize */
+        actionSpaceSize?: (number|undefined);
 
-        /** Shape of an EnvConfig. */
-        type $Shape = game.EnvConfig.$Properties;
-    }
+        /** SeatObservation decisionIndex */
+        decisionIndex?: (number|Long|undefined);
 
-    /**
-     * Properties of a SeatObservation.
-     * @deprecated Use game.SeatObservation.$Properties instead.
-     */
-    interface ISeatObservation extends game.SeatObservation.$Properties {
+        /** SeatObservation phase */
+        phase?: (game.GamePhase|undefined);
+
+        /** SeatObservation activePlayer */
+        activePlayer?: (number|undefined);
     }
 
     /** Represents a SeatObservation. */
-    class SeatObservation {
+    class SeatObservation implements ISeatObservation {
 
         /**
          * Constructs a new SeatObservation.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.SeatObservation.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ISeatObservation);
 
         /** SeatObservation seat. */
-        seat: number;
+        public seat: number;
 
         /** SeatObservation planes. */
-        planes: number[];
+        public planes: number[];
 
         /** SeatObservation planeChannels. */
-        planeChannels: number;
+        public planeChannels: number;
 
         /** SeatObservation planeHeight. */
-        planeHeight: number;
+        public planeHeight: number;
 
         /** SeatObservation planeWidth. */
-        planeWidth: number;
+        public planeWidth: number;
 
         /** SeatObservation scalars. */
-        scalars: number[];
+        public scalars: number[];
 
         /** SeatObservation actionMask. */
-        actionMask: Uint8Array;
+        public actionMask: Uint8Array;
 
         /** SeatObservation actionSpaceSize. */
-        actionSpaceSize: number;
+        public actionSpaceSize: number;
 
         /** SeatObservation decisionIndex. */
-        decisionIndex: (number|Long);
+        public decisionIndex: (number|Long);
 
         /** SeatObservation phase. */
-        phase: game.GamePhase;
+        public phase: game.GamePhase;
 
         /** SeatObservation activePlayer. */
-        activePlayer: number;
+        public activePlayer: number;
 
         /**
          * Creates a new SeatObservation instance using the specified properties.
          * @param [properties] Properties to set
          * @returns SeatObservation instance
          */
-        static create(properties: game.SeatObservation.$Shape): game.SeatObservation & game.SeatObservation.$Shape;
-        static create(properties?: game.SeatObservation.$Properties): game.SeatObservation;
+        public static create(properties?: game.ISeatObservation): game.SeatObservation;
 
         /**
          * Encodes the specified SeatObservation message. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
@@ -1775,7 +1542,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.SeatObservation.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ISeatObservation, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified SeatObservation message, length delimited. Does not implicitly {@link game.SeatObservation.verify|verify} messages.
@@ -1783,40 +1550,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.SeatObservation.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ISeatObservation, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a SeatObservation message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.SeatObservation & game.SeatObservation.$Shape} SeatObservation
+         * @returns SeatObservation
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatObservation & game.SeatObservation.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatObservation;
 
         /**
          * Decodes a SeatObservation message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.SeatObservation & game.SeatObservation.$Shape} SeatObservation
+         * @returns SeatObservation
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatObservation & game.SeatObservation.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatObservation;
 
         /**
          * Verifies a SeatObservation message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a SeatObservation message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns SeatObservation
          */
-        static fromObject(object: { [k: string]: any }): game.SeatObservation;
+        public static fromObject(object: { [k: string]: any }): game.SeatObservation;
 
         /**
          * Creates a plain object from a SeatObservation message. Also converts values to other types if specified.
@@ -1824,100 +1591,53 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.SeatObservation, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.SeatObservation, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this SeatObservation to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for SeatObservation
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for SeatObservation
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace SeatObservation {
+    /** Properties of an EnvResetRequest. */
+    interface IEnvResetRequest {
 
-        /** Properties of a SeatObservation. */
-        interface $Properties {
+        /** EnvResetRequest seed */
+        seed?: (number|Long|undefined);
 
-            /** SeatObservation seat */
-            seat?: number;
-
-            /** SeatObservation planes */
-            planes?: number[];
-
-            /** SeatObservation planeChannels */
-            planeChannels?: number;
-
-            /** SeatObservation planeHeight */
-            planeHeight?: number;
-
-            /** SeatObservation planeWidth */
-            planeWidth?: number;
-
-            /** SeatObservation scalars */
-            scalars?: number[];
-
-            /** SeatObservation actionMask */
-            actionMask?: Uint8Array;
-
-            /** SeatObservation actionSpaceSize */
-            actionSpaceSize?: number;
-
-            /** SeatObservation decisionIndex */
-            decisionIndex?: (number|Long);
-
-            /** SeatObservation phase */
-            phase?: game.GamePhase;
-
-            /** SeatObservation activePlayer */
-            activePlayer?: number;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a SeatObservation. */
-        type $Shape = game.SeatObservation.$Properties;
-    }
-
-    /**
-     * Properties of an EnvResetRequest.
-     * @deprecated Use game.EnvResetRequest.$Properties instead.
-     */
-    interface IEnvResetRequest extends game.EnvResetRequest.$Properties {
+        /** EnvResetRequest config */
+        config?: (game.IEnvConfig|undefined);
     }
 
     /** Represents an EnvResetRequest. */
-    class EnvResetRequest {
+    class EnvResetRequest implements IEnvResetRequest {
 
         /**
          * Constructs a new EnvResetRequest.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.EnvResetRequest.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IEnvResetRequest);
 
         /** EnvResetRequest seed. */
-        seed: (number|Long);
+        public seed: (number|Long);
 
         /** EnvResetRequest config. */
-        config: game.EnvConfig;
+        public config: game.EnvConfig;
 
         /**
          * Creates a new EnvResetRequest instance using the specified properties.
          * @param [properties] Properties to set
          * @returns EnvResetRequest instance
          */
-        static create(properties: game.EnvResetRequest.$Shape): game.EnvResetRequest & game.EnvResetRequest.$Shape;
-        static create(properties?: game.EnvResetRequest.$Properties): game.EnvResetRequest;
+        public static create(properties?: game.IEnvResetRequest): game.EnvResetRequest;
 
         /**
          * Encodes the specified EnvResetRequest message. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
@@ -1925,7 +1645,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.EnvResetRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IEnvResetRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified EnvResetRequest message, length delimited. Does not implicitly {@link game.EnvResetRequest.verify|verify} messages.
@@ -1933,40 +1653,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.EnvResetRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IEnvResetRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an EnvResetRequest message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.EnvResetRequest & game.EnvResetRequest.$Shape} EnvResetRequest
+         * @returns EnvResetRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetRequest & game.EnvResetRequest.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetRequest;
 
         /**
          * Decodes an EnvResetRequest message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.EnvResetRequest & game.EnvResetRequest.$Shape} EnvResetRequest
+         * @returns EnvResetRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetRequest & game.EnvResetRequest.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetRequest;
 
         /**
          * Verifies an EnvResetRequest message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an EnvResetRequest message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns EnvResetRequest
          */
-        static fromObject(object: { [k: string]: any }): game.EnvResetRequest;
+        public static fromObject(object: { [k: string]: any }): game.EnvResetRequest;
 
         /**
          * Creates a plain object from an EnvResetRequest message. Also converts values to other types if specified.
@@ -1974,82 +1694,71 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.EnvResetRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.EnvResetRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this EnvResetRequest to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for EnvResetRequest
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for EnvResetRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace EnvResetRequest {
+    /** Properties of an EnvResetResponse. */
+    interface IEnvResetResponse {
 
-        /** Properties of an EnvResetRequest. */
-        interface $Properties {
+        /** EnvResetResponse observation */
+        observation?: (game.ISeatObservation|undefined);
 
-            /** EnvResetRequest seed */
-            seed?: (number|Long);
+        /** EnvResetResponse rewards */
+        rewards?: (number[]|undefined);
 
-            /** EnvResetRequest config */
-            config?: game.EnvConfig.$Properties;
+        /** EnvResetResponse terminated */
+        terminated?: (boolean|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** EnvResetResponse truncated */
+        truncated?: (boolean|undefined);
 
-        /** Shape of an EnvResetRequest. */
-        type $Shape = game.EnvResetRequest.$Properties;
-    }
-
-    /**
-     * Properties of an EnvResetResponse.
-     * @deprecated Use game.EnvResetResponse.$Properties instead.
-     */
-    interface IEnvResetResponse extends game.EnvResetResponse.$Properties {
+        /** EnvResetResponse roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents an EnvResetResponse. */
-    class EnvResetResponse {
+    class EnvResetResponse implements IEnvResetResponse {
 
         /**
          * Constructs a new EnvResetResponse.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.EnvResetResponse.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IEnvResetResponse);
 
         /** EnvResetResponse observation. */
-        observation: game.SeatObservation;
+        public observation: game.SeatObservation;
 
         /** EnvResetResponse rewards. */
-        rewards: number[];
+        public rewards: number[];
 
         /** EnvResetResponse terminated. */
-        terminated: boolean;
+        public terminated: boolean;
 
         /** EnvResetResponse truncated. */
-        truncated: boolean;
+        public truncated: boolean;
 
         /** EnvResetResponse roundOutcome. */
-        roundOutcome: game.RoundOutcome;
+        public roundOutcome: game.RoundOutcome;
 
         /**
          * Creates a new EnvResetResponse instance using the specified properties.
          * @param [properties] Properties to set
          * @returns EnvResetResponse instance
          */
-        static create(properties: game.EnvResetResponse.$Shape): game.EnvResetResponse & game.EnvResetResponse.$Shape;
-        static create(properties?: game.EnvResetResponse.$Properties): game.EnvResetResponse;
+        public static create(properties?: game.IEnvResetResponse): game.EnvResetResponse;
 
         /**
          * Encodes the specified EnvResetResponse message. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
@@ -2057,7 +1766,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.EnvResetResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IEnvResetResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified EnvResetResponse message, length delimited. Does not implicitly {@link game.EnvResetResponse.verify|verify} messages.
@@ -2065,40 +1774,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.EnvResetResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IEnvResetResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an EnvResetResponse message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.EnvResetResponse & game.EnvResetResponse.$Shape} EnvResetResponse
+         * @returns EnvResetResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetResponse & game.EnvResetResponse.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvResetResponse;
 
         /**
          * Decodes an EnvResetResponse message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.EnvResetResponse & game.EnvResetResponse.$Shape} EnvResetResponse
+         * @returns EnvResetResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetResponse & game.EnvResetResponse.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvResetResponse;
 
         /**
          * Verifies an EnvResetResponse message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an EnvResetResponse message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns EnvResetResponse
          */
-        static fromObject(object: { [k: string]: any }): game.EnvResetResponse;
+        public static fromObject(object: { [k: string]: any }): game.EnvResetResponse;
 
         /**
          * Creates a plain object from an EnvResetResponse message. Also converts values to other types if specified.
@@ -2106,79 +1815,47 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.EnvResetResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.EnvResetResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this EnvResetResponse to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for EnvResetResponse
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for EnvResetResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace EnvResetResponse {
+    /** Properties of an EnvStepRequest. */
+    interface IEnvStepRequest {
 
-        /** Properties of an EnvResetResponse. */
-        interface $Properties {
-
-            /** EnvResetResponse observation */
-            observation?: game.SeatObservation.$Properties;
-
-            /** EnvResetResponse rewards */
-            rewards?: number[];
-
-            /** EnvResetResponse terminated */
-            terminated?: boolean;
-
-            /** EnvResetResponse truncated */
-            truncated?: boolean;
-
-            /** EnvResetResponse roundOutcome */
-            roundOutcome?: game.RoundOutcome.$Properties;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of an EnvResetResponse. */
-        type $Shape = game.EnvResetResponse.$Properties;
-    }
-
-    /**
-     * Properties of an EnvStepRequest.
-     * @deprecated Use game.EnvStepRequest.$Properties instead.
-     */
-    interface IEnvStepRequest extends game.EnvStepRequest.$Properties {
+        /** EnvStepRequest actionId */
+        actionId?: (number|undefined);
     }
 
     /** Represents an EnvStepRequest. */
-    class EnvStepRequest {
+    class EnvStepRequest implements IEnvStepRequest {
 
         /**
          * Constructs a new EnvStepRequest.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.EnvStepRequest.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IEnvStepRequest);
 
         /** EnvStepRequest actionId. */
-        actionId: number;
+        public actionId: number;
 
         /**
          * Creates a new EnvStepRequest instance using the specified properties.
          * @param [properties] Properties to set
          * @returns EnvStepRequest instance
          */
-        static create(properties: game.EnvStepRequest.$Shape): game.EnvStepRequest & game.EnvStepRequest.$Shape;
-        static create(properties?: game.EnvStepRequest.$Properties): game.EnvStepRequest;
+        public static create(properties?: game.IEnvStepRequest): game.EnvStepRequest;
 
         /**
          * Encodes the specified EnvStepRequest message. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
@@ -2186,7 +1863,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.EnvStepRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IEnvStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified EnvStepRequest message, length delimited. Does not implicitly {@link game.EnvStepRequest.verify|verify} messages.
@@ -2194,40 +1871,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.EnvStepRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IEnvStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an EnvStepRequest message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.EnvStepRequest & game.EnvStepRequest.$Shape} EnvStepRequest
+         * @returns EnvStepRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepRequest & game.EnvStepRequest.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepRequest;
 
         /**
          * Decodes an EnvStepRequest message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.EnvStepRequest & game.EnvStepRequest.$Shape} EnvStepRequest
+         * @returns EnvStepRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepRequest & game.EnvStepRequest.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepRequest;
 
         /**
          * Verifies an EnvStepRequest message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an EnvStepRequest message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns EnvStepRequest
          */
-        static fromObject(object: { [k: string]: any }): game.EnvStepRequest;
+        public static fromObject(object: { [k: string]: any }): game.EnvStepRequest;
 
         /**
          * Creates a plain object from an EnvStepRequest message. Also converts values to other types if specified.
@@ -2235,79 +1912,71 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.EnvStepRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.EnvStepRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this EnvStepRequest to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for EnvStepRequest
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for EnvStepRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace EnvStepRequest {
+    /** Properties of an EnvStepResponse. */
+    interface IEnvStepResponse {
 
-        /** Properties of an EnvStepRequest. */
-        interface $Properties {
+        /** EnvStepResponse observation */
+        observation?: (game.ISeatObservation|undefined);
 
-            /** EnvStepRequest actionId */
-            actionId?: number;
+        /** EnvStepResponse rewards */
+        rewards?: (number[]|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** EnvStepResponse terminated */
+        terminated?: (boolean|undefined);
 
-        /** Shape of an EnvStepRequest. */
-        type $Shape = game.EnvStepRequest.$Properties;
-    }
+        /** EnvStepResponse truncated */
+        truncated?: (boolean|undefined);
 
-    /**
-     * Properties of an EnvStepResponse.
-     * @deprecated Use game.EnvStepResponse.$Properties instead.
-     */
-    interface IEnvStepResponse extends game.EnvStepResponse.$Properties {
+        /** EnvStepResponse roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents an EnvStepResponse. */
-    class EnvStepResponse {
+    class EnvStepResponse implements IEnvStepResponse {
 
         /**
          * Constructs a new EnvStepResponse.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.EnvStepResponse.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IEnvStepResponse);
 
         /** EnvStepResponse observation. */
-        observation: game.SeatObservation;
+        public observation: game.SeatObservation;
 
         /** EnvStepResponse rewards. */
-        rewards: number[];
+        public rewards: number[];
 
         /** EnvStepResponse terminated. */
-        terminated: boolean;
+        public terminated: boolean;
 
         /** EnvStepResponse truncated. */
-        truncated: boolean;
+        public truncated: boolean;
 
         /** EnvStepResponse roundOutcome. */
-        roundOutcome: game.RoundOutcome;
+        public roundOutcome: game.RoundOutcome;
 
         /**
          * Creates a new EnvStepResponse instance using the specified properties.
          * @param [properties] Properties to set
          * @returns EnvStepResponse instance
          */
-        static create(properties: game.EnvStepResponse.$Shape): game.EnvStepResponse & game.EnvStepResponse.$Shape;
-        static create(properties?: game.EnvStepResponse.$Properties): game.EnvStepResponse;
+        public static create(properties?: game.IEnvStepResponse): game.EnvStepResponse;
 
         /**
          * Encodes the specified EnvStepResponse message. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
@@ -2315,7 +1984,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.EnvStepResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IEnvStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified EnvStepResponse message, length delimited. Does not implicitly {@link game.EnvStepResponse.verify|verify} messages.
@@ -2323,40 +1992,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.EnvStepResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IEnvStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an EnvStepResponse message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.EnvStepResponse & game.EnvStepResponse.$Shape} EnvStepResponse
+         * @returns EnvStepResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepResponse & game.EnvStepResponse.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvStepResponse;
 
         /**
          * Decodes an EnvStepResponse message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.EnvStepResponse & game.EnvStepResponse.$Shape} EnvStepResponse
+         * @returns EnvStepResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepResponse & game.EnvStepResponse.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvStepResponse;
 
         /**
          * Verifies an EnvStepResponse message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an EnvStepResponse message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns EnvStepResponse
          */
-        static fromObject(object: { [k: string]: any }): game.EnvStepResponse;
+        public static fromObject(object: { [k: string]: any }): game.EnvStepResponse;
 
         /**
          * Creates a plain object from an EnvStepResponse message. Also converts values to other types if specified.
@@ -2364,85 +2033,59 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.EnvStepResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.EnvStepResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this EnvStepResponse to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for EnvStepResponse
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for EnvStepResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace EnvStepResponse {
+    /** Properties of a BranchEvaluationRequest. */
+    interface IBranchEvaluationRequest {
 
-        /** Properties of an EnvStepResponse. */
-        interface $Properties {
+        /** BranchEvaluationRequest actionIds */
+        actionIds?: (number[]|undefined);
 
-            /** EnvStepResponse observation */
-            observation?: game.SeatObservation.$Properties;
+        /** BranchEvaluationRequest stopAtRoundEnd */
+        stopAtRoundEnd?: (boolean|undefined);
 
-            /** EnvStepResponse rewards */
-            rewards?: number[];
-
-            /** EnvStepResponse terminated */
-            terminated?: boolean;
-
-            /** EnvStepResponse truncated */
-            truncated?: boolean;
-
-            /** EnvStepResponse roundOutcome */
-            roundOutcome?: game.RoundOutcome.$Properties;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of an EnvStepResponse. */
-        type $Shape = game.EnvStepResponse.$Properties;
-    }
-
-    /**
-     * Properties of a BranchEvaluationRequest.
-     * @deprecated Use game.BranchEvaluationRequest.$Properties instead.
-     */
-    interface IBranchEvaluationRequest extends game.BranchEvaluationRequest.$Properties {
+        /** BranchEvaluationRequest maxDecisions */
+        maxDecisions?: (number|undefined);
     }
 
     /** Represents a BranchEvaluationRequest. */
-    class BranchEvaluationRequest {
+    class BranchEvaluationRequest implements IBranchEvaluationRequest {
 
         /**
          * Constructs a new BranchEvaluationRequest.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.BranchEvaluationRequest.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IBranchEvaluationRequest);
 
         /** BranchEvaluationRequest actionIds. */
-        actionIds: number[];
+        public actionIds: number[];
 
         /** BranchEvaluationRequest stopAtRoundEnd. */
-        stopAtRoundEnd: boolean;
+        public stopAtRoundEnd: boolean;
 
         /** BranchEvaluationRequest maxDecisions. */
-        maxDecisions: number;
+        public maxDecisions: number;
 
         /**
          * Creates a new BranchEvaluationRequest instance using the specified properties.
          * @param [properties] Properties to set
          * @returns BranchEvaluationRequest instance
          */
-        static create(properties: game.BranchEvaluationRequest.$Shape): game.BranchEvaluationRequest & game.BranchEvaluationRequest.$Shape;
-        static create(properties?: game.BranchEvaluationRequest.$Properties): game.BranchEvaluationRequest;
+        public static create(properties?: game.IBranchEvaluationRequest): game.BranchEvaluationRequest;
 
         /**
          * Encodes the specified BranchEvaluationRequest message. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
@@ -2450,7 +2093,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.BranchEvaluationRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IBranchEvaluationRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified BranchEvaluationRequest message, length delimited. Does not implicitly {@link game.BranchEvaluationRequest.verify|verify} messages.
@@ -2458,40 +2101,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.BranchEvaluationRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IBranchEvaluationRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a BranchEvaluationRequest message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.BranchEvaluationRequest & game.BranchEvaluationRequest.$Shape} BranchEvaluationRequest
+         * @returns BranchEvaluationRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationRequest & game.BranchEvaluationRequest.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationRequest;
 
         /**
          * Decodes a BranchEvaluationRequest message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.BranchEvaluationRequest & game.BranchEvaluationRequest.$Shape} BranchEvaluationRequest
+         * @returns BranchEvaluationRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationRequest & game.BranchEvaluationRequest.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationRequest;
 
         /**
          * Verifies a BranchEvaluationRequest message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a BranchEvaluationRequest message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns BranchEvaluationRequest
          */
-        static fromObject(object: { [k: string]: any }): game.BranchEvaluationRequest;
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationRequest;
 
         /**
          * Creates a plain object from a BranchEvaluationRequest message. Also converts values to other types if specified.
@@ -2499,91 +2142,83 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.BranchEvaluationRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.BranchEvaluationRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this BranchEvaluationRequest to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for BranchEvaluationRequest
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for BranchEvaluationRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace BranchEvaluationRequest {
+    /** Properties of a BranchEvaluationResult. */
+    interface IBranchEvaluationResult {
 
-        /** Properties of a BranchEvaluationRequest. */
-        interface $Properties {
+        /** BranchEvaluationResult actionId */
+        actionId?: (number|undefined);
 
-            /** BranchEvaluationRequest actionIds */
-            actionIds?: number[];
+        /** BranchEvaluationResult rewards */
+        rewards?: (number[]|undefined);
 
-            /** BranchEvaluationRequest stopAtRoundEnd */
-            stopAtRoundEnd?: boolean;
+        /** BranchEvaluationResult terminated */
+        terminated?: (boolean|undefined);
 
-            /** BranchEvaluationRequest maxDecisions */
-            maxDecisions?: number;
+        /** BranchEvaluationResult truncated */
+        truncated?: (boolean|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** BranchEvaluationResult roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
 
-        /** Shape of a BranchEvaluationRequest. */
-        type $Shape = game.BranchEvaluationRequest.$Properties;
-    }
+        /** BranchEvaluationResult decisions */
+        decisions?: (number|Long|undefined);
 
-    /**
-     * Properties of a BranchEvaluationResult.
-     * @deprecated Use game.BranchEvaluationResult.$Properties instead.
-     */
-    interface IBranchEvaluationResult extends game.BranchEvaluationResult.$Properties {
+        /** BranchEvaluationResult error */
+        error?: (string|undefined);
     }
 
     /** Represents a BranchEvaluationResult. */
-    class BranchEvaluationResult {
+    class BranchEvaluationResult implements IBranchEvaluationResult {
 
         /**
          * Constructs a new BranchEvaluationResult.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.BranchEvaluationResult.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IBranchEvaluationResult);
 
         /** BranchEvaluationResult actionId. */
-        actionId: number;
+        public actionId: number;
 
         /** BranchEvaluationResult rewards. */
-        rewards: number[];
+        public rewards: number[];
 
         /** BranchEvaluationResult terminated. */
-        terminated: boolean;
+        public terminated: boolean;
 
         /** BranchEvaluationResult truncated. */
-        truncated: boolean;
+        public truncated: boolean;
 
         /** BranchEvaluationResult roundOutcome. */
-        roundOutcome: game.RoundOutcome;
+        public roundOutcome: game.RoundOutcome;
 
         /** BranchEvaluationResult decisions. */
-        decisions: (number|Long);
+        public decisions: (number|Long);
 
         /** BranchEvaluationResult error. */
-        error: string;
+        public error: string;
 
         /**
          * Creates a new BranchEvaluationResult instance using the specified properties.
          * @param [properties] Properties to set
          * @returns BranchEvaluationResult instance
          */
-        static create(properties: game.BranchEvaluationResult.$Shape): game.BranchEvaluationResult & game.BranchEvaluationResult.$Shape;
-        static create(properties?: game.BranchEvaluationResult.$Properties): game.BranchEvaluationResult;
+        public static create(properties?: game.IBranchEvaluationResult): game.BranchEvaluationResult;
 
         /**
          * Encodes the specified BranchEvaluationResult message. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
@@ -2591,7 +2226,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.BranchEvaluationResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IBranchEvaluationResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified BranchEvaluationResult message, length delimited. Does not implicitly {@link game.BranchEvaluationResult.verify|verify} messages.
@@ -2599,40 +2234,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.BranchEvaluationResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IBranchEvaluationResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a BranchEvaluationResult message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.BranchEvaluationResult & game.BranchEvaluationResult.$Shape} BranchEvaluationResult
+         * @returns BranchEvaluationResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResult & game.BranchEvaluationResult.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResult;
 
         /**
          * Decodes a BranchEvaluationResult message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.BranchEvaluationResult & game.BranchEvaluationResult.$Shape} BranchEvaluationResult
+         * @returns BranchEvaluationResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResult & game.BranchEvaluationResult.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResult;
 
         /**
          * Verifies a BranchEvaluationResult message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a BranchEvaluationResult message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns BranchEvaluationResult
          */
-        static fromObject(object: { [k: string]: any }): game.BranchEvaluationResult;
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationResult;
 
         /**
          * Creates a plain object from a BranchEvaluationResult message. Also converts values to other types if specified.
@@ -2640,88 +2275,53 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.BranchEvaluationResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.BranchEvaluationResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this BranchEvaluationResult to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for BranchEvaluationResult
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for BranchEvaluationResult
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace BranchEvaluationResult {
+    /** Properties of a BranchEvaluationResponse. */
+    interface IBranchEvaluationResponse {
 
-        /** Properties of a BranchEvaluationResult. */
-        interface $Properties {
+        /** BranchEvaluationResponse observation */
+        observation?: (game.ISeatObservation|undefined);
 
-            /** BranchEvaluationResult actionId */
-            actionId?: number;
-
-            /** BranchEvaluationResult rewards */
-            rewards?: number[];
-
-            /** BranchEvaluationResult terminated */
-            terminated?: boolean;
-
-            /** BranchEvaluationResult truncated */
-            truncated?: boolean;
-
-            /** BranchEvaluationResult roundOutcome */
-            roundOutcome?: game.RoundOutcome.$Properties;
-
-            /** BranchEvaluationResult decisions */
-            decisions?: (number|Long);
-
-            /** BranchEvaluationResult error */
-            error?: string;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a BranchEvaluationResult. */
-        type $Shape = game.BranchEvaluationResult.$Properties;
-    }
-
-    /**
-     * Properties of a BranchEvaluationResponse.
-     * @deprecated Use game.BranchEvaluationResponse.$Properties instead.
-     */
-    interface IBranchEvaluationResponse extends game.BranchEvaluationResponse.$Properties {
+        /** BranchEvaluationResponse results */
+        results?: (game.IBranchEvaluationResult[]|undefined);
     }
 
     /** Represents a BranchEvaluationResponse. */
-    class BranchEvaluationResponse {
+    class BranchEvaluationResponse implements IBranchEvaluationResponse {
 
         /**
          * Constructs a new BranchEvaluationResponse.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.BranchEvaluationResponse.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IBranchEvaluationResponse);
 
         /** BranchEvaluationResponse observation. */
-        observation: game.SeatObservation;
+        public observation: game.SeatObservation;
 
         /** BranchEvaluationResponse results. */
-        results: game.BranchEvaluationResult[];
+        public results: game.BranchEvaluationResult[];
 
         /**
          * Creates a new BranchEvaluationResponse instance using the specified properties.
          * @param [properties] Properties to set
          * @returns BranchEvaluationResponse instance
          */
-        static create(properties: game.BranchEvaluationResponse.$Shape): game.BranchEvaluationResponse & game.BranchEvaluationResponse.$Shape;
-        static create(properties?: game.BranchEvaluationResponse.$Properties): game.BranchEvaluationResponse;
+        public static create(properties?: game.IBranchEvaluationResponse): game.BranchEvaluationResponse;
 
         /**
          * Encodes the specified BranchEvaluationResponse message. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
@@ -2729,7 +2329,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.BranchEvaluationResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IBranchEvaluationResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified BranchEvaluationResponse message, length delimited. Does not implicitly {@link game.BranchEvaluationResponse.verify|verify} messages.
@@ -2737,40 +2337,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.BranchEvaluationResponse.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IBranchEvaluationResponse, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a BranchEvaluationResponse message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.BranchEvaluationResponse & game.BranchEvaluationResponse.$Shape} BranchEvaluationResponse
+         * @returns BranchEvaluationResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResponse & game.BranchEvaluationResponse.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.BranchEvaluationResponse;
 
         /**
          * Decodes a BranchEvaluationResponse message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.BranchEvaluationResponse & game.BranchEvaluationResponse.$Shape} BranchEvaluationResponse
+         * @returns BranchEvaluationResponse
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResponse & game.BranchEvaluationResponse.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.BranchEvaluationResponse;
 
         /**
          * Verifies a BranchEvaluationResponse message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a BranchEvaluationResponse message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns BranchEvaluationResponse
          */
-        static fromObject(object: { [k: string]: any }): game.BranchEvaluationResponse;
+        public static fromObject(object: { [k: string]: any }): game.BranchEvaluationResponse;
 
         /**
          * Creates a plain object from a BranchEvaluationResponse message. Also converts values to other types if specified.
@@ -2778,76 +2378,59 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.BranchEvaluationResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.BranchEvaluationResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this BranchEvaluationResponse to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for BranchEvaluationResponse
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for BranchEvaluationResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace BranchEvaluationResponse {
+    /** Properties of a TrajectoryRequest. */
+    interface ITrajectoryRequest {
 
-        /** Properties of a BranchEvaluationResponse. */
-        interface $Properties {
+        /** TrajectoryRequest episodes */
+        episodes?: (number|undefined);
 
-            /** BranchEvaluationResponse observation */
-            observation?: game.SeatObservation.$Properties;
+        /** TrajectoryRequest startSeed */
+        startSeed?: (number|Long|undefined);
 
-            /** BranchEvaluationResponse results */
-            results?: game.BranchEvaluationResult.$Properties[];
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a BranchEvaluationResponse. */
-        type $Shape = game.BranchEvaluationResponse.$Properties;
-    }
-
-    /**
-     * Properties of a TrajectoryRequest.
-     * @deprecated Use game.TrajectoryRequest.$Properties instead.
-     */
-    interface ITrajectoryRequest extends game.TrajectoryRequest.$Properties {
+        /** TrajectoryRequest config */
+        config?: (game.IEnvConfig|undefined);
     }
 
     /** Represents a TrajectoryRequest. */
-    class TrajectoryRequest {
+    class TrajectoryRequest implements ITrajectoryRequest {
 
         /**
          * Constructs a new TrajectoryRequest.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.TrajectoryRequest.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ITrajectoryRequest);
 
         /** TrajectoryRequest episodes. */
-        episodes: number;
+        public episodes: number;
 
         /** TrajectoryRequest startSeed. */
-        startSeed: (number|Long);
+        public startSeed: (number|Long);
 
         /** TrajectoryRequest config. */
-        config: game.EnvConfig;
+        public config: game.EnvConfig;
 
         /**
          * Creates a new TrajectoryRequest instance using the specified properties.
          * @param [properties] Properties to set
          * @returns TrajectoryRequest instance
          */
-        static create(properties: game.TrajectoryRequest.$Shape): game.TrajectoryRequest & game.TrajectoryRequest.$Shape;
-        static create(properties?: game.TrajectoryRequest.$Properties): game.TrajectoryRequest;
+        public static create(properties?: game.ITrajectoryRequest): game.TrajectoryRequest;
 
         /**
          * Encodes the specified TrajectoryRequest message. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
@@ -2855,7 +2438,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.TrajectoryRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ITrajectoryRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified TrajectoryRequest message, length delimited. Does not implicitly {@link game.TrajectoryRequest.verify|verify} messages.
@@ -2863,40 +2446,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.TrajectoryRequest.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ITrajectoryRequest, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a TrajectoryRequest message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.TrajectoryRequest & game.TrajectoryRequest.$Shape} TrajectoryRequest
+         * @returns TrajectoryRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryRequest & game.TrajectoryRequest.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryRequest;
 
         /**
          * Decodes a TrajectoryRequest message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.TrajectoryRequest & game.TrajectoryRequest.$Shape} TrajectoryRequest
+         * @returns TrajectoryRequest
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryRequest & game.TrajectoryRequest.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryRequest;
 
         /**
          * Verifies a TrajectoryRequest message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a TrajectoryRequest message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns TrajectoryRequest
          */
-        static fromObject(object: { [k: string]: any }): game.TrajectoryRequest;
+        public static fromObject(object: { [k: string]: any }): game.TrajectoryRequest;
 
         /**
          * Creates a plain object from a TrajectoryRequest message. Also converts values to other types if specified.
@@ -2904,100 +2487,101 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.TrajectoryRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.TrajectoryRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this TrajectoryRequest to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for TrajectoryRequest
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for TrajectoryRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace TrajectoryRequest {
+    /** Properties of a TrajectorySample. */
+    interface ITrajectorySample {
 
-        /** Properties of a TrajectoryRequest. */
-        interface $Properties {
+        /** TrajectorySample observation */
+        observation?: (game.ISeatObservation|undefined);
 
-            /** TrajectoryRequest episodes */
-            episodes?: number;
+        /** TrajectorySample actionId */
+        actionId?: (number|undefined);
 
-            /** TrajectoryRequest startSeed */
-            startSeed?: (number|Long);
+        /** TrajectorySample rewards */
+        rewards?: (number[]|undefined);
 
-            /** TrajectoryRequest config */
-            config?: game.EnvConfig.$Properties;
+        /** TrajectorySample nextObservation */
+        nextObservation?: (game.ISeatObservation|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** TrajectorySample terminated */
+        terminated?: (boolean|undefined);
 
-        /** Shape of a TrajectoryRequest. */
-        type $Shape = game.TrajectoryRequest.$Properties;
-    }
+        /** TrajectorySample truncated */
+        truncated?: (boolean|undefined);
 
-    /**
-     * Properties of a TrajectorySample.
-     * @deprecated Use game.TrajectorySample.$Properties instead.
-     */
-    interface ITrajectorySample extends game.TrajectorySample.$Properties {
+        /** TrajectorySample actingSeat */
+        actingSeat?: (number|undefined);
+
+        /** TrajectorySample episodeIndex */
+        episodeIndex?: (number|Long|undefined);
+
+        /** TrajectorySample terminalRewards */
+        terminalRewards?: (number[]|undefined);
+
+        /** TrajectorySample terminalOutcome */
+        terminalOutcome?: (game.IRoundOutcome|undefined);
     }
 
     /** Represents a TrajectorySample. */
-    class TrajectorySample {
+    class TrajectorySample implements ITrajectorySample {
 
         /**
          * Constructs a new TrajectorySample.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.TrajectorySample.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ITrajectorySample);
 
         /** TrajectorySample observation. */
-        observation: game.SeatObservation;
+        public observation: game.SeatObservation;
 
         /** TrajectorySample actionId. */
-        actionId: number;
+        public actionId: number;
 
         /** TrajectorySample rewards. */
-        rewards: number[];
+        public rewards: number[];
 
         /** TrajectorySample nextObservation. */
-        nextObservation: game.SeatObservation;
+        public nextObservation: game.SeatObservation;
 
         /** TrajectorySample terminated. */
-        terminated: boolean;
+        public terminated: boolean;
 
         /** TrajectorySample truncated. */
-        truncated: boolean;
+        public truncated: boolean;
 
         /** TrajectorySample actingSeat. */
-        actingSeat: number;
+        public actingSeat: number;
 
         /** TrajectorySample episodeIndex. */
-        episodeIndex: (number|Long);
+        public episodeIndex: (number|Long);
 
         /** TrajectorySample terminalRewards. */
-        terminalRewards: number[];
+        public terminalRewards: number[];
 
         /** TrajectorySample terminalOutcome. */
-        terminalOutcome: game.RoundOutcome;
+        public terminalOutcome: game.RoundOutcome;
 
         /**
          * Creates a new TrajectorySample instance using the specified properties.
          * @param [properties] Properties to set
          * @returns TrajectorySample instance
          */
-        static create(properties: game.TrajectorySample.$Shape): game.TrajectorySample & game.TrajectorySample.$Shape;
-        static create(properties?: game.TrajectorySample.$Properties): game.TrajectorySample;
+        public static create(properties?: game.ITrajectorySample): game.TrajectorySample;
 
         /**
          * Encodes the specified TrajectorySample message. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
@@ -3005,7 +2589,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.TrajectorySample.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ITrajectorySample, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified TrajectorySample message, length delimited. Does not implicitly {@link game.TrajectorySample.verify|verify} messages.
@@ -3013,40 +2597,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.TrajectorySample.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ITrajectorySample, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a TrajectorySample message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.TrajectorySample & game.TrajectorySample.$Shape} TrajectorySample
+         * @returns TrajectorySample
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectorySample & game.TrajectorySample.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectorySample;
 
         /**
          * Decodes a TrajectorySample message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.TrajectorySample & game.TrajectorySample.$Shape} TrajectorySample
+         * @returns TrajectorySample
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectorySample & game.TrajectorySample.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectorySample;
 
         /**
          * Verifies a TrajectorySample message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a TrajectorySample message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns TrajectorySample
          */
-        static fromObject(object: { [k: string]: any }): game.TrajectorySample;
+        public static fromObject(object: { [k: string]: any }): game.TrajectorySample;
 
         /**
          * Creates a plain object from a TrajectorySample message. Also converts values to other types if specified.
@@ -3054,94 +2638,47 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.TrajectorySample, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.TrajectorySample, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this TrajectorySample to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for TrajectorySample
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for TrajectorySample
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace TrajectorySample {
+    /** Properties of a TrajectoryDataset. */
+    interface ITrajectoryDataset {
 
-        /** Properties of a TrajectorySample. */
-        interface $Properties {
-
-            /** TrajectorySample observation */
-            observation?: game.SeatObservation.$Properties;
-
-            /** TrajectorySample actionId */
-            actionId?: number;
-
-            /** TrajectorySample rewards */
-            rewards?: number[];
-
-            /** TrajectorySample nextObservation */
-            nextObservation?: game.SeatObservation.$Properties;
-
-            /** TrajectorySample terminated */
-            terminated?: boolean;
-
-            /** TrajectorySample truncated */
-            truncated?: boolean;
-
-            /** TrajectorySample actingSeat */
-            actingSeat?: number;
-
-            /** TrajectorySample episodeIndex */
-            episodeIndex?: (number|Long);
-
-            /** TrajectorySample terminalRewards */
-            terminalRewards?: number[];
-
-            /** TrajectorySample terminalOutcome */
-            terminalOutcome?: game.RoundOutcome.$Properties;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a TrajectorySample. */
-        type $Shape = game.TrajectorySample.$Properties;
-    }
-
-    /**
-     * Properties of a TrajectoryDataset.
-     * @deprecated Use game.TrajectoryDataset.$Properties instead.
-     */
-    interface ITrajectoryDataset extends game.TrajectoryDataset.$Properties {
+        /** TrajectoryDataset samples */
+        samples?: (game.ITrajectorySample[]|undefined);
     }
 
     /** Represents a TrajectoryDataset. */
-    class TrajectoryDataset {
+    class TrajectoryDataset implements ITrajectoryDataset {
 
         /**
          * Constructs a new TrajectoryDataset.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.TrajectoryDataset.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ITrajectoryDataset);
 
         /** TrajectoryDataset samples. */
-        samples: game.TrajectorySample[];
+        public samples: game.TrajectorySample[];
 
         /**
          * Creates a new TrajectoryDataset instance using the specified properties.
          * @param [properties] Properties to set
          * @returns TrajectoryDataset instance
          */
-        static create(properties: game.TrajectoryDataset.$Shape): game.TrajectoryDataset & game.TrajectoryDataset.$Shape;
-        static create(properties?: game.TrajectoryDataset.$Properties): game.TrajectoryDataset;
+        public static create(properties?: game.ITrajectoryDataset): game.TrajectoryDataset;
 
         /**
          * Encodes the specified TrajectoryDataset message. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
@@ -3149,7 +2686,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.TrajectoryDataset.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ITrajectoryDataset, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified TrajectoryDataset message, length delimited. Does not implicitly {@link game.TrajectoryDataset.verify|verify} messages.
@@ -3157,40 +2694,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.TrajectoryDataset.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ITrajectoryDataset, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a TrajectoryDataset message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.TrajectoryDataset & game.TrajectoryDataset.$Shape} TrajectoryDataset
+         * @returns TrajectoryDataset
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryDataset & game.TrajectoryDataset.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.TrajectoryDataset;
 
         /**
          * Decodes a TrajectoryDataset message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.TrajectoryDataset & game.TrajectoryDataset.$Shape} TrajectoryDataset
+         * @returns TrajectoryDataset
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryDataset & game.TrajectoryDataset.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.TrajectoryDataset;
 
         /**
          * Verifies a TrajectoryDataset message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a TrajectoryDataset message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns TrajectoryDataset
          */
-        static fromObject(object: { [k: string]: any }): game.TrajectoryDataset;
+        public static fromObject(object: { [k: string]: any }): game.TrajectoryDataset;
 
         /**
          * Creates a plain object from a TrajectoryDataset message. Also converts values to other types if specified.
@@ -3198,89 +2735,72 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.TrajectoryDataset, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.TrajectoryDataset, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this TrajectoryDataset to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for TrajectoryDataset
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for TrajectoryDataset
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace TrajectoryDataset {
-
-        /** Properties of a TrajectoryDataset. */
-        interface $Properties {
-
-            /** TrajectoryDataset samples */
-            samples?: game.TrajectorySample.$Properties[];
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a TrajectoryDataset. */
-        type $Shape = game.TrajectoryDataset.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** Difficulty enum. */
     enum Difficulty {
-
-        /** DIFFICULTY_UNSPECIFIED value */
         DIFFICULTY_UNSPECIFIED = 0,
-
-        /** DIFFICULTY_HEURISTIC value */
         DIFFICULTY_HEURISTIC = 1,
-
-        /** DIFFICULTY_RL value */
         DIFFICULTY_RL = 2
     }
 
-    /**
-     * Properties of a SeatConfig.
-     * @deprecated Use game.SeatConfig.$Properties instead.
-     */
-    interface ISeatConfig extends game.SeatConfig.$Properties {
+    /** Properties of a SeatConfig. */
+    interface ISeatConfig {
+
+        /** SeatConfig kind */
+        kind?: (string|undefined);
+
+        /** SeatConfig userId */
+        userId?: (number|undefined);
+
+        /** SeatConfig username */
+        username?: (string|undefined);
+
+        /** SeatConfig difficulty */
+        difficulty?: (game.Difficulty|undefined);
     }
 
     /** Represents a SeatConfig. */
-    class SeatConfig {
+    class SeatConfig implements ISeatConfig {
 
         /**
          * Constructs a new SeatConfig.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.SeatConfig.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.ISeatConfig);
 
         /** SeatConfig kind. */
-        kind: string;
+        public kind: string;
 
         /** SeatConfig userId. */
-        userId: number;
+        public userId: number;
 
         /** SeatConfig username. */
-        username: string;
+        public username: string;
 
         /** SeatConfig difficulty. */
-        difficulty: game.Difficulty;
+        public difficulty: game.Difficulty;
 
         /**
          * Creates a new SeatConfig instance using the specified properties.
          * @param [properties] Properties to set
          * @returns SeatConfig instance
          */
-        static create(properties: game.SeatConfig.$Shape): game.SeatConfig & game.SeatConfig.$Shape;
-        static create(properties?: game.SeatConfig.$Properties): game.SeatConfig;
+        public static create(properties?: game.ISeatConfig): game.SeatConfig;
 
         /**
          * Encodes the specified SeatConfig message. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
@@ -3288,7 +2808,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.SeatConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.ISeatConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified SeatConfig message, length delimited. Does not implicitly {@link game.SeatConfig.verify|verify} messages.
@@ -3296,40 +2816,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.SeatConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.ISeatConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a SeatConfig message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.SeatConfig & game.SeatConfig.$Shape} SeatConfig
+         * @returns SeatConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatConfig & game.SeatConfig.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SeatConfig;
 
         /**
          * Decodes a SeatConfig message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.SeatConfig & game.SeatConfig.$Shape} SeatConfig
+         * @returns SeatConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatConfig & game.SeatConfig.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SeatConfig;
 
         /**
          * Verifies a SeatConfig message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a SeatConfig message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns SeatConfig
          */
-        static fromObject(object: { [k: string]: any }): game.SeatConfig;
+        public static fromObject(object: { [k: string]: any }): game.SeatConfig;
 
         /**
          * Creates a plain object from a SeatConfig message. Also converts values to other types if specified.
@@ -3337,94 +2857,83 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.SeatConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.SeatConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this SeatConfig to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for SeatConfig
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for SeatConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace SeatConfig {
+    /** Properties of a PrivateTableState. */
+    interface IPrivateTableState {
 
-        /** Properties of a SeatConfig. */
-        interface $Properties {
+        /** PrivateTableState tableId */
+        tableId?: (string|undefined);
 
-            /** SeatConfig kind */
-            kind?: string;
+        /** PrivateTableState hostUserId */
+        hostUserId?: (number|undefined);
 
-            /** SeatConfig userId */
-            userId?: number;
+        /** PrivateTableState seats */
+        seats?: (game.ISeatConfig[]|undefined);
 
-            /** SeatConfig username */
-            username?: string;
+        /** PrivateTableState state */
+        state?: (string|undefined);
 
-            /** SeatConfig difficulty */
-            difficulty?: game.Difficulty;
+        /** PrivateTableState matchId */
+        matchId?: (string|undefined);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** PrivateTableState matchMode */
+        matchMode?: (game.MatchMode|undefined);
 
-        /** Shape of a SeatConfig. */
-        type $Shape = game.SeatConfig.$Properties;
-    }
-
-    /**
-     * Properties of a PrivateTableState.
-     * @deprecated Use game.PrivateTableState.$Properties instead.
-     */
-    interface IPrivateTableState extends game.PrivateTableState.$Properties {
+        /** PrivateTableState chongciConfig */
+        chongciConfig?: (game.IChongciConfig|undefined);
     }
 
     /** Represents a PrivateTableState. */
-    class PrivateTableState {
+    class PrivateTableState implements IPrivateTableState {
 
         /**
          * Constructs a new PrivateTableState.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.PrivateTableState.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IPrivateTableState);
 
         /** PrivateTableState tableId. */
-        tableId: string;
+        public tableId: string;
 
         /** PrivateTableState hostUserId. */
-        hostUserId: number;
+        public hostUserId: number;
 
         /** PrivateTableState seats. */
-        seats: game.SeatConfig[];
+        public seats: game.SeatConfig[];
 
         /** PrivateTableState state. */
-        state: string;
+        public state: string;
 
         /** PrivateTableState matchId. */
-        matchId: string;
+        public matchId: string;
 
         /** PrivateTableState matchMode. */
-        matchMode: game.MatchMode;
+        public matchMode: game.MatchMode;
 
         /** PrivateTableState chongciConfig. */
-        chongciConfig: game.ChongciConfig;
+        public chongciConfig: game.ChongciConfig;
 
         /**
          * Creates a new PrivateTableState instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PrivateTableState instance
          */
-        static create(properties: game.PrivateTableState.$Shape): game.PrivateTableState & game.PrivateTableState.$Shape;
-        static create(properties?: game.PrivateTableState.$Properties): game.PrivateTableState;
+        public static create(properties?: game.IPrivateTableState): game.PrivateTableState;
 
         /**
          * Encodes the specified PrivateTableState message. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
@@ -3432,7 +2941,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.PrivateTableState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IPrivateTableState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PrivateTableState message, length delimited. Does not implicitly {@link game.PrivateTableState.verify|verify} messages.
@@ -3440,40 +2949,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.PrivateTableState.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IPrivateTableState, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PrivateTableState message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.PrivateTableState & game.PrivateTableState.$Shape} PrivateTableState
+         * @returns PrivateTableState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PrivateTableState & game.PrivateTableState.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PrivateTableState;
 
         /**
          * Decodes a PrivateTableState message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.PrivateTableState & game.PrivateTableState.$Shape} PrivateTableState
+         * @returns PrivateTableState
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PrivateTableState & game.PrivateTableState.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PrivateTableState;
 
         /**
          * Verifies a PrivateTableState message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PrivateTableState message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PrivateTableState
          */
-        static fromObject(object: { [k: string]: any }): game.PrivateTableState;
+        public static fromObject(object: { [k: string]: any }): game.PrivateTableState;
 
         /**
          * Creates a plain object from a PrivateTableState message. Also converts values to other types if specified.
@@ -3481,104 +2990,66 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.PrivateTableState, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.PrivateTableState, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PrivateTableState to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PrivateTableState
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PrivateTableState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace PrivateTableState {
-
-        /** Properties of a PrivateTableState. */
-        interface $Properties {
-
-            /** PrivateTableState tableId */
-            tableId?: string;
-
-            /** PrivateTableState hostUserId */
-            hostUserId?: number;
-
-            /** PrivateTableState seats */
-            seats?: game.SeatConfig.$Properties[];
-
-            /** PrivateTableState state */
-            state?: string;
-
-            /** PrivateTableState matchId */
-            matchId?: string;
-
-            /** PrivateTableState matchMode */
-            matchMode?: game.MatchMode;
-
-            /** PrivateTableState chongciConfig */
-            chongciConfig?: game.ChongciConfig.$Properties;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PrivateTableState. */
-        type $Shape = game.PrivateTableState.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** MatchMode enum. */
     enum MatchMode {
-
-        /** MATCH_MODE_UNSPECIFIED value */
         MATCH_MODE_UNSPECIFIED = 0,
-
-        /** MATCH_MODE_CLASSIC value */
         MATCH_MODE_CLASSIC = 1,
-
-        /** MATCH_MODE_CHONGCI value */
         MATCH_MODE_CHONGCI = 2
     }
 
-    /**
-     * Properties of a ChongciConfig.
-     * @deprecated Use game.ChongciConfig.$Properties instead.
-     */
-    interface IChongciConfig extends game.ChongciConfig.$Properties {
+    /** Properties of a ChongciConfig. */
+    interface IChongciConfig {
+
+        /** ChongciConfig startingScore */
+        startingScore?: (number|undefined);
+
+        /** ChongciConfig bustThreshold */
+        bustThreshold?: (number|undefined);
+
+        /** ChongciConfig maxHands */
+        maxHands?: (number|undefined);
     }
 
     /** Represents a ChongciConfig. */
-    class ChongciConfig {
+    class ChongciConfig implements IChongciConfig {
 
         /**
          * Constructs a new ChongciConfig.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.ChongciConfig.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IChongciConfig);
 
         /** ChongciConfig startingScore. */
-        startingScore: number;
+        public startingScore: number;
 
         /** ChongciConfig bustThreshold. */
-        bustThreshold: number;
+        public bustThreshold: number;
 
         /** ChongciConfig maxHands. */
-        maxHands: number;
+        public maxHands: number;
 
         /**
          * Creates a new ChongciConfig instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ChongciConfig instance
          */
-        static create(properties: game.ChongciConfig.$Shape): game.ChongciConfig & game.ChongciConfig.$Shape;
-        static create(properties?: game.ChongciConfig.$Properties): game.ChongciConfig;
+        public static create(properties?: game.IChongciConfig): game.ChongciConfig;
 
         /**
          * Encodes the specified ChongciConfig message. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
@@ -3586,7 +3057,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.ChongciConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IChongciConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ChongciConfig message, length delimited. Does not implicitly {@link game.ChongciConfig.verify|verify} messages.
@@ -3594,40 +3065,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.ChongciConfig.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IChongciConfig, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ChongciConfig message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.ChongciConfig & game.ChongciConfig.$Shape} ChongciConfig
+         * @returns ChongciConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ChongciConfig & game.ChongciConfig.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.ChongciConfig;
 
         /**
          * Decodes a ChongciConfig message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.ChongciConfig & game.ChongciConfig.$Shape} ChongciConfig
+         * @returns ChongciConfig
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ChongciConfig & game.ChongciConfig.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.ChongciConfig;
 
         /**
          * Verifies a ChongciConfig message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ChongciConfig message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ChongciConfig
          */
-        static fromObject(object: { [k: string]: any }): game.ChongciConfig;
+        public static fromObject(object: { [k: string]: any }): game.ChongciConfig;
 
         /**
          * Creates a plain object from a ChongciConfig message. Also converts values to other types if specified.
@@ -3635,82 +3106,65 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.ChongciConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.ChongciConfig, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ChongciConfig to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ChongciConfig
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ChongciConfig
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ChongciConfig {
+    /** Properties of a PlayerStanding. */
+    interface IPlayerStanding {
 
-        /** Properties of a ChongciConfig. */
-        interface $Properties {
+        /** PlayerStanding seat */
+        seat?: (number|undefined);
 
-            /** ChongciConfig startingScore */
-            startingScore?: number;
+        /** PlayerStanding rank */
+        rank?: (number|undefined);
 
-            /** ChongciConfig bustThreshold */
-            bustThreshold?: number;
+        /** PlayerStanding finalScore */
+        finalScore?: (number|undefined);
 
-            /** ChongciConfig maxHands */
-            maxHands?: number;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a ChongciConfig. */
-        type $Shape = game.ChongciConfig.$Properties;
-    }
-
-    /**
-     * Properties of a PlayerStanding.
-     * @deprecated Use game.PlayerStanding.$Properties instead.
-     */
-    interface IPlayerStanding extends game.PlayerStanding.$Properties {
+        /** PlayerStanding netChange */
+        netChange?: (number|undefined);
     }
 
     /** Represents a PlayerStanding. */
-    class PlayerStanding {
+    class PlayerStanding implements IPlayerStanding {
 
         /**
          * Constructs a new PlayerStanding.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.PlayerStanding.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IPlayerStanding);
 
         /** PlayerStanding seat. */
-        seat: number;
+        public seat: number;
 
         /** PlayerStanding rank. */
-        rank: number;
+        public rank: number;
 
         /** PlayerStanding finalScore. */
-        finalScore: number;
+        public finalScore: number;
 
         /** PlayerStanding netChange. */
-        netChange: number;
+        public netChange: number;
 
         /**
          * Creates a new PlayerStanding instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PlayerStanding instance
          */
-        static create(properties: game.PlayerStanding.$Shape): game.PlayerStanding & game.PlayerStanding.$Shape;
-        static create(properties?: game.PlayerStanding.$Properties): game.PlayerStanding;
+        public static create(properties?: game.IPlayerStanding): game.PlayerStanding;
 
         /**
          * Encodes the specified PlayerStanding message. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
@@ -3718,7 +3172,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.PlayerStanding.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IPlayerStanding, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PlayerStanding message, length delimited. Does not implicitly {@link game.PlayerStanding.verify|verify} messages.
@@ -3726,40 +3180,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.PlayerStanding.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IPlayerStanding, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PlayerStanding message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.PlayerStanding & game.PlayerStanding.$Shape} PlayerStanding
+         * @returns PlayerStanding
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerStanding & game.PlayerStanding.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.PlayerStanding;
 
         /**
          * Decodes a PlayerStanding message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.PlayerStanding & game.PlayerStanding.$Shape} PlayerStanding
+         * @returns PlayerStanding
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerStanding & game.PlayerStanding.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.PlayerStanding;
 
         /**
          * Verifies a PlayerStanding message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PlayerStanding message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PlayerStanding
          */
-        static fromObject(object: { [k: string]: any }): game.PlayerStanding;
+        public static fromObject(object: { [k: string]: any }): game.PlayerStanding;
 
         /**
          * Creates a plain object from a PlayerStanding message. Also converts values to other types if specified.
@@ -3767,82 +3221,59 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.PlayerStanding, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.PlayerStanding, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PlayerStanding to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PlayerStanding
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PlayerStanding
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace PlayerStanding {
+    /** Properties of a MatchEndResult. */
+    interface IMatchEndResult {
 
-        /** Properties of a PlayerStanding. */
-        interface $Properties {
+        /** MatchEndResult reason */
+        reason?: (string|undefined);
 
-            /** PlayerStanding seat */
-            seat?: number;
+        /** MatchEndResult finalHandNum */
+        finalHandNum?: (number|undefined);
 
-            /** PlayerStanding rank */
-            rank?: number;
-
-            /** PlayerStanding finalScore */
-            finalScore?: number;
-
-            /** PlayerStanding netChange */
-            netChange?: number;
-
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PlayerStanding. */
-        type $Shape = game.PlayerStanding.$Properties;
-    }
-
-    /**
-     * Properties of a MatchEndResult.
-     * @deprecated Use game.MatchEndResult.$Properties instead.
-     */
-    interface IMatchEndResult extends game.MatchEndResult.$Properties {
+        /** MatchEndResult standings */
+        standings?: (game.IPlayerStanding[]|undefined);
     }
 
     /** Represents a MatchEndResult. */
-    class MatchEndResult {
+    class MatchEndResult implements IMatchEndResult {
 
         /**
          * Constructs a new MatchEndResult.
          * @param [properties] Properties to set
          */
-        constructor(properties?: game.MatchEndResult.$Properties);
-
-        /** Unknown fields preserved while decoding when enabled */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: game.IMatchEndResult);
 
         /** MatchEndResult reason. */
-        reason: string;
+        public reason: string;
 
         /** MatchEndResult finalHandNum. */
-        finalHandNum: number;
+        public finalHandNum: number;
 
         /** MatchEndResult standings. */
-        standings: game.PlayerStanding[];
+        public standings: game.PlayerStanding[];
 
         /**
          * Creates a new MatchEndResult instance using the specified properties.
          * @param [properties] Properties to set
          * @returns MatchEndResult instance
          */
-        static create(properties: game.MatchEndResult.$Shape): game.MatchEndResult & game.MatchEndResult.$Shape;
-        static create(properties?: game.MatchEndResult.$Properties): game.MatchEndResult;
+        public static create(properties?: game.IMatchEndResult): game.MatchEndResult;
 
         /**
          * Encodes the specified MatchEndResult message. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
@@ -3850,7 +3281,7 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: game.MatchEndResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: game.IMatchEndResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified MatchEndResult message, length delimited. Does not implicitly {@link game.MatchEndResult.verify|verify} messages.
@@ -3858,40 +3289,40 @@ export namespace game {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: game.MatchEndResult.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: game.IMatchEndResult, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a MatchEndResult message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {game.MatchEndResult & game.MatchEndResult.$Shape} MatchEndResult
+         * @returns MatchEndResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.MatchEndResult & game.MatchEndResult.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.MatchEndResult;
 
         /**
          * Decodes a MatchEndResult message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {game.MatchEndResult & game.MatchEndResult.$Shape} MatchEndResult
+         * @returns MatchEndResult
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.MatchEndResult & game.MatchEndResult.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.MatchEndResult;
 
         /**
          * Verifies a MatchEndResult message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a MatchEndResult message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns MatchEndResult
          */
-        static fromObject(object: { [k: string]: any }): game.MatchEndResult;
+        public static fromObject(object: { [k: string]: any }): game.MatchEndResult;
 
         /**
          * Creates a plain object from a MatchEndResult message. Also converts values to other types if specified.
@@ -3899,41 +3330,621 @@ export namespace game {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: game.MatchEndResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: game.MatchEndResult, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this MatchEndResult to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for MatchEndResult
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for MatchEndResult
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace MatchEndResult {
+    /** Properties of an EnvPoolNewRequest. */
+    interface IEnvPoolNewRequest {
 
-        /** Properties of a MatchEndResult. */
-        interface $Properties {
+        /** EnvPoolNewRequest config */
+        config?: (game.IEnvConfig|undefined);
 
-            /** MatchEndResult reason */
-            reason?: string;
+        /** EnvPoolNewRequest slots */
+        slots?: (number|undefined);
+    }
 
-            /** MatchEndResult finalHandNum */
-            finalHandNum?: number;
+    /** Represents an EnvPoolNewRequest. */
+    class EnvPoolNewRequest implements IEnvPoolNewRequest {
 
-            /** MatchEndResult standings */
-            standings?: game.PlayerStanding.$Properties[];
+        /**
+         * Constructs a new EnvPoolNewRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvPoolNewRequest);
 
-            /** Unknown fields preserved while decoding when enabled */
-            $unknowns?: Uint8Array[];
-        }
+        /** EnvPoolNewRequest config. */
+        public config: game.EnvConfig;
 
-        /** Shape of a MatchEndResult. */
-        type $Shape = game.MatchEndResult.$Properties;
+        /** EnvPoolNewRequest slots. */
+        public slots: number;
+
+        /**
+         * Creates a new EnvPoolNewRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvPoolNewRequest instance
+         */
+        public static create(properties?: game.IEnvPoolNewRequest): game.EnvPoolNewRequest;
+
+        /**
+         * Encodes the specified EnvPoolNewRequest message. Does not implicitly {@link game.EnvPoolNewRequest.verify|verify} messages.
+         * @param message EnvPoolNewRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvPoolNewRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvPoolNewRequest message, length delimited. Does not implicitly {@link game.EnvPoolNewRequest.verify|verify} messages.
+         * @param message EnvPoolNewRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvPoolNewRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvPoolNewRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvPoolNewRequest;
+
+        /**
+         * Decodes an EnvPoolNewRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvPoolNewRequest;
+
+        /**
+         * Verifies an EnvPoolNewRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvPoolNewRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvPoolNewRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvPoolNewRequest;
+
+        /**
+         * Creates a plain object from an EnvPoolNewRequest message. Also converts values to other types if specified.
+         * @param message EnvPoolNewRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvPoolNewRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvPoolNewRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvPoolNewRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a SlotCommand. */
+    interface ISlotCommand {
+
+        /** SlotCommand slot */
+        slot?: (number|undefined);
+
+        /** SlotCommand actionId */
+        actionId?: (number|null|undefined);
+
+        /** SlotCommand resetSeed */
+        resetSeed?: (number|Long|null|undefined);
+
+        /** SlotCommand skip */
+        skip?: (boolean|null|undefined);
+    }
+
+    /** Represents a SlotCommand. */
+    class SlotCommand implements ISlotCommand {
+
+        /**
+         * Constructs a new SlotCommand.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ISlotCommand);
+
+        /** SlotCommand slot. */
+        public slot: number;
+
+        /** SlotCommand actionId. */
+        public actionId: (number|null);
+
+        /** SlotCommand resetSeed. */
+        public resetSeed: (number|Long|null);
+
+        /** SlotCommand skip. */
+        public skip: (boolean|null);
+
+        /** SlotCommand cmd. */
+        public cmd?: ("actionId"|"resetSeed"|"skip");
+
+        /**
+         * Creates a new SlotCommand instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns SlotCommand instance
+         */
+        public static create(properties?: game.ISlotCommand): game.SlotCommand;
+
+        /**
+         * Encodes the specified SlotCommand message. Does not implicitly {@link game.SlotCommand.verify|verify} messages.
+         * @param message SlotCommand message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ISlotCommand, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified SlotCommand message, length delimited. Does not implicitly {@link game.SlotCommand.verify|verify} messages.
+         * @param message SlotCommand message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ISlotCommand, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a SlotCommand message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns SlotCommand
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SlotCommand;
+
+        /**
+         * Decodes a SlotCommand message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns SlotCommand
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SlotCommand;
+
+        /**
+         * Verifies a SlotCommand message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a SlotCommand message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns SlotCommand
+         */
+        public static fromObject(object: { [k: string]: any }): game.SlotCommand;
+
+        /**
+         * Creates a plain object from a SlotCommand message. Also converts values to other types if specified.
+         * @param message SlotCommand
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.SlotCommand, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this SlotCommand to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for SlotCommand
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvPoolStepRequest. */
+    interface IEnvPoolStepRequest {
+
+        /** EnvPoolStepRequest commands */
+        commands?: (game.ISlotCommand[]|undefined);
+    }
+
+    /** Represents an EnvPoolStepRequest. */
+    class EnvPoolStepRequest implements IEnvPoolStepRequest {
+
+        /**
+         * Constructs a new EnvPoolStepRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvPoolStepRequest);
+
+        /** EnvPoolStepRequest commands. */
+        public commands: game.SlotCommand[];
+
+        /**
+         * Creates a new EnvPoolStepRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvPoolStepRequest instance
+         */
+        public static create(properties?: game.IEnvPoolStepRequest): game.EnvPoolStepRequest;
+
+        /**
+         * Encodes the specified EnvPoolStepRequest message. Does not implicitly {@link game.EnvPoolStepRequest.verify|verify} messages.
+         * @param message EnvPoolStepRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvPoolStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvPoolStepRequest message, length delimited. Does not implicitly {@link game.EnvPoolStepRequest.verify|verify} messages.
+         * @param message EnvPoolStepRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvPoolStepRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvPoolStepRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvPoolStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvPoolStepRequest;
+
+        /**
+         * Decodes an EnvPoolStepRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvPoolStepRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvPoolStepRequest;
+
+        /**
+         * Verifies an EnvPoolStepRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvPoolStepRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvPoolStepRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvPoolStepRequest;
+
+        /**
+         * Creates a plain object from an EnvPoolStepRequest message. Also converts values to other types if specified.
+         * @param message EnvPoolStepRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvPoolStepRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvPoolStepRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvPoolStepRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a SlotState. */
+    interface ISlotState {
+
+        /** SlotState slot */
+        slot?: (number|undefined);
+
+        /** SlotState seat */
+        seat?: (number|undefined);
+
+        /** SlotState terminated */
+        terminated?: (boolean|undefined);
+
+        /** SlotState truncated */
+        truncated?: (boolean|undefined);
+
+        /** SlotState stepRewards */
+        stepRewards?: (number[]|undefined);
+
+        /** SlotState hasObservation */
+        hasObservation?: (boolean|undefined);
+
+        /** SlotState roundOutcome */
+        roundOutcome?: (game.IRoundOutcome|undefined);
+
+        /** SlotState error */
+        error?: (string|undefined);
+    }
+
+    /** Represents a SlotState. */
+    class SlotState implements ISlotState {
+
+        /**
+         * Constructs a new SlotState.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ISlotState);
+
+        /** SlotState slot. */
+        public slot: number;
+
+        /** SlotState seat. */
+        public seat: number;
+
+        /** SlotState terminated. */
+        public terminated: boolean;
+
+        /** SlotState truncated. */
+        public truncated: boolean;
+
+        /** SlotState stepRewards. */
+        public stepRewards: number[];
+
+        /** SlotState hasObservation. */
+        public hasObservation: boolean;
+
+        /** SlotState roundOutcome. */
+        public roundOutcome: game.RoundOutcome;
+
+        /** SlotState error. */
+        public error: string;
+
+        /**
+         * Creates a new SlotState instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns SlotState instance
+         */
+        public static create(properties?: game.ISlotState): game.SlotState;
+
+        /**
+         * Encodes the specified SlotState message. Does not implicitly {@link game.SlotState.verify|verify} messages.
+         * @param message SlotState message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ISlotState, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified SlotState message, length delimited. Does not implicitly {@link game.SlotState.verify|verify} messages.
+         * @param message SlotState message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ISlotState, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a SlotState message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns SlotState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SlotState;
+
+        /**
+         * Decodes a SlotState message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns SlotState
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SlotState;
+
+        /**
+         * Verifies a SlotState message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a SlotState message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns SlotState
+         */
+        public static fromObject(object: { [k: string]: any }): game.SlotState;
+
+        /**
+         * Creates a plain object from a SlotState message. Also converts values to other types if specified.
+         * @param message SlotState
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.SlotState, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this SlotState to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for SlotState
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of an EnvPoolStepResponse. */
+    interface IEnvPoolStepResponse {
+
+        /** EnvPoolStepResponse slots */
+        slots?: (game.ISlotState[]|undefined);
+
+        /** EnvPoolStepResponse planes */
+        planes?: (Uint8Array|undefined);
+
+        /** EnvPoolStepResponse scalars */
+        scalars?: (Uint8Array|undefined);
+
+        /** EnvPoolStepResponse actionMasks */
+        actionMasks?: (Uint8Array|undefined);
+
+        /** EnvPoolStepResponse planeChannels */
+        planeChannels?: (number|undefined);
+
+        /** EnvPoolStepResponse planeHeight */
+        planeHeight?: (number|undefined);
+
+        /** EnvPoolStepResponse planeWidth */
+        planeWidth?: (number|undefined);
+
+        /** EnvPoolStepResponse scalarCount */
+        scalarCount?: (number|undefined);
+
+        /** EnvPoolStepResponse actionSpaceSize */
+        actionSpaceSize?: (number|undefined);
+    }
+
+    /** Represents an EnvPoolStepResponse. */
+    class EnvPoolStepResponse implements IEnvPoolStepResponse {
+
+        /**
+         * Constructs a new EnvPoolStepResponse.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IEnvPoolStepResponse);
+
+        /** EnvPoolStepResponse slots. */
+        public slots: game.SlotState[];
+
+        /** EnvPoolStepResponse planes. */
+        public planes: Uint8Array;
+
+        /** EnvPoolStepResponse scalars. */
+        public scalars: Uint8Array;
+
+        /** EnvPoolStepResponse actionMasks. */
+        public actionMasks: Uint8Array;
+
+        /** EnvPoolStepResponse planeChannels. */
+        public planeChannels: number;
+
+        /** EnvPoolStepResponse planeHeight. */
+        public planeHeight: number;
+
+        /** EnvPoolStepResponse planeWidth. */
+        public planeWidth: number;
+
+        /** EnvPoolStepResponse scalarCount. */
+        public scalarCount: number;
+
+        /** EnvPoolStepResponse actionSpaceSize. */
+        public actionSpaceSize: number;
+
+        /**
+         * Creates a new EnvPoolStepResponse instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns EnvPoolStepResponse instance
+         */
+        public static create(properties?: game.IEnvPoolStepResponse): game.EnvPoolStepResponse;
+
+        /**
+         * Encodes the specified EnvPoolStepResponse message. Does not implicitly {@link game.EnvPoolStepResponse.verify|verify} messages.
+         * @param message EnvPoolStepResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IEnvPoolStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified EnvPoolStepResponse message, length delimited. Does not implicitly {@link game.EnvPoolStepResponse.verify|verify} messages.
+         * @param message EnvPoolStepResponse message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IEnvPoolStepResponse, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes an EnvPoolStepResponse message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns EnvPoolStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.EnvPoolStepResponse;
+
+        /**
+         * Decodes an EnvPoolStepResponse message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns EnvPoolStepResponse
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.EnvPoolStepResponse;
+
+        /**
+         * Verifies an EnvPoolStepResponse message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates an EnvPoolStepResponse message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns EnvPoolStepResponse
+         */
+        public static fromObject(object: { [k: string]: any }): game.EnvPoolStepResponse;
+
+        /**
+         * Creates a plain object from an EnvPoolStepResponse message. Also converts values to other types if specified.
+         * @param message EnvPoolStepResponse
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.EnvPoolStepResponse, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this EnvPoolStepResponse to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for EnvPoolStepResponse
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 }
