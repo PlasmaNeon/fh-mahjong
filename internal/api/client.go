@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"log"
 	"time"
 
@@ -62,6 +61,19 @@ func (c *Client) readPump() {
 	}
 }
 
+// writeFrame sends one queued payload as its own websocket frame, sniffing
+// JSON control messages into text frames and protobuf blobs into binary ones.
+func (c *Client) writeFrame(message []byte) error {
+	messageType := websocket.BinaryMessage
+	if len(message) > 0 && message[0] == '{' && json.Valid(message) {
+		messageType = websocket.TextMessage
+	}
+	if err := c.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		return err
+	}
+	return c.Conn.WriteMessage(messageType, message)
+}
+
 // writePump pumps messages from the hub to the websocket connection.
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
@@ -73,32 +85,33 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
+				c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			var w io.WriteCloser
-			var err error
-			if len(message) > 0 && message[0] == '{' && json.Valid(message) {
-				w, err = c.Conn.NextWriter(websocket.TextMessage)
-			} else {
-				w, err = c.Conn.NextWriter(websocket.BinaryMessage)
-			}
-			if err != nil {
+			if err := c.writeFrame(message); err != nil {
 				return
 			}
-			w.Write(message)
 
-			// Add queued chat messages to the current websocket message
+			// Drain anything already queued, one frame per message. Never
+			// concatenate into a single frame: this protocol mixes JSON text
+			// frames with protobuf binary frames, and a merged frame is
+			// undecodable on the client (e.g. a GameState glued onto a
+			// seat_assignment left the host stuck on "Waiting for server to
+			// deal" whenever two broadcasts queued up back to back).
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				w.Write(<-c.Send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
+				queued, ok := <-c.Send
+				if !ok {
+					c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+					c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+					return
+				}
+				if err := c.writeFrame(queued); err != nil {
+					return
+				}
 			}
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))

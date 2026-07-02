@@ -53,7 +53,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **client.go** — Individual player WebSocket connection:
   - `Client` struct — UserID, Send channel, WebSocket conn
-  - `ReadPump()` / `WritePump()` — Goroutine message loops
+  - `ReadPump()` / `WritePump()` — Goroutine message loops; queued JSON and protobuf payloads are written as separate text/binary frames with a fresh deadline per frame
 
 - **matchmaker.go** — Player queue and pairing:
   - `Matchmaker` struct — Queue of waiting clients
