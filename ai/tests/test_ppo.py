@@ -1139,11 +1139,16 @@ def test_default_num_workers_is_core_aware_and_bounded(monkeypatch) -> None:
 
     # Profiled: self-play rollout throughput is core-bound (RAM is not the limit),
     # so the default scales with cores, leaves headroom, and caps on big machines.
+    # Count is affinity-aware (CPUs available to the process, not the host total),
+    # so an affinity-limited/containerized allocation is not oversubscribed.
     cases = {2: 1, 8: 1, 12: 4, 16: 8, 24: 16, 64: 16}
     for cores, expected in cases.items():
-        monkeypatch.setattr(ppo.os, "cpu_count", lambda c=cores: c)
+        monkeypatch.setattr(ppo.os, "sched_getaffinity", lambda _pid, c=cores: set(range(c)), raising=False)
         assert ppo.default_num_workers() == expected, f"{cores} cores -> {expected}"
 
-    # Robust when cpu_count() is unavailable.
+    # Falls back to cpu_count() where sched_getaffinity is unavailable (macOS/Windows).
+    monkeypatch.delattr(ppo.os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(ppo.os, "cpu_count", lambda: 24)
+    assert ppo.default_num_workers() == 16
     monkeypatch.setattr(ppo.os, "cpu_count", lambda: None)
     assert ppo.default_num_workers() >= 1

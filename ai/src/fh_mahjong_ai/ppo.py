@@ -49,8 +49,14 @@ def default_num_workers() -> int:
     (0.61/0.91/1.03 matches/s at 8/16/20). Default to core count minus headroom
     for the main process and the OS, capped so large machines stay sane; override
     with --num-workers.
+
+    Uses the CPUs available to THIS process (affinity/cpuset), not the host total,
+    so an affinity-limited or containerized allocation is not oversubscribed.
     """
-    cores = os.cpu_count() or 4
+    try:
+        cores = len(os.sched_getaffinity(0))  # Linux: CPUs available to this process
+    except AttributeError:  # not available on macOS/Windows
+        cores = os.cpu_count() or 4
     return max(1, min(16, cores - 8))
 
 
