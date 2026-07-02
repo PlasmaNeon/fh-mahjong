@@ -15,6 +15,7 @@ This package keeps the authoritative simulator in Go while exposing a training-o
   - In Chongci mode, `Env.Step` / `advanceToDecision` returns a dense per-step reward from `scoreDeltaReward`: the acting seat's running-score delta since the previous decision, which telescopes exactly to the match net-change.
   - `EvaluateBranches` clones the live `engine.Game`, applies each candidate action from the current learning-seat decision, then lets deterministic heuristics finish the branch to create same-state counterfactual labels without mutating the live environment.
   - Branch requests can stop at the next round end for multi-hand modes, returning hand payout labels from the current visible match context instead of rolling every candidate to full Chongci match end.
+- **envpool.go** — `EnvPool`: `slots` independent envs stepped in lockstep rounds via `ApplyCommands` (one command per slot per call: step/reset/skip; commanded slots run concurrently in goroutines). Returns flat little-endian float32/uint8 observation buffers (rows = has_observation slots, ascending slot order) plus per-slot `SlotState` metadata. Never self-resets — the foreign caller owns the seed schedule.
 - **action_test.go** — Fixed action/tile-index mapping tests; tile faces follow the backend shanten order `man, pin, sou, jihai, flower`.
 - **env_test.go** — Determinism, action round-trip, hidden-information, and trajectory-export tests.
 
