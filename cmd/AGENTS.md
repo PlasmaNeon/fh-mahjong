@@ -8,7 +8,7 @@ Contains `main.go` files for each build target. The Go module now produces five 
 
 ## Subdirectories
 
-- **server/** — Production HTTP server (Gin + WebSocket, connects to PostgreSQL/Redis)
+- **server/** — Production HTTP server (Gin + WebSocket, connects to PostgreSQL)
 - **cli/** — Offline CLI tool for hand evaluation and game simulation, now using the shared heuristic bot for non-human seats
 - **wasm/** — WebAssembly build (`GOOS=js GOARCH=wasm`) for client-side action validation
 - **rlbridge/** — c-shared build target exposing protobuf-based RL environment functions to Python via `ctypes`

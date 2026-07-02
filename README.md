@@ -16,7 +16,7 @@ A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang
 | Serialization | Protocol Buffers |
 | Frontend | React + TypeScript + HTML5 Canvas |
 | AI training | Python + PyTorch |
-| Database | PostgreSQL + Redis |
+| Database | PostgreSQL |
 | Blob storage | S3 / filesystem |
 
 ## Project Structure
@@ -52,11 +52,11 @@ fh-mahjong/
 - **Frontend** — React 19 client with `/login`, `/lobby`, `/table/:roomId`, `/game/:matchId`, `/calc` rules debugger, and a replay viewer; client-side move validation via the Go → WASM bridge.
 - **AI / RL** — Python RL package (`ai/`) with self-play data generation, BC/AWBC/IQL/offline-Q and PPO training, an MLflow-tracked pipeline, the `rlenv` environment wrapper + 204-action catalog, the `cmd/rlbridge` c-shared bridge, a deterministic heuristic bot, and an HTTP-served RL agent seat with heuristic fallback.
 
-**Partial / future:** Redis-backed matchmaking polish, ELO/leaderboards, and broader deployment work.
+**Partial / future:** Redis-backed matchmaking queue (only needed if the server ever runs multi-instance; matchmaking is in-memory today), ELO/leaderboards, and broader deployment work.
 
 ## Quick Start
 ```bash
-# 1. Start database and redis containers
+# 1. Start the database container
 docker-compose up -d
 
 # 2. Start the Go WebSocket server
