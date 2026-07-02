@@ -32,8 +32,10 @@ var (
 	nextHandle uint64 = 1
 	envs              = make(map[uint64]*rl.Env)
 
-	// poolMu only protects the pool handle table. Individual *rl.EnvPool instances
-	// handle their own internal synchronization.
+	// poolMu only protects the pool handle table. Individual *rl.EnvPool
+	// instances are not safe for concurrent ApplyCommands calls; foreign
+	// callers must serialize operations per handle (ApplyCommands parallelizes
+	// internally across slots within a single call).
 	poolMu         sync.Mutex
 	nextPoolHandle uint64 = 1
 	pools                 = make(map[uint64]*rl.EnvPool)

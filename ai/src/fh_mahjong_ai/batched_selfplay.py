@@ -119,7 +119,12 @@ def collect_selfplay_rollouts_batched(env_config: EnvConfig, model: PolicyValueN
                 commands.append(PoolCommand(slot=slot, reset_seed=state.seed))
             # idle slots get no command (absent == skip)
         if not commands:
-            break  # defensive: nothing in flight and nothing left to assign
+            # Unreachable under correct pool semantics; if a pool ever wedges a
+            # slot (has_observation False without terminated/truncated), fail
+            # loudly rather than silently truncating the training batch.
+            raise RuntimeError(
+                f"env pool wedged: {len(active)} slots active, "
+                f"{total - emit_next} matches unemitted")
         result: PoolStepResult = pool.step(commands)
 
         pending_rows = []  # (slot, state, planes_np, scalars_np, mask_np, seat)
