@@ -92,6 +92,10 @@ type Room struct {
 	botTick        chan struct{}
 	botTickPending bool
 
+	// replayBytes accumulates every serialized broadcast for the whole match;
+	// persisted on shutdown. Owned by the room goroutine (Start's loop).
+	replayBytes []byte
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
@@ -169,7 +173,8 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 	return room
 }
 
-// Start begins the event loop for the room
+// Start begins the event loop for the room. Every case body runs on this
+// goroutine, which exclusively owns the engine, Seats, and the replay buffer.
 func (r *Room) Start() {
 	log.Printf("Match Room %s initialized", r.ID)
 
@@ -184,9 +189,7 @@ func (r *Room) Start() {
 	// Initial State Broadcast
 	r.BroadcastState()
 
-	// 1. In-memory buffer to record the full serialized replay of the match
-	var replayBytes []byte
-	replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
+	r.appendReplay(r.advanceAutomatedSeats())
 	r.maybeScheduleBotTick()
 
 	for {
@@ -196,234 +199,272 @@ func (r *Room) Start() {
 			if r.OnShutdown != nil {
 				r.OnShutdown()
 			}
-
-			// 2. Persist replay to database
-			// (For production, we might upload `replayBytes` to AWS S3 and save the URL.
-			// Since we're keeping it simple, we'll store the raw bytes directly in the DB as text via base64)
-			encodedReplay := base64.StdEncoding.EncodeToString(replayBytes)
-
-			// Finalize paipu recording
-			var paipuJSON string
-			if r.Engine.Recorder != nil {
-				var finalScores [4]int32
-				for i, p := range r.Engine.State.Players {
-					finalScores[i] = p.Score
-				}
-				paipu := r.Engine.Recorder.Finalize(finalScores)
-				paipuBytes, err := json.Marshal(paipu)
-				if err != nil {
-					log.Printf("Failed to marshal paipu: %v", err)
-				} else {
-					paipuJSON = string(paipuBytes)
-				}
-			}
-
-			now := time.Now()
-			if r.DB != nil {
-				r.DB.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
-					Status:    "completed",
-					EndTime:   &now,
-					ReplayURL: encodedReplay,
-					WallSeed:  r.Engine.State.WallSeed,
-					PaipuJSON: paipuJSON,
-				})
-			} else if paipuJSON != "" && r.PaipuStore != nil {
-				r.PaipuStore(r.ID, paipuJSON)
-				log.Printf("Stored paipu in-memory for room %s", r.ID)
-			} else {
-				log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
-			}
+			r.persistMatch()
 			return
 
 		case <-r.TimerResolveChan:
-			// Timer goroutine signaled that we should resolve interrupts.
-			// All engine mutations happen here on the main goroutine, preventing races.
-			if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-				r.Engine.ResolveInterrupts()
-				resolvePayload := r.BroadcastState()
-				replayBytes = append(replayBytes, resolvePayload...)
-				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-					r.storePaipuSnapshot()
-				}
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
-				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-					r.storePaipuSnapshot()
-				}
-				r.maybeScheduleBotTick()
-				log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
-			}
+			r.resolveInterruptsFromTimer()
 
 		case client := <-r.DisconnectedClient:
-			// A seat's socket dropped. Hold the seat for a grace window so a
-			// refresh or brief blip can reconnect without losing turns; after
-			// that a bot takes over. All matching is by pointer identity.
-			seat, found := r.seatForClient(client)
-			if !found {
-				// Never seated, or already superseded by a reconnect.
-				safeClose(client.Send)
-				continue
-			}
-			if r.disconnectGrace <= 0 {
-				r.freeSeatForClient(client)
-				safeClose(client.Send)
-				log.Printf("Seat %d disconnected in room %s; bot taking over", seat, r.ID)
-				r.maybeScheduleBotTick()
-			} else {
-				log.Printf("Seat %d disconnected in room %s; bot takes over in %s unless they return", seat, r.ID, r.disconnectGrace)
-				grace := r.disconnectGrace
-				dropped := client
-				go func() {
-					time.Sleep(grace)
-					select {
-					case r.seatReleaseChan <- dropped:
-					default:
-					}
-				}()
-			}
+			r.handleSeatDisconnect(client)
 
 		case client := <-r.seatReleaseChan:
-			// Grace window elapsed. Free the seat only if this same connection
-			// still holds it (a reconnect would have replaced the pointer).
-			seat, found := r.freeSeatForClient(client)
-			safeClose(client.Send)
-			if found {
-				log.Printf("Seat %d grace window elapsed in room %s; bot taking over", seat, r.ID)
-				r.maybeScheduleBotTick()
-			}
+			r.releaseSeatAfterGrace(client)
 
 		case client := <-r.ReconnectedClient:
-			// An owner's socket returned. Rebind their seat (reclaiming it from
-			// a bot if needed), then replay the current board to just them.
-			seat, owned := r.seatForOwner(client.UserID)
-			if !owned {
-				log.Printf("Reconnect from user %d but no owned seat in room %s", client.UserID, r.ID)
-				safeClose(client.Send)
-				continue
-			}
-			if old, exists := r.Seats[seat]; exists && old != client {
-				safeClose(old.Send)
-			}
-			r.Seats[seat] = client
-			seatMsg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, seat))
-			select {
-			case client.Send <- seatMsg:
-			default:
-			}
-			r.SendStateToClient(client)
-			log.Printf("User %d reconnected to seat %d in room %s", client.UserID, seat, r.ID)
-			// If they returned while a bot is mid-turn, keep the bots moving up
-			// to their seat instead of stalling until they happen to act.
-			r.maybeScheduleBotTick()
+			r.handleSeatReconnect(client)
 
 		case <-r.botTick:
-			// One step of bot-only play, then re-arm if more remains. Yielding
-			// between steps keeps the loop responsive to reconnects.
-			r.botTickPending = false
-			replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeatsN(1))
-			if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-				r.storePaipuSnapshot()
-			}
-			r.maybeScheduleBotTick()
+			r.stepBotTick()
 
 		case clientAction := <-r.ActionQueue:
-			// 1. Identify which seat this client belongs to
-			var originSeat uint32
-			found := false
-			for seat, client := range r.Seats {
-				if client.UserID == clientAction.Client.UserID {
-					originSeat = seat
-					found = true
-					break
-				}
+			r.dispatchClientAction(clientAction)
+		}
+	}
+}
+
+// appendReplay accumulates broadcast payloads into the room's replay buffer.
+// Room-goroutine only.
+func (r *Room) appendReplay(payloads [][]byte) {
+	r.replayBytes = appendReplayPayloads(r.replayBytes, payloads)
+}
+
+// persistMatch finalizes the paipu and writes the replay + result to the DB
+// (or the in-memory paipu store when the DB is absent). Called once, on
+// shutdown.
+func (r *Room) persistMatch() {
+	// (For production, we might upload the replay to AWS S3 and save the URL.
+	// Since we're keeping it simple, we store the raw bytes directly in the DB
+	// as base64 text.)
+	encodedReplay := base64.StdEncoding.EncodeToString(r.replayBytes)
+
+	// Finalize paipu recording
+	var paipuJSON string
+	if r.Engine.Recorder != nil {
+		var finalScores [4]int32
+		for i, p := range r.Engine.State.Players {
+			finalScores[i] = p.Score
+		}
+		paipu := r.Engine.Recorder.Finalize(finalScores)
+		paipuBytes, err := json.Marshal(paipu)
+		if err != nil {
+			log.Printf("Failed to marshal paipu: %v", err)
+		} else {
+			paipuJSON = string(paipuBytes)
+		}
+	}
+
+	now := time.Now()
+	if r.DB != nil {
+		r.DB.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
+			Status:    "completed",
+			EndTime:   &now,
+			ReplayURL: encodedReplay,
+			WallSeed:  r.Engine.State.WallSeed,
+			PaipuJSON: paipuJSON,
+		})
+	} else if paipuJSON != "" && r.PaipuStore != nil {
+		r.PaipuStore(r.ID, paipuJSON)
+		log.Printf("Stored paipu in-memory for room %s", r.ID)
+	} else {
+		log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
+	}
+}
+
+// resolveInterruptsFromTimer handles the timer goroutine's signal that the
+// interrupt window elapsed. All engine mutations happen here on the room
+// goroutine, preventing races.
+func (r *Room) resolveInterruptsFromTimer() {
+	if r.Engine.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		return
+	}
+	r.Engine.ResolveInterrupts()
+	r.replayBytes = append(r.replayBytes, r.BroadcastState()...)
+	if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		r.storePaipuSnapshot()
+	}
+	r.appendReplay(r.advanceAutomatedSeats())
+	if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		r.storePaipuSnapshot()
+	}
+	r.maybeScheduleBotTick()
+	log.Printf("Resolved interrupts for room %s, next active player: %d", r.ID, r.Engine.State.ActivePlayer)
+}
+
+// handleSeatDisconnect holds a dropped seat for the grace window so a refresh
+// or brief blip can reconnect without losing turns; after that a bot takes
+// over. All matching is by pointer identity.
+func (r *Room) handleSeatDisconnect(client *Client) {
+	seat, found := r.seatForClient(client)
+	if !found {
+		// Never seated, or already superseded by a reconnect.
+		safeClose(client.Send)
+		return
+	}
+	if r.disconnectGrace <= 0 {
+		r.freeSeatForClient(client)
+		safeClose(client.Send)
+		log.Printf("Seat %d disconnected in room %s; bot taking over", seat, r.ID)
+		r.maybeScheduleBotTick()
+	} else {
+		log.Printf("Seat %d disconnected in room %s; bot takes over in %s unless they return", seat, r.ID, r.disconnectGrace)
+		grace := r.disconnectGrace
+		dropped := client
+		go func() {
+			time.Sleep(grace)
+			select {
+			case r.seatReleaseChan <- dropped:
+			default:
 			}
+		}()
+	}
+}
 
-			if !found {
-				log.Printf("Unauthorized action by user %d in room %s", clientAction.Client.UserID, r.ID)
-				continue
-			}
+// releaseSeatAfterGrace frees a seat whose grace window elapsed, but only if
+// the same connection still holds it (a reconnect replaces the pointer).
+func (r *Room) releaseSeatAfterGrace(client *Client) {
+	seat, found := r.freeSeatForClient(client)
+	safeClose(client.Send)
+	if found {
+		log.Printf("Seat %d grace window elapsed in room %s; bot taking over", seat, r.ID)
+		r.maybeScheduleBotTick()
+	}
+}
 
-			// 2. Feed action securely to the Core Game Engine
-			err := r.Engine.ProcessPlayerAction(originSeat, clientAction.Action)
+// handleSeatReconnect rebinds a returning owner's seat (reclaiming it from a
+// bot if needed), then replays the current board to just them.
+func (r *Room) handleSeatReconnect(client *Client) {
+	seat, owned := r.seatForOwner(client.UserID)
+	if !owned {
+		log.Printf("Reconnect from user %d but no owned seat in room %s", client.UserID, r.ID)
+		safeClose(client.Send)
+		return
+	}
+	if old, exists := r.Seats[seat]; exists && old != client {
+		safeClose(old.Send)
+	}
+	r.Seats[seat] = client
+	seatMsg := []byte(fmt.Sprintf(`{"type":"seat_assignment","seat":%d}`, seat))
+	select {
+	case client.Send <- seatMsg:
+	default:
+	}
+	r.SendStateToClient(client)
+	log.Printf("User %d reconnected to seat %d in room %s", client.UserID, seat, r.ID)
+	// If they returned while a bot is mid-turn, keep the bots moving up
+	// to their seat instead of stalling until they happen to act.
+	r.maybeScheduleBotTick()
+}
 
-			if err != nil {
-				// We don't crash, we just log and ignore illegal moves
-				log.Printf("Illegal move by seat %d: %v", originSeat, err)
-			} else {
-				// 3. The state has successfully mutated! Broadcast the new state to all 4 players
-				log.Printf("Seat %d executed %v", originSeat, clientAction.Action.Type)
+// stepBotTick advances bot-only play one step, then re-arms if more remains.
+// Yielding between steps keeps the loop responsive to reconnects.
+func (r *Room) stepBotTick() {
+	r.botTickPending = false
+	r.appendReplay(r.advanceAutomatedSeatsN(1))
+	if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		r.storePaipuSnapshot()
+	}
+	r.maybeScheduleBotTick()
+}
 
-				// 3. Serialize the StateDelta
-				statePayload := r.BroadcastState()
+// dispatchClientAction authorizes a client's action, feeds it to the engine,
+// broadcasts the result, and manages the interrupt-window timer.
+func (r *Room) dispatchClientAction(clientAction ClientAction) {
+	// 1. Identify which seat this client belongs to
+	var originSeat uint32
+	found := false
+	for seat, client := range r.Seats {
+		if client.UserID == clientAction.Client.UserID {
+			originSeat = seat
+			found = true
+			break
+		}
+	}
 
-				// Keep appending the state into the giant binary blob
-				replayBytes = append(replayBytes, statePayload...)
-				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-					r.storePaipuSnapshot()
-				}
-				replayBytes = appendReplayPayloads(replayBytes, r.advanceAutomatedSeats())
-				if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-					r.storePaipuSnapshot()
-				}
+	if !found {
+		log.Printf("Unauthorized action by user %d in room %s", clientAction.Client.UserID, r.ID)
+		return
+	}
 
-				// 4. Handle Phase Transitions
-				currentPhase := r.Engine.State.Phase
+	// 2. Feed action securely to the Core Game Engine
+	err := r.Engine.ProcessPlayerAction(originSeat, clientAction.Action)
+	if err != nil {
+		// We don't crash, we just log and ignore illegal moves
+		log.Printf("Illegal move by seat %d: %v", originSeat, err)
+		return
+	}
 
-				// Did we just resolve the wait phase early?
-				if clientAction.Action.Type != pb.ActionType_ACTION_DISCARD && currentPhase != pb.GamePhase_PHASE_WAIT_DISCARDS {
-					select {
-					case r.InterruptChan <- true: // signal early cancel
-					default:
-					}
-				}
+	// 3. The state has successfully mutated! Broadcast the new state to all 4
+	// players and keep appending the payloads into the replay buffer.
+	log.Printf("Seat %d executed %v", originSeat, clientAction.Action.Type)
+	r.replayBytes = append(r.replayBytes, r.BroadcastState()...)
+	if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		r.storePaipuSnapshot()
+	}
+	r.appendReplay(r.advanceAutomatedSeats())
+	if r.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		r.storePaipuSnapshot()
+	}
 
-				// If we just entered wait phase, start the timer
-				if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
-					if r.Engine.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
-						if r.interruptTmr != nil {
-							r.interruptTmr.Stop()
-						}
-						// Drain any stale signal from previous cycle
-						select {
-						case <-r.InterruptChan:
-						default:
-						}
+	// 4. Handle Phase Transitions
+	currentPhase := r.Engine.State.Phase
 
-						r.interruptEpoch++
-						epoch := r.interruptEpoch
+	// Did we just resolve the wait phase early?
+	if clientAction.Action.Type != pb.ActionType_ACTION_DISCARD && currentPhase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		select {
+		case r.InterruptChan <- true: // signal early cancel
+		default:
+		}
+	}
 
-						// 5 seconds to decide if they want to Pong/Chi/Ron
-						r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
+	// If we just entered wait phase, start the timer
+	if currentPhase == pb.GamePhase_PHASE_WAIT_DISCARDS && clientAction.Action.Type == pb.ActionType_ACTION_DISCARD {
+		r.armInterruptTimer()
+	}
+}
 
-						go func(timer *time.Timer, myEpoch uint64) {
-							select {
-							case <-timer.C:
-								// Time expired, auto-resolve
-							case <-r.InterruptChan:
-								// Someone claimed it early or everyone skipped!
-								if !timer.Stop() {
-									select {
-									case <-timer.C:
-									default:
-									}
-								}
-							}
+// armInterruptTimer (re)starts the interrupt-decision window and spawns the
+// goroutine that signals the room loop when it expires or is cancelled early.
+// The epoch counter prevents stale goroutines from resolving a newer cycle.
+func (r *Room) armInterruptTimer() {
+	if r.interruptTmr != nil {
+		r.interruptTmr.Stop()
+	}
+	// Drain any stale signal from previous cycle
+	select {
+	case <-r.InterruptChan:
+	default:
+	}
 
-							// Only signal the main loop if this goroutine's epoch is still current.
-							// Prevents stale goroutines from resolving a newer interrupt cycle.
-							if myEpoch == r.interruptEpoch {
-								select {
-								case r.TimerResolveChan <- true:
-								default:
-								}
-							}
-						}(r.interruptTmr, epoch)
-					} else {
-						log.Printf("Auto-resolved interrupts for room %s", r.ID)
-					}
+	r.interruptEpoch++
+	epoch := r.interruptEpoch
+
+	// 5 seconds to decide if they want to Pong/Chi/Ron
+	r.interruptTmr = time.NewTimer(1 * time.Hour) // Temporarily disabled for UI testing
+
+	go func(timer *time.Timer, myEpoch uint64) {
+		select {
+		case <-timer.C:
+			// Time expired, auto-resolve
+		case <-r.InterruptChan:
+			// Someone claimed it early or everyone skipped!
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
 				}
 			}
 		}
-	}
+
+		// Only signal the main loop if this goroutine's epoch is still current.
+		// Prevents stale goroutines from resolving a newer interrupt cycle.
+		if myEpoch == r.interruptEpoch {
+			select {
+			case r.TimerResolveChan <- true:
+			default:
+			}
+		}
+	}(r.interruptTmr, epoch)
 }
 
 func (r *Room) advanceAutomatedSeats() [][]byte {
