@@ -1,40 +1,47 @@
 {
   "current_chongci_reward_trained_best": {
-    "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-student-iter050-39ch.pt",
-    "id": "chongci_selfplay_featuredropout_iter050_39ch",
+    "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter120-39ch.pt",
+    "id": "chongci_selfplay_deep4_ext_iter120_39ch",
     "match_mode": "chongci",
-    "method": "selfplay_feature_dropout_oracle_scaffold",
+    "method": "selfplay_feature_dropout_oracle_scaffold_deeper4_extended",
+    "model_config": {
+      "channels": 96,
+      "residual_blocks": 4,
+      "note": "DEEPER 4-block net; serving infers architecture via infer_model_config"
+    },
     "notes": [
-      "Deployable 39ch student extracted (slice input conv) from the 51ch self-play feature-dropout net iter_050 (sp-gate run).",
-      "First deployable agent to robustly beat the heuristic anchor: Suphx perfect-info scaffold (feature-dropout over the 12 opponents'-hands channels, delta 0->1) + all-4 symmetric self-play, warm-started from the previous anchor.",
-      "Evaluated NON-oracle (plain 39ch); directly comparable to the anchor and drop-in for serve_policy."
+      "Deployable 39ch student extracted from the 4-residual-block self-play feature-dropout net, sp-big-ext iter_120 (deeper net, warm-started from the 2-block anchor, then extended 60 more delta=1 iters).",
+      "New campaign best: the deeper net was undertrained at 60 iters (+0.1875); given a fair 120-iter budget it clears the small-net longer-schedule iter_075 (+0.2125).",
+      "This checkpoint is residual_blocks=4 \u2014 CheckpointPolicy.from_checkpoint infers architecture from the state dict (infer_model_config), so no serving config change is needed to load it.",
+      "Runner-up / fallback candidate: sp-long iter_075 39ch (+0.2125) at /root/fh-mahjong-runs/deploy/selfplay-student-iter075-39ch.pt."
     ],
     "evaluation": [
       {
         "label": "paired_dup_seat_120ep_start870000_vs_anchor",
-        "mean_placement": 0.1111,
+        "mean_placement": 0.2431,
         "anchor_mean_placement": -0.0528,
-        "paired_placement_diff": 0.1639,
-        "paired_placement_ci95": 0.0676,
-        "large_loss_rate": 0.165,
+        "paired_placement_diff": 0.2958,
+        "paired_placement_ci95": 0.0773,
+        "large_loss_rate": 0.104,
         "anchor_large_loss_rate": 0.208,
         "verdict": "BEATS (CI excludes 0)",
-        "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json",
-        "from_oracle_report_path": "/root/fh-mahjong-runs/sp-gate/eval-student050.json",
+        "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json",
+        "from_oracle_report_path": "/root/fh-mahjong-runs/sp-big-ext/eval-ext120.json",
         "anchor_report_path": "/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json"
       }
     ],
     "promotion_gate": {
       "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline)",
-      "result": "paired_diff +0.1639 +/-0.0676 vs anchor -0.0528; large_loss 0.165 vs 0.208; robust across delta=1 tail (iters 40/44/47/50 all BEAT).",
-      "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json"
+      "result": "paired_diff +0.2958 +/-0.0773 vs anchor -0.0528; large_loss 0.104 vs 0.208 (halved); tail iters 080/100/120 = +0.2042/+0.2903/+0.2958 (plateauing).",
+      "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json"
     },
-    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt",
-    "previous_best_id": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
-    "source_run": "/root/fh-mahjong-runs/sp-gate",
+    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-student-iter050-39ch.pt",
+    "previous_best_id": "chongci_selfplay_featuredropout_iter050_39ch",
+    "source_run": "/root/fh-mahjong-runs/sp-big-ext",
     "training": {
-      "method": "all-4 symmetric self-play + Suphx feature-dropout (delta 0->1)",
-      "iterations": 50,
+      "method": "all-4 symmetric self-play + Suphx feature-dropout, deeper 4-block net, extended delta=1",
+      "residual_blocks": 4,
+      "iterations_total": 120,
       "matches_per_iter": 256,
       "num_workers": 5,
       "lr": 2e-05,
@@ -42,8 +49,8 @@
       "ppo_epochs": 2,
       "max_grad_norm": 0.5,
       "gamma": 0.99,
-      "warm_start": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
-      "checkpoint": "iter_050 (51ch) -> extract 39ch"
+      "warm_start": "anchor (2-block) via build_oracle_model + deeper-block zero-init; extension resumes iter_060",
+      "checkpoint": "iter_120 (51ch, 4-block) -> extract 39ch"
     },
     "score_config": {
       "bust_threshold": 0,
@@ -1971,6 +1978,58 @@
         "pairwise_weight": 0.01,
         "target_mode": "mc",
         "temperature": 3.0
+      }
+    },
+    {
+      "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-student-iter050-39ch.pt",
+      "id": "chongci_selfplay_featuredropout_iter050_39ch",
+      "match_mode": "chongci",
+      "method": "selfplay_feature_dropout_oracle_scaffold",
+      "notes": [
+        "Deployable 39ch student extracted (slice input conv) from the 51ch self-play feature-dropout net iter_050 (sp-gate run).",
+        "First deployable agent to robustly beat the heuristic anchor: Suphx perfect-info scaffold (feature-dropout over the 12 opponents'-hands channels, delta 0->1) + all-4 symmetric self-play, warm-started from the previous anchor.",
+        "Evaluated NON-oracle (plain 39ch); directly comparable to the anchor and drop-in for serve_policy."
+      ],
+      "evaluation": [
+        {
+          "label": "paired_dup_seat_120ep_start870000_vs_anchor",
+          "mean_placement": 0.1111,
+          "anchor_mean_placement": -0.0528,
+          "paired_placement_diff": 0.1639,
+          "paired_placement_ci95": 0.0676,
+          "large_loss_rate": 0.165,
+          "anchor_large_loss_rate": 0.208,
+          "verdict": "BEATS (CI excludes 0)",
+          "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json",
+          "from_oracle_report_path": "/root/fh-mahjong-runs/sp-gate/eval-student050.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json"
+        }
+      ],
+      "promotion_gate": {
+        "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline)",
+        "result": "paired_diff +0.1639 +/-0.0676 vs anchor -0.0528; large_loss 0.165 vs 0.208; robust across delta=1 tail (iters 40/44/47/50 all BEAT).",
+        "report_path": "/root/fh-mahjong-runs/deploy/eval-student-plain39.json"
+      },
+      "previous_best_checkpoint_path": "/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt",
+      "previous_best_id": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
+      "source_run": "/root/fh-mahjong-runs/sp-gate",
+      "training": {
+        "method": "all-4 symmetric self-play + Suphx feature-dropout (delta 0->1)",
+        "iterations": 50,
+        "matches_per_iter": 256,
+        "num_workers": 5,
+        "lr": 2e-05,
+        "entropy_coef": 0.0,
+        "ppo_epochs": 2,
+        "max_grad_norm": 0.5,
+        "gamma": 0.99,
+        "warm_start": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
+        "checkpoint": "iter_050 (51ch) -> extract 39ch"
+      },
+      "score_config": {
+        "bust_threshold": 0,
+        "max_hands": 50,
+        "starting_score": 2000
       }
     }
   ],
@@ -4169,5 +4228,5 @@
     "promotion_rule": "reward-trained checkpoint must beat the BC fallback on mean_reward across independent 1000-seed windows without regressing deal-in rate; win rate is tracked as a secondary metric.",
     "serving_validation": "Python returns an action_id from visible SeatObservation inputs; Go must still decode and validate the action_id against current legal actions before applying it."
   },
-  "updated_at": "2026-07-01T04:39:39.330003+00:00"
+  "updated_at": "2026-07-02T07:14:57.109686+00:00"
 }
