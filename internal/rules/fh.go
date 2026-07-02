@@ -60,7 +60,65 @@ func (r *FenghuaRuleset) GetInitialWall() []*pb.Tile {
 	return wall
 }
 
+// EvaluateHand scores a candidate winning hand and reports whether it wins.
+// It runs a fixed pipeline of stages, each owned by a handEvaluation method:
+// base/wild bonuses, the best structural route, honor/suit extremes, flowers
+// (including the eight-flower override), dragon/wind pungs, kong-completion
+// bonuses, and finally the 4-point Ron minimum. Entry order is user-visible
+// in the score breakdown, so stages append in this fixed order.
 func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) (int32, []*pb.ScoreEntry, bool) {
+	e := newHandEvaluation(r, hand, openMelds, winTile, state, playerSeat, isTsumo)
+
+	entries := e.baseAndWildEntries()
+
+	routeEntries, canWin := e.bestStructuralRoute()
+	entries = append(entries, routeEntries...)
+
+	entries, canWin = e.appendHonorSuitEntries(entries, canWin)
+	entries, canWin = e.applyFlowers(entries, canWin)
+
+	if !canWin {
+		return 0, nil, false
+	}
+
+	entries = e.appendDragonAndWindEntries(entries)
+	entries = e.appendKongFlagEntries(entries)
+
+	totalPoints := int32(0)
+	for _, entry := range entries {
+		totalPoints += entry.Points
+	}
+
+	if !isTsumo && !meetsRonMinimum(entries) {
+		return totalPoints, entries, false
+	}
+
+	return totalPoints, entries, true
+}
+
+// handEvaluation carries one EvaluateHand call's context through its stages.
+type handEvaluation struct {
+	rules            *FenghuaRuleset
+	hand             []*pb.Tile
+	fullHand         []*pb.Tile // hand + Ron win tile (tsumo hands already contain it)
+	openMelds        []*pb.Meld
+	winTile          *pb.Tile
+	effectiveWinTile *pb.Tile // winTile, or the inferred drawn tile on tsumo
+	state            *pb.GameState
+	playerSeat       uint32
+	isTsumo          bool
+
+	wildHashes   map[uint32]bool
+	wildsInHand  int
+	isFlowerWild bool
+	// hasWinningSize gates every normal structural route: the effective tile
+	// count must be exactly 14 (each open meld, kongs included, stands in for
+	// one three-tile component — replacement draws keep the arithmetic exact).
+	// Eight Flowers is the explicit incomplete-hand exception.
+	hasWinningSize bool
+}
+
+func newHandEvaluation(r *FenghuaRuleset, hand []*pb.Tile, openMelds []*pb.Meld, winTile *pb.Tile, state *pb.GameState, playerSeat uint32, isTsumo bool) *handEvaluation {
 	effectiveWinTile := winTile
 	if isTsumo && effectiveWinTile == nil {
 		effectiveWinTile = resolveTsumoWinTile(hand, state, playerSeat)
@@ -73,218 +131,240 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		fullHand = append(fullHand, winTile)
 	}
 
-	// Breakdown entries accumulated throughout evaluation
-	entries := make([]*pb.ScoreEntry, 0)
+	e := &handEvaluation{
+		rules:            r,
+		hand:             hand,
+		fullHand:         fullHand,
+		openMelds:        openMelds,
+		winTile:          winTile,
+		effectiveWinTile: effectiveWinTile,
+		state:            state,
+		playerSeat:       playerSeat,
+		isTsumo:          isTsumo,
+		wildHashes:       make(map[uint32]bool),
+		hasWinningSize:   len(fullHand)+3*len(openMelds) == 14,
+	}
 
-	// --- 1. Identify Wild Tiles & Tame State ---
-	isFlowerWild := false
-	wildHashes := make(map[uint32]bool)
 	if state != nil {
-		wildHashes = tiles.WildSet(state.WildTiles)
+		e.wildHashes = tiles.WildSet(state.WildTiles)
 		for _, w := range state.WildTiles {
 			if w.Suit == pb.Suit_SUIT_UNKNOWN || w.Suit > pb.Suit_SUIT_JIHAI {
-				isFlowerWild = true
+				e.isFlowerWild = true
 			}
 		}
 	}
 	// Count wild tiles (excluding Ron win tile — it acts as a normal tile)
-	wildsInHand := tiles.CountWilds(hand, wildHashes)
+	e.wildsInHand = tiles.CountWilds(hand, e.wildHashes)
 	// If Tsumo, the drawn winning tile is part of our concealed hand and counts as wild
-	if isTsumo && winTile != nil {
-		hash := tiles.KeyOf(winTile.Suit, winTile.Value)
-		if wildHashes[hash] {
-			wildsInHand++
-		}
+	if isTsumo && winTile != nil && e.wildHashes[tiles.KeyOf(winTile.Suit, winTile.Value)] {
+		e.wildsInHand++
 	}
 
-	// Base point (坐台) — always awarded
+	return e
+}
+
+// baseAndWildEntries emits the always-awarded base point, the tsumo bonus,
+// the wild-count bonuses (无搭/一搭/二搭/三百搭), and the tame-wild bonus
+// (还搭: the hand would also win with its wilds treated as normal tiles).
+func (e *handEvaluation) baseAndWildEntries() []*pb.ScoreEntry {
+	entries := make([]*pb.ScoreEntry, 0)
+
 	entries = append(entries, NewScoreEntry(PatternBasePoint, 1))
-	if isTsumo {
+	if e.isTsumo {
 		entries = append(entries, NewScoreEntry(PatternTsumo, 1))
 	}
 
-	// --- 3. Evaluate High-Level Hand Structures (Mutually Exclusive Cores) ---
-	canWin := false
-
-	// Open melds, including kongs, each replace one three-tile component of
-	// the winning shape. Kong replacement draws keep this effective count at
-	// 14 even though the meld itself contains four physical tiles.
-	hasWinningTileCount := len(fullHand)+3*len(openMelds) == 14
-	isIndependence := hasWinningTileCount && len(openMelds) == 0 && r.isIndependence(fullHand, wildHashes)
-	isSevenPairs := hasWinningTileCount && len(openMelds) == 0 && r.isSevenPairs(fullHand, wildHashes)
-	isStandard := hasWinningTileCount && r.canFormStandardHand(fullHand, wildHashes, true)
-
-	// --- 1.5. Calculate Tame Wild (还搭) ---
-	isTame := false
-	if wildsInHand > 0 {
-		emptyWilds := make(map[uint32]bool)
-		if r.canFormStandardHand(fullHand, emptyWilds, true) ||
-			(len(openMelds) == 0 && r.isSevenPairs(fullHand, emptyWilds)) ||
-			(len(openMelds) == 0 && r.isIndependence(fullHand, emptyWilds)) {
-			isTame = true
-		}
-	}
-
-	// --- 2. Wild Tile Point Bonuses ---
-	if wildsInHand == 0 {
+	if e.wildsInHand == 0 {
 		entries = append(entries, NewScoreEntry(PatternNoWildTiles, 1))
-	} else if wildsInHand == 1 {
+	} else if e.wildsInHand == 1 {
 		entries = append(entries, NewScoreEntry(PatternOneWildTile, 1))
-	} else if wildsInHand == 2 {
+	} else if e.wildsInHand == 2 {
 		entries = append(entries, NewScoreEntry(PatternTwoWildTiles, 2))
-	} else if wildsInHand == 3 {
-		if isFlowerWild {
+	} else if e.wildsInHand == 3 {
+		if e.isFlowerWild {
 			entries = append(entries, NewScoreEntry(PatternThreeFlowerWildTiles, 300))
 		} else {
 			entries = append(entries, NewScoreEntry(PatternThreeNormalWildTiles, 150))
 		}
 	}
-	if isTame {
+
+	if e.isTameWild() {
 		entries = append(entries, NewScoreEntry(PatternTameWildTiles, 1))
 	}
 
-	// --- Structural route evaluation (pick highest-scoring route) ---
-	type scoredRoute struct {
-		score   int32
-		entries []*pb.ScoreEntry
-	}
-	var bestRoute *scoredRoute
+	return entries
+}
 
-	if isIndependence {
-		canWin = true
-		re := make([]*pb.ScoreEntry, 0)
-		// Base Independence is always +50
-		re = append(re, NewScoreEntry(PatternIndependence, 50))
-		// Seven Stars bonus stacks on top (closed +100, open +50)
-		if r.hasAllSevenHonors(fullHand) {
-			if isTsumo {
-				re = append(re, NewScoreEntry(PatternClosedSevenStars, 100))
-			} else {
-				re = append(re, NewScoreEntry(PatternOpenSevenStars, 50))
-			}
+func (e *handEvaluation) isTameWild() bool {
+	if e.wildsInHand == 0 {
+		return false
+	}
+	emptyWilds := make(map[uint32]bool)
+	return e.rules.canFormStandardHand(e.fullHand, emptyWilds, true) ||
+		(len(e.openMelds) == 0 && e.rules.isSevenPairs(e.fullHand, emptyWilds)) ||
+		(len(e.openMelds) == 0 && e.rules.isIndependence(e.fullHand, emptyWilds))
+}
+
+// scoredRoute is one mutually exclusive structural interpretation of the hand.
+type scoredRoute struct {
+	score   int32
+	entries []*pb.ScoreEntry
+}
+
+func routeOf(entries []*pb.ScoreEntry) *scoredRoute {
+	total := int32(0)
+	for _, entry := range entries {
+		total += entry.Points
+	}
+	return &scoredRoute{score: total, entries: entries}
+}
+
+// bestStructuralRoute evaluates the three mutually exclusive core shapes —
+// Independence (大大胡), Seven Pairs (七对), Standard (4 melds + pair) — and
+// returns the highest-scoring one. Ties keep the earlier route in that order.
+func (e *handEvaluation) bestStructuralRoute() ([]*pb.ScoreEntry, bool) {
+	var best *scoredRoute
+	for _, route := range []*scoredRoute{e.independenceRoute(), e.sevenPairsRoute(), e.standardRoute()} {
+		if route == nil {
+			continue
 		}
-		// Without-suit bonus stacks independently (+100), combinable with Seven Stars
-		if r.isMissingASuit(fullHand) {
-			re = append(re, NewScoreEntry(PatternIndependenceMissingSuit, 100))
-		}
-		routeTotal := int32(0)
-		for _, e := range re {
-			routeTotal += e.Points
-		}
-		if bestRoute == nil {
-			bestRoute = &scoredRoute{score: routeTotal, entries: re}
-		} else if routeTotal > bestRoute.score {
-			bestRoute = &scoredRoute{score: routeTotal, entries: re}
+		if best == nil || route.score > best.score {
+			best = route
 		}
 	}
+	if best == nil {
+		return nil, false
+	}
+	return best.entries, true
+}
 
-	if isSevenPairs {
-		canWin = true
-		re := make([]*pb.ScoreEntry, 0)
-		if wildsInHand == 0 {
-			re = append(re, NewScoreEntry(PatternStraightSevenPairs, 150))
+func (e *handEvaluation) independenceRoute() *scoredRoute {
+	if !e.hasWinningSize || len(e.openMelds) != 0 || !e.rules.isIndependence(e.fullHand, e.wildHashes) {
+		return nil
+	}
+	re := make([]*pb.ScoreEntry, 0)
+	// Base Independence is always +50
+	re = append(re, NewScoreEntry(PatternIndependence, 50))
+	// Seven Stars bonus stacks on top (closed +100, open +50)
+	if e.rules.hasAllSevenHonors(e.fullHand) {
+		if e.isTsumo {
+			re = append(re, NewScoreEntry(PatternClosedSevenStars, 100))
 		} else {
-			re = append(re, NewScoreEntry(PatternWildSevenPairs, 50))
+			re = append(re, NewScoreEntry(PatternOpenSevenStars, 50))
 		}
-		if bombCount := r.countIdenticalFours(fullHand); bombCount > 0 {
-			if isTsumo {
-				re = append(re, NewScoreEntry(PatternClosedBomb, 100))
-			} else {
-				re = append(re, NewScoreEntry(PatternOpenBomb, 50))
-			}
+	}
+	// Without-suit bonus stacks independently (+100), combinable with Seven Stars
+	if e.rules.isMissingASuit(e.fullHand) {
+		re = append(re, NewScoreEntry(PatternIndependenceMissingSuit, 100))
+	}
+	return routeOf(re)
+}
+
+func (e *handEvaluation) sevenPairsRoute() *scoredRoute {
+	if !e.hasWinningSize || len(e.openMelds) != 0 || !e.rules.isSevenPairs(e.fullHand, e.wildHashes) {
+		return nil
+	}
+	re := make([]*pb.ScoreEntry, 0)
+	if e.wildsInHand == 0 {
+		re = append(re, NewScoreEntry(PatternStraightSevenPairs, 150))
+	} else {
+		re = append(re, NewScoreEntry(PatternWildSevenPairs, 50))
+	}
+	if bombCount := e.rules.countIdenticalFours(e.fullHand); bombCount > 0 {
+		if e.isTsumo {
+			re = append(re, NewScoreEntry(PatternClosedBomb, 100))
+		} else {
+			re = append(re, NewScoreEntry(PatternOpenBomb, 50))
 		}
-		routeTotal := int32(0)
-		for _, e := range re {
-			routeTotal += e.Points
-		}
-		if bestRoute == nil || routeTotal > bestRoute.score {
-			bestRoute = &scoredRoute{score: routeTotal, entries: re}
+	}
+	return routeOf(re)
+}
+
+func (e *handEvaluation) standardRoute() *scoredRoute {
+	if !e.hasWinningSize || !e.rules.canFormStandardHand(e.fullHand, e.wildHashes, true) {
+		return nil
+	}
+	re := make([]*pb.ScoreEntry, 0)
+
+	isAllPung := e.rules.isAllPung(e.fullHand, e.openMelds, e.wildHashes)
+	isAllChow := e.rules.isAllChow(e.fullHand, e.openMelds, e.wildHashes)
+	isPureSuit := e.rules.isPureOneSuit(e.fullHand, e.openMelds, e.wildHashes)
+	isMixedSuit := e.rules.isMixedOneSuit(e.fullHand, e.openMelds, e.wildHashes)
+
+	// Common Win (朋胡): four runs (sequences) and a pair of eyes.
+	// Excluded when pure/mixed one-suit patterns apply (those are scored separately).
+	if isAllChow && !isPureSuit && !isMixedSuit {
+		re = append(re, NewScoreEntry(PatternCommonWin, 1))
+	}
+
+	// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
+	if e.effectiveWinTile != nil && e.rules.evalWaitPattern(e.hand, e.effectiveWinTile, e.wildHashes) > 0 {
+		re = append(re, NewScoreEntry(PatternSinglePairCall, 1))
+	}
+	if len(e.openMelds) == 4 {
+		if e.wildsInHand == 0 {
+			re = append(re, NewScoreEntry(PatternStraightLoner, 100))
+		} else {
+			re = append(re, NewScoreEntry(PatternWildLoner, 50))
 		}
 	}
 
-	if isStandard {
-		canWin = true
-		re := make([]*pb.ScoreEntry, 0)
-
-		isAllPung := r.isAllPung(fullHand, openMelds, wildHashes)
-		isAllChow := r.isAllChow(fullHand, openMelds, wildHashes)
-		isPureSuit := r.isPureOneSuit(fullHand, openMelds, wildHashes)
-		isMixedSuit := r.isMixedOneSuit(fullHand, openMelds, wildHashes)
-
-		// Common Win (朋胡): four runs (sequences) and a pair of eyes.
-		// Excluded when pure/mixed one-suit patterns apply (those are scored separately).
-		if isAllChow && !isPureSuit && !isMixedSuit {
-			re = append(re, NewScoreEntry(PatternCommonWin, 1))
-		}
-
-		// Wait pattern bonus — single wait/pair call (边嵌单吊对倒)
-		hasSingleCall := effectiveWinTile != nil && r.evalWaitPattern(hand, effectiveWinTile, wildHashes) > 0
-		if hasSingleCall {
-			re = append(re, NewScoreEntry(PatternSinglePairCall, 1))
-		}
-		if len(openMelds) == 4 {
-			if wildsInHand == 0 {
-				re = append(re, NewScoreEntry(PatternStraightLoner, 100))
-			} else {
-				re = append(re, NewScoreEntry(PatternWildLoner, 50))
-			}
-		}
-
-		if isAllPung {
-			if wildsInHand == 0 {
-				re = append(re, NewScoreEntry(PatternStraightAllPung, 100))
-			} else {
-				re = append(re, NewScoreEntry(PatternWildAllPung, 50))
-			}
-		}
-
-		routeTotal := int32(0)
-		for _, e := range re {
-			routeTotal += e.Points
-		}
-		if bestRoute == nil || routeTotal > bestRoute.score {
-			bestRoute = &scoredRoute{score: routeTotal, entries: re}
+	if isAllPung {
+		if e.wildsInHand == 0 {
+			re = append(re, NewScoreEntry(PatternStraightAllPung, 100))
+		} else {
+			re = append(re, NewScoreEntry(PatternWildAllPung, 50))
 		}
 	}
 
-	// Merge best structural route into entries
-	if bestRoute != nil {
-		entries = append(entries, bestRoute.entries...)
-	}
+	return routeOf(re)
+}
 
-	// If no standard structural shapes matched, check for absolute extremes.
+// appendHonorSuitEntries handles the honor/suit extremes: a structurally
+// invalid all-honor hand can still win as 乱老头; a structural win upgrades
+// with 清老头, 清一色, or 混一色.
+func (e *handEvaluation) appendHonorSuitEntries(entries []*pb.ScoreEntry, canWin bool) ([]*pb.ScoreEntry, bool) {
 	if !canWin {
-		if r.isUncompletedAllHonors(fullHand, openMelds, wildHashes) {
+		if e.rules.isUncompletedAllHonors(e.fullHand, e.openMelds, e.wildHashes) {
 			canWin = true
 			entries = append(entries, NewScoreEntry(PatternUncompletedAllHonors, 400))
 		}
-	} else {
-		if r.isCompletedAllHonors(fullHand, openMelds, wildHashes) {
-			entries = append(entries, NewScoreEntry(PatternCompletedAllHonors, 800))
-		} else if r.isPureOneSuit(fullHand, openMelds, wildHashes) {
-			entries = append(entries, NewScoreEntry(PatternPureOneSuit, 150))
-		} else if r.isMixedOneSuit(fullHand, openMelds, wildHashes) {
-			entries = append(entries, NewScoreEntry(PatternMixedOneSuit, 70))
-		}
+		return entries, canWin
 	}
+	if e.rules.isCompletedAllHonors(e.fullHand, e.openMelds, e.wildHashes) {
+		entries = append(entries, NewScoreEntry(PatternCompletedAllHonors, 800))
+	} else if e.rules.isPureOneSuit(e.fullHand, e.openMelds, e.wildHashes) {
+		entries = append(entries, NewScoreEntry(PatternPureOneSuit, 150))
+	} else if e.rules.isMixedOneSuit(e.fullHand, e.openMelds, e.wildHashes) {
+		entries = append(entries, NewScoreEntry(PatternMixedOneSuit, 70))
+	}
+	return entries, canWin
+}
 
-	// --- 7. Flower Bonuses & Eight Flower Win ---
-	var myFlowers []*pb.Tile
-	if state != nil && state.Players != nil {
-		if int(playerSeat) < len(state.Players) {
-			ps := state.Players[playerSeat]
-			if ps != nil {
-				myFlowers = ps.FlowerMelds
-			}
-		}
+func (e *handEvaluation) myFlowers() []*pb.Tile {
+	if e.state == nil || e.state.Players == nil {
+		return nil
 	}
+	if int(e.playerSeat) >= len(e.state.Players) {
+		return nil
+	}
+	ps := e.state.Players[e.playerSeat]
+	if ps == nil {
+		return nil
+	}
+	return ps.FlowerMelds
+}
+
+// applyFlowers emits the flower bonuses. Eight flowers on a non-winning hand
+// is a direct win that OVERRIDES everything accumulated so far (八花直胡 is
+// just 400 + own flowers); on a winning hand it stacks as 八花搓胡.
+func (e *handEvaluation) applyFlowers(entries []*pb.ScoreEntry, canWin bool) ([]*pb.ScoreEntry, bool) {
+	myFlowers := e.myFlowers()
 
 	if len(myFlowers) == 8 {
 		if !canWin {
 			canWin = true
-			// Override: clear all previous entries, it's just 400 + own flower
-			entries = []*pb.ScoreEntry{}
-			entries = append(entries, NewScoreEntry(PatternUncompletedEightFlowers, 400))
+			entries = []*pb.ScoreEntry{NewScoreEntry(PatternUncompletedEightFlowers, 400)}
 		} else {
 			entries = append(entries, NewScoreEntry(PatternCompletedEightFlowers, 800))
 		}
@@ -292,98 +372,86 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		entries = append(entries, NewScoreEntry(PatternFourFlowers, 150))
 	}
 
-	flowerBonus := getFlowerBonuses(myFlowers, playerSeat, state)
-	if flowerBonus > 0 {
+	if flowerBonus := getFlowerBonuses(myFlowers, e.playerSeat, e.state); flowerBonus > 0 {
 		entries = append(entries, NewScoreEntry(PatternOwnFlower, flowerBonus))
 	}
 
-	if !canWin {
-		return 0, nil, false
-	}
+	return entries, canWin
+}
 
-	// --- 4. Dragon Pon Bonuses (中发白碰出) ---
-	dragonPoints := r.countDragonPungs(fullHand, openMelds, wildHashes)
-	if dragonPoints > 0 {
+// appendDragonAndWindEntries emits dragon-pung (中发白碰出) and wind-pung
+// (正风/位风/圈风) bonuses.
+func (e *handEvaluation) appendDragonAndWindEntries(entries []*pb.ScoreEntry) []*pb.ScoreEntry {
+	if dragonPoints := e.rules.countDragonPungs(e.fullHand, e.openMelds, e.wildHashes); dragonPoints > 0 {
 		entries = append(entries, NewScoreEntry(PatternDragonPung, dragonPoints))
 	}
 
-	// --- 5. Wind Pon Bonuses (位风/圈风/正风) ---
-	if state != nil {
-		var seatWind, prevailingWind uint32
-		if int(playerSeat) < len(state.Players) && state.Players[playerSeat] != nil {
-			seatWind = state.Players[playerSeat].SeatWind
-		}
-		prevailingWind = state.PrevailingWind
-		if seatWind > 0 {
-			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, seatWind) {
-				if seatWind == prevailingWind {
-					entries = append(entries, NewScoreEntry(PatternRightWind, 2))
-				} else {
-					entries = append(entries, NewScoreEntry(PatternSeatWind, 1))
-				}
-			}
-		}
-		if prevailingWind > 0 && prevailingWind != seatWind {
-			if r.hasPungOfValue(fullHand, openMelds, pb.Suit_SUIT_JIHAI, prevailingWind) {
-				entries = append(entries, NewScoreEntry(PatternPrevailingWind, 1))
-			}
+	if e.state == nil {
+		return entries
+	}
+	var seatWind uint32
+	if int(e.playerSeat) < len(e.state.Players) && e.state.Players[e.playerSeat] != nil {
+		seatWind = e.state.Players[e.playerSeat].SeatWind
+	}
+	prevailingWind := e.state.PrevailingWind
+	if seatWind > 0 && e.rules.hasPungOfValue(e.fullHand, e.openMelds, pb.Suit_SUIT_JIHAI, seatWind) {
+		if seatWind == prevailingWind {
+			entries = append(entries, NewScoreEntry(PatternRightWind, 2))
+		} else {
+			entries = append(entries, NewScoreEntry(PatternSeatWind, 1))
 		}
 	}
-
-	// --- 6. Kong Bonuses (杠牌加分) ---
-	if state != nil && int(playerSeat) < len(state.Players) {
-		ps := state.Players[playerSeat]
-		if ps != nil {
-			// Budding and blooming are mutually exclusive per kong type: a kong
-			// that bloomed (won on its supplementary tile) scores the blooming
-			// bonus only, never both.
-			if ps.HasBloomingDirectKong {
-				entries = append(entries, NewScoreEntry(PatternBloomingDirectKong, 100))
-			} else if ps.HasBuddingDirectKong {
-				entries = append(entries, NewScoreEntry(PatternBuddingDirectKong, 50))
-			}
-			if ps.HasBloomingClosedKong {
-				entries = append(entries, NewScoreEntry(PatternBloomingClosedKong, 150))
-			} else if ps.HasBuddingClosedKong {
-				entries = append(entries, NewScoreEntry(PatternBuddingClosedKong, 100))
-			}
-			if ps.HasBloomingRiskyKong {
-				entries = append(entries, NewScoreEntry(PatternBloomingRiskyKong, 200))
-			} else if ps.HasBuddingRiskyKong {
-				entries = append(entries, NewScoreEntry(PatternBuddingRiskyKong, 100))
-			}
-			if ps.HasBloomingFlowerKong {
-				entries = append(entries, NewScoreEntry(PatternBloomingFlowerKong, 50))
-			}
-		}
+	if prevailingWind > 0 && prevailingWind != seatWind && e.rules.hasPungOfValue(e.fullHand, e.openMelds, pb.Suit_SUIT_JIHAI, prevailingWind) {
+		entries = append(entries, NewScoreEntry(PatternPrevailingWind, 1))
 	}
+	return entries
+}
 
-	// Sum total from all entries
-	totalPoints := int32(0)
-	for _, e := range entries {
-		totalPoints += e.Points
+// appendKongFlagEntries emits kong-completion bonuses from the player's flags.
+// Budding and blooming are mutually exclusive per kong type: a kong that
+// bloomed (won on its supplementary tile) scores the blooming bonus only.
+func (e *handEvaluation) appendKongFlagEntries(entries []*pb.ScoreEntry) []*pb.ScoreEntry {
+	if e.state == nil || int(e.playerSeat) >= len(e.state.Players) {
+		return entries
 	}
-
-	// Fenghua Minimum Win Points Enforcement ---
-	// Ron requires 4 *qualifying* points. Reward bonuses (Four Flowers, Own
-	// Flower, kan-completion bonuses) are awarded but do NOT count toward
-	// the minimum — they describe lucky tile collection, not the playing
-	// hand. The minimum must be reached by base + structural patterns.
-	// Tsumo has no minimum.
-	if !isTsumo {
-		qualifying := int32(0)
-		for _, e := range entries {
-			if isRewardPattern(e) {
-				continue
-			}
-			qualifying += e.Points
-		}
-		if qualifying < 4 {
-			return totalPoints, entries, false
-		}
+	ps := e.state.Players[e.playerSeat]
+	if ps == nil {
+		return entries
 	}
+	if ps.HasBloomingDirectKong {
+		entries = append(entries, NewScoreEntry(PatternBloomingDirectKong, 100))
+	} else if ps.HasBuddingDirectKong {
+		entries = append(entries, NewScoreEntry(PatternBuddingDirectKong, 50))
+	}
+	if ps.HasBloomingClosedKong {
+		entries = append(entries, NewScoreEntry(PatternBloomingClosedKong, 150))
+	} else if ps.HasBuddingClosedKong {
+		entries = append(entries, NewScoreEntry(PatternBuddingClosedKong, 100))
+	}
+	if ps.HasBloomingRiskyKong {
+		entries = append(entries, NewScoreEntry(PatternBloomingRiskyKong, 200))
+	} else if ps.HasBuddingRiskyKong {
+		entries = append(entries, NewScoreEntry(PatternBuddingRiskyKong, 100))
+	}
+	if ps.HasBloomingFlowerKong {
+		entries = append(entries, NewScoreEntry(PatternBloomingFlowerKong, 50))
+	}
+	return entries
+}
 
-	return totalPoints, entries, true
+// meetsRonMinimum enforces the Fenghua 4-point Ron minimum. Reward bonuses
+// (Four Flowers, Own Flower, kan-completion bonuses) are awarded but do NOT
+// count toward the minimum — they describe lucky tile collection, not the
+// playing hand. Tsumo has no minimum (callers skip this check).
+func meetsRonMinimum(entries []*pb.ScoreEntry) bool {
+	qualifying := int32(0)
+	for _, entry := range entries {
+		if isRewardPattern(entry) {
+			continue
+		}
+		qualifying += entry.Points
+	}
+	return qualifying >= 4
 }
 
 // isRewardPattern reports whether a scoring entry is a "reward" bonus

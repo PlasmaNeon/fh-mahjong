@@ -14,7 +14,7 @@ This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin tha
   - `rewardPatternIds` classifies reward bonuses (flowers, kong completions) excluded from the 4-point Ron minimum; logic keys off ids, never display strings
 - **fh.go** — `FenghuaRuleset` struct implementing all `RuleEngine` methods:
   - `GetInitialWall()` — 144 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z) + 8 unique flower tiles (1=Spring, 2=Summer, 3=Autumn, 4=Winter, 5=Plum, 6=Orchid, 7=Chrysanthemum, 8=Bamboo)
-  - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). Evaluates three mutually exclusive routes:
+  - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). A staged pipeline over a `handEvaluation` context (base/wild bonuses → best structural route → honor/suit extremes → flowers → dragons/winds → kong flags → Ron minimum); entry order is user-visible, so stages append in fixed order. Evaluates three mutually exclusive routes:
     1. **Independence** (大大胡): 14 disconnected tiles, base 50 + stackable bonuses
     2. **Seven Pairs** (七对): 7 pairs, straight (150) or wild (50) + bomb bonuses
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns

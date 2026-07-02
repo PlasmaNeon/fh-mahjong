@@ -665,327 +665,344 @@ func (g *Game) ProcessPlayerAction(seat uint32, action *pb.PlayerAction) error {
 	}
 }
 
-// handleActiveTurnAction processes normal turn actions like Discard or Tsumo.
+// handleActiveTurnAction dispatches normal turn actions like Discard or Tsumo.
 func (g *Game) handleActiveTurnAction(seat uint32, action *pb.PlayerAction) error {
-	// --- Haitei Accept/Refuse ---
-	if action.Type == pb.ActionType_ACTION_ACCEPT_HAITEI {
-		// Player accepts the haitei tile. Draw it from the wangpai.
-		haiteiIdx := g.findHaiteiIndex()
-		if haiteiIdx < 0 {
-			return errors.New("no haitei tile available")
+	switch action.Type {
+	case pb.ActionType_ACTION_ACCEPT_HAITEI:
+		return g.handleHaiteiAccept(seat)
+	case pb.ActionType_ACTION_REFUSE_HAITEI:
+		return g.handleHaiteiRefuse(seat)
+	case pb.ActionType_ACTION_DISCARD:
+		return g.handleDiscard(seat, action)
+	case pb.ActionType_ACTION_KAN, pb.ActionType_ACTION_FLOWER_REVEAL:
+		return g.handleKongOrFlowerReveal(seat, action)
+	case pb.ActionType_ACTION_TSUMO:
+		return g.handleTsumo(seat)
+	default:
+		return fmt.Errorf("unsupported active action: %v", action.Type)
+	}
+}
+
+// concludeRound performs the shared round-end trailer: finalize dealer/round
+// bookkeeping, clear every seat's valid actions, and record the round in the
+// paipu. Callers must set State.Phase and State.RoundResult first.
+func (g *Game) concludeRound() {
+	g.finalizeRoundEnd()
+	for _, p := range g.State.Players {
+		p.ValidActions = nil
+	}
+	g.recordRoundEnd()
+}
+
+// endRoundInDraw ends the current round as an exhaustive draw (ryuukyoku).
+func (g *Game) endRoundInDraw() {
+	g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+	g.State.RoundResult = &pb.RoundResult{IsDraw: true}
+	g.concludeRound()
+}
+
+// offerInterrupts computes valid interrupts for every seat other than the
+// discarder and reports whether anyone can act. ronOnly restricts offers to
+// Ron, per the haitei rule (no Chii/Pon/Kan on the last discard).
+func (g *Game) offerInterrupts(seat uint32, tile *pb.Tile, ronOnly bool) bool {
+	anyoneCanAct := false
+	for pSeat, p := range g.State.Players {
+		if uint32(pSeat) == seat {
+			p.ValidActions = nil // the discarder has no interrupts
+			continue
 		}
-
-		player := g.State.Players[seat]
-		drawnTile := g.wall[haiteiIdx]
-		player.ClosedHand = append(player.ClosedHand, drawnTile)
-		player.HandSize++
-		drawnID := int32(drawnTile.Id)
-		player.DrawnTileId = &drawnID
-		g.State.WallCount--
-		g.haiteiDrawIndex = haiteiIdx
-		g.updateWangpaiTilesLeft()
-
-		if g.Recorder != nil {
-			g.Recorder.RecordHaiteiAccept(seat, drawnTile.Id)
+		interrupts := g.Rules.GetValidInterrupts(g.State, tile, uint32(pSeat))
+		if ronOnly {
+			var ronActions []*pb.PlayerAction
+			for _, intr := range interrupts {
+				if intr.Type == pb.ActionType_ACTION_RON {
+					ronActions = append(ronActions, intr)
+				}
+			}
+			interrupts = ronActions
 		}
-
-		// If the accepted haitei tile is a revealable flower, the replacement comes
-		// from the dead wall and the haitei-only restriction no longer applies.
-		if g.findRevealableFlowerTile(seat) != nil {
-			g.State.IsHaitei = false
-			return g.autoRevealFlowers(seat)
+		p.ValidActions = interrupts
+		if len(interrupts) > 0 {
+			anyoneCanAct = true
 		}
+	}
+	return anyoneCanAct
+}
 
-		// Get valid actions — during haitei, only Tsumo or Discard of the drawn tile
-		player.ValidActions = g.Rules.GetValidActions(g.State, seat)
-
-		return nil
+// handleHaiteiAccept draws the haitei tile from the wangpai for the player.
+func (g *Game) handleHaiteiAccept(seat uint32) error {
+	haiteiIdx := g.findHaiteiIndex()
+	if haiteiIdx < 0 {
+		return errors.New("no haitei tile available")
 	}
 
-	if action.Type == pb.ActionType_ACTION_REFUSE_HAITEI {
-		// Player refuses the haitei tile → ryuukyoku
+	player := g.State.Players[seat]
+	drawnTile := g.wall[haiteiIdx]
+	player.ClosedHand = append(player.ClosedHand, drawnTile)
+	player.HandSize++
+	drawnID := int32(drawnTile.Id)
+	player.DrawnTileId = &drawnID
+	g.State.WallCount--
+	g.haiteiDrawIndex = haiteiIdx
+	g.updateWangpaiTilesLeft()
+
+	if g.Recorder != nil {
+		g.Recorder.RecordHaiteiAccept(seat, drawnTile.Id)
+	}
+
+	// If the accepted haitei tile is a revealable flower, the replacement comes
+	// from the dead wall and the haitei-only restriction no longer applies.
+	if g.findRevealableFlowerTile(seat) != nil {
 		g.State.IsHaitei = false
-		if g.Recorder != nil {
-			g.Recorder.RecordHaiteiRefuse(seat)
+		return g.autoRevealFlowers(seat)
+	}
+
+	// Get valid actions — during haitei, only Tsumo or Discard of the drawn tile
+	player.ValidActions = g.Rules.GetValidActions(g.State, seat)
+
+	return nil
+}
+
+// handleHaiteiRefuse ends the round in a draw when the player declines the
+// haitei tile.
+func (g *Game) handleHaiteiRefuse(seat uint32) error {
+	g.State.IsHaitei = false
+	if g.Recorder != nil {
+		g.Recorder.RecordHaiteiRefuse(seat)
+	}
+	g.endRoundInDraw()
+	return nil
+}
+
+// handleDiscard removes the tile from the player's hand, offers interrupts to
+// the other seats, and either opens the interrupt window or advances the turn.
+func (g *Game) handleDiscard(seat uint32, action *pb.PlayerAction) error {
+	player := g.State.Players[seat]
+
+	// Remove from hand, add to discards
+	found := false
+	for i, t := range player.ClosedHand {
+		if t.Id == action.Tile.Id {
+			player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
+			found = true
+			break
 		}
-		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-		g.finalizeRoundEnd()
-		for _, p := range g.State.Players {
-			p.ValidActions = nil
+	}
+	if !found {
+		return errors.New("discard tile not in hand")
+	}
+
+	player.Discards = append(player.Discards, action.Tile)
+	player.HandSize--
+	// LastDiscardFromDrawn (tsumogiri) must survive the turn advance, so it
+	// lives on the player and is overwritten only by their next discard —
+	// unlike ActiveDiscard, which is cleared the moment no interrupt is
+	// possible (the common no-interrupt path), before the state is broadcast.
+	player.LastDiscardFromDrawn = player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
+	player.DrawnTileId = nil
+	g.State.ActiveDiscard = action.Tile
+
+	if g.Recorder != nil {
+		g.Recorder.RecordDiscard(seat, action.Tile.Id)
+	}
+
+	// Choosing to discard means the player did not win on the dead-wall
+	// replacement tile, so the transient blooming flags are stale. Budding
+	// flags persist — the kong still scores when the hand is eventually won.
+	g.clearBloomingKongFlags(player)
+
+	// During haitei, only Ron is allowed as an interrupt (no Chii/Pon/Kan)
+	if g.State.IsHaitei {
+		if g.offerInterrupts(seat, action.Tile, true) {
+			g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+			g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+		} else {
+			// No one can Ron → ryuukyoku (no more tiles to draw after haitei)
+			g.State.IsHaitei = false
+			g.endRoundInDraw()
 		}
-		g.recordRoundEnd()
 		return nil
 	}
 
-	if action.Type == pb.ActionType_ACTION_DISCARD {
-		player := g.State.Players[seat]
+	// Normal (non-haitei) discard path
+	if g.offerInterrupts(seat, action.Tile, false) {
+		// Transition to wait for interrupts
+		g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+		g.interruptQueue = make(map[uint32]*pb.PlayerAction) // clear queue
+	} else {
+		// No one can interrupt, immediately advance turn
+		g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
+		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+		g.State.ActiveDiscard = nil
+		g.ExecuteSystemDraw(g.State.ActivePlayer)
+	}
 
-		// Remove from hand, add to discards
+	return nil
+}
+
+// handleKongOrFlowerReveal melds a self-drawn kong (closed or pon upgrade) or
+// reveals a flower, then takes the supplementary dead-wall draw and marks the
+// transient blooming bonus flags.
+func (g *Game) handleKongOrFlowerReveal(seat uint32, action *pb.PlayerAction) error {
+	player := g.State.Players[seat]
+	// Which kong type may "bloom" if the player wins on this dead-wall draw.
+	kongBloom := "" // "risky" (upgraded pon) or "closed" (4 from hand)
+
+	// Verify and remove the tiles from the closed hand
+	for _, requiredTile := range action.MeldTiles {
 		found := false
-		for i, t := range player.ClosedHand {
-			if t.Id == action.Tile.Id {
+		for i, handTile := range player.ClosedHand {
+			if handTile.Id == requiredTile.Id {
 				player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
+				player.HandSize--
 				found = true
 				break
 			}
 		}
 		if !found {
-			return errors.New("discard tile not in hand")
+			return fmt.Errorf("tile %d for action %v not found in hand", requiredTile.Id, action.Type)
 		}
+	}
 
-		player.Discards = append(player.Discards, action.Tile)
-		player.HandSize--
-		// LastDiscardFromDrawn (tsumogiri) must survive the turn advance, so it
-		// lives on the player and is overwritten only by their next discard —
-		// unlike ActiveDiscard, which is cleared the moment no interrupt is
-		// possible (the common no-interrupt path), before the state is broadcast.
-		player.LastDiscardFromDrawn = player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
-		player.DrawnTileId = nil
-		g.State.ActiveDiscard = action.Tile
-
-		if g.Recorder != nil {
-			g.Recorder.RecordDiscard(seat, action.Tile.Id)
-		}
-
-		// Choosing to discard means the player did not win on the dead-wall
-		// replacement tile, so the transient blooming flags are stale. Budding
-		// flags persist — the kong still scores when the hand is eventually won.
-		g.clearBloomingKongFlags(player)
-
-		// During haitei, only Ron is allowed as an interrupt (no Chii/Pon/Kan)
-		if g.State.IsHaitei {
-			anyoneCanRon := false
-			for pSeat, p := range g.State.Players {
-				if uint32(pSeat) == seat {
-					p.ValidActions = nil
-					continue
-				}
-				// Only check for Ron during haitei
-				interrupts := g.Rules.GetValidInterrupts(g.State, action.Tile, uint32(pSeat))
-				var ronOnly []*pb.PlayerAction
-				for _, intr := range interrupts {
-					if intr.Type == pb.ActionType_ACTION_RON {
-						ronOnly = append(ronOnly, intr)
-					}
-				}
-				p.ValidActions = ronOnly
-				if len(ronOnly) > 0 {
-					anyoneCanRon = true
-				}
-			}
-
-			if anyoneCanRon {
-				g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
-				g.interruptQueue = make(map[uint32]*pb.PlayerAction)
-			} else {
-				// No one can Ron → ryuukyoku (no more tiles to draw after haitei)
-				g.State.IsHaitei = false
-				g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-				g.State.RoundResult = &pb.RoundResult{IsDraw: true}
-				g.finalizeRoundEnd()
-				for _, p := range g.State.Players {
-					p.ValidActions = nil
-				}
-				g.recordRoundEnd()
-			}
-			return nil
-		}
-
-		// Normal (non-haitei) discard path
-		// Calculate valid actions for all other players
-		anyoneCanInterrupt := false
-		for pSeat, p := range g.State.Players {
-			if uint32(pSeat) == seat {
-				p.ValidActions = nil // Active player has no interrupts
-				continue
-			}
-
-			interrupts := g.Rules.GetValidInterrupts(g.State, action.Tile, uint32(pSeat))
-			p.ValidActions = interrupts
-
-			if len(interrupts) > 0 {
-				anyoneCanInterrupt = true
+	if action.Type == pb.ActionType_ACTION_KAN {
+		upgraded := false
+		// Check if we are upgrading an existing Pon
+		for _, m := range player.OpenMelds {
+			if m.Type == pb.ActionType_ACTION_PON && m.Tiles[0].Suit == action.MeldTiles[0].Suit && m.Tiles[0].Value == action.MeldTiles[0].Value {
+				m.Type = pb.ActionType_ACTION_KAN
+				m.Tiles = append(m.Tiles, action.MeldTiles...)
+				// Record the tile stacked on top of the originally-called tile so
+				// the UI can render the "risky kong" (加杠) stacked look.
+				addedID := action.MeldTiles[0].Id
+				m.AddedTileId = &addedID
+				upgraded = true
+				break
 			}
 		}
 
-		if anyoneCanInterrupt {
-			// Transition to wait for interrupts
-			g.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
-			g.interruptQueue = make(map[uint32]*pb.PlayerAction) // clear queue
+		if !upgraded {
+			// Add a new Closed Kan
+			meld := &pb.Meld{
+				Type:            pb.ActionType_ACTION_KAN,
+				Tiles:           action.MeldTiles,
+				CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
+			}
+			player.OpenMelds = append(player.OpenMelds, meld)
+		}
+
+		// Budding kong bonus (persistent): an upgraded pon is a risky kong,
+		// a fresh self-drawn kan is a closed kong. The bonus is awarded when
+		// the hand is won; it upgrades to a blooming bonus below if the player
+		// wins on the supplementary tile.
+		if upgraded {
+			player.HasBuddingRiskyKong = true
+			kongBloom = "risky"
 		} else {
-			// No one can interrupt, immediately advance turn
-			g.State.ActivePlayer = (g.State.ActivePlayer + 1) % 4
-			g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-			g.State.ActiveDiscard = nil
-			g.ExecuteSystemDraw(g.State.ActivePlayer)
-		}
-
-		return nil
-	} else if action.Type == pb.ActionType_ACTION_KAN || action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-		player := g.State.Players[seat]
-		// Which kong type may "bloom" if the player wins on this dead-wall draw.
-		kongBloom := "" // "risky" (upgraded pon) or "closed" (4 from hand)
-
-		// Verify and remove the tiles from the closed hand
-		for _, requiredTile := range action.MeldTiles {
-			found := false
-			for i, handTile := range player.ClosedHand {
-				if handTile.Id == requiredTile.Id {
-					player.ClosedHand = append(player.ClosedHand[:i], player.ClosedHand[i+1:]...)
-					player.HandSize--
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("tile %d for action %v not found in hand", requiredTile.Id, action.Type)
-			}
-		}
-
-		if action.Type == pb.ActionType_ACTION_KAN {
-			upgraded := false
-			// Check if we are upgrading an existing Pon
-			for _, m := range player.OpenMelds {
-				if m.Type == pb.ActionType_ACTION_PON && m.Tiles[0].Suit == action.MeldTiles[0].Suit && m.Tiles[0].Value == action.MeldTiles[0].Value {
-					m.Type = pb.ActionType_ACTION_KAN
-					m.Tiles = append(m.Tiles, action.MeldTiles...)
-					// Record the tile stacked on top of the originally-called tile so
-					// the UI can render the "risky kong" (加杠) stacked look.
-					addedID := action.MeldTiles[0].Id
-					m.AddedTileId = &addedID
-					upgraded = true
-					break
-				}
-			}
-
-			if !upgraded {
-				// Add a new Closed Kan
-				meld := &pb.Meld{
-					Type:            pb.ActionType_ACTION_KAN,
-					Tiles:           action.MeldTiles,
-					CalledDirection: pb.MeldDirection_MELD_DIRECTION_UNKNOWN, // Closed/Upgraded Kan is self-drawn
-				}
-				player.OpenMelds = append(player.OpenMelds, meld)
-			}
-
-			// Budding kong bonus (persistent): an upgraded pon is a risky kong,
-			// a fresh self-drawn kan is a closed kong. The bonus is awarded when
-			// the hand is won; it upgrades to a blooming bonus below if the player
-			// wins on the supplementary tile.
-			if upgraded {
-				player.HasBuddingRiskyKong = true
-				kongBloom = "risky"
-			} else {
-				player.HasBuddingClosedKong = true
-				kongBloom = "closed"
-			}
-
-			if g.Recorder != nil {
-				if upgraded {
-					g.Recorder.RecordUpgradeKan(seat, action.MeldTiles[0].Id)
-				} else {
-					ids := make([]uint32, len(action.MeldTiles))
-					for i, t := range action.MeldTiles {
-						ids[i] = t.Id
-					}
-					g.Recorder.RecordClosedKan(seat, ids)
-				}
-			}
-		} else if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-			// Add to Flower Melds
-			player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
-
-			if g.Recorder != nil {
-				g.Recorder.RecordFlowerReveal(seat, action.MeldTiles[0].Id)
-			}
-		}
-
-		// Player immediately gets a supplementary tile from the Dead Wall.
-		// If the supplementary draw exhausts the wall, the round is already over;
-		// do not restore PLAYER_TURN with an empty valid-action set.
-		if err := g.ExecuteDeadWallDraw(seat); err != nil {
-			return err
-		}
-		if g.State.Phase == pb.GamePhase_PHASE_ROUND_END || g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
-			return nil
-		}
-
-		// Optimistically mark the kong as blooming: if the player wins (tsumo) on
-		// this supplementary tile the blooming bonus applies; otherwise it is
-		// cleared on the next discard/draw, leaving only the budding bonus.
-		switch kongBloom {
-		case "risky":
-			player.HasBloomingRiskyKong = true
-		case "closed":
-			player.HasBloomingClosedKong = true
-		}
-		// Set kong bonus flag: winning on the dead wall draw after a flower reveal
-		if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
-			player.HasBloomingFlowerKong = true
-		}
-
-		// It remains their turn to either discard, declare another Kan/Flower, or Tsumo
-		g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
-
-		return nil
-	} else if action.Type == pb.ActionType_ACTION_TSUMO {
-		player := g.State.Players[seat]
-
-		score, breakdown, canWin := g.Rules.EvaluateHand(
-			player.ClosedHand, player.OpenMelds, nil, g.State, seat, true,
-		)
-		if !canWin {
-			return errors.New("hand is not a valid tsumo win")
-		}
-
-		// Find the drawn tile (the winning tile for tsumo)
-		var winTile *pb.Tile
-		if player.DrawnTileId != nil {
-			for _, t := range player.ClosedHand {
-				if int32(t.Id) == *player.DrawnTileId {
-					winTile = t
-					break
-				}
-			}
+			player.HasBuddingClosedKong = true
+			kongBloom = "closed"
 		}
 
 		if g.Recorder != nil {
-			tileID := uint32(0)
-			if winTile != nil {
-				tileID = winTile.Id
+			if upgraded {
+				g.Recorder.RecordUpgradeKan(seat, action.MeldTiles[0].Id)
+			} else {
+				ids := make([]uint32, len(action.MeldTiles))
+				for i, t := range action.MeldTiles {
+					ids[i] = t.Id
+				}
+				g.Recorder.RecordClosedKan(seat, ids)
 			}
-			g.Recorder.RecordTsumo(seat, tileID)
 		}
+	} else if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+		// Add to Flower Melds
+		player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
 
-		payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_TSUMO, seat, 0)
-		for _, p := range payouts {
-			g.State.Players[p.Seat].Score += p.Amount
+		if g.Recorder != nil {
+			g.Recorder.RecordFlowerReveal(seat, action.MeldTiles[0].Id)
 		}
+	}
 
-		g.State.RoundResult = &pb.RoundResult{
-			WinnerSeat:   seat,
-			WinType:      pb.ActionType_ACTION_TSUMO,
-			WinningHand:  player.ClosedHand,
-			WinningMelds: player.OpenMelds,
-			WinTile:      winTile,
-			Breakdown:    breakdown,
-			TotalScore:   score,
-			Payouts:      payouts,
-			IsDraw:       false,
-		}
-
-		g.State.Phase = pb.GamePhase_PHASE_ROUND_END
-		g.finalizeRoundEnd()
-		for _, p := range g.State.Players {
-			p.ValidActions = nil
-		}
-		g.recordRoundEnd()
-
+	// Player immediately gets a supplementary tile from the Dead Wall.
+	// If the supplementary draw exhausts the wall, the round is already over;
+	// do not restore PLAYER_TURN with an empty valid-action set.
+	if err := g.ExecuteDeadWallDraw(seat); err != nil {
+		return err
+	}
+	if g.State.Phase == pb.GamePhase_PHASE_ROUND_END || g.State.Phase == pb.GamePhase_PHASE_MATCH_END {
 		return nil
 	}
 
-	return fmt.Errorf("unsupported active action: %v", action.Type)
+	// Optimistically mark the kong as blooming: if the player wins (tsumo) on
+	// this supplementary tile the blooming bonus applies; otherwise it is
+	// cleared on the next discard/draw, leaving only the budding bonus.
+	switch kongBloom {
+	case "risky":
+		player.HasBloomingRiskyKong = true
+	case "closed":
+		player.HasBloomingClosedKong = true
+	}
+	// Set kong bonus flag: winning on the dead wall draw after a flower reveal
+	if action.Type == pb.ActionType_ACTION_FLOWER_REVEAL {
+		player.HasBloomingFlowerKong = true
+	}
+
+	// It remains their turn to either discard, declare another Kan/Flower, or Tsumo
+	g.State.Phase = pb.GamePhase_PHASE_PLAYER_TURN
+
+	return nil
+}
+
+// handleTsumo scores a self-drawn win, applies payouts, and ends the round.
+func (g *Game) handleTsumo(seat uint32) error {
+	player := g.State.Players[seat]
+
+	score, breakdown, canWin := g.Rules.EvaluateHand(
+		player.ClosedHand, player.OpenMelds, nil, g.State, seat, true,
+	)
+	if !canWin {
+		return errors.New("hand is not a valid tsumo win")
+	}
+
+	// Find the drawn tile (the winning tile for tsumo)
+	var winTile *pb.Tile
+	if player.DrawnTileId != nil {
+		for _, t := range player.ClosedHand {
+			if int32(t.Id) == *player.DrawnTileId {
+				winTile = t
+				break
+			}
+		}
+	}
+
+	if g.Recorder != nil {
+		tileID := uint32(0)
+		if winTile != nil {
+			tileID = winTile.Id
+		}
+		g.Recorder.RecordTsumo(seat, tileID)
+	}
+
+	payouts := g.Rules.CalculatePayouts(score, pb.ActionType_ACTION_TSUMO, seat, 0)
+	for _, p := range payouts {
+		g.State.Players[p.Seat].Score += p.Amount
+	}
+
+	g.State.RoundResult = &pb.RoundResult{
+		WinnerSeat:   seat,
+		WinType:      pb.ActionType_ACTION_TSUMO,
+		WinningHand:  player.ClosedHand,
+		WinningMelds: player.OpenMelds,
+		WinTile:      winTile,
+		Breakdown:    breakdown,
+		TotalScore:   score,
+		Payouts:      payouts,
+		IsDraw:       false,
+	}
+
+	g.State.Phase = pb.GamePhase_PHASE_ROUND_END
+	g.concludeRound()
+
+	return nil
 }
 
 // handleInterruptAction processes out-of-turn actions like Pong or Ron during the waiting window.
