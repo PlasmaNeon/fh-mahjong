@@ -11,6 +11,7 @@ import Shanten from './features/shanten/Shanten'
 import Replay from './features/replay/Replay'
 import CreateRoom from './features/lobby/CreateRoom'
 import Account from './features/auth/Account'
+import TableSample from './features/dev/TableSample'
 
 // Keying the waiting room by its room id forces a fresh component instance per
 // room, so route-local state (token, name, seats, left-marker) never carries
@@ -37,6 +38,7 @@ function App() {
                             <Route path="/replay/:matchId" element={<Replay />} />
                             <Route path="/tools/calc" element={<Calc />} />
                             <Route path="/tools/shanten" element={<Shanten />} />
+                            <Route path="/tools/table-sample" element={<TableSample />} />
                             <Route path="*" element={<Navigate to="/" />} />
                         </Routes>
                     </div>
