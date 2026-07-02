@@ -40,6 +40,55 @@ def cpu_state_snapshot(model: "torch.nn.Module") -> dict:
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
 
+def default_num_workers() -> int:
+    """Hardware-aware default for parallel self-play rollout workers.
+
+    Profiling showed rollout throughput is CPU-core-bound, not memory-bound
+    (~380MB/worker, so ~13% RAM at 10 workers on a 24-core/31GB box). Throughput
+    scales near-linearly to ~8 workers and keeps climbing with a knee near 16
+    (0.61/0.91/1.03 matches/s at 8/16/20). Default to core count minus headroom
+    for the main process and the OS, capped so large machines stay sane; override
+    with --num-workers.
+
+    Uses the CPUs available to THIS process (affinity/cpuset and cgroup CPU
+    quota), not the host total, so an affinity-limited or containerized allocation
+    is not oversubscribed.
+    """
+    try:
+        cores = len(os.sched_getaffinity(0))  # Linux: CPUs available to this process
+    except AttributeError:  # not available on macOS/Windows
+        cores = os.cpu_count() or 4
+    quota = _cgroup_cpu_quota()  # cpuset can still be the full host under a CFS quota
+    if quota is not None:
+        cores = min(cores, max(1, int(quota)))
+    return max(1, min(16, cores - 8))
+
+
+def _cgroup_cpu_quota() -> Optional[float]:
+    """Best-effort effective CPU count from the cgroup CPU quota (cgroup v2
+    `cpu.max`, then v1 `cfs_quota_us`/`cfs_period_us`). Returns None when there is
+    no quota or it can't be read, so callers fall back to the affinity count."""
+    try:  # cgroup v2
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            quota_s, period_s = f.read().split()
+        if quota_s != "max":
+            quota, period = int(quota_s), int(period_s)
+            if quota > 0 and period > 0:
+                return quota / period
+    except (OSError, ValueError):
+        pass
+    try:  # cgroup v1
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+            quota = int(f.read())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+            period = int(f.read())
+        if quota > 0 and period > 0:
+            return quota / period
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 @dataclass
 class PPOConfig:
     iterations: int = 50
