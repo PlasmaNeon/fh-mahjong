@@ -1398,6 +1398,7 @@ func (g *Game) recordRoundEnd() {
 		}
 		for _, entry := range result.Breakdown {
 			paipuResult.Breakdown = append(paipuResult.Breakdown, PaipuBreakdown{
+				Id:     entry.PatternId,
 				Name:   entry.PatternName,
 				Points: entry.Points,
 			})

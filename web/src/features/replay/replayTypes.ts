@@ -38,6 +38,8 @@ export interface PaipuMeld {
 }
 
 export interface PaipuBreakdown {
+  /** Stable pattern id (absent in paipu recorded before it existed). */
+  id?: string
   name: string
   points: number
 }

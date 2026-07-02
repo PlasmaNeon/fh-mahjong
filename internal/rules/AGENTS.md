@@ -8,6 +8,10 @@ This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin tha
 
 ## Key Files
 
+- **patterns.go** — Stable scoring-pattern identifiers and the single id → display-name registry:
+  - `Pattern*` constants (e.g. `PatternPureOneSuit = "pure_one_suit"`) are carried in `pb.ScoreEntry.PatternId`; never rename an existing id (replays and clients persist them)
+  - `NewScoreEntry(id, points)` is the only way score entries should be built — it stamps both the id and the display name
+  - `rewardPatternIds` classifies reward bonuses (flowers, kong completions) excluded from the 4-point Ron minimum; logic keys off ids, never display strings
 - **fh.go** — `FenghuaRuleset` struct implementing all `RuleEngine` methods:
   - `GetInitialWall()` — 144 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z) + 8 unique flower tiles (1=Spring, 2=Summer, 3=Autumn, 4=Winter, 5=Plum, 6=Orchid, 7=Chrysanthemum, 8=Bamboo)
   - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). Evaluates three mutually exclusive routes:

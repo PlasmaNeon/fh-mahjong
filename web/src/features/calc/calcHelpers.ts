@@ -55,6 +55,8 @@ export interface CalcRequestPayload {
 }
 
 export interface CalcEntryResponse {
+  /** Stable pattern id; display logic should key off this, not patternName. */
+  patternId?: string
   patternName: string
   points: number
 }
@@ -340,6 +342,7 @@ export function normalizeCalcSuccessResponse(payload: unknown): CalcSuccessRespo
     ? record.entries.map((entry) => {
         const entryRecord = isRecord(entry) ? entry : {}
         return {
+          patternId: readString(entryRecord.patternId) ?? readString(entryRecord.PatternID) ?? undefined,
           patternName: readString(entryRecord.patternName) ?? readString(entryRecord.PatternName) ?? 'Unknown entry',
           points: readNumber(entryRecord.points) ?? readNumber(entryRecord.Points) ?? 0,
         }

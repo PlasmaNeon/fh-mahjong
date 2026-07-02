@@ -1046,9 +1046,13 @@ func (x *GameState) GetMatchEndResult() *MatchEndResult {
 }
 
 type ScoreEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PatternName   string                 `protobuf:"bytes,1,opt,name=pattern_name,json=patternName,proto3" json:"pattern_name,omitempty"` // e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
-	Points        int32                  `protobuf:"varint,2,opt,name=points,proto3" json:"points,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	PatternName string                 `protobuf:"bytes,1,opt,name=pattern_name,json=patternName,proto3" json:"pattern_name,omitempty"` // display-only, e.g. "Base Point (坐台)", "Pure One Suit (清一色)"
+	Points      int32                  `protobuf:"varint,2,opt,name=points,proto3" json:"points,omitempty"`
+	// Stable snake_case identifier (e.g. "base_point", "pure_one_suit").
+	// Logic and localization must key off this, never pattern_name, so display
+	// strings can change freely. Empty in replays recorded before it existed.
+	PatternId     string `protobuf:"bytes,3,opt,name=pattern_id,json=patternId,proto3" json:"pattern_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1095,6 +1099,13 @@ func (x *ScoreEntry) GetPoints() int32 {
 		return x.Points
 	}
 	return 0
+}
+
+func (x *ScoreEntry) GetPatternId() string {
+	if x != nil {
+		return x.PatternId
+	}
+	return ""
 }
 
 type PlayerPayout struct {
@@ -2674,11 +2685,13 @@ const file_proto_game_proto_rawDesc = "" +
 	"\n" +
 	"match_mode\x18\x15 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
 	"\x0echongci_config\x18\x16 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12>\n" +
-	"\x10match_end_result\x18\x17 \x01(\v2\x14.game.MatchEndResultR\x0ematchEndResult\"G\n" +
+	"\x10match_end_result\x18\x17 \x01(\v2\x14.game.MatchEndResultR\x0ematchEndResult\"f\n" +
 	"\n" +
 	"ScoreEntry\x12!\n" +
 	"\fpattern_name\x18\x01 \x01(\tR\vpatternName\x12\x16\n" +
-	"\x06points\x18\x02 \x01(\x05R\x06points\":\n" +
+	"\x06points\x18\x02 \x01(\x05R\x06points\x12\x1d\n" +
+	"\n" +
+	"pattern_id\x18\x03 \x01(\tR\tpatternId\":\n" +
 	"\fPlayerPayout\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
 	"\x06amount\x18\x02 \x01(\x05R\x06amount\"\xa1\x03\n" +
