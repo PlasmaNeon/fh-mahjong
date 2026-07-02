@@ -154,6 +154,13 @@ func generateHonorTable() [][10]uint8 {
 }
 
 func generateTables() {
+	// Prefer the embedded precomputed tables (fast); fall back to the ~14s DFS
+	// generation if the embed is missing or corrupt so correctness never depends
+	// on the file being present.
+	if suit, honor, err := loadEmbeddedTables(); err == nil {
+		suitTable, honorTable = suit, honor
+		return
+	}
 	suitTable = generateSuitTable()
 	honorTable = generateHonorTable()
 }

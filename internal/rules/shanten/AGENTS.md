@@ -14,7 +14,10 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
   - `AnalyzeHand()` — current-hand useful-tile count plus discard-option analysis
   - `FindUsefulTilesFromTiles()` — effective draws for the current hand state
   - Wild candidate draws are simulated as additional wilds, not as natural copies in the 34-count table
-- **tables.go** — Precomputed suit/honor DP tables.
+- **tables.go** — Suit/honor DP table generation (DFS). `generateTables()` loads the embedded precomputed tables and only falls back to the ~14s DFS build if the embed is missing/corrupt.
+- **tables_embed.go** — Loads `shanten_tables.bin.gz` (gzip'd precomputed suit+honor tables, ~270KB) via `go:embed`, cutting first-use table build from ~14s to ~20ms per process (matters for every worker/eval/CLI startup).
+- **shanten_tables.bin.gz** — Committed precomputed tables. Regenerate with `SHANTEN_REGEN=1 go test ./internal/rules/shanten -run TestRegenerateEmbeddedTables` after changing table generation, then commit the new file.
+- **tables_embed_test.go** — `TestEmbeddedTablesMatchGeneratedExactly` guarantees the committed tables are byte-identical to the DFS generators (a mismatch would corrupt all hand evaluation); `TestRegenerateEmbeddedTables` (SHANTEN_REGEN=1) rewrites the file.
 - **shanten_test.go** — Route, wild, edge-case, and benchmark coverage.
 
 ## Architecture Notes
