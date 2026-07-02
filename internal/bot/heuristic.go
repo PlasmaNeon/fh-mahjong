@@ -382,16 +382,7 @@ func discardPreferenceScore(counts map[uint32]int, tile shanten.TileType, isWild
 }
 
 func containsWildTile(hand []*pb.Tile, wildTiles []*pb.Tile) bool {
-	wildSet := make(map[uint32]bool, len(wildTiles))
-	for _, tile := range wildTiles {
-		wildSet[tiles.KeyOf(tile.Suit, tile.Value)] = true
-	}
-	for _, tile := range hand {
-		if wildSet[tiles.KeyOf(tile.Suit, tile.Value)] {
-			return true
-		}
-	}
-	return false
+	return tiles.CountWilds(hand, tiles.WildSet(wildTiles)) > 0
 }
 
 func pickTileForDiscard(hand []*pb.Tile, target shanten.TileType) *pb.Tile {

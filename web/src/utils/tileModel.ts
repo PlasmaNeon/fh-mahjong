@@ -24,12 +24,15 @@ export const TILE_LIBRARY: TileValue[] = [
   ...buildSuitTiles(game.Suit.SUIT_JIHAI, 7),
 ]
 
+// Sort rank for suits: man -> pin -> sou -> jihai -> flower -> unknown.
+// Single source of truth for tile ordering across the app.
 export function suitOrder(suit: game.Suit): number {
   switch (suit) {
     case game.Suit.SUIT_MAN: return 0
     case game.Suit.SUIT_PIN: return 1
     case game.Suit.SUIT_SOU: return 2
     case game.Suit.SUIT_JIHAI: return 3
+    case game.Suit.SUIT_FLOWER: return 4
     default: return 9
   }
 }
