@@ -23,9 +23,17 @@ A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang
 ```
 fh-mahjong/
 ├── proto/          # Protobuf schemas (game.proto) — source of truth for all types
-├── internal/engine/  # Game state machine and RuleEngine interface
-├── internal/rules/  # Fenghua ruleset plugin
-├── CLAUDE.md       # Claude Code project context (auto-loaded)
+├── internal/       # Go library packages (module-private)
+│   ├── engine/     #   Game state machine and RuleEngine interface
+│   ├── rules/      #   Fenghua ruleset plugin (+ shanten/)
+│   ├── api/        #   REST + WebSocket server
+│   ├── storage/    #   GORM database models
+│   ├── bot/        #   Heuristic bot policies (+ remote/)
+│   ├── rl/         #   RL environment wrapper and action catalog
+│   └── tiles/      #   Shared tile key/index/clone helpers
+├── cmd/            # Entry points: server, cli, wasm, rlbridge, rlpaipu
+├── web/            # React frontend (features/, table/, theme/, …)
+├── ai/             # Python RL training pipeline
 └── docs/
     └── rules/
         ├── official-rules.md  # Raw Fenghua rule source

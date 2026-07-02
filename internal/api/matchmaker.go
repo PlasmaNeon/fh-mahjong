@@ -465,10 +465,9 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
 		}
 		if table.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI && table.ChongciConfig != nil {
-			cfg := *table.ChongciConfig
 			roomOptions = append(roomOptions, WithMatchOptions(engine.MatchOptions{
 				Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
-				ChongciConfig: &cfg,
+				ChongciConfig: engine.CloneChongciConfig(table.ChongciConfig),
 			}))
 		}
 		room = NewRoom(matchID, m.Hub, m.DB, roomOptions...)

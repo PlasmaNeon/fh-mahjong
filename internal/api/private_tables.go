@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -120,9 +121,8 @@ func (t *PrivateTable) setMatchMode(mode string, cfg *pb.ChongciConfig) error {
 		if cfg.MaxHands > 200 {
 			return fmt.Errorf("%w: max_hands %d above ceiling 200", ErrChongciConfigInvalid, cfg.MaxHands)
 		}
-		copied := *cfg
 		t.MatchMode = pb.MatchMode_MATCH_MODE_CHONGCI
-		t.ChongciConfig = &copied
+		t.ChongciConfig = engine.CloneChongciConfig(cfg)
 		return nil
 	default:
 		return fmt.Errorf("unsupported match mode %q", mode)
@@ -173,10 +173,7 @@ func (t *PrivateTable) toProto() *pb.PrivateTableState {
 		MatchId:    t.MatchID,
 		MatchMode:  t.MatchMode,
 	}
-	if t.ChongciConfig != nil {
-		cfg := *t.ChongciConfig
-		state.ChongciConfig = &cfg
-	}
+	state.ChongciConfig = engine.CloneChongciConfig(t.ChongciConfig)
 	return state
 }
 

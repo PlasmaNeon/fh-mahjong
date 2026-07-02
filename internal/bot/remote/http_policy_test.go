@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plasma/fh-mahjong/internal/tiles"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -169,13 +170,13 @@ func testDiscardState() *pb.GameState {
 }
 
 func testTiles(specs ...*pb.Tile) []*pb.Tile {
-	tiles := make([]*pb.Tile, len(specs))
+	out := make([]*pb.Tile, len(specs))
 	for index, tile := range specs {
-		copyTile := *tile
+		copyTile := tiles.CloneTile(tile)
 		copyTile.Id = uint32(index + 1)
-		tiles[index] = &copyTile
+		out[index] = copyTile
 	}
-	return tiles
+	return out
 }
 
 func testMan(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_MAN, Value: value} }
