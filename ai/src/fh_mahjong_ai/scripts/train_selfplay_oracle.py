@@ -14,9 +14,10 @@ def main() -> None:
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--matches-per-iter", type=int, default=256)
-    p.add_argument("--num-workers", type=int, default=default_num_workers(),
+    p.add_argument("--num-workers", type=int, default=None,
                    help="parallel self-play rollout workers (1 = sequential); default is "
-                        "core-aware (rollout throughput is core-bound, not memory-bound)")
+                        "min(core-aware, --matches-per-iter) since rollout throughput is "
+                        "core-bound and extra workers beyond the match count sit idle")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--entropy-coef", type=float, default=0.0)
@@ -31,6 +32,9 @@ def main() -> None:
     p.add_argument("--base-seed", type=int, default=0)
     add_model_config_args(p)
     args = p.parse_args()
+    num_workers = args.num_workers
+    if num_workers is None:
+        num_workers = min(default_num_workers(), args.matches_per_iter)
     env_config = EnvConfig(bridge_kind=args.bridge_kind, bridge_library_path=args.bridge_lib,
                            match_mode=args.match_mode, max_steps_per_episode=args.max_steps_per_episode,
                            oracle_observation=True)
@@ -39,7 +43,7 @@ def main() -> None:
                        ppo_epochs=args.ppo_epochs, minibatch_size=args.minibatch_size,
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
-                       num_workers=args.num_workers)
+                       num_workers=num_workers)
     train_selfplay_oracle(env_config=env_config, model_config=model_config_from_args(args),
                           anchor_checkpoint=args.anchor_checkpoint, checkpoint_dir=args.checkpoint_dir,
                           config=config, base_seed=args.base_seed, run_eval=False)

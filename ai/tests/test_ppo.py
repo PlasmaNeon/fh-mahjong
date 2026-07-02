@@ -1141,6 +1141,7 @@ def test_default_num_workers_is_core_aware_and_bounded(monkeypatch) -> None:
     # so the default scales with cores, leaves headroom, and caps on big machines.
     # Count is affinity-aware (CPUs available to the process, not the host total),
     # so an affinity-limited/containerized allocation is not oversubscribed.
+    monkeypatch.setattr(ppo, "_cgroup_cpu_quota", lambda: None)  # no CPU quota
     cases = {2: 1, 8: 1, 12: 4, 16: 8, 24: 16, 64: 16}
     for cores, expected in cases.items():
         monkeypatch.setattr(ppo.os, "sched_getaffinity", lambda _pid, c=cores: set(range(c)), raising=False)
@@ -1152,3 +1153,15 @@ def test_default_num_workers_is_core_aware_and_bounded(monkeypatch) -> None:
     assert ppo.default_num_workers() == 16
     monkeypatch.setattr(ppo.os, "cpu_count", lambda: None)
     assert ppo.default_num_workers() >= 1
+
+
+def test_default_num_workers_clamps_to_cgroup_quota(monkeypatch) -> None:
+    from fh_mahjong_ai import ppo
+
+    # A CFS CPU quota can be smaller than the visible cpuset; clamp to it so a
+    # quota-limited container is not oversubscribed.
+    monkeypatch.setattr(ppo.os, "sched_getaffinity", lambda _pid: set(range(64)), raising=False)
+    monkeypatch.setattr(ppo, "_cgroup_cpu_quota", lambda: 12.0)
+    assert ppo.default_num_workers() == 4  # min(16, 12 - 8)
+    monkeypatch.setattr(ppo, "_cgroup_cpu_quota", lambda: 4.0)
+    assert ppo.default_num_workers() == 1
