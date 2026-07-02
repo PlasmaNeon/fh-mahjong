@@ -15717,6 +15717,72 @@ Recommendations before scaling online RL (do NOT just rerun as-is):
 The PPO code paths (PR #91/#92) are correct and reusable; this is a
 tuning/throughput/reward-density problem, not a code failure.
 
+### Experiment: Oracle Guiding → Self-Play Feature-Dropout (deployable beat)
+
+Run:
+`/root/fh-mahjong-runs/sp-gate` (50-iter small net, first beat),
+`/root/fh-mahjong-runs/sp-long` (80-iter small net),
+`/root/fh-mahjong-runs/sp-big` + `/root/fh-mahjong-runs/sp-big-ext` (deeper 4-block net).
+Anchor: `/root/fh-mahjong-runs/chongci-broader-mixed-iql-20260607-034720/checkpoints/broader_mixed_iql_highrisk_pairwise/epoch_001.pt`.
+
+Question:
+Can a DEPLOYABLE imperfect-information agent beat the anchor, by combining the two
+untried pieces of the Suphx/Mortal recipe: (1) a perfect-information scaffold
+(51ch oracle observation = the 3 opponents' concealed hands) annealed away via
+feature-dropout (δ 0→1), and (2) all-4 symmetric self-play (every seat is the
+co-evolving net) instead of a fixed heuristic/anchor opponent?
+
+Data:
+Self-generated all-4 self-play (no offline dataset). 51ch oracle net warm-started
+from the 39ch anchor via `build_oracle_model`. Deeper variant = `residual_blocks=4`
+warm-started from the 2-block anchor (blocks 0-1 + heads + input conv copied, new
+blocks' output convs zeroed → logit_corr 1.000 with the anchor).
+
+Training:
+all-4 self-play + feature-dropout (δ=0 first 20% iters, linear ramp 0→1 over the
+next 60%, δ=1 final 20%); 256 matches/iter, lr 2e-5, entropy_coef 0, ppo_epochs 2,
+max_grad_norm 0.5, gamma 0.99, chongci, max-steps 4000, cuda, 5 workers. sp-gate 50
+iters; sp-long 80 iters; sp-big 60 iters (deeper); sp-big-ext resumes sp-big
+iter_060 for 60 more δ=1 iters (→ iter_120). MLflow: N/A — these were run via
+standalone scripts (`sp_big.py`, `sp_big_ext.py`), not the MLflow-integrated CLI;
+metrics are in each run's `train.log` + `ckpt/history.json`.
+
+Evaluation:
+Deployable 39ch student extracted from the 51ch net (slice input conv), evaluated
+NON-oracle (directly comparable to the anchor). Paired duplicate-seat, 120 episodes
+× 4 seats = 480, start-seed 870000, chongci 50 hands, max-steps 4000. Anchor
+evaluated on the identical seeds (`/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json`).
+Reports under each run's `deploy/`/`eval-*` json.
+
+Result:
+
+| checkpoint | paired diff vs anchor | ci95 | large_loss |
+| --- | ---: | ---: | ---: |
+| anchor | 0.0 (mean_pl -0.0528) | — | 0.208 |
+| sp-gate iter_050 (small, first beat) | +0.1639 | 0.0676 | 0.165 |
+| sp-long iter_075 (small, longer) | +0.2125 | 0.0750 | 0.138 |
+| sp-big iter_060 (deep4, 60 iters) | +0.1875 | 0.0719 | 0.150 |
+| **sp-big-ext iter_120 (deep4, 120 iters)** | **+0.2958** | **0.0773** | **0.104** |
+
+Decision:
+promoted — `sp-big-ext` iter_120 (deep 4-block) → `current_chongci_reward_trained_best`
+(PR #136), extracted standalone 39ch at
+`/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter120-39ch.pt`. The prior
+`iter_050` student moves to `fallbacks`; `iter_075` (+0.2125) is the runner-up/
+fallback candidate at `/root/fh-mahjong-runs/deploy/selfplay-student-iter075-39ch.pt`.
+
+Interpretation:
+First deployable agent to robustly beat the anchor — the winning combination is the
+Suphx feature-dropout scaffold + all-4 self-play (neither alone had cleared parity).
+Depth initially looked worse (deep4 at 60 iters = +0.1875 < small-net +0.2125) but
+that was UNDERTRAINING, not a capacity ceiling: given a fair 120-iter budget the
+deeper net's δ=1 tail climbed 080/100/120 = +0.2042/+0.2903/+0.2958 and plateaued
+well above the small net, halving large-loss (0.104 vs 0.208). Lesson: bigger nets
+need proportionally more experience; compare at matched (sufficient) budgets, and
+promote demonstrated (converged) performance, not potential. Serving had to learn
+the checkpoint's architecture from the state dict (`infer_model_config`, PR #136),
+since the promoted net is 4-block vs the 2-block default.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
