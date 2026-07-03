@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -116,8 +117,22 @@ def main() -> None:
     add_model_config_args(parser)
     args = parser.parse_args()
 
-    if args.sample_temperature > 0.0 and not args.duplicate_seats:
-        parser.error("--sample-temperature requires --duplicate-seats (the paired gate path)")
+    if not math.isfinite(args.sample_temperature) or args.sample_temperature < 0.0:
+        parser.error("--sample-temperature must be a finite value >= 0")
+    if args.sample_top_k < 0:
+        parser.error("--sample-top-k must be >= 0")
+    if args.sample_temperature == 0.0 and (args.sample_top_k > 0 or args.sample_action_family != "all"):
+        parser.error("--sample-top-k / --sample-action-family have no effect without --sample-temperature > 0")
+    if args.sample_temperature > 0.0:
+        if not args.duplicate_seats:
+            parser.error("--sample-temperature requires --duplicate-seats (the paired gate path)")
+        from fh_mahjong_ai.action_catalog import action_family as _action_family
+        known_families = {"all", "", "*"} | {
+            _action_family(a) for a in range(EnvConfig().action_space_size)
+        }
+        if args.sample_action_family not in known_families:
+            parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
+                         f"action family (choose from {sorted(known_families - {'', '*'})})")
 
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
     # When --from-oracle is set the model is a 39ch student; eval must also use 39ch obs.
@@ -152,15 +167,16 @@ def main() -> None:
         else None,
         "offline": None,
         "online": None,
-        "sampling": {
+    }
+    if args.sample_temperature > 0.0:
+        # Only present when sampling is active, so the default (greedy) report
+        # stays byte-identical to pre-sampling output.
+        final_report["sampling"] = {
             "temperature": args.sample_temperature,
             "top_k": args.sample_top_k,
             "action_family": args.sample_action_family,
             "seed": args.sample_seed,
         }
-        if args.sample_temperature > 0.0
-        else None,
-    }
 
     with start_run(
         enabled=args.mlflow,
