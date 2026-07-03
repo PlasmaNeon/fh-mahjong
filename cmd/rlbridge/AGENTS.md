@@ -14,6 +14,7 @@ This package wraps the `rl` environment in a narrow protobuf-based C ABI so Pyth
   - `FHEnvStep`
   - `FHEnvEvaluateBranches`
   - `FHEnvClose`
+  - `FHEnvPoolNew` / `FHEnvPoolStep` / `FHEnvPoolClose` — batched env-pool exports (own handle registry, same FHBytesResult conventions): one FFI round-trip steps/resets many envs and returns all pending observations as flat buffers inside `EnvPoolStepResponse`.
   - `FHGenerateHeuristicTrajectory`
   - `FHFree`
 

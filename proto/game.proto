@@ -424,3 +424,46 @@ message MatchEndResult {
   uint32 final_hand_num = 2;
   repeated PlayerStanding standings = 3;  // length 4, sorted by score desc
 }
+
+message EnvPoolNewRequest {
+  EnvConfig config = 1;
+  uint32 slots = 2;
+}
+
+message SlotCommand {
+  uint32 slot = 1;
+  oneof cmd {
+    uint32 action_id = 2;   // step this slot
+    uint64 reset_seed = 3;  // reset this slot with a new match seed
+    bool skip = 4;          // slot idle this round (no-op; absent == skip)
+  }
+}
+
+message EnvPoolStepRequest {
+  repeated SlotCommand commands = 1;
+}
+
+message SlotState {
+  uint32 slot = 1;
+  uint32 seat = 2;                 // acting seat of the returned observation
+  bool terminated = 3;
+  bool truncated = 4;
+  repeated float step_rewards = 5; // per-seat rewards for THIS step (len 4)
+  bool has_observation = 6;        // false when terminated/truncated/skipped
+  RoundOutcome round_outcome = 7;
+  string error = 8;                // per-slot failure (empty = ok)
+}
+
+message EnvPoolStepResponse {
+  repeated SlotState slots = 1;    // one per commanded slot, ascending slot id
+  // Flat observation buffers for slots with has_observation, concatenated in
+  // ascending slot order. planes: float32 LE, C-order [rows, C, H, W].
+  bytes planes = 2;
+  bytes scalars = 3;               // float32 LE [rows, scalar_count]
+  bytes action_masks = 4;          // uint8 [rows, action_space_size]
+  uint32 plane_channels = 5;
+  uint32 plane_height = 6;
+  uint32 plane_width = 7;
+  uint32 scalar_count = 8;
+  uint32 action_space_size = 9;
+}

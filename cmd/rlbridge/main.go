@@ -31,6 +31,14 @@ var (
 	envMu      sync.Mutex
 	nextHandle uint64 = 1
 	envs              = make(map[uint64]*rl.Env)
+
+	// poolMu only protects the pool handle table. Individual *rl.EnvPool
+	// instances are not safe for concurrent ApplyCommands calls; foreign
+	// callers must serialize operations per handle (ApplyCommands parallelizes
+	// internally across slots within a single call).
+	poolMu         sync.Mutex
+	nextPoolHandle uint64 = 1
+	pools                 = make(map[uint64]*rl.EnvPool)
 )
 
 func main() {}
@@ -121,6 +129,57 @@ func FHEnvClose(handle C.uint64_t) {
 	envMu.Lock()
 	defer envMu.Unlock()
 	delete(envs, uint64(handle))
+}
+
+//export FHEnvPoolNew
+func FHEnvPoolNew(requestPtr *C.char, requestLen C.int) C.uint64_t {
+	request := &pb.EnvPoolNewRequest{}
+	if data := inputBytes(requestPtr, requestLen); len(data) > 0 {
+		if err := proto.Unmarshal(data, request); err != nil {
+			return 0
+		}
+	}
+	if request.GetSlots() == 0 {
+		return 0
+	}
+
+	poolMu.Lock()
+	defer poolMu.Unlock()
+
+	handle := nextPoolHandle
+	nextPoolHandle++
+	pools[handle] = rl.NewEnvPool(request.GetConfig(), int(request.GetSlots()))
+	return C.uint64_t(handle)
+}
+
+//export FHEnvPoolStep
+func FHEnvPoolStep(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FHBytesResult {
+	poolMu.Lock()
+	pool, ok := pools[uint64(handle)]
+	poolMu.Unlock()
+	if !ok {
+		return errorResult(errors.New("invalid env pool handle"))
+	}
+
+	request := &pb.EnvPoolStepRequest{}
+	if data := inputBytes(requestPtr, requestLen); len(data) > 0 {
+		if err := proto.Unmarshal(data, request); err != nil {
+			return errorResult(err)
+		}
+	}
+
+	response, err := pool.ApplyCommands(request)
+	if err != nil {
+		return errorResult(err)
+	}
+	return marshalResult(response)
+}
+
+//export FHEnvPoolClose
+func FHEnvPoolClose(handle C.uint64_t) {
+	poolMu.Lock()
+	defer poolMu.Unlock()
+	delete(pools, uint64(handle))
 }
 
 //export FHGenerateHeuristicTrajectory

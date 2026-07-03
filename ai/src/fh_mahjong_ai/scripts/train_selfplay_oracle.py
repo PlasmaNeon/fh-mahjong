@@ -18,6 +18,11 @@ def main() -> None:
                    help="parallel self-play rollout workers (1 = sequential); default is "
                         "min(core-aware, --matches-per-iter) since rollout throughput is "
                         "core-bound and extra workers beyond the match count sit idle")
+    p.add_argument("--collector", choices=("process", "batched"), default="process",
+                   help="rollout collection: spawn-worker processes (default) or the "
+                        "batched env-pool collector (one batched forward per round)")
+    p.add_argument("--pool-slots", type=int, default=128,
+                   help="concurrent env-pool slots when --collector batched")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--entropy-coef", type=float, default=0.0)
@@ -43,7 +48,8 @@ def main() -> None:
                        ppo_epochs=args.ppo_epochs, minibatch_size=args.minibatch_size,
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
-                       num_workers=num_workers)
+                       num_workers=num_workers, collector=args.collector,
+                       pool_slots=args.pool_slots)
     train_selfplay_oracle(env_config=env_config, model_config=model_config_from_args(args),
                           anchor_checkpoint=args.anchor_checkpoint, checkpoint_dir=args.checkpoint_dir,
                           config=config, base_seed=args.base_seed, run_eval=False)

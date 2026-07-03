@@ -2601,6 +2601,418 @@ func (x *MatchEndResult) GetStandings() []*PlayerStanding {
 	return nil
 }
 
+type EnvPoolNewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *EnvConfig             `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	Slots         uint32                 `protobuf:"varint,2,opt,name=slots,proto3" json:"slots,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvPoolNewRequest) Reset() {
+	*x = EnvPoolNewRequest{}
+	mi := &file_proto_game_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvPoolNewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvPoolNewRequest) ProtoMessage() {}
+
+func (x *EnvPoolNewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvPoolNewRequest.ProtoReflect.Descriptor instead.
+func (*EnvPoolNewRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *EnvPoolNewRequest) GetConfig() *EnvConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *EnvPoolNewRequest) GetSlots() uint32 {
+	if x != nil {
+		return x.Slots
+	}
+	return 0
+}
+
+type SlotCommand struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Slot  uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	// Types that are valid to be assigned to Cmd:
+	//
+	//	*SlotCommand_ActionId
+	//	*SlotCommand_ResetSeed
+	//	*SlotCommand_Skip
+	Cmd           isSlotCommand_Cmd `protobuf_oneof:"cmd"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SlotCommand) Reset() {
+	*x = SlotCommand{}
+	mi := &file_proto_game_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SlotCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SlotCommand) ProtoMessage() {}
+
+func (x *SlotCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SlotCommand.ProtoReflect.Descriptor instead.
+func (*SlotCommand) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *SlotCommand) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *SlotCommand) GetCmd() isSlotCommand_Cmd {
+	if x != nil {
+		return x.Cmd
+	}
+	return nil
+}
+
+func (x *SlotCommand) GetActionId() uint32 {
+	if x != nil {
+		if x, ok := x.Cmd.(*SlotCommand_ActionId); ok {
+			return x.ActionId
+		}
+	}
+	return 0
+}
+
+func (x *SlotCommand) GetResetSeed() uint64 {
+	if x != nil {
+		if x, ok := x.Cmd.(*SlotCommand_ResetSeed); ok {
+			return x.ResetSeed
+		}
+	}
+	return 0
+}
+
+func (x *SlotCommand) GetSkip() bool {
+	if x != nil {
+		if x, ok := x.Cmd.(*SlotCommand_Skip); ok {
+			return x.Skip
+		}
+	}
+	return false
+}
+
+type isSlotCommand_Cmd interface {
+	isSlotCommand_Cmd()
+}
+
+type SlotCommand_ActionId struct {
+	ActionId uint32 `protobuf:"varint,2,opt,name=action_id,json=actionId,proto3,oneof"` // step this slot
+}
+
+type SlotCommand_ResetSeed struct {
+	ResetSeed uint64 `protobuf:"varint,3,opt,name=reset_seed,json=resetSeed,proto3,oneof"` // reset this slot with a new match seed
+}
+
+type SlotCommand_Skip struct {
+	Skip bool `protobuf:"varint,4,opt,name=skip,proto3,oneof"` // slot idle this round (no-op; absent == skip)
+}
+
+func (*SlotCommand_ActionId) isSlotCommand_Cmd() {}
+
+func (*SlotCommand_ResetSeed) isSlotCommand_Cmd() {}
+
+func (*SlotCommand_Skip) isSlotCommand_Cmd() {}
+
+type EnvPoolStepRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Commands      []*SlotCommand         `protobuf:"bytes,1,rep,name=commands,proto3" json:"commands,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvPoolStepRequest) Reset() {
+	*x = EnvPoolStepRequest{}
+	mi := &file_proto_game_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvPoolStepRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvPoolStepRequest) ProtoMessage() {}
+
+func (x *EnvPoolStepRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvPoolStepRequest.ProtoReflect.Descriptor instead.
+func (*EnvPoolStepRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *EnvPoolStepRequest) GetCommands() []*SlotCommand {
+	if x != nil {
+		return x.Commands
+	}
+	return nil
+}
+
+type SlotState struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Slot           uint32                 `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`
+	Seat           uint32                 `protobuf:"varint,2,opt,name=seat,proto3" json:"seat,omitempty"` // acting seat of the returned observation
+	Terminated     bool                   `protobuf:"varint,3,opt,name=terminated,proto3" json:"terminated,omitempty"`
+	Truncated      bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	StepRewards    []float32              `protobuf:"fixed32,5,rep,packed,name=step_rewards,json=stepRewards,proto3" json:"step_rewards,omitempty"`  // per-seat rewards for THIS step (len 4)
+	HasObservation bool                   `protobuf:"varint,6,opt,name=has_observation,json=hasObservation,proto3" json:"has_observation,omitempty"` // false when terminated/truncated/skipped
+	RoundOutcome   *RoundOutcome          `protobuf:"bytes,7,opt,name=round_outcome,json=roundOutcome,proto3" json:"round_outcome,omitempty"`
+	Error          string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"` // per-slot failure (empty = ok)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SlotState) Reset() {
+	*x = SlotState{}
+	mi := &file_proto_game_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SlotState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SlotState) ProtoMessage() {}
+
+func (x *SlotState) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SlotState.ProtoReflect.Descriptor instead.
+func (*SlotState) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *SlotState) GetSlot() uint32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *SlotState) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+func (x *SlotState) GetTerminated() bool {
+	if x != nil {
+		return x.Terminated
+	}
+	return false
+}
+
+func (x *SlotState) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *SlotState) GetStepRewards() []float32 {
+	if x != nil {
+		return x.StepRewards
+	}
+	return nil
+}
+
+func (x *SlotState) GetHasObservation() bool {
+	if x != nil {
+		return x.HasObservation
+	}
+	return false
+}
+
+func (x *SlotState) GetRoundOutcome() *RoundOutcome {
+	if x != nil {
+		return x.RoundOutcome
+	}
+	return nil
+}
+
+func (x *SlotState) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type EnvPoolStepResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Slots []*SlotState           `protobuf:"bytes,1,rep,name=slots,proto3" json:"slots,omitempty"` // one per commanded slot, ascending slot id
+	// Flat observation buffers for slots with has_observation, concatenated in
+	// ascending slot order. planes: float32 LE, C-order [rows, C, H, W].
+	Planes          []byte `protobuf:"bytes,2,opt,name=planes,proto3" json:"planes,omitempty"`
+	Scalars         []byte `protobuf:"bytes,3,opt,name=scalars,proto3" json:"scalars,omitempty"`                            // float32 LE [rows, scalar_count]
+	ActionMasks     []byte `protobuf:"bytes,4,opt,name=action_masks,json=actionMasks,proto3" json:"action_masks,omitempty"` // uint8 [rows, action_space_size]
+	PlaneChannels   uint32 `protobuf:"varint,5,opt,name=plane_channels,json=planeChannels,proto3" json:"plane_channels,omitempty"`
+	PlaneHeight     uint32 `protobuf:"varint,6,opt,name=plane_height,json=planeHeight,proto3" json:"plane_height,omitempty"`
+	PlaneWidth      uint32 `protobuf:"varint,7,opt,name=plane_width,json=planeWidth,proto3" json:"plane_width,omitempty"`
+	ScalarCount     uint32 `protobuf:"varint,8,opt,name=scalar_count,json=scalarCount,proto3" json:"scalar_count,omitempty"`
+	ActionSpaceSize uint32 `protobuf:"varint,9,opt,name=action_space_size,json=actionSpaceSize,proto3" json:"action_space_size,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *EnvPoolStepResponse) Reset() {
+	*x = EnvPoolStepResponse{}
+	mi := &file_proto_game_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvPoolStepResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvPoolStepResponse) ProtoMessage() {}
+
+func (x *EnvPoolStepResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvPoolStepResponse.ProtoReflect.Descriptor instead.
+func (*EnvPoolStepResponse) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *EnvPoolStepResponse) GetSlots() []*SlotState {
+	if x != nil {
+		return x.Slots
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetPlanes() []byte {
+	if x != nil {
+		return x.Planes
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetScalars() []byte {
+	if x != nil {
+		return x.Scalars
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetActionMasks() []byte {
+	if x != nil {
+		return x.ActionMasks
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetPlaneChannels() uint32 {
+	if x != nil {
+		return x.PlaneChannels
+	}
+	return 0
+}
+
+func (x *EnvPoolStepResponse) GetPlaneHeight() uint32 {
+	if x != nil {
+		return x.PlaneHeight
+	}
+	return 0
+}
+
+func (x *EnvPoolStepResponse) GetPlaneWidth() uint32 {
+	if x != nil {
+		return x.PlaneWidth
+	}
+	return 0
+}
+
+func (x *EnvPoolStepResponse) GetScalarCount() uint32 {
+	if x != nil {
+		return x.ScalarCount
+	}
+	return 0
+}
+
+func (x *EnvPoolStepResponse) GetActionSpaceSize() uint32 {
+	if x != nil {
+		return x.ActionSpaceSize
+	}
+	return 0
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -2837,7 +3249,41 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0eMatchEndResult\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12$\n" +
 	"\x0efinal_hand_num\x18\x02 \x01(\rR\ffinalHandNum\x122\n" +
-	"\tstandings\x18\x03 \x03(\v2\x14.game.PlayerStandingR\tstandings*c\n" +
+	"\tstandings\x18\x03 \x03(\v2\x14.game.PlayerStandingR\tstandings\"R\n" +
+	"\x11EnvPoolNewRequest\x12'\n" +
+	"\x06config\x18\x01 \x01(\v2\x0f.game.EnvConfigR\x06config\x12\x14\n" +
+	"\x05slots\x18\x02 \x01(\rR\x05slots\"~\n" +
+	"\vSlotCommand\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x1d\n" +
+	"\taction_id\x18\x02 \x01(\rH\x00R\bactionId\x12\x1f\n" +
+	"\n" +
+	"reset_seed\x18\x03 \x01(\x04H\x00R\tresetSeed\x12\x14\n" +
+	"\x04skip\x18\x04 \x01(\bH\x00R\x04skipB\x05\n" +
+	"\x03cmd\"C\n" +
+	"\x12EnvPoolStepRequest\x12-\n" +
+	"\bcommands\x18\x01 \x03(\v2\x11.game.SlotCommandR\bcommands\"\x8c\x02\n" +
+	"\tSlotState\x12\x12\n" +
+	"\x04slot\x18\x01 \x01(\rR\x04slot\x12\x12\n" +
+	"\x04seat\x18\x02 \x01(\rR\x04seat\x12\x1e\n" +
+	"\n" +
+	"terminated\x18\x03 \x01(\bR\n" +
+	"terminated\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x12!\n" +
+	"\fstep_rewards\x18\x05 \x03(\x02R\vstepRewards\x12'\n" +
+	"\x0fhas_observation\x18\x06 \x01(\bR\x0ehasObservation\x127\n" +
+	"\rround_outcome\x18\a \x01(\v2\x12.game.RoundOutcomeR\froundOutcome\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\"\xcb\x02\n" +
+	"\x13EnvPoolStepResponse\x12%\n" +
+	"\x05slots\x18\x01 \x03(\v2\x0f.game.SlotStateR\x05slots\x12\x16\n" +
+	"\x06planes\x18\x02 \x01(\fR\x06planes\x12\x18\n" +
+	"\ascalars\x18\x03 \x01(\fR\ascalars\x12!\n" +
+	"\faction_masks\x18\x04 \x01(\fR\vactionMasks\x12%\n" +
+	"\x0eplane_channels\x18\x05 \x01(\rR\rplaneChannels\x12!\n" +
+	"\fplane_height\x18\x06 \x01(\rR\vplaneHeight\x12\x1f\n" +
+	"\vplane_width\x18\a \x01(\rR\n" +
+	"planeWidth\x12!\n" +
+	"\fscalar_count\x18\b \x01(\rR\vscalarCount\x12*\n" +
+	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -2902,7 +3348,7 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),                        // 0: game.Suit
 	(ActionType)(0),                  // 1: game.ActionType
@@ -2936,6 +3382,11 @@ var file_proto_game_proto_goTypes = []any{
 	(*ChongciConfig)(nil),            // 29: game.ChongciConfig
 	(*PlayerStanding)(nil),           // 30: game.PlayerStanding
 	(*MatchEndResult)(nil),           // 31: game.MatchEndResult
+	(*EnvPoolNewRequest)(nil),        // 32: game.EnvPoolNewRequest
+	(*SlotCommand)(nil),              // 33: game.SlotCommand
+	(*EnvPoolStepRequest)(nil),       // 34: game.EnvPoolStepRequest
+	(*SlotState)(nil),                // 35: game.SlotState
+	(*EnvPoolStepResponse)(nil),      // 36: game.EnvPoolStepResponse
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
@@ -2987,11 +3438,15 @@ var file_proto_game_proto_depIdxs = []int32{
 	5,  // 46: game.PrivateTableState.match_mode:type_name -> game.MatchMode
 	29, // 47: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
 	30, // 48: game.MatchEndResult.standings:type_name -> game.PlayerStanding
-	49, // [49:49] is the sub-list for method output_type
-	49, // [49:49] is the sub-list for method input_type
-	49, // [49:49] is the sub-list for extension type_name
-	49, // [49:49] is the sub-list for extension extendee
-	0,  // [0:49] is the sub-list for field type_name
+	15, // 49: game.EnvPoolNewRequest.config:type_name -> game.EnvConfig
+	33, // 50: game.EnvPoolStepRequest.commands:type_name -> game.SlotCommand
+	14, // 51: game.SlotState.round_outcome:type_name -> game.RoundOutcome
+	35, // 52: game.EnvPoolStepResponse.slots:type_name -> game.SlotState
+	53, // [53:53] is the sub-list for method output_type
+	53, // [53:53] is the sub-list for method input_type
+	53, // [53:53] is the sub-list for extension type_name
+	53, // [53:53] is the sub-list for extension extendee
+	0,  // [0:53] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -3001,13 +3456,18 @@ func file_proto_game_proto_init() {
 	}
 	file_proto_game_proto_msgTypes[2].OneofWrappers = []any{}
 	file_proto_game_proto_msgTypes[3].OneofWrappers = []any{}
+	file_proto_game_proto_msgTypes[27].OneofWrappers = []any{
+		(*SlotCommand_ActionId)(nil),
+		(*SlotCommand_ResetSeed)(nil),
+		(*SlotCommand_Skip)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   26,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
