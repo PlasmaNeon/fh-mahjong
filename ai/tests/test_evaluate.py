@@ -704,3 +704,90 @@ def test_evaluate_cli_oracle_builds_51ch(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     evaluate_cli.main()  # must not raise; 51ch model + 51ch mock obs are consistent
     assert (tmp_path / "rep.json").exists()
+
+
+def test_evaluate_cli_sampled_duplicate_seats_is_seeded_and_reported(tmp_path, monkeypatch):
+    """--sample-temperature routes the duplicate-seat eval through the serving
+    sampler (CheckpointPolicy): reproducible under --sample-seed, and the
+    sampling config is recorded in the report."""
+    import json
+    import sys
+
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    ckpt = tmp_path / "m.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(), mcfg))
+
+    def run(report_name):
+        argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+                "--online-episodes", "2", "--duplicate-seats", "--match-mode", "classic",
+                "--sample-temperature", "0.7", "--sample-top-k", "3", "--sample-seed", "11",
+                "--model-channels", "8", "--model-residual-blocks", "1",
+                "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+                "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+                "--model-q-hidden-dim", "16",
+                "--report-output", str(tmp_path / report_name)]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                            lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+        ev.main()
+        return json.loads((tmp_path / report_name).read_text())
+
+    first = run("a.json")
+    second = run("b.json")
+
+    assert first["sampling"] == {"temperature": 0.7, "top_k": 3, "action_family": "all", "seed": 11}
+    assert first["online"]["per_episode_placements"] == second["online"]["per_episode_placements"]
+    assert first["online"]["episodes"] == second["online"]["episodes"]
+
+
+def test_evaluate_cli_sampling_flag_validation_and_t0_report_unchanged(tmp_path, monkeypatch):
+    """T=0 reports omit the 'sampling' key entirely (byte-identical greedy
+    reports), and misused sampling flags fail loudly instead of silently
+    degrading to greedy."""
+    import json
+    import sys
+
+    import pytest
+
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16, q_hidden_dim=16)
+    ckpt = tmp_path / "m.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(), mcfg))
+    model_args = ["--model-channels", "8", "--model-residual-blocks", "1",
+                  "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+                  "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+                  "--model-q-hidden-dim", "16"]
+
+    def run(extra, report_name="rep.json"):
+        argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt), "--match-mode", "classic",
+                *model_args, "--report-output", str(tmp_path / report_name), *extra]
+        monkeypatch.setattr(sys, "argv", argv)
+        monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                            lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+        ev.main()
+        return json.loads((tmp_path / report_name).read_text())
+
+    # Default greedy report carries NO sampling key at all.
+    report = run(["--online-episodes", "1", "--duplicate-seats"])
+    assert "sampling" not in report
+
+    # Misused flags fail loudly (argparse SystemExit).
+    for bad in (["--sample-temperature", "-0.5", "--duplicate-seats"],
+                ["--sample-temperature", "nan", "--duplicate-seats"],
+                ["--sample-temperature", "0.5", "--sample-top-k", "-1", "--duplicate-seats"],
+                ["--sample-top-k", "3", "--duplicate-seats"],           # top-k without temperature
+                ["--sample-temperature", "0.5"],                        # temperature without duplicate-seats
+                ["--sample-temperature", "0.5", "--sample-action-family", "bogus", "--duplicate-seats"]):
+        with pytest.raises(SystemExit):
+            run(["--online-episodes", "1", *bad], report_name="bad.json")

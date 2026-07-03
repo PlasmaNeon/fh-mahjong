@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import compute_action_agreement_from_batches, evaluate_duplicate_seats, evaluate_online
+from fh_mahjong_ai.evaluate import (
+    compute_action_agreement_from_batches,
+    evaluate_duplicate_seats,
+    evaluate_duplicate_seats_policy,
+    evaluate_online,
+)
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
@@ -93,12 +99,40 @@ def main() -> None:
     parser.add_argument("--report-output", type=Path, default=None)
     parser.add_argument("--oracle", action="store_true", help="perfect-information oracle eval (51ch observation)")
     parser.add_argument("--from-oracle", action="store_true", help="checkpoint is a 51ch oracle/self-play net; extract the deployable 39ch student and eval non-oracle")
+    parser.add_argument("--sample-temperature", type=float, default=0.0,
+                        help="evaluate with the SERVING sampler (CheckpointPolicy) at this softmax "
+                             "temperature instead of greedy argmax; 0 = greedy (unchanged). "
+                             "Requires --duplicate-seats")
+    parser.add_argument("--sample-top-k", type=int, default=0,
+                        help="restrict sampling to the top-k legal actions (0 = no cap)")
+    parser.add_argument("--sample-action-family", type=str, default="all",
+                        help="only sample when every legal action is in this family "
+                             "(e.g. 'discard'); mixed decisions stay greedy")
+    parser.add_argument("--sample-seed", type=int, default=1,
+                        help="base RNG seed for the sampler (per-seat seeds derive from it)")
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
+
+    if not math.isfinite(args.sample_temperature) or args.sample_temperature < 0.0:
+        parser.error("--sample-temperature must be a finite value >= 0")
+    if args.sample_top_k < 0:
+        parser.error("--sample-top-k must be >= 0")
+    if args.sample_temperature == 0.0 and (args.sample_top_k > 0 or args.sample_action_family != "all"):
+        parser.error("--sample-top-k / --sample-action-family have no effect without --sample-temperature > 0")
+    if args.sample_temperature > 0.0:
+        if not args.duplicate_seats:
+            parser.error("--sample-temperature requires --duplicate-seats (the paired gate path)")
+        from fh_mahjong_ai.action_catalog import action_family as _action_family
+        known_families = {"all", "", "*"} | {
+            _action_family(a) for a in range(EnvConfig().action_space_size)
+        }
+        if args.sample_action_family not in known_families:
+            parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
+                         f"action family (choose from {sorted(known_families - {'', '*'})})")
 
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
     # When --from-oracle is set the model is a 39ch student; eval must also use 39ch obs.
@@ -134,6 +168,15 @@ def main() -> None:
         "offline": None,
         "online": None,
     }
+    if args.sample_temperature > 0.0:
+        # Only present when sampling is active, so the default (greedy) report
+        # stays byte-identical to pre-sampling output.
+        final_report["sampling"] = {
+            "temperature": args.sample_temperature,
+            "top_k": args.sample_top_k,
+            "action_family": args.sample_action_family,
+            "seed": args.sample_seed,
+        }
 
     with start_run(
         enabled=args.mlflow,
@@ -188,7 +231,40 @@ def main() -> None:
         if args.online_episodes > 0:
             print(f"\n--- Online Evaluation ({args.online_episodes} episodes) ---")
             seeds = parse_seed_windows(args.seed_window, args.online_episodes, args.start_seed)
-            if args.duplicate_seats:
+            if args.duplicate_seats and args.sample_temperature > 0.0:
+                # Deploy-realistic eval: route decisions through the SERVING
+                # sampler so the sweep measures exactly what production ships.
+                from fh_mahjong_ai.policies import SampledServingPolicy
+                from fh_mahjong_ai.serving import CheckpointPolicy
+
+                def sampled_policy_factory(seat: int) -> SampledServingPolicy:
+                    # Fresh per-seat policy: seeded sampler RNG restarts per seat
+                    # rotation, so reports are reproducible under --sample-seed.
+                    return SampledServingPolicy(CheckpointPolicy(
+                        model=model,
+                        checkpoint_path=args.checkpoint,
+                        checkpoint_step=step,
+                        device=args.device,
+                        sample_temperature=args.sample_temperature,
+                        sample_top_k=args.sample_top_k,
+                        sample_action_family=args.sample_action_family,
+                        seed=args.sample_seed * 4 + seat,
+                    ))
+
+                online_report = evaluate_duplicate_seats_policy(
+                    policy_factory=sampled_policy_factory,
+                    seeds=seeds,
+                    bridge_kind="go",
+                    bridge_library_path=args.bridge_lib,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=eval_oracle,
+                )
+            elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
                     model=model,
                     seeds=seeds,

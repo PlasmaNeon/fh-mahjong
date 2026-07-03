@@ -46,6 +46,27 @@ class TorchGreedyPolicy:
         return ActionChoice(action_id=action_id, value=float(value.item()))
 
 
+class SampledServingPolicy:
+    """Adapter exposing serving's CheckpointPolicy (temperature / top-k / family
+    sampling) through the ActionChoice protocol used by policy-based evaluation,
+    so a sweep measures exactly the sampler production ships."""
+
+    def __init__(self, checkpoint_policy: Any) -> None:
+        self._policy = checkpoint_policy
+
+    def choose(self, observation: Observation) -> ActionChoice:
+        served = self._policy.choose(observation)
+        return ActionChoice(
+            action_id=served.action_id,
+            value=served.value,
+            info={
+                "source": "sampled" if served.sampling_applied else "greedy",
+                "greedy_action_id": served.greedy_action_id,
+                "sampled_from_greedy": served.sampled_from_greedy,
+            },
+        )
+
+
 class GuardedQPolicy:
     """Use a candidate policy only when its Q estimate clears the anchor action by a margin."""
 
