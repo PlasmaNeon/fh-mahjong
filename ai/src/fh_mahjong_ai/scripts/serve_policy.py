@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,6 +40,11 @@ class PolicyHolder:
         with self._lock:
             # Carry the current sampling config into the new policy: a hot-swap
             # must not silently revert the deployed temperature softening.
+            # Deliberate: the sampler RNG RESTARTS from the base seed on reload
+            # (config is preserved, generator state is not) — reloads are rare
+            # promotion events and real-play trajectories diverge immediately,
+            # so transferring generator state would add complexity for no
+            # observable benefit.
             current = self._policy
             if checkpoint:
                 new_policy = CheckpointPolicy.from_checkpoint(
@@ -79,6 +85,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 "sample_temperature": policy.sample_temperature,
                 "sample_top_k": policy.sample_top_k,
                 "sample_action_family": policy.sample_action_family,
+                "sample_seed": policy.sample_seed,
             }
         )
 
@@ -181,6 +188,23 @@ def main() -> None:
                         help="only sample when every legal action is in this family (e.g. 'discard')")
     parser.add_argument("--sample-seed", type=int, default=1)
     args = parser.parse_args()
+
+    # Fail loudly on misconfigured sampling: a typo here would otherwise start
+    # a server that silently serves greedy (or clamps values) in production.
+    if not math.isfinite(args.sample_temperature) or args.sample_temperature < 0.0:
+        parser.error("--sample-temperature must be a finite value >= 0")
+    if args.sample_top_k < 0:
+        parser.error("--sample-top-k must be >= 0")
+    if args.sample_temperature == 0.0 and (args.sample_top_k > 0 or args.sample_action_family != "all"):
+        parser.error("--sample-top-k / --sample-action-family have no effect without --sample-temperature > 0")
+    if args.sample_temperature > 0.0:
+        from fh_mahjong_ai.action_catalog import action_family as _action_family
+        known_families = {"all", "", "*"} | {
+            _action_family(a) for a in range(EnvConfig().action_space_size)
+        }
+        if args.sample_action_family not in known_families:
+            parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
+                         f"action family (choose from {sorted(known_families - {'', '*'})})")
 
     policy = load_policy_from_manifest(
         manifest_path=args.manifest,

@@ -252,3 +252,35 @@ def test_policy_holder_reload_preserves_sampling(tmp_path: Path) -> None:
     assert policy.sample_temperature == 0.7
     assert policy.sample_top_k == 3
     assert policy.sample_action_family == "discard"
+
+
+def test_policy_holder_manifest_reload_preserves_sampling_and_seed(tmp_path: Path) -> None:
+    """The manifest reload path must also carry the sampling config (incl. the
+    base seed) — and note: the sampler RNG deliberately RESTARTS from that base
+    seed on reload (config preserved, generator state not)."""
+    import json
+
+    first = tmp_path / "a.pt"
+    second = tmp_path / "b.pt"
+    save_checkpoint(first, PolicyValueNet(EnvConfig(), ModelConfig()), step=1)
+    save_checkpoint(second, PolicyValueNet(EnvConfig(), ModelConfig()), step=2)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "schema_version": 1,
+        "current_reward_trained_best": {"id": "current", "method": "test",
+                                        "checkpoint_path": str(second)},
+    }))
+
+    holder = PolicyHolder(
+        CheckpointPolicy.from_checkpoint(first, sample_temperature=0.7, sample_top_k=3,
+                                         sample_action_family="discard", seed=7),
+        manifest_path=manifest,
+    )
+    holder.reload(checkpoint_id="current")
+
+    policy = holder.policy
+    assert policy.checkpoint_step == 2
+    assert policy.sample_temperature == 0.7
+    assert policy.sample_top_k == 3
+    assert policy.sample_action_family == "discard"
+    assert policy.sample_seed == 7
