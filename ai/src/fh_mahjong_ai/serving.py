@@ -49,6 +49,7 @@ class CheckpointPolicy:
         self.sample_temperature = max(0.0, float(sample_temperature))
         self.sample_top_k = max(0, int(sample_top_k))
         self.sample_action_family = str(sample_action_family or "all")
+        self.sample_seed = int(seed)  # kept so holders can rebuild with the same config
         self._rng = np.random.default_rng(seed)
         self.model.eval()
 
@@ -138,6 +139,10 @@ def load_policy_from_manifest(
     checkpoint_id: str = "current",
     checkpoint_override: Optional[Path] = None,
     device: str = "cpu",
+    sample_temperature: float = 0.0,
+    sample_top_k: int = 0,
+    sample_action_family: str = "all",
+    sample_seed: int = 1,
 ) -> CheckpointPolicy:
     manifest = load_checkpoint_manifest(manifest_path)
     checkpoint_path = resolve_checkpoint_path(
@@ -145,7 +150,14 @@ def load_policy_from_manifest(
         checkpoint_id=checkpoint_id,
         checkpoint_override=checkpoint_override,
     )
-    return CheckpointPolicy.from_checkpoint(checkpoint_path, device=device)
+    return CheckpointPolicy.from_checkpoint(
+        checkpoint_path,
+        device=device,
+        sample_temperature=sample_temperature,
+        sample_top_k=sample_top_k,
+        sample_action_family=sample_action_family,
+        seed=sample_seed,
+    )
 
 
 def run_bridge_serving_smoke(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,13 +38,32 @@ class PolicyHolder:
 
     def reload(self, checkpoint: Optional[str] = None, checkpoint_id: str = "current") -> CheckpointPolicy:
         with self._lock:
+            # Carry the current sampling config into the new policy: a hot-swap
+            # must not silently revert the deployed temperature softening.
+            # Deliberate: the sampler RNG RESTARTS from the base seed on reload
+            # (config is preserved, generator state is not) — reloads are rare
+            # promotion events and real-play trajectories diverge immediately,
+            # so transferring generator state would add complexity for no
+            # observable benefit.
+            current = self._policy
             if checkpoint:
-                new_policy = CheckpointPolicy.from_checkpoint(Path(checkpoint), device=self._device)
+                new_policy = CheckpointPolicy.from_checkpoint(
+                    Path(checkpoint),
+                    device=self._device,
+                    sample_temperature=current.sample_temperature,
+                    sample_top_k=current.sample_top_k,
+                    sample_action_family=current.sample_action_family,
+                    seed=current.sample_seed,
+                )
             else:
                 new_policy = load_policy_from_manifest(
                     manifest_path=self._manifest_path,
                     checkpoint_id=checkpoint_id,
                     device=self._device,
+                    sample_temperature=current.sample_temperature,
+                    sample_top_k=current.sample_top_k,
+                    sample_action_family=current.sample_action_family,
+                    sample_seed=current.sample_seed,
                 )
             self._policy = new_policy
             return new_policy
@@ -62,6 +82,10 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "checkpoint": str(policy.checkpoint_path),
                 "checkpoint_step": policy.checkpoint_step,
+                "sample_temperature": policy.sample_temperature,
+                "sample_top_k": policy.sample_top_k,
+                "sample_action_family": policy.sample_action_family,
+                "sample_seed": policy.sample_seed,
             }
         )
 
@@ -154,13 +178,43 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--sample-temperature", type=float, default=0.0,
+                        help="softmax temperature for served actions; 0 = greedy. Swept 2026-07: "
+                             "T<=0.7 with top-k 3 + discard-only costs nothing vs greedy; T=1.0 "
+                             "degrades tail risk")
+    parser.add_argument("--sample-top-k", type=int, default=0,
+                        help="restrict sampling to the top-k legal actions (0 = no cap)")
+    parser.add_argument("--sample-action-family", type=str, default="all",
+                        help="only sample when every legal action is in this family (e.g. 'discard')")
+    parser.add_argument("--sample-seed", type=int, default=1)
     args = parser.parse_args()
+
+    # Fail loudly on misconfigured sampling: a typo here would otherwise start
+    # a server that silently serves greedy (or clamps values) in production.
+    if not math.isfinite(args.sample_temperature) or args.sample_temperature < 0.0:
+        parser.error("--sample-temperature must be a finite value >= 0")
+    if args.sample_top_k < 0:
+        parser.error("--sample-top-k must be >= 0")
+    if args.sample_temperature == 0.0 and (args.sample_top_k > 0 or args.sample_action_family != "all"):
+        parser.error("--sample-top-k / --sample-action-family have no effect without --sample-temperature > 0")
+    if args.sample_temperature > 0.0:
+        from fh_mahjong_ai.action_catalog import action_family as _action_family
+        known_families = {"all", "", "*"} | {
+            _action_family(a) for a in range(EnvConfig().action_space_size)
+        }
+        if args.sample_action_family not in known_families:
+            parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
+                         f"action family (choose from {sorted(known_families - {'', '*'})})")
 
     policy = load_policy_from_manifest(
         manifest_path=args.manifest,
         checkpoint_id=args.checkpoint_id,
         checkpoint_override=args.checkpoint,
         device=args.device,
+        sample_temperature=args.sample_temperature,
+        sample_top_k=args.sample_top_k,
+        sample_action_family=args.sample_action_family,
+        sample_seed=args.sample_seed,
     )
     holder = PolicyHolder(policy, manifest_path=args.manifest, device=args.device)
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
