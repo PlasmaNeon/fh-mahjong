@@ -15783,6 +15783,57 @@ promote demonstrated (converged) performance, not potential. Serving had to lear
 the checkpoint's architecture from the state dict (`infer_model_config`, PR #136),
 since the promoted net is 4-block vs the 2-block default.
 
+### Experiment: Phase B run #1 — bigger-batch extension of the deep4 champion
+
+Run:
+`/root/fh-mahjong-runs/phaseB1` (resumed from `/root/fh-mahjong-runs/sp-big-ext/ckpt/iter_120.pt`)
+
+Question:
+The deep4 champion's iteration-scaling had plateaued (+0.290 -> +0.296 over iters
+100->120). Is gradient noise the binding constraint — i.e. does a bigger batch
+per PPO update (more matches per iteration) break the plateau?
+
+Data:
+Self-generated all-4 self-play, delta=1 throughout (net already weaned).
+
+Training:
+Single variable vs the champion run: matches_per_iter 256 -> 320 (the intended
+512 was OOM-killed — the process collector materializes ~3x the batch; fixed
+post-hoc in PR #146). 155 iters (gi 121-275), nw=10, lr 2e-5, entropy 0,
+ppo_epochs 2, chongci, cuda. No MLflow (standalone script /root/sp_phaseb1.py);
+metrics in train.log + ckpt/history.json.
+
+Evaluation:
+Extracted 39ch students, paired duplicate-seat 120x4=480 episodes, start-seed
+870000, vs the IQL anchor baseline (-0.0528). Promotion bar: CI lower bound
+above the prior champion's +0.2958.
+
+Result:
+
+| checkpoint | paired diff | CI95 | CI lo | large_loss |
+| --- | ---: | ---: | ---: | ---: |
+| champion iter_120 (prior) | +0.2958 | 0.0773 | — | 0.104 |
+| iter_200 | +0.3903 | 0.0825 | +0.3078 | 0.094 |
+| iter_240 | +0.3861 | 0.0781 | +0.3080 | 0.073 |
+| iter_275 | +0.4722 | 0.0815 | +0.3907 | 0.079 |
+
+Standalone plain-39ch validation of iter_275: +0.4722 +/-0.0815 (exact match to
+the --from-oracle eval; artifact self-contained at
+`/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt`).
+
+Decision:
+promoted — iter_275 student -> `current_chongci_reward_trained_best`
+(prior champion iter_120 retained in fallbacks; BC stays the generic fallback).
+
+Interpretation:
+Bigger-batch hypothesis confirmed even at 1.25x batch: the plateau was gradient
+noise, not capacity or iteration count. The curve is still RISING at run end
+(240 -> 275 jumped +0.086), so Phase B run #2 continues from iter_275 at
+matches_per_iter 448 (enabled by the PR #146 collector memory fix). Operational
+lessons: 512x16 needs ~38GB (3x-batch materialization) — fixed by worker-side
+release + consume-mode concat; watcher aggregators must not be edited via sed
+patterns that miss escaped quotes (evals ran, aggregation mislabeled).
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:

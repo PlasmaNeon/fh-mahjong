@@ -1,56 +1,55 @@
 {
   "current_chongci_reward_trained_best": {
-    "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter120-39ch.pt",
-    "id": "chongci_selfplay_deep4_ext_iter120_39ch",
+    "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt",
+    "id": "chongci_selfplay_deep4_phaseb1_iter275_39ch",
     "match_mode": "chongci",
-    "method": "selfplay_feature_dropout_oracle_scaffold_deeper4_extended",
+    "method": "selfplay_deep4_bigger_batch_extension",
     "model_config": {
       "channels": 96,
       "residual_blocks": 4,
-      "note": "DEEPER 4-block net; serving infers architecture via infer_model_config"
+      "note": "4-block net; serving infers architecture via infer_model_config"
     },
     "notes": [
-      "Deployable 39ch student extracted from the 4-residual-block self-play feature-dropout net, sp-big-ext iter_120 (deeper net, warm-started from the 2-block anchor, then extended 60 more delta=1 iters).",
-      "New campaign best: the deeper net was undertrained at 60 iters (+0.1875); given a fair 120-iter budget it clears the small-net longer-schedule iter_075 (+0.2125).",
-      "This checkpoint is residual_blocks=4 \u2014 CheckpointPolicy.from_checkpoint infers architecture from the state dict (infer_model_config), so no serving config change is needed to load it.",
-      "Runner-up / fallback candidate: sp-long iter_075 39ch (+0.2125) at /root/fh-mahjong-runs/deploy/selfplay-student-iter075-39ch.pt."
+      "Phase B run #1: deep4 champion (sp-big-ext iter_120) extended 155 iters at delta=1 with matches_per_iter 320 (vs 256) \u2014 the bigger-batch gradient-noise cut broke the iteration-scaling plateau.",
+      "Deployable 39ch student extracted from phaseB1 iter_275; evaluated NON-oracle (plain 39ch, drop-in for serve_policy).",
+      "Curve still rising at run end (iters 200/240/275 = +0.3903/+0.3861/+0.4722); Phase B run #2 (batch 448, post collector-memory-fix PR #146) continues from iter_275."
     ],
     "evaluation": [
       {
         "label": "paired_dup_seat_120ep_start870000_vs_anchor",
-        "mean_placement": 0.2431,
+        "mean_placement": 0.4194,
         "anchor_mean_placement": -0.0528,
-        "paired_placement_diff": 0.2958,
-        "paired_placement_ci95": 0.0773,
-        "large_loss_rate": 0.104,
+        "paired_placement_diff": 0.4722,
+        "paired_placement_ci95": 0.0815,
+        "large_loss_rate": 0.079,
         "anchor_large_loss_rate": 0.208,
-        "verdict": "BEATS (CI excludes 0)",
-        "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json",
-        "from_oracle_report_path": "/root/fh-mahjong-runs/sp-big-ext/eval-ext120.json",
+        "verdict": "BEATS (CI lower bound +0.3907 also CI-clears the prior champion's +0.2958)",
+        "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student275-plain39.json",
+        "from_oracle_report_path": "/root/fh-mahjong-runs/phaseB1/eval-275.json",
         "anchor_report_path": "/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json"
       }
     ],
     "promotion_gate": {
-      "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline)",
-      "result": "paired_diff +0.2958 +/-0.0773 vs anchor -0.0528; large_loss 0.104 vs 0.208 (halved); tail iters 080/100/120 = +0.2042/+0.2903/+0.2958 (plateauing).",
-      "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json"
+      "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline); bar = CI lower bound > prior champion +0.2958",
+      "result": "iter_275 paired +0.4722 +/-0.0815 (lo +0.3907) CLEARS; large_loss 0.079 vs champion 0.104 vs anchor 0.208; robust across tail (200/240/275 all CI-clear).",
+      "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student275-plain39.json"
     },
-    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-student-iter050-39ch.pt",
-    "previous_best_id": "chongci_selfplay_featuredropout_iter050_39ch",
-    "source_run": "/root/fh-mahjong-runs/sp-big-ext",
+    "previous_best_checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter120-39ch.pt",
+    "previous_best_id": "chongci_selfplay_deep4_ext_iter120_39ch",
+    "source_run": "/root/fh-mahjong-runs/phaseB1",
     "training": {
-      "method": "all-4 symmetric self-play + Suphx feature-dropout, deeper 4-block net, extended delta=1",
+      "method": "all-4 symmetric self-play, delta=1 (pure student), deep4, bigger batch",
       "residual_blocks": 4,
-      "iterations_total": 120,
-      "matches_per_iter": 256,
-      "num_workers": 5,
+      "iterations_total": 275,
+      "matches_per_iter": 320,
+      "num_workers": 10,
       "lr": 2e-05,
       "entropy_coef": 0.0,
       "ppo_epochs": 2,
       "max_grad_norm": 0.5,
       "gamma": 0.99,
-      "warm_start": "anchor (2-block) via build_oracle_model + deeper-block zero-init; extension resumes iter_060",
-      "checkpoint": "iter_120 (51ch, 4-block) -> extract 39ch"
+      "warm_start": "chongci_selfplay_deep4_ext_iter120_39ch (resumed from sp-big-ext iter_120)",
+      "checkpoint": "iter_275 (51ch, 4-block) -> extract 39ch"
     },
     "score_config": {
       "bust_threshold": 0,
@@ -2025,6 +2024,65 @@
         "gamma": 0.99,
         "warm_start": "chongci_broader_mixed_iql_highrisk_pairwise_epoch001",
         "checkpoint": "iter_050 (51ch) -> extract 39ch"
+      },
+      "score_config": {
+        "bust_threshold": 0,
+        "max_hands": 50,
+        "starting_score": 2000
+      }
+    },
+    {
+      "checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter120-39ch.pt",
+      "id": "chongci_selfplay_deep4_ext_iter120_39ch",
+      "match_mode": "chongci",
+      "method": "selfplay_feature_dropout_oracle_scaffold_deeper4_extended",
+      "model_config": {
+        "channels": 96,
+        "residual_blocks": 4,
+        "note": "DEEPER 4-block net; serving infers architecture via infer_model_config"
+      },
+      "notes": [
+        "Deployable 39ch student extracted from the 4-residual-block self-play feature-dropout net, sp-big-ext iter_120 (deeper net, warm-started from the 2-block anchor, then extended 60 more delta=1 iters).",
+        "New campaign best: the deeper net was undertrained at 60 iters (+0.1875); given a fair 120-iter budget it clears the small-net longer-schedule iter_075 (+0.2125).",
+        "This checkpoint is residual_blocks=4 \u2014 CheckpointPolicy.from_checkpoint infers architecture from the state dict (infer_model_config), so no serving config change is needed to load it.",
+        "Runner-up / fallback candidate: sp-long iter_075 39ch (+0.2125) at /root/fh-mahjong-runs/deploy/selfplay-student-iter075-39ch.pt."
+      ],
+      "evaluation": [
+        {
+          "label": "paired_dup_seat_120ep_start870000_vs_anchor",
+          "mean_placement": 0.2431,
+          "anchor_mean_placement": -0.0528,
+          "paired_placement_diff": 0.2958,
+          "paired_placement_ci95": 0.0773,
+          "large_loss_rate": 0.104,
+          "anchor_large_loss_rate": 0.208,
+          "verdict": "BEATS (CI excludes 0)",
+          "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json",
+          "from_oracle_report_path": "/root/fh-mahjong-runs/sp-big-ext/eval-ext120.json",
+          "anchor_report_path": "/root/fh-mahjong-runs/oracle-gate-baseline/eval-anchor.json"
+        }
+      ],
+      "promotion_gate": {
+        "metric": "mean_placement (paired duplicate-seat, 480 episodes, same seeds as anchor baseline)",
+        "result": "paired_diff +0.2958 +/-0.0773 vs anchor -0.0528; large_loss 0.104 vs 0.208 (halved); tail iters 080/100/120 = +0.2042/+0.2903/+0.2958 (plateauing).",
+        "report_path": "/root/fh-mahjong-runs/deploy/eval-deep4-student120-plain39.json"
+      },
+      "previous_best_checkpoint_path": "/root/fh-mahjong-runs/deploy/selfplay-student-iter050-39ch.pt",
+      "previous_best_id": "chongci_selfplay_featuredropout_iter050_39ch",
+      "source_run": "/root/fh-mahjong-runs/sp-big-ext",
+      "training": {
+        "method": "all-4 symmetric self-play + Suphx feature-dropout, deeper 4-block net, extended delta=1",
+        "residual_blocks": 4,
+        "iterations_total": 120,
+        "matches_per_iter": 256,
+        "num_workers": 5,
+        "lr": 2e-05,
+        "entropy_coef": 0.0,
+        "ppo_epochs": 2,
+        "max_grad_norm": 0.5,
+        "gamma": 0.99,
+        "warm_start": "anchor (2-block) via build_oracle_model + deeper-block zero-init; extension resumes iter_060",
+        "checkpoint": "iter_120 (51ch, 4-block) -> extract 39ch"
       },
       "score_config": {
         "bust_threshold": 0,
@@ -4228,5 +4286,5 @@
     "promotion_rule": "reward-trained checkpoint must beat the BC fallback on mean_reward across independent 1000-seed windows without regressing deal-in rate; win rate is tracked as a secondary metric.",
     "serving_validation": "Python returns an action_id from visible SeatObservation inputs; Go must still decode and validate the action_id against current legal actions before applying it."
   },
-  "updated_at": "2026-07-02T07:14:57.109686+00:00"
+  "updated_at": "2026-07-04T22:30:08.752610+00:00"
 }
