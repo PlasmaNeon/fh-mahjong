@@ -229,3 +229,26 @@ def test_checkpoint_policy_loads_non_default_architecture(tmp_path: Path) -> Non
         expected_logits, _ = model(planes, scalars, mask)
         actual_logits, _ = policy.model(planes, scalars, mask)
     assert torch.allclose(expected_logits, actual_logits, atol=1e-6)
+
+
+def test_policy_holder_reload_preserves_sampling(tmp_path: Path) -> None:
+    """Hot-swapping the checkpoint must keep the deployment's sampling config
+    (temperature softening for human play) — a reload that silently reverts to
+    greedy would undo the deployed exploitability mitigation."""
+    first = tmp_path / "a.pt"
+    second = tmp_path / "b.pt"
+    save_checkpoint(first, PolicyValueNet(EnvConfig(), ModelConfig()), step=1)
+    save_checkpoint(second, PolicyValueNet(EnvConfig(), ModelConfig()), step=2)
+
+    holder = PolicyHolder(
+        CheckpointPolicy.from_checkpoint(first, sample_temperature=0.7, sample_top_k=3,
+                                         sample_action_family="discard", seed=7),
+        manifest_path=tmp_path / "manifest.json",
+    )
+    holder.reload(checkpoint=str(second))
+
+    policy = holder.policy
+    assert policy.checkpoint_step == 2
+    assert policy.sample_temperature == 0.7
+    assert policy.sample_top_k == 3
+    assert policy.sample_action_family == "discard"
