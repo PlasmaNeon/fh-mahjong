@@ -48,6 +48,7 @@ def _worker_loop(env_config, model_config, ppo_config, grp_state_dict, task_q, r
                 grp_model=grp_model,
             )
             result_q.put((worker_id, batch, None))
+            batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
 
@@ -112,7 +113,7 @@ class ParallelRolloutCollector:
             results[worker_id] = batch
             received += 1
         ordered = [results[w] for w in sorted(results)]
-        return concat_rollout_batches(ordered)
+        return concat_rollout_batches(ordered, consume=True)
 
     def close(self) -> None:
         if not self._procs:

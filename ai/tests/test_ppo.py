@@ -1165,3 +1165,43 @@ def test_default_num_workers_clamps_to_cgroup_quota(monkeypatch) -> None:
     assert ppo.default_num_workers() == 4  # min(16, 12 - 8)
     monkeypatch.setattr(ppo, "_cgroup_cpu_quota", lambda: 4.0)
     assert ppo.default_num_workers() == 1
+
+
+def _tiny_batch(n: int, seed: int):
+    from fh_mahjong_ai.ppo import RolloutBatch
+
+    rng = np.random.default_rng(seed)
+    return RolloutBatch(
+        planes=rng.standard_normal((n, 3, 2, 1)).astype(np.float32),
+        scalars=rng.standard_normal((n, 4)).astype(np.float32),
+        action_mask=np.ones((n, 6), dtype=np.int8),
+        actions=rng.integers(0, 6, n).astype(np.int64),
+        old_logprobs=rng.standard_normal(n).astype(np.float32),
+        values=rng.standard_normal(n).astype(np.float32),
+        rewards=rng.standard_normal(n).astype(np.float32),
+        dones=np.zeros(n, dtype=np.float32),
+        truncated_matches=seed,
+    )
+
+
+def test_concat_rollout_batches_consume_frees_sources_and_matches_default():
+    from fh_mahjong_ai.ppo import concat_rollout_batches
+
+    fields = ("planes", "scalars", "action_mask", "actions",
+              "old_logprobs", "values", "rewards", "dones")
+    expected = concat_rollout_batches([_tiny_batch(3, 1), _tiny_batch(4, 2)])
+
+    # Default stays non-destructive.
+    keep_a, keep_b = _tiny_batch(3, 1), _tiny_batch(4, 2)
+    concat_rollout_batches([keep_a, keep_b])
+    assert keep_a.planes is not None and keep_b.dones is not None
+
+    # consume=True: identical output, but source arrays are released.
+    eat_a, eat_b = _tiny_batch(3, 1), _tiny_batch(4, 2)
+    result = concat_rollout_batches([eat_a, eat_b], consume=True)
+    for name in fields:
+        np.testing.assert_array_equal(getattr(result, name), getattr(expected, name), err_msg=name)
+    assert result.truncated_matches == expected.truncated_matches == 3
+    for source in (eat_a, eat_b):
+        for name in fields:
+            assert getattr(source, name) is None, f"{name} not released"
