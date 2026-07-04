@@ -135,25 +135,36 @@ class RolloutBatch:
         return int(self.actions.shape[0])
 
 
-def concat_rollout_batches(batches: List["RolloutBatch"]) -> "RolloutBatch":
+_ROLLOUT_ARRAY_FIELDS = (
+    "planes", "scalars", "action_mask", "actions",
+    "old_logprobs", "values", "rewards", "dones",
+)
+
+
+def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False) -> "RolloutBatch":
     """Concatenate per-worker rollout batches into one flat batch. Empty batches
     are skipped; raises if there is nothing to concatenate. Each match is
     self-contained (dones=1 at its final step), so GAE over the concatenation is
-    correct without any boundary fix-up."""
+    correct without any boundary fix-up.
+
+    With ``consume=True`` each source field is released (set to None) right
+    after it is concatenated, so at any moment only ONE field exists in both
+    source and destination form. Since planes dominate batch memory, this
+    bounds the concat peak near 2x-of-planes instead of 2x-of-everything —
+    the difference between fitting and OOM at large matches_per_iter (the
+    512x16 run was OOM-killed while assembling worker results). Consumed
+    inputs must not be reused."""
     nonempty = [b for b in batches if len(b) > 0]
     if not nonempty:
         raise RuntimeError("concat_rollout_batches: no rollout data")
-    return RolloutBatch(
-        planes=np.concatenate([b.planes for b in nonempty], axis=0),
-        scalars=np.concatenate([b.scalars for b in nonempty], axis=0),
-        action_mask=np.concatenate([b.action_mask for b in nonempty], axis=0),
-        actions=np.concatenate([b.actions for b in nonempty], axis=0),
-        old_logprobs=np.concatenate([b.old_logprobs for b in nonempty], axis=0),
-        values=np.concatenate([b.values for b in nonempty], axis=0),
-        rewards=np.concatenate([b.rewards for b in nonempty], axis=0),
-        dones=np.concatenate([b.dones for b in nonempty], axis=0),
-        truncated_matches=sum(int(b.truncated_matches) for b in nonempty),
-    )
+    truncated_matches = sum(int(b.truncated_matches) for b in nonempty)
+    fields = {}
+    for name in _ROLLOUT_ARRAY_FIELDS:
+        fields[name] = np.concatenate([getattr(b, name) for b in nonempty], axis=0)
+        if consume:
+            for b in nonempty:
+                setattr(b, name, None)
+    return RolloutBatch(**fields, truncated_matches=truncated_matches)
 
 
 def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributions.Categorical:

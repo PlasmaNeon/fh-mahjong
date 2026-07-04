@@ -288,6 +288,7 @@ def _oracle_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_oracle_rollouts(env_config, model, cfg, base_seed=base_seed)
             result_q.put((worker_id, batch, None))
+            batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
 
@@ -354,7 +355,7 @@ class ParallelOracleCollector:
             results[worker_id] = batch
             received += 1
         ordered = [results[w] for w in sorted(results)]
-        return concat_rollout_batches(ordered)
+        return concat_rollout_batches(ordered, consume=True)
 
     def close(self) -> None:
         if not self._procs:
@@ -388,6 +389,7 @@ def _selfplay_worker_loop(env_config, model_config, ppo_config, task_q, result_q
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_selfplay_rollouts(env_config, model, cfg, base_seed=base_seed, drop_prob=drop_prob)
             result_q.put((worker_id, batch, None))
+            batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
         except Exception:  # noqa: BLE001
             result_q.put((worker_id, None, traceback.format_exc()))
 
@@ -450,7 +452,7 @@ class ParallelSelfplayCollector:
             results[worker_id] = batch
             received += 1
         ordered = [results[w] for w in sorted(results)]
-        return concat_rollout_batches(ordered)
+        return concat_rollout_batches(ordered, consume=True)
 
     def close(self) -> None:
         if not self._procs:
