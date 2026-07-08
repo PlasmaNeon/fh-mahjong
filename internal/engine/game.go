@@ -8,9 +8,26 @@ import (
 	"sort"
 	"time"
 
+	"github.com/plasma/fh-mahjong/internal/tiles"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 )
+
+// firstWildKanTile returns the first wild tile among the given tiles, or nil.
+// Wild tiles (搭) cannot be used in a kan (Fenghua rule). The action generators
+// already exclude wild kans; this guards the execution paths so a forged or
+// otherwise illegal kan action cannot create a kong containing a wild.
+func (g *Game) firstWildKanTile(candidates ...[]*pb.Tile) *pb.Tile {
+	wildSet := tiles.WildSet(g.State.WildTiles)
+	for _, group := range candidates {
+		for _, t := range group {
+			if t != nil && wildSet[tiles.KeyOf(t.Suit, t.Value)] {
+				return t
+			}
+		}
+	}
+	return nil
+}
 
 // CloneChongciConfig returns a deep copy of cfg (nil-safe). Use this instead
 // of dereferencing-and-copying the struct, which copies the embedded protobuf
@@ -845,6 +862,27 @@ func (g *Game) handleDiscard(seat uint32, action *pb.PlayerAction) error {
 // transient blooming bonus flags.
 func (g *Game) handleKongOrFlowerReveal(seat uint32, action *pb.PlayerAction) error {
 	player := g.State.Players[seat]
+
+	// Wild tiles cannot be used in a kan. Validate BEFORE removing any tiles from
+	// the hand so a rejected (forged) kan leaves game state untouched. Check the
+	// concealed/added tiles, and — for an upgrade — the Pon being promoted. The
+	// action generator already excludes wild kans; this backstops forged actions.
+	if action.Type == pb.ActionType_ACTION_KAN {
+		var ponTiles []*pb.Tile
+		if len(action.MeldTiles) > 0 {
+			for _, m := range player.OpenMelds {
+				if m.Type == pb.ActionType_ACTION_PON && len(m.Tiles) > 0 &&
+					m.Tiles[0].Suit == action.MeldTiles[0].Suit && m.Tiles[0].Value == action.MeldTiles[0].Value {
+					ponTiles = m.Tiles
+					break
+				}
+			}
+		}
+		if w := g.firstWildKanTile(action.MeldTiles, ponTiles); w != nil {
+			return fmt.Errorf("illegal kan: wild tile %d cannot be used in a kan", w.Id)
+		}
+	}
+
 	// Which kong type may "bloom" if the player wins on this dead-wall draw.
 	kongBloom := "" // "risky" (upgraded pon) or "closed" (4 from hand)
 
@@ -1009,6 +1047,18 @@ func (g *Game) handleTsumo(seat uint32) error {
 func (g *Game) handleInterruptAction(seat uint32, action *pb.PlayerAction) error {
 	if seat == g.State.ActivePlayer {
 		return errors.New("active player cannot interrupt their own discard")
+	}
+	// Wild tiles cannot be used in a kan. A direct kan claims the discard plus its
+	// in-hand matches (all one face), so a wild discard would make the kong wild.
+	// Reject before queuing; the generator already excludes it.
+	if action.Type == pb.ActionType_ACTION_KAN {
+		var claimed []*pb.Tile
+		if g.State.ActiveDiscard != nil {
+			claimed = []*pb.Tile{g.State.ActiveDiscard}
+		}
+		if w := g.firstWildKanTile(action.MeldTiles, claimed); w != nil {
+			return fmt.Errorf("illegal kan: wild tile %d cannot be used in a kan", w.Id)
+		}
 	}
 	// Add to queue
 	g.interruptQueue[seat] = action
