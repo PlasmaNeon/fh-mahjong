@@ -475,7 +475,8 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
                           run_eval: bool = False) -> list[dict]:
     """All-4 self-play feature-dropout training. Warm-start a 51ch net from the
     anchor; each iteration set delta from feature_dropout_schedule, collect self-play
-    rollouts with that mask probability, then compute_gae + ppo_update. Saves the
+    rollouts with that mask probability, then compute_gae + the config-selected
+    update (ppo_update, or ach_update when config.objective=="ach"). Saves the
     51ch checkpoint per iter (extract the deployable 39ch student post-hoc / at eval
     time)."""
     device = config.device
