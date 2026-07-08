@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .ach import ach_update
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
@@ -483,6 +484,7 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
     model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    update_fn = ach_update if config.objective == "ach" else ppo_update
     history: list[dict] = []
     collector = None
     pool = None
@@ -507,11 +509,13 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
                 batch = collect_selfplay_rollouts(env_config, model, config, base_seed=iter_seed, drop_prob=delta)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                               config.gamma, config.gae_lambda)
-            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics = update_fn(model, optimizer, batch, advantages, returns, config)
             metrics["iteration"] = iteration
             metrics["delta"] = delta
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
+            metrics["objective"] = config.objective
+            metrics["ach_beta"] = config.ach_beta
             save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
             history.append(metrics)
             (checkpoint_dir / "history.json").write_text(json.dumps(history))
