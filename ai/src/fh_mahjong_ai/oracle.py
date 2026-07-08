@@ -484,6 +484,15 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
         raise ValueError(
             f"train_selfplay_oracle: config.objective must be 'ppo' or 'ach', "
             f"got {config.objective!r} (a typo would silently train PPO)")
+    if config.objective == "ach" and not (config.ach_beta > 0):
+        # `ach_beta > 0` allows a finite positive threshold or the +inf sentinel
+        # (pure NeuRD, no hedge) while rejecting nan (all comparisons false ->
+        # would silently disable the hedge and write NaN to history), 0, and
+        # negatives (would fire saturation in unintended regions and zero most
+        # policy gradients). Fail before any checkpoint/model/worker setup.
+        raise ValueError(
+            f"train_selfplay_oracle: ach_beta must be a positive value (finite or "
+            f"inf) for objective='ach', got {config.ach_beta!r}")
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)

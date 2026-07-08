@@ -201,6 +201,24 @@ def test_train_selfplay_oracle_rejects_invalid_objective(tmp_path):
                               run_eval=False)
 
 
+@pytest.mark.parametrize("bad_beta", [float("nan"), 0.0, -1.0])
+def test_train_selfplay_oracle_rejects_nonpositive_ach_beta(tmp_path, bad_beta):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    # nan/0/negative beta would silently disable or corrupt the hedge — must fail loudly.
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    objective="ach", ach_beta=bad_beta)
+    with pytest.raises(ValueError):
+        train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                              checkpoint_dir=tmp_path / "sp_badbeta", config=cfg, base_seed=1,
+                              run_eval=False)
+
+
 def test_parallel_selfplay_matches_sequential():
     from fh_mahjong_ai.oracle import collect_selfplay_rollouts, ParallelSelfplayCollector
     env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
