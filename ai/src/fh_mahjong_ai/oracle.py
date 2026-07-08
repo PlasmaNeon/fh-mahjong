@@ -3,6 +3,7 @@ warm-started from the 39-channel anchor."""
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing as mp
 import queue as _queue
 import traceback
@@ -12,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from .ach import ach_update
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
@@ -474,15 +476,31 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
                           run_eval: bool = False) -> list[dict]:
     """All-4 self-play feature-dropout training. Warm-start a 51ch net from the
     anchor; each iteration set delta from feature_dropout_schedule, collect self-play
-    rollouts with that mask probability, then compute_gae + ppo_update. Saves the
+    rollouts with that mask probability, then compute_gae + the config-selected
+    update (ppo_update, or ach_update when config.objective=="ach"). Saves the
     51ch checkpoint per iter (extract the deployable 39ch student post-hoc / at eval
     time)."""
     device = config.device
+    if config.objective not in ("ppo", "ach"):
+        raise ValueError(
+            f"train_selfplay_oracle: config.objective must be 'ppo' or 'ach', "
+            f"got {config.objective!r} (a typo would silently train PPO)")
+    if config.objective == "ach" and not (math.isfinite(config.ach_beta) and config.ach_beta > 0):
+        # Require a FINITE positive hedge threshold on the ACH path. This rejects
+        # nan/0/negative (which would disable the hedge or fire saturation in
+        # unintended regions) AND +inf: inf is a valid math "no-hedge" sentinel but
+        # json.dumps serializes it as bare `Infinity`, producing a non-standard
+        # history.json that strict/cross-language consumers reject. A no-hedge
+        # ablation should use a large finite beta. Fail before any setup.
+        raise ValueError(
+            f"train_selfplay_oracle: ach_beta must be a finite positive value for "
+            f"objective='ach', got {config.ach_beta!r}")
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+    update_fn = ach_update if config.objective == "ach" else ppo_update
     history: list[dict] = []
     collector = None
     pool = None
@@ -507,11 +525,16 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
                 batch = collect_selfplay_rollouts(env_config, model, config, base_seed=iter_seed, drop_prob=delta)
             advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                               config.gamma, config.gae_lambda)
-            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+            metrics = update_fn(model, optimizer, batch, advantages, returns, config)
             metrics["iteration"] = iteration
             metrics["delta"] = delta
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
+            # Record ACH metadata only on the ACH path so the default PPO history
+            # schema is byte-unchanged (no new keys on pre-existing PPO runs).
+            if config.objective == "ach":
+                metrics["objective"] = config.objective
+                metrics["ach_beta"] = config.ach_beta
             save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
             history.append(metrics)
             (checkpoint_dir / "history.json").write_text(json.dumps(history))

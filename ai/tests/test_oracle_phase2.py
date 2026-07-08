@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
@@ -143,6 +144,80 @@ def test_selfplay_trajectories_are_seat_contiguous():
         f"largest segment is {max_seg}/{total} = {max_seg/total:.1%} > 40%; "
         "trajectories appear to still be interleaved across seats"
     )
+
+
+def test_train_selfplay_oracle_ach_objective_records_metadata(tmp_path):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))   # 39ch anchor
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    cfg = PPOConfig(iterations=2, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    objective="ach", ach_beta=1.5)
+    history = train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                                    checkpoint_dir=tmp_path / "sp_ach", config=cfg, base_seed=1,
+                                    run_eval=False)
+    assert len(history) == 2
+    assert (tmp_path / "sp_ach" / "iter_002.pt").exists()
+    assert all(h["objective"] == "ach" for h in history)
+    assert all(h["ach_beta"] == 1.5 for h in history)
+    # ACH-only metric surfaced into history:
+    assert all("saturated_fraction" in h for h in history)
+
+
+def test_train_selfplay_oracle_defaults_to_ppo_objective(tmp_path):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu")
+    history = train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                                    checkpoint_dir=tmp_path / "sp_ppo", config=cfg, base_seed=1,
+                                    run_eval=False)
+    # PPO history schema is byte-unchanged: no ACH-only metadata or metrics keys.
+    assert "objective" not in history[0]
+    assert "ach_beta" not in history[0]
+    assert "saturated_fraction" not in history[0]
+
+
+def test_train_selfplay_oracle_rejects_invalid_objective(tmp_path):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    # "ACH" (wrong case) is not a valid objective — must fail loudly, not silently train PPO.
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu", objective="ACH")
+    with pytest.raises(ValueError):
+        train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                              checkpoint_dir=tmp_path / "sp_bad", config=cfg, base_seed=1,
+                              run_eval=False)
+
+
+@pytest.mark.parametrize("bad_beta", [float("nan"), 0.0, -1.0, float("inf")])
+def test_train_selfplay_oracle_rejects_nonfinite_or_nonpositive_ach_beta(tmp_path, bad_beta):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    # nan/0/negative would disable or corrupt the hedge; +inf serializes to non-standard
+    # JSON (`Infinity`) in history — all must fail loudly, not start an expensive run.
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu",
+                    objective="ach", ach_beta=bad_beta)
+    with pytest.raises(ValueError):
+        train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                              checkpoint_dir=tmp_path / "sp_badbeta", config=cfg, base_seed=1,
+                              run_eval=False)
 
 
 def test_parallel_selfplay_matches_sequential():

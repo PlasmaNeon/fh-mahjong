@@ -35,6 +35,10 @@ def main() -> None:
     p.add_argument("--bridge-lib", type=str, default=None)
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--base-seed", type=int, default=0)
+    p.add_argument("--objective", choices=("ppo", "ach"), default="ppo",
+                   help="policy update objective: PPO clipped surrogate (default) or ACH regret")
+    p.add_argument("--ach-beta", type=float, default=2.0,
+                   help="ACH hedge/logit trust-region threshold (used when --objective ach)")
     add_model_config_args(p)
     args = p.parse_args()
     num_workers = args.num_workers
@@ -49,7 +53,8 @@ def main() -> None:
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers, collector=args.collector,
-                       pool_slots=args.pool_slots)
+                       pool_slots=args.pool_slots,
+                       objective=args.objective, ach_beta=args.ach_beta)
     train_selfplay_oracle(env_config=env_config, model_config=model_config_from_args(args),
                           anchor_checkpoint=args.anchor_checkpoint, checkpoint_dir=args.checkpoint_dir,
                           config=config, base_seed=args.base_seed, run_eval=False)
