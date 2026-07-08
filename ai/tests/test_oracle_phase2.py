@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
@@ -178,9 +179,26 @@ def test_train_selfplay_oracle_defaults_to_ppo_objective(tmp_path):
     history = train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
                                     checkpoint_dir=tmp_path / "sp_ppo", config=cfg, base_seed=1,
                                     run_eval=False)
-    assert history[0]["objective"] == "ppo"
-    # PPO path must not surface the ACH-only metric.
+    # PPO history schema is byte-unchanged: no ACH-only metadata or metrics keys.
+    assert "objective" not in history[0]
+    assert "ach_beta" not in history[0]
     assert "saturated_fraction" not in history[0]
+
+
+def test_train_selfplay_oracle_rejects_invalid_objective(tmp_path):
+    from fh_mahjong_ai.oracle import train_selfplay_oracle
+    mcfg = _mcfg()
+    anchor = tmp_path / "anchor.pt"
+    save_checkpoint(anchor, PolicyValueNet(EnvConfig(), mcfg))
+    env_cfg = EnvConfig(bridge_kind="mock", match_mode="classic", max_steps_per_episode=64,
+                        oracle_observation=True)
+    # "ACH" (wrong case) is not a valid objective — must fail loudly, not silently train PPO.
+    cfg = PPOConfig(iterations=1, matches_per_iter=2, ppo_epochs=1, minibatch_size=8,
+                    match_mode="classic", max_steps_per_episode=64, device="cpu", objective="ACH")
+    with pytest.raises(ValueError):
+        train_selfplay_oracle(env_config=env_cfg, model_config=mcfg, anchor_checkpoint=anchor,
+                              checkpoint_dir=tmp_path / "sp_bad", config=cfg, base_seed=1,
+                              run_eval=False)
 
 
 def test_parallel_selfplay_matches_sequential():

@@ -138,3 +138,39 @@ def test_ach_update_handles_minibatch_not_dividing_n_and_normalization():
                                    normalize_advantages=True, device="cpu"))
     assert np.isfinite(metrics["policy_loss"])
     assert 0.0 <= metrics["saturated_fraction"] <= 1.0
+
+
+def test_ach_update_policy_gradient_flows_only_through_taken_logit():
+    # Regression for the "importance ratio left in the autograd graph" bug: the
+    # NeuRD policy loss must treat the IS-corrected advantage as a detached
+    # COEFFICIENT, so per sample the gradient reaches EXACTLY ONE logit (the taken
+    # action's). If the ratio (a function of every logit via log-prob/softmax)
+    # leaked into the graph, all logits in the row would receive gradient.
+    # Isolate the policy loss: value_coef=0, entropy_coef=0, beta=inf (no
+    # saturation), single epoch, lr=0 (inspect grad only, no update). We assert the
+    # per-row one-hot STRUCTURE, which is permutation-independent (ach_update
+    # shuffles the minibatch, so captured row order != batch order).
+    model, env = _tiny_model()
+    n = 6
+    batch = _synthetic_batch(env, n=n)  # all-legal mask; nonzero advantages below
+    adv = np.linspace(-1.0, 1.0, n).astype(np.float32)  # no zero entries
+    ret = np.zeros(n, dtype=np.float32)
+    captured = {}
+
+    def hook(_module, _inp, out):
+        logits = out[0]
+        logits.retain_grad()
+        captured["logits"] = logits
+
+    handle = model.register_forward_hook(hook)
+    opt = torch.optim.SGD(model.parameters(), lr=0.0)
+    ach_update(model, opt, batch, adv, ret,
+               PPOConfig(minibatch_size=n, ppo_epochs=1, entropy_coef=0.0, value_coef=0.0,
+                         normalize_advantages=False, ach_beta=float("inf"), device="cpu"))
+    handle.remove()
+    grad = captured["logits"].grad  # (n, action_space_size)
+    nonzero_per_row = (grad.abs() > 1e-6).sum(dim=1)
+    # Exactly one logit per sample receives gradient — proves the IS weight is
+    # detached (else softmax would spread gradient across all action_space_size logits).
+    assert torch.equal(nonzero_per_row, torch.ones(n, dtype=nonzero_per_row.dtype)), \
+        f"expected one gradient-carrying logit per row, got counts {nonzero_per_row.tolist()}"

@@ -29,6 +29,13 @@ def ach_policy_loss(masked_logits: torch.Tensor, actions: torch.Tensor,
     the logit is already saturated beyond ``+/-beta`` in the direction
     ``weights`` would push it, its gradient is zeroed (the hedge threshold).
 
+    The threshold is applied to the RAW network logit, not a policy-centered one.
+    This is intentional and faithful to NeuRD/ACH: the update is replicator
+    dynamics on the logit parameters themselves, and capping the raw logit is what
+    bounds its unbounded absolute growth (the logit-blow-up guard). Softmax is
+    shift-invariant, so a policy-relative parameterization would be a different
+    method than the one this A/B is meant to test.
+
     Returns ``(loss, saturated_mask)``.
     """
     y_t = masked_logits.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -66,7 +73,13 @@ def ach_update(model, optimizer, batch: RolloutBatch,
             new_logprobs = dist.log_prob(actions[idx])
             ratio = torch.exp(new_logprobs - old_logprobs[idx])
             rho = torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps)
-            w = rho * adv_t[idx]
+            # The (IS-corrected, clipped) advantage is a COEFFICIENT on the logit
+            # gradient, not part of the differentiated objective. Detach it so the
+            # only gradient path is through the taken logit y_eff (a pure regret /
+            # NeuRD update). Leaving rho in the graph would backprop through the
+            # log-prob ratio, adding a spurious policy-gradient term and pushing the
+            # non-taken logits too — i.e. a PPO/NeuRD hybrid, not ACH.
+            w = (rho * adv_t[idx]).detach()
 
             policy_loss, saturated = ach_policy_loss(masked_logits, actions[idx], w, beta)
             value_loss = torch.nn.functional.mse_loss(value, ret_t[idx])

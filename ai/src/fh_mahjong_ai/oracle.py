@@ -480,6 +480,10 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
     51ch checkpoint per iter (extract the deployable 39ch student post-hoc / at eval
     time)."""
     device = config.device
+    if config.objective not in ("ppo", "ach"):
+        raise ValueError(
+            f"train_selfplay_oracle: config.objective must be 'ppo' or 'ach', "
+            f"got {config.objective!r} (a typo would silently train PPO)")
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model = build_oracle_model(env_config, model_config, anchor_checkpoint, device)
@@ -515,8 +519,11 @@ def train_selfplay_oracle(env_config: EnvConfig, model_config: ModelConfig, anch
             metrics["delta"] = delta
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
-            metrics["objective"] = config.objective
-            metrics["ach_beta"] = config.ach_beta
+            # Record ACH metadata only on the ACH path so the default PPO history
+            # schema is byte-unchanged (no new keys on pre-existing PPO runs).
+            if config.objective == "ach":
+                metrics["objective"] = config.objective
+                metrics["ach_beta"] = config.ach_beta
             save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
             history.append(metrics)
             (checkpoint_dir / "history.json").write_text(json.dumps(history))
