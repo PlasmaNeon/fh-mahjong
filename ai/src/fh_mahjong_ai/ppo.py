@@ -117,6 +117,8 @@ class PPOConfig:
     grp_checkpoint: Optional[Path] = None
     grp_placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
     device: str = "cpu"
+    objective: str = "ppo"       # "ppo" | "ach" (selects the policy update)
+    ach_beta: float = 2.0        # hedge/logit trust-region threshold when objective="ach"
 
 
 @dataclass
