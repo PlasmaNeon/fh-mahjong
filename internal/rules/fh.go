@@ -745,11 +745,9 @@ func (r *FenghuaRuleset) GetValidActions(state *pb.GameState, playerSeat uint32)
 	}
 
 	// Upgraded (added) Kongs: add the matching 4th tile to an existing open Pon.
-	// Skipped when the added tile is a wild, or when the Pon itself already contains
-	// a wild — either way the resulting kong would contain a wild tile (illegal).
-	// Skipping wild-containing Pons also removes the duplicate-action collision: a
-	// Pon melded with a wild substitute leaves two natural copies in hand, so the
-	// per-tile loop would otherwise emit two identical added-kan actions.
+	// Skipped when the added tile is a wild, or when the Pon itself contains a wild
+	// (a Pon melded from wild tiles at face value) — either way the resulting kong
+	// would contain a wild tile, which the Fenghua rules forbid.
 	for _, t := range player.ClosedHand {
 		if isWild(t) {
 			continue
