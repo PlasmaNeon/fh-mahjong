@@ -18,6 +18,7 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 - **envpool.go** — `EnvPool`: `slots` independent envs stepped in lockstep rounds via `ApplyCommands` (one command per slot per call: step/reset/skip; commanded slots run concurrently in goroutines). Returns flat little-endian float32/uint8 observation buffers (rows = has_observation slots, ascending slot order) plus per-slot `SlotState` metadata. Never self-resets — the foreign caller owns the seed schedule.
 - **action_test.go** — Fixed action/tile-index mapping tests; tile faces follow the backend shanten order `man, pin, sou, jihai, flower`.
 - **env_test.go** — Determinism, action round-trip, hidden-information, and trajectory-export tests.
+- **kan_dup_repro_test.go** — Fuzzes random self-play and asserts the engine's wall-consumption invariant: no tile id ever appears twice in any hand (and no unexpected step error). Regression gate for the dead-wall/front double-draw bug that surfaced as a `duplicate action id ... ACTION_KAN` crash.
 
 ## Architecture Notes
 
