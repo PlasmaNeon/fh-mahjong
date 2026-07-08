@@ -727,8 +727,16 @@ func (r *FenghuaRuleset) GetValidActions(state *pb.GameState, playerSeat uint32)
 		counts[k] = append(counts[k], t)
 	}
 
-	for _, tileGroup := range counts {
-		if len(tileGroup) == 4 {
+	// Wild tiles (搭) cannot be used in a kan. A tile is wild when its face
+	// (Suit+Value) matches one of this round's wild indicators.
+	wildSet := tiles.WildSet(state.WildTiles)
+	isWild := func(tile *pb.Tile) bool {
+		return tile != nil && wildSet[tiles.KeyOf(tile.Suit, tile.Value)]
+	}
+
+	for face, tileGroup := range counts {
+		// A concealed kong of a wild face is illegal (the kong would be all wilds).
+		if len(tileGroup) == 4 && !wildSet[tiles.KeyOf(face.suit, face.value)] {
 			actions = append(actions, &pb.PlayerAction{
 				Type:      pb.ActionType_ACTION_KAN,
 				MeldTiles: tileGroup,
@@ -736,21 +744,44 @@ func (r *FenghuaRuleset) GetValidActions(state *pb.GameState, playerSeat uint32)
 		}
 	}
 
-	// Upgraded Kongs: Check if we have a tile in our ClosedHand that matches an existing open Pon
+	// Upgraded (added) Kongs: add the matching 4th tile to an existing open Pon.
+	// Skipped when the added tile is a wild, or when the Pon itself already contains
+	// a wild — either way the resulting kong would contain a wild tile (illegal).
+	// Skipping wild-containing Pons also removes the duplicate-action collision: a
+	// Pon melded with a wild substitute leaves two natural copies in hand, so the
+	// per-tile loop would otherwise emit two identical added-kan actions.
 	for _, t := range player.ClosedHand {
+		if isWild(t) {
+			continue
+		}
 		for _, m := range player.OpenMelds {
-			if m.Type == pb.ActionType_ACTION_PON && len(m.Tiles) > 0 {
-				if m.Tiles[0].Suit == t.Suit && m.Tiles[0].Value == t.Value {
-					actions = append(actions, &pb.PlayerAction{
-						Type:      pb.ActionType_ACTION_KAN,
-						MeldTiles: []*pb.Tile{t},
-					})
-				}
+			if m.Type != pb.ActionType_ACTION_PON || len(m.Tiles) == 0 {
+				continue
 			}
+			if m.Tiles[0].Suit != t.Suit || m.Tiles[0].Value != t.Value {
+				continue
+			}
+			if meldContainsWild(m, isWild) {
+				continue
+			}
+			actions = append(actions, &pb.PlayerAction{
+				Type:      pb.ActionType_ACTION_KAN,
+				MeldTiles: []*pb.Tile{t},
+			})
 		}
 	}
 
 	return actions
+}
+
+// meldContainsWild reports whether any tile in the meld is a wild.
+func meldContainsWild(m *pb.Meld, isWild func(*pb.Tile) bool) bool {
+	for _, tile := range m.Tiles {
+		if isWild(tile) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *FenghuaRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *pb.Tile, playerSeat uint32) []*pb.PlayerAction {
@@ -778,8 +809,11 @@ func (r *FenghuaRuleset) GetValidInterrupts(state *pb.GameState, discardedTile *
 		}
 	}
 
-	// 2. Check Kang (Needs 3 matching tiles)
-	if len(matchingTiles) == 3 {
+	// 2. Check Kang (Needs 3 matching tiles). Wild tiles cannot be used in a kan;
+	// the claimed tile and its 3 in-hand matches share a face, so a wild discard
+	// would make the entire kong wild.
+	discardIsWild := tiles.WildSet(state.WildTiles)[tiles.KeyOf(discardedTile.Suit, discardedTile.Value)]
+	if len(matchingTiles) == 3 && !discardIsWild {
 		actions = append(actions, &pb.PlayerAction{
 			Type:         pb.ActionType_ACTION_KAN,
 			Tile:         discardedTile,
