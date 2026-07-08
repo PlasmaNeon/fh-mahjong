@@ -476,6 +476,15 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	player := g.State.Players[seat]
 	g.clearBloomingKongFlags(player)
 
+	// Skip any live-wall tiles already taken by dead-wall (kong/flower) draws that
+	// descended past the wangpai into the live wall. Without this the same physical
+	// tile is dispensed twice — once from the back as a replacement draw, then again
+	// from the front — duplicating a tile id across hands (a phantom tile that
+	// corrupts hand counts, scoring, and yields duplicate legal actions).
+	for g.wallIndex < g.wangpaiBoundary && g.isTileConsumedByDeadWall(g.wallIndex) {
+		g.wallIndex++
+	}
+
 	// Check if the live wall (front → wangpai boundary) is exhausted
 	if g.wallIndex >= g.wangpaiBoundary {
 		// The live wall is empty. Offer the haitei tile.
