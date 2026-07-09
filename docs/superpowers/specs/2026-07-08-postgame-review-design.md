@@ -124,7 +124,9 @@ Add a batch **evaluate** endpoint:
 - `GET /api/v1/matches/:id/review` — returns the cached report (latest by
   creation time), 404 if none.
 - New table `match_reviews` (GORM model in `internal/storage`):
-  `id, match_id (indexed), checkpoint_id, report JSONB, created_at`.
+  `id, match_id (indexed), checkpoint_id, report TEXT (JSON), created_at` —
+  TEXT rather than JSONB for consistency with `Match.PaipuJSON` and the
+  in-memory sqlite test setup.
   A separate table — not a Match column — so a future champion can re-review a
   match without destroying the old report. `(match_id, checkpoint_id)` unique:
   re-POST with the same champion returns the cached row.
