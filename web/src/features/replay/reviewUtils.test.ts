@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { actionLabel, decisionGap, decisionKey, decisionSeverity, selectPanelDecisions } from './reviewUtils'
 import type { ReportDecision, ReviewReport } from './reviewTypes'
+import { fetchReview, generateReview } from './reviewTypes'
 
 function dec(actions: [number, number][], chosen: number): ReportDecision {
   return {
@@ -48,6 +49,79 @@ describe('actionLabel', () => {
     expect(actionLabel(47).en).toContain('Pon 1m')
     expect(actionLabel(183).en).toContain('Chii')
     expect(actionLabel(203).en).toContain('Chii')
+  })
+
+  // Expected labels below are derived from internal/rl/action.go offsets:
+  // DiscardBase=5 with face order man(0-8) pin(9-17) sou(18-26) jihai(27-33)
+  // flower(34-41); PonBase=47; KanDirectBase=81; KanClosedBase=115;
+  // KanUpgradedBase=149; ChiiBase=183 with suit offsets man=0 pin=7 sou=14.
+  it('labels discards across every face group', () => {
+    expect(actionLabel(14).en).toBe('Discard 1p') // 5 + 9
+    expect(actionLabel(23).en).toBe('Discard 1s') // 5 + 18
+    expect(actionLabel(32).en).toBe('Discard East') // 5 + 27, jihai value 1
+    expect(actionLabel(32).zh).toBe('打 东')
+    expect(actionLabel(39).en).toBe('Discard Spring') // 5 + 34, flower value 1
+    expect(actionLabel(39).zh).toBe('打 春')
+  })
+
+  it('labels the three kan modes distinctly', () => {
+    const open = actionLabel(81) // KanDirectBase + face 0
+    const closed = actionLabel(115) // KanClosedBase + face 0
+    const upgraded = actionLabel(149) // KanUpgradedBase + face 0
+    expect(open.en).toBe('Open Kan 1m')
+    expect(closed.en).toBe('Closed Kan 1m')
+    expect(upgraded.en).toBe('Upgraded Kan 1m')
+    expect(new Set([open.en, closed.en, upgraded.en]).size).toBe(3)
+    expect(new Set([open.zh, closed.zh, upgraded.zh]).size).toBe(3)
+  })
+
+  it('labels a pon of a non-man face', () => {
+    expect(actionLabel(56).en).toBe('Pon 1p') // PonBase 47 + pin face 9
+  })
+
+  it('labels a mid-range chii', () => {
+    expect(actionLabel(190).en).toBe('Chii 1-2-3p') // ChiiBase 183 + pin offset 7
+    expect(actionLabel(190).zh).toBe('吃 1-2-3饼')
+  })
+})
+
+describe('fetchReview / generateReview', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const report: ReviewReport = {
+    schemaVersion: 1,
+    matchId: 'm1',
+    ruleset: 'fenghua',
+    checkpointPath: '/ckpt',
+    checkpointStep: 10,
+    generatedAt: '2026-01-01T00:00:00Z',
+    decisions: [],
+    seats: [],
+  }
+
+  it('fetchReview returns null on 404', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not found', { status: 404 })))
+    await expect(fetchReview('m1')).resolves.toBeNull()
+  })
+
+  it('fetchReview returns the parsed report on 200', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(report), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchReview('m1')).resolves.toEqual(report)
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/matches/m1/review'))
+  })
+
+  it('generateReview throws {status, message} from the error body on 503', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'reviewer unavailable' }), { status: 503 })))
+    await expect(generateReview('m1')).rejects.toEqual({ status: 503, message: 'reviewer unavailable' })
+  })
+
+  it('generateReview throws a sensible message on a non-JSON error body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>bad gateway</html>', { status: 502 })))
+    await expect(generateReview('m1')).rejects.toEqual({ status: 502, message: 'HTTP 502' })
   })
 })
 
