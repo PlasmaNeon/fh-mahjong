@@ -144,17 +144,43 @@ func finalScores(game *engine.Game) [4]int32 {
 	return scores
 }
 
-func TestExtractDecisionsClassicRoundTrip(t *testing.T) {
-	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
-	decisions, err := ExtractDecisions(paipu)
-	if err != nil {
-		t.Fatalf("ExtractDecisions: %v", err)
+// actMatchesCatalogFamily reports whether a paipu action verb and a catalog
+// action id belong to the same action family — the anchor-correctness link
+// between a Decision and the paipu record it claims to represent.
+func actMatchesCatalogFamily(act string, id int) bool {
+	switch act {
+	case "discard":
+		return id >= rl.DiscardBase && id < rl.DiscardBase+rl.DiscardCount
+	case "pon":
+		return id >= rl.PonBase && id < rl.PonBase+rl.PonCount
+	case "okan":
+		return id >= rl.KanDirectBase && id < rl.KanDirectBase+rl.KanModeCount
+	case "ckan":
+		return id >= rl.KanClosedBase && id < rl.KanClosedBase+rl.KanModeCount
+	case "ukan":
+		return id >= rl.KanUpgradedBase && id < rl.KanUpgradedBase+rl.KanModeCount
+	case "chii":
+		return id >= rl.ChiiBase && id < rl.ChiiBase+rl.ChiiCount
+	case "tsumo":
+		return id == rl.ActionTsumo
+	case "ron":
+		return id == rl.ActionRon
+	case "haitei":
+		return id == rl.ActionAcceptHaitei
+	case "haiteiRefuse":
+		return id == rl.ActionRefuseHaitei
+	default:
+		return false
 	}
-	if len(decisions) == 0 {
-		t.Fatal("expected at least one decision")
-	}
-	seatSeen := map[uint32]bool{}
-	passSeen := false
+}
+
+// assertDecisionAnchors bounds-checks every decision and verifies its anchor
+// points at the RIGHT paipu record: pass decisions must anchor to the
+// triggering "discard" record; non-pass decisions must anchor to a record
+// made by the same seat whose Act maps to the same catalog family as the
+// chosen action id.
+func assertDecisionAnchors(t *testing.T, paipu *engine.Paipu, decisions []Decision) {
+	t.Helper()
 	for i, d := range decisions {
 		if d.RoundIndex < 0 || d.RoundIndex >= len(paipu.Rounds) {
 			t.Fatalf("decision %d: bad round index %d", i, d.RoundIndex)
@@ -165,9 +191,73 @@ func TestExtractDecisionsClassicRoundTrip(t *testing.T) {
 		if d.ChosenAction < 0 || d.ChosenAction >= rl.ActionSpaceSize {
 			t.Fatalf("decision %d: chosen action %d out of catalog", i, d.ChosenAction)
 		}
+		anchored := paipu.Rounds[d.RoundIndex].Actions[d.ActionIndex]
+		if d.ChosenAction == rl.ActionPass {
+			if anchored.Act != "discard" {
+				t.Fatalf("decision %d: pass decision anchored to %q record, want the triggering \"discard\"", i, anchored.Act)
+			}
+			continue
+		}
+		if anchored.Seat != d.Seat {
+			t.Fatalf("decision %d: seat %d's decision anchored to seat %d's %q record", i, d.Seat, anchored.Seat, anchored.Act)
+		}
+		if !actMatchesCatalogFamily(anchored.Act, d.ChosenAction) {
+			t.Fatalf("decision %d: chosen action %d is not in the catalog family of anchored %q record", i, d.ChosenAction, anchored.Act)
+		}
+	}
+}
+
+// assertCallRecordsHaveDecisions verifies pass-completeness from the paipu
+// side: every recorded interrupt call (chii/pon/okan/ron) opened a window
+// with at least two legal actions (pass + the call), so the winning seat's
+// decision must exist anchored at exactly that record's index. A driver
+// regression that stops recording interrupt-window decisions would fail here.
+func assertCallRecordsHaveDecisions(t *testing.T, paipu *engine.Paipu, decisions []Decision) {
+	t.Helper()
+	decisionAt := make(map[[2]int]Decision, len(decisions))
+	for _, d := range decisions {
+		decisionAt[[2]int{d.RoundIndex, d.ActionIndex}] = d
+	}
+	callRecords := 0
+	for roundIdx := range paipu.Rounds {
+		for actionIdx, pa := range paipu.Rounds[roundIdx].Actions {
+			switch pa.Act {
+			case "chii", "pon", "okan", "ron":
+			default:
+				continue
+			}
+			callRecords++
+			d, ok := decisionAt[[2]int{roundIdx, actionIdx}]
+			if !ok {
+				t.Fatalf("round %d action %d: %s call record has no anchored decision", roundIdx, actionIdx, pa.Act)
+			}
+			if d.Seat != pa.Seat || d.ChosenAction == rl.ActionPass {
+				t.Fatalf("round %d action %d: %s call record anchored to wrong decision %+v", roundIdx, actionIdx, pa.Act, d)
+			}
+		}
+	}
+	if callRecords == 0 {
+		t.Fatal("expected at least one interrupt call record in the paipu; pick another seed rather than delete the assertion")
+	}
+}
+
+func TestExtractDecisionsClassicRoundTrip(t *testing.T) {
+	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
+	decisions, err := ExtractDecisions(paipu)
+	if err != nil {
+		t.Fatalf("ExtractDecisions: %v", err)
+	}
+	if len(decisions) == 0 {
+		t.Fatal("expected at least one decision")
+	}
+	assertDecisionAnchors(t, paipu, decisions)
+	assertCallRecordsHaveDecisions(t, paipu, decisions)
+	seatSeen := map[uint32]bool{}
+	passCount := 0
+	for _, d := range decisions {
 		seatSeen[d.Seat] = true
 		if d.ChosenAction == rl.ActionPass {
-			passSeen = true
+			passCount++
 		}
 	}
 	if len(seatSeen) != 4 {
@@ -176,8 +266,20 @@ func TestExtractDecisionsClassicRoundTrip(t *testing.T) {
 	// A full heuristic game virtually always has at least one declined call
 	// window; if this seed has none, pick another seed rather than delete
 	// the assertion.
-	if !passSeen {
+	if passCount == 0 {
 		t.Fatal("expected at least one implicit pass decision")
+	}
+	// Golden pass-decision count for this fixed seed. The paipu format never
+	// records a declined interrupt, so a regression that silently drops
+	// recordDecision for a subset of passing seats in a multi-seat window
+	// would otherwise pass every per-decision check above. The game is fully
+	// deterministic (fixed wall seed + deterministic heuristic policy), so
+	// this count only changes if the driver's decision recording — or,
+	// legitimately, the heuristic policy / rules engine — changes. If a
+	// deliberate upstream change moves it, re-derive the count and update it.
+	const wantPassDecisions = 7
+	if passCount != wantPassDecisions {
+		t.Fatalf("pass-decision count = %d, want %d (decision-dropping regression guard; see comment)", passCount, wantPassDecisions)
 	}
 }
 
@@ -193,9 +295,11 @@ func TestExtractDecisionsChongciMultiRound(t *testing.T) {
 	if len(paipu.Rounds) < 2 {
 		t.Fatalf("want a multi-round paipu for this test, got %d rounds", len(paipu.Rounds))
 	}
-	if _, err := ExtractDecisions(paipu); err != nil {
+	decisions, err := ExtractDecisions(paipu)
+	if err != nil {
 		t.Fatalf("ExtractDecisions: %v", err)
 	}
+	assertDecisionAnchors(t, paipu, decisions)
 }
 
 func TestExtractDecisionsDivergenceAborts(t *testing.T) {
