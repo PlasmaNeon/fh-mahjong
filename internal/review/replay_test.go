@@ -302,6 +302,95 @@ func TestExtractDecisionsChongciMultiRound(t *testing.T) {
 	assertDecisionAnchors(t, paipu, decisions)
 }
 
+func TestObservationsChongciContextClassic(t *testing.T) {
+	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
+	decisions, err := ExtractDecisions(paipu)
+	if err != nil {
+		t.Fatalf("ExtractDecisions: %v", err)
+	}
+	for i, d := range decisions {
+		obs := d.Observation
+		if obs == nil {
+			t.Fatalf("decision %d: nil observation", i)
+		}
+		if int(obs.PlaneChannels) != rl.ObservationPlaneChannels {
+			t.Fatalf("decision %d: expected %d channels (visible obs, never oracle), got %d",
+				i, rl.ObservationPlaneChannels, obs.PlaneChannels)
+		}
+		// Classic paipu → chongci-final-hand-equal-scores context:
+		// scalar 42 = chongci flag, 43 = hand progress (1 = final), 44 = remaining (0).
+		if obs.Scalars[42] != 1 {
+			t.Fatalf("decision %d: chongci flag scalar not set", i)
+		}
+		if obs.Scalars[43] != 1 || obs.Scalars[44] != 0 {
+			t.Fatalf("decision %d: expected final-hand context, got progress=%f remaining=%f",
+				i, obs.Scalars[43], obs.Scalars[44])
+		}
+		// Equal scores → self rank strength 1.0 (all tied at rank 1) and zero gaps.
+		if obs.Scalars[45] != 1 || obs.Scalars[46] != 0 {
+			t.Fatalf("decision %d: expected equal-scores context, got rank=%f leaderGap=%f",
+				i, obs.Scalars[45], obs.Scalars[46])
+		}
+		// Chosen action must be legal in the observation's own mask.
+		if obs.ActionMask[d.ChosenAction] != 1 {
+			t.Fatalf("decision %d: chosen action %d illegal in mask", i, d.ChosenAction)
+		}
+	}
+}
+
+func TestObservationsChongciRealScores(t *testing.T) {
+	paipu := generateHeuristicPaipu(t, 11, engine.MatchOptions{
+		Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+		// Same small ChongciConfig as TestExtractDecisionsChongciMultiRound.
+		ChongciConfig: &pb.ChongciConfig{
+			StartingScore: 25000,
+			BustThreshold: 0,
+			MaxHands:      4,
+		},
+	})
+	decisions, err := ExtractDecisions(paipu)
+	if err != nil {
+		t.Fatalf("ExtractDecisions: %v", err)
+	}
+	// Find a decision in a round whose StartingScores are no longer equal
+	// (after the first hand with a payout) and assert score scalars differ
+	// across seats — i.e. real chongci context is carried through.
+	unequalRound := -1
+	for i, r := range paipu.Rounds {
+		s := r.StartingScores
+		if s[0] != s[1] || s[0] != s[2] || s[0] != s[3] {
+			unequalRound = i
+			break
+		}
+	}
+	if unequalRound < 0 {
+		t.Fatal("expected at least one round with unequal starting scores; pick another seed rather than delete the assertion")
+	}
+	var fromSeats []Decision
+	seatsSeen := map[uint32]bool{}
+	for _, d := range decisions {
+		if d.RoundIndex != unequalRound {
+			continue
+		}
+		if seatsSeen[d.Seat] {
+			continue
+		}
+		seatsSeen[d.Seat] = true
+		fromSeats = append(fromSeats, d)
+		if len(fromSeats) == 2 {
+			break
+		}
+	}
+	if len(fromSeats) < 2 {
+		t.Fatalf("expected decisions from at least 2 different seats in round %d, got %d", unequalRound, len(fromSeats))
+	}
+	a, b := fromSeats[0], fromSeats[1]
+	if a.Observation.Scalars[50] == b.Observation.Scalars[50] {
+		t.Fatalf("expected scalar[50] (own score) to differ across seats %d and %d in round %d with unequal starting scores, both got %f",
+			a.Seat, b.Seat, unequalRound, a.Observation.Scalars[50])
+	}
+}
+
 func TestExtractDecisionsDivergenceAborts(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
 	// Corrupt one dealt tile: replay must abort, never emit a wrong review.

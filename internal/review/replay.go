@@ -82,6 +82,7 @@ func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64) ([]Dec
 
 	r := &roundReplayer{
 		game:          game,
+		paipu:         paipu,
 		round:         round,
 		roundIdx:      roundIdx,
 		decisionIndex: decisionIndex,
@@ -131,6 +132,7 @@ func verifyRoundSetup(game *engine.Game, round *engine.PaipuRound) error {
 // Decision wherever the acting seat had more than one legal option.
 type roundReplayer struct {
 	game          *engine.Game
+	paipu         *engine.Paipu
 	round         *engine.PaipuRound
 	roundIdx      int
 	cursor        int // next unconsumed index into round.Actions
@@ -204,7 +206,9 @@ func (r *roundReplayer) stepPlayerTurn() error {
 		return err
 	}
 	if len(legal) > 1 {
-		r.recordDecision(seat, r.cursor, id)
+		if err := r.recordDecision(seat, r.cursor, id); err != nil {
+			return err
+		}
 	}
 	if pa.Act == "discard" {
 		r.lastDiscard = r.cursor
@@ -262,7 +266,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 			return err
 		}
 		if len(legal) > 1 {
-			r.recordDecision(matchSeat, r.cursor, id)
+			if err := r.recordDecision(matchSeat, r.cursor, id); err != nil {
+				return err
+			}
 		}
 		actionIdx := r.cursor
 		r.cursor++
@@ -287,7 +293,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 		if r.lastDiscard < 0 {
 			return fmt.Errorf("round %d: implicit pass for seat %d has no triggering discard to anchor to", r.roundIdx, seat)
 		}
-		r.recordDecision(seat, r.lastDiscard, rl.ActionPass)
+		if err := r.recordDecision(seat, r.lastDiscard, rl.ActionPass); err != nil {
+			return err
+		}
 	}
 	if err := game.ProcessPlayerAction(seat, passAction); err != nil {
 		return fmt.Errorf("round %d: engine rejected implicit pass for seat %d: %w", r.roundIdx, seat, err)
@@ -317,15 +325,27 @@ func matchingPendingSeat(pending []uint32, discarder uint32, peeked *engine.Paip
 	return 0, false
 }
 
-func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenAction int) {
+// recordDecision captures a reviewable decision along with its 39ch policy
+// observation. The observation is encoded against a dressed clone of the
+// live replay state (see reviewState in context.go) — the replay game itself
+// always runs in classic mode with zero scores, so encoding straight off
+// r.game.State would feed the champion match context it was never trained to
+// see.
+func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenAction int) error {
+	obs, err := rl.EncodeObservation(reviewState(r.game.State, r.paipu, r.roundIdx), seat, r.decisionIndex)
+	if err != nil {
+		return fmt.Errorf("round %d: encode observation for seat %d: %w", r.roundIdx, seat, err)
+	}
 	r.decisions = append(r.decisions, Decision{
 		Seat:          seat,
 		RoundIndex:    r.roundIdx,
 		ActionIndex:   actionIndex,
 		DecisionIndex: r.decisionIndex,
 		ChosenAction:  chosenAction,
+		Observation:   obs,
 	})
 	r.decisionIndex++
+	return nil
 }
 
 // drainSystemRecords consumes and verifies every "draw"/"flower" record at
