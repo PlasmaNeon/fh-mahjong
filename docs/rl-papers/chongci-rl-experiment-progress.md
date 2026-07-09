@@ -15834,6 +15834,62 @@ lessons: 512x16 needs ~38GB (3x-batch materialization) — fixed by worker-side
 release + consume-mode concat; watcher aggregators must not be edited via sed
 patterns that miss escaped quotes (evals ran, aggregation mislabeled).
 
+### Experiment: ACH regret objective A/B (2026-07-07/08) — FAILED, keep PPO
+
+Motivation: with scaling saturated (Phase B #2 parity at 448), the champion not
+exploitable, and the oracle-ceiling eval showing hidden-info value ~0 (perfect-info
+51ch iter_275 = +0.4361 vs the 39ch student's +0.4722 — parity, so belief modeling
+ruled out), the remaining lever was the objective itself: clipped-NeuRD / ACH
+(LuckyJ's family), merged as a drop-in for ppo_update in PR #147
+(--objective ach --ach-beta; RolloutBatch unchanged; PPO default byte-identical).
+
+A/B (both resume iter_275, identical seeds, 40 iters, batch 224 after OOM tuning,
+delta held 1): PPO control +0.4306 vs anchor / large_loss 0.079 (validates champion
+and eval); ACH beta=2 -0.6250 / large_loss 0.675; paired ACH-PPO = -1.0556 +/-0.077.
+ACH never sharpened (entropy pinned ~1.73 vs PPO 0.14); mean_abs_logit 1.2-1.5
+stayed BELOW beta=2 with saturation 4-15%, so beta was not the binding constraint
+(beta sweep pointless). A from-scratch retry (IQL anchor, lr 1e-4) was projected
+~30h on the 31GB box (the anchor plays max-length games; 224 OOM'd, 128 crawled)
+and was killed per user decision.
+
+Theory note: ACH/regret-min guarantees Nash convergence only in 2-player zero-sum
+(the paper's 1-on-1 mahjong benchmark); in 4-player games regret dynamics reach
+only coarse-correlated equilibria and need not sharpen — the observed failure is
+consistent with the setting, not just the config. LuckyJ's 4-player method is
+undisclosed. Verdict: ACH closed; PPO remains the objective.
+
+Incidental find (blocking bug, fixed): the A/B crashed at iter 277 with
+"duplicate action id 182 for ACTION_KAN" — root cause was NOT wilds but a wall
+double-draw: dead-wall (kong/flower) replacement draws descend past wangpaiBoundary
+into the live wall, and ExecuteSystemDraw never skipped those consumed indices, so
+the same physical tile could be dispensed twice (phantom duplicate tile id in a
+hand; corrupts counts/scoring). Fixed in PR #149 (front draw skips
+isTileConsumedByDeadWall indices; fuzzer regression gate in
+internal/rl/kan_dup_repro_test.go reproduced at seeds 15/47/68 pre-fix). The
+related wild-in-kan rule enforcement (PR #148) was closed: a wild kan is
+unreachable in normal play (a standard indicator leaves only 3 wild-face copies in
+play; a kan needs 4). Rules clarified by the owner: wilds are jokers ONLY in the
+concealed hand; in open melds / discards / calls they are strictly face-value.
+
+### Experiment: pool-diversity run (2026-07-08/09) — PARITY, champion stands
+
+The last untested training lever: the entire champion line was pure mirror
+self-play (pool_max_size=1). Run: 39ch student extracted from iter_275, trained
+via train_ppo (single learning seat, pure 39ch env) against a snapshot pool
+(pool_max_size 6, snapshot_interval 8), 160 iters x 224 matches, lr 2e-5, ~9h.
+Paired vs champion on identical eval seeds: iter_80 -0.068, iter_120 -0.081,
+iter_160 -0.031 +/-0.069 = statistical parity (large_loss 0.067 vs 0.079 — a mild
+tail improvement, not promotable). No promotion.
+
+Campaign status after these runs: ALL FIVE training levers tested and closed —
+scaling saturated, not exploitable, hidden info worthless, ACH failed, opponent
+diversity neutral. The +0.4722 iter_275 39ch student is the genuine, robust
+self-play plateau for this architecture/pipeline. Remaining non-training options:
+pMCPA-style test-time search (serve-time boost, no training), a bigger net
+(4->8 residual blocks, brute force), production human-paipu accumulation
+(storage.Match.PaipuJSON — capture verified live), and the human game-review
+product direction (mjai-reviewer-style; spawned as its own design session).
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
