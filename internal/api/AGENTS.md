@@ -10,7 +10,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
-  - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `/api/v1/ws`
+  - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `/api/v1/matches/:matchId/review`, `/api/v1/ws`
   - Protected routes (JWT required):
     - `PATCH /api/v1/users/me` — update email/display name; returns fresh token
     - `/api/v1/rooms/:roomId` (GET) — read current seat config.
@@ -53,6 +53,18 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
   - Local-dev fallback: serves checked-in `testdata/paipu/<matchId>.json` fixtures when no in-memory/DB record exists, which keeps replay pages usable without a populated database
   - Only queries the legacy `matches` table for canonical UUID match IDs; per-hand IDs like `match-1` skip the UUID-only lookup to avoid noisy Postgres cast errors
+
+- **review.go** — Post-game review report API, cached via `storage.MatchReview`:
+  - `(*Server) loadPaipuJSON(matchID) (string, bool)` — shared paipu source chain extracted from `paipu.go` (in-memory store → `paipu_records` → legacy `Match.PaipuJSON` UUID-guarded lookup → checked-in fixtures), reused by both `handleGetPaipu` and the review handlers so behavior stays identical between the two APIs.
+  - `GET /api/v1/matches/:matchId/review` — cache-only lookup: DB nil or no cached row → **404**; otherwise **200** with the newest cached report's raw JSON (`c.Data`, `application/json`).
+  - `POST /api/v1/matches/:matchId/review` — build-or-cached:
+    - `POLICY_SERVER_URL` env var unset → **503** `{"error":"reviewer unavailable"}` (no reviewer configured; checked before any paipu lookup).
+    - No paipu found for `matchId` (via `loadPaipuJSON`) → **404**.
+    - Paipu JSON fails to unmarshal, or `review.BuildReport` fails with `errors.Is(err, review.ErrUnreviewable)` (decision-reconstruction/extraction failure) → **422** `{"error":"unreviewable paipu: ..."}`.
+    - Policy server call itself fails (network error, non-2xx, etc., NOT `ErrUnreviewable`) → **502**.
+    - Otherwise **200** with the report JSON (built fresh or served from cache).
+  - **Cache policy**: with a DB present, an unforced POST returns the newest cached `MatchReview` for the match (by `created_at`) without calling the policy server at all — pass `?force=1` to force a fresh build. A fresh build upserts on `(MatchID, CheckpointID=report.CheckpointPath)`: same champion re-reviewing overwrites its own row in place; a new champion (different `CheckpointID`) adds a new row so old champions' reports survive until pruned. DB nil (dev mode) → every POST builds fresh and nothing is cached; GET always 404s.
+  - See `internal/review/` for `BuildReport`/`ExtractDecisions`/`HTTPPolicyClient` and `internal/storage/db.go` for the `MatchReview` model.
 
 - **client.go** — Individual player WebSocket connection:
   - `Client` struct — UserID, Send channel, WebSocket conn
@@ -109,6 +121,13 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **server_test.go** — SPA/static serving regression coverage:
   - Built JS asset requests return JavaScript, not `index.html`
   - Missing asset requests return `404`, not the SPA shell
+
+- **review_test.go** — Review API coverage (in-memory sqlite + `httptest` stub policy server mirroring `internal/review/report_test.go`'s uniform-probs-over-legal-mask stub):
+  - No `POLICY_SERVER_URL` → 503 `{"error":"reviewer unavailable"}`
+  - Build against the checked-in `testdata/paipu/review-fixture.json` fixture (generated via `cmd/rlpaipu -seed 7`) → 200, `MatchReview` row persisted; a second POST hits the cache (no extra stub requests); GET returns the same cached body
+  - Policy server unreachable → 502
+  - GET for an unknown match → 404
+  - A paipu with no rounds → 422 (`review.ErrUnreviewable`)
 
 - **private_tables_test.go** — Seat-config + lifecycle regression coverage:
   - First joiner is assigned host at seat 0; subsequent joiners claim the next empty seat

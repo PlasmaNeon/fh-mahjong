@@ -91,6 +91,16 @@ type PaipuRecord struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// MatchReview caches one champion's review report for a match. A new champion
+// (different CheckpointID) re-reviews without destroying the old report.
+type MatchReview struct {
+	ID           uint      `gorm:"primaryKey" json:"-"`
+	MatchID      string    `gorm:"size:255;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:1;index" json:"matchId"`
+	CheckpointID string    `gorm:"size:512;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:2" json:"checkpointId"`
+	ReportJSON   string    `gorm:"type:text;not null" json:"-"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
 // AutoMigrate brings the schema up to date and safely transitions a legacy
 // username-based users table to the email-based schema.
 //
@@ -122,6 +132,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&Match{},
 		&MatchPlayer{},
 		&PaipuRecord{},
+		&MatchReview{},
 	); err != nil {
 		return err
 	}
