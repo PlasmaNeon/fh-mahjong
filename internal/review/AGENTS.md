@@ -1,7 +1,8 @@
 # internal/review/
 
-> Reconstructs reviewable decision points from a recorded paipu, as the
-> foundation for post-game critique (paipu → decisions → champion critique).
+> Reconstructs reviewable decision points from a recorded paipu and
+> critiques them against a served champion policy: paipu → decisions →
+> `Report`.
 
 ## Overview
 
@@ -21,6 +22,13 @@ replay with an error rather than silently emitting a wrong review. There is
 no fallback or best-effort mode: `ExtractDecisions` either returns exact
 decisions for the whole paipu or an error.
 
+`BuildReport` (report.go) takes those decisions, batches their observations
+through a `PolicyClient` (client.go's `HTTPPolicyClient` POSTs
+`{baseURL}/evaluate` in chunks of 256), and assembles a `Report`: per-decision
+legal-action probability distributions plus per-seat rollups. Like
+`ExtractDecisions`, it never returns a partial report — any extraction or
+evaluation failure aborts with an error and a nil `*Report`.
+
 ## Key Files
 
 - **replay.go** — `Decision`, `ExtractDecisions`, and the whole replay
@@ -33,6 +41,26 @@ decisions for the whole paipu or an error.
   `ResolveInterrupts`, never a re-implementation.
 - **context.go** — `isChongciPaipu` and `reviewState`, the encode-time
   context normalization described below.
+- **client.go** — `PolicyClient` interface, `PolicyResult`,
+  `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient`). Mirrors
+  `internal/bot/remote.HTTPPolicy`'s `/act` request encoding (`seat`,
+  `planes`, `scalars`, `action_mask` as ints) but batches many observations
+  per `/evaluate` request instead of one, chunking at `evaluateChunkSize`
+  (256) and preserving order across chunks. Every chunk must report the same
+  `checkpoint_path`/`checkpoint_step` — a mismatch (a checkpoint hot-swapped
+  mid-review) is a hard error, never a mixed-champion report. Any non-200
+  response, `"error"` field, or per-chunk result-count mismatch aborts the
+  whole `Evaluate` call.
+- **report.go** — `Report`/`ReportDecision`/`ActionProb`/`SeatSummary`/
+  `GapRef` (the frontend JSON contract — field names/types must stay
+  verbatim, Tasks 6/7 depend on them) and `BuildReport`. `ErrUnreviewable`
+  wraps `ExtractDecisions` failures so the review HTTP API (a later task) can
+  map them to 422 instead of a generic 500. Per decision, `Probs` is filtered
+  down to the observation's legal (`ActionMask == 1`) indices, sorted
+  descending, and renormalized over that legal subset (a no-op guard — the
+  policy server is expected to already zero illegal-action mass). Per-seat
+  `TopGaps` are the 5 largest `Actions[0].Prob - ChosenProb` gaps, referencing
+  global indices into `Report.Decisions`.
 - **replay_test.go** — round-trip tests against heuristic-bot-generated
   paipu (classic single round, chongci multi-round) plus a corrupted-paipu
   divergence test, plus the observation context tests
@@ -42,6 +70,16 @@ decisions for the whole paipu or an error.
   chongci ready-ack flow mirrors `internal/rl/env.go`'s
   `readyAllPlayersForNextRound` (derives a fresh wall seed per hand before
   the final per-round ready ack).
+- **report_test.go** — `TestBuildReportAgainstStubServer` runs a full
+  heuristic-bot paipu through `BuildReport` against an `httptest.Server`
+  stub that returns a uniform distribution over legal actions, verifying the
+  report's shape (4 seats, sorted+renormalized legal actions, chosen-prob
+  matches the known uniform value). `TestBuildReportServerErrorReturnsNoPartialReport`
+  checks a server error aborts with no partial report.
+  `TestHTTPClientChunksBatches` calls `HTTPPolicyClient.Evaluate` directly
+  with 600 synthetic observations against a stub that echoes a
+  request-order-derived value, asserting exactly `ceil(600/256)=3` requests
+  and that result order is preserved end to end across chunk boundaries.
 
 ## Design Notes
 
