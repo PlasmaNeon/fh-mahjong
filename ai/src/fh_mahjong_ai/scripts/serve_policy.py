@@ -16,6 +16,10 @@ from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.serving import CheckpointPolicy, load_policy_from_manifest
 from fh_mahjong_ai.types import Observation
 
+# Caps a single /evaluate request. The Go review client (internal/review/client.go)
+# chunks its calls at 256 observations, well under this limit.
+MAX_EVALUATE_BATCH = 1024
+
 
 class PolicyHolder:
     """Thread-safe holder for the active policy so it can be hot-swapped at
@@ -92,6 +96,8 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == "/act":
             self._handle_act()
+        elif self.path == "/evaluate":
+            self._handle_evaluate()
         elif self.path == "/reload":
             self._handle_reload()
         else:
@@ -112,6 +118,41 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 "value": action.value,
                 "checkpoint_path": action.checkpoint_path,
                 "checkpoint_step": action.checkpoint_step,
+            }
+        )
+
+    def _handle_evaluate(self) -> None:
+        try:
+            length = int(self.headers.get("content-length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            observations = payload["observations"]
+            if len(observations) > MAX_EVALUATE_BATCH:
+                raise ValueError(
+                    f"batch of {len(observations)} observations exceeds max of {MAX_EVALUATE_BATCH}"
+                )
+            policy = self.holder.policy
+            parsed = [observation_from_json(item) for item in observations]
+            planes = np.stack([obs.planes for obs in parsed]) if parsed else np.zeros(
+                (0, *EnvConfig().plane_shape), dtype=np.float32
+            )
+            scalars = np.stack([obs.scalars for obs in parsed]) if parsed else np.zeros(
+                (0, EnvConfig().scalar_features), dtype=np.float32
+            )
+            action_masks = np.stack([obs.action_mask for obs in parsed]) if parsed else np.zeros(
+                (0, EnvConfig().action_space_size), dtype=np.int8
+            )
+            probs, values = policy.evaluate_batch(planes, scalars, action_masks)
+        except Exception as exc:
+            self._write_json({"error": str(exc)}, status=400)
+            return
+        self._write_json(
+            {
+                "results": [
+                    {"probs": probs[i].tolist(), "value": float(values[i])}
+                    for i in range(len(parsed))
+                ],
+                "checkpoint_path": str(policy.checkpoint_path),
+                "checkpoint_step": policy.checkpoint_step,
             }
         )
 

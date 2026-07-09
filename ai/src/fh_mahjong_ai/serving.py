@@ -126,6 +126,41 @@ class CheckpointPolicy:
             sampled_from_greedy=sampling_applied and action_id != greedy_action_id,
         )
 
+    @torch.inference_mode()
+    def evaluate_batch(
+        self,
+        planes: np.ndarray,
+        scalars: np.ndarray,
+        action_masks: np.ndarray,
+        chunk_size: int = 256,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Masked policy distribution + value for a batch of visible observations.
+
+        Deterministic: no temperature/top-k sampling. Illegal actions get exactly
+        zero probability. Used by the post-game review pipeline.
+        """
+        n = planes.shape[0]
+        all_probs = np.zeros((n, action_masks.shape[1]), dtype=np.float32)
+        all_values = np.zeros((n,), dtype=np.float32)
+        expected_scalars = self.model.scalar_encoder[0].in_features
+        for start in range(0, n, max(1, chunk_size)):
+            end = min(n, start + max(1, chunk_size))
+            p = torch.from_numpy(planes[start:end]).to(self.device)
+            s = torch.from_numpy(scalars[start:end]).to(self.device)
+            if s.shape[1] < expected_scalars:
+                s = torch.nn.functional.pad(s, (0, expected_scalars - s.shape[1]))
+            elif s.shape[1] > expected_scalars:
+                raise ValueError(f"expected at most {expected_scalars} scalars, got {s.shape[1]}")
+            m = torch.from_numpy(action_masks[start:end]).to(self.device)
+            logits, value = self.model(p, s, m)
+            legal = m.to(dtype=torch.bool)
+            masked = logits.masked_fill(~legal, float("-inf"))
+            probs = torch.softmax(masked, dim=1)
+            probs = probs.masked_fill(~legal, 0.0)  # exact zeros, no -inf softmax residue
+            all_probs[start:end] = probs.cpu().numpy().astype(np.float32)
+            all_values[start:end] = value.reshape(-1).cpu().numpy().astype(np.float32)
+        return all_probs, all_values
+
     def _sampling_actions(self, legal_actions: list[int]) -> list[int]:
         if self.sample_action_family in {"", "all", "*"}:
             return list(legal_actions)
