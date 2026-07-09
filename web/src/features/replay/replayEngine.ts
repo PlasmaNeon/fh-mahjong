@@ -85,6 +85,14 @@ export class ReplayEngine {
     this.actionIndex = this.currentRound.actions.length - 1
   }
 
+  /** Jump to a specific round and step forward to a specific action index within it (e.g. a review-panel deep link). */
+  jumpToAction(roundIndex: number, actionIndex: number) {
+    this.jumpToRound(roundIndex)
+    while (this.actionIndex < actionIndex && this.stepForward()) {
+      // advance one action at a time until we reach actionIndex (or run out of actions)
+    }
+  }
+
   getActionDescription(): string {
     if (this.actionIndex < 0) return 'Deal'
     const action = this.currentRound.actions[this.actionIndex]

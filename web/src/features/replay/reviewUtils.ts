@@ -1,4 +1,4 @@
-import type { ReportDecision, ReviewReport } from './reviewTypes'
+import type { ActionProb, ReportDecision, ReviewReport } from './reviewTypes'
 
 export type Severity = 'ok' | 'disagreement' | 'mistake'
 
@@ -52,6 +52,57 @@ export function selectPanelDecisions(
     if (key !== undefined && decisionKey(d.round, d.actionIndex) !== key) return false
     return true
   })
+}
+
+/**
+ * Groups a report's decisions by `decisionKey(round, actionIndex)`. A single
+ * key can hold multiple seats' decisions (a call window where several seats
+ * had a legal response to the same discard) — callers filter by seat.
+ */
+export function buildDecisionIndex(report: ReviewReport): Map<string, ReportDecision[]> {
+  const map = new Map<string, ReportDecision[]>()
+  for (const d of report.decisions) {
+    const key = decisionKey(d.round, d.actionIndex)
+    const existing = map.get(key)
+    if (existing) existing.push(d)
+    else map.set(key, [d])
+  }
+  return map
+}
+
+export interface BarRow extends ActionProb {
+  isChosen: boolean
+}
+
+/** Top 8 legal actions by probability (already sorted desc per the report contract), plus the chosen action appended if it fell outside the top 8. */
+export function selectBarRows(d: ReportDecision): BarRow[] {
+  const top = d.actions.slice(0, 8).map(a => ({ ...a, isChosen: a.actionId === d.chosenActionId }))
+  if (!top.some(r => r.isChosen)) {
+    top.push({ actionId: d.chosenActionId, prob: d.chosenProb, isChosen: true })
+  }
+  return top
+}
+
+/** Counts of each severity tier across a set of decisions (e.g. one seat's decisions). */
+export function severityCounts(
+  decisions: ReportDecision[],
+  thresholds: SeverityThresholds = SEVERITY_THRESHOLDS,
+): Record<Severity, number> {
+  const counts: Record<Severity, number> = { ok: 0, disagreement: 0, mistake: 0 }
+  for (const d of decisions) counts[decisionSeverity(d, thresholds)]++
+  return counts
+}
+
+export const SEVERITY_COLORS: Record<Severity, string> = {
+  ok: '#10b981',
+  disagreement: '#f59e0b',
+  mistake: '#ef4444',
+}
+
+export const SEVERITY_LABELS: Record<Severity, { en: string; zh: string }> = {
+  ok: { en: 'OK', zh: '正常' },
+  disagreement: { en: 'Disagreement', zh: '分歧' },
+  mistake: { en: 'Mistake', zh: '失误' },
 }
 
 // Action catalog for actionLabel — mirror internal/rl/action.go exactly:

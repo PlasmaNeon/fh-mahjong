@@ -1,0 +1,106 @@
+import { describe, expect, it } from 'vitest'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import ReviewPanel from './ReviewPanel'
+import type { ReportDecision, ReviewReport } from './reviewTypes'
+import { SEVERITY_THRESHOLDS } from './reviewUtils'
+
+// NOTE: web/package.json has no @testing-library/react, and vitest.config.ts
+// runs with environment: 'node' (no DOM). Per Task 7's brief, this uses
+// react-dom/server (already a dependency) for a dependency-free "light
+// render test" rather than a jsdom-based interaction test.
+
+function dec(overrides: Partial<ReportDecision> = {}): ReportDecision {
+  return {
+    seat: 0,
+    round: 0,
+    actionIndex: 3,
+    chosenActionId: 8, // Discard 9s
+    chosenProb: 0.01,
+    value: 0.2,
+    actions: [
+      { actionId: 5, prob: 0.8 }, // Discard 1m — the champion's preferred action
+      { actionId: 6, prob: 0.15 },
+      { actionId: 7, prob: 0.04 },
+      { actionId: 8, prob: 0.01 },
+    ],
+    ...overrides,
+  }
+}
+
+function fixtureReport(): ReviewReport {
+  return {
+    schemaVersion: 1,
+    matchId: 'm1',
+    ruleset: 'fenghua',
+    checkpointPath: '/ckpt',
+    checkpointStep: 10,
+    generatedAt: '2026-01-01T00:00:00Z',
+    decisions: [dec(), dec({ round: 0, actionIndex: 5, chosenActionId: 5, chosenProb: 0.8 })],
+    seats: [
+      { seat: 0, decisions: 2, meanChosenProb: 0.4, topGaps: [{ decision: 0, gap: 0.79 }] },
+    ],
+  }
+}
+
+describe('ReviewPanel', () => {
+  it('renders the severity badge and the champion top-action bar row for the decision at the current position', () => {
+    const report = fixtureReport()
+    const html = renderToStaticMarkup(
+      React.createElement(ReviewPanel, {
+        report,
+        status: 'ready',
+        onRequestReview: () => {},
+        viewSeat: 0,
+        position: { round: 0, actionIndex: 3 }, // matches decisions[0], a mistake (gap 0.79)
+        onJump: () => {},
+        lang: 'en',
+        onLangToggle: () => {},
+        thresholds: SEVERITY_THRESHOLDS,
+        onThresholdsChange: () => {},
+      }),
+    )
+
+    expect(html).toContain('Mistake') // severity badge
+    expect(html).toContain('Discard 1m') // champion's top-action bar row label
+  })
+
+  it('shows the request-review button when no report exists yet', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ReviewPanel, {
+        report: null,
+        status: 'empty',
+        onRequestReview: () => {},
+        viewSeat: 0,
+        position: { round: 0, actionIndex: -1 },
+        onJump: () => {},
+        lang: 'en',
+        onLangToggle: () => {},
+        thresholds: SEVERITY_THRESHOLDS,
+        onThresholdsChange: () => {},
+      }),
+    )
+
+    expect(html).toContain('Request review')
+  })
+
+  it('shows the neutral unavailable message on a 503 status', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ReviewPanel, {
+        report: null,
+        status: 'unavailable',
+        onRequestReview: () => {},
+        viewSeat: 0,
+        position: { round: 0, actionIndex: -1 },
+        onJump: () => {},
+        lang: 'en',
+        onLangToggle: () => {},
+        thresholds: SEVERITY_THRESHOLDS,
+        onThresholdsChange: () => {},
+      }),
+    )
+
+    expect(html).toContain('Reviewer unavailable')
+    expect(html).not.toContain('wrong')
+  })
+})

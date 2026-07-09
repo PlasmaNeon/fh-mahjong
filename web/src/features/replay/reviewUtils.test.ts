@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { actionLabel, decisionGap, decisionKey, decisionSeverity, selectPanelDecisions } from './reviewUtils'
+import {
+  actionLabel,
+  buildDecisionIndex,
+  decisionGap,
+  decisionKey,
+  decisionSeverity,
+  selectBarRows,
+  selectPanelDecisions,
+  severityCounts,
+} from './reviewUtils'
 import type { ReportDecision, ReviewReport } from './reviewTypes'
 import { fetchReview, generateReview } from './reviewTypes'
 
@@ -158,5 +167,53 @@ describe('selectPanelDecisions', () => {
     expect(result).toHaveLength(1)
     expect(result[0].round).toBe(1)
     expect(result[0].actionIndex).toBe(4)
+  })
+})
+
+describe('buildDecisionIndex', () => {
+  it('groups decisions by round:actionIndex, keeping multiple seats under one key', () => {
+    const report: ReviewReport = {
+      schemaVersion: 1, matchId: 'm1', ruleset: 'fenghua', checkpointPath: '/ckpt',
+      checkpointStep: 10, generatedAt: '2026-01-01T00:00:00Z',
+      decisions: [
+        dec([[5, 0.9], [6, 0.1]], 5), // seat 0, key "0:3"
+        { ...dec([[5, 0.9], [6, 0.1]], 5), seat: 1 }, // seat 1, same key (call window)
+        { ...dec([[5, 0.9], [6, 0.1]], 5), round: 1, actionIndex: 4 }, // different key
+      ],
+      seats: [],
+    }
+    const index = buildDecisionIndex(report)
+    expect(index.get(decisionKey(0, 3))).toHaveLength(2)
+    expect(index.get(decisionKey(1, 4))).toHaveLength(1)
+    expect(index.size).toBe(2)
+  })
+})
+
+describe('selectBarRows', () => {
+  it('returns all actions when there are 8 or fewer, chosen included', () => {
+    const d = dec([[5, 0.5], [6, 0.3], [7, 0.2]], 6)
+    const rows = selectBarRows(d)
+    expect(rows).toHaveLength(3)
+    expect(rows.find(r => r.isChosen)?.actionId).toBe(6)
+  })
+
+  it('caps at top 8 plus appends the chosen action if it falls outside', () => {
+    const actions: [number, number][] = Array.from({ length: 10 }, (_, i) => [i, 0.1 - i * 0.001])
+    const d = dec(actions, 9) // chosen is the 10th (lowest-prob) action, outside top 8
+    const rows = selectBarRows(d)
+    expect(rows).toHaveLength(9) // top 8 + appended chosen
+    expect(rows[8].actionId).toBe(9)
+    expect(rows[8].isChosen).toBe(true)
+  })
+})
+
+describe('severityCounts', () => {
+  it('tallies severities across a set of decisions', () => {
+    const decisions = [
+      dec([[5, 0.4], [6, 0.35], [7, 0.25]], 7), // ok (small gap)
+      dec([[5, 0.5], [6, 0.3], [7, 0.12], [8, 0.08]], 8), // disagreement
+      dec([[5, 0.8], [6, 0.15], [7, 0.04], [8, 0.01]], 8), // mistake
+    ]
+    expect(severityCounts(decisions)).toEqual({ ok: 1, disagreement: 1, mistake: 1 })
   })
 })
