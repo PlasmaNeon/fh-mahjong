@@ -310,3 +310,15 @@ func sortedTilesByID(tiles []*pb.Tile) []*pb.Tile {
 	})
 	return out
 }
+
+// LegalActions exposes the catalog-indexed legal action map so replay/review
+// drivers can resolve recorded actions through the same legality map used by
+// the RL bridge.
+func LegalActions(state *pb.GameState, seat uint32) (map[int]*pb.PlayerAction, error) {
+	return legalActionMap(state, seat)
+}
+
+// EncodeAction exposes catalog encoding for replay/review drivers.
+func EncodeAction(state *pb.GameState, seat uint32, action *pb.PlayerAction) (int, bool) {
+	return encodeAction(state, seat, action)
+}
