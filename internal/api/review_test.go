@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -163,13 +164,59 @@ func TestPostReviewBuildsAndCaches(t *testing.T) {
 }
 
 func TestPostReviewPolicyServerDown(t *testing.T) {
-	t.Setenv("POLICY_SERVER_URL", "http://127.0.0.1:1")
+	const policyURL = "http://127.0.0.1:1"
+	t.Setenv("POLICY_SERVER_URL", policyURL)
 	server := newReviewTestServer(t, true)
 	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
 
 	rec := doReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// The 502 body must not leak the internal policy server address: Go
+	// http.Client errors embed the full request URL, and this route is
+	// unauthenticated.
+	if body := rec.Body.String(); strings.Contains(body, policyURL) || strings.Contains(body, "127.0.0.1") {
+		t.Fatalf("502 body leaks internal policy server URL: %s", body)
+	}
+}
+
+func TestPostReviewForceRebuildsAndOverwrites(t *testing.T) {
+	var requestCount int
+	stub := newStubPolicyServer(t, &requestCount)
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
+
+	rec := doReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on initial build, got %d: %s", rec.Code, rec.Body.String())
+	}
+	firstRequestCount := requestCount
+	if firstRequestCount == 0 {
+		t.Fatal("expected at least one request to the stub policy server")
+	}
+
+	// ?force=1 must rebuild against the policy server even with a cached row.
+	rec2 := doReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review?force=1")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 on forced rebuild, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if requestCount <= firstRequestCount {
+		t.Fatalf("expected forced rebuild to hit the stub again, request count still %d", requestCount)
+	}
+
+	// Same match + same checkpoint: the row is overwritten in place, not duplicated.
+	var count int64
+	if err := server.DB.Model(&storage.MatchReview{}).
+		Where("match_id = ? AND checkpoint_id = ?", "review-fixture", "stub.pt").
+		Count(&count).Error; err != nil {
+		t.Fatalf("count MatchReview rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 MatchReview row after forced rebuild, got %d", count)
 	}
 }
 

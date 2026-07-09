@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 
@@ -97,10 +98,16 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	report, err := review.BuildReport(&paipu, review.NewHTTPPolicyClient(policyURL))
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {
+			// Divergence/extraction detail is the whole point of a 422 and
+			// contains no internal URLs — keep it in the body.
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unreviewable paipu: " + err.Error()})
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"error": "policy server evaluation failed: " + err.Error()})
+		// Policy-server failures embed the internal POLICY_SERVER_URL in the
+		// error chain (http.Client errors include the request URL) — log the
+		// detail server-side, return a generic body to the caller.
+		log.Printf("review: policy server evaluation failed for match %s: %v", matchID, err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "policy server evaluation failed"})
 		return
 	}
 
