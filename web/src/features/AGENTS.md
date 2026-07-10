@@ -64,6 +64,13 @@ Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/mat
 - **rejoinMatch.ts** — Logic for rejoining an active match after a page refresh or reconnect.
 - **rejoinMatch.test.ts** — Vitest unit tests for the rejoin logic (11 tests).
 
+### `dev/`
+
+Dev-only preview pages that render real components with mock data (no live match). Not linked from the app UI; reached by URL.
+
+- **TableSample.tsx** — Renders the real `TableBoard` with mock game data so the table layout can be iterated without a live match. Route: `/tools/table-sample`.
+- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so PR #152's redesign can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · ready-badge toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own viewport drives the responsive `max-width: 720px` / landscape media queries. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
+
 ## Architecture Notes
 
 - All files in a feature folder use `'../../` to reference `src`-level directories (`proto`, `table`, `contexts`, `hooks`, `theme`, `utils`, `config`). Intra-feature imports (files in the same folder) use `'./'`.
