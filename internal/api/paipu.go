@@ -20,31 +20,53 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
+	data, ok, errMsg := s.loadPaipuJSONWithErr(matchID)
+	if errMsg != "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+		return
+	}
+	c.Data(http.StatusOK, "application/json", []byte(data))
+}
+
+// loadPaipuJSON is the paipu source chain shared by handleGetPaipu and the
+// review API: in-memory store → paipu_records → legacy Match.PaipuJSON →
+// checked-in local-dev fixtures. Internal DB errors are swallowed and treated
+// as "not found" — callers that need to distinguish a DB failure from a
+// genuine miss should use loadPaipuJSONWithErr instead.
+func (s *Server) loadPaipuJSON(matchID string) (string, bool) {
+	data, ok, _ := s.loadPaipuJSONWithErr(matchID)
+	return data, ok
+}
+
+// loadPaipuJSONWithErr is the same source chain as loadPaipuJSON but
+// surfaces a non-empty errMsg when a DB lookup itself failed (as opposed to
+// simply finding no record), so handleGetPaipu can keep returning 500 for
+// that case exactly as it did before this helper was extracted.
+func (s *Server) loadPaipuJSONWithErr(matchID string) (data string, ok bool, errMsg string) {
 	// Try in-memory store first (works with or without DB)
 	if data, ok := s.GetPaipu(matchID); ok {
-		c.Data(http.StatusOK, "application/json", []byte(data))
-		return
+		return data, true, ""
 	}
 
 	// Fall back to database
 	if s.DB == nil {
 		// No DB: fall back to local dev fixtures
-		if data, ok := loadPaipuFixture(matchID); ok {
-			c.Data(http.StatusOK, "application/json", data)
-			return
+		if raw, ok := loadPaipuFixture(matchID); ok {
+			return string(raw), true, ""
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
-		return
+		return "", false, ""
 	}
 
 	// Check paipu_records table (per-round paipus)
 	var record storage.PaipuRecord
 	if err := s.DB.Where("id = ?", matchID).First(&record).Error; err == nil {
-		c.Data(http.StatusOK, "application/json", []byte(record.Data))
-		return
-	} else if err != nil && err != gorm.ErrRecordNotFound {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
-		return
+		return record.Data, true, ""
+	} else if err != gorm.ErrRecordNotFound {
+		return "", false, "Failed to load paipu"
 	}
 
 	// Fall back to legacy Match.PaipuJSON, but only for canonical match UUIDs.
@@ -52,22 +74,19 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		var match storage.Match
 		if err := s.DB.Where("id = ?", matchID).First(&match).Error; err == nil {
 			if match.PaipuJSON != "" {
-				c.Data(http.StatusOK, "application/json", []byte(match.PaipuJSON))
-				return
+				return match.PaipuJSON, true, ""
 			}
 		} else if err != gorm.ErrRecordNotFound {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load paipu"})
-			return
+			return "", false, "Failed to load paipu"
 		}
 	}
 
 	// Local dev fallback: serve checked-in fixtures when no DB record exists.
-	if data, ok := loadPaipuFixture(matchID); ok {
-		c.Data(http.StatusOK, "application/json", data)
-		return
+	if raw, ok := loadPaipuFixture(matchID); ok {
+		return string(raw), true, ""
 	}
 
-	c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+	return "", false, ""
 }
 
 func (s *Server) handleUploadPaipu(c *gin.Context) {

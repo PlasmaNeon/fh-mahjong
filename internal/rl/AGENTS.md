@@ -8,7 +8,7 @@ This package keeps the authoritative simulator in Go while exposing a training-o
 
 ## Key Files
 
-- **action.go** — 204-action catalog plus action-mask generation and action encode/decode helpers. `DecodeActionID` is exported so serving clients can validate remote policy ids through the same legality map used by the RL bridge.
+- **action.go** — 204-action catalog plus action-mask generation and action encode/decode helpers. `DecodeActionID` is exported so serving clients can validate remote policy ids through the same legality map used by the RL bridge. `LegalActions` and `EncodeAction` are thin exported wrappers around the already-private `legalActionMap`/`encodeAction`, added so `internal/review`'s paipu replay driver resolves recorded actions through the exact same legality map the RL bridge uses instead of re-deriving it.
 - **observation.go** — Seat-relative observation encoder (`39 x 42 x 1` planes, 58 scalars) with no hidden-opponent tile leakage. `EncodeObservation` is exported for remote-policy clients that need the same visible input format as Python training.
 - **env.go** — `Env` wrapper with deterministic `Reset`, `Step`, `EvaluateBranches`, and `GenerateHeuristicTrajectory`.
   - Terminal responses include `RoundOutcome` metadata for winner, win type, discarder, draw flag, score, and payouts.

@@ -9,6 +9,10 @@ import { tileObjectFromId } from './replayTypes'
 import { ReplayEngine, ReplayState } from './replayEngine'
 import { TableBoard, TableRoundResultOverlay } from '../../table/TableScene'
 import { LoadingScreen } from '../../theme'
+import ReviewPanel, { type ReviewStatus } from './ReviewPanel'
+import type { ReviewReport } from './reviewTypes'
+import { fetchReview, generateReview } from './reviewTypes'
+import { SEVERITY_THRESHOLDS, decisionSeverity, type SeverityThresholds } from './reviewUtils'
 
 /**
  * Compute calledDirection from seat layout:
@@ -33,7 +37,47 @@ export default function Replay() {
   const engineRef = useRef<ReplayEngine | null>(null)
   const stageLayout = useGameStageLayout()
 
+  const [review, setReview] = useState<ReviewReport | null>(null)
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('loading')
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewLang, setReviewLang] = useState<'en' | 'zh'>('en')
+  const [reviewThresholds, setReviewThresholds] = useState<SeverityThresholds>(SEVERITY_THRESHOLDS)
+
   useEffect(() => { preloadAllTileSvgs() }, [])
+
+  // Fetch existing review report (if any) on mount
+  useEffect(() => {
+    if (!matchId) return
+    let cancelled = false
+    setReviewStatus('loading')
+    fetchReview(matchId)
+      .then(r => {
+        if (cancelled) return
+        setReview(r)
+        setReviewStatus(r ? 'ready' : 'empty')
+      })
+      .catch((err: { status?: number; message?: string }) => {
+        if (cancelled) return
+        setReviewStatus(err.status === 503 ? 'unavailable' : 'error')
+        setReviewError(err.message ?? null)
+      })
+    return () => { cancelled = true }
+  }, [matchId])
+
+  const handleRequestReview = () => {
+    if (!matchId) return
+    setReviewStatus('generating')
+    setReviewError(null)
+    generateReview(matchId)
+      .then(r => {
+        setReview(r)
+        setReviewStatus('ready')
+      })
+      .catch((err: { status?: number; message?: string }) => {
+        setReviewStatus(err.status === 503 ? 'unavailable' : 'error')
+        setReviewError(err.message ?? null)
+      })
+  }
 
   // Fetch paipu data
   useEffect(() => {
@@ -138,6 +182,22 @@ export default function Replay() {
     { label: `Round ${state.roundNum}` },
     { label: `${state.actionIndex + 1}/${state.totalActions}` },
   ]
+
+  // Flagged decisions (disagreement/mistake) for the selected seat within the
+  // current round, positioned along the action-progress bar as tick marks.
+  const flaggedTicks = review
+    ? review.decisions
+        .filter(d => d.seat === viewSeat && d.round === engine.currentRoundIndex)
+        .map(d => ({
+          left: state.totalActions > 0 ? ((d.actionIndex + 1) / state.totalActions) * 100 : 0,
+          severity: decisionSeverity(d, reviewThresholds),
+          round: d.round,
+          actionIndex: d.actionIndex,
+        }))
+        .filter(tick => tick.severity !== 'ok')
+    : []
+
+  const tickColor = { disagreement: '#f59e0b', mistake: '#ef4444' } as const
 
   const playerViews = [0, 1, 2, 3].map((seat) => {
     const player = state.players[seat]
@@ -268,14 +328,33 @@ export default function Replay() {
             <span>Action {state.actionIndex + 1} / {state.totalActions}</span>
             <span>Round {engine.currentRoundIndex + 1} / {engine.totalRounds}</span>
           </div>
-          <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-            <div style={{
-              width: state.totalActions > 0 ? `${((state.actionIndex + 1) / state.totalActions) * 100}%` : '0%',
-              height: '100%',
-              background: 'linear-gradient(90deg, #10b981, #34d399)',
-              borderRadius: '3px',
-              transition: 'width 0.15s ease',
-            }} />
+          <div style={{ position: 'relative', width: '100%', height: '6px' }}>
+            <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{
+                width: state.totalActions > 0 ? `${((state.actionIndex + 1) / state.totalActions) * 100}%` : '0%',
+                height: '100%',
+                background: 'linear-gradient(90deg, #10b981, #34d399)',
+                borderRadius: '3px',
+                transition: 'width 0.15s ease',
+              }} />
+            </div>
+            {flaggedTicks.map((tick, i) => (
+              <div
+                key={i}
+                title={`R${tick.round + 1} · ${tick.severity}`}
+                onClick={() => { engine.jumpToAction(tick.round, tick.actionIndex); setVersion(v => v + 1); setPlaying(false) }}
+                style={{
+                  position: 'absolute',
+                  left: `calc(${tick.left}% - 3px)`,
+                  top: '-2px',
+                  width: '6px',
+                  height: '10px',
+                  borderRadius: '2px',
+                  background: tickColor[tick.severity as 'disagreement' | 'mistake'],
+                  cursor: 'pointer',
+                }}
+              />
+            ))}
           </div>
         </div>
 
@@ -383,6 +462,25 @@ export default function Replay() {
             </div>
           ))}
         </div>
+
+        {/* Post-game Review */}
+        <ReviewPanel
+          report={review}
+          status={reviewStatus}
+          errorMessage={reviewError}
+          onRequestReview={handleRequestReview}
+          viewSeat={viewSeat}
+          position={{ round: engine.currentRoundIndex, actionIndex: state.actionIndex }}
+          onJump={(round, actionIndex) => {
+            engine.jumpToAction(round, actionIndex)
+            setVersion(v => v + 1)
+            setPlaying(false)
+          }}
+          lang={reviewLang}
+          onLangToggle={() => setReviewLang(l => (l === 'en' ? 'zh' : 'en'))}
+          thresholds={reviewThresholds}
+          onThresholdsChange={setReviewThresholds}
+        />
 
         {/* Keyboard Shortcuts */}
         <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', fontSize: '11px', color: '#6b7280' }}>
