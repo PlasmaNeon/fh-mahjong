@@ -13,12 +13,14 @@ FROM python:3.12-slim
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
-# The serving path (scripts/serve_policy.py -> serving.py -> model/policies)
-# imports only numpy and torch; --no-deps below skips training-only heavy
-# dependencies (mlflow, grpcio-tools). The import check catches dependency
-# drift at build time instead of at first request.
+# The serving path imports numpy, torch, and google.protobuf: serving.py pulls
+# in bridge.py -> generated/proto/game_pb2, which needs the protobuf runtime.
+# --no-deps below skips only the training-only heavy deps (mlflow, grpcio-tools).
+# protobuf is pinned to the uv.lock version so the game_pb2 gencode runtime guard
+# (compiled against protoc 6.33.5) is satisfied. The build-time import check
+# catches any further dependency drift instead of failing at first request.
 RUN pip install "torch>=2.4" --index-url https://download.pytorch.org/whl/cpu && \
-    pip install "numpy>=2.0"
+    pip install "numpy>=2.0" "protobuf==6.33.6"
 
 COPY ai/ /app/ai/
 RUN pip install --no-deps /app/ai && \
