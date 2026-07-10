@@ -30,7 +30,7 @@ Contains all React components, context providers, custom hooks, and utility func
   - All four discard trays now use the same center-HUD-relative gap variable, so the top/right/bottom/left tray spacing from the panel stays symmetric
   - Newly discarded tiles use a faster move-in animation for every seat, and callable discards use a brighter teal-cyan pulse ring rather than the wild-tile gold glow
   - Includes the glass action-bar styling used for bottom-player `CHII / PON / KAN / RON / TSUMO / SKIP` controls in the elevated lower-right table gap beside the bottom discard tray, kept above the bottom hand line
-  - Includes a glass round-result modal styled to match the table HUD/cards instead of the older flat dark dialog, but without backdrop blur so players can still inspect the table behind it
+  - Imports `table/roundResult.css`, the focused Fenghua settlement-sheet module shared by live and replay; the result body scrolls independently while its action footer stays reachable on phone viewports
   - The live table now has a fixed-stage override layer: a 1600x900 board scaled as one unit inside a safe-area-aware shell so resizing the viewport no longer reflows each hand/discard region independently
   - The shell should measure the actual available pane size and keep the logical 1600x900 board on a stable coordinate system; the current stage uses `zoom` instead of a transformed parent so Framer Motion tile transitions stay in a less surprising coordinate space
 
