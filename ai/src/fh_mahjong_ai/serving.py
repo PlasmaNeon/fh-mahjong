@@ -140,6 +140,9 @@ class CheckpointPolicy:
         zero probability. Used by the post-game review pipeline.
         """
         n = planes.shape[0]
+        no_legal_rows = np.flatnonzero(~action_masks.astype(bool).any(axis=1))
+        if no_legal_rows.size:
+            raise ValueError(f"observation {int(no_legal_rows[0])} has no legal actions")
         all_probs = np.zeros((n, action_masks.shape[1]), dtype=np.float32)
         all_values = np.zeros((n,), dtype=np.float32)
         expected_scalars = self.model.scalar_encoder[0].in_features

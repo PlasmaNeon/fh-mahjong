@@ -44,6 +44,18 @@ def test_evaluate_batch_masks_and_normalizes():
     assert float(np.abs(illegal).max()) == 0.0
 
 
+def test_evaluate_batch_rejects_all_zero_mask_row():
+    policy = _tiny_policy()
+    planes, scalars, masks = _batch(3, legal=[0, 5, 12])
+    masks[1, :] = 0
+    try:
+        policy.evaluate_batch(planes, scalars, masks)
+    except ValueError as exc:
+        assert "1" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for all-zero mask row")
+
+
 def test_evaluate_batch_deterministic_and_chunked():
     policy = _tiny_policy()
     planes, scalars, masks = _batch(10, legal=[1, 2, 3])
@@ -129,6 +141,27 @@ def test_http_evaluate_endpoint_rejects_malformed_payload(tmp_path: Path) -> Non
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
         body = json.dumps({"observations": [{"seat": 0, "planes": [], "scalars": [], "action_mask": []}]})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        response = conn.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert response.status == 400
+    assert "error" in payload
+
+
+def test_http_evaluate_endpoint_rejects_all_zero_mask(tmp_path: Path) -> None:
+    server = _EvaluateServer(tmp_path)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        body = json.dumps({
+            "observations": [
+                _observation_payload([0, 5, 12]),
+                _observation_payload([]),
+            ]
+        })
         conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
         response = conn.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
