@@ -14,7 +14,7 @@ All Go library packages live here, enforcing Go's `internal/` visibility boundar
 | `bot` | `…/internal/bot` | Deterministic heuristic bot policies used by CLI, empty seats, and RL bootstrapping. |
 | `bot/remote` | `…/internal/bot/remote` | HTTP client wrapper that drives an external policy server (e.g. Python RL model) as a bot player. |
 | `rl` | `…/internal/rl` | Deterministic RL environment wrapper (`Env`), observation encoder, and fixed 204-action catalog. |
-| `review` | `…/internal/review` | Paipu replay driver: reconstructs every decision point of a recorded match (`ExtractDecisions`) as the foundation for post-game review/critique. |
+| `review` | `…/internal/review` | Paipu → decision reconstruction → champion policy critique (post-game review); drives `engine.Game`, reuses `rl` encoders, never oracle obs. |
 | `tiles` | `…/internal/tiles` | Shared low-level tile helpers (keying, cloning) used across engine, rules, bot, and rl. |
 
 ## Invariants
