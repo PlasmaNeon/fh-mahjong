@@ -711,40 +711,50 @@ func (r *FenghuaRuleset) GetValidActions(state *pb.GameState, playerSeat uint32)
 		}
 	}
 
-	// Check for Concealed Kongs (4 of a kind in hand).
-	// Tiles in the closed hand each carry a unique instance Id, so we must
-	// group by tile face (Suit+Value) to detect four of a kind.
-	type faceKey struct {
-		suit  pb.Suit
-		value uint32
-	}
-	counts := make(map[faceKey][]*pb.Tile)
-	for _, t := range player.ClosedHand {
-		if t.Suit == pb.Suit_SUIT_FLOWER {
-			continue
+	// Kongs declared from the hand (concealed 4-of-a-kind or an added kan that
+	// upgrades an open Pon) may only be declared on the player's own turn AFTER
+	// they have drawn a tile (wall draw or dead-wall replacement). Immediately
+	// after a Pon/Chii steal the player has NOT drawn (the engine clears
+	// DrawnTileId on a steal) — they may only discard now, and the kan becomes
+	// available on a later turn once they draw. Without this gate a player who
+	// Pons while already holding the 4th matching tile would be offered an
+	// illegal added kan in the same turn (kan-after-pon bug).
+	if player.DrawnTileId != nil {
+		// Check for Concealed Kongs (4 of a kind in hand).
+		// Tiles in the closed hand each carry a unique instance Id, so we must
+		// group by tile face (Suit+Value) to detect four of a kind.
+		type faceKey struct {
+			suit  pb.Suit
+			value uint32
 		}
-		k := faceKey{t.Suit, t.Value}
-		counts[k] = append(counts[k], t)
-	}
-
-	for _, tileGroup := range counts {
-		if len(tileGroup) == 4 {
-			actions = append(actions, &pb.PlayerAction{
-				Type:      pb.ActionType_ACTION_KAN,
-				MeldTiles: tileGroup,
-			})
+		counts := make(map[faceKey][]*pb.Tile)
+		for _, t := range player.ClosedHand {
+			if t.Suit == pb.Suit_SUIT_FLOWER {
+				continue
+			}
+			k := faceKey{t.Suit, t.Value}
+			counts[k] = append(counts[k], t)
 		}
-	}
 
-	// Upgraded Kongs: Check if we have a tile in our ClosedHand that matches an existing open Pon
-	for _, t := range player.ClosedHand {
-		for _, m := range player.OpenMelds {
-			if m.Type == pb.ActionType_ACTION_PON && len(m.Tiles) > 0 {
-				if m.Tiles[0].Suit == t.Suit && m.Tiles[0].Value == t.Value {
-					actions = append(actions, &pb.PlayerAction{
-						Type:      pb.ActionType_ACTION_KAN,
-						MeldTiles: []*pb.Tile{t},
-					})
+		for _, tileGroup := range counts {
+			if len(tileGroup) == 4 {
+				actions = append(actions, &pb.PlayerAction{
+					Type:      pb.ActionType_ACTION_KAN,
+					MeldTiles: tileGroup,
+				})
+			}
+		}
+
+		// Upgraded Kongs: Check if we have a tile in our ClosedHand that matches an existing open Pon
+		for _, t := range player.ClosedHand {
+			for _, m := range player.OpenMelds {
+				if m.Type == pb.ActionType_ACTION_PON && len(m.Tiles) > 0 {
+					if m.Tiles[0].Suit == t.Suit && m.Tiles[0].Value == t.Value {
+						actions = append(actions, &pb.PlayerAction{
+							Type:      pb.ActionType_ACTION_KAN,
+							MeldTiles: []*pb.Tile{t},
+						})
+					}
 				}
 			}
 		}

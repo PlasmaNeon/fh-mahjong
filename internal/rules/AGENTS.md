@@ -20,7 +20,7 @@ This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin tha
     3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
   - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
   - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
-  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Non-wild flower handling is owned by `engine.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
+  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Kan (concealed 4-of-a-kind or added kan upgrading an open Pon) and Tsumo are gated on `player.DrawnTileId != nil`: they're only offered on the player's own turn after a wall/dead-wall draw, never immediately after a Pon/Chii steal (the engine clears `DrawnTileId` on a steal). This prevents the illegal kan-after-pon. Non-wild flower handling is owned by `engine.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
   - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1), with same-priority ties resolved by ascending seat for deterministic RL replay
   - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
