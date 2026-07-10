@@ -1613,3 +1613,86 @@ func TestFenghuaRuleset_GetValidActions_TsumoRequiresDraw(t *testing.T) {
 		}
 	})
 }
+
+// --- GetValidActions: Kan gated on DrawnTileId ---
+// Regression (kan-after-pon): a Kan (concealed 4-of-a-kind or an added kan that
+// upgrades an existing Pon) may only be declared on the player's own turn AFTER
+// they have drawn a tile from the wall or the dead wall. Immediately after a
+// Pon/Chii steal the player has NOT drawn (the engine clears DrawnTileId on a
+// steal); they may only discard now, and the Kan becomes available on a later
+// turn once they draw. GetValidActions must respect that gate.
+func TestFenghuaRuleset_GetValidActions_KanRequiresDraw(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+
+	hasKan := func(actions []*pb.PlayerAction) bool {
+		for _, a := range actions {
+			if a.Type == pb.ActionType_ACTION_KAN {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("added kan (upgrade Pon)", func(t *testing.T) {
+		// Open Pon of 5m, plus the 4th 5m sitting in the closed hand: the added
+		// (upgrade) kan is structurally possible, but only after a draw.
+		openMelds := []*pb.Meld{
+			{Type: pb.ActionType_ACTION_PON, Tiles: []*pb.Tile{
+				{Id: 100, Suit: pb.Suit_SUIT_MAN, Value: 5},
+				{Id: 101, Suit: pb.Suit_SUIT_MAN, Value: 5},
+				{Id: 102, Suit: pb.Suit_SUIT_MAN, Value: 5},
+			}},
+		}
+		closedHand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_MAN, Value: 5}, // 4th 5m → upgrade candidate
+			{Id: 2, Suit: pb.Suit_SUIT_PIN, Value: 2},
+			{Id: 3, Suit: pb.Suit_SUIT_PIN, Value: 7},
+		}
+		buildState := func(drawn *int32) *pb.GameState {
+			return &pb.GameState{
+				Phase:        pb.GamePhase_PHASE_PLAYER_TURN,
+				ActivePlayer: 0,
+				Players: []*pb.PlayerState{
+					{Seat: 0, ClosedHand: closedHand, OpenMelds: openMelds, DrawnTileId: drawn},
+					{Seat: 1}, {Seat: 2}, {Seat: 3},
+				},
+			}
+		}
+
+		if hasKan(r.GetValidActions(buildState(nil), 0)) {
+			t.Fatalf("added Kan offered after Pon steal (DrawnTileId nil); it must wait for a draw")
+		}
+		drawnID := int32(2)
+		if !hasKan(r.GetValidActions(buildState(&drawnID), 0)) {
+			t.Fatalf("added Kan missing on legitimate self-draw with a matching open Pon")
+		}
+	})
+
+	t.Run("concealed kan (4 in hand)", func(t *testing.T) {
+		closedHand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_PIN, Value: 3},
+			{Id: 2, Suit: pb.Suit_SUIT_PIN, Value: 3},
+			{Id: 3, Suit: pb.Suit_SUIT_PIN, Value: 3},
+			{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 3},
+			{Id: 5, Suit: pb.Suit_SUIT_MAN, Value: 9},
+		}
+		buildState := func(drawn *int32) *pb.GameState {
+			return &pb.GameState{
+				Phase:        pb.GamePhase_PHASE_PLAYER_TURN,
+				ActivePlayer: 0,
+				Players: []*pb.PlayerState{
+					{Seat: 0, ClosedHand: closedHand, DrawnTileId: drawn},
+					{Seat: 1}, {Seat: 2}, {Seat: 3},
+				},
+			}
+		}
+
+		if hasKan(r.GetValidActions(buildState(nil), 0)) {
+			t.Fatalf("concealed Kan offered after steal (DrawnTileId nil); it must wait for a draw")
+		}
+		drawnID := int32(4)
+		if !hasKan(r.GetValidActions(buildState(&drawnID), 0)) {
+			t.Fatalf("concealed Kan missing on legitimate self-draw with 4-of-a-kind")
+		}
+	})
+}
