@@ -27,6 +27,9 @@ describe('buildScenario', () => {
       expect(payouts.filter((p) => p.amount > 0)).toHaveLength(1) // winner
       expect(payouts.filter((p) => p.amount < 0)).toHaveLength(3) // losers
       expect(payouts.reduce((acc, p) => acc + p.amount, 0)).toBe(0)
+
+      const breakdownSum = (r.breakdown ?? []).reduce((acc, e) => acc + e.points, 0)
+      expect(r.totalScore).toBe(breakdownSum)
     })
   }
 

@@ -68,7 +68,7 @@ export function buildScenario(key: ScenarioKey, ready: boolean): ScenarioData {
           { name: 'Seat Wind (自風)', points: 1 },
           { name: 'Robbing the Kong (搶槓)', points: 8 },
         ],
-        totalScore: 16,
+        totalScore: 11,
         payouts: payouts([-3, 16, -3, -10], ready),
       }
     }
@@ -106,7 +106,7 @@ export function buildScenario(key: ScenarioKey, ready: boolean): ScenarioData {
           { name: 'Wild-Tile Pair (搭)', points: 6 },
           { name: 'All Terminals Fringe', points: 4 },
         ],
-        totalScore: 96,
+        totalScore: 56,
         payouts: payouts([-32, -32, 96, -32], ready),
       }
     }
@@ -133,7 +133,7 @@ export function buildScenario(key: ScenarioKey, ready: boolean): ScenarioData {
           { name: 'All Sequences (平和)', points: 4 },
           { name: 'Flower (花牌)', points: 1 },
         ],
-        totalScore: 24,
+        totalScore: 7,
         payouts: payouts([24, -8, -8, -8], ready),
       }
   }
