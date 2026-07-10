@@ -1,0 +1,38 @@
+# Production image for the private-room RL policy server (Zeabur `policy`
+# service). Unlike ai/Dockerfile (local docker-compose), this image:
+#   - installs CPU-only torch wheels: ai/uv.lock pins CUDA torch + nvidia-*
+#     packages, which are multi-GB and useless for batch-1 CPU inference;
+#   - bakes the deployed champion checkpoint from ai/checkpoints/deploy/ into
+#     the image, so no volume mount is needed;
+#   - hardcodes the validated human-play sampling flags (T=0.7, top-k 3,
+#     discard family) — serve greedy by removing the --sample-* args.
+#
+# Build context is the repo root: `docker build -f ai/Dockerfile.deploy .`
+FROM python:3.12-slim
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+# The serving path (scripts/serve_policy.py -> serving.py -> model/policies)
+# imports only numpy and torch; --no-deps below skips training-only heavy
+# dependencies (mlflow, grpcio-tools). The import check catches dependency
+# drift at build time instead of at first request.
+RUN pip install "torch>=2.4" --index-url https://download.pytorch.org/whl/cpu && \
+    pip install "numpy>=2.0"
+
+COPY ai/ /app/ai/
+RUN pip install --no-deps /app/ai && \
+    python -c "import fh_mahjong_ai.scripts.serve_policy"
+
+EXPOSE 8765
+
+# --manifest must be explicit: the installed package resolves the default
+# manifest path relative to site-packages, not /app/ai.
+CMD ["fh-mj-serve-policy", \
+     "--manifest", "/app/ai/checkpoints/best-checkpoints.json", \
+     "--checkpoint", "/app/ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt", \
+     "--sample-temperature", "0.7", \
+     "--sample-top-k", "3", \
+     "--sample-action-family", "discard", \
+     "--host", "0.0.0.0", \
+     "--port", "8765"]
