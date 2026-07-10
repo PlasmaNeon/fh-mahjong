@@ -155,7 +155,10 @@ helper convention as `TableSample` (suits: 1=sou, 2=pin, 3=man, 4=jihai,
    and visible.
 
 Each builder accepts the `ready` flag to populate `readyLabel` /`readyActive`
-on payouts and to seed the footer's initial Ready state.
+on payouts (the per-seat ready badges — simulating *other* players' ready
+state). The footer's own Ready button is independently interactive: it starts
+enabled and flips to a disabled `Waiting…` on click, regardless of the `ready`
+flag, so the click behavior is always demonstrable.
 
 ## Error handling
 
