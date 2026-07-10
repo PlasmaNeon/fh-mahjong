@@ -145,65 +145,87 @@ export function TableRoundResultOverlay({
 
   return (
     <div className="round-result-overlay">
-      <div className="round-result-modal">
-        {result.isDraw ? (
-          <div className="round-result-draw">
-            <div className="round-result-badge round-result-badge-draw">Draw</div>
-            <h2 className="round-result-title round-result-title-draw">Exhaustive Draw</h2>
-            <p className="round-result-subtitle">No tiles remaining in the wall.</p>
-          </div>
-        ) : (
-          <>
-            <div className="round-result-header-line">
-              <div className={`round-result-badge ${result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
-                {result.winType === 'tsumo' ? 'TSUMO!' : 'RON!'}
+      <section
+        className={`round-result-modal round-result-modal-${result.isDraw ? 'draw' : result.winType ?? 'draw'}`}
+        role="dialog"
+        aria-modal={true}
+        aria-labelledby="round-result-title"
+      >
+        <div className="round-result-scroll" tabIndex={0}>
+          {result.isDraw ? (
+            <header className="round-result-heading round-result-heading-draw">
+              <div className="round-result-badge round-result-badge-draw">Draw</div>
+              <div>
+                <div className="round-result-eyebrow">Hand settled</div>
+                <h2 id="round-result-title" className="round-result-title round-result-title-draw">
+                  Exhaustive Draw
+                </h2>
+                <p className="round-result-subtitle">No tiles remaining in the wall.</p>
               </div>
-              <h2 className={`round-result-title ${result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
-                {result.winnerLabel}
-              </h2>
-            </div>
-
-            {result.discarderLabel && (
-              <p className="round-result-subtitle">{result.discarderLabel}</p>
-            )}
-
-            <div className="round-result-panel round-result-panel-plain round-result-hand-panel">
-              <div className="round-result-hand-row">
-                <div className="round-result-closed-hand">
-                  {closedHand.map((tile) => (
-                    <div key={tile.id} className="pov-bottom small">
-                      <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
-                    </div>
-                  ))}
-
-                  {result.winTile && (
-                    <div className="pov-bottom small round-result-win-tile">
-                      <TileComponent tile={result.winTile} size="small" isWild={isWildTile(result.winTile)} />
-                    </div>
-                  )}
+            </header>
+          ) : (
+            <>
+              <header className="round-result-heading">
+                <div className="round-result-heading-main">
+                  <div className={`round-result-badge ${result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
+                    {result.winType === 'tsumo' ? 'Tsumo' : 'Ron'}
+                  </div>
+                  <div>
+                    <div className="round-result-eyebrow">Hand settled</div>
+                    <h2 id="round-result-title" className={`round-result-title ${result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
+                      {result.winnerLabel}
+                    </h2>
+                    {result.discarderLabel && (
+                      <p className="round-result-subtitle">{result.discarderLabel}</p>
+                    )}
+                  </div>
                 </div>
+                <div className="round-result-total" aria-label={`Total score ${result.totalScore ?? 0}`}>
+                  <span>Total</span>
+                  <strong>{result.totalScore ?? 0}</strong>
+                </div>
+              </header>
 
-                {winningMelds.length > 0 && (
-                  <div className="round-result-melds-divider">
-                    <OpenMelds melds={winningMelds} isWildTile={isWildTile} />
-                  </div>
-                )}
+              <section className="round-result-section round-result-hand-section" aria-label="Winning hand">
+                <div className="round-result-section-label">Winning hand</div>
+                <div className="round-result-hand-rack">
+                  <div className="round-result-hand-row">
+                    <div className="round-result-closed-hand">
+                      {closedHand.map((tile) => (
+                        <div key={tile.id} className="pov-bottom small">
+                          <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
+                        </div>
+                      ))}
 
-                {flowers.length > 0 && (
-                  <div className="round-result-melds-divider">
-                    {flowers.map((tile) => (
-                      <div key={`fl-${tile.id}`} className="pov-bottom small">
-                        <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
+                      {result.winTile && (
+                        <div className="pov-bottom small round-result-win-tile">
+                          <TileComponent tile={result.winTile} size="small" isWild={isWildTile(result.winTile)} />
+                        </div>
+                      )}
+                    </div>
+
+                    {winningMelds.length > 0 && (
+                      <div className="round-result-melds-divider">
+                        <OpenMelds melds={winningMelds} isWildTile={isWildTile} />
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+                    )}
 
-            {breakdown.length > 0 && (
-              <div className="round-result-panel">
-                <div className="round-result-breakdown-scroll">
+                    {flowers.length > 0 && (
+                      <div className="round-result-melds-divider">
+                        {flowers.map((tile) => (
+                          <div key={`fl-${tile.id}`} className="pov-bottom small">
+                            <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {breakdown.length > 0 && (
+                <section className="round-result-section" aria-label="Scoring breakdown">
+                  <div className="round-result-section-label">Score ledger</div>
                   <div className="round-result-breakdown-grid">
                     {breakdown.map((entry, index) => (
                       <div key={`${entry.name}-${index}`} className="round-result-breakdown-item">
@@ -211,46 +233,41 @@ export function TableRoundResultOverlay({
                         <div className="round-result-breakdown-points">+{entry.points}</div>
                       </div>
                     ))}
-
-                    <div className="round-result-breakdown-total-row">
-                      <div>Total</div>
-                      <div>{result.totalScore}</div>
-                    </div>
                   </div>
-                </div>
-              </div>
-            )}
+                </section>
+              )}
 
-            <div className="round-result-panel round-result-panel-plain">
-              <div className="round-result-payout-grid">
-                {payouts.map((payout) => (
-                  <div
-                    key={`${payout.seat}-${payout.label}`}
-                    className={`round-result-payout-cell ${payout.amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}
-                  >
-                    <div className="round-result-payout-seat">{payout.label}</div>
-                    <div className="round-result-payout-amount">
-                      {payout.amount > 0 ? '+' : ''}
-                      {payout.amount}
-                    </div>
-                    {payout.readyLabel && (
-                      <div className={`round-result-payout-ready ${payout.readyActive ? 'round-result-payout-ready-on' : ''}`}>
-                        {payout.readyLabel}
+              <section className="round-result-section" aria-label="Seat payouts">
+                <div className="round-result-section-label">Payouts</div>
+                <div className="round-result-payout-grid">
+                  {payouts.map((payout) => (
+                    <div
+                      key={`${payout.seat}-${payout.label}`}
+                      className={`round-result-payout-cell ${payout.amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}
+                    >
+                      <div className="round-result-payout-seat">{payout.label}</div>
+                      <div className="round-result-payout-amount">
+                        {payout.amount > 0 ? '+' : ''}{payout.amount}
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+                      {payout.readyLabel && (
+                        <div className={`round-result-payout-ready ${payout.readyActive ? 'round-result-payout-ready-on' : ''}`}>
+                          {payout.readyLabel}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
 
         {result.actions && (
           <div className="round-result-actions">
             {result.actions}
           </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }
