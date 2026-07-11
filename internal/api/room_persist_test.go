@@ -540,3 +540,43 @@ func TestPersistMatch_IdempotentSeatRows(t *testing.T) {
 		t.Fatalf("expected exactly 4 seat rows after a retried persist, got %d", count)
 	}
 }
+
+// The draining gate must be atomic with room registration: a start that
+// slips past an early check while the drain completes must still be refused
+// at registration time and must not leave an orphaned in_progress row.
+func TestStartPrivateTable_DrainGateLeavesNoOrphanRow(t *testing.T) {
+	db := newPersistTestDB(t)
+	hub := NewHub()
+	go hub.Run()
+	m := NewMatchmaker(NewInMemoryQueue(), db, hub)
+
+	if _, err := m.JoinOrCreatePrivateTable("t-race", 101, "alice"); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if _, err := m.MutatePrivateTable("t-race", func(pt *PrivateTable) error {
+		for _, seat := range []uint32{1, 2, 3} {
+			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
+	m.DrainActiveRooms(100 * time.Millisecond) // flips draining mode
+
+	if _, err := m.StartPrivateTable("t-race", 101); err == nil {
+		t.Fatal("expected StartPrivateTable to be refused while draining")
+	}
+	var count int64
+	if err := db.Model(&storage.Match{}).Where("status = ?", "in_progress").Count(&count).Error; err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("draining start orphaned %d in_progress match row(s)", count)
+	}
+	if _, active := m.GetActivePrivateTable("t-race"); active {
+		t.Fatal("refused start must not leave the table registered as active")
+	}
+}

@@ -171,10 +171,17 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 }
 
 // registerActiveRoom tracks a live room for server-drain persistence.
-func (m *Matchmaker) registerActiveRoom(room *Room) {
+// Registration is atomic with the draining flag (same mutex): either the room
+// is visible to the drain's first snapshot, or the caller is told the server
+// is draining and must abort the start. Returns false when draining.
+func (m *Matchmaker) registerActiveRoom(room *Room) bool {
 	m.activeRoomsMu.Lock()
 	defer m.activeRoomsMu.Unlock()
+	if m.draining.Load() {
+		return false
+	}
 	m.activeRooms[room.ID] = room
+	return true
 }
 
 // unregisterActiveRoom drops a room from the drain registry (normal shutdown).
@@ -193,7 +200,12 @@ func (m *Matchmaker) unregisterActiveRoom(matchID string) {
 // loop never started (or that are wedged) are skipped once the timeout
 // elapses.
 func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
+	// Set the flag under the registry mutex so it serializes with
+	// registerActiveRoom: every successful registration is visible to the
+	// first snapshot below, and everything later is refused.
+	m.activeRoomsMu.Lock()
 	m.draining.Store(true)
+	m.activeRoomsMu.Unlock()
 
 	// A closed channel (unlike time.After's one-shot send) releases every
 	// waiting goroutine at the deadline.
@@ -377,10 +389,6 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 }
 
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
-	if m.draining.Load() {
-		log.Printf("Refusing to start match during shutdown drain (players %v)", playerIDs)
-		return
-	}
 	ruleset = canonicalRuleset(ruleset)
 	matchID := uuid.New().String()
 
@@ -419,7 +427,17 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		m.unregisterActivePrivateTable(tableID)
 		m.unregisterActiveRoom(matchID)
 	}
-	m.registerActiveRoom(room)
+	// Atomic with the draining flag: refuse to start a queue match that
+	// would miss the shutdown drain.
+	if !m.registerActiveRoom(room) {
+		log.Printf("Refusing to start match during shutdown drain (players %v)", playerIDs)
+		if m.DB != nil {
+			if derr := m.DB.Delete(&storage.Match{}, "id = ?", matchID).Error; derr != nil {
+				log.Printf("Failed to clean up draining-refused match %s: %v", matchID, derr)
+			}
+		}
+		return
+	}
 
 	// 4. Parse user IDs and dispatch to Hub for exact WS binding
 	var userIDs []uint
@@ -517,9 +535,6 @@ func (m *Matchmaker) removeConfiguringTable(tableID string) {
 // via the Hub. Returns the table snapshot (with State == "started" and
 // MatchID populated) on success.
 func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*PrivateTable, error) {
-	if m.draining.Load() {
-		return nil, ErrServerDraining
-	}
 	table := m.GetConfiguringPrivateTable(tableID)
 	if table == nil {
 		return nil, ErrPrivateTableNotFound
@@ -602,7 +617,17 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			m.unregisterActivePrivateTable(tableID)
 			m.unregisterActiveRoom(matchID)
 		}
-		m.registerActiveRoom(room)
+		// The drain-registry admission is the authoritative draining gate:
+		// it is atomic with DrainActiveRooms' flag flip, so a start racing a
+		// shutdown either lands in the drain snapshot or is refused here.
+		if !m.registerActiveRoom(room) {
+			if m.DB != nil {
+				if derr := m.DB.Delete(&storage.Match{}, "id = ?", matchID).Error; derr != nil {
+					log.Printf("Failed to clean up draining-refused match %s: %v", matchID, derr)
+				}
+			}
+			return ErrServerDraining
+		}
 
 		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats), room)
 
