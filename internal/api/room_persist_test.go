@@ -1,0 +1,188 @@
+package api
+
+import (
+	"testing"
+	"time"
+
+	"github.com/glebarez/sqlite"
+	"github.com/plasma/fh-mahjong/internal/storage"
+	pb "github.com/plasma/fh-mahjong/proto"
+	"gorm.io/gorm"
+)
+
+func newPersistTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := storage.AutoMigrate(db); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	return db
+}
+
+func insertInProgressMatch(t *testing.T, db *gorm.DB, matchID string) {
+	t.Helper()
+	match := storage.Match{ID: matchID, Status: "in_progress", StartTime: time.Now(), Ruleset: "fenghua"}
+	if err := db.Create(&match).Error; err != nil {
+		t.Fatalf("insert match: %v", err)
+	}
+}
+
+// GAP 3: a room persisted before natural MATCH_END must mark the match
+// aborted while still writing the partial paipu.
+func TestPersistMatch_AbortedBeforeMatchEnd(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "abort-match")
+
+	room := NewRoom("abort-match", nil, db)
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	if room.Engine.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+		t.Fatal("test premise broken: match already ended")
+	}
+
+	room.persistMatch()
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "abort-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status != "aborted" {
+		t.Fatalf("status = %q, want aborted", row.Status)
+	}
+	if row.PaipuJSON == "" {
+		t.Fatal("expected partial paipu to be persisted on abort")
+	}
+	if row.EndTime == nil {
+		t.Fatal("expected EndTime to be set on abort")
+	}
+}
+
+func TestPersistMatch_CompletedAtMatchEnd(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "complete-match")
+
+	room := NewRoom("complete-match", nil, db)
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	room.persistMatch()
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "complete-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status != "completed" {
+		t.Fatalf("status = %q, want completed", row.Status)
+	}
+}
+
+// GAP 3: a server drain (SIGTERM before redeploy) must persist every active
+// room instead of orphaning in_progress rows with empty PaipuJSON.
+func TestDrainActiveRooms_PersistsRunningRoom(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "drain-match")
+
+	hub := NewHub()
+	go hub.Run()
+	m := NewMatchmaker(NewInMemoryQueue(), db, hub)
+
+	room := NewRoom("drain-match", hub, db)
+	// A connected human seat keeps the bots from playing the match to
+	// completion on their own, so the room is mid-match when drained.
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+	m.registerActiveRoom(room)
+
+	go room.Start()
+
+	m.DrainActiveRooms(5 * time.Second)
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "drain-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status != "aborted" {
+		t.Fatalf("status = %q, want aborted", row.Status)
+	}
+	if row.PaipuJSON == "" {
+		t.Fatal("expected drained room to persist its partial paipu")
+	}
+}
+
+// DrainActiveRooms must not hang on a room whose loop never ran.
+func TestDrainActiveRooms_TimesOutOnStuckRoom(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+	m.registerActiveRoom(NewRoom("stuck-match", hub, nil)) // Start never called
+
+	done := make(chan struct{})
+	go func() {
+		m.DrainActiveRooms(200 * time.Millisecond)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("DrainActiveRooms hung on a room that never started")
+	}
+}
+
+// GAP 4: persistMatch must also write relational MatchPlayer rows so the
+// dataset is SQL-queryable without parsing every paipu blob.
+func TestPersistMatch_InsertsMatchPlayerRows(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "rows-match")
+
+	room := NewRoom("rows-match", nil, db)
+	room.SeatInfos = map[uint32]SeatInfo{
+		0: {Kind: "human", Name: "Alice", UserID: 101},
+		1: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_HEURISTIC},
+		2: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: "champ.pt@step9"},
+		3: {Kind: "human", Name: "Bob", UserID: 102},
+	}
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+	room.Engine.State.Players[0].Score = 40
+	room.Engine.State.Players[1].Score = -10
+	room.Engine.State.Players[2].Score = 40
+	room.Engine.State.Players[3].Score = -70
+
+	room.persistMatch()
+
+	var rows []storage.MatchPlayer
+	if err := db.Where("match_id = ?", "rows-match").Order("seat asc").Find(&rows).Error; err != nil {
+		t.Fatalf("load match players: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 MatchPlayer rows, got %d", len(rows))
+	}
+
+	if r := rows[0]; r.UserID != 101 || r.IsBot || r.FinalScore != 40 {
+		t.Fatalf("seat 0 row wrong: %+v", r)
+	}
+	if r := rows[1]; !r.IsBot || r.Difficulty != "heuristic" || r.UserID != 0 {
+		t.Fatalf("seat 1 row wrong: %+v", r)
+	}
+	if r := rows[2]; !r.IsBot || r.Difficulty != "rl" || r.PolicyID != "champ.pt@step9" {
+		t.Fatalf("seat 2 row wrong: %+v", r)
+	}
+	// Placements: 40/40 tie for 1st, -10 is 3rd, -70 is 4th.
+	wantPlacement := []uint{1, 3, 1, 4}
+	for i, r := range rows {
+		if r.Placement != wantPlacement[i] {
+			t.Fatalf("seat %d placement = %d, want %d", i, r.Placement, wantPlacement[i])
+		}
+	}
+}

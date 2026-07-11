@@ -2,6 +2,9 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -27,6 +30,7 @@ type HealthChecker struct {
 	checkedAt time.Time
 	healthy   bool
 	primed    bool
+	identity  string
 }
 
 // NewHealthChecker builds a checker for the given /act endpoint. The /healthz
@@ -61,16 +65,43 @@ func (h *HealthChecker) Healthy() bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.primed && time.Since(h.checkedAt) < h.ttl {
-		return h.healthy
-	}
-	h.healthy = h.probe()
-	h.checkedAt = time.Now()
-	h.primed = true
+	h.refreshLocked()
 	return h.healthy
 }
 
-func (h *HealthChecker) probe() bool {
+// Identity reports the serving policy's checkpoint identity as
+// "<checkpoint>@step<N>", extracted from the /healthz JSON payload. Empty when
+// the endpoint is unreachable or its healthz body carries no checkpoint info
+// (e.g. an older policy server). Shares the Healthy() probe cache.
+func (h *HealthChecker) Identity() string {
+	if h == nil || h.healthURL == "" {
+		return ""
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.refreshLocked()
+	return h.identity
+}
+
+// refreshLocked re-probes the endpoint when the cached result expired.
+// Caller must hold h.mu.
+func (h *HealthChecker) refreshLocked() {
+	if h.primed && time.Since(h.checkedAt) < h.ttl {
+		return
+	}
+	h.healthy, h.identity = h.probe()
+	h.checkedAt = time.Now()
+	h.primed = true
+}
+
+// healthzPayload mirrors the identity fields of serve_policy.py's GET /healthz
+// response. Extra fields are ignored.
+type healthzPayload struct {
+	Checkpoint     string `json:"checkpoint"`
+	CheckpointStep int64  `json:"checkpoint_step"`
+}
+
+func (h *HealthChecker) probe() (healthy bool, identity string) {
 	timeout := h.client.Timeout
 	if timeout <= 0 {
 		timeout = defaultHealthTimeout
@@ -79,12 +110,21 @@ func (h *HealthChecker) probe() bool {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.healthURL, nil)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, ""
+	}
+	// Identity is best-effort: a healthz body without checkpoint info (or
+	// that isn't JSON) still counts as healthy, just anonymous.
+	var payload healthzPayload
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil || payload.Checkpoint == "" {
+		return true, ""
+	}
+	return true, fmt.Sprintf("%s@step%d", payload.Checkpoint, payload.CheckpointStep)
 }

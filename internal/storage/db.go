@@ -80,6 +80,12 @@ type MatchPlayer struct {
 	Placement   uint  `gorm:"not null;default:0" json:"placement"` // 1st, 2nd, 3rd, 4th
 	RatingDelta int   `gorm:"not null;default:0" json:"ratingDelta"`
 
+	// Seat-composition labels mirroring the paipu players, so a dataset can
+	// be filtered in SQL without parsing PaipuJSON. Bots have UserID 0.
+	IsBot      bool   `gorm:"not null;default:false" json:"isBot"`
+	Difficulty string `gorm:"size:32" json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
+	PolicyID   string `gorm:"size:512" json:"policyId,omitempty"`  // RL bots: serving checkpoint identity
+
 	// Eager-loaded user info for match history API
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }

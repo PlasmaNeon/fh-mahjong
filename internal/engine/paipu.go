@@ -14,6 +14,11 @@ type PaipuPlayer struct {
 	Seat   uint32 `json:"seat"`
 	Name   string `json:"name"`
 	UserID uint   `json:"userId"`
+	// Seat-composition labels for dataset use. Empty in paipu recorded
+	// before they existed (readers must treat absence as unknown).
+	Kind       string `json:"kind,omitempty"`       // "human" | "bot"
+	Difficulty string `json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
+	PolicyID   string `json:"policyId,omitempty"`   // RL bots: serving checkpoint identity
 }
 
 type PaipuAction struct {
@@ -125,11 +130,18 @@ func NewPaipuRecorder(matchID, ruleset string) *PaipuRecorder {
 }
 
 func (r *PaipuRecorder) AddPlayer(seat uint32, name string, userID uint) {
-	r.paipu.Players = append(r.paipu.Players, PaipuPlayer{
+	r.AddPlayerInfo(PaipuPlayer{
 		Seat:   seat,
 		Name:   name,
 		UserID: userID,
 	})
+}
+
+// AddPlayerInfo records a seat entry with full composition labels
+// (kind/difficulty/policy identity). AddPlayer remains for callers that
+// don't know the seat composition.
+func (r *PaipuRecorder) AddPlayerInfo(p PaipuPlayer) {
+	r.paipu.Players = append(r.paipu.Players, p)
 }
 
 func (r *PaipuRecorder) StartRound(

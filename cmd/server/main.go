@@ -123,15 +123,34 @@ func main() {
 	// Surface the RL option only while the model server is actually reachable.
 	rlHealth := remote.NewHealthChecker(rlPolicyURL)
 	matchmaker.RLAgentAvailable = rlHealth.Healthy
+	// Label RL seats in the paipu with the served checkpoint identity; when
+	// the policy server doesn't report one, fall back to the endpoint URL so
+	// the seat is at least attributable to a deployment.
+	matchmaker.RLPolicyIdentity = func() string {
+		if id := rlHealth.Identity(); id != "" {
+			return id
+		}
+		return rlPolicyURL
+	}
 	log.Printf("Private-room RL agent endpoint: %s (offered when reachable)", rlPolicyURL)
 
 	// When using the local default endpoint, bring the policy server up as a
 	// managed child process so the RL agent connects automatically on boot.
 	// Skipped when an external endpoint is configured (AI_BOT_POLICY_URL or
 	// RL_AGENT_POLICY_URL) — e.g. the docker-compose `policy` service.
+	var policyCleanup func()
 	if rlIsLocalDefault {
-		installSignalCleanup(maybeStartPolicyServer(rlPolicyURL))
+		policyCleanup = maybeStartPolicyServer(rlPolicyURL)
 	}
+	// On SIGINT/SIGTERM (Ctrl-C, redeploy), persist every in-flight match as
+	// "aborted" with its partial paipu before exiting, then stop the managed
+	// policy child (if any).
+	installSignalCleanup(func() {
+		matchmaker.DrainActiveRooms(10 * time.Second)
+		if policyCleanup != nil {
+			policyCleanup()
+		}
+	})
 
 	go matchmaker.StartQueueWatcher("fenghua")
 	go matchmaker.StartQueueWatcher("chongci-fh")

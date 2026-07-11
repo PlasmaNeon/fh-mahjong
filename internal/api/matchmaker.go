@@ -126,8 +126,20 @@ type Matchmaker struct {
 	// server is actually reachable. Nil means unavailable.
 	RLAgentAvailable func() bool
 
+	// RLPolicyIdentity reports the identity of the policy currently served at
+	// the RL endpoint (e.g. "<checkpoint>@step<N>" from its /healthz payload,
+	// falling back to the endpoint URL). Captured per RL seat at match start
+	// and recorded in the paipu so the dataset knows which model played. Nil
+	// or empty means unknown.
+	RLPolicyIdentity func() string
+
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
+
+	// activeRooms tracks every live match room (queue and private) keyed by
+	// matchID so a server drain can persist them before the process exits.
+	activeRoomsMu sync.Mutex
+	activeRooms   map[string]*Room
 
 	configuringMu     sync.Mutex
 	configuringTables map[string]*PrivateTable
@@ -146,8 +158,68 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		DB:                  db,
 		Hub:                 hub,
 		activePrivateTables: make(map[string]ActivePrivateTable),
+		activeRooms:         make(map[string]*Room),
 		configuringTables:   make(map[string]*PrivateTable),
 	}
+}
+
+// registerActiveRoom tracks a live room for server-drain persistence.
+func (m *Matchmaker) registerActiveRoom(room *Room) {
+	m.activeRoomsMu.Lock()
+	defer m.activeRoomsMu.Unlock()
+	m.activeRooms[room.ID] = room
+}
+
+// unregisterActiveRoom drops a room from the drain registry (normal shutdown).
+func (m *Matchmaker) unregisterActiveRoom(matchID string) {
+	m.activeRoomsMu.Lock()
+	defer m.activeRoomsMu.Unlock()
+	delete(m.activeRooms, matchID)
+}
+
+// DrainActiveRooms asks every live room to shut down and waits (up to timeout)
+// for each to finish persisting. Called on SIGINT/SIGTERM so a redeploy marks
+// in-flight matches "aborted" with their partial paipu instead of orphaning
+// in_progress rows with empty PaipuJSON. Rooms whose loop never started (or
+// that are wedged) are skipped once the timeout elapses.
+func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
+	m.activeRoomsMu.Lock()
+	rooms := make([]*Room, 0, len(m.activeRooms))
+	for _, room := range m.activeRooms {
+		rooms = append(rooms, room)
+	}
+	m.activeRoomsMu.Unlock()
+
+	if len(rooms) == 0 {
+		return
+	}
+	log.Printf("Draining %d active room(s) before shutdown...", len(rooms))
+
+	// A closed channel (unlike time.After's one-shot send) releases every
+	// waiting goroutine at the deadline.
+	deadline := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() { close(deadline) })
+	defer timer.Stop()
+	var wg sync.WaitGroup
+	for _, room := range rooms {
+		wg.Add(1)
+		go func(r *Room) {
+			defer wg.Done()
+			select {
+			case r.Shutdown <- true:
+			case <-r.Done: // already shutting down on its own
+			case <-deadline:
+				log.Printf("Drain timed out signalling room %s", r.ID)
+				return
+			}
+			select {
+			case <-r.Done:
+			case <-deadline:
+				log.Printf("Drain timed out waiting for room %s to persist", r.ID)
+			}
+		}(room)
+	}
+	wg.Wait()
 }
 
 // resolveSeatPolicy builds the bot.Policy for a private-room seat of the given
@@ -296,10 +368,8 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		log.Printf("Database disabled, skipping match persistence for %s", matchID)
 	}
 
-	// 2. Add players to the join table
-	// In a real scenario we'd query users to convert string ID to uint ID
-	// For simulation, we assume ID mappings are properly handled down the line
-	// Note: Skipped explicit MatchPlayer insertion here for brevity; the Room engine handles scores.
+	// 2. MatchPlayer rows are inserted by Room.persistMatch at shutdown, once
+	// final scores and placements are known.
 
 	// 3. Create the Room Goroutine explicitly
 	roomOptions := []RoomOption{WithBotActionDelay(defaultBotActionDelay)}
@@ -314,7 +384,9 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	room.PrivateTableID = tableID
 	room.OnShutdown = func() {
 		m.unregisterActivePrivateTable(tableID)
+		m.unregisterActiveRoom(matchID)
 	}
+	m.registerActiveRoom(room)
 
 	// 4. Parse user IDs and dispatch to Hub for exact WS binding
 	var userIDs []uint
@@ -331,9 +403,14 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	}
 
 	seats := make(map[uint32]uint, len(userIDs))
+	seatInfos := make(map[uint32]SeatInfo, len(userIDs))
 	for i, uid := range userIDs {
 		seats[uint32(i)] = uid
+		// Queue matches seat four humans; usernames are resolved from the
+		// live socket (or a userID placeholder) when the paipu registers.
+		seatInfos[uint32(i)] = SeatInfo{Kind: "human", UserID: uid}
 	}
+	room.SeatInfos = seatInfos
 	m.Hub.BindRoom <- RoomBind{
 		Seats: seats,
 		Room:  room,
@@ -431,18 +508,25 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 
 		seatPolicies := make(map[uint32]bot.Policy)
+		seatInfos := make(map[uint32]SeatInfo)
 		humanSeats = make(map[uint32]uint)
 		for i, s := range table.Seats {
 			seat := uint32(i)
 			switch s.Kind {
 			case "human":
 				humanSeats[seat] = s.UserID
+				seatInfos[seat] = SeatInfo{Kind: "human", Name: s.Username, UserID: s.UserID}
 			case "bot":
 				policy, perr := m.resolveSeatPolicy(s.Difficulty)
 				if perr != nil {
 					return fmt.Errorf("seat %d: %w", i, perr)
 				}
 				seatPolicies[seat] = policy
+				info := SeatInfo{Kind: "bot", Difficulty: s.Difficulty}
+				if s.Difficulty == pb.Difficulty_DIFFICULTY_RL && m.RLPolicyIdentity != nil {
+					info.PolicyID = m.RLPolicyIdentity()
+				}
+				seatInfos[seat] = info
 			default:
 				return fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
 			}
@@ -477,9 +561,12 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		room.PaipuStore = m.PaipuStore
 		room.PrivateTableID = tableID
 		room.SeatPolicies = seatPolicies
+		room.SeatInfos = seatInfos
 		room.OnShutdown = func() {
 			m.unregisterActivePrivateTable(tableID)
+			m.unregisterActiveRoom(matchID)
 		}
+		m.registerActiveRoom(room)
 
 		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats), room)
 

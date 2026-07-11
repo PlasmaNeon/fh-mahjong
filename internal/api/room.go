@@ -44,7 +44,13 @@ type Room struct {
 	// the host's PrivateTable seat config. Seats not present in this map
 	// fall through to BotPolicy / the heuristic baseline (defensive only).
 	SeatPolicies map[uint32]bot.Policy
-	Seats        map[uint32]*Client // maps 0-3 to active WS connections
+	// SeatInfos records each seat's composition for the whole match (human
+	// vs bot, bot difficulty, RL policy identity), captured by the matchmaker
+	// at match start. It labels the paipu players so stored games are usable
+	// as a labelled dataset. Seats absent from the map fall back to
+	// SeatOwners/SeatPolicies-based classification (legacy paths and tests).
+	SeatInfos map[uint32]SeatInfo
+	Seats     map[uint32]*Client // maps 0-3 to active WS connections
 	// SeatOwners maps a seat (0-3) to the user ID that owns it for the whole
 	// match. Unlike Seats it is never cleared on disconnect, so a player can
 	// reclaim their seat after a bot took it over. Populated at BindRoom.
@@ -62,8 +68,11 @@ type Room struct {
 	// hands is unaffected.
 	botActionDelay time.Duration
 
-	ActionQueue      chan ClientAction
-	Shutdown         chan bool
+	ActionQueue chan ClientAction
+	Shutdown    chan bool
+	// Done is closed once the shutdown case has finished persisting the
+	// match, so a server drain can wait for persistence to complete.
+	Done             chan struct{}
 	InterruptChan    chan bool
 	TimerResolveChan chan bool // timer goroutine signals main loop to resolve interrupts
 	interruptTmr     *time.Timer
@@ -144,10 +153,12 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		Hub:                hub,
 		DB:                 db,
 		SeatPolicies:       make(map[uint32]bot.Policy),
+		SeatInfos:          make(map[uint32]SeatInfo),
 		Seats:              make(map[uint32]*Client),
 		SeatOwners:         make(map[uint32]uint),
 		ActionQueue:        make(chan ClientAction),
 		Shutdown:           make(chan bool),
+		Done:               make(chan struct{}),
 		InterruptChan:      make(chan bool, 1),
 		TimerResolveChan:   make(chan bool, 1),
 		DisconnectedClient: make(chan *Client, 4),
@@ -193,6 +204,7 @@ func (r *Room) Start() {
 				r.OnShutdown()
 			}
 			r.persistMatch()
+			close(r.Done)
 			return
 
 		case <-r.TimerResolveChan:
@@ -224,7 +236,8 @@ func (r *Room) appendReplay(payloads [][]byte) {
 
 // persistMatch finalizes the paipu and writes the replay + result to the DB
 // (or the in-memory paipu store when the DB is absent). Called once, on
-// shutdown.
+// shutdown. A room persisted before natural MATCH_END (server drain, abort)
+// records status "aborted" but still keeps every completed round.
 func (r *Room) persistMatch() {
 	// (For production, we might upload the replay to AWS S3 and save the URL.
 	// Since we're keeping it simple, we store the raw bytes directly in the DB
@@ -233,12 +246,13 @@ func (r *Room) persistMatch() {
 
 	// Finalize paipu recording
 	var paipuJSON string
+	var paipu *engine.Paipu
+	var finalScores [4]int32
+	for i, p := range r.Engine.State.Players {
+		finalScores[i] = p.Score
+	}
 	if r.Engine.Recorder != nil {
-		var finalScores [4]int32
-		for i, p := range r.Engine.State.Players {
-			finalScores[i] = p.Score
-		}
-		paipu := r.Engine.Recorder.Finalize(finalScores)
+		paipu = r.Engine.Recorder.Finalize(finalScores)
 		paipuBytes, err := json.Marshal(paipu)
 		if err != nil {
 			log.Printf("Failed to marshal paipu: %v", err)
@@ -247,20 +261,65 @@ func (r *Room) persistMatch() {
 		}
 	}
 
+	status := "completed"
+	if r.Engine.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		status = "aborted"
+	}
+
 	now := time.Now()
 	if r.DB != nil {
 		r.DB.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
-			Status:    "completed",
+			Status:    status,
 			EndTime:   &now,
 			ReplayURL: encodedReplay,
 			WallSeed:  r.Engine.State.WallSeed,
 			PaipuJSON: paipuJSON,
 		})
+		r.persistMatchPlayers(paipu, finalScores)
 	} else if paipuJSON != "" && r.PaipuStore != nil {
 		r.PaipuStore(r.ID, paipuJSON)
 		log.Printf("Stored paipu in-memory for room %s", r.ID)
 	} else {
 		log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
+	}
+}
+
+// persistMatchPlayers mirrors the paipu's seat entries into relational
+// MatchPlayer rows (seat, user, bot labels, final score, placement) so the
+// dataset can be filtered in SQL without parsing PaipuJSON. Ties share the
+// best placement (competition ranking). No-op without a DB or paipu.
+func (r *Room) persistMatchPlayers(paipu *engine.Paipu, finalScores [4]int32) {
+	if r.DB == nil || paipu == nil || len(paipu.Players) == 0 {
+		return
+	}
+	rows := make([]storage.MatchPlayer, 0, len(paipu.Players))
+	for _, p := range paipu.Players {
+		if p.Seat >= uint32(len(finalScores)) {
+			continue
+		}
+		score := finalScores[p.Seat]
+		placement := uint(1)
+		for _, other := range finalScores {
+			if other > score {
+				placement++
+			}
+		}
+		rows = append(rows, storage.MatchPlayer{
+			MatchID:    r.ID,
+			UserID:     p.UserID,
+			Seat:       uint(p.Seat),
+			FinalScore: score,
+			Placement:  placement,
+			IsBot:      p.Kind == "bot",
+			Difficulty: p.Difficulty,
+			PolicyID:   p.PolicyID,
+		})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if err := r.DB.Create(&rows).Error; err != nil {
+		log.Printf("Failed to persist match players for room %s: %v", r.ID, err)
 	}
 }
 
@@ -566,23 +625,105 @@ func (r *Room) storePaipuSnapshot() {
 	log.Printf("Saved paipu %s (hand %d)", paipuID, handNum)
 }
 
+// SeatInfo describes who or what occupies a seat for the whole match. The
+// matchmaker builds it from the private table's seat config (or the queue's
+// user list) so the paipu can be labelled independently of which sockets
+// happen to be connected when the room starts.
+type SeatInfo struct {
+	Kind       string // "human" | "bot"
+	Name       string // human display name (bots are named by the room)
+	UserID     uint   // humans only
+	Difficulty pb.Difficulty
+	PolicyID   string // RL seats: serving checkpoint identity
+}
+
+// difficultyLabel maps a proto difficulty to the stable string stored in the
+// paipu. Unknown/unspecified difficulties record as "" (unknown).
+func difficultyLabel(d pb.Difficulty) string {
+	switch d {
+	case pb.Difficulty_DIFFICULTY_HEURISTIC:
+		return "heuristic"
+	case pb.Difficulty_DIFFICULTY_RL:
+		return "rl"
+	default:
+		return ""
+	}
+}
+
+// botDisplayName renders the paipu display name for an automated seat, e.g.
+// "Bot 2 (RL)". Difficulty-less bots stay plain "Bot 2".
+func botDisplayName(seat uint32, d pb.Difficulty) string {
+	name := fmt.Sprintf("Bot %d", seat+1)
+	switch d {
+	case pb.Difficulty_DIFFICULTY_HEURISTIC:
+		return name + " (Heuristic)"
+	case pb.Difficulty_DIFFICULTY_RL:
+		return name + " (RL)"
+	default:
+		return name
+	}
+}
+
+// registerPaipuPlayers records the four seat entries on the paipu. Seat
+// composition comes from SeatInfos when the matchmaker provided it; otherwise
+// classification falls back to SeatOwners (authoritative for the whole match
+// — a reserved-but-not-yet-connected human is still a human), then the live
+// socket map, then a bot placeholder.
 func (r *Room) registerPaipuPlayers() {
 	if r.Engine == nil || r.Engine.Recorder == nil {
 		return
 	}
 
 	for seat := uint32(0); seat < 4; seat++ {
-		if client, ok := r.Seats[seat]; ok && client != nil {
-			r.Engine.Recorder.AddPlayer(seat, client.Username, client.UserID)
+		if info, ok := r.SeatInfos[seat]; ok {
+			r.Engine.Recorder.AddPlayerInfo(r.paipuPlayerForSeatInfo(seat, info))
 			continue
 		}
-
-		name := fmt.Sprintf("Bot %d", seat+1)
-		if _, configured := r.SeatPolicies[seat]; configured {
-			name = fmt.Sprintf("Bot %d (Heuristic)", seat+1)
+		if owner, owned := r.SeatOwners[seat]; owned {
+			r.Engine.Recorder.AddPlayerInfo(r.humanPaipuPlayer(seat, "", owner))
+			continue
 		}
-		r.Engine.Recorder.AddPlayer(seat, name, 0)
+		if client, ok := r.Seats[seat]; ok && client != nil {
+			r.Engine.Recorder.AddPlayerInfo(r.humanPaipuPlayer(seat, client.Username, client.UserID))
+			continue
+		}
+		// No composition info at all: an automated seat of unknown difficulty.
+		r.Engine.Recorder.AddPlayerInfo(engine.PaipuPlayer{
+			Seat: seat,
+			Name: botDisplayName(seat, pb.Difficulty_DIFFICULTY_UNSPECIFIED),
+			Kind: "bot",
+		})
 	}
+}
+
+// paipuPlayerForSeatInfo converts a matchmaker SeatInfo into its paipu entry.
+func (r *Room) paipuPlayerForSeatInfo(seat uint32, info SeatInfo) engine.PaipuPlayer {
+	if info.Kind == "human" {
+		return r.humanPaipuPlayer(seat, info.Name, info.UserID)
+	}
+	return engine.PaipuPlayer{
+		Seat:       seat,
+		Name:       botDisplayName(seat, info.Difficulty),
+		Kind:       "bot",
+		Difficulty: difficultyLabel(info.Difficulty),
+		PolicyID:   info.PolicyID,
+	}
+}
+
+// humanPaipuPlayer builds a human seat entry, preferring the live socket's
+// username, then the provided fallback name, then a userID-derived
+// placeholder (a reserved seat whose owner never connected).
+func (r *Room) humanPaipuPlayer(seat uint32, name string, userID uint) engine.PaipuPlayer {
+	if client, ok := r.Seats[seat]; ok && client != nil && client.Username != "" {
+		name = client.Username
+		if userID == 0 {
+			userID = client.UserID
+		}
+	}
+	if name == "" {
+		name = fmt.Sprintf("Player %d", userID)
+	}
+	return engine.PaipuPlayer{Seat: seat, Name: name, UserID: userID, Kind: "human"}
 }
 
 func appendReplayPayloads(dst []byte, payloads [][]byte) []byte {

@@ -15,6 +15,10 @@ export interface PaipuPlayer {
   seat: number
   name: string
   userId: number
+  // Seat-composition labels; absent in paipu recorded before they existed.
+  kind?: 'human' | 'bot'
+  difficulty?: 'heuristic' | 'rl'
+  policyId?: string
 }
 
 export interface PaipuAction {

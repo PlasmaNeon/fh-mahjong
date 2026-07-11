@@ -32,8 +32,9 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
 
 - **paipu.go** — Structured paipu recording support:
   - Paipu JSON DTOs for players, rounds, actions, melds, and results
+  - `PaipuPlayer` carries seat-composition labels for dataset use: `Kind` ("human"/"bot"), `Difficulty` ("heuristic"/"rl"), `PolicyID` (RL serving checkpoint identity). All `omitempty` — absent in old paipu, readers must treat absence as unknown
   - `TileFromId()` to map engine tile IDs back to suit/value pairs for replay export
-  - `PaipuRecorder` that tracks the canonical round flow directly from core engine events
+  - `PaipuRecorder` that tracks the canonical round flow directly from core engine events; `AddPlayerInfo()` records a fully-labelled seat entry, `AddPlayer()` remains for callers without composition info
 
 - **rules.go** — `RuleEngine` interface:
   - `GetInitialWall()` — Generate tile deck
