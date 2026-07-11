@@ -22,6 +22,8 @@ export interface PaipuPlayer {
   // RL decision provenance: remote-served vs heuristic-fallback counts.
   remoteDecisions?: number
   fallbackDecisions?: number
+  // Decisions a bot made on this seat (takeover of a human seat).
+  automatedDecisions?: number
 }
 
 export interface PaipuAction {

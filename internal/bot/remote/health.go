@@ -3,7 +3,6 @@ package remote
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -126,5 +125,5 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil || payload.Checkpoint == "" {
 		return true, ""
 	}
-	return true, fmt.Sprintf("%s@step%d", payload.Checkpoint, payload.CheckpointStep)
+	return true, checkpointIdentity(payload.Checkpoint, payload.CheckpointStep)
 }

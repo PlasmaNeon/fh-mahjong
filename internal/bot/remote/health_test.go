@@ -84,7 +84,7 @@ func TestHealthChecker_IdentityFromHealthz(t *testing.T) {
 	defer srv.Close()
 
 	h := NewHealthChecker(srv.URL + "/act")
-	if got, want := h.Identity(), "/models/champ.pt@step1234"; got != want {
+	if got, want := h.Identity(), "champ.pt@step1234"; got != want {
 		t.Fatalf("Identity() = %q, want %q", got, want)
 	}
 }

@@ -213,7 +213,7 @@ func TestHTTPPolicyTracksObservedPolicyIDs(t *testing.T) {
 	}
 
 	got := policy.ObservedPolicyIDs()
-	want := []string{"/models/a.pt@step100", "/models/b.pt@step200"}
+	want := []string{"a.pt@step100", "b.pt@step200"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("ObservedPolicyIDs() = %v, want %v", got, want)
 	}

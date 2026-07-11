@@ -29,6 +29,10 @@ type PaipuPlayer struct {
 	// degradation). A pure-RL dataset filter is fallbackDecisions == 0.
 	RemoteDecisions   uint64 `json:"remoteDecisions,omitempty"`
 	FallbackDecisions uint64 `json:"fallbackDecisions,omitempty"`
+	// AutomatedDecisions counts gameplay decisions a bot made ON THIS SEAT
+	// while it was automated (a human seat covered by a bot after a
+	// disconnect / no-show). Pure human play has automatedDecisions == 0.
+	AutomatedDecisions uint64 `json:"automatedDecisions,omitempty"`
 }
 
 type PaipuAction struct {
@@ -173,6 +177,17 @@ func (r *PaipuRecorder) SetPlayerDecisionCounts(seat uint32, remote, fallback ui
 		if r.paipu.Players[i].Seat == seat {
 			r.paipu.Players[i].RemoteDecisions = remote
 			r.paipu.Players[i].FallbackDecisions = fallback
+			return
+		}
+	}
+}
+
+// SetPlayerAutomatedDecisions records how many gameplay decisions were made
+// by automation on this seat (bot takeover of a human seat).
+func (r *PaipuRecorder) SetPlayerAutomatedDecisions(seat uint32, count uint64) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].AutomatedDecisions = count
 			return
 		}
 	}

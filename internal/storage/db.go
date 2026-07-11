@@ -91,6 +91,9 @@ type MatchPlayer struct {
 	// counts (pure-RL filter: fallback_decisions = 0 AND remote_decisions > 0).
 	RemoteDecisions   uint64 `gorm:"not null;default:0" json:"remoteDecisions,omitempty"`
 	FallbackDecisions uint64 `gorm:"not null;default:0" json:"fallbackDecisions,omitempty"`
+	// Decisions automation made on this seat (bot takeover of a human seat);
+	// pure-human filter: is_bot = false AND automated_decisions = 0.
+	AutomatedDecisions uint64 `gorm:"not null;default:0" json:"automatedDecisions,omitempty"`
 
 	// NOTE: deliberately no gorm relation to User (and no users foreign key):
 	// bots persist with UserID 0 and guest accounts (9000000-range ids) have

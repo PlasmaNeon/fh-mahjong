@@ -107,6 +107,12 @@ type Room struct {
 	// persisted on shutdown. Owned by the room goroutine (Start's loop).
 	replayBytes []byte
 
+	// automatedDecisions counts, per seat, the gameplay decisions made by
+	// automation (bot takeover of a human seat, or a bot seat's own play).
+	// READY acks are excluded (forced, not decisions). Room-goroutine only;
+	// reconciled into the paipu/MatchPlayer rows at persist time.
+	automatedDecisions map[uint32]uint64
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
@@ -175,6 +181,7 @@ func NewRoom(matchID string, hub *Hub, db *gorm.DB, opts ...RoomOption) *Room {
 		seatReleaseChan:    make(chan *Client, 4),
 		disconnectGrace:    defaultDisconnectGrace,
 		botTick:            make(chan struct{}, 1),
+		automatedDecisions: make(map[uint32]uint64),
 	}
 	for _, opt := range opts {
 		opt(room)
@@ -363,6 +370,13 @@ func (r *Room) reconcileRLPolicyIDs() {
 			r.Engine.Recorder.SetPlayerDecisionCounts(seat, remote, fallback)
 		}
 	}
+	// Mark bot-takeover play on human seats so "human data" filters can
+	// exclude it (kind stays human — the seat is still owned by its user).
+	for seat, count := range r.automatedDecisions {
+		if count > 0 {
+			r.Engine.Recorder.SetPlayerAutomatedDecisions(seat, count)
+		}
+	}
 }
 
 // persistMatchPlayers mirrors the paipu's seat entries into relational
@@ -393,16 +407,17 @@ func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, final
 			policyID = policyID[:512]
 		}
 		rows = append(rows, storage.MatchPlayer{
-			MatchID:           matchID,
-			UserID:            p.UserID,
-			Seat:              uint(p.Seat),
-			FinalScore:        score,
-			Placement:         placement,
-			IsBot:             p.Kind == "bot",
-			Difficulty:        p.Difficulty,
-			PolicyID:          policyID,
-			RemoteDecisions:   p.RemoteDecisions,
-			FallbackDecisions: p.FallbackDecisions,
+			MatchID:            matchID,
+			UserID:             p.UserID,
+			Seat:               uint(p.Seat),
+			FinalScore:         score,
+			Placement:          placement,
+			IsBot:              p.Kind == "bot",
+			Difficulty:         p.Difficulty,
+			PolicyID:           policyID,
+			RemoteDecisions:    p.RemoteDecisions,
+			FallbackDecisions:  p.FallbackDecisions,
+			AutomatedDecisions: p.AutomatedDecisions,
 		})
 	}
 	if len(rows) == 0 {

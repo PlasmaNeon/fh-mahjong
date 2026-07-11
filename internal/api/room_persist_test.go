@@ -580,3 +580,50 @@ func TestStartPrivateTable_DrainGateLeavesNoOrphanRow(t *testing.T) {
 		t.Fatal("refused start must not leave the table registered as active")
 	}
 }
+
+// A human seat played by a bot (never connected / disconnected takeover) must
+// carry an automated-decision marker: datasets filtered as "human play" must
+// be able to exclude bot-generated actions.
+func TestPersistMatch_MarksAutomatedTakeoverOfHumanSeat(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "takeover-match")
+
+	room := NewRoom("takeover-match", nil, db)
+	room.SeatInfos = map[uint32]SeatInfo{
+		0: {Kind: "human", Name: "Ghost", UserID: 101}, // reserved, never connects
+	}
+	room.SeatOwners[0] = 101
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	// Bots (including the takeover of seat 0) play some turns.
+	room.advanceAutomatedSeatsN(8)
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("persistMatch: %v", err)
+	}
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "takeover-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	var paipu engine.Paipu
+	if err := json.Unmarshal([]byte(row.PaipuJSON), &paipu); err != nil {
+		t.Fatalf("parse paipu: %v", err)
+	}
+	if paipu.Players[0].Kind != "human" {
+		t.Fatalf("seat 0 must stay attributed to its human owner: %+v", paipu.Players[0])
+	}
+	if paipu.Players[0].AutomatedDecisions == 0 {
+		t.Fatal("bot-takeover decisions on a human seat must be marked (automatedDecisions > 0)")
+	}
+	var mp storage.MatchPlayer
+	if err := db.Where("match_id = ? AND seat = 0", "takeover-match").First(&mp).Error; err != nil {
+		t.Fatalf("load row: %v", err)
+	}
+	if mp.AutomatedDecisions == 0 {
+		t.Fatal("MatchPlayer row must mirror the automated-decision marker")
+	}
+}

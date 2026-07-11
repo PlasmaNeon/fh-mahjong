@@ -123,14 +123,16 @@ func main() {
 	// Surface the RL option only while the model server is actually reachable.
 	rlHealth := remote.NewHealthChecker(rlPolicyURL)
 	matchmaker.RLAgentAvailable = rlHealth.Healthy
-	// Label RL seats in the paipu with the served checkpoint identity; when
-	// the policy server doesn't report one, fall back to the endpoint URL so
-	// the seat is at least attributable to a deployment.
+	// Label RL seats in the paipu with the served checkpoint identity
+	// (basename@step from /healthz — paipu are public, so never a URL or
+	// filesystem path). When the policy server reports nothing, fall back to
+	// the operator-configured RL_AGENT_CHECKPOINT_ID; empty means unknown.
+	rlCheckpointLabel := strings.TrimSpace(os.Getenv("RL_AGENT_CHECKPOINT_ID"))
 	matchmaker.RLPolicyIdentity = func() string {
 		if id := rlHealth.Identity(); id != "" {
 			return id
 		}
-		return rlPolicyURL
+		return rlCheckpointLabel
 	}
 	log.Printf("Private-room RL agent endpoint: %s (offered when reachable)", rlPolicyURL)
 

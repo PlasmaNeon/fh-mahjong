@@ -251,7 +251,7 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 	// and will actually be played (a rejected response falls back to the
 	// heuristic, which must not be credited to the remote checkpoint).
 	if response.CheckpointPath != "" {
-		p.recordObservedPolicyID(fmt.Sprintf("%s@step%d", response.CheckpointPath, response.CheckpointStep))
+		p.recordObservedPolicyID(checkpointIdentity(response.CheckpointPath, response.CheckpointStep))
 	}
 	return action, nil
 }
