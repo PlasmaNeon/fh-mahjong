@@ -416,6 +416,8 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 			status = http.StatusConflict
 		case errors.Is(err, ErrPrivateTablePersistFailed):
 			status = http.StatusInternalServerError
+		case errors.Is(err, ErrServerDraining):
+			status = http.StatusServiceUnavailable
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return

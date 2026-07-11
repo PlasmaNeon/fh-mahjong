@@ -25,6 +25,14 @@ import (
 // losing turns. Override per-room with WithDisconnectGrace (0 = immediate).
 const defaultDisconnectGrace = 20 * time.Second
 
+// Shutdown-persistence retry policy: transient DB hiccups (connection blips,
+// lock contention) get a few quick attempts before the room gives up and
+// leaves the match row in_progress.
+const (
+	persistAttempts     = 3
+	persistRetryBackoff = 250 * time.Millisecond
+)
+
 // Room represents a single active match, orchestrating 4 clients and 1 core engine
 type Room struct {
 	ID             string
@@ -203,9 +211,21 @@ func (r *Room) Start() {
 			log.Printf("Room %s shutting down", r.ID)
 			// Persist BEFORE unregistering (OnShutdown): if SIGTERM lands
 			// in between, DrainActiveRooms must still see this room so the
-			// process can't exit mid-write.
-			if err := r.persistMatch(); err != nil {
-				log.Printf("Room %s failed to persist match: %v", r.ID, err)
+			// process can't exit mid-write. Transient DB failures get a few
+			// retries; a persistent failure leaves the row in_progress (a
+			// consistent state a backfill can find) and is logged loudly.
+			var persistErr error
+			for attempt := 1; attempt <= persistAttempts; attempt++ {
+				if persistErr = r.persistMatch(); persistErr == nil {
+					break
+				}
+				log.Printf("Room %s persist attempt %d/%d failed: %v", r.ID, attempt, persistAttempts, persistErr)
+				if attempt < persistAttempts {
+					time.Sleep(persistRetryBackoff)
+				}
+			}
+			if persistErr != nil {
+				log.Printf("Room %s GAVE UP persisting match after %d attempts; row remains in_progress", r.ID, persistAttempts)
 			}
 			if r.OnShutdown != nil {
 				r.OnShutdown()
@@ -356,6 +376,12 @@ func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, final
 				placement++
 			}
 		}
+		// PolicyID is varchar(512); truncate rather than let an oversized
+		// label fail the insert and roll back the whole match write.
+		policyID := p.PolicyID
+		if len(policyID) > 512 {
+			policyID = policyID[:512]
+		}
 		rows = append(rows, storage.MatchPlayer{
 			MatchID:    matchID,
 			UserID:     p.UserID,
@@ -364,7 +390,7 @@ func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, final
 			Placement:  placement,
 			IsBot:      p.Kind == "bot",
 			Difficulty: p.Difficulty,
-			PolicyID:   p.PolicyID,
+			PolicyID:   policyID,
 		})
 	}
 	if len(rows) == 0 {

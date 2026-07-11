@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,5 +368,94 @@ func TestPersistMatch_ReconcilesObservedPolicyIDs(t *testing.T) {
 	}
 	if mpRows[0].PolicyID != "a.pt@step100,b.pt@step200" {
 		t.Fatalf("seat 2 MatchPlayer policyId = %q", mpRows[0].PolicyID)
+	}
+}
+
+// The PolicyID column is varchar(512); an oversized label must be truncated
+// rather than failing the insert and rolling back the whole match write.
+func TestPersistMatch_TruncatesOversizedPolicyID(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "longid-match")
+
+	room := NewRoom("longid-match", nil, db)
+	longID := strings.Repeat("c", 600)
+	room.SeatInfos = map[uint32]SeatInfo{
+		2: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: longID},
+	}
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("persistMatch must survive oversized policy ids: %v", err)
+	}
+	var rows []storage.MatchPlayer
+	if err := db.Where("match_id = ? AND seat = 2", "longid-match").Find(&rows).Error; err != nil || len(rows) != 1 {
+		t.Fatalf("load seat 2 row: %v (%d rows)", err, len(rows))
+	}
+	if len(rows[0].PolicyID) > 512 {
+		t.Fatalf("PolicyID not bounded: %d chars", len(rows[0].PolicyID))
+	}
+}
+
+// Transient DB failures during shutdown are retried before giving up.
+func TestRoomShutdown_RetriesTransientPersistFailure(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "retry-match")
+
+	// Fail the first two write attempts, then recover.
+	var failures int
+	if err := db.Callback().Update().Before("gorm:update").Register("test:failtwice", func(tx *gorm.DB) {
+		if failures < 2 {
+			failures++
+			tx.AddError(gorm.ErrInvalidTransaction)
+		}
+	}); err != nil {
+		t.Fatalf("register callback: %v", err)
+	}
+
+	room := NewRoom("retry-match", nil, db)
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+	go room.Start()
+	room.Shutdown <- true
+	<-room.Done
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "retry-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status == "in_progress" {
+		t.Fatalf("expected retries to persist the match, still in_progress after %d failures", failures)
+	}
+}
+
+// While the server is draining, no new match may start (it would be invisible
+// to the in-flight drain and instantly orphaned by os.Exit).
+func TestStartPrivateTable_RefusedWhileDraining(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+
+	if _, err := m.JoinOrCreatePrivateTable("t-drain", 101, "alice"); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if _, err := m.MutatePrivateTable("t-drain", func(pt *PrivateTable) error {
+		for _, seat := range []uint32{1, 2, 3} {
+			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
+	m.DrainActiveRooms(100 * time.Millisecond) // no rooms; flips draining mode
+
+	if _, err := m.StartPrivateTable("t-drain", 101); err == nil {
+		t.Fatal("expected StartPrivateTable to be refused while draining")
 	}
 }

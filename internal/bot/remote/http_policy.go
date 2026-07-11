@@ -236,9 +236,6 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 			err:    fmt.Errorf("remote policy error: %s", response.Error),
 		}
 	}
-	if response.CheckpointPath != "" {
-		p.recordObservedPolicyID(fmt.Sprintf("%s@step%d", response.CheckpointPath, response.CheckpointStep))
-	}
 	if response.ActionID < 0 || response.ActionID >= rl.ActionSpaceSize {
 		return nil, policyError{
 			reason: FallbackReasonIllegalAction,
@@ -249,6 +246,12 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 	action, err := rl.DecodeActionID(state, seat, response.ActionID)
 	if err != nil {
 		return nil, policyError{reason: FallbackReasonIllegalAction, err: err}
+	}
+	// Attribute the checkpoint only now that its action passed validation
+	// and will actually be played (a rejected response falls back to the
+	// heuristic, which must not be credited to the remote checkpoint).
+	if response.CheckpointPath != "" {
+		p.recordObservedPolicyID(fmt.Sprintf("%s@step%d", response.CheckpointPath, response.CheckpointStep))
 	}
 	return action, nil
 }
@@ -269,16 +272,31 @@ type actResponse struct {
 	CheckpointStep int64   `json:"checkpoint_step,omitempty"`
 }
 
+// Bounds on remote-reported checkpoint identities: the values come from an
+// external response and end up in a varchar(512) column that shares a
+// transaction with the match write, so a hostile/misconfigured server must
+// not be able to bloat them.
+const (
+	maxObservedPolicyIDs   = 8
+	maxObservedPolicyIDLen = 256
+)
+
 // recordObservedPolicyID appends a checkpoint identity the first time it is
 // seen. The list stays tiny (one entry per hot reload), so a linear scan is
 // fine.
 func (p *HTTPPolicy) recordObservedPolicyID(id string) {
+	if len(id) > maxObservedPolicyIDLen {
+		id = id[:maxObservedPolicyIDLen]
+	}
 	p.observedMu.Lock()
 	defer p.observedMu.Unlock()
 	for _, existing := range p.observedPolicyIDs {
 		if existing == id {
 			return
 		}
+	}
+	if len(p.observedPolicyIDs) >= maxObservedPolicyIDs {
+		return
 	}
 	p.observedPolicyIDs = append(p.observedPolicyIDs, id)
 }

@@ -235,3 +235,51 @@ func TestHTTPPolicyObservedPolicyIDsEmptyWithoutCheckpoint(t *testing.T) {
 		t.Fatalf("ObservedPolicyIDs() = %v, want empty", got)
 	}
 }
+
+// A response whose action fails validation must NOT attribute the checkpoint:
+// the heuristic fallback played that turn, not the remote policy.
+func TestHTTPPolicyDoesNotAttributeRejectedActions(t *testing.T) {
+	state := testDiscardState()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 999999, CheckpointPath: "/models/bad.pt", CheckpointStep: 1})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	if action := policy.ChooseAction(state, 0); action == nil {
+		t.Fatal("expected heuristic fallback action")
+	}
+	if got := policy.ObservedPolicyIDs(); len(got) != 0 {
+		t.Fatalf("rejected action must not be attributed, got %v", got)
+	}
+}
+
+// Identities are bounded at ingestion so a hostile/misconfigured server
+// cannot bloat the persisted labels (which share a transaction with the
+// match write).
+func TestHTTPPolicyBoundsObservedIdentities(t *testing.T) {
+	state := testDiscardState()
+	long := strings.Repeat("x", 5000)
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5, CheckpointPath: fmt.Sprintf("%s-%d", long, call), CheckpointStep: 1})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for i := 0; i < 20; i++ {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected remote action")
+		}
+	}
+	got := policy.ObservedPolicyIDs()
+	if len(got) > maxObservedPolicyIDs {
+		t.Fatalf("observed list unbounded: %d entries", len(got))
+	}
+	for _, id := range got {
+		if len(id) > maxObservedPolicyIDLen {
+			t.Fatalf("identity unbounded: %d chars", len(id))
+		}
+	}
+}

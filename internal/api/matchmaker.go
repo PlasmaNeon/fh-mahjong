@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ var (
 	ErrPrivateTableAlreadyStarted = errors.New("table already started")
 	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
+	ErrServerDraining             = errors.New("server is shutting down")
 )
 
 // InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
@@ -141,6 +143,11 @@ type Matchmaker struct {
 	activeRoomsMu sync.Mutex
 	activeRooms   map[string]*Room
 
+	// draining is set by DrainActiveRooms: once the server is shutting down,
+	// no new match may start (it would miss the drain snapshot and be
+	// orphaned when the process exits).
+	draining atomic.Bool
+
 	configuringMu     sync.Mutex
 	configuringTables map[string]*PrivateTable
 }
@@ -177,49 +184,71 @@ func (m *Matchmaker) unregisterActiveRoom(matchID string) {
 	delete(m.activeRooms, matchID)
 }
 
-// DrainActiveRooms asks every live room to shut down and waits (up to timeout)
-// for each to finish persisting. Called on SIGINT/SIGTERM so a redeploy marks
-// in-flight matches "aborted" with their partial paipu instead of orphaning
-// in_progress rows with empty PaipuJSON. Rooms whose loop never started (or
-// that are wedged) are skipped once the timeout elapses.
+// DrainActiveRooms stops new matches from starting, then asks every live room
+// to shut down and waits (up to timeout) for each to finish persisting.
+// Called on SIGINT/SIGTERM so a redeploy marks in-flight matches "aborted"
+// with their partial paipu instead of orphaning in_progress rows with empty
+// PaipuJSON. It re-snapshots until the registry is empty so a room that
+// started just before the draining flag flipped is still covered. Rooms whose
+// loop never started (or that are wedged) are skipped once the timeout
+// elapses.
 func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
-	m.activeRoomsMu.Lock()
-	rooms := make([]*Room, 0, len(m.activeRooms))
-	for _, room := range m.activeRooms {
-		rooms = append(rooms, room)
-	}
-	m.activeRoomsMu.Unlock()
-
-	if len(rooms) == 0 {
-		return
-	}
-	log.Printf("Draining %d active room(s) before shutdown...", len(rooms))
+	m.draining.Store(true)
 
 	// A closed channel (unlike time.After's one-shot send) releases every
 	// waiting goroutine at the deadline.
 	deadline := make(chan struct{})
 	timer := time.AfterFunc(timeout, func() { close(deadline) })
 	defer timer.Stop()
-	var wg sync.WaitGroup
-	for _, room := range rooms {
-		wg.Add(1)
-		go func(r *Room) {
-			defer wg.Done()
-			select {
-			case r.Shutdown <- true:
-			case <-r.Done: // already shutting down on its own
-			case <-deadline:
-				log.Printf("Drain timed out signalling room %s", r.ID)
-				return
-			}
-			select {
-			case <-r.Done:
-			case <-deadline:
-				log.Printf("Drain timed out waiting for room %s to persist", r.ID)
-			}
-		}(room)
+
+	for {
+		m.activeRoomsMu.Lock()
+		rooms := make([]*Room, 0, len(m.activeRooms))
+		for _, room := range m.activeRooms {
+			rooms = append(rooms, room)
+		}
+		m.activeRoomsMu.Unlock()
+
+		if len(rooms) == 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			log.Printf("Drain deadline reached with %d room(s) still registered", len(rooms))
+			return
+		default:
+		}
+		log.Printf("Draining %d active room(s) before shutdown...", len(rooms))
+
+		var wg sync.WaitGroup
+		for _, room := range rooms {
+			wg.Add(1)
+			go func(r *Room) {
+				defer wg.Done()
+				select {
+				case r.Shutdown <- true:
+				case <-r.Done: // already shutting down on its own
+				case <-deadline:
+					log.Printf("Drain timed out signalling room %s", r.ID)
+					return
+				}
+				select {
+				case <-r.Done:
+				case <-deadline:
+					log.Printf("Drain timed out waiting for room %s to persist", r.ID)
+				}
+			}(room)
+		}
+		wg.Wait()
+
+		// Rooms that hit the deadline (wedged/never-started) stay registered;
+		// exit rather than spinning on them forever.
+		select {
+		case <-deadline:
+			return
+		default:
+		}
 	}
-	wg.Wait()
 }
 
 // resolveSeatPolicy builds the bot.Policy for a private-room seat of the given
@@ -348,6 +377,10 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 }
 
 func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID string) {
+	if m.draining.Load() {
+		log.Printf("Refusing to start match during shutdown drain (players %v)", playerIDs)
+		return
+	}
 	ruleset = canonicalRuleset(ruleset)
 	matchID := uuid.New().String()
 
@@ -484,6 +517,9 @@ func (m *Matchmaker) removeConfiguringTable(tableID string) {
 // via the Hub. Returns the table snapshot (with State == "started" and
 // MatchID populated) on success.
 func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*PrivateTable, error) {
+	if m.draining.Load() {
+		return nil, ErrServerDraining
+	}
 	table := m.GetConfiguringPrivateTable(tableID)
 	if table == nil {
 		return nil, ErrPrivateTableNotFound
