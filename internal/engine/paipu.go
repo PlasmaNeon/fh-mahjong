@@ -18,7 +18,10 @@ type PaipuPlayer struct {
 	// before they existed (readers must treat absence as unknown).
 	Kind       string `json:"kind,omitempty"`       // "human" | "bot"
 	Difficulty string `json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
-	PolicyID   string `json:"policyId,omitempty"`   // RL bots: serving checkpoint identity
+	// PolicyID is the RL serving checkpoint identity captured at MATCH START
+	// (from the policy server's /healthz). An operator hot-reloading the
+	// checkpoint mid-match is not reflected here.
+	PolicyID string `json:"policyId,omitempty"`
 }
 
 type PaipuAction struct {

@@ -186,3 +186,51 @@ func TestPersistMatch_InsertsMatchPlayerRows(t *testing.T) {
 		}
 	}
 }
+
+// Persistence failures must be reported, not silently swallowed (a drained
+// deploy would otherwise claim success while the match stayed in_progress).
+func TestPersistMatch_ReportsDBFailure(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "failing-match")
+
+	room := NewRoom("failing-match", nil, db)
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	if err := db.Migrator().DropTable("matches"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	if err := room.persistMatch(); err == nil {
+		t.Fatal("expected persistMatch to report the failed write")
+	}
+}
+
+// The Match update and MatchPlayer insert are one transaction: if the row
+// insert fails nothing is committed, so a retry/backfill sees a consistent
+// in_progress row instead of a half-persisted match.
+func TestPersistMatch_TransactionalRows(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "tx-match")
+
+	room := NewRoom("tx-match", nil, db)
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	if err := db.Migrator().DropTable("match_players"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	if err := room.persistMatch(); err == nil {
+		t.Fatal("expected persistMatch to fail when MatchPlayer insert fails")
+	}
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "tx-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status != "in_progress" || row.PaipuJSON != "" {
+		t.Fatalf("expected rollback to keep the match untouched, got status=%q paipuLen=%d", row.Status, len(row.PaipuJSON))
+	}
+}

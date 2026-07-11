@@ -203,7 +203,9 @@ func (r *Room) Start() {
 			if r.OnShutdown != nil {
 				r.OnShutdown()
 			}
-			r.persistMatch()
+			if err := r.persistMatch(); err != nil {
+				log.Printf("Room %s failed to persist match: %v", r.ID, err)
+			}
 			close(r.Done)
 			return
 
@@ -238,7 +240,12 @@ func (r *Room) appendReplay(payloads [][]byte) {
 // (or the in-memory paipu store when the DB is absent). Called once, on
 // shutdown. A room persisted before natural MATCH_END (server drain, abort)
 // records status "aborted" but still keeps every completed round.
-func (r *Room) persistMatch() {
+//
+// The Match update and MatchPlayer insert run in one transaction, and a
+// failure is returned (and logged by the caller): a failed write leaves the
+// row in_progress with no seat rows, a consistent state a backfill can find,
+// rather than a silently half-persisted match.
+func (r *Room) persistMatch() error {
 	// (For production, we might upload the replay to AWS S3 and save the URL.
 	// Since we're keeping it simple, we store the raw bytes directly in the DB
 	// as base64 text.)
@@ -268,29 +275,38 @@ func (r *Room) persistMatch() {
 
 	now := time.Now()
 	if r.DB != nil {
-		r.DB.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
-			Status:    status,
-			EndTime:   &now,
-			ReplayURL: encodedReplay,
-			WallSeed:  r.Engine.State.WallSeed,
-			PaipuJSON: paipuJSON,
+		err := r.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&storage.Match{}).Where("id = ?", r.ID).Updates(storage.Match{
+				Status:    status,
+				EndTime:   &now,
+				ReplayURL: encodedReplay,
+				WallSeed:  r.Engine.State.WallSeed,
+				PaipuJSON: paipuJSON,
+			}).Error; err != nil {
+				return err
+			}
+			return persistMatchPlayers(tx, r.ID, paipu, finalScores)
 		})
-		r.persistMatchPlayers(paipu, finalScores)
+		if err != nil {
+			return fmt.Errorf("persist match %s: %w", r.ID, err)
+		}
 	} else if paipuJSON != "" && r.PaipuStore != nil {
 		r.PaipuStore(r.ID, paipuJSON)
 		log.Printf("Stored paipu in-memory for room %s", r.ID)
 	} else {
 		log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
 	}
+	return nil
 }
 
 // persistMatchPlayers mirrors the paipu's seat entries into relational
 // MatchPlayer rows (seat, user, bot labels, final score, placement) so the
 // dataset can be filtered in SQL without parsing PaipuJSON. Ties share the
-// best placement (competition ranking). No-op without a DB or paipu.
-func (r *Room) persistMatchPlayers(paipu *engine.Paipu, finalScores [4]int32) {
-	if r.DB == nil || paipu == nil || len(paipu.Players) == 0 {
-		return
+// best placement (competition ranking). Runs inside persistMatch's
+// transaction. No-op without a paipu.
+func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, finalScores [4]int32) error {
+	if paipu == nil || len(paipu.Players) == 0 {
+		return nil
 	}
 	rows := make([]storage.MatchPlayer, 0, len(paipu.Players))
 	for _, p := range paipu.Players {
@@ -305,7 +321,7 @@ func (r *Room) persistMatchPlayers(paipu *engine.Paipu, finalScores [4]int32) {
 			}
 		}
 		rows = append(rows, storage.MatchPlayer{
-			MatchID:    r.ID,
+			MatchID:    matchID,
 			UserID:     p.UserID,
 			Seat:       uint(p.Seat),
 			FinalScore: score,
@@ -316,11 +332,9 @@ func (r *Room) persistMatchPlayers(paipu *engine.Paipu, finalScores [4]int32) {
 		})
 	}
 	if len(rows) == 0 {
-		return
+		return nil
 	}
-	if err := r.DB.Create(&rows).Error; err != nil {
-		log.Printf("Failed to persist match players for room %s: %v", r.ID, err)
-	}
+	return tx.Create(&rows).Error
 }
 
 // resolveInterruptsFromTimer handles the timer goroutine's signal that the

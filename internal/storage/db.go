@@ -20,7 +20,6 @@ type User struct {
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 
-	Matches []MatchPlayer `gorm:"foreignKey:UserID" json:"-"`
 }
 
 const (
@@ -86,8 +85,10 @@ type MatchPlayer struct {
 	Difficulty string `gorm:"size:32" json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
 	PolicyID   string `gorm:"size:512" json:"policyId,omitempty"`  // RL bots: serving checkpoint identity
 
-	// Eager-loaded user info for match history API
-	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	// NOTE: deliberately no gorm relation to User (and no users foreign key):
+	// bots persist with UserID 0 and guest accounts (9000000-range ids) have
+	// no users row by design, so a users FK would reject their rows.
+	// AutoMigrate drops the constraint left behind by the old relations.
 }
 
 // PaipuRecord stores a per-round paipu replay
@@ -141,6 +142,18 @@ func AutoMigrate(db *gorm.DB) error {
 		&MatchReview{},
 	); err != nil {
 		return err
+	}
+
+	// Drop the users foreign key(s) the old User↔MatchPlayer relations put on
+	// match_players. Bots persist with user_id 0 and guest accounts have no
+	// users row by design, so the constraint would reject their seat rows.
+	// Both historical GORM constraint names are handled; idempotent.
+	for _, constraint := range []string{"fk_users_matches", "fk_match_players_user"} {
+		if m.HasConstraint(&MatchPlayer{}, constraint) {
+			if err := m.DropConstraint(&MatchPlayer{}, constraint); err != nil {
+				return fmt.Errorf("dropping match_players users FK %q: %w", constraint, err)
+			}
+		}
 	}
 
 	// Drop the stale unique index on username left by the old schema so display

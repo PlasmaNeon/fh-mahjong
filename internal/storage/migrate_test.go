@@ -3,6 +3,7 @@ package storage
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -89,5 +90,60 @@ func TestAutoMigrateEmptyLegacyTableMigratesInPlace(t *testing.T) {
 	}
 	if err := db.Create(&User{Email: "b@x.com", Username: "Sam", PasswordHash: "h"}).Error; err != nil {
 		t.Fatalf("expected duplicate display name after migration, got: %v", err)
+	}
+}
+
+// legacyMatchPlayersDDL mirrors the schema GORM created before seat labels:
+// a users foreign key on match_players (from the then-declared relations).
+// Bots (user_id 0) and guest users (9000000-range, no users row by design)
+// cannot satisfy it, so AutoMigrate must drop it.
+const legacyMatchPlayersDDL = `CREATE TABLE match_players (
+	id integer PRIMARY KEY AUTOINCREMENT,
+	match_id uuid,
+	user_id integer NOT NULL,
+	seat integer NOT NULL,
+	final_score integer NOT NULL DEFAULT 0,
+	placement integer NOT NULL DEFAULT 0,
+	rating_delta integer NOT NULL DEFAULT 0,
+	CONSTRAINT fk_users_matches FOREIGN KEY (user_id) REFERENCES users(id)
+)`
+
+// After AutoMigrate, rows for bots (user_id 0) and guests (no users row) must
+// insert cleanly even with foreign-key enforcement on.
+func TestAutoMigrateDropsMatchPlayerUserFK(t *testing.T) {
+	db := newMemDB(t)
+	if err := db.Exec(`PRAGMA foreign_keys = ON`).Error; err != nil {
+		t.Fatalf("enable fk enforcement: %v", err)
+	}
+	// Seed the legacy schema: users table + match_players with the users FK.
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("bootstrap users: %v", err)
+	}
+	if err := db.Migrator().DropTable("match_players"); err != nil {
+		t.Fatalf("drop fresh match_players: %v", err)
+	}
+	if err := db.Exec(legacyMatchPlayersDDL).Error; err != nil {
+		t.Fatalf("create legacy match_players: %v", err)
+	}
+	if !db.Migrator().HasConstraint(&MatchPlayer{}, "fk_users_matches") {
+		t.Fatal("test premise broken: legacy FK not present")
+	}
+
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate over legacy match_players: %v", err)
+	}
+	if db.Migrator().HasConstraint(&MatchPlayer{}, "fk_users_matches") {
+		t.Fatal("expected AutoMigrate to drop the match_players users FK")
+	}
+
+	if err := db.Create(&Match{ID: "00000000-0000-0000-0000-000000000001", Status: "completed", StartTime: time.Now()}).Error; err != nil {
+		t.Fatalf("insert match: %v", err)
+	}
+	rows := []MatchPlayer{
+		{MatchID: "00000000-0000-0000-0000-000000000001", UserID: 0, Seat: 1, IsBot: true, Difficulty: "rl", PolicyID: "champ.pt@step9"},
+		{MatchID: "00000000-0000-0000-0000-000000000001", UserID: 9000123, Seat: 0},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("bot/guest MatchPlayer rows must insert without a users row: %v", err)
 	}
 }
