@@ -29,6 +29,7 @@ This package contains the ruleset-agnostic game driver (`Game` struct) and the i
   - `GameState` now carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
   - `PlayerState.LastDiscardFromDrawn`: public tsumogiri flag; true when the player's most recent discard was their just-drawn tile. Set in the discard handler; persists until their next discard (reset in `startNextRound`). It lives on the player, not on `ActiveDiscard`, because the common no-interrupt discard clears `ActiveDiscard` during the same turn-advance, before the state is broadcast
   - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`, `wallSeedOverride`
+  - `RedealUnseen(actingSeat, seed)` — search determinization: re-deals the 3 opponents' concealed hands + undrawn wall from the acting seat's unseen pool (seeded); visible state and wall geometry fixed; remaps opponents' `DrawnTileId` positionally and clears the interrupt queue (queued responses are hidden info). Clone-only use (`CloneForBranch`).
 
 - **paipu.go** — Structured paipu recording support:
   - Paipu JSON DTOs for players, rounds, actions, melds, and results
