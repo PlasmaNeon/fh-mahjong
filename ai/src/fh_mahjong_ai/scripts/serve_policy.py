@@ -43,7 +43,9 @@ class PolicyHolder:
     def reload(self, checkpoint: Optional[str] = None, checkpoint_id: str = "current") -> CheckpointPolicy:
         with self._lock:
             # Carry the current sampling config into the new policy: a hot-swap
-            # must not silently revert the deployed temperature softening.
+            # must not silently change serving behavior — whatever sampling was
+            # explicitly configured at launch (production default: none = greedy)
+            # is preserved across reloads.
             # Deliberate: the sampler RNG RESTARTS from the base seed on reload
             # (config is preserved, generator state is not) — reloads are rare
             # promotion events and real-play trajectories diverge immediately,
