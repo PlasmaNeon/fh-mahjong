@@ -173,3 +173,49 @@ func TestAddPlayerInfoRecordsSeatLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestPaipuSnapshotIncludesCurrentRound(t *testing.T) {
+	rec := engine.NewPaipuRecorder("snap-match", "fenghua")
+	rec.AddPlayer(0, "Alice", 1)
+	deals := [4][]uint32{{0}, {1}, {2}, {3}}
+	rec.StartRound(1, 1, 0, [2]uint32{3, 4}, "seed", nil, 7, [4]int32{}, deals)
+	rec.RecordDraw(0, 52)
+
+	snap := rec.Snapshot([4]int32{10, 20, 30, 40})
+	if len(snap.Rounds) != 1 {
+		t.Fatalf("snapshot rounds = %d, want 1 (must include the in-progress hand)", len(snap.Rounds))
+	}
+	if snap.Rounds[0].Result != nil {
+		t.Fatalf("in-progress round must have nil result, got %+v", snap.Rounds[0].Result)
+	}
+	if len(snap.Rounds[0].Actions) != 1 {
+		t.Fatalf("snapshot actions = %d, want 1", len(snap.Rounds[0].Actions))
+	}
+	if snap.FinalScores != [4]int32{10, 20, 30, 40} {
+		t.Fatalf("snapshot finalScores = %v", snap.FinalScores)
+	}
+
+	// Snapshot must not mutate the recorder: the round can still end
+	// normally and Finalize sees exactly one (completed) round.
+	rec.RecordDiscard(0, 52)
+	rec.EndRound(&engine.PaipuRoundResult{Type: "draw", ScoreChanges: []int32{0, 0, 0, 0}})
+	fin := rec.Finalize([4]int32{})
+	if len(fin.Rounds) != 1 {
+		t.Fatalf("finalize rounds = %d, want 1", len(fin.Rounds))
+	}
+	if fin.Rounds[0].Result == nil || len(fin.Rounds[0].Actions) != 2 {
+		t.Fatalf("completed round corrupted by snapshot: %+v", fin.Rounds[0])
+	}
+}
+
+func TestPaipuSnapshotBetweenRounds(t *testing.T) {
+	rec := engine.NewPaipuRecorder("snap2", "fenghua")
+	deals := [4][]uint32{{0}, {1}, {2}, {3}}
+	rec.StartRound(1, 1, 0, [2]uint32{3, 4}, "seed", nil, 7, [4]int32{}, deals)
+	rec.EndRound(&engine.PaipuRoundResult{Type: "draw", ScoreChanges: []int32{0, 0, 0, 0}})
+
+	snap := rec.Snapshot([4]int32{})
+	if len(snap.Rounds) != 1 {
+		t.Fatalf("snapshot rounds = %d, want 1 (no in-progress hand to add)", len(snap.Rounds))
+	}
+}

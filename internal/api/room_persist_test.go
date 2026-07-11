@@ -1,10 +1,12 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"gorm.io/gorm"
@@ -232,5 +234,74 @@ func TestPersistMatch_TransactionalRows(t *testing.T) {
 	}
 	if row.Status != "in_progress" || row.PaipuJSON != "" {
 		t.Fatalf("expected rollback to keep the match untouched, got status=%q paipuLen=%d", row.Status, len(row.PaipuJSON))
+	}
+}
+
+// A drained room must persist the hand in progress, not just completed
+// rounds: aborting during the first hand would otherwise store a paipu with
+// zero rounds, silently losing every deal and action.
+func TestDrainActiveRooms_KeepsInProgressHand(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "midhand-match")
+
+	hub := NewHub()
+	go hub.Run()
+	m := NewMatchmaker(NewInMemoryQueue(), db, hub)
+
+	room := NewRoom("midhand-match", hub, db)
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+	m.registerActiveRoom(room)
+	go room.Start()
+
+	m.DrainActiveRooms(5 * time.Second)
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "midhand-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	var paipu engine.Paipu
+	if err := json.Unmarshal([]byte(row.PaipuJSON), &paipu); err != nil {
+		t.Fatalf("parse persisted paipu: %v", err)
+	}
+	if len(paipu.Rounds) == 0 {
+		t.Fatal("aborted paipu lost the in-progress hand (zero rounds persisted)")
+	}
+	last := paipu.Rounds[len(paipu.Rounds)-1]
+	if len(last.Deals[0]) == 0 {
+		t.Fatal("in-progress hand persisted without deals")
+	}
+	if last.Result != nil {
+		t.Fatalf("in-progress hand must persist with nil result, got %+v", last.Result)
+	}
+}
+
+// The shutdown sequence must persist BEFORE unregistering the room: if
+// SIGTERM lands between OnShutdown and the DB write, DrainActiveRooms would
+// otherwise no longer see the room and the process could exit mid-write.
+func TestRoomShutdown_PersistsBeforeOnShutdown(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "order-match")
+
+	room := NewRoom("order-match", nil, db)
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+
+	statusAtUnregister := make(chan string, 1)
+	room.OnShutdown = func() {
+		var row storage.Match
+		if err := db.First(&row, "id = ?", "order-match").Error; err != nil {
+			statusAtUnregister <- "load-error: " + err.Error()
+			return
+		}
+		statusAtUnregister <- row.Status
+	}
+
+	go room.Start()
+	room.Shutdown <- true
+	<-room.Done
+
+	if got := <-statusAtUnregister; got == "in_progress" {
+		t.Fatal("room was unregistered while the match was still unpersisted (in_progress)")
 	}
 }

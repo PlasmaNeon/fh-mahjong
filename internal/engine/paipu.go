@@ -254,6 +254,25 @@ func (r *PaipuRecorder) Finalize(finalScores [4]int32) *Paipu {
 	return &r.paipu
 }
 
+// Snapshot returns a copy of the paipu that ALSO includes the in-progress
+// round (with a nil Result), so an aborted match persists the active hand's
+// deals and actions instead of dropping them. Unlike Finalize it never
+// mutates recorder state beyond the returned copy; the current round can
+// still end normally afterwards. Call from the goroutine that owns the
+// recorder (the round's Actions slice is shared with the copy).
+func (r *PaipuRecorder) Snapshot(finalScores [4]int32) *Paipu {
+	snap := r.paipu
+	snap.FinalScores = finalScores
+	snap.Rounds = make([]PaipuRound, len(r.paipu.Rounds), len(r.paipu.Rounds)+1)
+	copy(snap.Rounds, r.paipu.Rounds)
+	if r.currentRound != nil {
+		partial := *r.currentRound
+		partial.Result = nil
+		snap.Rounds = append(snap.Rounds, partial)
+	}
+	return &snap
+}
+
 // CurrentRound returns the in-progress round (for testing).
 func (r *PaipuRecorder) CurrentRound() *PaipuRound {
 	return r.currentRound

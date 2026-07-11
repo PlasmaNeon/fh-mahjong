@@ -200,11 +200,14 @@ func (r *Room) Start() {
 		select {
 		case <-r.Shutdown:
 			log.Printf("Room %s shutting down", r.ID)
-			if r.OnShutdown != nil {
-				r.OnShutdown()
-			}
+			// Persist BEFORE unregistering (OnShutdown): if SIGTERM lands
+			// in between, DrainActiveRooms must still see this room so the
+			// process can't exit mid-write.
 			if err := r.persistMatch(); err != nil {
 				log.Printf("Room %s failed to persist match: %v", r.ID, err)
+			}
+			if r.OnShutdown != nil {
+				r.OnShutdown()
 			}
 			close(r.Done)
 			return
@@ -259,7 +262,10 @@ func (r *Room) persistMatch() error {
 		finalScores[i] = p.Score
 	}
 	if r.Engine.Recorder != nil {
-		paipu = r.Engine.Recorder.Finalize(finalScores)
+		// Snapshot (not Finalize) so an abort mid-hand keeps the active
+		// hand's deals/actions as a result-less round. At natural MATCH_END
+		// the current round is already closed and this equals Finalize.
+		paipu = r.Engine.Recorder.Snapshot(finalScores)
 		paipuBytes, err := json.Marshal(paipu)
 		if err != nil {
 			log.Printf("Failed to marshal paipu: %v", err)
