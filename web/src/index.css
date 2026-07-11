@@ -1858,18 +1858,24 @@ body {
 .game-stage .seat-bundle .zone-hand {
   pointer-events: auto;
 }
-/* Reserve the hand's full (max 14-tile) width instead of content-sizing it.
-   A content-sized hand grows/shrinks by one tile every draw/discard; combined
-   with the bundle's justify-content: space-between that shifts the exposed
-   stack (flowers + melds) sideways each turn — the "shaking flowers" bug. A
-   fixed reserved width keeps the hand's footprint constant so the exposed stack
-   never moves when a tile is drawn. Sized per seat: self uses normal tiles and
-   a separate drawn slot (+drawn-gap); opponents render small backs in one row. */
+/* Reserve a fixed concealed-hand width instead of content-sizing it. A
+   content-sized hand grows/shrinks by one tile every draw/discard; combined with
+   the bundle's justify-content: space-between that shifts the exposed stack
+   (flowers + melds) sideways each turn — the "shaking flowers" bug. But the
+   reservation must track the hand's real max for its meld count, NOT a blanket 14
+   tiles: each called meld removes ~3 concealed tiles, so a called hand is
+   narrower. Over-reserving 14 makes the bundle content overflow its fixed span
+   and (because the bundle is centred on its pivot) shoves the exposed melds past
+   the table edge — the "first meld pushed out" bug. --seat-hand-tiles is set per
+   seat by SeatBundle.tsx (concealedHandReserveTiles) and stays constant across a
+   draw/discard, so the hand footprint is still fixed and the flowers don't shake.
+   Sized per seat: self uses normal tiles and a separate drawn slot (+drawn-gap);
+   opponents render small backs in one row. */
 .game-stage .seat-bundle--self .seat-hand--bottom {
-  width: calc(var(--tile-width) * 14 + var(--tile-gap) * 13 + var(--drawn-gap));
+  width: calc(var(--tile-width) * var(--seat-hand-tiles, 14) + var(--tile-gap) * (var(--seat-hand-tiles, 14) - 1) + var(--drawn-gap));
 }
 .game-stage .seat-bundle--opp .seat-hand--bottom {
-  width: calc(var(--tile-small-width) * 14 + var(--tile-gap) * 13);
+  width: calc(var(--tile-small-width) * var(--seat-hand-tiles, 14) + var(--tile-gap) * (var(--seat-hand-tiles, 14) - 1));
 }
 
 /* Exposed stack: flowers above melds, bottom-aligned with the hand baseline. */

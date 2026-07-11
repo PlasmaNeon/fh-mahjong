@@ -1,6 +1,8 @@
+import type { CSSProperties } from 'react'
 import { ClosedHand } from './ClosedHand'
 import { FlowerZone } from './FlowerZone'
 import { OpenMeldZone } from './OpenMeldZone'
+import { concealedHandReserveTiles } from './handReserve'
 import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type SeatBundleProps = {
@@ -32,8 +34,16 @@ export function SeatBundle({
   const melds = player.openMelds || []
   const hasExposed = flowers.length > 0 || melds.length > 0
 
+  // Reserve the concealed hand's width for its real max size given the called
+  // melds (not a blanket 14 tiles). Keeps the exposed stack from shaking on a
+  // draw AND from overflowing the bundle span once melds shrink the hand — the
+  // latter is what shoved the first meld past the table edge. See handReserve.ts.
+  const bundleStyle = {
+    '--seat-hand-tiles': concealedHandReserveTiles(melds.length),
+  } as CSSProperties
+
   return (
-    <div className={`seat-bundle seat-bundle--${isSelf ? 'self' : 'opp'}`}>
+    <div className={`seat-bundle seat-bundle--${isSelf ? 'self' : 'opp'}`} style={bundleStyle}>
       <ClosedHand
         isSelf={isSelf}
         player={player}
