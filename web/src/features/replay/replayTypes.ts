@@ -19,6 +19,9 @@ export interface PaipuPlayer {
   kind?: 'human' | 'bot'
   difficulty?: 'heuristic' | 'rl'
   policyId?: string
+  // RL decision provenance: remote-served vs heuristic-fallback counts.
+  remoteDecisions?: number
+  fallbackDecisions?: number
 }
 
 export interface PaipuAction {

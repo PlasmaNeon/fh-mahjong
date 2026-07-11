@@ -18,10 +18,17 @@ type PaipuPlayer struct {
 	// before they existed (readers must treat absence as unknown).
 	Kind       string `json:"kind,omitempty"`       // "human" | "bot"
 	Difficulty string `json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
-	// PolicyID is the RL serving checkpoint identity captured at MATCH START
-	// (from the policy server's /healthz). An operator hot-reloading the
-	// checkpoint mid-match is not reflected here.
+	// PolicyID is the RL serving checkpoint identity: the match-start label
+	// (from /healthz), reconciled at persist time to the comma-joined
+	// checkpoints that actually served the seat's actions. If
+	// RemoteDecisions is 0 the label is the configured endpoint identity,
+	// not evidence the model ever acted.
 	PolicyID string `json:"policyId,omitempty"`
+	// Decision provenance for RL seats: how many decisions the remote model
+	// served vs how many fell back to the local heuristic (per-decision
+	// degradation). A pure-RL dataset filter is fallbackDecisions == 0.
+	RemoteDecisions   uint64 `json:"remoteDecisions,omitempty"`
+	FallbackDecisions uint64 `json:"fallbackDecisions,omitempty"`
 }
 
 type PaipuAction struct {
@@ -154,6 +161,18 @@ func (r *PaipuRecorder) SetPlayerPolicyID(seat uint32, policyID string) {
 	for i := range r.paipu.Players {
 		if r.paipu.Players[i].Seat == seat {
 			r.paipu.Players[i].PolicyID = policyID
+			return
+		}
+	}
+}
+
+// SetPlayerDecisionCounts records a seat's remote-vs-fallback decision
+// provenance at persist time.
+func (r *PaipuRecorder) SetPlayerDecisionCounts(seat uint32, remote, fallback uint64) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].RemoteDecisions = remote
+			r.paipu.Players[i].FallbackDecisions = fallback
 			return
 		}
 	}

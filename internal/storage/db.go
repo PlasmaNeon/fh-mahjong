@@ -71,10 +71,12 @@ type Match struct {
 // MatchPlayer is the join table recording a user's performance in a specific match
 type MatchPlayer struct {
 	ID      uint   `gorm:"primaryKey" json:"-"`
-	MatchID string `gorm:"type:uuid;index;not null" json:"matchId"`
+	MatchID string `gorm:"type:uuid;index;not null;uniqueIndex:idx_match_players_match_seat,priority:1" json:"matchId"`
 	UserID  uint   `gorm:"index;not null" json:"userId"`
 
-	Seat        uint  `gorm:"not null" json:"seat"` // 0=East, 1=South, 2=West, 3=North
+	// One row per seat per match; the unique index also guards against a
+	// retried persist duplicating rows after an ambiguous commit.
+	Seat        uint  `gorm:"not null;uniqueIndex:idx_match_players_match_seat,priority:2" json:"seat"` // 0=East, 1=South, 2=West, 3=North
 	FinalScore  int32 `gorm:"not null;default:0" json:"finalScore"`
 	Placement   uint  `gorm:"not null;default:0" json:"placement"` // 1st, 2nd, 3rd, 4th
 	RatingDelta int   `gorm:"not null;default:0" json:"ratingDelta"`
@@ -84,6 +86,11 @@ type MatchPlayer struct {
 	IsBot      bool   `gorm:"not null;default:false" json:"isBot"`
 	Difficulty string `gorm:"size:32" json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
 	PolicyID   string `gorm:"size:512" json:"policyId,omitempty"`  // RL bots: serving checkpoint identity
+
+	// RL decision provenance: remote-served vs heuristic-fallback decision
+	// counts (pure-RL filter: fallback_decisions = 0 AND remote_decisions > 0).
+	RemoteDecisions   uint64 `gorm:"not null;default:0" json:"remoteDecisions,omitempty"`
+	FallbackDecisions uint64 `gorm:"not null;default:0" json:"fallbackDecisions,omitempty"`
 
 	// NOTE: deliberately no gorm relation to User (and no users foreign key):
 	// bots persist with UserID 0 and guest accounts (9000000-range ids) have

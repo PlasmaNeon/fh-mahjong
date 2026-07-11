@@ -459,3 +459,84 @@ func TestStartPrivateTable_RefusedWhileDraining(t *testing.T) {
 		t.Fatal("expected StartPrivateTable to be refused while draining")
 	}
 }
+
+// statsPolicy stubs an RL policy reporting decision provenance counts.
+type statsPolicy struct {
+	stubPolicy
+	remote, fallback uint64
+}
+
+func (p statsPolicy) DecisionCounts() (uint64, uint64) { return p.remote, p.fallback }
+
+// Seats whose endpoint fell back to the heuristic mid-match must be
+// distinguishable: remote/fallback decision counts are persisted per seat.
+func TestPersistMatch_RecordsDecisionProvenance(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "prov-match")
+
+	room := NewRoom("prov-match", nil, db)
+	room.SeatInfos = map[uint32]SeatInfo{
+		2: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: "a.pt@step1"},
+	}
+	room.SeatPolicies = map[uint32]bot.Policy{
+		2: statsPolicy{remote: 40, fallback: 3},
+	}
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("persistMatch: %v", err)
+	}
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "prov-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	var paipu engine.Paipu
+	if err := json.Unmarshal([]byte(row.PaipuJSON), &paipu); err != nil {
+		t.Fatalf("parse paipu: %v", err)
+	}
+	if p := paipu.Players[2]; p.RemoteDecisions != 40 || p.FallbackDecisions != 3 {
+		t.Fatalf("paipu provenance = (%d, %d), want (40, 3)", p.RemoteDecisions, p.FallbackDecisions)
+	}
+
+	var mp storage.MatchPlayer
+	if err := db.Where("match_id = ? AND seat = 2", "prov-match").First(&mp).Error; err != nil {
+		t.Fatalf("load row: %v", err)
+	}
+	if mp.RemoteDecisions != 40 || mp.FallbackDecisions != 3 {
+		t.Fatalf("row provenance = (%d, %d), want (40, 3)", mp.RemoteDecisions, mp.FallbackDecisions)
+	}
+}
+
+// Retried persistence must be idempotent: a retry after an ambiguous commit
+// cannot duplicate seat rows.
+func TestPersistMatch_IdempotentSeatRows(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "idem-match")
+
+	room := NewRoom("idem-match", nil, db)
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("first persist: %v", err)
+	}
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("second persist (retry): %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&storage.MatchPlayer{}).Where("match_id = ?", "idem-match").Count(&count).Error; err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("expected exactly 4 seat rows after a retried persist, got %d", count)
+	}
+}

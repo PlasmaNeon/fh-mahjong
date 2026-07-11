@@ -333,25 +333,35 @@ type policyIdentityReporter interface {
 	ObservedPolicyIDs() []string
 }
 
+// policyDecisionCounter is implemented by remote policies that count how many
+// decisions the remote model served vs how many fell back to the heuristic
+// (remote.HTTPPolicy).
+type policyDecisionCounter interface {
+	DecisionCounts() (remote, fallback uint64)
+}
+
 // reconcileRLPolicyIDs replaces each RL seat's match-start policy label with
 // the checkpoints that actually served its actions, comma-joined in serving
 // order — so a policy hot reload mid-match stays attributable instead of
 // silently mislabeling the dataset. Seats whose endpoint reports no
-// checkpoint info keep the match-start label.
+// checkpoint info keep the match-start label. It also records each seat's
+// remote-vs-fallback decision counts so heuristic degradation is visible in
+// the dataset.
 func (r *Room) reconcileRLPolicyIDs() {
 	for seat, info := range r.SeatInfos {
 		if info.Difficulty != pb.Difficulty_DIFFICULTY_RL {
 			continue
 		}
-		reporter, ok := r.SeatPolicies[seat].(policyIdentityReporter)
-		if !ok {
-			continue
+		policy := r.SeatPolicies[seat]
+		if reporter, ok := policy.(policyIdentityReporter); ok {
+			if observed := reporter.ObservedPolicyIDs(); len(observed) > 0 {
+				r.Engine.Recorder.SetPlayerPolicyID(seat, strings.Join(observed, ","))
+			}
 		}
-		observed := reporter.ObservedPolicyIDs()
-		if len(observed) == 0 {
-			continue
+		if counter, ok := policy.(policyDecisionCounter); ok {
+			remote, fallback := counter.DecisionCounts()
+			r.Engine.Recorder.SetPlayerDecisionCounts(seat, remote, fallback)
 		}
-		r.Engine.Recorder.SetPlayerPolicyID(seat, strings.Join(observed, ","))
 	}
 }
 
@@ -383,18 +393,26 @@ func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, final
 			policyID = policyID[:512]
 		}
 		rows = append(rows, storage.MatchPlayer{
-			MatchID:    matchID,
-			UserID:     p.UserID,
-			Seat:       uint(p.Seat),
-			FinalScore: score,
-			Placement:  placement,
-			IsBot:      p.Kind == "bot",
-			Difficulty: p.Difficulty,
-			PolicyID:   policyID,
+			MatchID:           matchID,
+			UserID:            p.UserID,
+			Seat:              uint(p.Seat),
+			FinalScore:        score,
+			Placement:         placement,
+			IsBot:             p.Kind == "bot",
+			Difficulty:        p.Difficulty,
+			PolicyID:          policyID,
+			RemoteDecisions:   p.RemoteDecisions,
+			FallbackDecisions: p.FallbackDecisions,
 		})
 	}
 	if len(rows) == 0 {
 		return nil
+	}
+	// Replace-then-insert keeps a retried persist idempotent: a retry after
+	// an ambiguous commit must not duplicate seat rows (also guarded by the
+	// unique (match_id, seat) index).
+	if err := tx.Where("match_id = ?", matchID).Delete(&storage.MatchPlayer{}).Error; err != nil {
+		return err
 	}
 	return tx.Create(&rows).Error
 }

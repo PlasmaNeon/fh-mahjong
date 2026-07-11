@@ -301,6 +301,16 @@ func (p *HTTPPolicy) recordObservedPolicyID(id string) {
 	p.observedPolicyIDs = append(p.observedPolicyIDs, id)
 }
 
+// DecisionCounts reports how many decisions the remote endpoint actually
+// served vs how many fell back to the local heuristic. Persisted per seat so
+// datasets can select pure-RL play (fallback == 0).
+func (p *HTTPPolicy) DecisionCounts() (remote, fallback uint64) {
+	if p == nil {
+		return 0, 0
+	}
+	return p.remoteSuccesses.Load(), p.fallbacks.Load()
+}
+
 // ObservedPolicyIDs returns the distinct checkpoint identities that served
 // this policy's /act responses, in first-seen order. Empty when the server
 // does not report checkpoint info.

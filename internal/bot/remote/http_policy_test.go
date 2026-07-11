@@ -283,3 +283,31 @@ func TestHTTPPolicyBoundsObservedIdentities(t *testing.T) {
 		}
 	}
 }
+
+// DecisionCounts exposes how many decisions the remote actually served vs how
+// many fell back to the heuristic, so persisted seats can be filtered for
+// pure-RL play.
+func TestHTTPPolicyDecisionCounts(t *testing.T) {
+	state := testDiscardState()
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		if call == 2 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for i := 0; i < 3; i++ {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected an action (remote or fallback)")
+		}
+	}
+	remote, fallback := policy.DecisionCounts()
+	if remote != 2 || fallback != 1 {
+		t.Fatalf("DecisionCounts() = (%d, %d), want (2, 1)", remote, fallback)
+	}
+}
