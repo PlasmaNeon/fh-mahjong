@@ -183,3 +183,55 @@ func testMan(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_MAN, 
 func testPin(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: value} }
 func testSou(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_SOU, Value: value} }
 func testJihai(value uint32) *pb.Tile { return &pb.Tile{Suit: pb.Suit_SUIT_JIHAI, Value: value} }
+
+// Every /act response reports which checkpoint served it; the policy must
+// track the distinct identities in serving order so a mid-match hot reload
+// stays attributable in the dataset.
+func TestHTTPPolicyTracksObservedPolicyIDs(t *testing.T) {
+	state := testDiscardState()
+	checkpoints := []struct {
+		path string
+		step int64
+	}{
+		{"/models/a.pt", 100},
+		{"/models/a.pt", 100}, // repeat must not duplicate
+		{"/models/b.pt", 200}, // hot reload mid-match
+	}
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ck := checkpoints[call]
+		call++
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5, CheckpointPath: ck.path, CheckpointStep: ck.step})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for range checkpoints {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected remote action")
+		}
+	}
+
+	got := policy.ObservedPolicyIDs()
+	want := []string{"/models/a.pt@step100", "/models/b.pt@step200"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("ObservedPolicyIDs() = %v, want %v", got, want)
+	}
+}
+
+// Responses without checkpoint info (older servers) must not record noise.
+func TestHTTPPolicyObservedPolicyIDsEmptyWithoutCheckpoint(t *testing.T) {
+	state := testDiscardState()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	if action := policy.ChooseAction(state, 0); action == nil {
+		t.Fatal("expected remote action")
+	}
+	if got := policy.ObservedPolicyIDs(); len(got) != 0 {
+		t.Fatalf("ObservedPolicyIDs() = %v, want empty", got)
+	}
+}

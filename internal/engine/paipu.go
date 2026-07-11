@@ -147,6 +147,18 @@ func (r *PaipuRecorder) AddPlayerInfo(p PaipuPlayer) {
 	r.paipu.Players = append(r.paipu.Players, p)
 }
 
+// SetPlayerPolicyID overwrites a seat's recorded policy identity. Used at
+// persist time to reconcile the match-start label with the checkpoints that
+// actually served the seat's actions (a hot reload mid-match adds entries).
+func (r *PaipuRecorder) SetPlayerPolicyID(seat uint32, policyID string) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].PolicyID = policyID
+			return
+		}
+	}
+}
+
 func (r *PaipuRecorder) StartRound(
 	round, prevailingWind, dealer uint32,
 	dice [2]uint32,

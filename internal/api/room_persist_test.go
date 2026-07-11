@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -303,5 +304,68 @@ func TestRoomShutdown_PersistsBeforeOnShutdown(t *testing.T) {
 
 	if got := <-statusAtUnregister; got == "in_progress" {
 		t.Fatal("room was unregistered while the match was still unpersisted (in_progress)")
+	}
+}
+
+// observedIDsPolicy stubs an RL policy that reports which checkpoints
+// actually served its actions.
+type observedIDsPolicy struct {
+	stubPolicy
+	ids []string
+}
+
+func (p observedIDsPolicy) ObservedPolicyIDs() []string { return p.ids }
+
+// A policy hot reload mid-match must not corrupt attribution: the persisted
+// labels reflect the checkpoints that actually served actions, not just the
+// identity captured at match start.
+func TestPersistMatch_ReconcilesObservedPolicyIDs(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "observed-match")
+
+	room := NewRoom("observed-match", nil, db)
+	room.SeatInfos = map[uint32]SeatInfo{
+		0: {Kind: "human", Name: "Alice", UserID: 101},
+		1: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_HEURISTIC},
+		2: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: "a.pt@step100"},
+		3: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: "a.pt@step100"},
+	}
+	// Seat 2's endpoint hot-reloaded mid-match; seat 3 reported nothing
+	// (older server) and must keep its match-start label.
+	room.SeatPolicies = map[uint32]bot.Policy{
+		2: observedIDsPolicy{ids: []string{"a.pt@step100", "b.pt@step200"}},
+		3: observedIDsPolicy{},
+	}
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("persistMatch: %v", err)
+	}
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "observed-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	var paipu engine.Paipu
+	if err := json.Unmarshal([]byte(row.PaipuJSON), &paipu); err != nil {
+		t.Fatalf("parse paipu: %v", err)
+	}
+	if got := paipu.Players[2].PolicyID; got != "a.pt@step100,b.pt@step200" {
+		t.Fatalf("seat 2 policyId = %q, want observed checkpoints joined", got)
+	}
+	if got := paipu.Players[3].PolicyID; got != "a.pt@step100" {
+		t.Fatalf("seat 3 policyId = %q, want match-start label kept", got)
+	}
+
+	var mpRows []storage.MatchPlayer
+	if err := db.Where("match_id = ? AND seat = 2", "observed-match").Find(&mpRows).Error; err != nil || len(mpRows) != 1 {
+		t.Fatalf("load seat 2 row: %v (%d rows)", err, len(mpRows))
+	}
+	if mpRows[0].PolicyID != "a.pt@step100,b.pt@step200" {
+		t.Fatalf("seat 2 MatchPlayer policyId = %q", mpRows[0].PolicyID)
 	}
 }

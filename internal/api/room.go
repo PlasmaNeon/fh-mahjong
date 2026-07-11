@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
@@ -262,6 +263,7 @@ func (r *Room) persistMatch() error {
 		finalScores[i] = p.Score
 	}
 	if r.Engine.Recorder != nil {
+		r.reconcileRLPolicyIDs()
 		// Snapshot (not Finalize) so an abort mid-hand keeps the active
 		// hand's deals/actions as a result-less round. At natural MATCH_END
 		// the current round is already closed and this equals Finalize.
@@ -303,6 +305,34 @@ func (r *Room) persistMatch() error {
 		log.Printf("Database disabled, skipping replay persistence for room %s", r.ID)
 	}
 	return nil
+}
+
+// policyIdentityReporter is implemented by remote policies that know which
+// checkpoints actually served their /act responses (remote.HTTPPolicy).
+type policyIdentityReporter interface {
+	ObservedPolicyIDs() []string
+}
+
+// reconcileRLPolicyIDs replaces each RL seat's match-start policy label with
+// the checkpoints that actually served its actions, comma-joined in serving
+// order — so a policy hot reload mid-match stays attributable instead of
+// silently mislabeling the dataset. Seats whose endpoint reports no
+// checkpoint info keep the match-start label.
+func (r *Room) reconcileRLPolicyIDs() {
+	for seat, info := range r.SeatInfos {
+		if info.Difficulty != pb.Difficulty_DIFFICULTY_RL {
+			continue
+		}
+		reporter, ok := r.SeatPolicies[seat].(policyIdentityReporter)
+		if !ok {
+			continue
+		}
+		observed := reporter.ObservedPolicyIDs()
+		if len(observed) == 0 {
+			continue
+		}
+		r.Engine.Recorder.SetPlayerPolicyID(seat, strings.Join(observed, ","))
+	}
 }
 
 // persistMatchPlayers mirrors the paipu's seat entries into relational

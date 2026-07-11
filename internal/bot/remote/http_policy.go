@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,6 +53,13 @@ type HTTPPolicy struct {
 	fallbackIllegalAction atomic.Uint64
 	fallbackDecode        atomic.Uint64
 	fallbackUnknown       atomic.Uint64
+
+	// observedPolicyIDs records the distinct checkpoint identities
+	// ("<path>@step<N>") that actually served /act responses, in serving
+	// order. A policy hot reload mid-match adds a second entry, keeping
+	// dataset attribution honest (see Room.persistMatch reconciliation).
+	observedMu        sync.Mutex
+	observedPolicyIDs []string
 }
 
 type Option func(*HTTPPolicy)
@@ -228,6 +236,9 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 			err:    fmt.Errorf("remote policy error: %s", response.Error),
 		}
 	}
+	if response.CheckpointPath != "" {
+		p.recordObservedPolicyID(fmt.Sprintf("%s@step%d", response.CheckpointPath, response.CheckpointStep))
+	}
 	if response.ActionID < 0 || response.ActionID >= rl.ActionSpaceSize {
 		return nil, policyError{
 			reason: FallbackReasonIllegalAction,
@@ -251,9 +262,39 @@ type actRequest struct {
 }
 
 type actResponse struct {
-	ActionID int     `json:"action_id"`
-	Value    float64 `json:"value,omitempty"`
-	Error    string  `json:"error,omitempty"`
+	ActionID       int     `json:"action_id"`
+	Value          float64 `json:"value,omitempty"`
+	Error          string  `json:"error,omitempty"`
+	CheckpointPath string  `json:"checkpoint_path,omitempty"`
+	CheckpointStep int64   `json:"checkpoint_step,omitempty"`
+}
+
+// recordObservedPolicyID appends a checkpoint identity the first time it is
+// seen. The list stays tiny (one entry per hot reload), so a linear scan is
+// fine.
+func (p *HTTPPolicy) recordObservedPolicyID(id string) {
+	p.observedMu.Lock()
+	defer p.observedMu.Unlock()
+	for _, existing := range p.observedPolicyIDs {
+		if existing == id {
+			return
+		}
+	}
+	p.observedPolicyIDs = append(p.observedPolicyIDs, id)
+}
+
+// ObservedPolicyIDs returns the distinct checkpoint identities that served
+// this policy's /act responses, in first-seen order. Empty when the server
+// does not report checkpoint info.
+func (p *HTTPPolicy) ObservedPolicyIDs() []string {
+	if p == nil {
+		return nil
+	}
+	p.observedMu.Lock()
+	defer p.observedMu.Unlock()
+	out := make([]string, len(p.observedPolicyIDs))
+	copy(out, p.observedPolicyIDs)
+	return out
 }
 
 func actionMaskJSON(mask []byte) []int {
