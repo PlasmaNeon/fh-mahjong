@@ -232,9 +232,10 @@ def test_checkpoint_policy_loads_non_default_architecture(tmp_path: Path) -> Non
 
 
 def test_policy_holder_reload_preserves_sampling(tmp_path: Path) -> None:
-    """Hot-swapping the checkpoint must keep the deployment's sampling config
-    (temperature softening for human play) — a reload that silently reverts to
-    greedy would undo the deployed exploitability mitigation."""
+    """Hot-swapping the checkpoint must keep whatever sampling config was
+    explicitly set at launch — a reload must never silently change serving
+    behavior. (Production serves greedy — no sampling flags; this guards
+    experimental sampled configurations.)"""
     first = tmp_path / "a.pt"
     second = tmp_path / "b.pt"
     save_checkpoint(first, PolicyValueNet(EnvConfig(), ModelConfig()), step=1)
