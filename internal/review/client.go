@@ -71,9 +71,9 @@ type evaluateResult struct {
 
 type evaluateResponse struct {
 	Results        []evaluateResult `json:"results"`
-	CheckpointPath string            `json:"checkpoint_path"`
-	CheckpointStep int               `json:"checkpoint_step"`
-	Error          string            `json:"error"`
+	CheckpointPath string           `json:"checkpoint_path"`
+	CheckpointStep int              `json:"checkpoint_step"`
+	Error          string           `json:"error"`
 }
 
 // Evaluate sends obs to the /evaluate endpoint in chunks of at most
