@@ -19,7 +19,6 @@ type User struct {
 	Rating       int       `gorm:"default:1500" json:"rating"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
-
 }
 
 const (
