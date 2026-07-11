@@ -15890,6 +15890,32 @@ pMCPA-style test-time search (serve-time boost, no training), a bigger net
 (storage.Match.PaipuJSON — capture verified live), and the human game-review
 product direction (mjai-reviewer-style; spawned as its own design session).
 
+### Experiment: deep8 capacity campaign (2026-07-09/11) — PARITY CEILING, capacity closed
+
+Brute-force lever: replay the champion pipeline at residual_blocks=8 (2x deep4).
+Warm-start 51ch from the IQL anchor via load_compatible (deep2->deep4 mechanism),
+60-iter delta ramp at batch 128 (anchor-start plays max-length games — the 224 OOM
+lesson), then delta=1 extensions.
+
+Trajectory (paired vs anchor, -0.0528): ramp iter_60 +0.138 (deep4 ref +0.13);
+ext1 batch 224: 120=+0.242, 150=+0.303, 180=+0.356 (tail 0.077 = champion-level);
+ext2 batch 224: 220=+0.371, 260=+0.396, 300=+0.379 — SATURATED ~+0.38, worse than
+champion CI-separated. Leg 3 applied the Phase-B batch move (224->320, the exact
+recipe that broke deep4's plateau): iter_330 +0.4528 (champion parity, -0.019
++/-0.075), iter_360 +0.4056 (post-peak oscillation, mirrors deep4's endgame; tail
+0.069 = best seen — ensemble candidate).
+
+Verdict: the batch move works on deep8 exactly as on deep4, but the destination is
+the SAME ~+0.45-0.47 ceiling — deep8 reaches champion parity at 2x inference cost
+and never CI-beats +0.4722. Not promotable. Capacity joins the closed levers.
+
+Campaign status: SIX levers tested and closed — scaling saturated, not exploitable,
+hidden info ~0, ACH failed, pool diversity neutral, capacity parity-bound. +0.47 is
+a pipeline-level plateau independent of model size. The remaining ceiling-moving
+mechanism is test-time search + expert iteration (search-improved targets distilled
+back into the net), with serve-time ensembling (champion + deep8 iter_360's 0.069
+tail) as a cheap adjacent win.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
