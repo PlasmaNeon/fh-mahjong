@@ -4,8 +4,10 @@
 #     packages, which are multi-GB and useless for batch-1 CPU inference;
 #   - bakes the deployed champion checkpoint from ai/checkpoints/deploy/ into
 #     the image, so no volume mount is needed;
-#   - hardcodes the validated human-play sampling flags (T=0.7, top-k 3,
-#     discard family) — serve greedy by removing the --sample-* args.
+#   - serves GREEDY (temperature 0 = argmax; no --sample-* args) — the
+#     exploitability probe showed greedy is not exploitable, and sampling
+#     caused visible per-move blunders vs humans. Add --sample-* args back
+#     only for softening experiments.
 #
 # Build context is the repo root: `docker build -f ai/Dockerfile.deploy .`
 FROM python:3.12-slim
