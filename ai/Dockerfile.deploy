@@ -30,11 +30,12 @@ EXPOSE 8765
 
 # --manifest must be explicit: the installed package resolves the default
 # manifest path relative to site-packages, not /app/ai.
+# Greedy serving (no sampling flags): temperature 0 = argmax top-1. The
+# exploitability probe showed the greedy champion is not exploitable by a
+# trained best-response, and top-3/T=0.7 sampling produced visible per-move
+# blunders in human games (aggregate-neutral, individually costly).
 CMD ["fh-mj-serve-policy", \
      "--manifest", "/app/ai/checkpoints/best-checkpoints.json", \
      "--checkpoint", "/app/ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt", \
-     "--sample-temperature", "0.7", \
-     "--sample-top-k", "3", \
-     "--sample-action-family", "discard", \
      "--host", "0.0.0.0", \
      "--port", "8765"]
