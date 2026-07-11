@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
@@ -116,5 +117,105 @@ func TestPaipuRecorderIntegration(t *testing.T) {
 	}
 	if g.Recorder.CurrentRound().Actions[0].Act != "draw" {
 		t.Errorf("First action = %q, want 'draw'", g.Recorder.CurrentRound().Actions[0].Act)
+	}
+}
+
+func TestPaipuPlayerOldJSONStillParses(t *testing.T) {
+	// Paipu recorded before seat-composition labels existed must keep loading:
+	// absent fields decode to zero values, not errors.
+	old := `{"version":1,"matchId":"m1","ruleset":"fenghua",` +
+		`"players":[{"seat":0,"name":"Alice","userId":42},{"seat":1,"name":"Bot 2","userId":0}],` +
+		`"rounds":[],"finalScores":[0,0,0,0]}`
+	var p engine.Paipu
+	if err := json.Unmarshal([]byte(old), &p); err != nil {
+		t.Fatalf("old-format paipu failed to parse: %v", err)
+	}
+	if p.Players[0].Kind != "" || p.Players[0].Difficulty != "" || p.Players[0].PolicyID != "" {
+		t.Fatalf("expected empty labels on old-format player, got %+v", p.Players[0])
+	}
+}
+
+func TestAddPlayerInfoRecordsSeatLabels(t *testing.T) {
+	rec := engine.NewPaipuRecorder("m2", "fenghua")
+	rec.AddPlayerInfo(engine.PaipuPlayer{Seat: 0, Name: "Alice", UserID: 42, Kind: "human"})
+	rec.AddPlayerInfo(engine.PaipuPlayer{Seat: 1, Name: "Bot 2 (RL)", Kind: "bot", Difficulty: "rl", PolicyID: "champ.pt@step9"})
+	rec.AddPlayer(2, "Legacy", 7) // legacy call keeps working, no labels
+
+	paipu := rec.Finalize([4]int32{})
+	data, err := json.Marshal(paipu)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if p := paipu.Players[1]; p.Kind != "bot" || p.Difficulty != "rl" || p.PolicyID != "champ.pt@step9" {
+		t.Fatalf("RL labels not recorded: %+v", p)
+	}
+	var decoded engine.Paipu
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p := decoded.Players[0]; p.Kind != "human" || p.UserID != 42 {
+		t.Fatalf("human labels lost in round-trip: %+v", p)
+	}
+	if p := decoded.Players[2]; p.Kind != "" || p.Difficulty != "" {
+		t.Fatalf("legacy AddPlayer should leave labels empty: %+v", p)
+	}
+	// omitempty: legacy players must serialize without the new keys so old
+	// readers see byte-identical shapes.
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	players := raw["players"].([]any)
+	legacy := players[2].(map[string]any)
+	for _, key := range []string{"kind", "difficulty", "policyId"} {
+		if _, present := legacy[key]; present {
+			t.Fatalf("legacy player unexpectedly serialized %q", key)
+		}
+	}
+}
+
+func TestPaipuSnapshotIncludesCurrentRound(t *testing.T) {
+	rec := engine.NewPaipuRecorder("snap-match", "fenghua")
+	rec.AddPlayer(0, "Alice", 1)
+	deals := [4][]uint32{{0}, {1}, {2}, {3}}
+	rec.StartRound(1, 1, 0, [2]uint32{3, 4}, "seed", nil, 7, [4]int32{}, deals)
+	rec.RecordDraw(0, 52)
+
+	snap := rec.Snapshot([4]int32{10, 20, 30, 40})
+	if len(snap.Rounds) != 1 {
+		t.Fatalf("snapshot rounds = %d, want 1 (must include the in-progress hand)", len(snap.Rounds))
+	}
+	if snap.Rounds[0].Result != nil {
+		t.Fatalf("in-progress round must have nil result, got %+v", snap.Rounds[0].Result)
+	}
+	if len(snap.Rounds[0].Actions) != 1 {
+		t.Fatalf("snapshot actions = %d, want 1", len(snap.Rounds[0].Actions))
+	}
+	if snap.FinalScores != [4]int32{10, 20, 30, 40} {
+		t.Fatalf("snapshot finalScores = %v", snap.FinalScores)
+	}
+
+	// Snapshot must not mutate the recorder: the round can still end
+	// normally and Finalize sees exactly one (completed) round.
+	rec.RecordDiscard(0, 52)
+	rec.EndRound(&engine.PaipuRoundResult{Type: "draw", ScoreChanges: []int32{0, 0, 0, 0}})
+	fin := rec.Finalize([4]int32{})
+	if len(fin.Rounds) != 1 {
+		t.Fatalf("finalize rounds = %d, want 1", len(fin.Rounds))
+	}
+	if fin.Rounds[0].Result == nil || len(fin.Rounds[0].Actions) != 2 {
+		t.Fatalf("completed round corrupted by snapshot: %+v", fin.Rounds[0])
+	}
+}
+
+func TestPaipuSnapshotBetweenRounds(t *testing.T) {
+	rec := engine.NewPaipuRecorder("snap2", "fenghua")
+	deals := [4][]uint32{{0}, {1}, {2}, {3}}
+	rec.StartRound(1, 1, 0, [2]uint32{3, 4}, "seed", nil, 7, [4]int32{}, deals)
+	rec.EndRound(&engine.PaipuRoundResult{Type: "draw", ScoreChanges: []int32{0, 0, 0, 0}})
+
+	snap := rec.Snapshot([4]int32{})
+	if len(snap.Rounds) != 1 {
+		t.Fatalf("snapshot rounds = %d, want 1 (no in-progress hand to add)", len(snap.Rounds))
 	}
 }

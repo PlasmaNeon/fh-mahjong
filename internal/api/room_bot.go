@@ -50,6 +50,7 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
 				return payloads
 			}
+			r.automatedDecisions[seat]++
 
 			payloads = append(payloads, r.BroadcastState())
 
@@ -75,6 +76,7 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 						_ = r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
 					}
 				}
+				r.automatedDecisions[seat]++
 
 				submitted = true
 			}

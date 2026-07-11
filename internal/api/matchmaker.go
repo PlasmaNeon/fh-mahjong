@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ var (
 	ErrPrivateTableAlreadyStarted = errors.New("table already started")
 	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
+	ErrServerDraining             = errors.New("server is shutting down")
 )
 
 // InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
@@ -126,8 +128,25 @@ type Matchmaker struct {
 	// server is actually reachable. Nil means unavailable.
 	RLAgentAvailable func() bool
 
+	// RLPolicyIdentity reports the identity of the policy currently served at
+	// the RL endpoint (e.g. "<checkpoint>@step<N>" from its /healthz payload,
+	// falling back to the endpoint URL). Captured per RL seat at match start
+	// and recorded in the paipu so the dataset knows which model played. Nil
+	// or empty means unknown.
+	RLPolicyIdentity func() string
+
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
+
+	// activeRooms tracks every live match room (queue and private) keyed by
+	// matchID so a server drain can persist them before the process exits.
+	activeRoomsMu sync.Mutex
+	activeRooms   map[string]*Room
+
+	// draining is set by DrainActiveRooms: once the server is shutting down,
+	// no new match may start (it would miss the drain snapshot and be
+	// orphaned when the process exits).
+	draining atomic.Bool
 
 	configuringMu     sync.Mutex
 	configuringTables map[string]*PrivateTable
@@ -146,7 +165,101 @@ func NewMatchmaker(queue *InMemoryQueue, db *gorm.DB, hub *Hub) *Matchmaker {
 		DB:                  db,
 		Hub:                 hub,
 		activePrivateTables: make(map[string]ActivePrivateTable),
+		activeRooms:         make(map[string]*Room),
 		configuringTables:   make(map[string]*PrivateTable),
+	}
+}
+
+// registerActiveRoom tracks a live room for server-drain persistence.
+// Registration is atomic with the draining flag (same mutex): either the room
+// is visible to the drain's first snapshot, or the caller is told the server
+// is draining and must abort the start. Returns false when draining.
+func (m *Matchmaker) registerActiveRoom(room *Room) bool {
+	m.activeRoomsMu.Lock()
+	defer m.activeRoomsMu.Unlock()
+	if m.draining.Load() {
+		return false
+	}
+	m.activeRooms[room.ID] = room
+	return true
+}
+
+// unregisterActiveRoom drops a room from the drain registry (normal shutdown).
+func (m *Matchmaker) unregisterActiveRoom(matchID string) {
+	m.activeRoomsMu.Lock()
+	defer m.activeRoomsMu.Unlock()
+	delete(m.activeRooms, matchID)
+}
+
+// DrainActiveRooms stops new matches from starting, then asks every live room
+// to shut down and waits (up to timeout) for each to finish persisting.
+// Called on SIGINT/SIGTERM so a redeploy marks in-flight matches "aborted"
+// with their partial paipu instead of orphaning in_progress rows with empty
+// PaipuJSON. It re-snapshots until the registry is empty so a room that
+// started just before the draining flag flipped is still covered. Rooms whose
+// loop never started (or that are wedged) are skipped once the timeout
+// elapses.
+func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
+	// Set the flag under the registry mutex so it serializes with
+	// registerActiveRoom: every successful registration is visible to the
+	// first snapshot below, and everything later is refused.
+	m.activeRoomsMu.Lock()
+	m.draining.Store(true)
+	m.activeRoomsMu.Unlock()
+
+	// A closed channel (unlike time.After's one-shot send) releases every
+	// waiting goroutine at the deadline.
+	deadline := make(chan struct{})
+	timer := time.AfterFunc(timeout, func() { close(deadline) })
+	defer timer.Stop()
+
+	for {
+		m.activeRoomsMu.Lock()
+		rooms := make([]*Room, 0, len(m.activeRooms))
+		for _, room := range m.activeRooms {
+			rooms = append(rooms, room)
+		}
+		m.activeRoomsMu.Unlock()
+
+		if len(rooms) == 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			log.Printf("Drain deadline reached with %d room(s) still registered", len(rooms))
+			return
+		default:
+		}
+		log.Printf("Draining %d active room(s) before shutdown...", len(rooms))
+
+		var wg sync.WaitGroup
+		for _, room := range rooms {
+			wg.Add(1)
+			go func(r *Room) {
+				defer wg.Done()
+				select {
+				case r.Shutdown <- true:
+				case <-r.Done: // already shutting down on its own
+				case <-deadline:
+					log.Printf("Drain timed out signalling room %s", r.ID)
+					return
+				}
+				select {
+				case <-r.Done:
+				case <-deadline:
+					log.Printf("Drain timed out waiting for room %s to persist", r.ID)
+				}
+			}(room)
+		}
+		wg.Wait()
+
+		// Rooms that hit the deadline (wedged/never-started) stay registered;
+		// exit rather than spinning on them forever.
+		select {
+		case <-deadline:
+			return
+		default:
+		}
 	}
 }
 
@@ -296,10 +409,8 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 		log.Printf("Database disabled, skipping match persistence for %s", matchID)
 	}
 
-	// 2. Add players to the join table
-	// In a real scenario we'd query users to convert string ID to uint ID
-	// For simulation, we assume ID mappings are properly handled down the line
-	// Note: Skipped explicit MatchPlayer insertion here for brevity; the Room engine handles scores.
+	// 2. MatchPlayer rows are inserted by Room.persistMatch at shutdown, once
+	// final scores and placements are known.
 
 	// 3. Create the Room Goroutine explicitly
 	roomOptions := []RoomOption{WithBotActionDelay(defaultBotActionDelay)}
@@ -314,6 +425,18 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	room.PrivateTableID = tableID
 	room.OnShutdown = func() {
 		m.unregisterActivePrivateTable(tableID)
+		m.unregisterActiveRoom(matchID)
+	}
+	// Atomic with the draining flag: refuse to start a queue match that
+	// would miss the shutdown drain.
+	if !m.registerActiveRoom(room) {
+		log.Printf("Refusing to start match during shutdown drain (players %v)", playerIDs)
+		if m.DB != nil {
+			if derr := m.DB.Delete(&storage.Match{}, "id = ?", matchID).Error; derr != nil {
+				log.Printf("Failed to clean up draining-refused match %s: %v", matchID, derr)
+			}
+		}
+		return
 	}
 
 	// 4. Parse user IDs and dispatch to Hub for exact WS binding
@@ -331,9 +454,14 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	}
 
 	seats := make(map[uint32]uint, len(userIDs))
+	seatInfos := make(map[uint32]SeatInfo, len(userIDs))
 	for i, uid := range userIDs {
 		seats[uint32(i)] = uid
+		// Queue matches seat four humans; usernames are resolved from the
+		// live socket (or a userID placeholder) when the paipu registers.
+		seatInfos[uint32(i)] = SeatInfo{Kind: "human", UserID: uid}
 	}
+	room.SeatInfos = seatInfos
 	m.Hub.BindRoom <- RoomBind{
 		Seats: seats,
 		Room:  room,
@@ -431,18 +559,25 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 
 		seatPolicies := make(map[uint32]bot.Policy)
+		seatInfos := make(map[uint32]SeatInfo)
 		humanSeats = make(map[uint32]uint)
 		for i, s := range table.Seats {
 			seat := uint32(i)
 			switch s.Kind {
 			case "human":
 				humanSeats[seat] = s.UserID
+				seatInfos[seat] = SeatInfo{Kind: "human", Name: s.Username, UserID: s.UserID}
 			case "bot":
 				policy, perr := m.resolveSeatPolicy(s.Difficulty)
 				if perr != nil {
 					return fmt.Errorf("seat %d: %w", i, perr)
 				}
 				seatPolicies[seat] = policy
+				info := SeatInfo{Kind: "bot", Difficulty: s.Difficulty}
+				if s.Difficulty == pb.Difficulty_DIFFICULTY_RL && m.RLPolicyIdentity != nil {
+					info.PolicyID = m.RLPolicyIdentity()
+				}
+				seatInfos[seat] = info
 			default:
 				return fmt.Errorf("seat %d is %s, expected human or bot", i, s.Kind)
 			}
@@ -477,8 +612,21 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		room.PaipuStore = m.PaipuStore
 		room.PrivateTableID = tableID
 		room.SeatPolicies = seatPolicies
+		room.SeatInfos = seatInfos
 		room.OnShutdown = func() {
 			m.unregisterActivePrivateTable(tableID)
+			m.unregisterActiveRoom(matchID)
+		}
+		// The drain-registry admission is the authoritative draining gate:
+		// it is atomic with DrainActiveRooms' flag flip, so a start racing a
+		// shutdown either lands in the drain snapshot or is refused here.
+		if !m.registerActiveRoom(room) {
+			if m.DB != nil {
+				if derr := m.DB.Delete(&storage.Match{}, "id = ?", matchID).Error; derr != nil {
+					log.Printf("Failed to clean up draining-refused match %s: %v", matchID, derr)
+				}
+			}
+			return ErrServerDraining
 		}
 
 		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats), room)

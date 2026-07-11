@@ -75,3 +75,42 @@ func TestHealthChecker_NilReceiver(t *testing.T) {
 		t.Fatal("nil HealthChecker should report unhealthy")
 	}
 }
+
+func TestHealthChecker_IdentityFromHealthz(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1234}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if got, want := h.Identity(), "champ.pt@step1234"; got != want {
+		t.Fatalf("Identity() = %q, want %q", got, want)
+	}
+}
+
+func TestHealthChecker_IdentityEmptyWithoutCheckpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if got := h.Identity(); got != "" {
+		t.Fatalf("Identity() = %q, want empty when healthz reports no checkpoint", got)
+	}
+	if !h.Healthy() {
+		t.Fatal("endpoint without checkpoint info must still count as healthy")
+	}
+}
+
+func TestHealthChecker_IdentityUnreachableAndNil(t *testing.T) {
+	h := NewHealthChecker("http://127.0.0.1:1/act")
+	if got := h.Identity(); got != "" {
+		t.Fatalf("Identity() = %q, want empty for unreachable endpoint", got)
+	}
+	var nilChecker *HealthChecker
+	if got := nilChecker.Identity(); got != "" {
+		t.Fatalf("nil Identity() = %q, want empty", got)
+	}
+}

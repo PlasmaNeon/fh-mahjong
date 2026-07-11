@@ -183,3 +183,131 @@ func testMan(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_MAN, 
 func testPin(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_PIN, Value: value} }
 func testSou(value uint32) *pb.Tile   { return &pb.Tile{Suit: pb.Suit_SUIT_SOU, Value: value} }
 func testJihai(value uint32) *pb.Tile { return &pb.Tile{Suit: pb.Suit_SUIT_JIHAI, Value: value} }
+
+// Every /act response reports which checkpoint served it; the policy must
+// track the distinct identities in serving order so a mid-match hot reload
+// stays attributable in the dataset.
+func TestHTTPPolicyTracksObservedPolicyIDs(t *testing.T) {
+	state := testDiscardState()
+	checkpoints := []struct {
+		path string
+		step int64
+	}{
+		{"/models/a.pt", 100},
+		{"/models/a.pt", 100}, // repeat must not duplicate
+		{"/models/b.pt", 200}, // hot reload mid-match
+	}
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ck := checkpoints[call]
+		call++
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5, CheckpointPath: ck.path, CheckpointStep: ck.step})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for range checkpoints {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected remote action")
+		}
+	}
+
+	got := policy.ObservedPolicyIDs()
+	want := []string{"a.pt@step100", "b.pt@step200"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("ObservedPolicyIDs() = %v, want %v", got, want)
+	}
+}
+
+// Responses without checkpoint info (older servers) must not record noise.
+func TestHTTPPolicyObservedPolicyIDsEmptyWithoutCheckpoint(t *testing.T) {
+	state := testDiscardState()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	if action := policy.ChooseAction(state, 0); action == nil {
+		t.Fatal("expected remote action")
+	}
+	if got := policy.ObservedPolicyIDs(); len(got) != 0 {
+		t.Fatalf("ObservedPolicyIDs() = %v, want empty", got)
+	}
+}
+
+// A response whose action fails validation must NOT attribute the checkpoint:
+// the heuristic fallback played that turn, not the remote policy.
+func TestHTTPPolicyDoesNotAttributeRejectedActions(t *testing.T) {
+	state := testDiscardState()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 999999, CheckpointPath: "/models/bad.pt", CheckpointStep: 1})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	if action := policy.ChooseAction(state, 0); action == nil {
+		t.Fatal("expected heuristic fallback action")
+	}
+	if got := policy.ObservedPolicyIDs(); len(got) != 0 {
+		t.Fatalf("rejected action must not be attributed, got %v", got)
+	}
+}
+
+// Identities are bounded at ingestion so a hostile/misconfigured server
+// cannot bloat the persisted labels (which share a transaction with the
+// match write).
+func TestHTTPPolicyBoundsObservedIdentities(t *testing.T) {
+	state := testDiscardState()
+	long := strings.Repeat("x", 5000)
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5, CheckpointPath: fmt.Sprintf("%s-%d", long, call), CheckpointStep: 1})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for i := 0; i < 20; i++ {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected remote action")
+		}
+	}
+	got := policy.ObservedPolicyIDs()
+	if len(got) > maxObservedPolicyIDs {
+		t.Fatalf("observed list unbounded: %d entries", len(got))
+	}
+	for _, id := range got {
+		if len(id) > maxObservedPolicyIDLen {
+			t.Fatalf("identity unbounded: %d chars", len(id))
+		}
+	}
+}
+
+// DecisionCounts exposes how many decisions the remote actually served vs how
+// many fell back to the heuristic, so persisted seats can be filtered for
+// pure-RL play.
+func TestHTTPPolicyDecisionCounts(t *testing.T) {
+	state := testDiscardState()
+	var call int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		if call == 2 {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	for i := 0; i < 3; i++ {
+		if action := policy.ChooseAction(state, 0); action == nil {
+			t.Fatal("expected an action (remote or fallback)")
+		}
+	}
+	remote, fallback := policy.DecisionCounts()
+	if remote != 2 || fallback != 1 {
+		t.Fatalf("DecisionCounts() = (%d, %d), want (2, 1)", remote, fallback)
+	}
+}
