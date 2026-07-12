@@ -34,7 +34,11 @@ import (
 // so a fork landing inside a haitei interrupt window never offers Chii/Pon/Kan;
 // in any other phase we clear them (opponents hold no interrupts mid-turn; only
 // stale entries could remain). The acting seat's ValidActions are left untouched
-// — its hand did not move.
+// — its hand did not move. The ACTIVE DISCARDER is also excluded from the
+// open-window recompute and its ValidActions cleared: a player never interrupts
+// its own discard (offerInterrupts always clears the discarder), and leaving it
+// a freshly computed interrupt would inflate the window's expected-response
+// count into a state the live engine can never reach.
 //
 // The refresh recomputes for EVERY non-acting seat, regardless of whether its
 // PRE-redeal ValidActions were empty. Interrupt eligibility derives from the
@@ -120,6 +124,18 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 			continue
 		}
 		if openWindow {
+			// The active discarder holds NO interrupts against its own discard —
+			// the live path (offerInterrupts) always clears the discarder's
+			// ValidActions, and handleInterruptAction counts every non-empty
+			// ValidActions toward window completeness. If a redealt discarder hand
+			// happened to "match" its own discard we would compute a spurious
+			// interrupt here, inflating expectedResponses into an impossible window
+			// state (the discarder is never offered, so it can never respond) and
+			// diverging from the live engine. Mirror offerInterrupts: clear it.
+			if uint32(s) == g.State.ActivePlayer {
+				p.ValidActions = nil
+				continue
+			}
 			interrupts := g.Rules.GetValidInterrupts(g.State, g.State.ActiveDiscard, uint32(s))
 			p.ValidActions = filterRonOnlyInterrupts(interrupts, g.State.IsHaitei)
 			continue

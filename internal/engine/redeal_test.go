@@ -264,3 +264,75 @@ func TestRedealUnseen_RejectsBadSeat(t *testing.T) {
 		t.Fatal("expected error for seat 4")
 	}
 }
+
+// TestRedealUnseen_DiscarderExcludedFromOpenWindow pins FINDING P2. The
+// open-window ValidActions refresh previously skipped only the SEARCH ROOT
+// (actingSeat). When the root is NOT the discarder, the ACTIVE DISCARDER is a
+// non-acting seat and gets a freshly computed interrupt against its OWN discard.
+// The live engine never offers the discarder (offerInterrupts always clears it),
+// and handleInterruptAction counts every non-empty ValidActions toward window
+// completeness — so a discarder with phantom ValidActions inflates the expected
+// response count into a window the live engine can never reach. The refresh must
+// mirror offerInterrupts: clear the discarder.
+//
+// We root the search on seat 2 (so the discarder, seat 0, is a NON-acting seat
+// the loop visits) and force the redeal pool homogeneous to the discard's
+// Suit+Value, so seat 0's redealt hand would present a Pon on its own discard.
+func TestRedealUnseen_DiscarderExcludedFromOpenWindow(t *testing.T) {
+	g := startedGame(t, 42)
+	base := g.CloneForBranch()
+
+	const actingSeat = uint32(2) // search root — NOT the discarder
+	const discarder = uint32(0)  // ActivePlayer
+	base.State.ActivePlayer = discarder
+	discard := &pb.Tile{Id: 6666, Suit: pb.Suit_SUIT_MAN, Value: 3}
+	base.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	base.State.ActiveDiscard = discard
+	base.State.IsHaitei = false
+
+	// Force the redeal pool (non-acting seats 0,1,3 + undrawn wall) homogeneous to
+	// the discard's Suit+Value, in place (ids preserved → multiset stays legal).
+	// After redeal the discarder's hand is all matching tiles → it WOULD Pon its
+	// own discard if the refresh recomputed it.
+	for _, s := range []uint32{0, 1, 3} {
+		for _, tile := range base.State.Players[s].ClosedHand {
+			tile.Suit, tile.Value = discard.Suit, discard.Value
+		}
+	}
+	for _, tile := range base.WallTilesForTest() {
+		tile.Suit, tile.Value = discard.Suit, discard.Value
+	}
+
+	if err := base.RedealUnseen(actingSeat, 1); err != nil {
+		t.Fatalf("redeal: %v", err)
+	}
+
+	// Premise: the discarder's REDEALT hand genuinely presents a Pon, so a
+	// recompute would have populated its ValidActions — the assertion below is not
+	// vacuously satisfied.
+	raw := base.Rules.GetValidInterrupts(base.State, discard, discarder)
+	hasPon := false
+	for _, a := range raw {
+		if a.Type == pb.ActionType_ACTION_PON {
+			hasPon = true
+			break
+		}
+	}
+	if !hasPon {
+		t.Fatalf("test premise broken: redealt discarder hand cannot Pon the discard")
+	}
+
+	// The fix: the discarder is excluded from the window and its ValidActions
+	// cleared, even though its redealt hand matches its own discard. Pre-fix this
+	// is non-empty (the discarder was refreshed like any other non-acting seat).
+	if len(base.State.Players[discarder].ValidActions) != 0 {
+		t.Fatalf("discarder (seat %d) got %d ValidActions against its own discard — it must be excluded from the window",
+			discarder, len(base.State.Players[discarder].ValidActions))
+	}
+
+	// Sanity: an ordinary non-acting, non-discarder seat is STILL admitted, so the
+	// exclusion is specific to the discarder, not a blanket clear.
+	if len(base.State.Players[1].ValidActions) == 0 {
+		t.Fatal("non-discarder seat 1 gained a Pon on redeal but was not admitted — refresh over-cleared")
+	}
+}
