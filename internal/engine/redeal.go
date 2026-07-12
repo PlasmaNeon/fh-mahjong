@@ -29,9 +29,12 @@ import (
 // phantom open meld without reducing the closed hand (duplicate tile ids). So
 // after the redeal we refresh each non-acting seat's ValidActions against its new
 // hand: at an open WAIT_DISCARDS window we recompute interrupts via the injected
-// RuleEngine (the exact call offerInterrupts makes); in any other phase we clear
-// them (opponents hold no interrupts mid-turn; only stale entries could remain).
-// The acting seat's ValidActions are left untouched — its hand did not move. A
+// RuleEngine (the exact call offerInterrupts makes), applying the same haitei
+// Ron-only filter offerInterrupts applies (shared via filterRonOnlyInterrupts)
+// so a fork landing inside a haitei interrupt window never offers Chii/Pon/Kan;
+// in any other phase we clear them (opponents hold no interrupts mid-turn; only
+// stale entries could remain). The acting seat's ValidActions are left untouched
+// — its hand did not move. A
 // seat whose refreshed interrupts come back empty simply drops out of the window
 // (expectedResponses derives from len(ValidActions)); that is correct honest
 // behavior — the redealt hand genuinely no longer holds that interrupt.
@@ -106,7 +109,8 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 			continue
 		}
 		if openWindow && len(p.ValidActions) > 0 {
-			p.ValidActions = g.Rules.GetValidInterrupts(g.State, g.State.ActiveDiscard, uint32(s))
+			interrupts := g.Rules.GetValidInterrupts(g.State, g.State.ActiveDiscard, uint32(s))
+			p.ValidActions = filterRonOnlyInterrupts(interrupts, g.State.IsHaitei)
 			continue
 		}
 		p.ValidActions = nil

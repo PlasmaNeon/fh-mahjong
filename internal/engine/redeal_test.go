@@ -134,6 +134,59 @@ func TestRedealUnseen_SeedDeterminism(t *testing.T) {
 	}
 }
 
+// TestRedealUnseen_HaiteiWindowRonOnly guards against a redeal-time
+// interrupt refresh offering Chii/Pon/Kan during a haitei window, where the
+// live engine (offerInterrupts, game.go) restricts opponents to Ron only.
+// A search fork can land RedealUnseen inside such a window (WAIT_DISCARDS +
+// IsHaitei), and its ValidActions refresh must apply the same restriction —
+// serving a redealt opponent a meld interrupt the real rules forbid would
+// corrupt search results.
+func TestRedealUnseen_HaiteiWindowRonOnly(t *testing.T) {
+	g := startedGame(t, 42)
+	base := g.CloneForBranch()
+
+	actingSeat := uint32(0)
+	discardTile := base.State.Players[actingSeat].ClosedHand[0]
+	base.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	base.State.ActiveDiscard = discardTile
+	base.State.IsHaitei = true
+	// Mark seat 1 as already holding interrupt options pre-redeal, so the
+	// refresh path (len(ValidActions) > 0) recomputes for it.
+	base.State.Players[1].ValidActions = []*pb.PlayerAction{{Type: pb.ActionType_ACTION_RON}}
+
+	found := false
+	for seed := uint64(0); seed < 500; seed++ {
+		trial := base.CloneForBranch()
+		if err := trial.RedealUnseen(actingSeat, seed); err != nil {
+			t.Fatalf("redeal: %v", err)
+		}
+		// Recompute the raw (unfiltered) interrupt set on the post-redeal hand
+		// to confirm this seed actually presents a meld opportunity — proving
+		// the assertion below is meaningful (would fail without the filter).
+		raw := trial.Rules.GetValidInterrupts(trial.State, discardTile, 1)
+		hasMeld := false
+		for _, a := range raw {
+			if a.Type == pb.ActionType_ACTION_PON || a.Type == pb.ActionType_ACTION_CHII || a.Type == pb.ActionType_ACTION_KAN {
+				hasMeld = true
+				break
+			}
+		}
+		if !hasMeld {
+			continue
+		}
+		found = true
+		for _, a := range trial.State.Players[1].ValidActions {
+			if a.Type != pb.ActionType_ACTION_RON {
+				t.Fatalf("seed %d: haitei redeal refresh offered non-Ron interrupt %v", seed, a.Type)
+			}
+		}
+		break
+	}
+	if !found {
+		t.Fatal("no seed within range produced a meld opportunity to exercise the haitei filter")
+	}
+}
+
 func TestRedealUnseen_RejectsBadSeat(t *testing.T) {
 	g := startedGame(t, 42)
 	if err := g.CloneForBranch().RedealUnseen(4, 1); err == nil {
