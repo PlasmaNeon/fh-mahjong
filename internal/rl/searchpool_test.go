@@ -124,7 +124,7 @@ func TestSearchPool_ActingSeatObservationInvariant(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	seat, obs := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 6, 99, 512)
+	pool, err := NewSearchPool(env, 6, 99, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSearchPool_OpponentHandsDifferAcrossClones(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	seat, _ := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 6, 99, 512)
+	pool, err := NewSearchPool(env, 6, 99, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,12 +174,12 @@ func TestSearchPool_SeedDeterminism(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	seat, _ := currentDecision(t, env)
 
-	poolA, err := NewSearchPool(env, 6, 99, 512)
+	poolA, err := NewSearchPool(env, 6, 99, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer poolA.Close()
-	poolB, err := NewSearchPool(env, 6, 99, 512)
+	poolB, err := NewSearchPool(env, 6, 99, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +197,128 @@ func TestSearchPool_SeedDeterminism(t *testing.T) {
 	}
 }
 
+// TestSearchPool_PairedDeterminizationsShareWorld pins the common-random-numbers
+// pairing (LEAK 2 fix): with K determinizations and M*K clones, clone i and
+// clone i+K belong to the SAME determinization group (k = i % K) and must hold a
+// byte-identical hidden world post-redeal, while different groups (different k)
+// must differ — otherwise pairing would be vacuous.
+func TestSearchPool_PairedDeterminizationsShareWorld(t *testing.T) {
+	env := newStartedEnv(t, 4242)
+	seat, _ := currentDecision(t, env)
+
+	const K, M = 3, 2
+	pool, err := NewSearchPool(env, M*K, 99, 512, K)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	opps := opponentSeats(seat)
+	// Same k across candidate groups -> identical world.
+	for k := 0; k < K; k++ {
+		for _, opp := range opps {
+			a := handTileIDs(pool.clones[k].env.game.State.Players[opp].ClosedHand)
+			b := handTileIDs(pool.clones[k+K].env.game.State.Players[opp].ClosedHand)
+			if !idsEqual(a, b) {
+				t.Fatalf("k=%d seat %d: paired clones %d and %d have different worlds — CRN pairing broken",
+					k, opp, k, k+K)
+			}
+		}
+	}
+	// Different k -> distinct worlds (pairing is not degenerate).
+	distinct := false
+	for _, opp := range opps {
+		a := handTileIDs(pool.clones[0].env.game.State.Players[opp].ClosedHand)
+		b := handTileIDs(pool.clones[1].env.game.State.Players[opp].ClosedHand)
+		if !idsEqual(a, b) {
+			distinct = true
+			break
+		}
+	}
+	if !distinct {
+		t.Fatalf("determinization groups k=0 and k=1 share a world — K worlds collapsed to 1")
+	}
+}
+
+// TestSearchPool_CloneWorldIndependentOfLiveSeed pins the honesty guarantee
+// behind LEAK 2: the clone worlds AND their sampled futures must be derived from
+// the POOL seed, never from the live env's baseSeed. Two source envs reset with
+// the same seed share identical game state; we then vary ONLY one env's baseSeed
+// (an in-package mutation, the cheapest honest way to diverge the "future" the
+// live env would deal). Post-fix, both pools' clone-0 rollouts cross a Chongci
+// round boundary to byte-identical next-hand hands. Pre-fix (clone baseSeed
+// copied from the live env) the next-hand wall is seeded from the differing live
+// baseSeed, so the post-boundary hands DIVERGE — this equality assertion fails.
+func TestSearchPool_CloneWorldIndependentOfLiveSeed(t *testing.T) {
+	envA := newStartedEnv(t, 4242)
+	envB := newStartedEnv(t, 4242)
+
+	// Identical state premise (opponent hands equal at the branch point).
+	for s := uint32(0); s < 4; s++ {
+		if !idsEqual(handTileIDs(envA.game.State.Players[s].ClosedHand),
+			handTileIDs(envB.game.State.Players[s].ClosedHand)) {
+			t.Fatalf("premise broken: seat %d differs between same-seed resets", s)
+		}
+	}
+	// Diverge ONLY the live future seed.
+	if envA.baseSeed == 0 {
+		envA.baseSeed = 1
+	}
+	envB.baseSeed = envA.baseSeed + 0xDEADBEEF
+
+	nextHandHands := func(env *Env) []uint32 {
+		pool, err := NewSearchPool(env, 1, 99, 4096, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Close()
+		_, obs := currentDecision(t, env)
+		actionID, ok := firstLegalFromResponse(&pb.EnvPoolStepResponse{
+			ActionSpaceSize: obs.ActionSpaceSize, ActionMasks: obs.ActionMask,
+		})
+		if !ok {
+			t.Fatalf("no legal action at branch point")
+		}
+		for step := 0; step < 5000; step++ {
+			resp, err := pool.Step(&pb.EnvPoolStepRequest{
+				Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
+			})
+			if err != nil {
+				t.Fatalf("step: %v", err)
+			}
+			state := resp.Slots[0]
+			if state.Error != "" {
+				t.Fatalf("slot error: %s", state.Error)
+			}
+			if state.RoundOutcome != nil && !state.Terminated {
+				// Clone state is now the NEXT hand; capture the dealt hands.
+				var ids []uint32
+				for s := uint32(0); s < 4; s++ {
+					ids = append(ids, handTileIDs(pool.clones[0].env.game.State.Players[s].ClosedHand)...)
+				}
+				return ids
+			}
+			if state.Terminated || state.Truncated {
+				t.Fatalf("clone ended (term=%t trunc=%t) before a non-terminal round end",
+					state.Terminated, state.Truncated)
+			}
+			next, ok := firstLegalFromResponse(resp)
+			if !ok {
+				t.Fatalf("no legal action at step %d", step)
+			}
+			actionID = next
+		}
+		t.Fatalf("never reached a non-terminal round end")
+		return nil
+	}
+
+	a := nextHandHands(envA)
+	b := nextHandHands(envB)
+	if !idsEqual(a, b) {
+		t.Fatal("clone next-hand world depends on the live env's baseSeed — future leaked into the rollout")
+	}
+}
+
 func TestSearchPool_RejectsOracleEnv(t *testing.T) {
 	config := poolTestConfig()
 	config.OracleObservation = true
@@ -204,13 +326,13 @@ func TestSearchPool_RejectsOracleEnv(t *testing.T) {
 	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 4242, Config: config}); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if _, err := NewSearchPool(env, 4, 99, 512); err == nil {
+	if _, err := NewSearchPool(env, 4, 99, 512, 0); err == nil {
 		t.Fatalf("expected error creating pool from oracle env")
 	}
 }
 
 func TestSearchPool_NilEnvRejected(t *testing.T) {
-	if _, err := NewSearchPool(nil, 4, 99, 512); err == nil {
+	if _, err := NewSearchPool(nil, 4, 99, 512, 0); err == nil {
 		t.Fatalf("expected error for nil env")
 	}
 }
@@ -219,7 +341,7 @@ func TestSearchPool_RoundEndEmitsNextHandObs(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	_, obs := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 1, 99, 4096)
+	pool, err := NewSearchPool(env, 1, 99, 4096, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +401,7 @@ func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
 	env := newStartedEnv(t, 23)
 	rootSeat, obs := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 1, 99, 4096)
+	pool, err := NewSearchPool(env, 1, 99, 4096, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +474,7 @@ func TestSearchPool_MatchEndAttachesOutcome(t *testing.T) {
 	}
 	_, obs := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 1, 99, 100000)
+	pool, err := NewSearchPool(env, 1, 99, 100000, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +527,7 @@ func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	_, obs := currentDecision(t, env)
 
-	pool, err := NewSearchPool(env, 1, 99, 1)
+	pool, err := NewSearchPool(env, 1, 99, 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +571,7 @@ func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
 
 func TestSearchPool_ResetCommandIsError(t *testing.T) {
 	env := newStartedEnv(t, 4242)
-	pool, err := NewSearchPool(env, 2, 99, 512)
+	pool, err := NewSearchPool(env, 2, 99, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +651,7 @@ func TestSearchPool_InterruptWindowReAsked(t *testing.T) {
 		t.Fatalf("live env should surface an interrupt decision")
 	}
 
-	pool, err := NewSearchPool(env, 3, 7, 512)
+	pool, err := NewSearchPool(env, 3, 7, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +743,7 @@ func TestSearchPool_InterruptWindowExecutable(t *testing.T) {
 		t.Fatalf("live env should surface an interrupt decision")
 	}
 
-	pool, err := NewSearchPool(env, 6, 7, 512)
+	pool, err := NewSearchPool(env, 6, 7, 512, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

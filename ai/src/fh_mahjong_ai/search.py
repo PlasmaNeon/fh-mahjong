@@ -37,15 +37,19 @@ class SearchConfig:
     seed: int = 1
 
 
-PoolFactory = Callable[[int, int, int], Any]
+PoolFactory = Callable[..., Any]
 
 
 class SearchPolicy:
     """ActionChoice-protocol policy: determinized champion-rollout search.
 
-    ``pool_factory(num_clones, seed, max_rollout_decisions) -> pool`` with
-    ``.step(commands) -> SearchStepResult`` and ``.close()``. Production wires
-    ``GoSearchPool`` over the live eval bridge; tests inject fakes.
+    ``pool_factory(num_clones, seed, max_rollout_decisions, determinizations=K)
+    -> pool`` with ``.step(commands) -> SearchStepResult`` and ``.close()``.
+    ``determinizations`` is the common-random-numbers pairing group count K (the
+    clone count num_clones is M candidates x K), passed as a keyword so clones
+    sharing a determinization face a paired hidden world + sampled future.
+    Production wires ``GoSearchPool`` over the live eval bridge; tests inject
+    fakes.
     """
 
     def __init__(self, checkpoint_policy: Any, pool_factory: PoolFactory, config: SearchConfig) -> None:
@@ -81,7 +85,8 @@ class SearchPolicy:
 
             K = self._config.num_determinizations
             pool = self._pool_factory(
-                len(candidates) * K, self._config.seed, self._config.max_rollout_decisions
+                len(candidates) * K, self._config.seed, self._config.max_rollout_decisions,
+                determinizations=K,
             )
             try:
                 scores = self._rollout_scores(

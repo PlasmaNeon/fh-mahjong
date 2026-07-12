@@ -3959,6 +3959,9 @@ export namespace game {
 
         /** SearchPoolNewRequest maxRolloutDecisions */
         maxRolloutDecisions?: (number|undefined);
+
+        /** SearchPoolNewRequest determinizations */
+        determinizations?: (number|undefined);
     }
 
     /** Represents a SearchPoolNewRequest. */
@@ -3978,6 +3981,9 @@ export namespace game {
 
         /** SearchPoolNewRequest maxRolloutDecisions. */
         public maxRolloutDecisions: number;
+
+        /** SearchPoolNewRequest determinizations. */
+        public determinizations: number;
 
         /**
          * Creates a new SearchPoolNewRequest instance using the specified properties.

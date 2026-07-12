@@ -11429,6 +11429,7 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [clones] SearchPoolNewRequest clones
          * @property {number|Long|undefined} [seed] SearchPoolNewRequest seed
          * @property {number|undefined} [maxRolloutDecisions] SearchPoolNewRequest maxRolloutDecisions
+         * @property {number|undefined} [determinizations] SearchPoolNewRequest determinizations
          */
 
         /**
@@ -11471,6 +11472,14 @@ export const game = $root.game = (() => {
         SearchPoolNewRequest.prototype.maxRolloutDecisions = 0;
 
         /**
+         * SearchPoolNewRequest determinizations.
+         * @member {number} determinizations
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.determinizations = 0;
+
+        /**
          * Creates a new SearchPoolNewRequest instance using the specified properties.
          * @function create
          * @memberof game.SearchPoolNewRequest
@@ -11500,6 +11509,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 2, wireType 0 =*/16).uint64(message.seed);
             if (message.maxRolloutDecisions != null && Object.hasOwnProperty.call(message, "maxRolloutDecisions"))
                 writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxRolloutDecisions);
+            if (message.determinizations != null && Object.hasOwnProperty.call(message, "determinizations"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.determinizations);
             return writer;
         };
 
@@ -11548,6 +11559,10 @@ export const game = $root.game = (() => {
                         message.maxRolloutDecisions = reader.uint32();
                         break;
                     }
+                case 4: {
+                        message.determinizations = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -11592,6 +11607,9 @@ export const game = $root.game = (() => {
             if (message.maxRolloutDecisions != null && message.hasOwnProperty("maxRolloutDecisions"))
                 if (!$util.isInteger(message.maxRolloutDecisions))
                     return "maxRolloutDecisions: integer expected";
+            if (message.determinizations != null && message.hasOwnProperty("determinizations"))
+                if (!$util.isInteger(message.determinizations))
+                    return "determinizations: integer expected";
             return null;
         };
 
@@ -11620,6 +11638,8 @@ export const game = $root.game = (() => {
                     message.seed = new $util.LongBits(object.seed.low >>> 0, object.seed.high >>> 0).toNumber(true);
             if (object.maxRolloutDecisions != null)
                 message.maxRolloutDecisions = object.maxRolloutDecisions >>> 0;
+            if (object.determinizations != null)
+                message.determinizations = object.determinizations >>> 0;
             return message;
         };
 
@@ -11644,6 +11664,7 @@ export const game = $root.game = (() => {
                 } else
                     object.seed = options.longs === String ? "0" : 0;
                 object.maxRolloutDecisions = 0;
+                object.determinizations = 0;
             }
             if (message.clones != null && message.hasOwnProperty("clones"))
                 object.clones = message.clones;
@@ -11654,6 +11675,8 @@ export const game = $root.game = (() => {
                     object.seed = options.longs === String ? $util.Long.prototype.toString.call(message.seed) : options.longs === Number ? new $util.LongBits(message.seed.low >>> 0, message.seed.high >>> 0).toNumber(true) : message.seed;
             if (message.maxRolloutDecisions != null && message.hasOwnProperty("maxRolloutDecisions"))
                 object.maxRolloutDecisions = message.maxRolloutDecisions;
+            if (message.determinizations != null && message.hasOwnProperty("determinizations"))
+                object.determinizations = message.determinizations;
             return object;
         };
 

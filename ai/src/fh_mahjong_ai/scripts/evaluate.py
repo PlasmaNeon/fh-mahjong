@@ -307,11 +307,14 @@ def main() -> None:
                     )
 
                     def pool_factory(num_clones: int, seed: int, max_rollout_decisions: int,
-                                      _bridge=bridge) -> GoSearchPool:
+                                      determinizations: int = 0, _bridge=bridge) -> GoSearchPool:
                         # Closes over THIS seat's live bridge -- the pool clones
                         # the current decision point of the env this policy is
                         # actually choosing for, not a shared/incidental bridge.
-                        return GoSearchPool(_bridge, num_clones, seed, max_rollout_decisions)
+                        # determinizations K enables common-random-numbers pairing
+                        # so no candidate's rollout consults the live env's future.
+                        return GoSearchPool(_bridge, num_clones, seed, max_rollout_decisions,
+                                            determinizations=determinizations)
 
                     search_policy = SearchPolicy(
                         checkpoint_policy=checkpoint_policy,

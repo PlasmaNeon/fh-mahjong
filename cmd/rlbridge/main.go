@@ -203,7 +203,7 @@ func FHSearchPoolNew(envHandle C.uint64_t, requestPtr *C.char, requestLen C.int)
 		}
 	}
 
-	pool, err := rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()))
+	pool, err := rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations())
 	if err != nil {
 		return 0
 	}

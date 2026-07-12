@@ -3026,8 +3026,15 @@ type SearchPoolNewRequest struct {
 	Clones              uint32                 `protobuf:"varint,1,opt,name=clones,proto3" json:"clones,omitempty"`
 	Seed                uint64                 `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
 	MaxRolloutDecisions uint32                 `protobuf:"varint,3,opt,name=max_rollout_decisions,json=maxRolloutDecisions,proto3" json:"max_rollout_decisions,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Common-random-numbers pairing group count K (the clone count is M*K, M
+	// candidates x K determinizations). Clone i uses determinization k = i % K:
+	// BOTH its redealt hidden world AND its sampled future are derived from
+	// (pool seed, k) ALONE — never from the live env's seed — so clones sharing k
+	// across candidate groups face a byte-identical determinized world and future.
+	// 0 is treated as 1 (each clone its own world).
+	Determinizations uint32 `protobuf:"varint,4,opt,name=determinizations,proto3" json:"determinizations,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SearchPoolNewRequest) Reset() {
@@ -3077,6 +3084,13 @@ func (x *SearchPoolNewRequest) GetSeed() uint64 {
 func (x *SearchPoolNewRequest) GetMaxRolloutDecisions() uint32 {
 	if x != nil {
 		return x.MaxRolloutDecisions
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetDeterminizations() uint32 {
+	if x != nil {
+		return x.Determinizations
 	}
 	return 0
 }
@@ -3351,11 +3365,12 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vplane_width\x18\a \x01(\rR\n" +
 	"planeWidth\x12!\n" +
 	"\fscalar_count\x18\b \x01(\rR\vscalarCount\x12*\n" +
-	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"v\n" +
+	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"\xa2\x01\n" +
 	"\x14SearchPoolNewRequest\x12\x16\n" +
 	"\x06clones\x18\x01 \x01(\rR\x06clones\x12\x12\n" +
 	"\x04seed\x18\x02 \x01(\x04R\x04seed\x122\n" +
-	"\x15max_rollout_decisions\x18\x03 \x01(\rR\x13maxRolloutDecisions*c\n" +
+	"\x15max_rollout_decisions\x18\x03 \x01(\rR\x13maxRolloutDecisions\x12*\n" +
+	"\x10determinizations\x18\x04 \x01(\rR\x10determinizations*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +

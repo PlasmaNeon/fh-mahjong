@@ -480,4 +480,11 @@ message SearchPoolNewRequest {
   uint32 clones = 1;
   uint64 seed = 2;
   uint32 max_rollout_decisions = 3;
+  // Common-random-numbers pairing group count K (the clone count is M*K, M
+  // candidates x K determinizations). Clone i uses determinization k = i % K:
+  // BOTH its redealt hidden world AND its sampled future are derived from
+  // (pool seed, k) ALONE — never from the live env's seed — so clones sharing k
+  // across candidate groups face a byte-identical determinized world and future.
+  // 0 is treated as 1 (each clone its own world).
+  uint32 determinizations = 4;
 }

@@ -34,7 +34,8 @@ class SearchStepResult(PoolStepResult):
 class GoSearchPool:
     """ctypes wrapper over the FHSearchPool* exports (one FFI call per round)."""
 
-    def __init__(self, bridge: CtypesGoBridge, clones: int, seed: int, max_rollout_decisions: int) -> None:
+    def __init__(self, bridge: CtypesGoBridge, clones: int, seed: int, max_rollout_decisions: int,
+                 determinizations: int = 0) -> None:
         if clones < 1:
             raise ValueError("clones must be >= 1")
         self.env_config = bridge.config
@@ -42,10 +43,13 @@ class GoSearchPool:
         self._handle = 0
         self._library = bridge.library
         self._configure_signatures()
+        # determinizations K is the common-random-numbers pairing group count
+        # (clone count is M*K). 0 lets Go treat each clone as its own world.
         request = game_pb2.SearchPoolNewRequest(
             clones=self.clones,
             seed=int(seed),
             max_rollout_decisions=int(max_rollout_decisions),
+            determinizations=int(determinizations),
         )
         self._handle = self._library.FHSearchPoolNew(
             ctypes.c_uint64(bridge.handle), *self._payload_args(request.SerializeToString())

@@ -167,10 +167,15 @@ class FakeSearchPool:
 
 
 def _factory_from(pool: FakeSearchPool):
-    calls = {"count": 0}
+    calls = {"count": 0, "num_clones": None, "seed": None,
+             "max_rollout_decisions": None, "determinizations": None}
 
-    def factory(num_clones: int, seed: int, max_rollout_decisions: int):
+    def factory(num_clones: int, seed: int, max_rollout_decisions: int, determinizations: int):
         calls["count"] += 1
+        calls["num_clones"] = num_clones
+        calls["seed"] = seed
+        calls["max_rollout_decisions"] = max_rollout_decisions
+        calls["determinizations"] = determinizations
         return pool
 
     return factory, calls
@@ -218,6 +223,30 @@ def test_search_prefers_higher_scoring_candidate():
     assert choice.action_id == 2                 # search overrides the greedy prior
     assert pool.closed is True
     assert choice.info["scores"] == pytest.approx([1.0, 5.0])
+
+
+def test_pool_factory_receives_determinizations_K():
+    # LEAK 2 plumbing: SearchPolicy must pass the determinization count K through
+    # to the pool factory (as the clone count M*K and the explicit
+    # `determinizations` arg) so the Go pool can pair worlds by k.
+    policy = FakeCheckpointPolicy({0.0: [0, 0.6, 0.4, 0, 0]})
+    K = 5
+    per_candidate = [
+        [SlotSpec(reward=1.0, terminated=True)],
+        [SlotSpec(reward=2.0, terminated=True)],
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, calls = _factory_from(pool)
+
+    searcher = SearchPolicy(policy, factory,
+                            SearchConfig(num_determinizations=K, seed=123, max_rollout_decisions=77))
+    searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    assert calls["count"] == 1
+    assert calls["determinizations"] == K
+    assert calls["num_clones"] == len(per_candidate) * K  # M candidates x K
+    assert calls["seed"] == 123
+    assert calls["max_rollout_decisions"] == 77
 
 
 def test_fail_open_on_pool_error():

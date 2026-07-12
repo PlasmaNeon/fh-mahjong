@@ -53,7 +53,27 @@ type searchClone struct {
 // NewSearchPool builds `clones` determinized copies of e's current decision
 // point. It fails on a nil env, an oracle-configured env (search must never see
 // oracle channels), or an env that is not at a decision point.
-func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64) (*SearchPool, error) {
+//
+// Common-random-numbers pairing (honesty guarantee against a live-seed future
+// leak). Clone i belongs to determinization group k = i % determinizations
+// (K; the clone count is M candidates x K). BOTH per-clone seeds are derived
+// from (pool seed, k) ALONE:
+//
+//   - redealSeed  = seed*1_000_003 + k  → the hidden world (opponents' hands +
+//     undrawn wall) RedealUnseen deals.
+//   - cloneBaseSeed = seed*7_919 + k + 1 → the clone Env's baseSeed, which
+//     drives readyAllPlayersForNextRound's next-hand wall at a Chongci round
+//     boundary (deriveHandSeed(baseSeed, handNum)).
+//
+// NEITHER is ever derived from e.baseSeed. Copying the live env's baseSeed (the
+// pre-fix behaviour) let a rollout that crosses a round boundary deal the live
+// simulator's ACTUAL future hand — information unavailable at the root decision,
+// and the root-seat next-hand bootstrap observation would contain the player's
+// real future tiles. Deriving from (seed, k) instead means clones (c,k) and
+// (c',k) in different candidate groups share the identical determinized world
+// AND the identical sampled future, so candidates are compared on paired worlds
+// (variance-reducing) and the live env's future is never consulted.
+func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, determinizations uint32) (*SearchPool, error) {
 	if e == nil || e.game == nil || e.game.State == nil {
 		return nil, fmt.Errorf("search pool: nil env")
 	}
@@ -68,14 +88,21 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64) 
 	if clones < 1 {
 		clones = 1
 	}
+	// determinizations==0 means "each clone its own world" (K = clone count), so
+	// k = i % clones == i and every clone is independent — the honest default
+	// when the caller does not pair.
+	if determinizations < 1 {
+		determinizations = uint32(clones)
+	}
 
 	p := &SearchPool{config: cfg, maxDec: maxRolloutDecisions, rootSeat: seat}
 	for i := 0; i < clones; i++ {
+		k := uint64(uint32(i) % determinizations)
 		g := e.game.CloneForBranch()
 		if g == nil {
 			return nil, fmt.Errorf("search pool: clone %d failed", i)
 		}
-		if err := g.RedealUnseen(seat, seed*1000003+uint64(i)); err != nil {
+		if err := g.RedealUnseen(seat, seed*1000003+k); err != nil {
 			return nil, err
 		}
 		p.clones = append(p.clones, &searchClone{env: &Env{
@@ -83,7 +110,10 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64) 
 			game:          g,
 			learningSeats: map[uint32]bool{0: true, 1: true, 2: true, 3: true},
 			decisionCount: e.decisionCount,
-			baseSeed:      e.baseSeed,
+			// Derive the clone's baseSeed from (pool seed, k) — NEVER from
+			// e.baseSeed — so a boundary-crossing rollout's next-hand wall is a
+			// sampled future paired by k, not the live env's actual future.
+			baseSeed: seed*7919 + k + 1,
 			// The clone must carry the visible score snapshot so its dense
 			// per-step reward (scoreDeltaReward) measures the change SINCE the
 			// branch point, not since zero. The skeleton omitted this; it is
