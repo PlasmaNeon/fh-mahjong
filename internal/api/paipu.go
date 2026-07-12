@@ -16,17 +16,17 @@ import (
 func (s *Server) handleGetPaipu(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "matchId is required"})
+		respondError(c, http.StatusBadRequest, "matchId is required")
 		return
 	}
 
 	data, ok, errMsg := s.loadPaipuJSONWithErr(matchID)
 	if errMsg != "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": errMsg})
+		respondError(c, http.StatusInternalServerError, errMsg)
 		return
 	}
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
+		respondError(c, http.StatusNotFound, "Match not found")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", []byte(data))
@@ -92,24 +92,24 @@ func (s *Server) loadPaipuJSONWithErr(matchID string) (data string, ok bool, err
 func (s *Server) handleUploadPaipu(c *gin.Context) {
 	secret := os.Getenv("ADMIN_SECRET")
 	if secret == "" || c.GetHeader("X-Admin-Secret") != secret {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
+		respondError(c, http.StatusForbidden, "Forbidden")
 		return
 	}
 
 	matchID := c.Param("matchId")
 	if matchID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "matchId is required"})
+		respondError(c, http.StatusBadRequest, "matchId is required")
 		return
 	}
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
+		respondError(c, http.StatusBadRequest, "Failed to read body")
 		return
 	}
 
 	if !json.Valid(body) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		respondError(c, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
