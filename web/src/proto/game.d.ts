@@ -3947,4 +3947,125 @@ export namespace game {
          */
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
+
+    /** Properties of a SearchPoolNewRequest. */
+    interface ISearchPoolNewRequest {
+
+        /** SearchPoolNewRequest clones */
+        clones?: (number|undefined);
+
+        /** SearchPoolNewRequest seed */
+        seed?: (number|Long|undefined);
+
+        /** SearchPoolNewRequest maxRolloutDecisions */
+        maxRolloutDecisions?: (number|undefined);
+
+        /** SearchPoolNewRequest determinizations */
+        determinizations?: (number|undefined);
+
+        /** SearchPoolNewRequest rootSeat */
+        rootSeat?: (number|null|undefined);
+    }
+
+    /** Represents a SearchPoolNewRequest. */
+    class SearchPoolNewRequest implements ISearchPoolNewRequest {
+
+        /**
+         * Constructs a new SearchPoolNewRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.ISearchPoolNewRequest);
+
+        /** SearchPoolNewRequest clones. */
+        public clones: number;
+
+        /** SearchPoolNewRequest seed. */
+        public seed: (number|Long);
+
+        /** SearchPoolNewRequest maxRolloutDecisions. */
+        public maxRolloutDecisions: number;
+
+        /** SearchPoolNewRequest determinizations. */
+        public determinizations: number;
+
+        /** SearchPoolNewRequest rootSeat. */
+        public rootSeat: (number|null);
+
+        /**
+         * Creates a new SearchPoolNewRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns SearchPoolNewRequest instance
+         */
+        public static create(properties?: game.ISearchPoolNewRequest): game.SearchPoolNewRequest;
+
+        /**
+         * Encodes the specified SearchPoolNewRequest message. Does not implicitly {@link game.SearchPoolNewRequest.verify|verify} messages.
+         * @param message SearchPoolNewRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.ISearchPoolNewRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified SearchPoolNewRequest message, length delimited. Does not implicitly {@link game.SearchPoolNewRequest.verify|verify} messages.
+         * @param message SearchPoolNewRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.ISearchPoolNewRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a SearchPoolNewRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns SearchPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.SearchPoolNewRequest;
+
+        /**
+         * Decodes a SearchPoolNewRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns SearchPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.SearchPoolNewRequest;
+
+        /**
+         * Verifies a SearchPoolNewRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a SearchPoolNewRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns SearchPoolNewRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.SearchPoolNewRequest;
+
+        /**
+         * Creates a plain object from a SearchPoolNewRequest message. Also converts values to other types if specified.
+         * @param message SearchPoolNewRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.SearchPoolNewRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this SearchPoolNewRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for SearchPoolNewRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
 }

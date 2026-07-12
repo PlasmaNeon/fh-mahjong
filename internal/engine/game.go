@@ -710,6 +710,24 @@ func (g *Game) endRoundInDraw() {
 	g.concludeRound()
 }
 
+// filterRonOnlyInterrupts restricts an interrupt set to Ron actions, per the
+// haitei rule (no Chii/Pon/Kan on the last discard). When ronOnly is false
+// the interrupts are returned unchanged. Shared by offerInterrupts (the live
+// discard path) and RedealUnseen's post-reshuffle ValidActions refresh, so
+// the two can never drift on what haitei allows.
+func filterRonOnlyInterrupts(interrupts []*pb.PlayerAction, ronOnly bool) []*pb.PlayerAction {
+	if !ronOnly {
+		return interrupts
+	}
+	var ronActions []*pb.PlayerAction
+	for _, intr := range interrupts {
+		if intr.Type == pb.ActionType_ACTION_RON {
+			ronActions = append(ronActions, intr)
+		}
+	}
+	return ronActions
+}
+
 // offerInterrupts computes valid interrupts for every seat other than the
 // discarder and reports whether anyone can act. ronOnly restricts offers to
 // Ron, per the haitei rule (no Chii/Pon/Kan on the last discard).
@@ -720,16 +738,7 @@ func (g *Game) offerInterrupts(seat uint32, tile *pb.Tile, ronOnly bool) bool {
 			p.ValidActions = nil // the discarder has no interrupts
 			continue
 		}
-		interrupts := g.Rules.GetValidInterrupts(g.State, tile, uint32(pSeat))
-		if ronOnly {
-			var ronActions []*pb.PlayerAction
-			for _, intr := range interrupts {
-				if intr.Type == pb.ActionType_ACTION_RON {
-					ronActions = append(ronActions, intr)
-				}
-			}
-			interrupts = ronActions
-		}
+		interrupts := filterRonOnlyInterrupts(g.Rules.GetValidInterrupts(g.State, tile, uint32(pSeat)), ronOnly)
 		p.ValidActions = interrupts
 		if len(interrupts) > 0 {
 			anyoneCanAct = true

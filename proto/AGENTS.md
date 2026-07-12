@@ -29,6 +29,8 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
     - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
       - `EnvResetResponse.round_outcome` / `EnvStepResponse.round_outcome` carry terminal round metadata when a round ends
       - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` and `terminal_outcome` carry final round targets for offline warm-start consumers
+    - `EnvPoolNewRequest`, `SlotCommand`, `EnvPoolStepRequest`, `SlotState`, `EnvPoolStepResponse`: batched multi-env FFI stepping (flat plane/scalar/action-mask buffers across commanded slots)
+    - `SearchPoolNewRequest` (clones/seed/max_rollout_decisions/determinizations, and proto3-`optional` `root_seat` — present ⇒ pin the search root explicitly for duplicate-seat eval, absent ⇒ Go falls back to `currentActionSeat()`; `optional` so seat 0 ≠ absent): test-time search pool creation — determinized clones of a live env's current decision point (undrawn wall + opponent hands re-dealt per clone, acting seat's observation held bit-identical). Stepping reuses `EnvPoolStepRequest`/`EnvPoolStepResponse` with search-specific semantics (reset_seed is a per-slot error; round_outcome set but non-terminal means the observation is the next hand's first decision state; truncated still carries the cap-state observation) — see `internal/rl/searchpool.go` and `cmd/rlbridge`'s `FHSearchPool*` exports
 - **game.pb.go** — Auto-generated Go bindings (do not edit manually)
 
 ## Regeneration Commands

@@ -107,22 +107,29 @@ func assemblePoolResponse(results []slotResult) (*pb.EnvPoolStepResponse, error)
 		hasObs := !r.skipped && !r.terminated && !r.truncated && r.observation != nil
 		state.HasObservation = hasObs
 		if hasObs {
-			obs := r.observation
-			state.Seat = obs.Seat
-			if response.PlaneChannels == 0 {
-				response.PlaneChannels = obs.PlaneChannels
-				response.PlaneHeight = obs.PlaneHeight
-				response.PlaneWidth = obs.PlaneWidth
-				response.ScalarCount = uint32(len(obs.Scalars))
-				response.ActionSpaceSize = obs.ActionSpaceSize
-			}
-			response.Planes = appendFloat32LE(response.Planes, obs.Planes)
-			response.Scalars = appendFloat32LE(response.Scalars, obs.Scalars)
-			response.ActionMasks = append(response.ActionMasks, obs.ActionMask...)
+			state.Seat = r.observation.Seat
+			appendObservationRow(response, r.observation)
 		}
 		response.Slots = append(response.Slots, state)
 	}
 	return response, nil
+}
+
+// appendObservationRow appends one observation's planes/scalars/mask to the flat
+// little-endian response buffers, seeding the shared header dims on the first
+// row. Shared by EnvPool and SearchPool so the flat-buffer layout stays
+// identical across both pools.
+func appendObservationRow(response *pb.EnvPoolStepResponse, obs *pb.SeatObservation) {
+	if response.PlaneChannels == 0 {
+		response.PlaneChannels = obs.PlaneChannels
+		response.PlaneHeight = obs.PlaneHeight
+		response.PlaneWidth = obs.PlaneWidth
+		response.ScalarCount = uint32(len(obs.Scalars))
+		response.ActionSpaceSize = obs.ActionSpaceSize
+	}
+	response.Planes = appendFloat32LE(response.Planes, obs.Planes)
+	response.Scalars = appendFloat32LE(response.Scalars, obs.Scalars)
+	response.ActionMasks = append(response.ActionMasks, obs.ActionMask...)
 }
 
 func appendFloat32LE(dst []byte, values []float32) []byte {
