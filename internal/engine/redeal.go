@@ -34,10 +34,18 @@ import (
 // so a fork landing inside a haitei interrupt window never offers Chii/Pon/Kan;
 // in any other phase we clear them (opponents hold no interrupts mid-turn; only
 // stale entries could remain). The acting seat's ValidActions are left untouched
-// — its hand did not move. A
-// seat whose refreshed interrupts come back empty simply drops out of the window
-// (expectedResponses derives from len(ValidActions)); that is correct honest
-// behavior — the redealt hand genuinely no longer holds that interrupt.
+// — its hand did not move.
+//
+// The refresh recomputes for EVERY non-acting seat, regardless of whether its
+// PRE-redeal ValidActions were empty. Interrupt eligibility derives from the
+// hidden hand, so the pre-redeal eligibility set is itself hidden information: a
+// seat whose PRE-redeal hand could not respond but whose REDEALT hand can now
+// Ron/Pon/Kan must be admitted to the window — gating the refresh on prior
+// non-emptiness would leak the true hidden hands into which seats the rollout
+// re-asks. Conversely, a seat whose refreshed interrupts come back empty simply
+// drops out of the window (expectedResponses derives from len(ValidActions));
+// that is correct honest behavior — the redealt hand genuinely no longer holds
+// (or never held) that interrupt.
 //
 // Intended for use on CloneForBranch clones (search determinization), never on
 // a live game.
@@ -101,14 +109,17 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 
 	// 5. Refresh non-acting seats' ValidActions against their new hands. Stale
 	// interrupt options reference tiles the reshuffle moved elsewhere; serving one
-	// would corrupt the hand (see the function comment). The acting seat's
-	// ValidActions are left as-is: its hand did not move.
+	// would corrupt the hand (see the function comment). At an open window we
+	// recompute for EVERY non-acting seat (not only those with non-empty
+	// pre-redeal options) — pre-redeal eligibility is hidden information, and a
+	// redealt hand that gains an interrupt must be admitted (see function comment).
+	// The acting seat's ValidActions are left as-is: its hand did not move.
 	openWindow := g.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS && g.State.ActiveDiscard != nil
 	for s, p := range g.State.Players {
 		if uint32(s) == actingSeat {
 			continue
 		}
-		if openWindow && len(p.ValidActions) > 0 {
+		if openWindow {
 			interrupts := g.Rules.GetValidInterrupts(g.State, g.State.ActiveDiscard, uint32(s))
 			p.ValidActions = filterRonOnlyInterrupts(interrupts, g.State.IsHaitei)
 			continue

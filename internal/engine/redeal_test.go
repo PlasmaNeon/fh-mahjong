@@ -187,6 +187,77 @@ func TestRedealUnseen_HaiteiWindowRonOnly(t *testing.T) {
 	}
 }
 
+// TestRedealUnseen_GainingEligibilityAdmitted guards LEAK 1: interrupt
+// eligibility derives from the hidden hand, so the PRE-redeal eligibility set is
+// itself hidden information. A non-acting seat whose PRE-redeal hand held no
+// interrupt but whose REDEALT hand can now Pon the active discard MUST be
+// admitted to the window; gating the refresh on prior non-emptiness (the
+// pre-fix behaviour) would wrongly exclude it, simulating a response window
+// correlated with the true hidden hands.
+//
+// We force the case deterministically: the redeal pool is exactly the three
+// opponents' concealed hands plus the undrawn wall. By overwriting every pool
+// tile in place with a copy of the active discard's Suit+Value (ids untouched, so
+// the multiset stays legal), every non-acting seat's redealt hand is guaranteed
+// to hold >=2 matching tiles and thus a Pon — regardless of shuffle seed. Seat 1
+// starts with EMPTY pre-redeal ValidActions, so the pre-fix refresh skips it.
+func TestRedealUnseen_GainingEligibilityAdmitted(t *testing.T) {
+	g := startedGame(t, 42)
+	base := g.CloneForBranch()
+
+	actingSeat := uint32(0)
+	base.State.ActivePlayer = actingSeat
+	discard := &pb.Tile{Id: 7777, Suit: pb.Suit_SUIT_MAN, Value: 3}
+	base.State.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	base.State.ActiveDiscard = discard
+	base.State.IsHaitei = false
+
+	// Force the redeal pool (opponents' hands + undrawn wall) to be entirely
+	// copies of the discard's Suit+Value, in place. tileKeys/ids are preserved so
+	// the conservation invariant holds; only Suit/Value are rewritten.
+	for s := 1; s < 4; s++ {
+		for _, tile := range base.State.Players[s].ClosedHand {
+			tile.Suit, tile.Value = discard.Suit, discard.Value
+		}
+	}
+	for _, tile := range base.WallTilesForTest() { // pointers into the live wall
+		tile.Suit, tile.Value = discard.Suit, discard.Value
+	}
+
+	// Seat 1 holds NO interrupt options pre-redeal: the pre-fix refresh path
+	// (len(ValidActions) > 0) therefore skips it entirely and leaves it empty.
+	base.State.Players[1].ValidActions = nil
+
+	if err := base.RedealUnseen(actingSeat, 1); err != nil {
+		t.Fatalf("redeal: %v", err)
+	}
+
+	// Premise check: the redealt hand genuinely presents a Pon (proves the
+	// assertion below is meaningful, not vacuously satisfied by some other path).
+	raw := base.Rules.GetValidInterrupts(base.State, discard, 1)
+	hasPon := false
+	for _, a := range raw {
+		if a.Type == pb.ActionType_ACTION_PON {
+			hasPon = true
+			break
+		}
+	}
+	if !hasPon {
+		t.Fatalf("test premise broken: redealt seat 1 hand cannot Pon the discard")
+	}
+
+	// The refresh must ADMIT seat 1 to the window despite its empty pre-redeal
+	// options. Pre-fix this stays nil (skipped) and the test fails.
+	if len(base.State.Players[1].ValidActions) == 0 {
+		t.Fatal("seat 1 gained a Pon on redeal but was excluded from the window — pre-redeal eligibility leaked")
+	}
+	for _, a := range base.State.Players[1].ValidActions {
+		if a.Type != pb.ActionType_ACTION_RON && a.Type != pb.ActionType_ACTION_PON && a.Type != pb.ActionType_ACTION_KAN {
+			t.Fatalf("unexpected refreshed interrupt type %v", a.Type)
+		}
+	}
+}
+
 func TestRedealUnseen_RejectsBadSeat(t *testing.T) {
 	g := startedGame(t, 42)
 	if err := g.CloneForBranch().RedealUnseen(4, 1); err == nil {
