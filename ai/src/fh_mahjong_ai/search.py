@@ -259,12 +259,14 @@ class SearchPolicy:
     def _add_value_bootstrap(self, result, scores, bootstrap: list[tuple[int, int]], horizon) -> None:
         planes = np.stack([result.planes[r] for _, r in bootstrap])
         scalars = np.stack([result.scalars[r] for _, r in bootstrap])
-        # value-only rows: mask sanitized to avoid NaN probs / no-legal-actions.
-        # Bootstrap rows are the root seat's view and may carry an all-zero mask
-        # (the root need not be on the clock); values are mask-independent, so an
-        # all-ones mask is safe and keeps evaluate_batch's no-legal-actions guard
-        # from rejecting the batch.
-        masks = np.ones_like(np.stack([result.action_masks[r] for _, r in bootstrap]))
+        # Bootstrap rows are now the root seat's GENUINE next decision state, which
+        # the Go pool emits with its REAL action mask (in-distribution for the
+        # champion value head). We pass the mask through UNCHANGED: an all-zero mask
+        # reaching here would be a contract violation, so we let evaluate_batch's
+        # no-legal-actions guard raise -> the search fails open (drops to greedy),
+        # which is the correct response to a broken bootstrap row. (Sanitizing to
+        # all-ones would silently mask that violation.)
+        masks = np.stack([result.action_masks[r] for _, r in bootstrap])
         _, values = self._policy.evaluate_batch(planes, scalars, masks)
         gamma = self._config.discount_gamma
         for i, (s, _) in enumerate(bootstrap):

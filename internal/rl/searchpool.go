@@ -15,28 +15,37 @@ import (
 // everything the acting seat can see stays fixed. Clones are stepped in
 // lockstep rounds through Step, reusing the EnvPool proto messages.
 //
+// Value bootstrapping is IN-DISTRIBUTION by construction. The champion value
+// head was trained on per-seat GAE where V is only ever evaluated at states
+// where THAT seat has a genuine decision. So every bootstrap row this pool emits
+// is a REAL root-seat decision state with its REAL action mask — never the root
+// seat's view frozen at another seat's turn (which would be out-of-distribution,
+// and candidate-dependent under Chongci dealer succession → ranking corruption).
+//
 // Response contract (documented deviations from EnvPool / FHEnvPool, all within
 // the same SlotState messages):
-//   - RoundOutcome != nil && !Terminated ⇒ the clone's current ROUND ended;
-//     HasObservation=true carries a VALUE-BOOTSTRAP row for the ROOT seat (the
-//     seat being searched, fixed at pool creation) viewed at the start of the
-//     NEXT hand — NOT the next hand's acting seat. Python then stops stepping
-//     that clone. The value head estimates the ROOT seat's future return, so its
-//     accumulated step_rewards[root] must be bootstrapped with the root's view;
-//     encoding the next acting seat (the dealer, whose identity is
-//     candidate-dependent under Chongci succession) would bias candidate ranking.
-//   - Terminated=true ⇒ the match ended; HasObservation=false.
-//   - Truncated=true (per-clone decision cap) ⇒ HasObservation=true: the
-//     cap-state observation IS returned for value bootstrapping, encoded for the
-//     ROOT seat (same rationale). This is the deliberate deviation from EnvPool,
-//     whose assembler drops the observation on truncation.
+//   - RoundOutcome != nil && !Terminated ⇒ a ROUND ended earlier in this clone's
+//     rollout and the clone has now reached the ROOT seat's next GENUINE
+//     decision; HasObservation=true carries THAT row (root's real decision state,
+//     real mask) as the VALUE-BOOTSTRAP row with the captured round outcome
+//     attached. Python scores step_rewards[root] + V(this row) and skips the
+//     clone. Between the round boundary and this row the clone surfaces ORDINARY
+//     live-decision rows (other seats act in the next hand; Python steps them
+//     with the champion as usual) — no outcome attached, no bootstrap.
+//   - Terminated=true ⇒ the match ended; HasObservation=false. If the match ends
+//     while still awaiting a bootstrap (root never got another decision), the
+//     latest captured outcome is attached as metadata (rewards already telescoped
+//     — no bootstrap, per the GAE terminal convention).
+//   - Truncated=true (per-clone decision cap) ⇒ HasObservation=true: the cap is
+//     checked ONLY at a root-seat decision, so the truncation row is always a
+//     genuine root decision state (in-distribution) with its real mask. This is
+//     the deliberate deviation from EnvPool, whose assembler drops the obs on
+//     truncation.
 //   - reset_seed command ⇒ per-slot error ("search pool has no reset"); the
 //     pool keeps working.
-//
-// Bootstrap rows (round-end + truncation) are the ROOT seat's view and are
-// value-only by contract: the root may not be on the clock, so its action mask
-// can be empty — that is expected and fine. Only ordinary live-decision rows
-// (no outcome, not truncated) encode the current acting seat and drive rollout.
+//   - A hard safety stop (total decisions ≥ 2*maxRolloutDecisions+16 with no root
+//     decision reached) ⇒ per-slot error, so a pathological no-root-decision loop
+//     cannot spin (Python fail-open drops the clone).
 //
 // Root-action pinning. The FIRST action command sent to each clone is the ROOT
 // CANDIDATE — the move being searched for rootSeat. It is always decoded and
@@ -74,6 +83,20 @@ type searchClone struct {
 	// pinning is a no-op there. Subsequent commands (the other window seats'
 	// responses, later turns) use currentActionSeat() as usual.
 	rootApplied bool
+	// awaitingBootstrap records that a ROUND ended in this clone's rollout and we
+	// have not yet reached the root seat's next genuine decision to emit as the
+	// value-bootstrap row. While it is set, the clone keeps surfacing ordinary
+	// live-decision rows (other seats acting in the next hand) until a root
+	// decision arrives (→ bootstrap emitted with pendingOutcome attached) or the
+	// match ends (→ terminated, latest pendingOutcome attached as metadata). It
+	// persists ACROSS Step calls because the bootstrap decision usually lands
+	// several steps after the boundary.
+	awaitingBootstrap bool
+	// pendingOutcome is the round outcome captured at the most recent PHASE_ROUND_END
+	// (before readyAllPlayersForNextRound clears State.RoundResult). If a second
+	// round ends while still awaiting (root never acted between them — rare), it is
+	// overwritten with the LATEST outcome. Cleared once the bootstrap row is emitted.
+	pendingOutcome *pb.RoundOutcome
 }
 
 // NewSearchPool builds `clones` determinized copies of e's current decision
@@ -238,31 +261,37 @@ func (p *SearchPool) stepClone(clone *searchClone, actionID uint32) slotResult {
 	return res
 }
 
-// advanceClone drives one clone from just after a ProcessPlayerAction to its
-// next decision, mirroring Env.advanceToDecision but with two search-specific
-// behaviours it cannot delegate:
+// advanceClone drives one clone from just after a ProcessPlayerAction to the
+// next row it surfaces, mirroring Env.advanceToDecision but with search-specific
+// behaviours it cannot delegate. The bootstrap contract keeps every value row
+// IN-DISTRIBUTION for the champion value head (a real root-seat decision state):
 //
-//  1. Round-end detection. In Chongci, advanceToDecision auto-acks the ROUND_END
-//     ready gate and continues; startNextRound() then NILS State.RoundResult, so
-//     the just-ended outcome would be unrecoverable afterwards. HandNum-change is
-//     a robust boundary signal but carries no payout data. We therefore capture
-//     the RoundOutcome HERE, before readying up, and attach it to the surfaced
-//     next-hand decision — realising "RoundOutcome + next-hand obs".
-//  2. Decision cap. The per-clone maxRolloutDecisions cap truncates WITH the
-//     cap-state observation (value bootstrap), unlike Env's MaxDecisions cap.
+//  1. Round-end detection + deferred bootstrap. In Chongci, advanceToDecision
+//     auto-acks the ROUND_END ready gate and continues; startNextRound() then
+//     NILS State.RoundResult, so the just-ended outcome would be unrecoverable
+//     afterwards. We therefore capture the RoundOutcome HERE, before readying up,
+//     into clone.pendingOutcome and set clone.awaitingBootstrap — but we do NOT
+//     stop the clone. It keeps surfacing ordinary live-decision rows (other seats
+//     act in the next hand) until the ROOT seat's next genuine decision, which we
+//     emit as the bootstrap row with the outcome attached.
+//  2. Decision cap. The per-clone maxRolloutDecisions cap is checked ONLY at a
+//     root-seat decision, so a truncation row is always a genuine root decision
+//     state; it truncates WITH that observation (value bootstrap), unlike Env's
+//     MaxDecisions cap.
+//  3. Hard safety stop. A pathological rollout that never reaches a root decision
+//     is broken with a per-slot error once total decisions exceed a hard bound.
 func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 	env := clone.env
-	var pendingOutcome *pb.RoundOutcome
 	for {
 		state := env.game.State
 
 		if state.Phase == pb.GamePhase_PHASE_MATCH_END {
-			// Terminal: dense per-step rewards already telescoped the outcome.
-			// Attach any final-round outcome so callers still get payout metadata
-			// (symmetric with the classic-terminal path below). Prefer a
-			// pendingOutcome captured this advance; fall back to the current
-			// state's outcome (nil-safe).
-			outcome := pendingOutcome
+			// Terminal: dense per-step rewards already telescoped the outcome, so
+			// there is NO bootstrap (GAE terminal convention) even if we were still
+			// awaiting one — the root simply never got another decision. Attach the
+			// latest captured outcome (or the current state's, nil-safe) so callers
+			// still get final-round payout metadata.
+			outcome := clone.pendingOutcome
 			if outcome == nil {
 				outcome = roundOutcome(state)
 			}
@@ -271,8 +300,12 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 
 		if state.Phase == pb.GamePhase_PHASE_ROUND_END {
 			if state.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
-				// Capture before readying up: startNextRound() clears RoundResult.
-				pendingOutcome = roundOutcome(state)
+				// Capture before readying up (startNextRound() clears RoundResult),
+				// arm the bootstrap, and keep going — the clone continues surfacing
+				// ordinary rows until the root's next decision. A second boundary
+				// while still awaiting overwrites with the LATEST outcome.
+				clone.pendingOutcome = roundOutcome(state)
+				clone.awaitingBootstrap = true
 				if err := env.readyAllPlayersForNextRound(); err != nil {
 					return slotResult{err: err}
 				}
@@ -282,25 +315,42 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 			return slotResult{terminated: true, rewards: roundRewards(state), outcome: roundOutcome(state)}
 		}
 
-		if p.maxDec > 0 && clone.decisions >= p.maxDec {
-			obs := p.capStateObservation(env)
-			return slotResult{truncated: true, rewards: env.scoreDeltaReward(), observation: obs, outcome: pendingOutcome}
+		// Hard safety stop: never let a clone that fails to reach another root
+		// decision spin forever. Python fail-open drops the errored clone.
+		if p.maxDec > 0 && clone.decisions >= 2*p.maxDec+16 {
+			return slotResult{err: fmt.Errorf("search: hard decision cap %d exceeded without a root decision", clone.decisions)}
 		}
 
 		if seat, ok := env.currentActionSeat(); ok {
-			// A pending outcome means the ROUND just ended and this is the
-			// next-hand value-bootstrap row: encode the ROOT seat's view (the
-			// seat being searched), not the next acting seat. Ordinary live
-			// decisions (no outcome) encode the acting seat to drive rollout.
-			encodeSeat := seat
-			if pendingOutcome != nil {
-				encodeSeat = p.rootSeat
+			isRoot := seat == p.rootSeat
+			// Bootstrap emission: the root's next GENUINE decision after a round
+			// boundary. Emit THIS row (real decision state + real mask) with the
+			// captured outcome attached; Python scores and skips the clone.
+			if isRoot && clone.awaitingBootstrap {
+				obs, err := encodeObservation(state, seat, env.decisionCount, false)
+				if err != nil {
+					return slotResult{err: err}
+				}
+				outcome := clone.pendingOutcome
+				clone.awaitingBootstrap = false
+				clone.pendingOutcome = nil
+				return slotResult{observation: obs, rewards: env.scoreDeltaReward(), outcome: outcome}
 			}
-			obs, err := encodeObservation(state, encodeSeat, env.decisionCount, false)
+			// Decision cap, checked ONLY at a root decision so the truncation row is
+			// an in-distribution root decision state with a real mask.
+			if isRoot && p.maxDec > 0 && clone.decisions >= p.maxDec {
+				obs, err := encodeObservation(state, seat, env.decisionCount, false)
+				if err != nil {
+					return slotResult{err: err}
+				}
+				return slotResult{truncated: true, rewards: env.scoreDeltaReward(), observation: obs}
+			}
+			// Ordinary live-decision row: encode the acting seat to drive rollout.
+			obs, err := encodeObservation(state, seat, env.decisionCount, false)
 			if err != nil {
 				return slotResult{err: err}
 			}
-			return slotResult{observation: obs, rewards: env.scoreDeltaReward(), outcome: pendingOutcome}
+			return slotResult{observation: obs, rewards: env.scoreDeltaReward()}
 		}
 
 		if state.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
@@ -314,19 +364,6 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 
 		return slotResult{err: fmt.Errorf("search: no actionable seat found: %s", env.decisionStateSummary())}
 	}
-}
-
-// capStateObservation returns the cap-state VALUE-BOOTSTRAP row, encoded for the
-// ROOT seat (the seat being searched) — not whoever is about to act at the cap.
-// The truncation row bootstraps the root's accumulated return, so it must be the
-// root's view; the root may not be on the clock, so its action mask can be empty
-// (value-only rows by contract). Falls back to an empty observation only if the
-// root's view somehow fails to encode.
-func (p *SearchPool) capStateObservation(env *Env) *pb.SeatObservation {
-	if obs, err := encodeObservation(env.game.State, p.rootSeat, env.decisionCount, false); err == nil {
-		return obs
-	}
-	return emptyObservation(env.game.State, env.decisionCount, false)
 }
 
 // cloneObservationForTest is an unexported test hook returning EncodeObservation

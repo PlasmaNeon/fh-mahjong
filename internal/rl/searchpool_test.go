@@ -2,6 +2,7 @@ package rl
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
@@ -391,13 +392,24 @@ func TestSearchPool_RoundEndEmitsNextHandObs(t *testing.T) {
 	}
 }
 
-// TestSearchPool_RoundEndBootstrapEncodesRootSeat pins the seat identity of the
-// round-end value-bootstrap row: it MUST be the ROOT seat's view (the seat being
-// searched), not the next hand's acting seat. Seed 23 is chosen so the next
-// hand's first acting seat (2) differs from the root seat (3) under Chongci
-// dealer succession — so encoding the acting seat would produce a byte-different
-// observation and this test would (and does, pre-fix) fail.
-func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
+// TestSearchPool_RoundEndBootstrapIsRootDecision pins the redesigned bootstrap
+// semantics (scenario a): after a round boundary the clone does NOT stop at the
+// frozen instant. It keeps surfacing the next hand's ORDINARY live-decision rows
+// for the OTHER seats until the ROOT seat's next GENUINE decision, which is
+// emitted as the value-bootstrap row — a real root decision state with a
+// NON-EMPTY action mask (in-distribution for the champion value head) and the
+// captured round outcome attached.
+//
+// Seed 23: the next hand's first acting seat (2) differs from the root seat (3)
+// under Chongci dealer succession, so the clone must surface at least one
+// foreign ordinary row after the boundary before the root's bootstrap decision.
+//
+// RED evidence on pre-fix code: pre-fix emitted the bootstrap row IMMEDIATELY at
+// the boundary (at seat 2's turn) with the root's view and an EMPTY mask, so both
+// the non-empty-mask assertion AND the "surfaced a foreign ordinary row"
+// assertion fail — pre-fix never surfaces an intervening foreign row and the mask
+// is empty.
+func TestSearchPool_RoundEndBootstrapIsRootDecision(t *testing.T) {
 	env := newStartedEnv(t, 23)
 	rootSeat, obs := currentDecision(t, env)
 
@@ -407,6 +419,8 @@ func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
 	}
 	defer pool.Close()
 
+	initialHand := pool.clones[0].env.game.State.HandNum
+
 	actionID, ok := firstLegalFromResponse(&pb.EnvPoolStepResponse{
 		ActionSpaceSize: obs.ActionSpaceSize, ActionMasks: obs.ActionMask,
 	})
@@ -414,6 +428,7 @@ func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
 		t.Fatalf("no legal action at branch point")
 	}
 
+	sawForeignAfterBoundary := false
 	for step := 0; step < 5000; step++ {
 		resp, err := pool.Step(&pb.EnvPoolStepRequest{
 			Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
@@ -425,23 +440,38 @@ func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
 		if state.Error != "" {
 			t.Fatalf("slot error: %s", state.Error)
 		}
+		clone := pool.clones[0].env
 		if state.RoundOutcome != nil && !state.Terminated {
+			// The bootstrap row: MUST be the root seat's GENUINE decision.
 			if !state.HasObservation {
-				t.Fatalf("round ended but no next-hand observation carried")
+				t.Fatalf("bootstrap row carried no observation")
 			}
-			clone := pool.clones[0].env
-			// Guard the test's own premise: the next acting seat must differ
-			// from root, else the assertion cannot distinguish the two encodings.
-			if actingSeat, ok := clone.currentActionSeat(); ok && actingSeat == rootSeat {
-				t.Fatalf("seed premise broken: next acting seat == root seat %d; pick a seed where they diverge", rootSeat)
+			if actingSeat, ok := clone.currentActionSeat(); !ok || actingSeat != rootSeat {
+				t.Fatalf("bootstrap row is not a root decision: acting seat=(%d,%v), want root %d",
+					actingSeat, ok, rootSeat)
 			}
-			// The emitted bootstrap row must be the ROOT seat's view.
+			if _, ok := firstLegalFromResponse(resp); !ok {
+				t.Fatalf("bootstrap row has an EMPTY action mask — not a genuine root decision (OOD)")
+			}
+			// Byte-exactly a direct encode of the root's real decision state.
 			assertEmittedRowEncodesSeat(t, resp, clone.game.State, rootSeat, clone.decisionCount)
+			if !sawForeignAfterBoundary {
+				t.Fatalf("no foreign ordinary row surfaced between the boundary and the root bootstrap — clone stopped at the frozen instant")
+			}
 			return
 		}
 		if state.Terminated || state.Truncated {
 			t.Fatalf("clone ended (term=%t trunc=%t) before any non-terminal round end",
 				state.Terminated, state.Truncated)
+		}
+		if !state.HasObservation {
+			t.Fatalf("no observation and not terminal at step %d", step)
+		}
+		// An ordinary row in the NEXT hand for a non-root seat proves the clone
+		// keeps surfacing foreign decisions after the boundary rather than
+		// bootstrapping immediately.
+		if clone.game.State.HandNum > initialHand && state.Seat != rootSeat {
+			sawForeignAfterBoundary = true
 		}
 		next, ok := firstLegalFromResponse(resp)
 		if !ok {
@@ -453,14 +483,16 @@ func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
 }
 
 // TestSearchPool_MatchEndAttachesOutcome drives a clone all the way to
-// PHASE_MATCH_END and asserts the terminal SlotState still carries the
-// final-round RoundOutcome — the MATCH_END return path attaches payout metadata
-// symmetric with the classic-terminal path, rather than discarding it.
+// PHASE_MATCH_END and asserts the terminal SlotState carries the final-round
+// RoundOutcome but NO observation (scenario b: match-end-while-awaiting). The
+// last round's boundary arms the bootstrap (awaitingBootstrap), but the match
+// ends before the root gets another decision, so per the GAE terminal convention
+// there is no bootstrap obs — only the latest captured outcome as metadata.
 func TestSearchPool_MatchEndAttachesOutcome(t *testing.T) {
 	// MaxHands=1 Chongci: the single decision that ends round 1 rolls straight
-	// through PHASE_ROUND_END into PHASE_MATCH_END within one advanceClone call,
-	// so the clone returns terminated directly (rather than being marked done at a
-	// separate round-end return, which a multi-hand match does after hand 1).
+	// through PHASE_ROUND_END (arming the bootstrap) into PHASE_MATCH_END within
+	// one advanceClone call, so the clone returns terminated directly with the
+	// captured outcome and no obs.
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
 		AutoPlayHeuristics: false,
@@ -503,6 +535,9 @@ func TestSearchPool_MatchEndAttachesOutcome(t *testing.T) {
 			if state.RoundOutcome == nil {
 				t.Fatalf("match end must attach the final-round outcome, got nil")
 			}
+			if state.HasObservation {
+				t.Fatalf("match-end-while-awaiting must NOT carry a bootstrap observation (GAE terminal convention)")
+			}
 			sawTerminated = true
 			break
 		}
@@ -523,9 +558,16 @@ func TestSearchPool_MatchEndAttachesOutcome(t *testing.T) {
 	}
 }
 
-func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
+// TestSearchPool_DecisionCapTruncatesAtRootDecision pins scenario (c): the
+// per-clone decision cap is checked ONLY at a root-seat decision, so the
+// truncation row is always a genuine in-distribution root decision state (with a
+// real mask), and foreign decisions taken while at/over the cap do NOT truncate.
+// Seed 4242 / cap 1: the root seat (3) is not the actor right after the apply
+// (seat 0 is), so the cap is exceeded during foreign decisions but truncation is
+// deferred to the root's next decision.
+func TestSearchPool_DecisionCapTruncatesAtRootDecision(t *testing.T) {
 	env := newStartedEnv(t, 4242)
-	_, obs := currentDecision(t, env)
+	rootSeat, obs := currentDecision(t, env)
 
 	pool, err := NewSearchPool(env, 1, 99, 1, 0)
 	if err != nil {
@@ -540,33 +582,129 @@ func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
 		t.Fatalf("no legal action at branch point")
 	}
 
+	ordinaryOverCap := 0
+	for step := 0; step < 5000; step++ {
+		resp, err := pool.Step(&pb.EnvPoolStepRequest{
+			Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
+		})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
+		state := resp.Slots[0]
+		if state.Error != "" {
+			t.Fatalf("slot error: %s", state.Error)
+		}
+		clone := pool.clones[0].env
+		if state.Truncated {
+			if !state.HasObservation {
+				t.Fatalf("decision-cap truncation must carry the cap-state observation")
+			}
+			// The truncation row must be a genuine ROOT decision with a real mask.
+			if actingSeat, ok := clone.currentActionSeat(); !ok || actingSeat != rootSeat {
+				t.Fatalf("truncation row is not a root decision: acting seat=(%d,%v), want root %d",
+					actingSeat, ok, rootSeat)
+			}
+			if _, ok := firstLegalFromResponse(resp); !ok {
+				t.Fatalf("truncation row has an EMPTY action mask — not a genuine root decision (OOD)")
+			}
+			assertEmittedRowEncodesSeat(t, resp, clone.game.State, rootSeat, clone.decisionCount)
+			if ordinaryOverCap == 0 {
+				t.Fatalf("cap fired at the first decision — expected foreign decisions over the cap before a root truncation")
+			}
+			return
+		}
+		if state.Terminated {
+			t.Fatalf("clone terminated before a root truncation")
+		}
+		if !state.HasObservation {
+			t.Fatalf("no observation and not terminal at step %d", step)
+		}
+		// A non-root ordinary row emitted after the cap was exceeded proves the
+		// cap did NOT fire at a foreign decision.
+		if state.Seat != rootSeat {
+			ordinaryOverCap++
+		}
+		next, ok := firstLegalFromResponse(resp)
+		if !ok {
+			t.Fatalf("no legal action at step %d", step)
+		}
+		actionID = next
+	}
+	t.Fatalf("never truncated at a root decision")
+}
+
+// TestSearchPool_HardStopOnNoRootDecision pins the hard safety stop: if a clone
+// never reaches another root decision (a pathological loop the cap — gated on
+// root decisions — cannot break), total decisions past 2*maxRolloutDecisions+16
+// emit a per-slot error so the pool cannot spin. We simulate "root never acts
+// again" white-box: after the first (correctly root-pinned) apply, we repoint the
+// pool's rootSeat to an unreachable seat so no surfaced decision is ever the
+// root's — the bootstrap and the (root-gated) cap can therefore never fire.
+func TestSearchPool_HardStopOnNoRootDecision(t *testing.T) {
+	env := newStartedEnv(t, 4242)
+	_, obs := currentDecision(t, env)
+
+	const maxDec = uint64(2)
+	pool, err := NewSearchPool(env, 1, 99, maxDec, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	actionID, ok := firstLegalFromResponse(&pb.EnvPoolStepResponse{
+		ActionSpaceSize: obs.ActionSpaceSize, ActionMasks: obs.ActionMask,
+	})
+	if !ok {
+		t.Fatalf("no legal action at branch point")
+	}
+
+	// First apply: still root-pinned (rootApplied is false), so the candidate is
+	// executed for the real root seat exactly as in production.
 	resp, err := pool.Step(&pb.EnvPoolStepRequest{
 		Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
 	})
 	if err != nil {
-		t.Fatalf("step: %v", err)
+		t.Fatalf("first step: %v", err)
 	}
-	state := resp.Slots[0]
-	if state.Error != "" {
-		t.Fatalf("slot error: %s", state.Error)
-	}
-	if !state.Truncated {
-		t.Fatalf("expected truncated after decision cap, got term=%t trunc=%t", state.Terminated, state.Truncated)
-	}
-	if !state.HasObservation {
-		t.Fatalf("decision-cap truncation must carry the cap-state observation")
+	if resp.Slots[0].Error != "" {
+		t.Fatalf("unexpected error on first apply: %s", resp.Slots[0].Error)
 	}
 
-	// The cap-state row is a VALUE-BOOTSTRAP row: it must be the ROOT seat's
-	// view, not whoever is on the clock at the cap. With seed 4242 / cap 1 the
-	// root seat (3) is not the acting seat at the cap (0), so encoding the acting
-	// seat would produce a byte-different observation.
-	rootSeat, _ := currentDecision(t, env)
-	clone := pool.clones[0].env
-	if actingSeat, ok := clone.currentActionSeat(); ok && actingSeat == rootSeat {
-		t.Fatalf("seed premise broken: cap acting seat == root seat %d; pick params where they diverge", rootSeat)
+	// Now make the root unreachable: no future surfaced decision equals rootSeat,
+	// so neither the bootstrap nor the root-gated cap can ever fire.
+	pool.rootSeat = 99
+
+	for step := 0; step < 5000; step++ {
+		state := resp.Slots[0]
+		if state.Truncated {
+			t.Fatalf("root-gated cap fired despite no reachable root decision")
+		}
+		if state.Error != "" {
+			// The hard stop: a per-slot error mentioning the hard cap.
+			if !strings.Contains(state.Error, "hard decision cap") {
+				t.Fatalf("unexpected per-slot error: %s", state.Error)
+			}
+			if pool.clones[0].decisions < 2*maxDec+16 {
+				t.Fatalf("hard stop fired too early at %d decisions (bound %d)",
+					pool.clones[0].decisions, 2*maxDec+16)
+			}
+			return
+		}
+		if state.Terminated {
+			t.Fatalf("clone terminated before the hard stop — pick a smaller maxDec")
+		}
+		next, ok := firstLegalFromResponse(resp)
+		if !ok {
+			t.Fatalf("no legal action at step %d", step)
+		}
+		resp, err = pool.Step(&pb.EnvPoolStepRequest{
+			Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: next}}},
+		})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
 	}
-	assertEmittedRowEncodesSeat(t, resp, clone.game.State, rootSeat, clone.decisionCount)
+	t.Fatalf("hard stop never fired")
 }
 
 func TestSearchPool_ResetCommandIsError(t *testing.T) {
