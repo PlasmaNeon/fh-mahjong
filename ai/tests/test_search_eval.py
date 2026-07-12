@@ -13,8 +13,12 @@ import sys
 
 import pytest
 
+import functools
+
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
+from fh_mahjong_ai.evaluate import _invoke_seat_policy_factory
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.policies import GuardedQPolicy
 from fh_mahjong_ai.scripts import evaluate as ev
 from fh_mahjong_ai.storage import save_checkpoint
 
@@ -132,3 +136,91 @@ class TestSearchReportKey:
         # No --online-episodes / --data at all: report is untouched by search.
         report = _run(tmp_path, monkeypatch, [])
         assert "search" not in report
+
+
+class TestInvokeSeatPolicyFactory:
+    """Unit tests for the arity-dispatch shim used by evaluate_duplicate_seats_policy.
+
+    Regression: `len(inspect.signature(factory).parameters)` counted DEFAULTED
+    params, so the standard capture-by-default idiom
+    ``lambda _seat, selected_margin=margin: GuardedQPolicy(..., min_q_margin=selected_margin, ...)``
+    (used by evaluate_guarded.py, evaluate_risk_guarded.py, evaluate_tail_constrained.py)
+    was misdetected as a 2-required-arg factory and called as
+    ``factory(seat, bridge)``, silently binding the live bridge object into the
+    captured default instead of the seat's margin.
+    """
+
+    def test_plain_one_arg_factory_called_with_seat_only(self):
+        calls = []
+
+        def factory(seat):
+            calls.append((seat,))
+            return seat
+
+        result = _invoke_seat_policy_factory(factory, 2, "BRIDGE")
+        assert result == 2
+        assert calls == [(2,)]
+
+    def test_capture_by_default_lambda_is_not_given_the_bridge(self):
+        # THE REGRESSION: a defaulted second parameter must NOT count as
+        # "required" -- the factory takes only the seat, and its captured
+        # default must remain untouched by the bridge object.
+        calls = []
+
+        def factory(seat, captured=0.5):
+            calls.append((seat, captured))
+            return (seat, captured)
+
+        result = _invoke_seat_policy_factory(factory, 7, "BRIDGE_OBJ")
+        assert result == (7, 0.5)
+        assert calls == [(7, 0.5)]
+
+    def test_genuine_two_required_arg_factory_receives_seat_and_bridge(self):
+        calls = []
+
+        def factory(seat, bridge):
+            calls.append((seat, bridge))
+            return (seat, bridge)
+
+        result = _invoke_seat_policy_factory(factory, 3, "BRIDGE")
+        assert result == (3, "BRIDGE")
+        assert calls == [(3, "BRIDGE")]
+
+    def test_functools_partial_reducing_required_args_to_one(self):
+        def factory(seat, bridge):
+            return (seat, bridge)
+
+        partial_factory = functools.partial(factory, bridge="FIXED_BRIDGE")
+        result = _invoke_seat_policy_factory(partial_factory, 9, "LIVE_BRIDGE")
+        assert result == (9, "FIXED_BRIDGE")
+
+    def test_factory_internal_typeerror_propagates(self):
+        def factory(seat):
+            raise TypeError("factory body blew up")
+
+        with pytest.raises(TypeError, match="factory body blew up"):
+            _invoke_seat_policy_factory(factory, 1, "BRIDGE")
+
+    def test_guarded_style_capture_by_default_lambda_constructs_with_right_margin(self):
+        # Integration-style: build the exact idiom evaluate_guarded.py:88 uses
+        # and drive it through the shim (mock bridge, no real duplicate-seats
+        # eval loop) to prove GuardedQPolicy ends up with the intended margin,
+        # not the bridge object.
+        anchor_model = object()
+        candidate_model = object()
+        margin = 0.75
+
+        policy_factory = lambda _seat, selected_margin=margin: GuardedQPolicy(
+            anchor_model=anchor_model,
+            candidate_model=candidate_model,
+            min_q_margin=selected_margin,
+            device="cpu",
+        )
+
+        mock_bridge = object()
+        policy = _invoke_seat_policy_factory(policy_factory, 2, mock_bridge)
+
+        assert isinstance(policy, GuardedQPolicy)
+        assert policy.min_q_margin == pytest.approx(0.75)
+        assert policy.anchor_model is anchor_model
+        assert policy.candidate_model is candidate_model

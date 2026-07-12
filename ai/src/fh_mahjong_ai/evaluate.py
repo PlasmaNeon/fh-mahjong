@@ -747,10 +747,21 @@ def _invoke_seat_policy_factory(factory: Any, seat: int, bridge: Any) -> Any:
     pool can clone the live decision point.
     """
     try:
-        param_count = len(inspect.signature(factory).parameters)
+        sig = inspect.signature(factory)
     except (TypeError, ValueError):
-        param_count = 1
-    if param_count >= 2:
+        return factory(seat)
+    required = 0
+    for p in sig.parameters.values():
+        if p.kind == inspect.Parameter.VAR_POSITIONAL:
+            # *args factories are today's 1-arg callers (e.g. sampled_policy_factory);
+            # treat as needing exactly the seat, not the bridge too.
+            continue
+        if (
+            p.default is inspect.Parameter.empty
+            and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ):
+            required += 1
+    if required >= 2:
         return factory(seat, bridge)
     return factory(seat)
 
