@@ -467,3 +467,16 @@ message EnvPoolStepResponse {
   uint32 scalar_count = 8;
   uint32 action_space_size = 9;
 }
+
+// Test-time search: create K determinized clones of a live env's current
+// decision point (opponents' hands + undrawn wall re-dealt per clone; the
+// acting seat's observation is bit-identical across clones). Stepping reuses
+// EnvPoolStepRequest/EnvPoolStepResponse with these deviations: reset_seed
+// commands are per-slot errors; round_outcome set (non-terminal) means the
+// round ended and the observation is the NEXT hand's first decision state;
+// truncated=true (decision cap) still carries the cap-state observation.
+message SearchPoolNewRequest {
+  uint32 clones = 1;
+  uint64 seed = 2;
+  uint32 max_rollout_decisions = 3;
+}
