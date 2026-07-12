@@ -1,6 +1,7 @@
 """Evaluation utilities for comparing a learned policy against baselines."""
 from __future__ import annotations
 
+import inspect
 from collections import Counter
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
@@ -462,8 +463,16 @@ def evaluate_policy_online(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
+    policy_factory: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
+
+    ``policy`` is used as-is when given. Pass ``policy=None`` with
+    ``policy_factory`` (called as ``policy_factory(bridge)``) when the policy
+    itself needs the seat's live bridge (e.g. a search policy whose rollout
+    pool clones the bridge's current decision point) -- the bridge does not
+    exist until this function builds it below, so it cannot be threaded
+    through an eagerly-constructed ``policy`` argument.
 
     Returns aggregate reward and action-frequency metrics.
     """
@@ -488,6 +497,10 @@ def evaluate_policy_online(
         config.max_steps_per_episode = int(max_steps_per_episode)
     bridge = build_bridge(config)
     env = MahjongEnv(config, bridge)
+    if policy is None:
+        if policy_factory is None:
+            raise ValueError("evaluate_policy_online requires either policy or policy_factory")
+        policy = policy_factory(bridge)
 
     seat_rewards: List[float] = []
     seat_placements: list[float] = []
@@ -721,6 +734,27 @@ def evaluate_online(
     )
 
 
+def _invoke_seat_policy_factory(factory: Any, seat: int, bridge: Any) -> Any:
+    """Call a duplicate-seat ``policy_factory``, passing the seat's live bridge
+    too when the factory accepts it.
+
+    Existing factories (e.g. the sampling path's ``sampled_policy_factory(seat)``)
+    take one argument and are called exactly as before -- just lazily, after
+    ``evaluate_policy_online`` has built the bridge instead of before it exists,
+    which has no observable effect since they don't touch the bridge. A factory
+    declared with two parameters (``factory(seat, bridge)``) additionally
+    receives that seat's bridge instance, e.g. so a search policy's rollout
+    pool can clone the live decision point.
+    """
+    try:
+        param_count = len(inspect.signature(factory).parameters)
+    except (TypeError, ValueError):
+        param_count = 1
+    if param_count >= 2:
+        return factory(seat, bridge)
+    return factory(seat)
+
+
 def evaluate_duplicate_seats_policy(
     policy_factory: Any,
     seeds: Sequence[int],
@@ -754,7 +788,8 @@ def evaluate_duplicate_seats_policy(
 
     for seat in seat_list:
         report = evaluate_policy_online(
-            policy=policy_factory(seat),
+            policy=None,
+            policy_factory=lambda bridge, _seat=seat: _invoke_seat_policy_factory(policy_factory, _seat, bridge),
             episodes=len(seeds),
             seeds=list(seeds),
             bridge_kind=bridge_kind,

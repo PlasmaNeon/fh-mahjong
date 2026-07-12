@@ -110,12 +110,30 @@ def main() -> None:
                              "(e.g. 'discard'); mixed decisions stay greedy")
     parser.add_argument("--sample-seed", type=int, default=1,
                         help="base RNG seed for the sampler (per-seat seeds derive from it)")
+    parser.add_argument("--search", action="store_true",
+                        help="run test-time determinized champion-rollout search (SearchPolicy) instead "
+                             "of plain greedy evaluation. Requires --duplicate-seats")
+    parser.add_argument("--search-determinizations", type=int, default=16,
+                        help="rollout clones per candidate root action")
+    parser.add_argument("--search-max-candidates", type=int, default=4,
+                        help="max root candidate actions considered by prior rank")
+    parser.add_argument("--search-prior-mass", type=float, default=0.95,
+                        help="cumulative prior-mass cutoff for candidate selection")
+    parser.add_argument("--search-max-rollout-decisions", type=int, default=512,
+                        help="rollout decision cap before bootstrapping with the value head")
+    parser.add_argument("--search-seed", type=int, default=1,
+                        help="base RNG seed for the search pool (per-seat seeds derive from it)")
     parser.add_argument("--mlflow", action="store_true", help="Log inference/evaluation params, metrics, and artifacts to MLflow")
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
     args = parser.parse_args()
+
+    # Computed early (used by validation below) rather than in its original spot
+    # after resolve_max_steps_per_episode: --from-oracle overrides --oracle so a
+    # 39ch student never runs against a 51ch env.
+    eval_oracle = args.oracle and not args.from_oracle
 
     if not math.isfinite(args.sample_temperature) or args.sample_temperature < 0.0:
         parser.error("--sample-temperature must be a finite value >= 0")
@@ -134,9 +152,33 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
+    _search_numeric_flags = (
+        "search_determinizations", "search_max_candidates", "search_prior_mass",
+        "search_max_rollout_decisions", "search_seed",
+    )
+    if not args.search:
+        for _flag_name in _search_numeric_flags:
+            if getattr(args, _flag_name) != parser.get_default(_flag_name):
+                parser.error(f"--{_flag_name.replace('_', '-')} requires --search")
+    else:
+        if not args.duplicate_seats:
+            parser.error("--search requires --duplicate-seats (the paired gate path)")
+        if args.search_determinizations < 1:
+            parser.error("--search-determinizations must be >= 1")
+        if args.search_max_candidates < 1:
+            parser.error("--search-max-candidates must be >= 1")
+        if not (0.0 < args.search_prior_mass <= 1.0):
+            parser.error("--search-prior-mass must be in (0, 1]")
+        if args.search_max_rollout_decisions < 1:
+            parser.error("--search-max-rollout-decisions must be >= 1")
+        if args.sample_temperature > 0.0:
+            parser.error("--search is incompatible with --sample-temperature > 0 "
+                         "(choose one decision-time policy)")
+        if eval_oracle:
+            parser.error("--search cannot run against an oracle observation env "
+                         "(--oracle without --from-oracle); the search pool rejects oracle envs")
+
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
-    # When --from-oracle is set the model is a 39ch student; eval must also use 39ch obs.
-    eval_oracle = args.oracle and not args.from_oracle
 
     model_config = model_config_from_args(args)
     if args.from_oracle:
@@ -176,6 +218,18 @@ def main() -> None:
             "top_k": args.sample_top_k,
             "action_family": args.sample_action_family,
             "seed": args.sample_seed,
+        }
+    if args.search:
+        # Only present when search is active, so the default (greedy) report
+        # stays byte-identical to pre-search output. fallback_count is filled
+        # in after the online eval runs (0 until then, e.g. --online-episodes 0).
+        final_report["search"] = {
+            "num_determinizations": args.search_determinizations,
+            "max_candidates": args.search_max_candidates,
+            "prior_mass_cutoff": args.search_prior_mass,
+            "max_rollout_decisions": args.search_max_rollout_decisions,
+            "seed": args.search_seed,
+            "fallback_count": 0,
         }
 
     with start_run(
@@ -231,7 +285,63 @@ def main() -> None:
         if args.online_episodes > 0:
             print(f"\n--- Online Evaluation ({args.online_episodes} episodes) ---")
             seeds = parse_seed_windows(args.seed_window, args.online_episodes, args.start_seed)
-            if args.duplicate_seats and args.sample_temperature > 0.0:
+            if args.duplicate_seats and args.search:
+                # Deploy-realistic eval: route decisions through determinized
+                # champion-rollout search (SearchPolicy) so the sweep measures
+                # what the search-augmented policy would ship.
+                from fh_mahjong_ai.search import SearchConfig, SearchPolicy
+                from fh_mahjong_ai.searchpool import GoSearchPool
+                from fh_mahjong_ai.serving import CheckpointPolicy
+
+                search_policies: list[SearchPolicy] = []
+
+                def search_policy_factory(seat: int, bridge: Any) -> SearchPolicy:
+                    # Fresh per-seat checkpoint policy, exactly as the sampling
+                    # path builds them, but greedy (no sampling kwargs) since
+                    # SearchPolicy needs a deterministic prior + value head.
+                    checkpoint_policy = CheckpointPolicy(
+                        model=model,
+                        checkpoint_path=args.checkpoint,
+                        checkpoint_step=step,
+                        device=args.device,
+                    )
+
+                    def pool_factory(num_clones: int, seed: int, max_rollout_decisions: int,
+                                      _bridge=bridge) -> GoSearchPool:
+                        # Closes over THIS seat's live bridge -- the pool clones
+                        # the current decision point of the env this policy is
+                        # actually choosing for, not a shared/incidental bridge.
+                        return GoSearchPool(_bridge, num_clones, seed, max_rollout_decisions)
+
+                    search_policy = SearchPolicy(
+                        checkpoint_policy=checkpoint_policy,
+                        pool_factory=pool_factory,
+                        config=SearchConfig(
+                            num_determinizations=args.search_determinizations,
+                            max_candidates=args.search_max_candidates,
+                            prior_mass_cutoff=args.search_prior_mass,
+                            max_rollout_decisions=args.search_max_rollout_decisions,
+                            seed=args.search_seed * 4 + seat,
+                        ),
+                    )
+                    search_policies.append(search_policy)
+                    return search_policy
+
+                online_report = evaluate_duplicate_seats_policy(
+                    policy_factory=search_policy_factory,
+                    seeds=seeds,
+                    bridge_kind="go",
+                    bridge_library_path=args.bridge_lib,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=eval_oracle,
+                )
+                final_report["search"]["fallback_count"] = sum(p.fallback_count for p in search_policies)
+            elif args.duplicate_seats and args.sample_temperature > 0.0:
                 # Deploy-realistic eval: route decisions through the SERVING
                 # sampler so the sweep measures exactly what production ships.
                 from fh_mahjong_ai.policies import SampledServingPolicy
