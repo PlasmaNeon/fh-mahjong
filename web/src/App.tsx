@@ -26,7 +26,7 @@ function App() {
         <SocketProvider>
             <GameProvider>
                 <BrowserRouter>
-                    <div className="min-h-screen bg-gray-900 text-white font-sans w-full">
+                    <div className="app-root">
                         <Routes>
                             <Route path="/" element={<Home />} />
                             <Route path="/login" element={<Login />} />
@@ -38,6 +38,7 @@ function App() {
                             <Route path="/replay/:matchId" element={<Replay />} />
                             <Route path="/tools/calc" element={<Calc />} />
                             <Route path="/tools/shanten" element={<Shanten />} />
+                            <Route path="/tools" element={<Navigate to="/tools/calc" replace />} />
                             <Route path="/tools/table-sample" element={<TableSample />} />
                             <Route path="*" element={<Navigate to="/" />} />
                         </Routes>

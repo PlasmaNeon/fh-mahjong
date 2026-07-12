@@ -77,6 +77,7 @@ func (s *Server) setupRoutes() {
 			protected.GET("/users/me", s.handleGetMe)
 			protected.PATCH("/users/me", authHandler.UpdateMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
+			protected.POST("/matchmaking/leave", s.handleLeaveQueue)
 
 			protected.GET("/rooms/:roomId", s.handlePrivateTableGet)
 			protected.POST("/rooms/:roomId/join", s.handlePrivateTableJoin)
@@ -330,6 +331,31 @@ func (s *Server) handleJoinQueue(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "queued", "ruleset": req.Ruleset})
+}
+
+// handleLeaveQueue safely releases an authenticated user from one ruleset
+// queue. If the queue watcher already claimed them, the client must remain
+// connected and wait for the match assignment instead of navigating away.
+func (s *Server) handleLeaveQueue(c *gin.Context) {
+	userID, _ := c.Get("userID")
+
+	var req struct {
+		Ruleset string `json:"ruleset" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.Matchmaker.LeaveQueue(userID.(uint), req.Ruleset) {
+		c.JSON(http.StatusConflict, gin.H{
+			"status": "match_forming",
+			"error":  "Your table is already forming. Stay connected to enter the match.",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "left", "ruleset": canonicalRuleset(req.Ruleset)})
 }
 
 // handleGetMe returns the authenticated user's profile

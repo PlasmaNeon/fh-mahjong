@@ -2,17 +2,19 @@
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-height: 100vh;
-  background-color: #1a1a1a;
-  color: #fff;
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  background-color: var(--night-ink, #0b1418);
+  color: var(--on-dark, #f5eddc);
+  font-family: var(--font, "IBM Plex Sans", system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #root {
   width: 100%;
 }
+
+.app-root { min-height: 100vh; width: 100%; }
 
 /* 5x5 Mahjong Table Grid Layout */
 .mahjong-table {
@@ -47,7 +49,7 @@ body {
   padding: 0.75rem 0.9rem;
   border-radius: 14px;
   border: 1px solid rgba(250, 204, 21, 0.55);
-  background: rgba(17, 24, 39, 0.8);
+  background: var(--lacquer, #111d21);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 

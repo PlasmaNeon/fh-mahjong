@@ -16,7 +16,7 @@ import {
 import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
 import { game } from '../../proto/game';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
+import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
@@ -32,6 +32,7 @@ export default function Table() {
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
     const [rlAgentAvailable, setRlAgentAvailable] = useState(false);
     const [leftMarker, setLeftMarker] = useState<LeftMatchMarker | null>(() => loadLeftMatchMarker());
+    const [shareState, setShareState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
@@ -170,6 +171,16 @@ export default function Table() {
             await navigator.clipboard.writeText(link);
         } catch {
             window.prompt('Copy your rejoin link:', link);
+        }
+    }, [roomId]);
+
+    const copyTableLink = useCallback(async () => {
+        if (!roomId || typeof window === 'undefined') return;
+        try {
+            await navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`);
+            setShareState('copied');
+        } catch {
+            setShareState('failed');
         }
     }, [roomId]);
 
@@ -375,8 +386,7 @@ export default function Table() {
 
     if (!guestToken) {
         return (
-            <Page>
-                <Shell>
+            <ClubShell title="Private Table">
                     <Card>
                         <PageHeader title="Join Room" subtitle={roomId} />
                         <Section title="Enter as guest" subtitle="Pick a display name to join this private room.">
@@ -394,8 +404,7 @@ export default function Table() {
                             </ToolsRow>
                         </Section>
                     </Card>
-                </Shell>
-            </Page>
+            </ClubShell>
         );
     }
 
@@ -410,8 +419,7 @@ export default function Table() {
     const modeLocked = !iAmHost || tableState?.state === 'started';
 
     return (
-        <Page>
-            <Shell wide>
+        <ClubShell wide title="Private Table">
                 {roomLeftMarker && (
                     <Card>
                         <Section
@@ -427,28 +435,26 @@ export default function Table() {
                 )}
                 <Card>
                     <PageHeader
-                        title="Room"
-                        subtitle={roomId}
-                        nav={iAmHost && (
-                            <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled || starting}>
-                                {starting ? 'Starting…' : 'Start Match'}
-                            </Button>
-                        )}
+                        title="Private Table"
+                        subtitle={`${roomId} · ${isChongci ? 'Chongci' : 'Classic Fenghua'}`}
+                        nav={<Button onClick={copyTableLink}>{shareState === 'copied' ? 'Link Copied' : shareState === 'failed' ? 'Copy Failed' : 'Share Table'}</Button>}
                     />
 
                     {error && <Note tone="error">{error}</Note>}
 
-                    <Section title="Match mode">
-                        <Toggle
-                            value={isChongci ? 'chongci' : 'classic'}
-                            disabled={modeLocked}
-                            onChange={(mode) => mode === 'chongci' ? setMatchMode('chongci', chongciDraft) : setMatchMode('classic')}
-                            options={[
-                                { value: 'classic', label: 'Classic' },
-                                { value: 'chongci', label: 'Chongci' },
-                            ]}
-                        />
-                        {isChongci && (
+                    <details className="table-rules">
+                        <summary>Table Rules <span>{isChongci ? 'Chongci' : 'Classic Fenghua'}</span></summary>
+                        <Section title="Game mode">
+                            <Toggle
+                                value={isChongci ? 'chongci' : 'classic'}
+                                disabled={modeLocked}
+                                onChange={(mode) => mode === 'chongci' ? setMatchMode('chongci', chongciDraft) : setMatchMode('classic')}
+                                options={[
+                                    { value: 'classic', label: 'Classic' },
+                                    { value: 'chongci', label: 'Chongci' },
+                                ]}
+                            />
+                            {isChongci && (
                             <div className="ldg-grid-3" style={{ marginTop: '0.85rem' }}>
                                 {[
                                     { key: 'starting_score', label: 'Starting points', min: 100, max: 1_000_000 },
@@ -468,9 +474,10 @@ export default function Table() {
                                     />
                                 ))}
                             </div>
-                        )}
-                        {!iAmHost && <Note>Only the host can change match settings.</Note>}
-                    </Section>
+                            )}
+                            {!iAmHost && <Note>Only the host can change table rules.</Note>}
+                        </Section>
+                    </details>
 
                     <Section title="Seats" meta={`${filledCount} / 4`}>
                         <div className="ldg-grid-2">
@@ -492,9 +499,16 @@ export default function Table() {
                         {iAmHost && !allSeatsFilled && <Note>Fill every seat with a player or AI before starting.</Note>}
                         {!iAmHost && <Note>The host configures the table. You'll join automatically when the match begins.</Note>}
                     </Section>
+
+                    <div className="waiting-room__primary">
+                        {iAmHost ? (
+                            <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled || starting}>
+                                {starting ? 'Starting…' : allSeatsFilled ? 'Start Match' : `Fill ${4 - filledCount} More Seat${4 - filledCount === 1 ? '' : 's'}`}
+                            </Button>
+                        ) : <span>Waiting for the host to start the match.</span>}
+                    </div>
                 </Card>
-            </Shell>
-        </Page>
+        </ClubShell>
     );
 }
 

@@ -19,7 +19,7 @@ Contains all React components, context providers, custom hooks, and utility func
 - **features/game/privateRoomSession.ts** — Durable private-room session helper:
   - Stores the active guest token, username, and `tableId` in tab-scoped session storage so refreshes reconnect cleanly without making every tab share the same guest identity
   - Drops expired guest JWTs before the UI attempts a reconnect and clears the legacy local-storage key from the short-lived cross-tab experiment
-- **index.css** — Global styles (TailwindCSS + custom classes for tiles, melds, table layout)
+- **index.css** — Global reset and fixed-stage geometry (TailwindCSS + table layout); Rainy Club visual values live under `theme/` and `table/table-theme.css`
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
   - Includes the centered match HUD plus the fixed-stage seat-lane / discard-lane styling used by the shared table presenter
   - Seat lanes now own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives instead of page-specific side rules
@@ -57,5 +57,5 @@ Contains all React components, context providers, custom hooks, and utility func
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
-- The non-game route pages (`/`, `/lobby`, `/create-room`, `/table/:tableId`) now intentionally share the same emerald/glass tabletop visual language as the live game so the room-creation and waiting flow feels continuous.
+- Every route shares the Rainy Mahjong Club identity: ink/rain backdrops, bone-paper work surfaces, jade controls, brass details, and seal-red danger treatment. The home route is the deliberate asymmetric exception, acting as the club entrance rather than another centered form card.
 - Private-room reconnects intentionally use per-tab browser storage so refreshes still reconnect, but opening multiple `/table/:tableId` tabs in the same browser can simulate multiple local players without all tabs sharing one guest identity.

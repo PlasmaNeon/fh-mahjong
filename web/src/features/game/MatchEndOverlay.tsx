@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useNavigate } from 'react-router-dom';
 import { game } from '../../proto/game';
+import { GameDialog } from '../../theme';
 
 type Props = {
     state: game.IGameState;
@@ -29,22 +30,23 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
     if (!result || !result.standings) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
-            <div className="w-full max-w-lg rounded-[28px] border border-emerald-300/20 bg-slate-950/95 p-8 shadow-[0_22px_70px_rgba(0,0,0,0.5)]">
-                <p className="text-[11px] font-black uppercase tracking-[0.32em] text-emerald-300/78">Chongci</p>
-                <h1 className="mt-2 text-2xl font-black uppercase tracking-[0.12em] text-emerald-100">
-                    {reasonLabel(result.reason)}
-                </h1>
-                <p className="mt-1 text-xs text-slate-400">Final hand: {Number(result.finalHandNum ?? 0)}</p>
-
-                <div className="mt-6 overflow-hidden rounded-2xl border border-slate-800">
-                    <table className="w-full text-sm">
-                        <thead className="bg-slate-900/80 text-[10px] uppercase tracking-[0.18em] text-emerald-200/70">
+        <GameDialog
+            eyebrow={`Chongci · Final hand ${Number(result.finalHandNum ?? 0)}`}
+            title={reasonLabel(result.reason)}
+            tone="win"
+            actions={<>
+                {matchId && <button onClick={() => navigate(`/replay/${matchId}`)} className="ldg-btn">Watch replay</button>}
+                <button onClick={() => navigate('/')} className="ldg-btn ldg-btn--primary">Back to club</button>
+            </>}
+        >
+                <div className="match-standings">
+                    <table>
+                        <thead>
                             <tr>
-                                <th className="px-4 py-2 text-left">Rank</th>
-                                <th className="px-4 py-2 text-left">Player</th>
-                                <th className="px-4 py-2 text-right">Score</th>
-                                <th className="px-4 py-2 text-right">Δ</th>
+                                <th>Rank</th>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Δ</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -53,11 +55,11 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
                                 const name = seatNames[seat] ?? `Seat ${seat}`;
                                 const net = Number(s.netChange ?? 0);
                                 return (
-                                    <tr key={seat} className="border-t border-slate-800/80">
-                                        <td className="px-4 py-2 font-black text-emerald-100">{rankLabel(Number(s.rank ?? 0))}</td>
-                                        <td className="px-4 py-2 text-slate-200">{name}</td>
-                                        <td className="px-4 py-2 text-right text-slate-100">{Number(s.finalScore ?? 0)}</td>
-                                        <td className={`px-4 py-2 text-right font-mono ${net >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                    <tr key={seat}>
+                                        <td className="match-standings__rank">{rankLabel(Number(s.rank ?? 0))}</td>
+                                        <td>{name}</td>
+                                        <td>{Number(s.finalScore ?? 0)}</td>
+                                        <td className={net >= 0 ? 'match-standings__gain' : 'match-standings__loss'}>
                                             {net >= 0 ? `+${net}` : `${net}`}
                                         </td>
                                     </tr>
@@ -67,23 +69,6 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
                     </table>
                 </div>
 
-                <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-                    {matchId && (
-                        <button
-                            onClick={() => navigate(`/replay/${matchId}`)}
-                            className="w-full rounded-2xl border border-cyan-300/30 bg-cyan-950/60 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-900/70"
-                        >
-                            Watch Replay
-                        </button>
-                    )}
-                    <button
-                        onClick={() => navigate('/play')}
-                        className="w-full rounded-2xl border border-emerald-300/30 bg-emerald-600 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white shadow-[0_18px_38px_rgba(5,150,105,0.32)] hover:bg-emerald-500"
-                    >
-                        Leave
-                    </button>
-                </div>
-            </div>
-        </div>
+        </GameDialog>
     );
 }

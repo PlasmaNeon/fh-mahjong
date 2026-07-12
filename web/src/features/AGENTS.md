@@ -6,7 +6,7 @@
 
 Route page components are organized into feature folders corresponding to app domains. Each feature folder owns all source files for that domain: the React page component(s) rendered by React Router, plus co-located helpers, sub-components, and tests. `App.tsx` imports from these folders.
 
-Every non-game page uses the shared "ledger" theme from `web/src/theme/` (IBM Plex, off-white/ink, single teal accent, hairline rules, light/dark via `prefers-color-scheme`); the theme CSS is imported once globally in `main.tsx`. Menu pages (Home, Login, Lobby, CreateRoom, Table) compose typed primitives from `../../theme` (`Page`, `Card`, `Section`, `Button`, `Field`, …). Only the live game/replay board (`Game.tsx`, `Replay.tsx`, `MatchEndOverlay.tsx`) keeps the dark in-game theme.
+Every page uses the shared Rainy Mahjong Club theme from `web/src/theme/`: ink/rain backdrops, bone-paper work surfaces, jade controls, brass emphasis, and seal-red danger states. Menu pages compose typed primitives from `../../theme`; the live board adds the visual-only `table/table-theme.css` skin while retaining shared geometry.
 
 ## Feature Folders
 
@@ -14,41 +14,43 @@ Every non-game page uses the shared "ledger" theme from `web/src/theme/` (IBM Pl
 
 Authentication pages. Routes: `/login`, `/account`.
 
-- **Login.tsx** — Email/password sign-in and registration form (toggle between modes). Calls runtime-configured auth endpoints via `getApiUrl(...)`. Stores JWT in localStorage. On login, navigates to `/play`. Includes a direct entry link to `/room/new`.
+- **AuthTicket.tsx** — Shared inline/direct account ticket. Quick Match keeps authentication in context and resumes the queued action after success.
+- **Login.tsx** — Direct account route using `AuthTicket`; successful login continues to `/play`.
 - **Account.tsx** — Account settings page (`/account`). Lets real accounts edit their email and display name; on save stores the returned JWT and calls `connect(newToken)` to refresh the socket. Guests (404/503 from `GET /api/v1/users/me`) see a notice directing them to the sign-in page instead of the form. Linked from the lobby nav (`/play`).
 
 ### `lobby/`
 
 Lobby/matchmaking pages. Routes: `/` (Home), `/play` (Lobby), `/room/new` (CreateRoom).
 
-- **Home.tsx** — Landing page. One-click feature buttons (Play, Create Private Room, Scoring Calculator, Shanten Calculator, Login/Account). Reads JWT from `localStorage` to show signed-in state. Built from the shared `PageShell`/`GlassCard`/`Eyebrow`/`PageHeading`/`ButtonLink` primitives.
-- **Lobby.tsx** — Matchmaking page. Shows the matchmaking queue and links to the private-room flow. On match found, navigates to `/match/:matchId`.
-- **CreateRoom.tsx** — Private-room link generator. Generates a random room id client-side and builds a shareable `/room/:roomId` URL. Lets the user copy the link or open/join immediately. Acts purely as a link generator; seat configuration happens on `/room/:roomId`.
+- **Home.tsx** — Asymmetric club entrance with three choices: Play, Table Tools, and Profile.
+- **Lobby.tsx** — Single Play screen for Quick Match and Private Table. Active searches must confirm `POST /matchmaking/leave` before the screen returns to idle; `409 match_forming` keeps the player connected.
+- **navigation.ts** — One-shot play intent and private-table route generation helpers.
+- **CreateRoom.tsx** — Compatibility redirect that generates a room id and immediately opens `/room/:roomId`.
 
 ### `calc/`
 
 Fenghua hand calculator tool. Route: `/tools/calc`.
 
-- **Calc.tsx** — Typed Fenghua rules debugger. Posts to `/api/v1/tools/calc`. Uses the shared ledger theme via utility classes from `../../theme/` (imported globally). Header language toggle (English/Chinese). Hybrid editor with canonical notation fields plus local tile palettes for closed hand, win tile, and wild tile. Open meld editing uses an inline per-row palette. Full scoring context: tsumo/ron toggle, seat wind, prevailing wind, flower meld toggles. Cross-links to `/tools/shanten`.
+- **Calc.tsx** — Typed Fenghua rules debugger with one shared, targetable tile tray for hand, win tile, wild tile, and the active meld.
 - **calcHelpers.ts** — Calculator-only helpers: typed draft models for tiles/melds, canonical tile notation parse/format helpers, meld validation, expected hand-size calculation, and request-payload builders.
 
 ### `shanten/`
 
 Shanten distance calculator tool. Route: `/tools/shanten`.
 
-- **Shanten.tsx** — Shanten calculator UI. Uses the shared ledger theme. Cross-links to `/tools/calc`.
+- **Shanten.tsx** — Shanten calculator UI with the shared Scoring/Shanten tabs and one hand/wild targetable tray.
 - **shantenHelpers.ts** — Shanten-specific helper utilities.
 
 ### `replay/`
 
 Replay viewer. Route: `/replay/:matchId`.
 
-- **Replay.tsx** — Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play. Keeps replay transport controls, perspective selector, and "show all hands" toggle in a side panel. Reuses the same fixed-stage scaling system as live play. Also owns the review-mode fetch/generate state (`review`, `reviewStatus`, `reviewError`) and renders `<ReviewPanel/>` as a second stacked section inside the same 280px control panel, plus colored tick marks on the action-progress bar for the selected seat's flagged decisions in the current round.
+- **Replay.tsx** — Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play. Keeps replay transport controls, perspective selector, and "show all hands" toggle in a lacquer side drawer, which becomes a bottom sheet on narrow screens. `replay.css` owns all static palette/layout styling; only dynamic progress widths and severity colours stay inline.
 - **replayEngine.ts** — Stateful replay engine: processes recorded game actions step-by-step and produces board state for each moment in the replay. `jumpToAction(roundIndex, actionIndex)` (`jumpToRound` + a `stepForward` loop) supports deep-linking from the review panel to a specific decision.
 - **replayTypes.ts** — TypeScript types for replay data (paipu format, engine state).
 - **reviewTypes.ts** — `ReviewReport`/`ReportDecision`/`SeatSummary`/`GapRef` types and `fetchReview`/`generateReview` API calls (`GET`/`POST /api/v1/matches/:matchId/review`). Field names are a cross-task contract with the backend (`internal/review/report.go`) — do not rename without updating that file. `fetchReview` returns `null` on 404 (no report generated yet); both throw `{status, message}` on other non-2xx responses (503 means no policy server is configured).
 - **reviewUtils.ts** — Pure helpers consumed by `ReviewPanel.tsx` and covered by `reviewUtils.test.ts`: `decisionSeverity(d, thresholds?)` classifies a decision as `ok`/`disagreement`/`mistake` from the gap between the top and chosen action probability (a chosen action ranked in the top N with non-trivial probability is always exempt, checked before the gap tiers); `decisionGap`; `decisionKey(round, actionIndex)` — the anchor string that ties a `ReportDecision` to the replay engine's `(engine.currentRoundIndex, state.actionIndex)` position (multiple seats can share one key during a call window); `buildDecisionIndex(report)` groups decisions by that key; `selectPanelDecisions`/`selectBarRows` filter/shape decisions for one seat's panel; `actionLabel(actionId)` maps the RL action-catalog id (mirrors `internal/rl/action.go`) to bilingual `{en, zh}` labels; `SEVERITY_THRESHOLDS`/`SEVERITY_COLORS`/`SEVERITY_LABELS` are the default severity contract shared by the bar chart, mistake-summary counts, and progress-bar ticks.
-- **ReviewPanel.tsx** — Self-contained review overlay (KillerDucky-style): request-review button with loading/generating/unavailable/error states when no report exists yet; once a report exists, renders the current decision's horizontal probability bar chart (top 8 actions + chosen if outside, chosen row colored by severity, "Champion prefers X (72%)" wording — never "wrong"), a per-seat mistake summary strip (severity counts + clickable `topGaps` entries), an SVG value sparkline with a current-position marker and click-to-jump points, a persistent placement-context caption, and two threshold sliders that override `SEVERITY_THRESHOLDS` (controlled from `Replay.tsx` so the progress-bar ticks stay in sync). Matches `Replay.tsx`'s dark `rgba(17,24,39,0.95)`/emerald inline-style idiom; no CSS frameworks. Bilingual (`en`/`zh`) via the same local-`useState<Lang>` pattern as `calc/Calc.tsx` (each page owns its own instance, not shared state).
+- **ReviewPanel.tsx** — Self-contained review overlay: request-review states, decision bars, mistake summary, clickable gaps, value sparkline, caption, and threshold sliders. Static presentation belongs in `replay.css`; severity values and data-driven bar dimensions remain dynamic. Bilingual (`en`/`zh`) state stays local to the replay route.
 - **ReviewPanel.test.ts** — `web/package.json` has no `@testing-library/react` and `vitest.config.ts` runs with `environment: 'node'` (no DOM) and only collects `*.test.ts`. Rather than add a dependency, this renders `ReviewPanel` with `react-dom/server`'s `renderToStaticMarkup` (already a transitive dependency of `react-dom`) against a fixture report and asserts on the resulting HTML string (severity badge text, a bar-row label, the request-review button, the unavailable message).
 
 ### `game/`
@@ -56,15 +58,18 @@ Replay viewer. Route: `/replay/:matchId`.
 Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/match/:matchId` (Game).
 
 - **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower reveal handling, and live round-result action buttons. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableScene.tsx`. Keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Uses tab-scoped private-room session helper for refresh reconnects.
-- **Table.tsx** — Private-room waiting/seat-configuration screen for `/room/:roomId`. Reads/POSTs `/api/v1/rooms/:roomId/...` for join, get, seat mutation, mode, and start. Renders four `SeatCard` components; host sees AI controls and a "Start Match" button. Subscribes to `lobby_update` envelopes and redirects to `/match/:matchId` on start.
-- **SeatCard.tsx** — Single seat-card sub-component. Renders waiting/human/bot states; if `canEdit`, shows "Add AI · Heuristic" buttons for empty seats and a "Remove AI" button for bot seats. Pure presentation; mutations bubble up to `Table.tsx`.
-- **MatchEndOverlay.tsx** — Chongci final-standings modal rendered when `gameState.phase === PHASE_MATCH_END`. Offers "Watch Replay" (→ `/replay/:matchId`) and "Leave" (→ `/play`).
+- **Table.tsx** — Private-table waiting screen with persistent Share Table, disclosed rules, and one sticky host Start Match action.
+- **SeatCard.tsx** — Single seat plaque. Empty seats expose one default Add AI action; AI type is an advanced disclosure.
+- **actionOrdering.ts** — Pure live action priority: wins first, calls next, Pass last.
+- **MatchEndOverlay.tsx** — Chongci final standings with Back to Club as the primary action and Watch Replay as secondary.
 - **ExitMatchButton.tsx** — Button component for leaving the active match.
 - **privateRoomSession.ts** — Private-room browser session helpers. Persists active guest token, username, and `tableId` in tab-scoped session storage. Decodes JWT expiry to discard stale sessions. Shared by `Table.tsx` and `Game.tsx` so both routes recover the same private-room identity.
 - **rejoinMatch.ts** — Logic for rejoining an active match after a page refresh or reconnect.
 - **rejoinMatch.test.ts** — Vitest unit tests for the rejoin logic (11 tests).
 
 ## Architecture Notes
+
+- `dev/TableSample.tsx` exposes deterministic idle, active-turn, interrupt, callable-discard, round-result, match-end, and exit-dialog fixtures for visual QA without a backend.
 
 - All files in a feature folder use `'../../` to reference `src`-level directories (`proto`, `table`, `contexts`, `hooks`, `theme`, `utils`, `config`). Intra-feature imports (files in the same folder) use `'./'`.
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.

@@ -72,6 +72,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **matchmaker.go** — Player queue and pairing:
   - `Matchmaker` struct — Queue of waiting clients
+  - Matchmaking joins are idempotent per user/ruleset. `POST /api/v1/matchmaking/leave` atomically removes a waiting user and returns `409 match_forming` when the watcher already claimed the entry.
   - Groups 4 players into a `Room`
   - `BotPolicyFactory` creates one automated-seat policy per new room; the server uses this to enable remote AI bots without sharing policy state across matches
   - Tracks `configuringTables` (host + 4-seat config) and exposes `JoinOrCreatePrivateTable`, `MutatePrivateTable`, and `StartPrivateTable`. The first joiner of a `tableId` becomes the host; only the host can mutate seats or start the match.

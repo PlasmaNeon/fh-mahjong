@@ -13,6 +13,7 @@ import ReviewPanel, { type ReviewStatus } from './ReviewPanel'
 import type { ReviewReport } from './reviewTypes'
 import { fetchReview, generateReview } from './reviewTypes'
 import { SEVERITY_THRESHOLDS, decisionSeverity, type SeverityThresholds } from './reviewUtils'
+import './replay.css'
 
 /**
  * Compute calledDirection from seat layout:
@@ -150,8 +151,11 @@ export default function Replay() {
 
   if (error || !engine || !paipu) {
     return (
-      <div className="flex h-screen w-full items-center justify-center">
-        <h2 className="text-xl text-red-400">{error || 'Failed to initialize replay'}</h2>
+      <div className="ledger-page replay-error">
+        <div className="replay-error__mark" aria-hidden="true">西</div>
+        <div className="replay-error__eyebrow">Replay room closed</div>
+        <h1>{error || 'Failed to initialize replay'}</h1>
+        <a href="/" className="replay-error__link">Return to the club</a>
       </div>
     )
   }
@@ -262,7 +266,7 @@ export default function Replay() {
   ) : null
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+    <div className="replay-viewer">
       {/* Table — uses same game-stage scaling system as Game.tsx */}
       <div className="stage-rotator stage-rotator--replay">
       <div
@@ -287,79 +291,43 @@ export default function Replay() {
       </div>
 
       {/* Control Panel */}
-      <div style={{
-        flex: '0 0 280px',
-        width: '280px',
-        minWidth: '280px',
-        background: 'rgba(17, 24, 39, 0.95)',
-        borderLeft: '1px solid rgba(255,255,255,0.1)',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '16px',
-        gap: '12px',
-        overflowY: 'auto',
-        color: '#e5e7eb',
-        fontSize: '14px',
-      }}>
+      <aside className="replay-drawer">
         {/* Match Info */}
-        <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
-          <div style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>Replay Viewer</div>
-          <div style={{ fontSize: '12px', color: '#9ca3af' }}>{paipu.matchId}</div>
+        <div className="replay-drawer__head">
+          <div className="replay-drawer__eyebrow">After the last hand</div>
+          <div className="replay-drawer__title">Replay viewer</div>
+          <div className="replay-drawer__match">{paipu.matchId}</div>
         </div>
 
         {/* Action Description */}
-        <div style={{
-          background: 'rgba(16, 185, 129, 0.15)',
-          borderRadius: '8px',
-          padding: '10px 12px',
-          fontWeight: 600,
-          textAlign: 'center',
-          minHeight: '40px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
+        <div className="replay-action-description">
           {actionDesc}
         </div>
 
         {/* Progress */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#9ca3af', marginBottom: '4px' }}>
+          <div className="replay-meta-row">
             <span>Action {state.actionIndex + 1} / {state.totalActions}</span>
             <span>Round {engine.currentRoundIndex + 1} / {engine.totalRounds}</span>
           </div>
-          <div style={{ position: 'relative', width: '100%', height: '6px' }}>
-            <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{
-                width: state.totalActions > 0 ? `${((state.actionIndex + 1) / state.totalActions) * 100}%` : '0%',
-                height: '100%',
-                background: 'linear-gradient(90deg, #10b981, #34d399)',
-                borderRadius: '3px',
-                transition: 'width 0.15s ease',
-              }} />
+          <div className="replay-progress">
+            <div className="replay-progress__track">
+              <div className="replay-progress__fill" style={{ width: state.totalActions > 0 ? `${((state.actionIndex + 1) / state.totalActions) * 100}%` : '0%' }} />
             </div>
             {flaggedTicks.map((tick, i) => (
               <div
                 key={i}
                 title={`R${tick.round + 1} · ${tick.severity}`}
                 onClick={() => { engine.jumpToAction(tick.round, tick.actionIndex); setVersion(v => v + 1); setPlaying(false) }}
-                style={{
-                  position: 'absolute',
-                  left: `calc(${tick.left}% - 3px)`,
-                  top: '-2px',
-                  width: '6px',
-                  height: '10px',
-                  borderRadius: '2px',
-                  background: tickColor[tick.severity as 'disagreement' | 'mistake'],
-                  cursor: 'pointer',
-                }}
+                className="replay-progress__flag"
+                style={{ left: `calc(${tick.left}% - 3px)`, background: tickColor[tick.severity as 'disagreement' | 'mistake'] }}
               />
             ))}
           </div>
         </div>
 
         {/* Transport Controls */}
-        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+        <div className="replay-transport">
           {[
             { label: '|◀', action: () => { engine.jumpToStart(); setVersion(v => v + 1); setPlaying(false) } },
             { label: '◀', action: () => { if (engine.stepBackward()) setVersion(v => v + 1) } },
@@ -370,17 +338,7 @@ export default function Replay() {
             <button
               key={i}
               onClick={btn.action}
-              style={{
-                flex: 1,
-                padding: '8px 4px',
-                background: i === 2 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: '6px',
-                color: '#e5e7eb',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 600,
-              }}
+              className={`replay-transport__button${i === 2 ? ' is-primary' : ''}`}
             >
               {btn.label}
             </button>
@@ -389,21 +347,13 @@ export default function Replay() {
 
         {/* Round Selector */}
         <div>
-          <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>Round</div>
-          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+          <div className="replay-control-label">Round</div>
+          <div className="replay-choice-row">
             {paipu.rounds.map((_, i) => (
               <button
                 key={i}
                 onClick={() => { engine.jumpToRound(i); setVersion(v => v + 1); setPlaying(false) }}
-                style={{
-                  padding: '4px 12px',
-                  background: i === engine.currentRoundIndex ? 'rgba(16, 185, 129, 0.4)' : 'rgba(255,255,255,0.08)',
-                  border: i === engine.currentRoundIndex ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: '4px',
-                  color: '#e5e7eb',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                }}
+                className={`replay-choice${i === engine.currentRoundIndex ? ' is-active' : ''}`}
               >
                 {i + 1}
               </button>
@@ -413,19 +363,11 @@ export default function Replay() {
 
         {/* Perspective Selector */}
         <div>
-          <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>Perspective</div>
+          <div className="replay-control-label">Perspective</div>
           <select
             value={viewSeat}
             onChange={e => setViewSeat(Number(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '6px 8px',
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: '4px',
-              color: '#e5e7eb',
-              fontSize: '13px',
-            }}
+            className="replay-select"
           >
             {paipu.players.map(p => (
               <option key={p.seat} value={p.seat}>
@@ -436,27 +378,20 @@ export default function Replay() {
         </div>
 
         {/* Show All Hands Toggle */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px' }}>
+        <label className="replay-check">
           <input
             type="checkbox"
             checked={showAllHands}
             onChange={e => setShowAllHands(e.target.checked)}
-            style={{ accentColor: '#10b981' }}
           />
           Show all hands
         </label>
 
         {/* Scores */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px' }}>
-          <div style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '6px' }}>Scores</div>
+        <div className="replay-scores">
+          <div className="replay-control-label">Scores</div>
           {state.players.map((p, i) => (
-            <div key={i} style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              padding: '4px 0',
-              fontWeight: i === state.activeSeat ? 700 : 400,
-              color: i === state.activeSeat ? '#34d399' : '#e5e7eb',
-            }}>
+            <div key={i} className={`replay-score${i === state.activeSeat ? ' is-active' : ''}`}>
               <span>{paipu.players[i]?.name ?? `Seat ${i}`}</span>
               <span>{p.score.toLocaleString()}</span>
             </div>
@@ -483,12 +418,12 @@ export default function Replay() {
         />
 
         {/* Keyboard Shortcuts */}
-        <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', fontSize: '11px', color: '#6b7280' }}>
+        <div className="replay-shortcuts">
           <div>← → Step back/forward</div>
           <div>↑ ↓ Previous/next round</div>
           <div>Space Play/pause</div>
         </div>
-      </div>
+      </aside>
     </div>
   )
 }

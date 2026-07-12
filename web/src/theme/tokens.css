@@ -1,53 +1,63 @@
-/* ---------- Font import ---------- */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+SC:wght@400;500;600;700&display=swap');
-
-/* ---------- Light defaults ---------- */
 :root {
-  --page:        #fafaf8;
-  --surface:     #ffffff;
-  --surface-2:   #f4f3ef;
-  --ink:         #171615;
-  --ink-2:       #3c3a36;
-  --ink-3:       #6b6863;
-  --ink-4:       #a09c95;
-  --rule:        #e3e1dc;
-  --rule-soft:   #ededea;
-  --accent:      #1b6d5a;
-  --accent-soft: #e7f0ed;
-  --danger:      #b03a2e;
-  --danger-soft: #fbeae8;
-  --btn-bg:        var(--page);
-  --btn-bg-hover:  #f0efeb;
-  --tile-face:     #ffffff;
-  --tile-shadow:   0 0 0 1px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.08);
-  --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.08), 0 3px 6px rgba(0,0,0,0.10);
-  --font:   "IBM Plex Sans", "IBM Plex Sans SC", system-ui, sans-serif;
-  --mono:   "IBM Plex Mono", ui-monospace, monospace;
-  --col:    680px;
-  --gutter: clamp(1.25rem, 4vw, 2rem);
-  --space:  2.25rem;
-}
+  color-scheme: dark;
 
-/* ---------- Dark mode (auto OS) ---------- */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page:        #121110;
-    --surface:     #1b1a18;
-    --surface-2:   #232220;
-    --ink:         #eae7e0;
-    --ink-2:       #c8c4bd;
-    --ink-3:       #8c8881;
-    --ink-4:       #5e5b56;
-    --rule:        #2b2926;
-    --rule-soft:   #232220;
-    --accent:      #5fbb9f;
-    --accent-soft: #1a2a25;
-    --danger:      #e5685c;
-    --danger-soft: #2a1816;
-    --btn-bg:        var(--surface);
-    --btn-bg-hover:  #2c2a27;
-    --tile-face:     #f3efe6;
-    --tile-shadow:   0 0 0 1px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.45);
-    --tile-shadow-h: 0 0 0 1px rgba(0,0,0,0.6),  0 5px 10px rgba(0,0,0,0.5);
-  }
+  /* Rainy Mahjong Club — six identity colours. */
+  --night-ink: #0b1418;
+  --rain-slate: #16262b;
+  --mahjong-jade: #2f7f70;
+  --bone-paper: #f3e9d2;
+  --lamp-apricot: #e6a15c;
+  --seal-red: #c85845;
+
+  /* Semantic surfaces and text. */
+  --page: var(--night-ink);
+  --surface: var(--bone-paper);
+  --surface-2: #e7dbc2;
+  --surface-3: #d6c7aa;
+  --ink: #182327;
+  --ink-2: #334347;
+  --ink-3: #647073;
+  --ink-4: #8e9694;
+  --on-dark: #f5eddc;
+  --on-dark-2: #bccbc6;
+  --on-dark-3: #7f9891;
+  --rule: rgba(52, 67, 71, 0.22);
+  --rule-soft: rgba(52, 67, 71, 0.12);
+  --accent: var(--mahjong-jade);
+  --accent-strong: #1e665b;
+  --accent-soft: rgba(47, 127, 112, 0.12);
+  --warning: var(--lamp-apricot);
+  --warning-soft: rgba(230, 161, 92, 0.16);
+  --danger: var(--seal-red);
+  --danger-soft: rgba(200, 88, 69, 0.12);
+  --focus: #f2bd78;
+
+  /* Physical materials. */
+  --felt-deep: #0f3836;
+  --felt: #17514c;
+  --felt-light: #24665d;
+  --wood: #2a211d;
+  --wood-light: #4a3528;
+  --brass: #d2a85f;
+  --brass-light: #f1cf8a;
+  --lacquer: #111d21;
+  --lacquer-raised: #1c2d31;
+
+  --btn-bg: rgba(255, 255, 255, 0.38);
+  --btn-bg-hover: rgba(255, 255, 255, 0.68);
+  --tile-face: #fffaf0;
+  --tile-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 3px 0 #b9aa8d, 0 8px 16px rgba(20,26,26,0.18);
+  --tile-shadow-h: 0 1px 0 rgba(255,255,255,0.9) inset, 0 4px 0 #b9aa8d, 0 12px 22px rgba(20,26,26,0.25);
+
+  --font-display: "Fraunces", "Noto Serif SC", Georgia, serif;
+  --font: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --col: 760px;
+  --gutter: clamp(1rem, 4vw, 2.25rem);
+  --space: 2.25rem;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 24px;
+  --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.32), 0 2px 0 rgba(255, 255, 255, 0.7) inset;
+  --shadow-lacquer: 0 22px 60px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
 }
