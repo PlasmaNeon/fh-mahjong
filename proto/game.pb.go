@@ -3018,8 +3018,9 @@ func (x *EnvPoolStepResponse) GetActionSpaceSize() uint32 {
 // acting seat's observation is bit-identical across clones). Stepping reuses
 // EnvPoolStepRequest/EnvPoolStepResponse with these deviations: reset_seed
 // commands are per-slot errors; round_outcome set (non-terminal) means the
-// round ended and the observation is the NEXT hand's first decision state;
-// truncated=true (decision cap) still carries the cap-state observation.
+// round ended and the observation is the ROOT seat's view at the next hand's
+// start (value-bootstrap row; mask may be empty); truncated=true (decision cap)
+// still carries the cap-state observation (also the ROOT seat's view).
 type SearchPoolNewRequest struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Clones              uint32                 `protobuf:"varint,1,opt,name=clones,proto3" json:"clones,omitempty"`

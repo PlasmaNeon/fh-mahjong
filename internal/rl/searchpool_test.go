@@ -1,12 +1,41 @@
 package rl
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
+
+// assertEmittedRowEncodesSeat asserts that the single observation row carried by
+// resp byte-for-byte equals EncodeObservation(state, seat, decisionCount) — the
+// exact planes/scalars/mask a direct encode of `seat` produces — and that the
+// SlotState advertises that seat. Bootstrap rows (round-end / truncation) must
+// encode the ROOT seat, so this is how we pin the seat identity of the emitted
+// value-bootstrap observation.
+func assertEmittedRowEncodesSeat(t *testing.T, resp *pb.EnvPoolStepResponse, state *pb.GameState, seat uint32, decisionCount uint64) {
+	t.Helper()
+	want, err := encodeObservation(state, seat, decisionCount, false)
+	if err != nil {
+		t.Fatalf("direct encode of seat %d: %v", seat, err)
+	}
+	packed := &pb.EnvPoolStepResponse{}
+	appendObservationRow(packed, want)
+	if !bytes.Equal(resp.Planes, packed.Planes) {
+		t.Fatalf("emitted planes differ from EncodeObservation(seat=%d) — bootstrap row encoded for the wrong seat", seat)
+	}
+	if !bytes.Equal(resp.Scalars, packed.Scalars) {
+		t.Fatalf("emitted scalars differ from EncodeObservation(seat=%d) — bootstrap row encoded for the wrong seat", seat)
+	}
+	if !bytes.Equal(resp.ActionMasks, packed.ActionMasks) {
+		t.Fatalf("emitted action mask differs from EncodeObservation(seat=%d) — bootstrap row encoded for the wrong seat", seat)
+	}
+	if resp.Slots[0].Seat != seat {
+		t.Fatalf("emitted SlotState.Seat=%d, want root seat %d", resp.Slots[0].Seat, seat)
+	}
+}
 
 // newStartedEnv builds a live Env at its first decision point using the shared
 // pool test config (39ch, four learning seats, Chongci MaxHands=2, no autoplay).
@@ -240,6 +269,67 @@ func TestSearchPool_RoundEndEmitsNextHandObs(t *testing.T) {
 	}
 }
 
+// TestSearchPool_RoundEndBootstrapEncodesRootSeat pins the seat identity of the
+// round-end value-bootstrap row: it MUST be the ROOT seat's view (the seat being
+// searched), not the next hand's acting seat. Seed 23 is chosen so the next
+// hand's first acting seat (2) differs from the root seat (3) under Chongci
+// dealer succession — so encoding the acting seat would produce a byte-different
+// observation and this test would (and does, pre-fix) fail.
+func TestSearchPool_RoundEndBootstrapEncodesRootSeat(t *testing.T) {
+	env := newStartedEnv(t, 23)
+	rootSeat, obs := currentDecision(t, env)
+
+	pool, err := NewSearchPool(env, 1, 99, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	actionID, ok := firstLegalFromResponse(&pb.EnvPoolStepResponse{
+		ActionSpaceSize: obs.ActionSpaceSize, ActionMasks: obs.ActionMask,
+	})
+	if !ok {
+		t.Fatalf("no legal action at branch point")
+	}
+
+	for step := 0; step < 5000; step++ {
+		resp, err := pool.Step(&pb.EnvPoolStepRequest{
+			Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
+		})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
+		state := resp.Slots[0]
+		if state.Error != "" {
+			t.Fatalf("slot error: %s", state.Error)
+		}
+		if state.RoundOutcome != nil && !state.Terminated {
+			if !state.HasObservation {
+				t.Fatalf("round ended but no next-hand observation carried")
+			}
+			clone := pool.clones[0].env
+			// Guard the test's own premise: the next acting seat must differ
+			// from root, else the assertion cannot distinguish the two encodings.
+			if actingSeat, ok := clone.currentActionSeat(); ok && actingSeat == rootSeat {
+				t.Fatalf("seed premise broken: next acting seat == root seat %d; pick a seed where they diverge", rootSeat)
+			}
+			// The emitted bootstrap row must be the ROOT seat's view.
+			assertEmittedRowEncodesSeat(t, resp, clone.game.State, rootSeat, clone.decisionCount)
+			return
+		}
+		if state.Terminated || state.Truncated {
+			t.Fatalf("clone ended (term=%t trunc=%t) before any non-terminal round end",
+				state.Terminated, state.Truncated)
+		}
+		next, ok := firstLegalFromResponse(resp)
+		if !ok {
+			t.Fatalf("no legal action at step %d", step)
+		}
+		actionID = next
+	}
+	t.Fatalf("never reached a non-terminal round end")
+}
+
 // TestSearchPool_MatchEndAttachesOutcome drives a clone all the way to
 // PHASE_MATCH_END and asserts the terminal SlotState still carries the
 // final-round RoundOutcome — the MATCH_END return path attaches payout metadata
@@ -344,6 +434,17 @@ func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
 	if !state.HasObservation {
 		t.Fatalf("decision-cap truncation must carry the cap-state observation")
 	}
+
+	// The cap-state row is a VALUE-BOOTSTRAP row: it must be the ROOT seat's
+	// view, not whoever is on the clock at the cap. With seed 4242 / cap 1 the
+	// root seat (3) is not the acting seat at the cap (0), so encoding the acting
+	// seat would produce a byte-different observation.
+	rootSeat, _ := currentDecision(t, env)
+	clone := pool.clones[0].env
+	if actingSeat, ok := clone.currentActionSeat(); ok && actingSeat == rootSeat {
+		t.Fatalf("seed premise broken: cap acting seat == root seat %d; pick params where they diverge", rootSeat)
+	}
+	assertEmittedRowEncodesSeat(t, resp, clone.game.State, rootSeat, clone.decisionCount)
 }
 
 func TestSearchPool_ResetCommandIsError(t *testing.T) {

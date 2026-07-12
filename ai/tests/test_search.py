@@ -72,6 +72,12 @@ class FakeCheckpointPolicy:
         # The searcher must always call us with batched (4-D plane) inputs.
         assert planes.ndim == 4, f"evaluate_batch expected batched planes, got ndim={planes.ndim}"
         assert scalars.ndim == 2 and action_masks.ndim == 2
+        # Mirror serving.CheckpointPolicy.evaluate_batch: an all-zero mask row is
+        # rejected (masked softmax over no legal actions -> NaN). Bootstrap rows
+        # must therefore be mask-sanitized by the searcher before reaching us.
+        no_legal = np.flatnonzero(~action_masks.astype(bool).any(axis=1))
+        if no_legal.size:
+            raise ValueError(f"observation {int(no_legal[0])} has no legal actions")
         n = planes.shape[0]
         self.batch_sizes.append(n)
         probs = np.zeros((n, A), dtype=np.float32)
@@ -92,6 +98,7 @@ class SlotSpec:
     round_ended: bool = False
     tag: float = 0.0        # obs tag (drives the value head on bootstrap rows)
     error: str = ""
+    mask: Optional[Sequence[int]] = None  # per-row action mask; None -> all ones
 
     @property
     def has_observation(self) -> bool:
@@ -147,6 +154,8 @@ class FakeSearchPool:
         row_of_slot: dict[int, int] = {}
         for i, (slot, spec) in enumerate(live):
             scalars[i, 0] = spec.tag
+            if spec.mask is not None:
+                masks[i] = np.asarray(spec.mask, dtype=np.int8)
             row_of_slot[slot] = i
         return SearchStepResult(
             slots=metas, planes=planes, scalars=scalars, action_masks=masks,
@@ -246,6 +255,35 @@ def test_round_end_uses_value_bootstrap():
 
     assert choice.info["source"] == "search"
     assert choice.action_id == 2                 # id 2 wins only via the value bootstrap
+    assert choice.info["scores"] == pytest.approx([0.1, 1.0])
+
+
+def test_bootstrap_row_zero_mask_is_sanitized():
+    # The Go search pool now encodes round-end / truncation bootstrap rows for the
+    # ROOT seat, which need not be on the clock -> its action mask can be all zero.
+    # The searcher must sanitize such rows before evaluate_batch (values are
+    # mask-independent), else the serving guard rejects the batch. FakePolicy
+    # mirrors that guard, so WITHOUT sanitization this raises and choose() falls
+    # back to greedy (source="greedy"); WITH it, the value bootstrap still lands.
+    TAG_A, TAG_B = 11.0, 22.0
+    policy = FakeCheckpointPolicy(
+        {0.0: [0, 0.6, 0.4, 0, 0]},
+        value_by_tag={TAG_A: 0.1, TAG_B: 1.0},
+    )
+    K = 2
+    ZERO_MASK = [0, 0, 0, 0, 0]
+    per_candidate = [
+        [SlotSpec(reward=0.0), SlotSpec(reward=0.0, round_ended=True, tag=TAG_A, mask=ZERO_MASK)],
+        [SlotSpec(reward=0.0), SlotSpec(reward=0.0, round_ended=True, tag=TAG_B, mask=ZERO_MASK)],
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, _ = _factory_from(pool)
+
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))
+    choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    assert choice.info["source"] == "search"      # not the greedy fail-open path
+    assert choice.action_id == 2                   # id 2 wins only via the value bootstrap
     assert choice.info["scores"] == pytest.approx([0.1, 1.0])
 
 

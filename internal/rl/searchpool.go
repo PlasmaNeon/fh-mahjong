@@ -18,19 +18,30 @@ import (
 // Response contract (documented deviations from EnvPool / FHEnvPool, all within
 // the same SlotState messages):
 //   - RoundOutcome != nil && !Terminated ⇒ the clone's current ROUND ended;
-//     HasObservation=true carries the FIRST decision of the NEXT hand (the
-//     value-bootstrap state). Python then stops stepping that clone.
+//     HasObservation=true carries a VALUE-BOOTSTRAP row for the ROOT seat (the
+//     seat being searched, fixed at pool creation) viewed at the start of the
+//     NEXT hand — NOT the next hand's acting seat. Python then stops stepping
+//     that clone. The value head estimates the ROOT seat's future return, so its
+//     accumulated step_rewards[root] must be bootstrapped with the root's view;
+//     encoding the next acting seat (the dealer, whose identity is
+//     candidate-dependent under Chongci succession) would bias candidate ranking.
 //   - Terminated=true ⇒ the match ended; HasObservation=false.
 //   - Truncated=true (per-clone decision cap) ⇒ HasObservation=true: the
-//     cap-state observation IS returned for value bootstrapping. This is the
-//     deliberate deviation from EnvPool, whose assembler drops the observation
-//     on truncation.
+//     cap-state observation IS returned for value bootstrapping, encoded for the
+//     ROOT seat (same rationale). This is the deliberate deviation from EnvPool,
+//     whose assembler drops the observation on truncation.
 //   - reset_seed command ⇒ per-slot error ("search pool has no reset"); the
 //     pool keeps working.
+//
+// Bootstrap rows (round-end + truncation) are the ROOT seat's view and are
+// value-only by contract: the root may not be on the clock, so its action mask
+// can be empty — that is expected and fine. Only ordinary live-decision rows
+// (no outcome, not truncated) encode the current acting seat and drive rollout.
 type SearchPool struct {
-	clones []*searchClone
-	config *pb.EnvConfig
-	maxDec uint64
+	clones   []*searchClone
+	config   *pb.EnvConfig
+	maxDec   uint64
+	rootSeat uint32
 }
 
 type searchClone struct {
@@ -58,7 +69,7 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64) 
 		clones = 1
 	}
 
-	p := &SearchPool{config: cfg, maxDec: maxRolloutDecisions}
+	p := &SearchPool{config: cfg, maxDec: maxRolloutDecisions, rootSeat: seat}
 	for i := 0; i < clones; i++ {
 		g := e.game.CloneForBranch()
 		if g == nil {
@@ -208,7 +219,15 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 		}
 
 		if seat, ok := env.currentActionSeat(); ok {
-			obs, err := encodeObservation(state, seat, env.decisionCount, false)
+			// A pending outcome means the ROUND just ended and this is the
+			// next-hand value-bootstrap row: encode the ROOT seat's view (the
+			// seat being searched), not the next acting seat. Ordinary live
+			// decisions (no outcome) encode the acting seat to drive rollout.
+			encodeSeat := seat
+			if pendingOutcome != nil {
+				encodeSeat = p.rootSeat
+			}
+			obs, err := encodeObservation(state, encodeSeat, env.decisionCount, false)
 			if err != nil {
 				return slotResult{err: err}
 			}
@@ -228,14 +247,15 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 	}
 }
 
-// capStateObservation returns the acting seat's observation at the cap point, or
-// an empty (zero-plane) observation if the game is mid-transition with no seat
-// currently on the clock.
+// capStateObservation returns the cap-state VALUE-BOOTSTRAP row, encoded for the
+// ROOT seat (the seat being searched) — not whoever is about to act at the cap.
+// The truncation row bootstraps the root's accumulated return, so it must be the
+// root's view; the root may not be on the clock, so its action mask can be empty
+// (value-only rows by contract). Falls back to an empty observation only if the
+// root's view somehow fails to encode.
 func (p *SearchPool) capStateObservation(env *Env) *pb.SeatObservation {
-	if seat, ok := env.currentActionSeat(); ok {
-		if obs, err := encodeObservation(env.game.State, seat, env.decisionCount, false); err == nil {
-			return obs
-		}
+	if obs, err := encodeObservation(env.game.State, p.rootSeat, env.decisionCount, false); err == nil {
+		return obs
 	}
 	return emptyObservation(env.game.State, env.decisionCount, false)
 }
