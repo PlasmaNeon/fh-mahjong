@@ -178,7 +178,15 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 
 		if state.Phase == pb.GamePhase_PHASE_MATCH_END {
 			// Terminal: dense per-step rewards already telescoped the outcome.
-			return slotResult{terminated: true, rewards: env.scoreDeltaReward()}
+			// Attach any final-round outcome so callers still get payout metadata
+			// (symmetric with the classic-terminal path below). Prefer a
+			// pendingOutcome captured this advance; fall back to the current
+			// state's outcome (nil-safe).
+			outcome := pendingOutcome
+			if outcome == nil {
+				outcome = roundOutcome(state)
+			}
+			return slotResult{terminated: true, rewards: env.scoreDeltaReward(), outcome: outcome}
 		}
 
 		if state.Phase == pb.GamePhase_PHASE_ROUND_END {

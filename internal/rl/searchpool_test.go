@@ -240,6 +240,77 @@ func TestSearchPool_RoundEndEmitsNextHandObs(t *testing.T) {
 	}
 }
 
+// TestSearchPool_MatchEndAttachesOutcome drives a clone all the way to
+// PHASE_MATCH_END and asserts the terminal SlotState still carries the
+// final-round RoundOutcome — the MATCH_END return path attaches payout metadata
+// symmetric with the classic-terminal path, rather than discarding it.
+func TestSearchPool_MatchEndAttachesOutcome(t *testing.T) {
+	// MaxHands=1 Chongci: the single decision that ends round 1 rolls straight
+	// through PHASE_ROUND_END into PHASE_MATCH_END within one advanceClone call,
+	// so the clone returns terminated directly (rather than being marked done at a
+	// separate round-end return, which a multi-hand match does after hand 1).
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       512,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 1},
+	}
+	env := New(config)
+	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 4242, Config: config}); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	_, obs := currentDecision(t, env)
+
+	pool, err := NewSearchPool(env, 1, 99, 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	actionID, ok := firstLegalFromResponse(&pb.EnvPoolStepResponse{
+		ActionSpaceSize: obs.ActionSpaceSize, ActionMasks: obs.ActionMask,
+	})
+	if !ok {
+		t.Fatalf("no legal action at branch point")
+	}
+
+	sawTerminated := false
+	for step := 0; step < 20000; step++ {
+		resp, err := pool.Step(&pb.EnvPoolStepRequest{
+			Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: actionID}}},
+		})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
+		state := resp.Slots[0]
+		if state.Error != "" {
+			t.Fatalf("slot error: %s", state.Error)
+		}
+		if state.Terminated {
+			if state.RoundOutcome == nil {
+				t.Fatalf("match end must attach the final-round outcome, got nil")
+			}
+			sawTerminated = true
+			break
+		}
+		if state.Truncated {
+			t.Fatalf("clone truncated (cap too low) before match end")
+		}
+		if !state.HasObservation {
+			t.Fatalf("no observation and not terminal at step %d", step)
+		}
+		next, ok := firstLegalFromResponse(resp)
+		if !ok {
+			t.Fatalf("no legal action at step %d", step)
+		}
+		actionID = next
+	}
+	if !sawTerminated {
+		t.Fatalf("clone never reached match end")
+	}
+}
+
 func TestSearchPool_DecisionCapTruncatesWithObs(t *testing.T) {
 	env := newStartedEnv(t, 4242)
 	_, obs := currentDecision(t, env)
@@ -373,5 +444,165 @@ func TestSearchPool_InterruptWindowReAsked(t *testing.T) {
 		if _, ok := clone.env.currentActionSeat(); !ok {
 			t.Fatalf("clone %d: no interrupt decision surfaced — window resolved silently", i)
 		}
+	}
+}
+
+// seatHasTileIDConflict returns the first tile id that appears more than once
+// across a seat's ClosedHand and open-meld tiles — the corruption signature of a
+// phantom meld appended without reducing the closed hand.
+func seatHasTileIDConflict(p *pb.PlayerState) (uint32, bool) {
+	seen := make(map[uint32]bool)
+	for _, t := range p.ClosedHand {
+		if seen[t.Id] {
+			return t.Id, true
+		}
+		seen[t.Id] = true
+	}
+	for _, m := range p.OpenMelds {
+		for _, t := range m.Tiles {
+			if seen[t.Id] {
+				return t.Id, true
+			}
+			seen[t.Id] = true
+		}
+	}
+	return 0, false
+}
+
+// TestSearchPool_InterruptWindowExecutable is the executable-consistency half of
+// the re-ask contract: after RedealUnseen refreshes each non-acting seat's
+// ValidActions against its new hand, a surfaced meld interrupt must actually be
+// stepped without corrupting state. Before the redeal.go fix, stale ValidActions
+// referenced tiles the reshuffle moved away, so ResolveInterrupts appended a
+// phantom open meld WITHOUT reducing the closed hand (duplicate tile ids). Here
+// we drive each clone's interrupt window to resolution — choosing a PON when the
+// refreshed mask offers one — and assert no per-slot error and no duplicate tile
+// ids across any seat's ClosedHand+melds; when a meld was actually made, its
+// maker's closed hand must have shrunk.
+func TestSearchPool_InterruptWindowExecutable(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       512,
+	}
+	env := New(config)
+	env.game = engine.NewGame("interrupt-exec", &rules.FenghuaRuleset{}, engine.MatchOptions{})
+	env.game.SetWallSeed(engine.SeedFromUint64(101))
+	if err := env.game.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	env.lastScores = snapshotScores(env.game.State)
+
+	active := env.game.State.ActivePlayer
+	discardTile := env.game.State.Players[active].ClosedHand[0]
+	seatA := (active + 1) % 4
+	seatB := (active + 2) % 4
+
+	// Give two opponents a matching pair each so both hold a PON of the discard.
+	a1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	a2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	b1 := &pb.Tile{Id: discardTile.Id + 3000, Suit: discardTile.Suit, Value: discardTile.Value}
+	b2 := &pb.Tile{Id: discardTile.Id + 4000, Suit: discardTile.Suit, Value: discardTile.Value}
+	env.game.State.Players[seatA].ClosedHand = append(env.game.State.Players[seatA].ClosedHand, a1, a2)
+	env.game.State.Players[seatB].ClosedHand = append(env.game.State.Players[seatB].ClosedHand, b1, b2)
+
+	if err := env.game.ProcessPlayerAction(active, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_DISCARD, Tile: discardTile,
+	}); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if err := env.game.ProcessPlayerAction(seatA, &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_PON, MeldTiles: []*pb.Tile{a1, a2},
+	}); err != nil {
+		t.Fatalf("queue A pon: %v", err)
+	}
+	if _, ok := env.currentActionSeat(); !ok {
+		t.Fatalf("live env should surface an interrupt decision")
+	}
+
+	pool, err := NewSearchPool(env, 6, 7, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	meldsMade := 0
+	for i, clone := range pool.clones {
+		// Snapshot each seat's closed-hand size before we drive the window so we
+		// can prove a meld reduced the maker's hand.
+		preLen := make([]int, len(clone.env.game.State.Players))
+		for s, p := range clone.env.game.State.Players {
+			preLen[s] = len(p.ClosedHand)
+		}
+
+		preMelds := make([]int, len(clone.env.game.State.Players))
+		for s, p := range clone.env.game.State.Players {
+			preMelds[s] = len(p.OpenMelds)
+		}
+
+		// Drive the interrupt window to resolution. Each surfaced seat picks a
+		// PON if its refreshed mask offers one, else passes.
+		for step := 0; step < 8; step++ {
+			seat, ok := clone.env.currentActionSeat()
+			if !ok {
+				break
+			}
+			if clone.env.game.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+				break
+			}
+			legal, err := legalActionMap(clone.env.game.State, seat)
+			if err != nil {
+				t.Fatalf("clone %d: legalActionMap seat %d: %v", i, seat, err)
+			}
+			chosen := ActionPass
+			for id, act := range legal {
+				if act.Type == pb.ActionType_ACTION_PON {
+					chosen = id
+					break
+				}
+			}
+			resp, err := pool.Step(&pb.EnvPoolStepRequest{
+				Commands: []*pb.SlotCommand{{Slot: uint32(i), Cmd: &pb.SlotCommand_ActionId{ActionId: uint32(chosen)}}},
+			})
+			if err != nil {
+				t.Fatalf("clone %d: pool step: %v", i, err)
+			}
+			var slotState *pb.SlotState
+			for _, ss := range resp.Slots {
+				if ss.Slot == uint32(i) {
+					slotState = ss
+					break
+				}
+			}
+			if slotState == nil {
+				t.Fatalf("clone %d: no slot result", i)
+			}
+			if slotState.Error != "" {
+				t.Fatalf("clone %d: refreshed interrupt not executable: %s", i, slotState.Error)
+			}
+		}
+
+		// Consistency: no duplicate tile ids anywhere (the phantom-meld signature).
+		for s, p := range clone.env.game.State.Players {
+			if id, dup := seatHasTileIDConflict(p); dup {
+				t.Fatalf("clone %d seat %d: duplicate tile id %d across hand+melds — phantom meld", i, s, id)
+			}
+		}
+
+		// If any seat gained an open meld, its closed hand must have shrunk (a
+		// real PON consumes two hand tiles; the phantom-meld bug left it unchanged).
+		for s, p := range clone.env.game.State.Players {
+			if len(p.OpenMelds) > preMelds[s] {
+				if len(p.ClosedHand) >= preLen[s] {
+					t.Fatalf("clone %d seat %d: gained a meld but closed hand did not shrink (%d -> %d) — phantom meld",
+						i, s, preLen[s], len(p.ClosedHand))
+				}
+				meldsMade++
+			}
+		}
+	}
+
+	if meldsMade == 0 {
+		t.Fatalf("no clone executed a meld interrupt — test did not exercise the meld-application path")
 	}
 }

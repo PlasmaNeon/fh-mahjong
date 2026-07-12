@@ -22,6 +22,20 @@ import (
 //   - The interrupt queue is CLEARED: queued-but-unresolved opponent responses
 //     are themselves hidden information; a rollout re-asks those seats.
 //
+// Because the reshuffle moves every non-acting seat's tiles, their precomputed
+// ValidActions (interrupt options that reference specific tile ids) become
+// stale. Serving a stale meld interrupt would corrupt the hand — ResolveInterrupts
+// removes MeldTiles by id-match, finds none in the new hand, and appends a
+// phantom open meld without reducing the closed hand (duplicate tile ids). So
+// after the redeal we refresh each non-acting seat's ValidActions against its new
+// hand: at an open WAIT_DISCARDS window we recompute interrupts via the injected
+// RuleEngine (the exact call offerInterrupts makes); in any other phase we clear
+// them (opponents hold no interrupts mid-turn; only stale entries could remain).
+// The acting seat's ValidActions are left untouched — its hand did not move. A
+// seat whose refreshed interrupts come back empty simply drops out of the window
+// (expectedResponses derives from len(ValidActions)); that is correct honest
+// behavior — the redealt hand genuinely no longer holds that interrupt.
+//
 // Intended for use on CloneForBranch clones (search determinization), never on
 // a live game.
 func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
@@ -81,6 +95,22 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 
 	// 4. Queued interrupt responses are hidden information — drop them.
 	g.interruptQueue = make(map[uint32]*pb.PlayerAction)
+
+	// 5. Refresh non-acting seats' ValidActions against their new hands. Stale
+	// interrupt options reference tiles the reshuffle moved elsewhere; serving one
+	// would corrupt the hand (see the function comment). The acting seat's
+	// ValidActions are left as-is: its hand did not move.
+	openWindow := g.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS && g.State.ActiveDiscard != nil
+	for s, p := range g.State.Players {
+		if uint32(s) == actingSeat {
+			continue
+		}
+		if openWindow && len(p.ValidActions) > 0 {
+			p.ValidActions = g.Rules.GetValidInterrupts(g.State, g.State.ActiveDiscard, uint32(s))
+			continue
+		}
+		p.ValidActions = nil
+	}
 	return nil
 }
 
