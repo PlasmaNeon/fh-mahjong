@@ -85,5 +85,7 @@ def test_go_search_pool_step_shapes_and_determinism():
             pool_b.close()
 
         np.testing.assert_array_equal(result_a.planes, result_b.planes)
+        np.testing.assert_array_equal(result_a.scalars, result_b.scalars)
+        np.testing.assert_array_equal(result_a.action_masks, result_b.action_masks)
         assert [(m.slot, m.seat, m.terminated, m.truncated, m.has_observation) for m in result_a.slots] == \
             [(m.slot, m.seat, m.terminated, m.truncated, m.has_observation) for m in result_b.slots]
