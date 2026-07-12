@@ -35,7 +35,7 @@ class GoSearchPool:
     """ctypes wrapper over the FHSearchPool* exports (one FFI call per round)."""
 
     def __init__(self, bridge: CtypesGoBridge, clones: int, seed: int, max_rollout_decisions: int,
-                 determinizations: int = 0) -> None:
+                 determinizations: int = 0, root_seat: int | None = None) -> None:
         if clones < 1:
             raise ValueError("clones must be >= 1")
         self.env_config = bridge.config
@@ -51,6 +51,13 @@ class GoSearchPool:
             max_rollout_decisions=int(max_rollout_decisions),
             determinizations=int(determinizations),
         )
+        # root_seat pins the search root EXPLICITLY (proto3 optional, so seat 0 is
+        # distinct from absent). Required under duplicate-seat evaluation, where the
+        # env's first globally actionable seat can be a lower-numbered heuristic
+        # opponent rather than the learning seat being searched. Absent ⇒ Go falls
+        # back to currentActionSeat().
+        if root_seat is not None:
+            request.root_seat = int(root_seat)
         self._handle = self._library.FHSearchPoolNew(
             ctypes.c_uint64(bridge.handle), *self._payload_args(request.SerializeToString())
         )

@@ -491,4 +491,12 @@ message SearchPoolNewRequest {
   // across candidate groups face a byte-identical determinized world and future.
   // 0 is treated as 1 (each clone its own world).
   uint32 determinizations = 4;
+  // Explicit search-root seat. proto3 `optional` so seat 0 is distinguishable
+  // from "absent" (the tile-id-0 lesson): when set, NewSearchPool roots the pool
+  // on THIS seat (validated against the env's pending-decision set) instead of
+  // e.currentActionSeat(). Required for duplicate-seat evaluation, where
+  // currentActionSeat() can surface a lower-numbered heuristic opponent's
+  // interrupt while the learning seat's decision is the one being searched.
+  // Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
+  optional uint32 root_seat = 5;
 }

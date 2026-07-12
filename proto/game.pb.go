@@ -3037,8 +3037,16 @@ type SearchPoolNewRequest struct {
 	// across candidate groups face a byte-identical determinized world and future.
 	// 0 is treated as 1 (each clone its own world).
 	Determinizations uint32 `protobuf:"varint,4,opt,name=determinizations,proto3" json:"determinizations,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Explicit search-root seat. proto3 `optional` so seat 0 is distinguishable
+	// from "absent" (the tile-id-0 lesson): when set, NewSearchPool roots the pool
+	// on THIS seat (validated against the env's pending-decision set) instead of
+	// e.currentActionSeat(). Required for duplicate-seat evaluation, where
+	// currentActionSeat() can surface a lower-numbered heuristic opponent's
+	// interrupt while the learning seat's decision is the one being searched.
+	// Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
+	RootSeat      *uint32 `protobuf:"varint,5,opt,name=root_seat,json=rootSeat,proto3,oneof" json:"root_seat,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SearchPoolNewRequest) Reset() {
@@ -3095,6 +3103,13 @@ func (x *SearchPoolNewRequest) GetMaxRolloutDecisions() uint32 {
 func (x *SearchPoolNewRequest) GetDeterminizations() uint32 {
 	if x != nil {
 		return x.Determinizations
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetRootSeat() uint32 {
+	if x != nil && x.RootSeat != nil {
+		return *x.RootSeat
 	}
 	return 0
 }
@@ -3369,12 +3384,15 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vplane_width\x18\a \x01(\rR\n" +
 	"planeWidth\x12!\n" +
 	"\fscalar_count\x18\b \x01(\rR\vscalarCount\x12*\n" +
-	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"\xa2\x01\n" +
+	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"\xd2\x01\n" +
 	"\x14SearchPoolNewRequest\x12\x16\n" +
 	"\x06clones\x18\x01 \x01(\rR\x06clones\x12\x12\n" +
 	"\x04seed\x18\x02 \x01(\x04R\x04seed\x122\n" +
 	"\x15max_rollout_decisions\x18\x03 \x01(\rR\x13maxRolloutDecisions\x12*\n" +
-	"\x10determinizations\x18\x04 \x01(\rR\x10determinizations*c\n" +
+	"\x10determinizations\x18\x04 \x01(\rR\x10determinizations\x12 \n" +
+	"\troot_seat\x18\x05 \x01(\rH\x00R\brootSeat\x88\x01\x01B\f\n" +
+	"\n" +
+	"_root_seat*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -3553,6 +3571,7 @@ func file_proto_game_proto_init() {
 		(*SlotCommand_ResetSeed)(nil),
 		(*SlotCommand_Skip)(nil),
 	}
+	file_proto_game_proto_msgTypes[31].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

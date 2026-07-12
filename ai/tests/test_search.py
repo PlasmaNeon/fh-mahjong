@@ -173,14 +173,16 @@ class FakeSearchPool:
 
 def _factory_from(pool: FakeSearchPool):
     calls = {"count": 0, "num_clones": None, "seed": None,
-             "max_rollout_decisions": None, "determinizations": None}
+             "max_rollout_decisions": None, "determinizations": None, "root_seat": None}
 
-    def factory(num_clones: int, seed: int, max_rollout_decisions: int, determinizations: int):
+    def factory(num_clones: int, seed: int, max_rollout_decisions: int,
+                determinizations: int, root_seat: int | None = None):
         calls["count"] += 1
         calls["num_clones"] = num_clones
         calls["seed"] = seed
         calls["max_rollout_decisions"] = max_rollout_decisions
         calls["determinizations"] = determinizations
+        calls["root_seat"] = root_seat
         return pool
 
     return factory, calls
@@ -241,18 +243,21 @@ def test_pool_factory_receives_determinizations_K():
         [SlotSpec(reward=1.0, terminated=True)],
         [SlotSpec(reward=2.0, terminated=True)],
     ]
-    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    pool = FakeSearchPool(per_candidate, K=K, seat=2)
     factory, calls = _factory_from(pool)
 
     searcher = SearchPolicy(policy, factory,
                             SearchConfig(num_determinizations=K, seed=123, max_rollout_decisions=77))
-    searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+    searcher.choose(_obs(seat=2, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
 
     assert calls["count"] == 1
     assert calls["determinizations"] == K
     assert calls["num_clones"] == len(per_candidate) * K  # M candidates x K
     assert calls["seed"] == 123
     assert calls["max_rollout_decisions"] == 77
+    # The search root must be pinned to the observation's seat explicitly, so the
+    # Go pool roots on the seat being searched rather than currentActionSeat().
+    assert calls["root_seat"] == 2
 
 
 def test_fail_open_on_pool_error():

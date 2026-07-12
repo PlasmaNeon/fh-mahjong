@@ -11430,6 +11430,7 @@ export const game = $root.game = (() => {
          * @property {number|Long|undefined} [seed] SearchPoolNewRequest seed
          * @property {number|undefined} [maxRolloutDecisions] SearchPoolNewRequest maxRolloutDecisions
          * @property {number|undefined} [determinizations] SearchPoolNewRequest determinizations
+         * @property {number|null|undefined} [rootSeat] SearchPoolNewRequest rootSeat
          */
 
         /**
@@ -11480,6 +11481,23 @@ export const game = $root.game = (() => {
         SearchPoolNewRequest.prototype.determinizations = 0;
 
         /**
+         * SearchPoolNewRequest rootSeat.
+         * @member {number|null} rootSeat
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.rootSeat = null;
+
+        // OneOf field names bound to virtual getters and setters
+        let $oneOfFields;
+
+        // Virtual OneOf for proto3 optional field
+        Object.defineProperty(SearchPoolNewRequest.prototype, "_rootSeat", {
+            get: $util.oneOfGetter($oneOfFields = ["rootSeat"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+
+        /**
          * Creates a new SearchPoolNewRequest instance using the specified properties.
          * @function create
          * @memberof game.SearchPoolNewRequest
@@ -11511,6 +11529,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxRolloutDecisions);
             if (message.determinizations != null && Object.hasOwnProperty.call(message, "determinizations"))
                 writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.determinizations);
+            if (message.rootSeat != null && Object.hasOwnProperty.call(message, "rootSeat"))
+                writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.rootSeat);
             return writer;
         };
 
@@ -11563,6 +11583,10 @@ export const game = $root.game = (() => {
                         message.determinizations = reader.uint32();
                         break;
                     }
+                case 5: {
+                        message.rootSeat = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -11598,6 +11622,7 @@ export const game = $root.game = (() => {
         SearchPoolNewRequest.verify = function verify(message) {
             if (typeof message !== "object" || message === null)
                 return "object expected";
+            let properties = {};
             if (message.clones != null && message.hasOwnProperty("clones"))
                 if (!$util.isInteger(message.clones))
                     return "clones: integer expected";
@@ -11610,6 +11635,11 @@ export const game = $root.game = (() => {
             if (message.determinizations != null && message.hasOwnProperty("determinizations"))
                 if (!$util.isInteger(message.determinizations))
                     return "determinizations: integer expected";
+            if (message.rootSeat != null && message.hasOwnProperty("rootSeat")) {
+                properties._rootSeat = 1;
+                if (!$util.isInteger(message.rootSeat))
+                    return "rootSeat: integer expected";
+            }
             return null;
         };
 
@@ -11640,6 +11670,8 @@ export const game = $root.game = (() => {
                 message.maxRolloutDecisions = object.maxRolloutDecisions >>> 0;
             if (object.determinizations != null)
                 message.determinizations = object.determinizations >>> 0;
+            if (object.rootSeat != null)
+                message.rootSeat = object.rootSeat >>> 0;
             return message;
         };
 
@@ -11677,6 +11709,11 @@ export const game = $root.game = (() => {
                 object.maxRolloutDecisions = message.maxRolloutDecisions;
             if (message.determinizations != null && message.hasOwnProperty("determinizations"))
                 object.determinizations = message.determinizations;
+            if (message.rootSeat != null && message.hasOwnProperty("rootSeat")) {
+                object.rootSeat = message.rootSeat;
+                if (options.oneofs)
+                    object._rootSeat = "rootSeat";
+            }
             return object;
         };
 

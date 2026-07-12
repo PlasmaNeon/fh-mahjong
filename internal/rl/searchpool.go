@@ -103,6 +103,19 @@ type searchClone struct {
 // point. It fails on a nil env, an oracle-configured env (search must never see
 // oracle channels), or an env that is not at a decision point.
 //
+// Root seat selection. The variadic rootSeat makes the search root EXPLICIT
+// end-to-end. When one value is supplied it is validated against the env's
+// pending-decision set (seatHasPendingDecision) and used as the pool root; when
+// omitted the pool falls back to e.currentActionSeat() (the all-four-learning
+// self-play default; existing Go tests rely on this back-compat). The explicit
+// form is REQUIRED for duplicate-seat evaluation (auto_play_heuristics=true, one
+// learning seat): at a WAIT_DISCARDS window a lower-numbered heuristic opponent
+// can hold an unqueued interrupt at the same time as the learning seat, so
+// currentActionSeat() would return the opponent and the pool would root on — and
+// RedealUnseen would protect — the WRONG hand, and pinning would apply the
+// learning seat's candidate id as that opponent's move. Passing the learning
+// seat explicitly roots the pool correctly.
+//
 // Common-random-numbers pairing (honesty guarantee against a live-seed future
 // leak). Clone i belongs to determinization group k = i % determinizations
 // (K; the clone count is M candidates x K). BOTH per-clone seeds are derived
@@ -122,17 +135,33 @@ type searchClone struct {
 // (c',k) in different candidate groups share the identical determinized world
 // AND the identical sampled future, so candidates are compared on paired worlds
 // (variance-reducing) and the live env's future is never consulted.
-func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, determinizations uint32) (*SearchPool, error) {
+func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, determinizations uint32, rootSeat ...uint32) (*SearchPool, error) {
 	if e == nil || e.game == nil || e.game.State == nil {
 		return nil, fmt.Errorf("search pool: nil env")
+	}
+	if len(rootSeat) > 1 {
+		return nil, fmt.Errorf("search pool: at most one root seat may be supplied, got %d", len(rootSeat))
 	}
 	cfg := normalizeConfig(e.config)
 	if cfg.OracleObservation {
 		return nil, fmt.Errorf("search pool: oracle observation is forbidden in search")
 	}
-	seat, ok := e.currentActionSeat()
-	if !ok {
-		return nil, fmt.Errorf("search pool: env is not at a decision point")
+	var seat uint32
+	if len(rootSeat) == 1 {
+		// Explicit root: validate the caller-chosen seat is genuinely actionable
+		// right now. This is the seat whose hand RedealUnseen preserves and whose
+		// candidate the first apply pins, so an unactionable choice must error
+		// rather than mis-score or fail open at an interrupt decision.
+		seat = rootSeat[0]
+		if !e.seatHasPendingDecision(seat) {
+			return nil, fmt.Errorf("search pool: root seat %d has no pending decision", seat)
+		}
+	} else {
+		s, ok := e.currentActionSeat()
+		if !ok {
+			return nil, fmt.Errorf("search pool: env is not at a decision point")
+		}
+		seat = s
 	}
 	if clones < 1 {
 		clones = 1

@@ -3962,6 +3962,9 @@ export namespace game {
 
         /** SearchPoolNewRequest determinizations */
         determinizations?: (number|undefined);
+
+        /** SearchPoolNewRequest rootSeat */
+        rootSeat?: (number|null|undefined);
     }
 
     /** Represents a SearchPoolNewRequest. */
@@ -3984,6 +3987,9 @@ export namespace game {
 
         /** SearchPoolNewRequest determinizations. */
         public determinizations: number;
+
+        /** SearchPoolNewRequest rootSeat. */
+        public rootSeat: (number|null);
 
         /**
          * Creates a new SearchPoolNewRequest instance using the specified properties.

@@ -203,7 +203,15 @@ func FHSearchPoolNew(envHandle C.uint64_t, requestPtr *C.char, requestLen C.int)
 		}
 	}
 
-	pool, err := rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations())
+	// root_seat is proto3 optional: present ⇒ pin the search root explicitly
+	// (duplicate-seat eval); absent ⇒ let NewSearchPool fall back to
+	// currentActionSeat() (all-four-learning self-play).
+	var pool *rl.SearchPool
+	if request.RootSeat != nil {
+		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations(), request.GetRootSeat())
+	} else {
+		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations())
+	}
 	if err != nil {
 		return 0
 	}

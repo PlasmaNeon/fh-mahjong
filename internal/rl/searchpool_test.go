@@ -1102,3 +1102,137 @@ func TestSearchPool_RootActionPinnedToRootSeat(t *testing.T) {
 		t.Fatalf("lower seat not surfaced as ordinary decision after root step: (%d,%v)", seat, ok)
 	}
 }
+
+// TestSearchPool_ExplicitRootSeatUnderDuplicateEval pins FINDING P1. Under
+// duplicate-seat evaluation (auto_play_heuristics=true, ONE learning seat) a
+// WAIT_DISCARDS window can hold TWO simultaneously-actionable interrupts: a
+// lower-numbered HEURISTIC opponent AND the learning seat. currentActionSeat()
+// returns the first globally actionable seat (the opponent), so a pool that
+// roots implicitly protects the WRONG hand across RedealUnseen and pins the
+// candidate to the wrong seat. Passing the learning seat EXPLICITLY roots the
+// pool correctly. The implicit path (no explicit root) roots on the opponent —
+// the exact pre-fix behaviour this fix supersedes.
+func TestSearchPool_ExplicitRootSeatUnderDuplicateEval(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{2}, // ONE learning seat: duplicate-seat eval
+		AutoPlayHeuristics: true,
+		MaxDecisions:       512,
+	}
+	env := New(config)
+	env.game = engine.NewGame("dup-eval-root", &rules.FenghuaRuleset{}, engine.MatchOptions{})
+	env.game.SetWallSeed(engine.SeedFromUint64(202))
+	if err := env.game.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	const discarder = uint32(0)
+	const heuristicSeat = uint32(1) // lower-numbered, NON-learning, also actionable
+	const learningSeat = uint32(2)  // the seat actually being searched
+
+	// Build a WAIT_DISCARDS window: seat 0 discards `discard`. BOTH the lower
+	// heuristic seat and the learning seat hold a matching pair → both PON.
+	discard := &pb.Tile{Id: 8001, Suit: pb.Suit_SUIT_MAN, Value: 5}
+	state := env.game.State
+	state.ActivePlayer = discarder
+	state.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	state.ActiveDiscard = discard
+	state.IsHaitei = false
+
+	for _, s := range []uint32{heuristicSeat, learningSeat} {
+		p1 := &pb.Tile{Id: 8100 + s*10, Suit: discard.Suit, Value: discard.Value}
+		p2 := &pb.Tile{Id: 8101 + s*10, Suit: discard.Suit, Value: discard.Value}
+		state.Players[s].ClosedHand = append(state.Players[s].ClosedHand, p1, p2)
+		state.Players[s].ValidActions = env.game.Rules.GetValidInterrupts(state, discard, s)
+		if len(state.Players[s].ValidActions) == 0 {
+			t.Fatalf("premise broken: seat %d has no interrupt on the discard", s)
+		}
+	}
+	state.Players[3].ValidActions = nil
+
+	env.lastScores = snapshotScores(state)
+
+	// Premise: currentActionSeat() returns the LOWER heuristic opponent, while the
+	// learning decision belongs to seat 2 — the exact ambiguity the finding flags.
+	if seat, ok := env.currentActionSeat(); !ok || seat != heuristicSeat {
+		t.Fatalf("premise broken: currentActionSeat=(%d,%v), want heuristic seat %d", seat, ok, heuristicSeat)
+	}
+	if seat, ok := env.currentLearningSeat(); !ok || seat != learningSeat {
+		t.Fatalf("premise broken: currentLearningSeat=(%d,%v), want learning seat %d", seat, ok, learningSeat)
+	}
+
+	// Snapshot the learning seat's hand — the fix must preserve it across the redeal.
+	learningHandBefore := handTileIDs(state.Players[learningSeat].ClosedHand)
+
+	// Force the redeal pool (seats 0,1,3 + undrawn wall) homogeneous so the lower
+	// heuristic seat STAYS actionable in every clone → the window still has a
+	// pending non-root response after the root apply, so the root candidate queues
+	// rather than resolving immediately.
+	for _, s := range []uint32{0, 1, 3} {
+		for _, tile := range state.Players[s].ClosedHand {
+			tile.Suit, tile.Value = discard.Suit, discard.Value
+		}
+	}
+	for _, tile := range env.game.WallTilesForTest() {
+		tile.Suit, tile.Value = discard.Suit, discard.Value
+	}
+
+	// EXPLICIT root: the pool must root on the learning seat, NOT currentActionSeat.
+	pool, err := NewSearchPool(env, 1, 7, 512, 0, learningSeat)
+	if err != nil {
+		t.Fatalf("NewSearchPool(explicit root): %v", err)
+	}
+	defer pool.Close()
+	if pool.rootSeat != learningSeat {
+		t.Fatalf("explicit-root pool rootSeat=%d, want learning seat %d", pool.rootSeat, learningSeat)
+	}
+
+	// The learning seat's hand is preserved across the determinized redeal.
+	clone := pool.clones[0]
+	learningHandAfter := handTileIDs(clone.env.game.State.Players[learningSeat].ClosedHand)
+	if !idsEqual(learningHandBefore, learningHandAfter) {
+		t.Fatalf("learning seat hand NOT preserved across redeal: before=%v after=%v", learningHandBefore, learningHandAfter)
+	}
+
+	// Pin the learning seat's PON candidate; it must queue for the LEARNING seat.
+	learnLegal, err := legalActionMap(clone.env.game.State, learningSeat)
+	if err != nil {
+		t.Fatalf("legalActionMap learning seat: %v", err)
+	}
+	ponID := -1
+	for id, act := range learnLegal {
+		if act.Type == pb.ActionType_ACTION_PON {
+			ponID = id
+			break
+		}
+	}
+	if ponID < 0 {
+		t.Fatalf("premise broken: learning seat %d has no PON candidate in clone", learningSeat)
+	}
+	if _, err := pool.Step(&pb.EnvPoolStepRequest{
+		Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: uint32(ponID)}}},
+	}); err != nil {
+		t.Fatalf("pool.Step: %v", err)
+	}
+	if !clone.env.game.InterruptQueued(learningSeat) {
+		t.Fatalf("root candidate was NOT queued for learning seat %d — pinned to the wrong seat", learningSeat)
+	}
+
+	// RED-relevant contrast: the IMPLICIT path (no explicit root) roots on the
+	// lower heuristic opponent, which is precisely the mis-rooting the fix cures.
+	implicit, err := NewSearchPool(env, 1, 7, 512, 0)
+	if err != nil {
+		t.Fatalf("NewSearchPool(implicit): %v", err)
+	}
+	defer implicit.Close()
+	if implicit.rootSeat != heuristicSeat {
+		t.Fatalf("implicit pool rootSeat=%d, want heuristic seat %d (currentActionSeat fallback)", implicit.rootSeat, heuristicSeat)
+	}
+	if implicit.rootSeat == learningSeat {
+		t.Fatalf("implicit pool unexpectedly rooted on the learning seat — contrast is vacuous")
+	}
+
+	// An explicit root that is NOT actionable must be rejected, not silently mis-rooted.
+	if _, err := NewSearchPool(env, 1, 7, 512, 0, uint32(3)); err == nil {
+		t.Fatalf("expected error rooting on non-actionable seat 3, got nil")
+	}
+}

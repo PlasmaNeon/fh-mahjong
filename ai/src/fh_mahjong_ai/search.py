@@ -49,13 +49,16 @@ PoolFactory = Callable[..., Any]
 class SearchPolicy:
     """ActionChoice-protocol policy: determinized champion-rollout search.
 
-    ``pool_factory(num_clones, seed, max_rollout_decisions, determinizations=K)
-    -> pool`` with ``.step(commands) -> SearchStepResult`` and ``.close()``.
-    ``determinizations`` is the common-random-numbers pairing group count K (the
-    clone count num_clones is M candidates x K), passed as a keyword so clones
-    sharing a determinization face a paired hidden world + sampled future.
-    Production wires ``GoSearchPool`` over the live eval bridge; tests inject
-    fakes.
+    ``pool_factory(num_clones, seed, max_rollout_decisions, determinizations=K,
+    root_seat=obs.seat) -> pool`` with ``.step(commands) -> SearchStepResult`` and
+    ``.close()``. ``determinizations`` is the common-random-numbers pairing group
+    count K (the clone count num_clones is M candidates x K), passed as a keyword
+    so clones sharing a determinization face a paired hidden world + sampled
+    future. ``root_seat`` is the observation's seat, passed EXPLICITLY so the Go
+    pool roots on the seat actually being searched — under duplicate-seat
+    evaluation the env's first globally actionable seat may be a lower-numbered
+    heuristic opponent, not this learning seat. Production wires ``GoSearchPool``
+    over the live eval bridge; tests inject fakes.
     """
 
     def __init__(self, checkpoint_policy: Any, pool_factory: PoolFactory, config: SearchConfig) -> None:
@@ -92,7 +95,7 @@ class SearchPolicy:
             K = self._config.num_determinizations
             pool = self._pool_factory(
                 len(candidates) * K, self._config.seed, self._config.max_rollout_decisions,
-                determinizations=K,
+                determinizations=K, root_seat=int(observation.seat),
             )
             try:
                 scores = self._rollout_scores(
