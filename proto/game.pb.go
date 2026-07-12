@@ -3013,6 +3013,107 @@ func (x *EnvPoolStepResponse) GetActionSpaceSize() uint32 {
 	return 0
 }
 
+// Test-time search: create K determinized clones of a live env's current
+// decision point (opponents' hands + undrawn wall re-dealt per clone; the
+// acting seat's observation is bit-identical across clones). Stepping reuses
+// EnvPoolStepRequest/EnvPoolStepResponse with these deviations: reset_seed
+// commands are per-slot errors; round_outcome set (non-terminal) means a round
+// ended earlier in the rollout and the clone has reached the ROOT seat's next
+// GENUINE decision, whose observation (real decision state, real mask) is the
+// value-bootstrap row with that outcome attached — bootstrap rows are always
+// in-distribution root decisions, never the root's view frozen at another seat's
+// turn; between the boundary and that row the clone surfaces ordinary
+// live-decision rows for the other seats. truncated=true (decision cap, checked
+// only at a root decision) carries the root-decision-state observation.
+type SearchPoolNewRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Clones              uint32                 `protobuf:"varint,1,opt,name=clones,proto3" json:"clones,omitempty"`
+	Seed                uint64                 `protobuf:"varint,2,opt,name=seed,proto3" json:"seed,omitempty"`
+	MaxRolloutDecisions uint32                 `protobuf:"varint,3,opt,name=max_rollout_decisions,json=maxRolloutDecisions,proto3" json:"max_rollout_decisions,omitempty"`
+	// Common-random-numbers pairing group count K (the clone count is M*K, M
+	// candidates x K determinizations). Clone i uses determinization k = i % K:
+	// BOTH its redealt hidden world AND its sampled future are derived from
+	// (pool seed, k) ALONE — never from the live env's seed — so clones sharing k
+	// across candidate groups face a byte-identical determinized world and future.
+	// 0 is treated as 1 (each clone its own world).
+	Determinizations uint32 `protobuf:"varint,4,opt,name=determinizations,proto3" json:"determinizations,omitempty"`
+	// Explicit search-root seat. proto3 `optional` so seat 0 is distinguishable
+	// from "absent" (the tile-id-0 lesson): when set, NewSearchPool roots the pool
+	// on THIS seat (validated against the env's pending-decision set) instead of
+	// e.currentActionSeat(). Required for duplicate-seat evaluation, where
+	// currentActionSeat() can surface a lower-numbered heuristic opponent's
+	// interrupt while the learning seat's decision is the one being searched.
+	// Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
+	RootSeat      *uint32 `protobuf:"varint,5,opt,name=root_seat,json=rootSeat,proto3,oneof" json:"root_seat,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchPoolNewRequest) Reset() {
+	*x = SearchPoolNewRequest{}
+	mi := &file_proto_game_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchPoolNewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchPoolNewRequest) ProtoMessage() {}
+
+func (x *SearchPoolNewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchPoolNewRequest.ProtoReflect.Descriptor instead.
+func (*SearchPoolNewRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *SearchPoolNewRequest) GetClones() uint32 {
+	if x != nil {
+		return x.Clones
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetSeed() uint64 {
+	if x != nil {
+		return x.Seed
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetMaxRolloutDecisions() uint32 {
+	if x != nil {
+		return x.MaxRolloutDecisions
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetDeterminizations() uint32 {
+	if x != nil {
+		return x.Determinizations
+	}
+	return 0
+}
+
+func (x *SearchPoolNewRequest) GetRootSeat() uint32 {
+	if x != nil && x.RootSeat != nil {
+		return *x.RootSeat
+	}
+	return 0
+}
+
 var File_proto_game_proto protoreflect.FileDescriptor
 
 const file_proto_game_proto_rawDesc = "" +
@@ -3283,7 +3384,15 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vplane_width\x18\a \x01(\rR\n" +
 	"planeWidth\x12!\n" +
 	"\fscalar_count\x18\b \x01(\rR\vscalarCount\x12*\n" +
-	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize*c\n" +
+	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"\xd2\x01\n" +
+	"\x14SearchPoolNewRequest\x12\x16\n" +
+	"\x06clones\x18\x01 \x01(\rR\x06clones\x12\x12\n" +
+	"\x04seed\x18\x02 \x01(\x04R\x04seed\x122\n" +
+	"\x15max_rollout_decisions\x18\x03 \x01(\rR\x13maxRolloutDecisions\x12*\n" +
+	"\x10determinizations\x18\x04 \x01(\rR\x10determinizations\x12 \n" +
+	"\troot_seat\x18\x05 \x01(\rH\x00R\brootSeat\x88\x01\x01B\f\n" +
+	"\n" +
+	"_root_seat*c\n" +
 	"\x04Suit\x12\x10\n" +
 	"\fSUIT_UNKNOWN\x10\x00\x12\f\n" +
 	"\bSUIT_SOU\x10\x01\x12\f\n" +
@@ -3348,7 +3457,7 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),                        // 0: game.Suit
 	(ActionType)(0),                  // 1: game.ActionType
@@ -3387,6 +3496,7 @@ var file_proto_game_proto_goTypes = []any{
 	(*EnvPoolStepRequest)(nil),       // 34: game.EnvPoolStepRequest
 	(*SlotState)(nil),                // 35: game.SlotState
 	(*EnvPoolStepResponse)(nil),      // 36: game.EnvPoolStepResponse
+	(*SearchPoolNewRequest)(nil),     // 37: game.SearchPoolNewRequest
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
@@ -3461,13 +3571,14 @@ func file_proto_game_proto_init() {
 		(*SlotCommand_ResetSeed)(nil),
 		(*SlotCommand_Skip)(nil),
 	}
+	file_proto_game_proto_msgTypes[31].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   31,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -14,6 +14,25 @@ type PaipuPlayer struct {
 	Seat   uint32 `json:"seat"`
 	Name   string `json:"name"`
 	UserID uint   `json:"userId"`
+	// Seat-composition labels for dataset use. Empty in paipu recorded
+	// before they existed (readers must treat absence as unknown).
+	Kind       string `json:"kind,omitempty"`       // "human" | "bot"
+	Difficulty string `json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
+	// PolicyID is the RL serving checkpoint identity: the match-start label
+	// (from /healthz), reconciled at persist time to the comma-joined
+	// checkpoints that actually served the seat's actions. If
+	// RemoteDecisions is 0 the label is the configured endpoint identity,
+	// not evidence the model ever acted.
+	PolicyID string `json:"policyId,omitempty"`
+	// Decision provenance for RL seats: how many decisions the remote model
+	// served vs how many fell back to the local heuristic (per-decision
+	// degradation). A pure-RL dataset filter is fallbackDecisions == 0.
+	RemoteDecisions   uint64 `json:"remoteDecisions,omitempty"`
+	FallbackDecisions uint64 `json:"fallbackDecisions,omitempty"`
+	// AutomatedDecisions counts gameplay decisions a bot made ON THIS SEAT
+	// while it was automated (a human seat covered by a bot after a
+	// disconnect / no-show). Pure human play has automatedDecisions == 0.
+	AutomatedDecisions uint64 `json:"automatedDecisions,omitempty"`
 }
 
 type PaipuAction struct {
@@ -125,11 +144,53 @@ func NewPaipuRecorder(matchID, ruleset string) *PaipuRecorder {
 }
 
 func (r *PaipuRecorder) AddPlayer(seat uint32, name string, userID uint) {
-	r.paipu.Players = append(r.paipu.Players, PaipuPlayer{
+	r.AddPlayerInfo(PaipuPlayer{
 		Seat:   seat,
 		Name:   name,
 		UserID: userID,
 	})
+}
+
+// AddPlayerInfo records a seat entry with full composition labels
+// (kind/difficulty/policy identity). AddPlayer remains for callers that
+// don't know the seat composition.
+func (r *PaipuRecorder) AddPlayerInfo(p PaipuPlayer) {
+	r.paipu.Players = append(r.paipu.Players, p)
+}
+
+// SetPlayerPolicyID overwrites a seat's recorded policy identity. Used at
+// persist time to reconcile the match-start label with the checkpoints that
+// actually served the seat's actions (a hot reload mid-match adds entries).
+func (r *PaipuRecorder) SetPlayerPolicyID(seat uint32, policyID string) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].PolicyID = policyID
+			return
+		}
+	}
+}
+
+// SetPlayerDecisionCounts records a seat's remote-vs-fallback decision
+// provenance at persist time.
+func (r *PaipuRecorder) SetPlayerDecisionCounts(seat uint32, remote, fallback uint64) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].RemoteDecisions = remote
+			r.paipu.Players[i].FallbackDecisions = fallback
+			return
+		}
+	}
+}
+
+// SetPlayerAutomatedDecisions records how many gameplay decisions were made
+// by automation on this seat (bot takeover of a human seat).
+func (r *PaipuRecorder) SetPlayerAutomatedDecisions(seat uint32, count uint64) {
+	for i := range r.paipu.Players {
+		if r.paipu.Players[i].Seat == seat {
+			r.paipu.Players[i].AutomatedDecisions = count
+			return
+		}
+	}
 }
 
 func (r *PaipuRecorder) StartRound(
@@ -237,6 +298,25 @@ func (r *PaipuRecorder) EndRound(result *PaipuRoundResult) {
 func (r *PaipuRecorder) Finalize(finalScores [4]int32) *Paipu {
 	r.paipu.FinalScores = finalScores
 	return &r.paipu
+}
+
+// Snapshot returns a copy of the paipu that ALSO includes the in-progress
+// round (with a nil Result), so an aborted match persists the active hand's
+// deals and actions instead of dropping them. Unlike Finalize it never
+// mutates recorder state beyond the returned copy; the current round can
+// still end normally afterwards. Call from the goroutine that owns the
+// recorder (the round's Actions slice is shared with the copy).
+func (r *PaipuRecorder) Snapshot(finalScores [4]int32) *Paipu {
+	snap := r.paipu
+	snap.FinalScores = finalScores
+	snap.Rounds = make([]PaipuRound, len(r.paipu.Rounds), len(r.paipu.Rounds)+1)
+	copy(snap.Rounds, r.paipu.Rounds)
+	if r.currentRound != nil {
+		partial := *r.currentRound
+		partial.Result = nil
+		snap.Rounds = append(snap.Rounds, partial)
+	}
+	return &snap
 }
 
 // CurrentRound returns the in-progress round (for testing).

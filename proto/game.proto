@@ -467,3 +467,36 @@ message EnvPoolStepResponse {
   uint32 scalar_count = 8;
   uint32 action_space_size = 9;
 }
+
+// Test-time search: create K determinized clones of a live env's current
+// decision point (opponents' hands + undrawn wall re-dealt per clone; the
+// acting seat's observation is bit-identical across clones). Stepping reuses
+// EnvPoolStepRequest/EnvPoolStepResponse with these deviations: reset_seed
+// commands are per-slot errors; round_outcome set (non-terminal) means a round
+// ended earlier in the rollout and the clone has reached the ROOT seat's next
+// GENUINE decision, whose observation (real decision state, real mask) is the
+// value-bootstrap row with that outcome attached — bootstrap rows are always
+// in-distribution root decisions, never the root's view frozen at another seat's
+// turn; between the boundary and that row the clone surfaces ordinary
+// live-decision rows for the other seats. truncated=true (decision cap, checked
+// only at a root decision) carries the root-decision-state observation.
+message SearchPoolNewRequest {
+  uint32 clones = 1;
+  uint64 seed = 2;
+  uint32 max_rollout_decisions = 3;
+  // Common-random-numbers pairing group count K (the clone count is M*K, M
+  // candidates x K determinizations). Clone i uses determinization k = i % K:
+  // BOTH its redealt hidden world AND its sampled future are derived from
+  // (pool seed, k) ALONE — never from the live env's seed — so clones sharing k
+  // across candidate groups face a byte-identical determinized world and future.
+  // 0 is treated as 1 (each clone its own world).
+  uint32 determinizations = 4;
+  // Explicit search-root seat. proto3 `optional` so seat 0 is distinguishable
+  // from "absent" (the tile-id-0 lesson): when set, NewSearchPool roots the pool
+  // on THIS seat (validated against the env's pending-decision set) instead of
+  // e.currentActionSeat(). Required for duplicate-seat evaluation, where
+  // currentActionSeat() can surface a lower-numbered heuristic opponent's
+  // interrupt while the learning seat's decision is the one being searched.
+  // Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
+  optional uint32 root_seat = 5;
+}

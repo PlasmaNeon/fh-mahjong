@@ -19,8 +19,6 @@ type User struct {
 	Rating       int       `gorm:"default:1500" json:"rating"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
-
-	Matches []MatchPlayer `gorm:"foreignKey:UserID" json:"-"`
 }
 
 const (
@@ -72,16 +70,34 @@ type Match struct {
 // MatchPlayer is the join table recording a user's performance in a specific match
 type MatchPlayer struct {
 	ID      uint   `gorm:"primaryKey" json:"-"`
-	MatchID string `gorm:"type:uuid;index;not null" json:"matchId"`
+	MatchID string `gorm:"type:uuid;index;not null;uniqueIndex:idx_match_players_match_seat,priority:1" json:"matchId"`
 	UserID  uint   `gorm:"index;not null" json:"userId"`
 
-	Seat        uint  `gorm:"not null" json:"seat"` // 0=East, 1=South, 2=West, 3=North
+	// One row per seat per match; the unique index also guards against a
+	// retried persist duplicating rows after an ambiguous commit.
+	Seat        uint  `gorm:"not null;uniqueIndex:idx_match_players_match_seat,priority:2" json:"seat"` // 0=East, 1=South, 2=West, 3=North
 	FinalScore  int32 `gorm:"not null;default:0" json:"finalScore"`
 	Placement   uint  `gorm:"not null;default:0" json:"placement"` // 1st, 2nd, 3rd, 4th
 	RatingDelta int   `gorm:"not null;default:0" json:"ratingDelta"`
 
-	// Eager-loaded user info for match history API
-	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	// Seat-composition labels mirroring the paipu players, so a dataset can
+	// be filtered in SQL without parsing PaipuJSON. Bots have UserID 0.
+	IsBot      bool   `gorm:"not null;default:false" json:"isBot"`
+	Difficulty string `gorm:"size:32" json:"difficulty,omitempty"` // bots: "heuristic" | "rl"
+	PolicyID   string `gorm:"size:512" json:"policyId,omitempty"`  // RL bots: serving checkpoint identity
+
+	// RL decision provenance: remote-served vs heuristic-fallback decision
+	// counts (pure-RL filter: fallback_decisions = 0 AND remote_decisions > 0).
+	RemoteDecisions   uint64 `gorm:"not null;default:0" json:"remoteDecisions,omitempty"`
+	FallbackDecisions uint64 `gorm:"not null;default:0" json:"fallbackDecisions,omitempty"`
+	// Decisions automation made on this seat (bot takeover of a human seat);
+	// pure-human filter: is_bot = false AND automated_decisions = 0.
+	AutomatedDecisions uint64 `gorm:"not null;default:0" json:"automatedDecisions,omitempty"`
+
+	// NOTE: deliberately no gorm relation to User (and no users foreign key):
+	// bots persist with UserID 0 and guest accounts (9000000-range ids) have
+	// no users row by design, so a users FK would reject their rows.
+	// AutoMigrate drops the constraint left behind by the old relations.
 }
 
 // PaipuRecord stores a per-round paipu replay
@@ -135,6 +151,18 @@ func AutoMigrate(db *gorm.DB) error {
 		&MatchReview{},
 	); err != nil {
 		return err
+	}
+
+	// Drop the users foreign key(s) the old User↔MatchPlayer relations put on
+	// match_players. Bots persist with user_id 0 and guest accounts have no
+	// users row by design, so the constraint would reject their seat rows.
+	// Both historical GORM constraint names are handled; idempotent.
+	for _, constraint := range []string{"fk_users_matches", "fk_match_players_user"} {
+		if m.HasConstraint(&MatchPlayer{}, constraint) {
+			if err := m.DropConstraint(&MatchPlayer{}, constraint); err != nil {
+				return fmt.Errorf("dropping match_players users FK %q: %w", constraint, err)
+			}
+		}
 	}
 
 	// Drop the stale unique index on username left by the old schema so display

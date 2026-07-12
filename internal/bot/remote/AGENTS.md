@@ -8,7 +8,8 @@ This package adapts Python-served AI checkpoints to the Go bot policy interface.
 
 ## Key Files
 
-- **http_policy.go** — HTTP JSON client for `fh-mj-serve-policy` with heuristic fallback on service errors, malformed responses, or illegal action ids. It exposes `Stats()` counters for remote calls, remote successes, fallback totals, and fallback reason categories, and logs a periodic summary by default every 100 remote decisions.
+- **health.go** — `HealthChecker` probes the policy endpoint's `GET /healthz` (derived from the `/act` URL) with a short-TTL cache. `Healthy()` gates the RL seat option; `Identity()` extracts the served checkpoint identity (basename-only `"<ckpt>@step<N>"` from the healthz JSON — paipu are public, never a path/URL; empty when unreported) used to label RL seats in the paipu/`MatchPlayer` rows.
+- **http_policy.go** — HTTP JSON client for `fh-mj-serve-policy` with heuristic fallback on service errors, malformed responses, or illegal action ids. Tracks dataset provenance per policy instance: `ObservedPolicyIDs()` (distinct sanitized checkpoint identities that served validated actions — hot reloads add entries; bounded 8×256 chars) and `DecisionCounts()` (remote-served vs fallback decisions), both reconciled into the paipu at `Room.persistMatch`. It exposes `Stats()` counters for remote calls, remote successes, fallback totals, and fallback reason categories, and logs a periodic summary by default every 100 remote decisions.
 - **http_policy_test.go** — Tests for successful remote decisions, fallback behavior, fallback logging, and instrumentation counters.
 
 ## Architecture Notes

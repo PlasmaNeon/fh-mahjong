@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useGameStageLayout } from '../../hooks/useGameStageLayout'
 import { TableBoard, TableRoundResultOverlay } from '../../table/TableScene'
-import type { PlayerTableView, TileLike } from '../../table/types'
+import type { MeldLike, PlayerTableView, TileLike } from '../../table/types'
 import { GameDialog } from '../../theme'
 
 // Dev-only sample page: renders the real TableBoard with mock game data so the
@@ -22,6 +22,12 @@ const selfConcealed: TileLike[] = [
 
 const discardsFor = (seed: number, n: number): TileLike[] =>
   Array.from({ length: n }, (_, i) => t(((seed + i) % 3) + 1, ((seed * 2 + i) % 9) + 1))
+
+const pon = (suit: number, value: number, calledDirection: number): MeldLike => {
+  const tiles = [t(suit, value), t(suit, value), t(suit, value)]
+  const stolenIndex = calledDirection === 3 ? 0 : calledDirection === 2 ? 1 : 2
+  return { tiles, calledTileId: tiles[stolenIndex].id, calledDirection }
+}
 
 const players: PlayerTableView[] = [
   {
@@ -62,14 +68,17 @@ const players: PlayerTableView[] = [
     shantenLabel: null,
   },
   {
+    // Left player mid-game: called three melds, so only a few concealed backs
+    // remain. Exercises the concealed-hand reservation shrinking with meld count
+    // — the regression where the first meld got shoved past the table edge.
     seat: 3,
     seatWind: 4,
     score: 26000,
     closedHand: [],
-    handBackCount: 13,
+    handBackCount: 4,
     showClosedHand: false,
-    openMelds: [],
-    flowerMelds: [],
+    openMelds: [pon(2, 3, 1), pon(2, 6, 2), pon(4, 1, 3)],
+    flowerMelds: [t(5, 2)],
     discards: discardsFor(1, 8),
     shantenLabel: null,
   },

@@ -39,6 +39,13 @@ var (
 	poolMu         sync.Mutex
 	nextPoolHandle uint64 = 1
 	pools                 = make(map[uint64]*rl.EnvPool)
+
+	// searchPoolMu only protects the search-pool handle table. Individual
+	// *rl.SearchPool instances are not safe for concurrent Step calls;
+	// foreign callers must serialize operations per handle.
+	searchPoolMu         sync.Mutex
+	nextSearchPoolHandle uint64 = 1
+	searchPools                 = make(map[uint64]*rl.SearchPool)
 )
 
 func main() {}
@@ -180,6 +187,72 @@ func FHEnvPoolClose(handle C.uint64_t) {
 	poolMu.Lock()
 	defer poolMu.Unlock()
 	delete(pools, uint64(handle))
+}
+
+//export FHSearchPoolNew
+func FHSearchPoolNew(envHandle C.uint64_t, requestPtr *C.char, requestLen C.int) C.uint64_t {
+	env, err := lookupEnv(uint64(envHandle))
+	if err != nil {
+		return 0
+	}
+
+	request := &pb.SearchPoolNewRequest{}
+	if data := inputBytes(requestPtr, requestLen); len(data) > 0 {
+		if err := proto.Unmarshal(data, request); err != nil {
+			return 0
+		}
+	}
+
+	// root_seat is proto3 optional: present ⇒ pin the search root explicitly
+	// (duplicate-seat eval); absent ⇒ let NewSearchPool fall back to
+	// currentActionSeat() (all-four-learning self-play).
+	var pool *rl.SearchPool
+	if request.RootSeat != nil {
+		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations(), request.GetRootSeat())
+	} else {
+		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations())
+	}
+	if err != nil {
+		return 0
+	}
+
+	searchPoolMu.Lock()
+	defer searchPoolMu.Unlock()
+
+	handle := nextSearchPoolHandle
+	nextSearchPoolHandle++
+	searchPools[handle] = pool
+	return C.uint64_t(handle)
+}
+
+//export FHSearchPoolStep
+func FHSearchPoolStep(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FHBytesResult {
+	searchPoolMu.Lock()
+	pool, ok := searchPools[uint64(handle)]
+	searchPoolMu.Unlock()
+	if !ok {
+		return errorResult(errors.New("invalid search pool handle"))
+	}
+
+	request := &pb.EnvPoolStepRequest{}
+	if data := inputBytes(requestPtr, requestLen); len(data) > 0 {
+		if err := proto.Unmarshal(data, request); err != nil {
+			return errorResult(err)
+		}
+	}
+
+	response, err := pool.Step(request)
+	if err != nil {
+		return errorResult(err)
+	}
+	return marshalResult(response)
+}
+
+//export FHSearchPoolClose
+func FHSearchPoolClose(handle C.uint64_t) {
+	searchPoolMu.Lock()
+	defer searchPoolMu.Unlock()
+	delete(searchPools, uint64(handle))
 }
 
 //export FHGenerateHeuristicTrajectory

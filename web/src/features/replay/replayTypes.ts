@@ -15,6 +15,15 @@ export interface PaipuPlayer {
   seat: number
   name: string
   userId: number
+  // Seat-composition labels; absent in paipu recorded before they existed.
+  kind?: 'human' | 'bot'
+  difficulty?: 'heuristic' | 'rl'
+  policyId?: string
+  // RL decision provenance: remote-served vs heuristic-fallback counts.
+  remoteDecisions?: number
+  fallbackDecisions?: number
+  // Decisions a bot made on this seat (takeover of a human seat).
+  automatedDecisions?: number
 }
 
 export interface PaipuAction {

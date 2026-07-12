@@ -191,7 +191,7 @@ func (s *Server) setupFrontendRoutes() {
 	// NoRoute: serve index.html for all unmatched GET/HEAD requests (SPA routing)
 	s.Router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Not found"})
+			respondError(c, http.StatusNotFound, "Not found")
 			return
 		}
 		if looksLikeStaticAssetRequest(c.Request.URL.Path) {
@@ -321,12 +321,12 @@ func (s *Server) handleJoinQueue(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := s.Matchmaker.JoinQueue(userID.(uint), req.Ruleset); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to join queue"})
+		respondError(c, http.StatusInternalServerError, "Failed to join queue")
 		return
 	}
 
@@ -363,13 +363,13 @@ func (s *Server) handleGetMe(c *gin.Context) {
 	userID, _ := c.Get("userID")
 
 	if s.DB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database is temporarily disabled. Profile data is unavailable."})
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled. Profile data is unavailable.")
 		return
 	}
 
 	var user storage.User
 	if err := s.DB.First(&user, userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		respondError(c, http.StatusNotFound, "User not found")
 		return
 	}
 

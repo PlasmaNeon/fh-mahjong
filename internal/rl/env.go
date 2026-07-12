@@ -478,6 +478,31 @@ func (e *Env) currentActionSeat() (uint32, bool) {
 	return 0, false
 }
 
+// seatHasPendingDecision reports whether `seat` specifically is at a genuine,
+// unqueued decision right now — the per-seat form of currentActionSeat, used to
+// validate an EXPLICIT search-root seat (SearchPool). It mirrors
+// currentActionSeat's phase logic but tests the given seat instead of scanning
+// for the first globally actionable one: in a WAIT_DISCARDS window several seats
+// can be simultaneously actionable, and the search root must be pinned to the
+// caller-chosen seat (the learning seat under duplicate-seat evaluation), not
+// whichever lower-numbered opponent currentActionSeat would return first.
+func (e *Env) seatHasPendingDecision(seat uint32) bool {
+	if e.game == nil || e.game.State == nil || int(seat) >= len(e.game.State.Players) {
+		return false
+	}
+	switch e.game.State.Phase {
+	case pb.GamePhase_PHASE_PLAYER_TURN:
+		return seat == e.game.State.ActivePlayer && len(e.game.State.Players[seat].ValidActions) > 0
+	case pb.GamePhase_PHASE_WAIT_DISCARDS:
+		if seat == e.game.State.ActivePlayer {
+			return false
+		}
+		player := e.game.State.Players[seat]
+		return len(player.ValidActions) > 0 && !e.game.InterruptQueued(seat)
+	}
+	return false
+}
+
 func (e *Env) currentSeat(learning bool) (uint32, bool) {
 	if e.game == nil || e.game.State == nil {
 		return 0, false

@@ -11420,6 +11420,332 @@ export const game = $root.game = (() => {
         return EnvPoolStepResponse;
     })();
 
+    game.SearchPoolNewRequest = (function() {
+
+        /**
+         * Properties of a SearchPoolNewRequest.
+         * @memberof game
+         * @interface ISearchPoolNewRequest
+         * @property {number|undefined} [clones] SearchPoolNewRequest clones
+         * @property {number|Long|undefined} [seed] SearchPoolNewRequest seed
+         * @property {number|undefined} [maxRolloutDecisions] SearchPoolNewRequest maxRolloutDecisions
+         * @property {number|undefined} [determinizations] SearchPoolNewRequest determinizations
+         * @property {number|null|undefined} [rootSeat] SearchPoolNewRequest rootSeat
+         */
+
+        /**
+         * Constructs a new SearchPoolNewRequest.
+         * @memberof game
+         * @classdesc Represents a SearchPoolNewRequest.
+         * @implements ISearchPoolNewRequest
+         * @constructor
+         * @param {game.ISearchPoolNewRequest=} [properties] Properties to set
+         */
+        function SearchPoolNewRequest(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * SearchPoolNewRequest clones.
+         * @member {number} clones
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.clones = 0;
+
+        /**
+         * SearchPoolNewRequest seed.
+         * @member {number|Long} seed
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.seed = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
+
+        /**
+         * SearchPoolNewRequest maxRolloutDecisions.
+         * @member {number} maxRolloutDecisions
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.maxRolloutDecisions = 0;
+
+        /**
+         * SearchPoolNewRequest determinizations.
+         * @member {number} determinizations
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.determinizations = 0;
+
+        /**
+         * SearchPoolNewRequest rootSeat.
+         * @member {number|null} rootSeat
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.rootSeat = null;
+
+        // OneOf field names bound to virtual getters and setters
+        let $oneOfFields;
+
+        // Virtual OneOf for proto3 optional field
+        Object.defineProperty(SearchPoolNewRequest.prototype, "_rootSeat", {
+            get: $util.oneOfGetter($oneOfFields = ["rootSeat"]),
+            set: $util.oneOfSetter($oneOfFields)
+        });
+
+        /**
+         * Creates a new SearchPoolNewRequest instance using the specified properties.
+         * @function create
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {game.ISearchPoolNewRequest=} [properties] Properties to set
+         * @returns {game.SearchPoolNewRequest} SearchPoolNewRequest instance
+         */
+        SearchPoolNewRequest.create = function create(properties) {
+            return new SearchPoolNewRequest(properties);
+        };
+
+        /**
+         * Encodes the specified SearchPoolNewRequest message. Does not implicitly {@link game.SearchPoolNewRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {game.ISearchPoolNewRequest} message SearchPoolNewRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SearchPoolNewRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.clones != null && Object.hasOwnProperty.call(message, "clones"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.clones);
+            if (message.seed != null && Object.hasOwnProperty.call(message, "seed"))
+                writer.uint32(/* id 2, wireType 0 =*/16).uint64(message.seed);
+            if (message.maxRolloutDecisions != null && Object.hasOwnProperty.call(message, "maxRolloutDecisions"))
+                writer.uint32(/* id 3, wireType 0 =*/24).uint32(message.maxRolloutDecisions);
+            if (message.determinizations != null && Object.hasOwnProperty.call(message, "determinizations"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.determinizations);
+            if (message.rootSeat != null && Object.hasOwnProperty.call(message, "rootSeat"))
+                writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.rootSeat);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified SearchPoolNewRequest message, length delimited. Does not implicitly {@link game.SearchPoolNewRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {game.ISearchPoolNewRequest} message SearchPoolNewRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        SearchPoolNewRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a SearchPoolNewRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.SearchPoolNewRequest} SearchPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SearchPoolNewRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.SearchPoolNewRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.clones = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.seed = reader.uint64();
+                        break;
+                    }
+                case 3: {
+                        message.maxRolloutDecisions = reader.uint32();
+                        break;
+                    }
+                case 4: {
+                        message.determinizations = reader.uint32();
+                        break;
+                    }
+                case 5: {
+                        message.rootSeat = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a SearchPoolNewRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.SearchPoolNewRequest} SearchPoolNewRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        SearchPoolNewRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a SearchPoolNewRequest message.
+         * @function verify
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        SearchPoolNewRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            let properties = {};
+            if (message.clones != null && message.hasOwnProperty("clones"))
+                if (!$util.isInteger(message.clones))
+                    return "clones: integer expected";
+            if (message.seed != null && message.hasOwnProperty("seed"))
+                if (!$util.isInteger(message.seed) && !(message.seed && $util.isInteger(message.seed.low) && $util.isInteger(message.seed.high)))
+                    return "seed: integer|Long expected";
+            if (message.maxRolloutDecisions != null && message.hasOwnProperty("maxRolloutDecisions"))
+                if (!$util.isInteger(message.maxRolloutDecisions))
+                    return "maxRolloutDecisions: integer expected";
+            if (message.determinizations != null && message.hasOwnProperty("determinizations"))
+                if (!$util.isInteger(message.determinizations))
+                    return "determinizations: integer expected";
+            if (message.rootSeat != null && message.hasOwnProperty("rootSeat")) {
+                properties._rootSeat = 1;
+                if (!$util.isInteger(message.rootSeat))
+                    return "rootSeat: integer expected";
+            }
+            return null;
+        };
+
+        /**
+         * Creates a SearchPoolNewRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.SearchPoolNewRequest} SearchPoolNewRequest
+         */
+        SearchPoolNewRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.SearchPoolNewRequest)
+                return object;
+            let message = new $root.game.SearchPoolNewRequest();
+            if (object.clones != null)
+                message.clones = object.clones >>> 0;
+            if (object.seed != null)
+                if ($util.Long)
+                    (message.seed = $util.Long.fromValue(object.seed)).unsigned = true;
+                else if (typeof object.seed === "string")
+                    message.seed = parseInt(object.seed, 10);
+                else if (typeof object.seed === "number")
+                    message.seed = object.seed;
+                else if (typeof object.seed === "object")
+                    message.seed = new $util.LongBits(object.seed.low >>> 0, object.seed.high >>> 0).toNumber(true);
+            if (object.maxRolloutDecisions != null)
+                message.maxRolloutDecisions = object.maxRolloutDecisions >>> 0;
+            if (object.determinizations != null)
+                message.determinizations = object.determinizations >>> 0;
+            if (object.rootSeat != null)
+                message.rootSeat = object.rootSeat >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a SearchPoolNewRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {game.SearchPoolNewRequest} message SearchPoolNewRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        SearchPoolNewRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.clones = 0;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, true);
+                    object.seed = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
+                } else
+                    object.seed = options.longs === String ? "0" : 0;
+                object.maxRolloutDecisions = 0;
+                object.determinizations = 0;
+            }
+            if (message.clones != null && message.hasOwnProperty("clones"))
+                object.clones = message.clones;
+            if (message.seed != null && message.hasOwnProperty("seed"))
+                if (typeof message.seed === "number")
+                    object.seed = options.longs === String ? String(message.seed) : message.seed;
+                else
+                    object.seed = options.longs === String ? $util.Long.prototype.toString.call(message.seed) : options.longs === Number ? new $util.LongBits(message.seed.low >>> 0, message.seed.high >>> 0).toNumber(true) : message.seed;
+            if (message.maxRolloutDecisions != null && message.hasOwnProperty("maxRolloutDecisions"))
+                object.maxRolloutDecisions = message.maxRolloutDecisions;
+            if (message.determinizations != null && message.hasOwnProperty("determinizations"))
+                object.determinizations = message.determinizations;
+            if (message.rootSeat != null && message.hasOwnProperty("rootSeat")) {
+                object.rootSeat = message.rootSeat;
+                if (options.oneofs)
+                    object._rootSeat = "rootSeat";
+            }
+            return object;
+        };
+
+        /**
+         * Converts this SearchPoolNewRequest to JSON.
+         * @function toJSON
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        SearchPoolNewRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for SearchPoolNewRequest
+         * @function getTypeUrl
+         * @memberof game.SearchPoolNewRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        SearchPoolNewRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.SearchPoolNewRequest";
+        };
+
+        return SearchPoolNewRequest;
+    })();
+
     return game;
 })();
 

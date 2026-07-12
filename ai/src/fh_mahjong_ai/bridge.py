@@ -214,6 +214,19 @@ class CtypesGoBridge(MahjongBridge):
             self._library.FHEnvClose(self._handle)
             self._handle = 0
 
+    @property
+    def handle(self) -> int:
+        """The live Go env handle (FHEnvNew's return value). Public accessor for
+        callers that need to attach FFI features to this env, e.g. GoSearchPool."""
+        return self._handle
+
+    @property
+    def library(self) -> ctypes.CDLL:
+        """The loaded c-shared bridge library. Public accessor so other ctypes
+        wrappers (e.g. GoSearchPool) can bind additional exported functions
+        from the same library instance without reloading it."""
+        return self._library
+
     def __enter__(self) -> "CtypesGoBridge":
         return self
 

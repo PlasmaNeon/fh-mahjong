@@ -225,12 +225,12 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 	username, _ := c.Get("username")
 	tableID := c.Param("roomId")
 	if tableID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "tableId is required"})
+		respondError(c, http.StatusBadRequest, "tableId is required")
 		return
 	}
 
 	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
 		return
 	}
 
@@ -245,7 +245,7 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 
 	table, err := s.Matchmaker.JoinOrCreatePrivateTable(tableID, userID.(uint), username.(string))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -257,7 +257,7 @@ func (s *Server) handlePrivateTableGet(c *gin.Context) {
 	userID, _ := c.Get("userID")
 	tableID := c.Param("roomId")
 	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
 		return
 	}
 
@@ -277,7 +277,7 @@ func (s *Server) handlePrivateTableGet(c *gin.Context) {
 
 	table := s.Matchmaker.GetConfiguringPrivateTable(tableID)
 	if table == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "table not found"})
+		respondError(c, http.StatusNotFound, "table not found")
 		return
 	}
 	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
@@ -288,7 +288,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
 		return
 	}
 
@@ -298,7 +298,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 		Difficulty pb.Difficulty `json:"difficulty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -327,7 +327,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 		case errors.Is(err, ErrPrivateTableAlreadyStarted):
 			status = http.StatusConflict
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondError(c, status, err.Error())
 		return
 	}
 
@@ -340,7 +340,7 @@ func (s *Server) handlePrivateTableMode(c *gin.Context) {
 	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
 		return
 	}
 
@@ -353,7 +353,7 @@ func (s *Server) handlePrivateTableMode(c *gin.Context) {
 		} `json:"chongci_config,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -387,7 +387,7 @@ func (s *Server) handlePrivateTableMode(c *gin.Context) {
 		case errors.Is(err, ErrPrivateTableNotFound):
 			status = http.StatusNotFound
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondError(c, status, err.Error())
 		return
 	}
 
@@ -400,7 +400,7 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 	tableID := c.Param("roomId")
 
 	if s.Matchmaker == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Private matchmaking unavailable"})
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
 		return
 	}
 
@@ -416,8 +416,10 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 			status = http.StatusConflict
 		case errors.Is(err, ErrPrivateTablePersistFailed):
 			status = http.StatusInternalServerError
+		case errors.Is(err, ErrServerDraining):
+			status = http.StatusServiceUnavailable
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondError(c, status, err.Error())
 		return
 	}
 
