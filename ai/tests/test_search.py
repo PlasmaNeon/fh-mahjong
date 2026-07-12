@@ -99,6 +99,7 @@ class SlotSpec:
     tag: float = 0.0        # obs tag (drives the value head on bootstrap rows)
     error: str = ""
     mask: Optional[Sequence[int]] = None  # per-row action mask; None -> all ones
+    seat: Optional[int] = None  # seat of the obs this step RETURNS; None -> pool seat
 
     @property
     def has_observation(self) -> bool:
@@ -138,8 +139,12 @@ class FakeSearchPool:
             spec = script[idx] if idx < len(script) else SlotSpec(terminated=True)
             rewards = np.zeros(4, dtype=np.float32)
             rewards[self.seat] = spec.reward
+            # ``spec.seat`` is the seat of the observation this step RETURNS (the
+            # seat that will act next); it drives the searcher's root-decision
+            # horizon counting. Rewards always credit the fixed pool/root seat.
+            obs_seat = self.seat if spec.seat is None else spec.seat
             metas.append(SlotMeta(
-                slot=slot, seat=self.seat, terminated=spec.terminated,
+                slot=slot, seat=obs_seat, terminated=spec.terminated,
                 truncated=spec.truncated, step_rewards=rewards,
                 has_observation=spec.has_observation, error=spec.error,
             ))
@@ -214,7 +219,8 @@ def test_search_prefers_higher_scoring_candidate():
     pool = FakeSearchPool(per_candidate, K=K, seat=0)
     factory, calls = _factory_from(pool)
 
-    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))
+    # gamma=1.0 pins the undiscounted convention this test's exact scores encode.
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=1.0))
     choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
 
     assert calls["count"] == 1
@@ -279,7 +285,8 @@ def test_round_end_uses_value_bootstrap():
     pool = FakeSearchPool(per_candidate, K=K, seat=0)
     factory, _ = _factory_from(pool)
 
-    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))
+    # gamma=1.0 pins the undiscounted convention this test's exact scores encode.
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=1.0))
     choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
 
     assert choice.info["source"] == "search"
@@ -308,7 +315,8 @@ def test_bootstrap_row_zero_mask_is_sanitized():
     pool = FakeSearchPool(per_candidate, K=K, seat=0)
     factory, _ = _factory_from(pool)
 
-    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))
+    # gamma=1.0 pins the undiscounted convention this test's exact scores encode.
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=1.0))
     choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
 
     assert choice.info["source"] == "search"      # not the greedy fail-open path
@@ -333,7 +341,10 @@ def test_truncation_scored_with_cap_value():
     pool = FakeSearchPool(per_candidate, K=K, seat=0)
     factory, _ = _factory_from(pool)
 
-    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))
+    # gamma=1.0 pins the undiscounted convention this test's exact scores encode
+    # (the truncation is on the FIRST apply, so at gamma<1 its bootstrap would be
+    # gamma^1 * cap value; test_horizon_counting covers the discounted case).
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=1.0))
     choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
 
     assert choice.info["source"] == "search"
@@ -359,3 +370,100 @@ def test_chunk_invariance_batches_live_clones():
     # a single batched evaluate_batch call of size 4. A per-clone loop would
     # only ever produce batch size 1.
     assert max(policy.batch_sizes) == 4
+
+
+def test_unequal_horizon_discounted_ranking_flips():
+    # Regression for the discount fix: two candidates whose UNDISCOUNTED and
+    # DISCOUNTED rankings DISAGREE. Candidate A earns a small immediate reward
+    # and ends the round at horizon 0 with a big (one-step-ahead) value
+    # bootstrap; candidate B earns a larger reward but only far down a chain of
+    # ROOT-seat decisions, so discounting erodes it below A.
+    #
+    #   A (id 1): apply reward 1.0, round_ended, bootstrap V=3.0
+    #     undiscounted = 1.0 + 3.0                     = 4.0
+    #     discounted   = 1.0 + gamma^1 * 3.0           = 1.0 + 0.99*3.0 = 3.97
+    #   B (id 2): 7 empty root decisions, then reward 4.1 terminated at horizon 7
+    #     undiscounted = 4.1                           = 4.1   (> A)
+    #     discounted   = gamma^7 * 4.1                 = 3.82  (< A)
+    # Undiscounted picks B; discounted picks A. Pre-fix code (undiscounted) picks
+    # B -> this assertion is the RED evidence.
+    TAG_BIG = 44.0
+    policy = FakeCheckpointPolicy(
+        {0.0: [0, 0.6, 0.4, 0, 0]},
+        value_by_tag={TAG_BIG: 3.0},
+    )
+    K = 1
+    per_candidate = [
+        [SlotSpec(reward=1.0, round_ended=True, tag=TAG_BIG)],           # A
+        [SlotSpec(reward=0.0), SlotSpec(reward=0.0), SlotSpec(reward=0.0),
+         SlotSpec(reward=0.0), SlotSpec(reward=0.0), SlotSpec(reward=0.0),
+         SlotSpec(reward=0.0), SlotSpec(reward=4.1, terminated=True)],   # B
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, _ = _factory_from(pool)
+
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K))  # gamma=0.99
+    choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    assert choice.info["source"] == "search"
+    assert choice.action_id == 1                 # discounted winner (A), NOT undiscounted B
+    a, b = choice.info["scores"]
+    assert a == pytest.approx(1.0 + 0.99 * 3.0)          # 3.97
+    assert b == pytest.approx((0.99 ** 7) * 4.1)         # 3.82
+    assert a > b                                          # discounted A beats B
+
+
+def test_gamma_one_reproduces_undiscounted_sum():
+    # Anchor for part (b): gamma=1.0 collapses every weight to 1, so the score is
+    # the raw reward sum plus the raw bootstrap -- identical to the pre-fix code.
+    # Reward chain over several root decisions + a round-end value bootstrap.
+    TAG = 7.0
+    policy = FakeCheckpointPolicy(
+        {0.0: [0, 0.6, 0.4, 0, 0]},
+        value_by_tag={TAG: 2.5},
+    )
+    K = 1
+    per_candidate = [
+        [SlotSpec(reward=1.0), SlotSpec(reward=2.0),
+         SlotSpec(reward=0.5, round_ended=True, tag=TAG)],   # sum 3.5 + V 2.5 = 6.0
+        [SlotSpec(reward=0.0, terminated=True)],
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, _ = _factory_from(pool)
+
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=1.0))
+    choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    assert choice.info["scores"][0] == pytest.approx(1.0 + 2.0 + 0.5 + 2.5)  # 6.0, undiscounted
+
+
+def test_horizon_counting_exact_gamma_exponents():
+    # Non-root steps must NOT advance the horizon; only ROOT-seat decisions do.
+    # Root seat = 0. Each SlotSpec's `seat` is the seat of the obs it RETURNS
+    # (i.e. who acts on the NEXT step), which is what drives horizon counting.
+    #
+    #   step 0 (apply, root decision 0): reward r0 at gamma^0; returns a NON-root
+    #           obs (seat 1) -> the next decision is not the root's.
+    #   step 1 (non-root decision):      reward r1 at gamma^0 (same chunk 0);
+    #           returns a ROOT obs (seat 0) -> the next decision IS the root's.
+    #   step 2 (root decision 1):        reward r2 at gamma^1, then terminated.
+    #
+    #   score = r0 + r1 + gamma * r2
+    gamma = 0.99
+    r0, r1, r2 = 1.0, 2.0, 4.0
+    policy = FakeCheckpointPolicy({0.0: [0, 0.6, 0.4, 0, 0]})
+    K = 1
+    per_candidate = [
+        [SlotSpec(reward=r0, seat=1),                 # -> next decision is seat 1 (non-root)
+         SlotSpec(reward=r1, seat=0),                 # -> next decision is seat 0 (root)
+         SlotSpec(reward=r2, terminated=True)],       # root decision 1, then terminal
+        [SlotSpec(reward=0.0, terminated=True)],      # trivial second candidate
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, _ = _factory_from(pool)
+
+    searcher = SearchPolicy(policy, factory, SearchConfig(num_determinizations=K, discount_gamma=gamma))
+    choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    expected = r0 + r1 + gamma * r2               # non-root step 1 stays in chunk 0
+    assert choice.info["scores"][0] == pytest.approx(expected)

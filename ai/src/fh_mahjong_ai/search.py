@@ -5,11 +5,12 @@ by `max_candidates` / `prior_mass_cutoff`), then score each by determinized
 rollouts: clone the current decision point into `num_determinizations` worlds
 per candidate, apply the candidate on the first step, and roll the champion
 (masked greedy argmax over `evaluate_batch`) forward in lockstep. Each clone
-accumulates the root seat's per-step reward; a round boundary or a truncation
-cap bootstraps with the value head of the returned observation; a terminal
-state is scored by the accumulated (telescoping) rewards alone. A candidate's
-score is the mean over its surviving clones. The best-scoring candidate's action
-is returned.
+accumulates the root seat's per-step reward, DISCOUNTED to match the champion
+value head's training convention (see `_rollout_scores` for the derivation); a
+round boundary or a truncation cap bootstraps with the discounted value head of
+the returned observation; a terminal state is scored by the accumulated
+(discounted, telescoping) rewards alone. A candidate's score is the mean over
+its surviving clones. The best-scoring candidate's action is returned.
 
 Fail-open: any exception in the search path (including the pool factory) yields
 the plain greedy action and increments `fallback_count`. If *every* clone of a
@@ -35,6 +36,11 @@ class SearchConfig:
     prior_mass_cutoff: float = 0.95
     max_rollout_decisions: int = 512
     seed: int = 1
+    # Per-root-decision discount. The champion value head was trained with
+    # gamma=0.99 GAE over per-seat-contiguous trajectories, so rollout scores
+    # must discount by ROOT-seat decision horizon (not raw step count) to match
+    # the value the head predicts. gamma=1.0 recovers the old undiscounted sum.
+    discount_gamma: float = 0.99
 
 
 PoolFactory = Callable[..., Any]
@@ -131,13 +137,45 @@ class SearchPolicy:
         scores = np.zeros(n, dtype=np.float64)
         done = np.zeros(n, dtype=bool)
         errored = np.zeros(n, dtype=bool)
+        # Per-clone ROOT-seat decision horizon t (see derivation below). The root
+        # candidate apply is root-decision 0, so every clone starts at t=0.
+        horizon = np.zeros(n, dtype=np.int64)
+
+        # --- Discount convention (must match training) ----------------------
+        # The champion value head is trained by compute_gae (ppo.py) over
+        # PER-SEAT-CONTIGUOUS trajectories (oracle.py): one timestep = one
+        # ROOT-seat decision, and the reward at root-decision k is the sum of the
+        # root seat's score deltas that accrue between root decisions k and k+1
+        # (oracle credits every step's delta to the seat's CURRENT last decision).
+        # compute_gae's delta_t = r_t + gamma*V(t+1) - V(t) makes the value head
+        # predict the return
+        #     G_0 = sum_{k=0..T-1} gamma^k * r_k + gamma^T * V(s_T),
+        # where r_k is root-decision chunk k and s_T is the root seat's next
+        # decision state that stands one root-step past the last reward chunk.
+        # A terminal (done=1) trajectory drops the bootstrap.
+        #
+        # So per clone we track t = the root-decision horizon:
+        #   * t starts at 0 (the candidate apply IS root-decision 0);
+        #   * a reward absorbed while the clone sits at horizon t carries gamma^t;
+        #   * t increments the moment we ISSUE the clone's NEXT root-seat decision
+        #     (its current observation row's seat == the fixed root seat), BEFORE
+        #     absorbing that step's reward -- so every reward between root
+        #     decisions k and k+1 carries gamma^k (chunk k), exactly like the
+        #     oracle bucketing;
+        #   * the round-end / truncation / cap bootstrap value carries gamma^(t+1)
+        #     because the returned observation is the root's NEXT-decision state,
+        #     one root-step past the last absorbed chunk (chunk index T = t+1).
+        # Sanity: a round that ends on the very first apply (zero intermediate
+        # root decisions) scores r_0 + gamma^1 * V(next) -- reward chunk 0 at
+        # gamma^0 plus the one-step-ahead bootstrap at gamma^1. gamma=1.0 collapses
+        # every weight to 1 and recovers the old undiscounted reward sum.
 
         # First step: apply each candidate to its clones. The response already
         # carries rewards and may terminate / end a round / truncate / error
         # some clones immediately, so absorb it exactly like any other step.
         commands = [PoolCommand(slot=s, action_id=int(candidates[s // K])) for s in range(n)]
         result = pool.step(commands)
-        self._absorb(result, root_seat, scores, done, errored, active=set(range(n)))
+        self._absorb(result, root_seat, scores, done, errored, horizon, active=set(range(n)))
 
         # Champion lockstep rollout of the still-live clones.
         for _ in range(self._config.max_rollout_decisions):
@@ -147,6 +185,13 @@ class SearchPolicy:
             rows = [(s, result.row_of_slot[s]) for s in active if s in result.row_of_slot]
             if not rows:
                 break
+            # A root-seat decision is about to be issued for any clone whose
+            # current observation row is the root seat -> advance its horizon
+            # BEFORE we absorb the reward this decision produces (chunk k+1).
+            seat_of_slot = {meta.slot: int(meta.seat) for meta in result.slots}
+            for s, _ in rows:
+                if seat_of_slot.get(s) == root_seat:
+                    horizon[s] += 1
             planes = np.stack([result.planes[r] for _, r in rows])
             scalars = np.stack([result.scalars[r] for _, r in rows])
             masks = np.stack([result.action_masks[r] for _, r in rows])
@@ -159,16 +204,22 @@ class SearchPolicy:
                 for s in range(n)
             ]
             result = pool.step(commands)
-            self._absorb(result, root_seat, scores, done, errored, active=active_set)
+            self._absorb(result, root_seat, scores, done, errored, horizon, active=active_set)
         else:
             # Decision cap hit with clones still live: bootstrap them like a
             # truncation with the value of their current observation row.
-            self._bootstrap_live(result, scores, done)
+            self._bootstrap_live(result, scores, done, horizon)
 
         return self._aggregate(scores, errored, candidates, K, greedy_action, root_value)
 
-    def _absorb(self, result, root_seat, scores, done, errored, active) -> None:
-        """Fold one step response into per-clone scores, batching value bootstraps."""
+    def _absorb(self, result, root_seat, scores, done, errored, horizon, active) -> None:
+        """Fold one step response into per-clone scores, batching value bootstraps.
+
+        Rewards absorbed at a clone's current horizon t carry gamma^t; round-end /
+        truncation bootstraps carry gamma^(t+1) (see the derivation in
+        `_rollout_scores`).
+        """
+        gamma = self._config.discount_gamma
         bootstrap: list[tuple[int, int]] = []  # (slot, row)
         for meta in result.slots:
             s = meta.slot
@@ -176,13 +227,13 @@ class SearchPolicy:
                 continue
             rewards = meta.step_rewards
             if rewards.size > root_seat:
-                scores[s] += float(rewards[root_seat])
+                scores[s] += (gamma ** int(horizon[s])) * float(rewards[root_seat])
             if meta.error:
                 errored[s] = True
                 done[s] = True
                 continue
             if meta.terminated:
-                done[s] = True  # accumulated (telescoping) reward is final
+                done[s] = True  # accumulated (discounted) reward is final, no bootstrap
                 continue
             round_ended = result.round_ended.get(s, False)
             if meta.truncated or round_ended:
@@ -192,9 +243,9 @@ class SearchPolicy:
                 continue
             # else: still live with an observation -> keep rolling
         if bootstrap:
-            self._add_value_bootstrap(result, scores, bootstrap)
+            self._add_value_bootstrap(result, scores, bootstrap, horizon)
 
-    def _bootstrap_live(self, result, scores, done) -> None:
+    def _bootstrap_live(self, result, scores, done, horizon) -> None:
         bootstrap = [
             (s, result.row_of_slot[s])
             for s in range(len(done))
@@ -203,9 +254,9 @@ class SearchPolicy:
         for s, _ in bootstrap:
             done[s] = True
         if bootstrap:
-            self._add_value_bootstrap(result, scores, bootstrap)
+            self._add_value_bootstrap(result, scores, bootstrap, horizon)
 
-    def _add_value_bootstrap(self, result, scores, bootstrap: list[tuple[int, int]]) -> None:
+    def _add_value_bootstrap(self, result, scores, bootstrap: list[tuple[int, int]], horizon) -> None:
         planes = np.stack([result.planes[r] for _, r in bootstrap])
         scalars = np.stack([result.scalars[r] for _, r in bootstrap])
         # value-only rows: mask sanitized to avoid NaN probs / no-legal-actions.
@@ -215,8 +266,11 @@ class SearchPolicy:
         # from rejecting the batch.
         masks = np.ones_like(np.stack([result.action_masks[r] for _, r in bootstrap]))
         _, values = self._policy.evaluate_batch(planes, scalars, masks)
+        gamma = self._config.discount_gamma
         for i, (s, _) in enumerate(bootstrap):
-            scores[s] += float(values[i])
+            # The bootstrap state stands one root-step past the last reward chunk
+            # (chunk index T = horizon[s] + 1), so it carries gamma^(t+1).
+            scores[s] += (gamma ** (int(horizon[s]) + 1)) * float(values[i])
 
     def _aggregate(self, scores, errored, candidates, K, greedy_action, root_value) -> np.ndarray:
         out = np.empty(len(candidates), dtype=np.float64)
