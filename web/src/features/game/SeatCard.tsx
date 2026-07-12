@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { game } from '../../proto/game';
-import { Button, Note } from '../../theme';
+import { Button } from '../../theme';
 
 type SeatConfig = game.ISeatConfig;
 type Difficulty = game.Difficulty;
@@ -37,6 +37,7 @@ function difficultyOptions(rlAgentAvailable: boolean): Array<{ value: Difficulty
 }
 
 const SEAT_LABEL = ['East', 'South', 'West', 'North'];
+const SEAT_WIND = ['東', '南', '西', '北'];
 
 export default function SeatCard(props: SeatCardProps) {
     const { seatIndex, seat, isHost, canEdit, hostUserId, rlAgentAvailable = false, onAssignBot, onClearSeat } = props;
@@ -44,10 +45,11 @@ export default function SeatCard(props: SeatCardProps) {
     const isHumanHost = seat.kind === 'human' && Number(seat.userId ?? 0) === hostUserId;
 
     return (
-        <div className="ldg-meld">
+        <div className={`ldg-meld seat-card seat-card--${seat.kind || 'empty'}`}>
+            <div className="seat-card__wind" aria-hidden="true">{SEAT_WIND[seatIndex]}</div>
             <div className="ldg-meld__head">
                 <div>
-                    <div className="ldg-meld__meta">Seat {seatIndex + 1} · {SEAT_LABEL[seatIndex]}</div>
+                    <div className="ldg-meld__meta">Seat {seatIndex + 1} · {SEAT_LABEL[seatIndex]} wind</div>
                     <div className="ldg-meld__title" style={{ marginTop: 4 }}>
                         {seat.kind === 'human' && <>{seat.username || `Player ${seat.userId ?? ''}`}</>}
                         {seat.kind === 'bot' && <>AI · {difficultyLabel(seat.difficulty)}</>}
@@ -61,16 +63,15 @@ export default function SeatCard(props: SeatCardProps) {
 
             {canEdit && (seat.kind === 'empty' || !seat.kind) && (
                 <div className="ldg-meld__actions">
-                    {difficultyOptions(rlAgentAvailable).map(opt => (
-                        <Button
-                            key={opt.value}
-                            disabled={opt.disabled}
-                            title={opt.disabled ? 'RL agent offline — start the model server to enable' : undefined}
-                            onClick={() => onAssignBot(seatIndex, opt.value)}
-                        >
-                            Add AI · {opt.label}
-                        </Button>
-                    ))}
+                    <Button onClick={() => onAssignBot(seatIndex, game.Difficulty.DIFFICULTY_HEURISTIC)}>Add AI</Button>
+                    <details className="seat-card__advanced">
+                        <summary>AI type</summary>
+                        {difficultyOptions(rlAgentAvailable).map(opt => (
+                            <button key={opt.value} disabled={opt.disabled} onClick={() => onAssignBot(seatIndex, opt.value)}>
+                                {opt.label}{opt.disabled ? ' · offline' : ''}
+                            </button>
+                        ))}
+                    </details>
                 </div>
             )}
 
@@ -78,10 +79,6 @@ export default function SeatCard(props: SeatCardProps) {
                 <div className="ldg-meld__actions">
                     <Button variant="danger" onClick={() => onClearSeat(seatIndex)}>Remove AI</Button>
                 </div>
-            )}
-
-            {isHost && !canEdit && (
-                <Note style={{ marginTop: '0.6rem' }}>Only the host can change seats.</Note>
             )}
         </div>
     );

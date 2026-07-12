@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
 import { game } from '../../proto/game'
 import { getTileName, getTileSvgName } from '../../utils/tileUtils'
+import { ClubShell, ToolTabs } from '../../theme'
 import {
   buildCalcRequestPayload,
   CalcKongContextKey,
@@ -86,7 +87,7 @@ const UI_TEXT = {
     prevailingWind: 'Prevailing wind',
     flowerMelds: 'Flower melds',
     calculating: 'Calculating…',
-    calculatePoints: 'Calculate',
+    calculatePoints: 'Calculate Score',
     noValidationErrors: 'No issues.',
     result: 'Result',
     validHand: 'Valid hand',
@@ -380,6 +381,7 @@ export default function Calc() {
     wildTile: false,
   })
   const [showDebug, setShowDebug] = useState(false)
+  const [paletteTarget, setPaletteTarget] = useState<'hand' | 'win' | 'wild' | 'meld'>('hand')
 
   useEffect(() => { setClosedHandInput(formatTehai(closedHand)) }, [closedHand])
   useEffect(() => { setWinTileInput(formatTile(winTile)) }, [winTile])
@@ -617,10 +619,18 @@ export default function Calc() {
   const expectedHandLength = expectedClosedHandSize(openMelds.length)
   const text = UI_TEXT[lang]
 
+  const addPaletteTile = (tile: CalcTileValue) => {
+    if (paletteTarget === 'hand') addTileToClosedHand(tile)
+    if (paletteTarget === 'win') { setWinTile(createTileDraft(tile)); clearServerState() }
+    if (paletteTarget === 'wild') { setWildTile(createTileDraft(tile)); clearServerState() }
+    if (paletteTarget === 'meld' && activeMeldId) addTileToMeld(activeMeldId, tile)
+  }
+
   return (
-    <div className="ledger-page">
-      <div className="ledger-shell ledger-shell--wide">
-        <article className="ldg-page">
+    <ClubShell wide title="Table Tools">
+        <article className="ldg-page ldg-page--workbench">
+
+          <ToolTabs />
 
           {/* Header */}
           <div className="ldg-page-head">
@@ -638,9 +648,6 @@ export default function Calc() {
               >
                 {text.language}
               </button>
-              <a href="/tools/shanten" className="ldg-link">
-                {lang === 'en' ? 'Shanten →' : '向听 →'}
-              </a>
             </div>
           </div>
 
@@ -681,12 +688,6 @@ export default function Calc() {
 
             <TileRow tiles={closedHand} emptyLabel={text.noClosedHand} onTileClick={removeClosedHandTile} />
 
-            {!collapsedSections.closedHand && (
-              <div className="ldg-palette-drawer">
-                <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
-                <PaletteGrid onTileClick={addTileToClosedHand} />
-              </div>
-            )}
           </section>
 
           {/* Win tile + Wild tile */}
@@ -723,13 +724,6 @@ export default function Calc() {
                     <button type="button" className="ldg-btn" onClick={applyWinTileInput}>
                       {text.apply}
                     </button>
-                  </div>
-                  <div className="ldg-palette-drawer">
-                    <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
-                    <PaletteGrid
-                      onTileClick={(tile) => { setWinTile(createTileDraft(tile)); clearServerState() }}
-                      selectedTile={winTile}
-                    />
                   </div>
                   {!winTile && (
                     <p className="ldg-note">{text.noWinTile}</p>
@@ -771,14 +765,6 @@ export default function Calc() {
                       {text.apply}
                     </button>
                   </div>
-                  <div className="ldg-palette-drawer">
-                    <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
-                    <PaletteGrid
-                      onTileClick={(tile) => { setWildTile(createTileDraft(tile)); clearServerState() }}
-                      selectedTile={wildTile}
-                      dimSelected
-                    />
-                  </div>
                   {!wildTile && (
                     <p className="ldg-note">{text.noWildTile}</p>
                   )}
@@ -787,6 +773,23 @@ export default function Calc() {
             </div>
           </div>
 
+          <section className="ldg-section workbench-palette">
+            <div className="ldg-section-row">
+              <h2 className="ldg-section-title">Tile tray<small>Choose a target, then use this one shared tray.</small></h2>
+            </div>
+            <div className="ldg-chooser" aria-label="Tile target">
+              {([['hand', text.closedHand], ['win', text.winTile], ['wild', text.wildTile], ['meld', text.openMeldsTitle]] as const).map(([value, label]) => (
+                <button key={value} type="button" disabled={value === 'meld' && !activeMeldId} className={`ldg-chooser__btn${paletteTarget === value ? ' is-active' : ''}`} onClick={() => setPaletteTarget(value)}>{label}</button>
+              ))}
+            </div>
+            <div className="ldg-palette-drawer">
+              <div className="ldg-palette-drawer__head">Adding to {paletteTarget === 'meld' ? text.openMeldsTitle : paletteTarget}</div>
+              <PaletteGrid onTileClick={addPaletteTile} selectedTile={paletteTarget === 'win' ? winTile : paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
+            </div>
+          </section>
+
+          <details className="advanced-setup">
+          <summary>Advanced setup <span>melds, winds, flowers, and kan context</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
@@ -814,7 +817,7 @@ export default function Calc() {
                         <button
                           type="button"
                           className={`ldg-btn${isActive ? ' ldg-btn--primary' : ''}`}
-                          onClick={() => setActiveMeldId(isActive ? null : meld.id)}
+                          onClick={() => { setActiveMeldId(isActive ? null : meld.id); if (!isActive) setPaletteTarget('meld') }}
                         >
                           {text.usePalette}
                         </button>
@@ -889,13 +892,6 @@ export default function Calc() {
                       emptyLabel={text.meldEmpty}
                       onTileClick={(tileId) => removeMeldTile(meld.id, tileId)}
                     />
-
-                    {isActive && (
-                      <div className="ldg-palette-drawer" style={{ marginTop: '0.75rem' }}>
-                        <div className="ldg-palette-drawer__head">{text.activeMeldPalette}</div>
-                        <PaletteGrid onTileClick={(tile) => addTileToMeld(meld.id, tile)} />
-                      </div>
-                    )}
 
                     {meld.type === game.ActionType.ACTION_KAN && (
                       <div className="ldg-field" style={{ marginTop: '0.75rem' }}>
@@ -1022,6 +1018,8 @@ export default function Calc() {
               })}
             </div>
           </section>
+
+          </details>
 
           {/* Actions row: validation + calculate */}
           <div className="ldg-actions-row">
@@ -1191,7 +1189,6 @@ export default function Calc() {
           </div>
 
         </article>
-      </div>
-    </div>
+    </ClubShell>
   )
 }

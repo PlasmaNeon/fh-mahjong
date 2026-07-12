@@ -23,13 +23,12 @@ export const TileComponent = memo(function TileComponent({
 
   return (
     <div
-      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${isInteractive ? 'interactive' : ''} ${size === 'small' ? 'small' : ''}`}
+      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${noGlow ? 'mahjong-tile--no-glow' : ''} ${isInteractive ? 'interactive' : ''} ${size === 'small' ? 'small' : ''}`}
       onClick={() => isInteractive && onDiscard?.(tile)}
       style={{
         padding: 0,
         border: 'none',
         backgroundColor: 'transparent',
-        boxShadow: (isWild && !noGlow) ? '0 0 15px 6px rgba(234, 179, 8, 0.9)' : '1px 1px 3px rgba(0,0,0,0.5)',
         position: 'relative',
       }}
     >

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
 import { getApiUrl } from '../../config';
-import { Page, Shell, Card, PageHeader, Section, ToolsRow, Button, TextLink, Field, Note } from '../../theme';
+import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note } from '../../theme';
 
 export default function Account() {
     const [email, setEmail] = useState('');
@@ -88,16 +88,11 @@ export default function Account() {
     };
 
     return (
-        <Page>
-            <Shell>
+        <ClubShell title="Profile">
                 <Card>
                     <PageHeader
                         title="Account"
                         subtitle="账户设置 · 奉化麻将"
-                        nav={<>
-                            <TextLink to="/play">← Play</TextLink>
-                            <TextLink to="/">Home</TextLink>
-                        </>}
                     />
                     <Section title="Profile" subtitle="Change your email or display name.">
                         {!loaded && <Note>Loading…</Note>}
@@ -125,7 +120,6 @@ export default function Account() {
                         )}
                     </Section>
                 </Card>
-            </Shell>
-        </Page>
+        </ClubShell>
     );
 }

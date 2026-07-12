@@ -20,8 +20,7 @@ export function CenterHud({ hudChips, seats }: CenterHudProps) {
           {hudChips.map((chip, index) => (
             <span
               key={`${chip.label}-${index}`}
-              className="center-info-chip"
-              style={chip.tone === 'danger' ? { color: '#ff6b6b' } : undefined}
+              className={`center-info-chip${chip.tone === 'danger' ? ' center-info-chip--danger' : ''}`}
             >
               {chip.label}
             </span>

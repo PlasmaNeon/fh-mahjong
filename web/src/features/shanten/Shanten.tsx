@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
 import { getTileName, getTileSvgName } from '../../utils/tileUtils'
+import { ClubShell, ToolTabs } from '../../theme'
 import {
   countTiles,
   createDraft,
@@ -195,7 +196,7 @@ export default function Shanten() {
   const [wildInput, setWildInput] = useState('')
   const [result, setResult] = useState<ShantenResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [showWildPalette, setShowWildPalette] = useState(false)
+  const [paletteTarget, setPaletteTarget] = useState<'hand' | 'wild'>('hand')
   const initializedRef = useRef(false)
 
   const baseSize = 13 - 3 * openMelds
@@ -315,14 +316,12 @@ export default function Shanten() {
     if (parseError) { setError(parseError); return }
     if (tiles.length !== 1) { setError('Enter exactly one tile for wild (e.g. 9s)'); return }
     setWildTile(tiles[0])
-    setShowWildPalette(false)
     setError(null)
   }, [wildInput])
 
   const selectWild = useCallback((tile: TileValue) => {
     if (sameTile(tile, wildTile)) { setWildTile(null); setWildInput('') }
     else { setWildTile(tile); setWildInput(formatTile(tile)) }
-    setShowWildPalette(false)
   }, [wildTile])
 
   const shantenStatusLabel = useMemo(() => {
@@ -333,9 +332,10 @@ export default function Shanten() {
   }, [result, text])
 
   return (
-    <div className="ledger-page">
-      <div className="ledger-shell">
-        <article className="ldg-page">
+    <ClubShell title="Table Tools">
+        <article className="ldg-page ldg-page--workbench">
+
+          <ToolTabs />
 
           {/* Header */}
           <div className="ldg-page-head">
@@ -353,9 +353,6 @@ export default function Shanten() {
               >
                 {text.language}
               </button>
-              <a href="/tools/calc" className="ldg-link">
-                {lang === 'en' ? 'Calculator →' : '算分器 →'}
-              </a>
             </div>
           </div>
 
@@ -389,10 +386,6 @@ export default function Shanten() {
               <button type="button" className="ldg-btn" onClick={clearHand}>{text.clear}</button>
             </div>
 
-            <div className="ldg-palette-drawer">
-              <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
-              <PaletteGrid onTileClick={addTile} usedCounts={usedCounts} />
-            </div>
           </section>
 
           {/* Wild tile */}
@@ -415,14 +408,13 @@ export default function Shanten() {
               <button
                 type="button"
                 className="ldg-link"
-                onClick={() => setShowWildPalette(v => !v)}
+                onClick={() => setPaletteTarget('wild')}
               >
                 {text.edit}
               </button>
             </div>
 
-            {showWildPalette && (
-              <>
+            {paletteTarget === 'wild' && (
                 <div className="ldg-input-row">
                   <input
                     className="ldg-input"
@@ -435,19 +427,25 @@ export default function Shanten() {
                     {text.apply}
                   </button>
                 </div>
-                <div className="ldg-palette-drawer">
-                  <div className="ldg-palette-drawer__head">{text.tilePalette}</div>
-                  <PaletteGrid
-                    onTileClick={selectWild}
-                    usedCounts={new Map()}
-                    selectedTile={wildTile}
-                    dimSelected
-                  />
-                </div>
-              </>
             )}
           </section>
 
+          <section className="ldg-section workbench-palette">
+            <div className="ldg-section-row">
+              <h2 className="ldg-section-title">Tile tray<small>One tray for the hand and wild indicator.</small></h2>
+            </div>
+            <div className="ldg-chooser" aria-label="Tile target">
+              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'hand' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('hand')}>{text.closedHand}</button>
+              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'wild' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('wild')}>{text.wildTile}</button>
+            </div>
+            <div className="ldg-palette-drawer">
+              <div className="ldg-palette-drawer__head">Adding to {paletteTarget === 'hand' ? text.closedHand : text.wildTile}</div>
+              <PaletteGrid onTileClick={paletteTarget === 'hand' ? addTile : selectWild} usedCounts={paletteTarget === 'hand' ? usedCounts : new Map()} selectedTile={paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
+            </div>
+          </section>
+
+          <details className="advanced-setup">
+          <summary>Advanced setup <span>open meld count</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
@@ -474,6 +472,16 @@ export default function Shanten() {
               {text.expected}: {baseSize}–{baseSize + 1} {text.tiles}
             </p>
           </section>
+          </details>
+
+          <div className="ldg-actions-row">
+            <div className="ldg-validation-area">
+              <span className="ldg-note" style={{ marginTop: 0 }}>{hand.length} / {baseSize}–{maxSize} {text.tiles}</span>
+            </div>
+            <button type="button" className="ldg-btn ldg-btn--primary" onClick={() => calculate(hand, wildTile, openMelds)}>
+              {lang === 'en' ? 'Analyze Hand' : '分析手牌'}
+            </button>
+          </div>
 
           {/* Result */}
           <section className="ldg-result">
@@ -560,7 +568,6 @@ export default function Shanten() {
           </section>
 
         </article>
-      </div>
-    </div>
+    </ClubShell>
   )
 }

@@ -56,6 +56,43 @@ func (q *InMemoryQueue) RPush(key string, val string) {
 	q.lists[key] = append(q.lists[key], val)
 }
 
+// RPushUnique appends val only when it is not already waiting in the list.
+// The membership check and append share one lock so duplicate join requests
+// cannot create duplicate seats.
+func (q *InMemoryQueue) RPushUnique(key string, val string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for _, queued := range q.lists[key] {
+		if queued == val {
+			return false
+		}
+	}
+	q.lists[key] = append(q.lists[key], val)
+	return true
+}
+
+// Remove deletes every occurrence of val from key and reports whether the
+// player was still waiting. A false result means the queue watcher may already
+// have claimed the player for a match.
+func (q *InMemoryQueue) Remove(key string, val string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	list := q.lists[key]
+	kept := list[:0]
+	removed := false
+	for _, queued := range list {
+		if queued == val {
+			removed = true
+			continue
+		}
+		kept = append(kept, queued)
+	}
+	q.lists[key] = kept
+	return removed
+}
+
 func (q *InMemoryQueue) LRange(key string) []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -303,11 +340,18 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	ruleset = canonicalRuleset(ruleset)
 	queueKey := "queue:" + ruleset
 
-	// Add user to the in-memory queue
-	m.Queue.RPush(queueKey, fmt.Sprintf("%d", userID))
+	// Duplicate network requests are harmless: one user occupies one queue slot.
+	m.Queue.RPushUnique(queueKey, fmt.Sprintf("%d", userID))
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
 	return nil
+}
+
+// LeaveQueue removes a waiting user from a single ruleset queue. False means
+// the player is no longer waiting and may already be assigned to a match.
+func (m *Matchmaker) LeaveQueue(userID uint, ruleset string) bool {
+	ruleset = canonicalRuleset(ruleset)
+	return m.Queue.Remove("queue:"+ruleset, fmt.Sprintf("%d", userID))
 }
 
 func (m *Matchmaker) GetActivePrivateTable(tableID string) (ActivePrivateTable, bool) {

@@ -1,11 +1,13 @@
 # web/src/theme/
 
-> The app's shared "ledger" theme: design tokens, structural CSS, and typed React primitives.
+> The app's shared Rainy Mahjong Club theme: design tokens, structural CSS, and typed React primitives.
 
 ## Overview
 
-Single source of truth for the out-of-game visual language (IBM Plex, off-white/ink
-surfaces, one teal accent, hairline rules, light/dark via `prefers-color-scheme`).
+Single source of truth for the app-wide material language: Fraunces/Noto Serif display
+type, IBM Plex UI type, ink/rain backdrops, bone-paper surfaces, jade controls, brass
+focus and victory details, and seal-red danger treatment. The identity is intentionally
+single-theme rather than following `prefers-color-scheme`.
 The CSS is imported once globally from `web/src/main.tsx` (`import './theme/index.css'`);
 the barrel `index.ts` also side-effect-imports it so importing any primitive pulls the styles.
 
@@ -22,14 +24,22 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
 
 ## Files
 
-- **tokens.css** — `@import` of IBM Plex fonts + `:root` custom properties (light) and the
-  `@media (prefers-color-scheme: dark)` overrides. This *is* the theme's values.
+- **tokens.css** — font imports plus the six identity colours, semantic states, physical
+  material colours, typography roles, radii, and shadows. This *is* the theme's values.
 - **base.css** — every structural class (`.ledger-page`, `.ledger-shell`, `.ldg-page`,
   `.ldg-section`, `.ldg-tile`, `.ldg-btn`, `.ldg-input`, …) consuming the tokens.
 - **index.css** — `@import`s tokens.css then base.css.
 - **index.ts** — side-effect-imports `index.css` and re-exports the primitives (the public API).
 - **components/** — `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`,
-  `TextLink`, `Field`, `Note`, `Toggle`, `ToolsRow`.
+  `TextLink`, `Field`, `Note`, `Toggle`, `ToolsRow`, `ClubShell`, `ToolTabs`, and `GameDialog`.
+
+`ClubShell` owns ordinary-page club identity, context-aware Back, and Profile navigation;
+route pages must not recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
+stable Scoring/Shanten switcher while preserving both tool deep links.
+
+`GameDialog` is the semantic modal shell used by game exit and match-end surfaces. It
+owns labelled-dialog markup, initial focus, optional Escape cancellation, the compass
+mark, tone styling, and shared action layout; callers continue to own business actions.
 
 ## Usage
 

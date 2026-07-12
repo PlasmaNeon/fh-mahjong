@@ -12,6 +12,7 @@ import { preloadAllTileSvgs } from '../../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
+import { orderTableActions } from './actionOrdering';
 
 export default function Game() {
     const { matchId } = useParams();
@@ -85,6 +86,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     const rawValidActions: any[] = myPlayer?.validActions || [];
     const pendingFlowerReveal = rawValidActions.find((action: any) => action.type === game.ActionType.ACTION_FLOWER_REVEAL) || null;
     const validActions = rawValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_FLOWER_REVEAL);
+    const orderedValidActions = orderTableActions(validActions);
+    const orderedInterruptActions = orderedValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_PASS);
 
     // Debug: log discard conditions each state update
     console.log('[Discard Debug]', {
@@ -253,7 +256,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         <div className="table-action-bar">
             {showInterruptActions && (
                 <>
-                    {validActions.map((action: any, i: number) => {
+                    {orderedInterruptActions.map((action: any, i: number) => {
                         const meta = getActionMeta(action);
 
                         return (
@@ -270,14 +273,14 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                         );
                     })}
                     <button onClick={() => { setHasSubmittedInterrupt(true); handleAction(game.ActionType.ACTION_PASS); }} className="table-action-btn table-action-btn-skip">
-                        SKIP
+                        PASS
                     </button>
                 </>
             )}
 
             {showTurnActions && (
                 <>
-                    {validActions.map((action: any, i: number) => {
+                    {orderedValidActions.map((action: any, i: number) => {
                         if (action.type === game.ActionType.ACTION_TSUMO) {
                             const meta = getActionMeta(action);
                             return (

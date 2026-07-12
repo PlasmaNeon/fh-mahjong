@@ -1,0 +1,322 @@
+/* Rainy Mahjong Club table skin.
+   Geometry stays in ../index.css; this file only changes materials, typography,
+   interaction treatment, and responsive presentation around that geometry. */
+
+.stage-rotator,
+.game-stage-shell {
+  background:
+    radial-gradient(circle at 50% 15%, rgba(47,127,112,0.1), transparent 38%),
+    var(--night-ink);
+}
+
+.game-stage-frame {
+  background: var(--wood);
+  box-shadow:
+    0 0 0 1px rgba(210,168,95,0.16),
+    0 30px 90px rgba(0,0,0,0.55),
+    0 1px 0 rgba(255,255,255,0.06) inset;
+}
+
+.mahjong-table,
+.game-stage .mahjong-table {
+  color: var(--on-dark);
+  font-family: var(--font);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(91, 159, 143, 0.22), transparent 26%),
+    repeating-linear-gradient(112deg, transparent 0 7px, rgba(255,255,255,0.014) 8px, transparent 9px),
+    repeating-linear-gradient(24deg, transparent 0 10px, rgba(0,0,0,0.025) 11px),
+    linear-gradient(145deg, var(--felt-light) 0%, var(--felt) 42%, var(--felt-deep) 100%);
+  box-shadow:
+    0 0 0 12px var(--wood) inset,
+    0 0 0 13px rgba(210,168,95,0.14) inset,
+    0 0 65px rgba(0,0,0,0.24) inset;
+}
+
+.mahjong-table::before {
+  content: '';
+  position: absolute;
+  inset: 18px;
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid rgba(210,168,95,0.11);
+  border-radius: 22px;
+}
+
+.wild-tile-corner,
+.game-stage .wild-tile-corner {
+  border: 1px solid rgba(210,168,95,0.44);
+  border-radius: 15px 15px 5px 15px;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.06), transparent 35%),
+    rgba(11,20,24,0.92);
+  box-shadow: var(--shadow-lacquer);
+  backdrop-filter: none;
+}
+
+.wild-tile-corner::before {
+  content: '搭';
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  position: absolute;
+  right: -10px;
+  top: -10px;
+  color: #5a381a;
+  background: var(--lamp-apricot);
+  border-radius: 8px 8px 2px 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.32);
+  font-family: var(--font-display);
+  font-weight: 700;
+  transform: rotate(7deg);
+}
+
+.wild-tile-corner-label,
+.game-stage .wild-tile-corner-label {
+  color: var(--brass-light);
+  font-family: var(--mono);
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+
+.wild-tile-corner-info {
+  color: var(--on-dark-2);
+  border-top-color: rgba(210,168,95,0.18);
+  font-family: var(--mono);
+  font-weight: 500;
+}
+
+.wild-tile-corner-info-row,
+.wild-tile-corner-info-row-label { color: var(--on-dark-2); }
+
+.wild-tile-corner-info-tag {
+  color: var(--brass-light);
+  background: rgba(230,161,92,0.11);
+  border-color: rgba(230,161,92,0.34);
+  border-radius: 6px 6px 2px 6px;
+}
+
+/* Brass wind compass — the table's signature object. */
+.center-info-panel {
+  overflow: visible;
+  background:
+    radial-gradient(circle, rgba(210,168,95,0.13) 0 32%, transparent 33%),
+    linear-gradient(145deg, #26383a, #101e22 72%);
+  border: 1px solid rgba(210,168,95,0.5);
+  border-radius: 22px 22px 7px 22px;
+  box-shadow:
+    0 0 0 7px rgba(11,20,24,0.42),
+    0 24px 55px rgba(0,0,0,0.44),
+    0 1px 0 rgba(255,255,255,0.08) inset;
+  backdrop-filter: none;
+}
+
+.center-info-panel::before,
+.center-info-panel::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+
+.center-info-panel::before {
+  inset: 12px;
+  border: 1px solid rgba(210,168,95,0.2);
+  border-radius: 50%;
+}
+
+.center-info-panel::after {
+  width: 8px;
+  height: 8px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%,-50%) rotate(45deg);
+  background: var(--brass);
+  box-shadow: 0 0 10px rgba(230,161,92,0.45);
+}
+
+.center-info-stats { position: relative; z-index: 2; gap: 0.3rem; }
+.center-info-chip {
+  padding: 0.25rem 0.5rem;
+  color: var(--on-dark-2);
+  background: rgba(11,20,24,0.65);
+  border-color: rgba(210,168,95,0.14);
+  border-radius: 6px 6px 2px 6px;
+  font-family: var(--mono);
+  font-size: 0.63rem;
+  font-weight: 500;
+  letter-spacing: 0.055em;
+}
+.center-info-chip--danger { color: #f3a18f; border-color: rgba(200,88,69,0.3); }
+
+.center-seat-wind {
+  color: rgba(210,168,95,0.68);
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+.center-seat-score { color: var(--on-dark-2); font-family: var(--mono); font-size: 0.64rem; }
+.center-seat-active .center-seat-wind { color: var(--brass-light); text-shadow: 0 0 14px rgba(230,161,92,0.5); }
+.center-seat-active .center-seat-score { color: #fff7e6; }
+
+.table-action-bar { gap: 0.55rem; }
+.table-action-btn {
+  min-height: 43px;
+  padding: 0.65rem 0.85rem;
+  color: var(--on-dark);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.05), transparent 35%),
+    var(--lacquer);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 11px 11px 3px 11px;
+  box-shadow: 0 4px 0 #071014, 0 13px 26px rgba(0,0,0,0.32);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.table-action-btn:hover { transform: translateY(-3px); box-shadow: 0 6px 0 #071014, 0 17px 30px rgba(0,0,0,0.36); }
+.table-action-btn:active { transform: translateY(1px); box-shadow: 0 2px 0 #071014, 0 8px 18px rgba(0,0,0,0.3); }
+.table-action-btn-chii,
+.table-action-btn-pon,
+.table-action-btn-kan { color: #eafff7; background: linear-gradient(150deg, #347e71, #205d54); border-color: rgba(145,205,191,0.38); }
+.table-action-btn-ron { color: #fff2e0; background: linear-gradient(150deg, #b94f3e, #803a30); border-color: rgba(243,161,143,0.42); }
+.table-action-btn-tsumo { color: #3d2815; background: linear-gradient(150deg, #f0bd78, #c98848); border-color: rgba(255,230,187,0.62); box-shadow: 0 4px 0 #8a572e, 0 0 26px rgba(230,161,92,0.22); }
+.table-action-btn-flower { color: #fff2e0; background: linear-gradient(150deg, #98634e, #6f493c); border-color: rgba(230,161,92,0.26); }
+.table-action-btn-skip { color: var(--on-dark-2); background: linear-gradient(150deg, #25373b, #18272b); border-color: rgba(255,255,255,0.1); }
+.table-action-preview { background: rgba(7,16,20,0.34); border-radius: 6px; }
+
+.table-exit-control {
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  z-index: 40;
+  padding: 0.55rem 0.8rem;
+  color: var(--on-dark-2);
+  background: rgba(11,20,24,0.7);
+  border: 1px solid rgba(210,168,95,0.2);
+  border-radius: 9px 9px 3px 9px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.26);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.table-exit-control:hover { color: var(--brass-light); border-color: rgba(210,168,95,0.42); }
+
+.mahjong-tile {
+  filter: drop-shadow(0 3px 2px rgba(0,0,0,0.36));
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.mahjong-tile.interactive:hover { transform: translateY(-9px) rotate(-1deg); filter: brightness(1.05) drop-shadow(0 10px 8px rgba(0,0,0,0.36)); }
+.mahjong-tile.wild-tile:not(.mahjong-tile--no-glow) { filter: drop-shadow(0 0 7px rgba(230,161,92,0.95)) drop-shadow(0 5px 3px rgba(0,0,0,0.32)); }
+
+.discard-pool-tile-callable::after,
+.discard-lane__tile--callable::after {
+  border-color: var(--brass-light);
+  box-shadow: 0 0 0 2px rgba(11,20,24,0.64), 0 0 18px rgba(230,161,92,0.55);
+}
+
+.shanten-indicator {
+  color: var(--brass-light);
+  background: rgba(11,20,24,0.84);
+  border: 1px solid rgba(210,168,95,0.3);
+  border-radius: 7px 7px 2px 7px;
+  font-family: var(--mono);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.24);
+}
+
+/* The score slip is shared by live play and replay. */
+.round-result-overlay { background: rgba(4,10,12,0.66); }
+.round-result-modal {
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.28), transparent 33%),
+    repeating-linear-gradient(0deg, transparent 0 8px, rgba(49,39,25,0.018) 9px),
+    var(--bone-paper);
+  border: 1px solid rgba(240,218,175,0.72);
+  border-radius: 23px 23px 7px 23px;
+  box-shadow: var(--shadow-paper);
+  animation: score-slip-in 360ms cubic-bezier(.2,.88,.25,1) both;
+}
+
+.round-result-modal::before {
+  content: '東';
+  position: absolute;
+  right: 1.5rem;
+  top: 1.3rem;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  color: rgba(200,88,69,0.86);
+  border: 2px solid rgba(200,88,69,0.62);
+  border-radius: 15px;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  transform: rotate(8deg);
+  animation: seal-land 480ms 120ms cubic-bezier(.2,.9,.2,1.2) both;
+}
+
+.round-result-badge {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: rgba(47,127,112,0.35);
+  border-radius: 7px 7px 2px 7px;
+  font-family: var(--mono);
+  letter-spacing: 0.1em;
+}
+.round-result-badge-ron { color: #8f372b; background: var(--danger-soft); border-color: rgba(200,88,69,0.35); }
+.round-result-badge-tsumo { color: #6d481f; background: var(--warning-soft); border-color: rgba(230,161,92,0.45); }
+.round-result-title { color: var(--ink); font-family: var(--font-display); font-weight: 700; letter-spacing: -0.035em; text-transform: none; }
+.round-result-title-tsumo { color: #7b4f22; text-shadow: none; }
+.round-result-title-ron { color: #87372b; text-shadow: none; }
+.round-result-subtitle { color: var(--ink-3); }
+.round-result-panel { background: rgba(255,255,255,0.26); border-color: var(--rule); border-radius: 13px 13px 4px 13px; }
+.round-result-panel-plain { background: transparent; }
+.round-result-breakdown-item { border-color: var(--rule-soft); }
+.round-result-breakdown-name { color: var(--ink-2); }
+.round-result-breakdown-points { color: var(--accent-strong); font-family: var(--mono); }
+.round-result-breakdown-total-row { color: var(--ink); border-color: var(--rule); font-family: var(--font-display); }
+.round-result-payout-cell { color: var(--ink-2); background: rgba(255,255,255,0.24); border-color: var(--rule-soft); }
+.round-result-payout-positive { background: var(--accent-soft); }
+.round-result-payout-negative { background: var(--danger-soft); }
+.round-result-payout-seat,
+.round-result-payout-ready { color: var(--ink-3); }
+.round-result-payout-positive .round-result-payout-amount { color: var(--accent-strong); }
+.round-result-payout-negative .round-result-payout-amount { color: #9f4032; }
+.round-result-action-btn { min-height: 42px; border-radius: 9px 9px 3px 9px; font-family: var(--mono); letter-spacing: 0.06em; }
+.round-result-action-btn-ready { color: #fff8e9; background: var(--accent-strong); border-color: var(--accent-strong); }
+.round-result-action-btn-exit { color: var(--ink-2); background: transparent; border-color: var(--rule); }
+
+@keyframes score-slip-in { from { opacity: 0; transform: translateY(22px) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
+@keyframes seal-land { from { opacity: 0; transform: scale(1.6) rotate(18deg); } to { opacity: 1; transform: scale(1) rotate(8deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .discard-pool-tile-callable::after,
+  .discard-lane__tile--callable::after { animation: none; }
+}
+
+.fixture-toolbar {
+  position: fixed;
+  top: max(0.65rem, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 1000;
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  max-width: calc(100vw - 1rem);
+  padding: 0.45rem;
+  overflow-x: auto;
+  color: var(--on-dark-3);
+  background: rgba(11,20,24,0.94);
+  border: 1px solid rgba(210,168,95,0.22);
+  border-radius: 11px 11px 4px 11px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.38);
+  font-family: var(--mono);
+  transform: translateX(-50%);
+}
+.fixture-toolbar > span { padding-inline: 0.35rem; font-size: 0.58rem; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.fixture-toolbar button { padding: 0.35rem 0.55rem; color: var(--on-dark-2); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 6px 6px 2px 6px; font: inherit; font-size: 0.61rem; white-space: nowrap; cursor: pointer; }
+.fixture-toolbar button.is-active { color: #fff8e9; background: var(--accent-strong); border-color: rgba(145,205,191,0.4); }
