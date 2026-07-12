@@ -37,6 +37,17 @@ import (
 // value-only by contract: the root may not be on the clock, so its action mask
 // can be empty — that is expected and fine. Only ordinary live-decision rows
 // (no outcome, not truncated) encode the current acting seat and drive rollout.
+//
+// Root-action pinning. The FIRST action command sent to each clone is the ROOT
+// CANDIDATE — the move being searched for rootSeat. It is always decoded and
+// executed for rootSeat (searchClone.rootApplied gates this), NOT for whatever
+// currentActionSeat() reports. At a WAIT_DISCARDS root, RedealUnseen recomputes
+// interrupt eligibility for every opponent, so a clone's first
+// currentActionSeat() can be a newly-eligible lower-numbered seat rather than
+// rootSeat; ProcessPlayerAction accepts interrupt responses from any window seat
+// asynchronously, so pinning plays the candidate as rootSeat's move. At a
+// PLAYER_TURN root currentActionSeat() == rootSeat, so pinning is a no-op there.
+// Every subsequent command uses currentActionSeat().
 type SearchPool struct {
 	clones   []*searchClone
 	config   *pb.EnvConfig
@@ -48,6 +59,21 @@ type searchClone struct {
 	env       *Env
 	decisions uint64
 	done      bool
+	// rootApplied records whether this clone has consumed its ROOT CANDIDATE
+	// action yet. The FIRST action command a clone receives is always the root
+	// candidate — the move being searched for p.rootSeat. It MUST be executed
+	// for p.rootSeat, not for whatever currentActionSeat() reports.
+	//
+	// At a WAIT_DISCARDS root, RedealUnseen recomputes interrupt eligibility for
+	// every opponent, so a clone's first currentActionSeat() can be a
+	// LOWER-numbered seat that became newly eligible — never the root seat. Since
+	// ProcessPlayerAction in WAIT_DISCARDS accepts interrupt responses from any
+	// window seat asynchronously (handleInterruptAction dispatch), pinning the
+	// first step to p.rootSeat plays the searched candidate as the root player's
+	// move. At a PLAYER_TURN root currentActionSeat() == p.rootSeat anyway, so
+	// pinning is a no-op there. Subsequent commands (the other window seats'
+	// responses, later turns) use currentActionSeat() as usual.
+	rootApplied bool
 }
 
 // NewSearchPool builds `clones` determinized copies of e's current decision
@@ -177,14 +203,27 @@ func (p *SearchPool) stepOne(cmd *pb.SlotCommand) slotResult {
 
 func (p *SearchPool) stepClone(clone *searchClone, actionID uint32) slotResult {
 	env := clone.env
-	seat, ok := env.currentActionSeat()
-	if !ok {
-		return slotResult{err: fmt.Errorf("search: clone is not at a decision point")}
+	// Root-action pinning: the FIRST command a clone receives is the root
+	// candidate, which must be decoded/executed for p.rootSeat regardless of
+	// currentActionSeat(). After a WAIT_DISCARDS redeal, currentActionSeat() may
+	// surface a newly-eligible lower-numbered seat; applying the candidate there
+	// would either fail-open or, worse, play it as the wrong seat's move. Every
+	// subsequent command uses currentActionSeat().
+	var seat uint32
+	if clone.rootApplied {
+		s, ok := env.currentActionSeat()
+		if !ok {
+			return slotResult{err: fmt.Errorf("search: clone is not at a decision point")}
+		}
+		seat = s
+	} else {
+		seat = p.rootSeat
 	}
 	action, err := decodeActionID(env.game.State, seat, int(actionID))
 	if err != nil {
 		return slotResult{err: err}
 	}
+	clone.rootApplied = true
 
 	env.decisionCount++
 	clone.decisions++

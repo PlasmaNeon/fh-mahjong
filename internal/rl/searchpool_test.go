@@ -829,3 +829,138 @@ func TestSearchPool_InterruptWindowExecutable(t *testing.T) {
 		t.Fatalf("no clone executed a meld interrupt — test did not exercise the meld-application path")
 	}
 }
+
+// TestSearchPool_RootActionPinnedToRootSeat pins root-action pinning at a
+// WAIT_DISCARDS root. RedealUnseen recomputes interrupt eligibility for every
+// opponent, so a clone can make a LOWER-numbered seat newly eligible — meaning
+// the clone's first currentActionSeat() is NOT the searched root seat. The FIRST
+// command sent to each clone is the ROOT CANDIDATE and must be executed for the
+// ROOT seat, not for whatever currentActionSeat() happens to surface. Before the
+// fix, stepClone decoded/executed the candidate against the newly-eligible lower
+// seat: because a Pon action id is face-based (seat-independent), it legally
+// executed as the WRONG seat's move, scoring a rollout in which the root player
+// never played its candidate.
+func TestSearchPool_RootActionPinnedToRootSeat(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       512,
+	}
+	env := New(config)
+	env.game = engine.NewGame("root-pin", &rules.FenghuaRuleset{}, engine.MatchOptions{})
+	env.game.SetWallSeed(engine.SeedFromUint64(101))
+	if err := env.game.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	const discarder = uint32(0)
+	const rootSeat = uint32(2)
+	const lowerSeat = uint32(1) // newly eligible after redeal; lower than rootSeat
+
+	// Build a WAIT_DISCARDS window: seat 0 discards `discard`.
+	discard := &pb.Tile{Id: 9001, Suit: pb.Suit_SUIT_MAN, Value: 5}
+	state := env.game.State
+	state.ActivePlayer = discarder
+	state.Phase = pb.GamePhase_PHASE_WAIT_DISCARDS
+	state.ActiveDiscard = discard
+	state.IsHaitei = false
+
+	// Root seat (2) holds a matching pair → PON eligible LIVE. Its hand is fixed
+	// across RedealUnseen, so this PON survives into every clone.
+	r1 := &pb.Tile{Id: 9101, Suit: discard.Suit, Value: discard.Value}
+	r2 := &pb.Tile{Id: 9102, Suit: discard.Suit, Value: discard.Value}
+	state.Players[rootSeat].ClosedHand = append(state.Players[rootSeat].ClosedHand, r1, r2)
+	state.Players[rootSeat].ValidActions = env.game.Rules.GetValidInterrupts(state, discard, rootSeat)
+
+	// The lower seat (1) is NOT eligible live (empty ValidActions), so live
+	// currentActionSeat() skips it and returns the root seat.
+	state.Players[lowerSeat].ValidActions = nil
+	state.Players[3].ValidActions = nil
+
+	// Force the redeal pool (opponents of rootSeat = seats 0,1,3 hands + undrawn
+	// wall) to be homogeneous copies of the discard's suit/value. After redeal the
+	// lower seat's hand is all matching tiles → it GAINS a PON, so the clone's
+	// first currentActionSeat() becomes the lower seat, not the root.
+	for _, s := range []uint32{0, 1, 3} {
+		for _, tile := range state.Players[s].ClosedHand {
+			tile.Suit, tile.Value = discard.Suit, discard.Value
+		}
+	}
+	for _, tile := range env.game.WallTilesForTest() { // pointers into the live wall
+		tile.Suit, tile.Value = discard.Suit, discard.Value
+	}
+
+	env.lastScores = snapshotScores(state)
+
+	// Premise: live currentActionSeat picks the root seat.
+	if seat, ok := env.currentActionSeat(); !ok || seat != rootSeat {
+		t.Fatalf("live premise broken: currentActionSeat=(%d,%v), want root seat %d", seat, ok, rootSeat)
+	}
+
+	// The searched candidate: the root seat's PON, encoded as a catalog action id.
+	rootLegal, err := legalActionMap(state, rootSeat)
+	if err != nil {
+		t.Fatalf("legalActionMap root: %v", err)
+	}
+	ponID := -1
+	for id, act := range rootLegal {
+		if act.Type == pb.ActionType_ACTION_PON {
+			ponID = id
+			break
+		}
+	}
+	if ponID < 0 {
+		t.Fatalf("test premise broken: root seat %d has no PON candidate", rootSeat)
+	}
+
+	pool, err := NewSearchPool(env, 1, 7, 512, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if pool.rootSeat != rootSeat {
+		t.Fatalf("pool rootSeat=%d, want %d", pool.rootSeat, rootSeat)
+	}
+	clone := pool.clones[0]
+
+	// Premise: the redeal made the LOWER seat newly eligible, so the clone's first
+	// acting seat diverges from the root seat — the exact condition the bug
+	// mishandled. If they matched, the test would be vacuous.
+	firstSeat, ok := clone.env.currentActionSeat()
+	if !ok {
+		t.Fatalf("clone has no decision surfaced after redeal")
+	}
+	if firstSeat != lowerSeat {
+		t.Fatalf("test premise broken: clone first acting seat=%d, want lower seat %d (< root %d)", firstSeat, lowerSeat, rootSeat)
+	}
+
+	// Send the ROOT CANDIDATE as the first command. It must be applied to the ROOT
+	// seat, regardless of currentActionSeat pointing at the lower seat.
+	resp, err := pool.Step(&pb.EnvPoolStepRequest{
+		Commands: []*pb.SlotCommand{{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: uint32(ponID)}}},
+	})
+	if err != nil {
+		t.Fatalf("pool step: %v", err)
+	}
+	if len(resp.Slots) != 1 || resp.Slots[0].Error != "" {
+		t.Fatalf("unexpected slot result: %+v", resp.Slots)
+	}
+
+	// The root candidate must have been queued for the ROOT seat...
+	if !clone.env.game.InterruptQueued(rootSeat) {
+		t.Fatalf("root candidate was NOT queued for root seat %d — it was applied to the wrong seat", rootSeat)
+	}
+	// ...and NOT for the newly-eligible lower seat.
+	if clone.env.game.InterruptQueued(lowerSeat) {
+		t.Fatalf("root candidate was queued for lower seat %d — candidate applied to wrong seat", lowerSeat)
+	}
+
+	// The lower seat is subsequently surfaced as an ordinary decision (it still
+	// owes a response), and the emitted row is encoded for it.
+	if resp.Slots[0].Seat != lowerSeat {
+		t.Fatalf("post-root-step surfaced seat=%d, want lower seat %d", resp.Slots[0].Seat, lowerSeat)
+	}
+	if seat, ok := clone.env.currentActionSeat(); !ok || seat != lowerSeat {
+		t.Fatalf("lower seat not surfaced as ordinary decision after root step: (%d,%v)", seat, ok)
+	}
+}
