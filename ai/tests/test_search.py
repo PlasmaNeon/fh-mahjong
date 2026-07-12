@@ -494,6 +494,62 @@ def test_horizon_counting_exact_gamma_exponents():
     assert choice.info["scores"][0] == pytest.approx(expected)
 
 
+def test_python_cutoff_excludes_foreign_seat_row_from_bootstrap():
+    # Regression for adversarial round 5: Go defers ITS cap to the root seat's
+    # next decision, so a clone can still be mid-foreign-seat-turn when the
+    # PYTHON loop's own defensive bound (2*max_rollout_decisions + 32) expires.
+    # Value-bootstrapping that foreign-seat row would feed the champion value
+    # head an out-of-distribution input -- the same OOD failure the Go-side
+    # round-4 fix eliminated. The fix: such a clone must be EXCLUDED from its
+    # candidate's mean (the same `errored` drop path used for real errors),
+    # never value-bootstrapped.
+    #
+    # Candidate id=2 (the prior's argmax / greedy action) terminates on the
+    # very first apply with reward 5.0. Candidate id=1 never terminates and
+    # sits on a foreign seat (seat=1, root seat=0) for the whole rollout, so
+    # the Python bound fires while its row is still foreign. Pre-fix, that
+    # foreign row would be value-bootstrapped with a deliberately huge value
+    # (999.0), swamping id=2's 5.0 and flipping the winner to id=1 -- WRONG.
+    # Post-fix, id=1's sole clone is excluded (all-clones-errored for that
+    # candidate), and since id=1 isn't the greedy action it scores -inf, so
+    # id=2 (5.0) correctly wins.
+    FOREIGN_TAG = 42.0
+    policy = FakeCheckpointPolicy(
+        {0.0: [0, 0.4, 0.6, 0, 0]},          # argmax/greedy = action 2
+        value_by_tag={FOREIGN_TAG: 999.0},    # huge decoy value for the OOD row
+    )
+    K = 1
+    max_rollout_decisions = 2
+    # Loop bound is 2*max_rollout_decisions + 32 = 36 iterations, plus the
+    # initial "apply" step, needs script indices 0..36 (37 entries) to stay
+    # live the whole time; pad generously.
+    foreign_script = [
+        SlotSpec(reward=0.0, seat=1, tag=FOREIGN_TAG) for _ in range(40)
+    ]
+    # order = argsort(-prior) -> [2, 1] (0.6 before 0.4)
+    per_candidate = [
+        [SlotSpec(reward=5.0, terminated=True)],  # candidate id=2 (greedy)
+        foreign_script,                            # candidate id=1 (foreign at cutoff)
+    ]
+    pool = FakeSearchPool(per_candidate, K=K, seat=0)
+    factory, _ = _factory_from(pool)
+
+    searcher = SearchPolicy(
+        policy, factory,
+        SearchConfig(num_determinizations=K, discount_gamma=1.0,
+                     max_rollout_decisions=max_rollout_decisions),
+    )
+    choice = searcher.choose(_obs(seat=0, prior_tag=0.0, mask=[1, 1, 1, 1, 1]))
+
+    assert choice.info["source"] == "search"
+    assert choice.info["greedy_action_id"] == 2
+    assert choice.action_id == 2                  # id=1's decoy value must NOT win
+    scores = choice.info["scores"]
+    assert scores[0] == pytest.approx(5.0)         # candidate id=2
+    assert scores[1] == float("-inf")              # candidate id=1: excluded, not greedy
+    assert searcher.fallback_count == 1            # all-clones-errored fallback counted
+
+
 def test_foreign_rows_between_boundary_and_bootstrap():
     # Models the redesigned Go contract: after a round boundary the pool surfaces
     # ORDINARY foreign-seat rows (round_ended=False) until the root's next GENUINE

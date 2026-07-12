@@ -177,8 +177,14 @@ class SearchPolicy:
         result = pool.step(commands)
         self._absorb(result, root_seat, scores, done, errored, horizon, active=set(range(n)))
 
-        # Champion lockstep rollout of the still-live clones.
-        for _ in range(self._config.max_rollout_decisions):
+        # Champion lockstep rollout of the still-live clones. Go defers ITS cap
+        # (max_rollout_decisions) to the root seat's next decision, so a clone
+        # can still be mid-foreign-seat-turn when Go's cap fires; this Python
+        # loop bound is intentionally slack (2x + 32) so Go's truncated/
+        # round_ended rows are the normal cutoff signal and reach `_absorb`
+        # first. Go owns truncation semantics; this bound is a defensive
+        # backstop only, in case a pool implementation never truncates.
+        for _ in range(2 * self._config.max_rollout_decisions + 32):
             active = [s for s in range(n) if not done[s]]
             if not active:
                 break
@@ -207,8 +213,16 @@ class SearchPolicy:
             self._absorb(result, root_seat, scores, done, errored, horizon, active=active_set)
         else:
             # Decision cap hit with clones still live: bootstrap them like a
-            # truncation with the value of their current observation row.
-            self._bootstrap_live(result, scores, done, horizon)
+            # truncation with the value of their current observation row --
+            # but ONLY if that row is a genuine root-seat decision. Go defers
+            # its own cap to the root seat's next decision, so this Python
+            # backstop firing mid-foreign-seat-turn means the clone never
+            # reached a scoreable root-seat state; value-bootstrapping a
+            # foreign-seat row would feed the value head an out-of-distribution
+            # input (the exact OOD failure mode eliminated on the Go side).
+            # Treat it like a per-clone error instead: exclude it from its
+            # candidate's mean via the existing `errored` drop path.
+            self._bootstrap_live(result, scores, done, errored, horizon, root_seat)
 
         return self._aggregate(scores, errored, candidates, K, greedy_action, root_value)
 
@@ -245,14 +259,24 @@ class SearchPolicy:
         if bootstrap:
             self._add_value_bootstrap(result, scores, bootstrap, horizon)
 
-    def _bootstrap_live(self, result, scores, done, horizon) -> None:
-        bootstrap = [
-            (s, result.row_of_slot[s])
+    def _bootstrap_live(self, result, scores, done, errored, horizon, root_seat) -> None:
+        seat_of_slot = {meta.slot: int(meta.seat) for meta in result.slots}
+        live = [
+            s
             for s in range(len(done))
             if not done[s] and s in result.row_of_slot
         ]
-        for s, _ in bootstrap:
+        bootstrap: list[tuple[int, int]] = []
+        for s in live:
             done[s] = True
+            if seat_of_slot.get(s) == root_seat:
+                bootstrap.append((s, result.row_of_slot[s]))
+            else:
+                # Foreign-seat row at cutoff: the clone never reached a
+                # scoreable root-seat state. Exclude it from its candidate's
+                # mean via the same path used for per-clone errors, rather
+                # than value-bootstrapping an out-of-distribution row.
+                errored[s] = True
         if bootstrap:
             self._add_value_bootstrap(result, scores, bootstrap, horizon)
 
