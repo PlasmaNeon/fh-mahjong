@@ -81,6 +81,14 @@ func (r *FenghuaRuleset) EvaluateHand(hand []*pb.Tile, openMelds []*pb.Meld, win
 		return 0, nil, false
 	}
 
+	// 大吊车有搭 (Wild Loner): four open melds with a lone wild tile in hand.
+	// That wild pairs with ANY tile, so the hand "is calling any tile" and — per
+	// the Fenghua rules (docs/rules/official-rules.md) — may only be won by an
+	// own tile. Reject a Ron on this shape; self-draw still wins normally.
+	if !isTsumo && e.isWildLoner() {
+		return 0, nil, false
+	}
+
 	entries = e.appendDragonAndWindEntries(entries)
 	entries = e.appendKongFlagEntries(entries)
 
@@ -278,6 +286,13 @@ func (e *handEvaluation) sevenPairsRoute() *scoredRoute {
 		}
 	}
 	return routeOf(re)
+}
+
+// isWildLoner reports the 大吊车有搭 shape: four open melds with a single wild
+// tile left in hand. That lone wild pairs with any tile, so the hand calls every
+// tile and (per the Fenghua rules) may only win by self-draw, never by Ron.
+func (e *handEvaluation) isWildLoner() bool {
+	return len(e.openMelds) == 4 && len(e.hand) == 1 && e.wildsInHand >= 1
 }
 
 func (e *handEvaluation) standardRoute() *scoredRoute {

@@ -379,12 +379,29 @@ func TestFenghuaRuleset_Loner(t *testing.T) {
 			t.Errorf("want 102, got %d (canWin=%v)", s, ok)
 		}
 	})
-	t.Run("Wild / 1 Wild / Ron", func(t *testing.T) {
-		// With 1 wild (closed tile is wild, winTile is also wild → 2 wilds in fullHand)
-		// Base(1)+2Wilds(2)+WildLoner(50) = 53 (no Common Win: open meld has pon)
-		s, _, ok := r.EvaluateHand(mkHand(1), openMelds, mkWin(1), ws, 0, false)
-		if !ok || s != 53 {
-			t.Errorf("want 53, got %d (canWin=%v)", s, ok)
+	t.Run("Wild / 1 Wild / Ron rejected", func(t *testing.T) {
+		// The lone tile in hand is a wild, so the pair of eyes is "calling any
+		// tile". Per the Fenghua rules (大吊车有搭 / Wild Loner) such a hand can
+		// only be won by self-draw — a Ron must be rejected.
+		_, _, ok := r.EvaluateHand(mkHand(1), openMelds, mkWin(1), ws, 0, false)
+		if ok {
+			t.Errorf("wild loner must not win by Ron (canWin should be false)")
+		}
+	})
+	t.Run("Wild / 1 Wild / Tsumo", func(t *testing.T) {
+		// The same shape still wins by self-draw and scores the Wild Loner pattern.
+		_, entries, ok := r.EvaluateHand(mkHand(1), openMelds, mkWin(1), ws, 0, true)
+		if !ok {
+			t.Fatalf("wild loner must win by Tsumo (canWin should be true)")
+		}
+		found := false
+		for _, e := range entries {
+			if e.PatternName == "Wild Loner (大吊车有搭)" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected Wild Loner entry, got %v", entries)
 		}
 	})
 }
