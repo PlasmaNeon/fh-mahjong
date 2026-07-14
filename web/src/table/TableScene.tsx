@@ -237,8 +237,7 @@ export function TableRoundResultOverlay({
                 </section>
               )}
 
-              <section className="round-result-section" aria-label="Seat payouts">
-                <div className="round-result-section-label">Payouts</div>
+              <section className="round-result-section round-result-payout-section" aria-label="Seat payouts">
                 <div className="round-result-payout-grid">
                   {payouts.map((payout) => (
                     <div
@@ -250,7 +249,8 @@ export function TableRoundResultOverlay({
                         {payout.amount > 0 ? '+' : ''}{payout.amount}
                       </div>
                       {payout.readyLabel && (
-                        <div className={`round-result-payout-ready ${payout.readyActive ? 'round-result-payout-ready-on' : ''}`}>
+                        <div className={`round-result-payout-status ${payout.readyActive ? 'round-result-payout-status-ready' : 'round-result-payout-status-waiting'}`}>
+                          <span className="round-result-payout-status-dot" aria-hidden="true" />
                           {payout.readyLabel}
                         </div>
                       )}
