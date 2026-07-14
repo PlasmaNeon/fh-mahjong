@@ -37,8 +37,11 @@ describe('buildScenario', () => {
     expect((buildScenario('long', false).breakdown ?? []).length).toBeGreaterThanOrEqual(10)
   })
 
-  it('ready flag populates payout ready badges; default clears them', () => {
-    expect((buildScenario('tsumo', true).payouts ?? []).some((p) => p.readyLabel)).toBe(true)
+  it('ready flag populates explicit payout statuses; default clears them', () => {
+    const readyLabels = (buildScenario('tsumo', true).payouts ?? []).map((p) => p.readyLabel)
+    expect(readyLabels).toContain('Ready')
+    expect(readyLabels).toContain('Waiting')
+    expect(readyLabels).not.toContain('...')
     expect((buildScenario('tsumo', false).payouts ?? []).every((p) => !p.readyLabel)).toBe(true)
   })
 })

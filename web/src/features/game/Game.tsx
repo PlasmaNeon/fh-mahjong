@@ -384,7 +384,7 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
             label: `Seat ${payout.seat}`,
             amount: payout.amount,
             readyLabel: gameState.playerReady && gameState.playerReady.length > payout.seat
-                ? (gameState.playerReady[payout.seat] ? 'Ready' : '...')
+                ? (gameState.playerReady[payout.seat] ? 'Ready' : 'Waiting')
                 : null,
             readyActive: !!(gameState.playerReady && gameState.playerReady[payout.seat]),
         })),

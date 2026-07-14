@@ -72,7 +72,7 @@ Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/mat
 Dev-only preview pages that render real components with mock data (no live match). Not linked from the app UI; reached by URL.
 
 - **TableSample.tsx** — Renders the real `TableBoard` with mock game data so the table layout can be iterated without a live match. Route: `/tools/table-sample`.
-- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so PR #152's redesign can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · ready-badge toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own viewport drives the responsive `max-width: 720px` / landscape media queries. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
+- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so the shared live/replay settlement UI can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · readiness toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own viewport drives the responsive `max-width: 720px` / landscape media queries. Presets include a 375x667 compact iPhone regression target. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
 
 ## Architecture Notes
 
@@ -80,6 +80,7 @@ Dev-only preview pages that render real components with mock data (no live match
 
 - All files in a feature folder use `'../../` to reference `src`-level directories (`proto`, `table`, `contexts`, `hooks`, `theme`, `utils`, `config`). Intra-feature imports (files in the same folder) use `'./'`.
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.
+- Live round-result payout adapters use explicit `Ready` / `Waiting` labels. Replay adapters leave readiness absent, and the shared overlay must not synthesize a status when none was provided.
 - `Game.tsx` and `Replay.tsx` do not own seat/discard layout markup directly; shared table layout belongs in `../../table/`.
 - The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - `Calc.tsx` is intentionally self-contained and does not share state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.

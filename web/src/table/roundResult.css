@@ -209,43 +209,68 @@
 .round-result-payout-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.45rem;
+  overflow: hidden;
+  border: 1px solid rgba(242, 232, 213, 0.14);
+  border-radius: 11px;
+  background: rgba(15, 74, 60, 0.18);
 }
 
 .round-result-payout-cell {
   min-width: 0;
-  padding: 0.6rem 0.45rem 0.5rem;
-  border: 1px solid rgba(242, 232, 213, 0.12);
-  border-radius: 10px;
-  background: rgba(15, 74, 60, 0.2);
+  padding: 0.48rem 0.25rem 0.44rem;
+  border-right: 1px solid rgba(242, 232, 213, 0.11);
   text-align: center;
 }
 
-.round-result-payout-positive { border-top: 3px solid var(--rr-jade); }
-.round-result-payout-negative { border-top: 3px solid var(--rr-cinnabar); }
+.round-result-payout-cell:last-child { border-right: 0; }
+.round-result-payout-positive {
+  background: linear-gradient(180deg, rgba(116, 198, 157, 0.15), rgba(116, 198, 157, 0.04));
+  box-shadow: inset 0 2px 0 var(--rr-jade);
+}
+.round-result-payout-negative { box-shadow: inset 0 2px 0 rgba(215, 102, 91, 0.72); }
+.round-result-payout-seat {
+  overflow: hidden;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .round-result-payout-amount {
-  margin-top: 0.12rem;
-  font-size: 1.1rem;
+  margin-top: 0.06rem;
+  font-size: clamp(0.96rem, 4.2vw, 1.15rem);
   font-weight: 900;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 .round-result-payout-positive .round-result-payout-amount { color: var(--rr-jade); }
 .round-result-payout-negative .round-result-payout-amount { color: #e58b81; }
 
-.round-result-payout-ready {
-  width: fit-content;
-  margin: 0.3rem auto 0;
-  padding: 0.1rem 0.34rem;
-  border-radius: 999px;
-  font-size: 0.56rem;
+.round-result-payout-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.24rem;
+  margin-top: 0.22rem;
+  font-size: 0.53rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(242, 232, 213, 0.48);
-  background: rgba(0, 0, 0, 0.18);
 }
 
-.round-result-payout-ready-on { color: var(--rr-jade); }
+.round-result-payout-status-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(242, 232, 213, 0.05);
+}
+
+.round-result-payout-status-waiting {
+  color: rgba(242, 232, 213, 0.48);
+}
+
+.round-result-payout-status-ready { color: var(--rr-jade); }
 
 .round-result-actions {
   flex-shrink: 0;
@@ -311,13 +336,14 @@
     border-radius: 22px 22px 0 0;
   }
 
-  .round-result-scroll { padding: 0.85rem 0.8rem 0.7rem; }
-  .round-result-heading { gap: 0.65rem; }
+  .round-result-scroll { padding: 0.7rem 0.65rem 0.55rem; }
+  .round-result-heading { gap: 0.65rem; padding-bottom: 0.7rem; }
   .round-result-heading-main { gap: 0.55rem; }
   .round-result-title { font-size: clamp(1.25rem, 6vw, 1.65rem); }
   .round-result-total strong { font-size: clamp(1.5rem, 8vw, 2rem); }
   .round-result-breakdown-grid { grid-template-columns: 1fr; }
-  .round-result-payout-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .round-result-section { margin-top: 0.7rem; }
+  .round-result-payout-section { margin-top: 0.55rem; }
   .round-result-hand-row { justify-content: flex-start; }
 
   .round-result-actions {
