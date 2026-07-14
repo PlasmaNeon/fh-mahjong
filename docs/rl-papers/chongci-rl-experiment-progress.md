@@ -15916,6 +15916,35 @@ mechanism is test-time search + expert iteration (search-improved targets distil
 back into the net), with serve-time ensembling (champion + deep8 iter_360's 0.069
 tail) as a cheap adjacent win.
 
+### Experiment: Phase-1 test-time search gate (2026-07-12/14) — FAILED, search closed
+
+Setup: honest determinized pMCPA over the frozen champion (PR #161: RedealUnseen,
+paired-CRN SearchPool, root-seat pinning, discount-consistent scoring, in-distribution
+bootstraps; 11 defects fixed pre-merge across SDD/adversarial-loop/GitHub-Codex).
+Gate: SearchPolicy(champion) vs raw greedy champion, paired duplicate-seat, 480
+placements, seeds 870000+.
+
+Results (fallback_count=0 in both runs — the machinery was flawless):
+- K=16/M=4 (21h): vs champion -0.0375 +/-0.0745 (parity); vs anchor +0.4347;
+  large_loss 0.079 (identical).
+- Escalation K=32/M=6 (34h): vs champion -0.0833 +/-0.0715 (WORSE, CI-separated);
+  vs anchor +0.3889; large_loss 0.092.
+
+Interpretation: tripling the budget made search WORSE — more candidates gave the
+rollout/value estimates more chances to override the champion's better greedy choice.
+The champion's policy is more accurate than its own value head can re-rank through
+shallow determinized search; without a search that outranks the policy there is no
+expert-iteration teacher, so Phase 2 is not justified. Search closes as the SEVENTH
+tested lever.
+
+CAMPAIGN CONCLUSION: batch scaling saturated, not exploitable, hidden info ~0, ACH
+failed, pool diversity neutral, capacity parity-bound at 2x cost, and test-time
+search loses to the raw policy. +0.4722 (deep4 iter_275 student) is the genuine
+ceiling of this pipeline, established seven independent ways. Remaining directions
+are product-side: labelled human-game corpus (accumulating in prod since the paipu
+fix), the post-game review tool, serve-time ensembling for tail risk, and an
+eventual human-data SL refresh once the corpus is large.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
