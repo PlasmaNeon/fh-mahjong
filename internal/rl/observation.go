@@ -499,7 +499,12 @@ func publicSeenCounts(state *pb.GameState) [42]int {
 		addCounts(&counts, faceCountsFromMelds(player.OpenMelds))
 		addCounts(&counts, faceCountsFromTiles(player.FlowerMelds))
 	}
-	addCounts(&counts, faceCountsFromTile(state.ActiveDiscard))
+	// ActiveDiscard is intentionally NOT summed: handleDiscard appends the
+	// tile to the discarder's Discards before setting ActiveDiscard, so during
+	// every claim window the tile is already in the pile above — adding it
+	// again double-counted the claimable tile at every interrupt decision.
+	// (The one state where ActiveDiscard is set but the tile is NOT in a pile
+	// is post-Ron ROUND_END, which no encoder path ever observes.)
 	addCounts(&counts, faceCountsFromTiles(state.WildTiles))
 	return counts
 }

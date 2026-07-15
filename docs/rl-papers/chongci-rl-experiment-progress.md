@@ -239,6 +239,26 @@ large-loss rate does not regress materially.
 
 Training loss, offline action agreement, and quick screens are not enough.
 
+### Seed-window policy (2026-07-14, binding)
+
+The `870000+` window is RETIRED for promotion decisions: it selected
+iter_200/240/275 AND scored every later gate, so any number measured on it
+carries winner's-curse bias (~+0.035 expected on the champion's margin).
+
+- **Screening** — `--start-seed 910000 --online-episodes 120` (480
+  placements): cheap looks, checkpoint selection, curiosity. Unlimited use;
+  never cite for promotion.
+- **Confirmation** — `--start-seed 950000 --online-episodes 1500` (6000
+  placements, ~6h on the 4090): final gates ONLY. Every promotion or
+  lever-verdict claim must cite a confirmation run compared via
+  `fh-mj-compare` (seed-clustered paired CI95). The windows cannot collide:
+  screening consumes seeds far below 950000 at these episode counts.
+- CIs: duplicate-seat rotations of one wall seed are correlated — use the
+  clustered fields (`mean_placement_ci95_clustered`, `cluster_design_effect`)
+  added 2026-07-14, not the naive iid `mean_placement_ci95`. Power reference
+  (iid-optimistic; scale by the measured design effect): 1500 seeds ≈ ±0.03
+  half-width; 80% power needs ~550 seeds for a true +0.05, ~1530 for +0.03.
+
 ## Implementation Milestones
 
 ### Roadmap And Study Docs
