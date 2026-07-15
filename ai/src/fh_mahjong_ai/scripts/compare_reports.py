@@ -69,6 +69,7 @@ def _check_comparable(
     report_b: Dict[str, Any],
     protocol_a: Dict[str, Any],
     protocol_b: Dict[str, Any],
+    allow_missing_config: bool,
 ) -> None:
     if protocol_a != protocol_b:
         label_a = protocol_a if protocol_a else "greedy"
@@ -77,7 +78,19 @@ def _check_comparable(
             f"reports are not comparable: decision protocol differs ({label_a!r} vs {label_b!r})"
         )
     for key in _COMPAT_KEYS:
-        if key in report_a and key in report_b and report_a[key] != report_b[key]:
+        in_a = key in report_a
+        in_b = key in report_b
+        if not (in_a and in_b):
+            if allow_missing_config:
+                continue
+            where = "both reports" if not in_a and not in_b else ("report A" if not in_a else "report B")
+            raise ValueError(
+                f"reports are not comparable: {key} missing from {where}. "
+                "A gate verdict requires the full evaluation config in both reports; "
+                "pass --allow-missing-config to compare a legacy report anyway "
+                "(the result is then NOT a valid promotion gate)"
+            )
+        if report_a[key] != report_b[key]:
             raise ValueError(
                 f"reports are not comparable: {key} differs "
                 f"({report_a[key]!r} vs {report_b[key]!r})"
@@ -103,10 +116,14 @@ def _per_seed_means(report: Dict[str, Any], num_seeds: int) -> list[float]:
     return stats["per_seed_mean_placements"]
 
 
-def paired_comparison(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> Dict[str, Any]:
+def paired_comparison(
+    report_a: Dict[str, Any],
+    report_b: Dict[str, Any],
+    allow_missing_config: bool = False,
+) -> Dict[str, Any]:
     report_a, protocol_a = _unwrap_report(report_a)
     report_b, protocol_b = _unwrap_report(report_b)
-    _check_comparable(report_a, report_b, protocol_a, protocol_b)
+    _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config)
     seeds_a = list(report_a.get("seeds", []))
     seeds_b = list(report_b.get("seeds", []))
     if not seeds_a or not seeds_b:
@@ -117,6 +134,12 @@ def paired_comparison(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> Dic
             "first mismatch at index "
             f"{next((i for i, (a, b) in enumerate(zip(seeds_a, seeds_b)) if a != b), min(len(seeds_a), len(seeds_b)))}) "
             "— paired comparison requires reports from the SAME seed window"
+        )
+    duplicates = len(seeds_a) - len(set(seeds_a))
+    if duplicates:
+        raise ValueError(
+            f"seed list contains {duplicates} duplicate wall seed(s) — repeated seeds are "
+            "identical simulations, not independent clusters, and would shrink the CI"
         )
 
     num_seeds = len(seeds_a)
@@ -143,6 +166,7 @@ def paired_comparison(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> Dic
         "large_loss_rate_a": report_a.get("large_loss_rate"),
         "large_loss_rate_b": report_b.get("large_loss_rate"),
         "significant": bool(ci95 > 0.0 and abs(mean_delta) > ci95),
+        "config_check": "legacy" if allow_missing_config else "strict",
     }
 
 
@@ -156,6 +180,8 @@ def _format_text(result: Dict[str, Any], label_a: str, label_b: str) -> str:
         f"  mean delta: {result['mean_delta']:+.4f} ± {result['delta_ci95_clustered']:.4f} (seed-clustered CI95)",
         f"  significant at 95%: {'YES' if result['significant'] else 'no'}",
     ]
+    if result.get("config_check") == "legacy":
+        lines.append("  WARNING: --allow-missing-config used — NOT a valid promotion gate")
     return "\n".join(lines)
 
 
@@ -164,6 +190,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("report_a", help="duplicate-seat report JSON (candidate)")
     parser.add_argument("report_b", help="duplicate-seat report JSON (baseline)")
     parser.add_argument("--json", action="store_true", help="emit the comparison dict as JSON")
+    parser.add_argument(
+        "--allow-missing-config",
+        action="store_true",
+        help="compare legacy reports missing persisted evaluation settings; the result is NOT a valid promotion gate",
+    )
     args = parser.parse_args(argv)
 
     with open(args.report_a) as fh:
@@ -171,7 +202,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     with open(args.report_b) as fh:
         report_b = json.load(fh)
 
-    result = paired_comparison(report_a, report_b)
+    result = paired_comparison(report_a, report_b, allow_missing_config=args.allow_missing_config)
     if args.json:
         print(json.dumps(result, indent=2))
     else:

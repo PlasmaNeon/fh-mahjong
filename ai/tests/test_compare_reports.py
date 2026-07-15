@@ -6,17 +6,31 @@ import pytest
 from fh_mahjong_ai.scripts.compare_reports import main, paired_comparison
 
 
+# The evaluation-config fields real duplicate-seat reports persist; the
+# strict comparability gate requires all of them in both reports.
+FULL_CONFIG = {
+    "match_mode": "chongci",
+    "chongci_config": {"starting_score": 2000, "bust_threshold": 0, "max_hands": 50},
+    "seats": [0, 1, 2, 3],
+    "max_steps_per_episode": 4000,
+    "oracle_observation": False,
+    "large_loss_threshold": -800.0,
+}
+
+
 def make_report(seeds, per_seed_means, large_loss_rate=0.05, with_field=True):
-    """Minimal duplicate-seat report. with_field=False mimics an OLD report
-    that predates per_seed_mean_placements (reconstruction fallback)."""
+    """Realistic duplicate-seat report (full persisted config). with_field=False
+    mimics an OLD report that predates per_seed_mean_placements
+    (reconstruction fallback)."""
     report = {
         "seeds": list(seeds),
-        "mean_placement": float(np.mean(per_seed_means)),
+        "mean_placement": float(np.mean(per_seed_means)) if len(seeds) else 0.0,
         "large_loss_rate": large_loss_rate,
         "seat_reports": [
             {"per_episode_placements": [float(m) for m in per_seed_means]}
             for _ in range(4)
         ],
+        **FULL_CONFIG,
     }
     if with_field:
         report["per_seed_mean_placements"] = [float(m) for m in per_seed_means]
@@ -141,16 +155,50 @@ def test_incompatible_configs_refused():
         paired_comparison(a, b)
 
 
-def test_missing_config_keys_still_comparable():
-    # Reports predating the persisted config fields must not be rejected:
-    # the compatibility check applies only to keys present in BOTH reports.
+def test_missing_config_fails_closed_with_legacy_opt_in():
+    # A gate verdict requires the full evaluation config in BOTH reports:
+    # a legacy report missing a persisted setting is refused by default and
+    # only comparable via the explicit opt-in, which marks the result legacy.
     seeds = [1, 2, 3]
     means = [0.0, 0.1, -0.1]
     a = make_report(seeds, means)
-    a["match_mode"] = "chongci"
-    b = make_report(seeds, means)  # no match_mode at all
-    result = paired_comparison(a, b)
+    legacy = make_report(seeds, means)
+    del legacy["max_steps_per_episode"]
+    with pytest.raises(ValueError, match="max_steps_per_episode missing from report B"):
+        paired_comparison(a, legacy)
+
+    result = paired_comparison(a, legacy, allow_missing_config=True)
     assert result["num_seeds"] == 3
+    assert result["config_check"] == "legacy"
+    assert paired_comparison(a, make_report(seeds, means))["config_check"] == "strict"
+
+
+def test_duplicate_seeds_refused():
+    # Repeated wall seeds are identical simulations, not independent
+    # clusters — counting them would shrink the CI.
+    seeds = [1, 2, 2, 3]
+    means = [0.0, 0.1, 0.1, -0.1]
+    with pytest.raises(ValueError, match="duplicate wall seed"):
+        paired_comparison(make_report(seeds, means), make_report(seeds, means))
+
+
+def test_cli_allow_missing_config_flag(tmp_path, capsys):
+    seeds = [1, 2, 3, 4]
+    means = [0.1, 0.2, -0.1, 0.0]
+    a = make_report(seeds, means)
+    legacy = make_report(seeds, means)
+    del legacy["oracle_observation"]
+    path_a = tmp_path / "a.json"
+    path_b = tmp_path / "b.json"
+    path_a.write_text(json.dumps(a))
+    path_b.write_text(json.dumps(legacy))
+
+    with pytest.raises(ValueError, match="oracle_observation missing"):
+        main([str(path_a), str(path_b)])
+
+    main([str(path_a), str(path_b), "--allow-missing-config"])
+    out = capsys.readouterr().out
+    assert "NOT a valid promotion gate" in out
 
 
 def test_protocol_mismatch_refused():
