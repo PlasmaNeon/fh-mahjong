@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { SocketProvider } from './contexts/SocketContext'
+import { AuthProvider } from './contexts/AuthContext'
 import { GameProvider } from './contexts/GameContext'
 import Home from './features/lobby/Home'
 import Login from './features/auth/Login'
@@ -15,8 +16,8 @@ import TableSample from './features/dev/TableSample'
 import RoundResultDemo from './features/dev/RoundResultDemo'
 
 // Keying the waiting room by its room id forces a fresh component instance per
-// room, so route-local state (token, name, seats, left-marker) never carries
-// over when navigating between different room links.
+// room, so route-local seats, requests, and reconnect state never carry over
+// when navigating between different room links.
 function TableRoute() {
     const { roomId } = useParams()
     return <Table key={roomId} />
@@ -24,9 +25,10 @@ function TableRoute() {
 
 function App() {
     return (
-        <SocketProvider>
-            <GameProvider>
-                <BrowserRouter>
+        <AuthProvider>
+            <SocketProvider>
+                <GameProvider>
+                    <BrowserRouter>
                     <div className="app-root">
                         <Routes>
                             <Route path="/" element={<Home />} />
@@ -45,9 +47,10 @@ function App() {
                             <Route path="*" element={<Navigate to="/" />} />
                         </Routes>
                     </div>
-                </BrowserRouter>
-            </GameProvider>
-        </SocketProvider>
+                    </BrowserRouter>
+                </GameProvider>
+            </SocketProvider>
+        </AuthProvider>
     )
 }
 

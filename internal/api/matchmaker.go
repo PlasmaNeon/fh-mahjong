@@ -29,6 +29,8 @@ const defaultBotActionDelay = 800 * time.Millisecond
 // internal errors to HTTP status codes without string-matching.
 var (
 	ErrPrivateTableNotFound       = errors.New("table not found")
+	ErrPrivateTableExists         = errors.New("table already exists")
+	ErrPrivateTableFull           = errors.New("table is full")
 	ErrPrivateTableAlreadyStarted = errors.New("table already started")
 	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
@@ -512,22 +514,30 @@ func (m *Matchmaker) createMatch(playerIDs []string, ruleset string, tableID str
 	}
 }
 
-// JoinOrCreatePrivateTable claims a seat for the given user. If the table
-// does not exist, the user becomes the host at seat 0. If the user is
-// already seated, this is a no-op.
-//
-// Returns a snapshot of the table state for the caller. The caller is
-// expected to broadcast a lobby_update afterward.
-func (m *Matchmaker) JoinOrCreatePrivateTable(tableID string, userID uint, username string) (*PrivateTable, error) {
+// CreatePrivateTable creates a configuring room and seats its creator as host.
+// It never reuses an existing id.
+func (m *Matchmaker) CreatePrivateTable(tableID string, userID uint, username string) (*PrivateTable, error) {
 	m.configuringMu.Lock()
 	defer m.configuringMu.Unlock()
-
-	table, ok := m.configuringTables[tableID]
-	if !ok {
-		table = newConfiguringTable(tableID, userID)
-		m.configuringTables[tableID] = table
+	if _, exists := m.configuringTables[tableID]; exists {
+		return nil, ErrPrivateTableExists
 	}
+	table := newConfiguringTable(tableID, userID)
+	if _, err := table.claimNextHumanSeat(userID, username); err != nil {
+		return nil, err
+	}
+	table.normalize()
+	m.configuringTables[tableID] = table
+	return table, nil
+}
 
+// JoinPrivateTable claims a seat in an existing room. Missing room ids are
+// rejected and never create state.
+func (m *Matchmaker) JoinPrivateTable(tableID string, userID uint, username string) (*PrivateTable, error) {
+	table := m.GetConfiguringPrivateTable(tableID)
+	if table == nil {
+		return nil, ErrPrivateTableNotFound
+	}
 	table.mu.Lock()
 	defer table.mu.Unlock()
 
@@ -694,7 +704,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 	}
 
 	// Async to avoid acquiring configuringMu while we'd otherwise be
-	// holding table.mu (lock-order inversion with JoinOrCreatePrivateTable).
+	// holding table.mu (lock-order inversion with JoinPrivateTable).
 	// Even now (after the lock is released) the goroutine is harmless and
 	// keeps the caller responsive.
 	go m.removeConfiguringTable(tableID)

@@ -439,7 +439,7 @@ func TestStartPrivateTable_RefusedWhileDraining(t *testing.T) {
 	go hub.Run()
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
 
-	if _, err := m.JoinOrCreatePrivateTable("t-drain", 101, "alice"); err != nil {
+	if _, err := m.CreatePrivateTable("t-drain", 101, "alice"); err != nil {
 		t.Fatalf("join: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t-drain", func(pt *PrivateTable) error {
@@ -550,7 +550,7 @@ func TestStartPrivateTable_DrainGateLeavesNoOrphanRow(t *testing.T) {
 	go hub.Run()
 	m := NewMatchmaker(NewInMemoryQueue(), db, hub)
 
-	if _, err := m.JoinOrCreatePrivateTable("t-race", 101, "alice"); err != nil {
+	if _, err := m.CreatePrivateTable("t-race", 101, "alice"); err != nil {
 		t.Fatalf("join: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t-race", func(pt *PrivateTable) error {

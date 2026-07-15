@@ -6,17 +6,16 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	pb "github.com/plasma/fh-mahjong/proto"
+	"gorm.io/gorm"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	// Open up CORS for local web testing
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return originAllowed(r)
 	},
 }
 
@@ -152,37 +151,16 @@ func (h *Hub) Run() {
 }
 
 // ServeWs handles websocket requests from the peer.
-func ServeWs(hub *Hub, c *gin.Context) {
-	// Since this is a websocket connection, the standard Gin Header middleware
-	// for JWT often fails because browsers can't set headers on WebSocket(url) connections easily.
-	// Normally we pass token as a query param `?token=XYZ`
-	token := c.Query("token")
-
-	if token == "" {
-		log.Println("WebSocket connection failed: Missing token")
-		return // Return without upgrading
-	}
-
-	parsedToken, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return jwtSecret, nil
-	})
-
-	if err != nil || !parsedToken.Valid {
-		log.Println("WebSocket connection failed: Invalid or expired token")
+func ServeWs(hub *Hub, db *gorm.DB, c *gin.Context) {
+	if !originAllowed(c.Request) {
+		abortError(c, http.StatusForbidden, "Origin not allowed")
 		return
 	}
-
-	claims, ok := parsedToken.Claims.(jwt.MapClaims)
-	if !ok {
-		log.Println("WebSocket connection failed: Invalid token claims")
+	user, _, _, authErr := authenticateSessionRequest(db, c.Request)
+	if authErr != nil {
+		abortError(c, http.StatusUnauthorized, "Authentication required")
 		return
 	}
-
-	userID := uint(claims["sub"].(float64))
-	username := claims["username"].(string)
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -194,8 +172,8 @@ func ServeWs(hub *Hub, c *gin.Context) {
 		Hub:      hub,
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
-		UserID:   userID,
-		Username: username,
+		UserID:   user.ID,
+		Username: user.Username,
 	}
 
 	client.Hub.Register <- client

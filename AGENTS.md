@@ -13,7 +13,7 @@ This project implements a full-stack Mahjong game with a plugin-based ruleset ar
 | Game Engine | Go 1.25 |
 | Serialization | Protocol Buffers (protobuf 1.36.11) |
 | HTTP/WS Server | Gin + gorilla/websocket |
-| Auth | JWT + bcrypt |
+| Auth | 30-day opaque cookie sessions + bcrypt + CSRF |
 | Database | PostgreSQL 15, GORM |
 | Frontend | React 19, TypeScript, Vite 7 |
 | Styling | TailwindCSS 4 |

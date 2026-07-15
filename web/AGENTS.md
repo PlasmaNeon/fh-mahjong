@@ -10,7 +10,7 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 
 - **package.json** — Dependencies: React 19, Vite 7, TailwindCSS 4, Framer Motion 12, protobufjs 8
 - **vite.config.ts** — Vite bundler configuration
-- **.env.example** — Deployment-time frontend env vars for the public backend origin
+- **.env.example** — Optional same-site backend URLs. Preferred deployments proxy `/api` and WebSocket traffic through the frontend’s public origin so persistent cookies remain first-party
 - Client-side routes (`/play`, `/room/:roomId`, `/match/:matchId`, `/tools/calc`, etc.) rely on an SPA fallback to `index.html`. The Go server's `NoRoute` handler provides this for the bundled deploy; a static host (e.g. Vercel) needs its own rewrite-to-`index.html` rule.
 - **tsconfig.json** — TypeScript configuration
 - **index.html** — HTML entry point; declares the authored dark color scheme and Night Ink browser theme color used by Rainy Mahjong Club
@@ -25,7 +25,7 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 
 - Dev server: `npm run dev` (Vite on port 3000, proxies API to `:8080`)
 - Build: `npm run build` (outputs to `dist/`)
-- Production hosting: Vercel can serve the built SPA, but the app must be given `VITE_API_BASE_URL` and `VITE_WS_BASE_URL` for a reachable backend because Vite proxying only exists in local dev
+- Production hosting: use the bundled Go SPA or a reverse proxy that exposes `/api` and `/api/v1/ws` on the frontend’s public origin. Direct split URLs are supported only for same-site subdomains and require the backend `FRONTEND_ORIGINS` allowlist
 - All game state arrives as Protobuf binary via WebSocket; decoded by `protobufjs`.
 - `src/proto/game.js` and `src/proto/game.d.ts` are generated from `proto/game.proto`; regenerate them whenever proto schemas change.
 - Tile rendering uses layered SVG images: `Front.svg` (background) + tile face SVG.

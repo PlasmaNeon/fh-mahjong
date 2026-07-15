@@ -29,10 +29,12 @@ func TestPrivateMatchDeliversInitialStateToHost(t *testing.T) {
 	defer ts.Close()
 
 	hostToken := privateTableAuthToken(t, 101, "alice")
+	hostCookie, _, _, _ := privateTableSession(t, server, hostToken)
 
 	// 1. Host opens a websocket BEFORE starting (like the waiting room page).
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws?token=" + hostToken
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws"
+	headers := http.Header{"Cookie": []string{hostCookie.String()}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
 	if err != nil {
 		t.Fatalf("ws dial failed: %v", err)
 	}

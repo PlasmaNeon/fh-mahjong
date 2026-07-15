@@ -5,7 +5,8 @@ import { useSocket } from '../../contexts/SocketContext';
 import { useGameState } from '../../contexts/GameContext';
 import { game } from '../../proto/game';
 import { useGameStageLayout } from '../../hooks/useGameStageLayout';
-import { getPrivateRoomToken, loadPrivateRoomSession } from './privateRoomSession';
+import { loadPrivateRoomSession } from './privateRoomSession';
+import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import { preloadAllTileSvgs } from '../../utils/tileUtils';
@@ -19,8 +20,15 @@ export default function Game() {
     const navigate = useNavigate();
     const { isConnected, socket, connect } = useSocket();
     const { gameState, mySeatId } = useGameState();
+    const { status: authStatus, refreshSession } = useAuth();
 
     useEffect(() => {
+        if (authStatus === 'anonymous') {
+            const room = loadPrivateRoomSession();
+            const returnTo = room ? `/room/${room.tableId}` : '/play';
+            navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+            return;
+        }
         // If the player intentionally left this match, do NOT auto-reconnect.
         // Closing the socket on leave flips isConnected to false and would
         // otherwise instantly reconnect here, reclaiming the seat before the
@@ -28,16 +36,14 @@ export default function Game() {
         if (loadLeftMatchMarker()) {
             return;
         }
-        if (!isConnected || !socket) {
-            const storedToken = getPrivateRoomToken();
-            if (storedToken) {
-                // Attempt to auto-reconnect instead of booting user
-                connect(storedToken);
-            } else {
-                navigate('/');
-            }
+        if (authStatus === 'authenticated' && (!isConnected || !socket)) {
+            connect();
         }
-    }, [isConnected, socket, navigate, connect]);
+    }, [authStatus, isConnected, socket, navigate, connect]);
+
+    if (authStatus === 'offline') {
+        return <LoadingScreen label="The club is offline. Reconnect, then refresh to reclaim your seat." onRetry={() => void refreshSession()} />;
+    }
 
     if (!gameState) {
         return <LoadingScreen label="Waiting for server to deal" />;

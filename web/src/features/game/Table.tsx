@@ -2,16 +2,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { getApiUrl } from '../../config';
-import { clearPrivateRoomSession, loadPrivateRoomSession, savePrivateRoomSession } from './privateRoomSession';
 import { roomActiveRedirectMatchId } from './roomNavigation';
+import { savePrivateRoomSession } from './privateRoomSession';
 import {
-    buildRejoinLink,
     clearLeftMatchMarker,
-    extractRejoinToken,
     loadLeftMatchMarker,
     saveLeftMatchMarker,
-    stripTokenFromUrl,
 } from './rejoinMatch';
 import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
@@ -23,12 +21,11 @@ type Difficulty = game.Difficulty;
 
 export default function Table() {
     const { roomId } = useParams();
-    const [username, setUsername] = useState(() => loadPrivateRoomSession(roomId)?.username ?? '');
-    const [guestToken, setGuestToken] = useState('');
     const [joining, setJoining] = useState(false);
     const [starting, setStarting] = useState(false);
     const [error, setError] = useState('');
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
+    const [activeMatchId, setActiveMatchId] = useState('');
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
     const [rlAgentAvailable, setRlAgentAvailable] = useState(false);
     const [leftMarker, setLeftMarker] = useState<LeftMatchMarker | null>(() => loadLeftMatchMarker());
@@ -36,8 +33,8 @@ export default function Table() {
 
     const navigate = useNavigate();
     const { isConnected, connect, socket } = useSocket();
-
-    const myUserId = useMyUserId(guestToken);
+    const { status: authStatus, user, apiFetch, refreshSession } = useAuth();
+    const myUserId = user?.id ?? null;
 
     // The left-match marker is stored globally; only honor it for the room it
     // actually belongs to, so a leave in one room never suppresses connect /
@@ -46,104 +43,13 @@ export default function Table() {
     // renders and safe in effect dependency lists.
     const roomLeftMarker = leftMarker && leftMarker.roomId === roomId ? leftMarker : null;
 
-    // A cross-device rejoin link arrives as /room/:roomId?token=<jwt>. Save the
-    // token as our session, strip it from the URL (don't leave a bearer secret
-    // in history), and set the left-match marker so the Rejoin banner shows.
     useEffect(() => {
-        if (!roomId || typeof window === 'undefined') return;
-        const token = extractRejoinToken(window.location.search);
-        if (!token) return;
-
-        savePrivateRoomSession({
-            tableId: roomId,
-            token,
-            username: loadPrivateRoomSession(roomId)?.username ?? 'Guest',
-        });
-        setGuestToken(token);
-        window.history.replaceState(null, '', stripTokenFromUrl(window.location.href));
-
-        const marker = { roomId, matchId: '' };
-        saveLeftMatchMarker(marker);
-        setLeftMarker(marker);
-    }, [roomId]);
-
-    useEffect(() => {
-        const stored = loadPrivateRoomSession(roomId);
-        if (!stored) return;
-        // Always restore identity so the room screen (and the Rejoin banner)
-        // render after an intentional leave.
-        setGuestToken(stored.token);
-        setUsername(stored.username);
-        // But if the player intentionally left THIS room, stay disconnected so
-        // the bot keeps their seat — only auto-connect in the normal flow.
-        // Don't gate on isConnected: a socket from a *previous* room may still
-        // be open, and connect() must run so it can swap to this room's token
-        // (it is idempotent when the token is unchanged).
-        if (!roomLeftMarker) {
-            connect(stored.token);
+        if (authStatus === 'anonymous' && roomId) {
+            navigate(`/login?returnTo=${encodeURIComponent(`/room/${roomId}`)}`, { replace: true });
+        } else if (authStatus === 'authenticated' && !roomLeftMarker) {
+            connect();
         }
-    }, [connect, roomId, roomLeftMarker]);
-
-    const handleAuthFailure = useCallback(() => {
-        clearPrivateRoomSession(roomId);
-        setGuestToken('');
-        setTableState(null);
-        setError('Your private room session expired. Enter your name again.');
-    }, [roomId]);
-
-    const fetchTableState = useCallback(async (signal?: AbortSignal) => {
-        if (!roomId || !guestToken) return;
-        try {
-            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}`), {
-                headers: { Authorization: `Bearer ${guestToken}` },
-                signal,
-            });
-            // Bail if this request was for a room we've since navigated away
-            // from — a stale response must never write cross-room state.
-            if (signal?.aborted) return;
-            if (res.status === 401) {
-                handleAuthFailure();
-                return;
-            }
-            if (res.ok) {
-                const data = await res.json();
-                if (signal?.aborted) return;
-                // Redirect into the live match ONLY when THIS room reports one
-                // (status === 'active'). This is room-scoped, so opening a
-                // different room link never bounces into a previous game.
-                const matchId = roomActiveRedirectMatchId(data, leftMarker, roomId);
-                if (matchId) {
-                    navigate(`/match/${matchId}`);
-                    return;
-                }
-                // Active room the player intentionally left: keep showing the
-                // Rejoin banner. Capture the live match id first — a cross-device
-                // rejoin link (/room/:id?token=) starts the marker with an empty
-                // matchId, and this is the only payload carrying it, so the
-                // Rejoin button would otherwise have nowhere to navigate. Don't
-                // store the active-status payload as a table state (it has no
-                // seats and would trip the marker-clear).
-                if (data?.status === 'active') {
-                    if (roomLeftMarker && !roomLeftMarker.matchId && data.matchId) {
-                        const updated = { roomId: roomId as string, matchId: data.matchId };
-                        saveLeftMatchMarker(updated);
-                        setLeftMarker(updated);
-                    }
-                    return;
-                }
-                setTableState(data as PrivateTableState);
-            }
-        } catch (err) {
-            if ((err as any)?.name === 'AbortError') return;
-            console.error('fetch table state failed', err);
-        }
-    }, [guestToken, roomId, handleAuthFailure, leftMarker, navigate]);
-
-    useEffect(() => {
-        const controller = new AbortController();
-        fetchTableState(controller.signal);
-        return () => controller.abort();
-    }, [fetchTableState]);
+    }, [authStatus, connect, navigate, roomId, roomLeftMarker]);
 
     // If the match ended (or the room is back to configuring) while we were
     // away, drop the marker so the normal room screen shows instead of Rejoin.
@@ -155,24 +61,12 @@ export default function Table() {
     }, [roomLeftMarker, tableState]);
 
     const handleRejoin = useCallback(() => {
-        const session = loadPrivateRoomSession(roomId);
         const matchId = roomLeftMarker?.matchId || (tableState as any)?.matchId;
         clearLeftMatchMarker();
         setLeftMarker(null);
-        if (session?.token) connect(session.token);
+        connect();
         if (matchId) navigate(`/match/${matchId}`);
-    }, [connect, navigate, roomId, roomLeftMarker, tableState]);
-
-    const copyRejoinLink = useCallback(async () => {
-        const token = loadPrivateRoomSession(roomId)?.token;
-        if (!token || !roomId || typeof window === 'undefined') return;
-        const link = buildRejoinLink(window.location.origin, roomId, token);
-        try {
-            await navigator.clipboard.writeText(link);
-        } catch {
-            window.prompt('Copy your rejoin link:', link);
-        }
-    }, [roomId]);
+    }, [connect, navigate, roomLeftMarker, tableState]);
 
     const copyTableLink = useCallback(async () => {
         if (!roomId || typeof window === 'undefined') return;
@@ -221,6 +115,8 @@ export default function Table() {
                     setTableState(data.state as PrivateTableState);
                     if (!roomLeftMarker && data.state.state === 'started' && data.state.matchId) {
                         navigate(`/match/${data.state.matchId}`);
+                    } else if (roomLeftMarker && data.state.state === 'started' && data.state.matchId) {
+                        setActiveMatchId(data.state.matchId);
                     }
                 }
             } catch (err) {
@@ -232,77 +128,69 @@ export default function Table() {
         return () => socket.removeEventListener('message', handle);
     }, [socket, isConnected, roomId, navigate, roomLeftMarker]);
 
-    const performJoin = useCallback(async (token: string) => {
+    const performJoin = useCallback(async (signal?: AbortSignal) => {
         if (!roomId) return;
+        setJoining(true);
+        setError('');
         try {
-            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/join`), {
+            const res = await apiFetch(`/api/v1/rooms/${roomId}/join`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
+                signal,
             });
-            if (res.status === 401) {
-                handleAuthFailure();
-                return;
-            }
+            if (signal?.aborted) return;
             const data = await res.json().catch(() => ({}));
-            if (res.status === 409) {
-                setError(data.error || 'This private table is already in an active game.');
+            if (res.status === 401) {
+                navigate(`/login?returnTo=${encodeURIComponent(`/room/${roomId}`)}`, { replace: true });
                 return;
             }
             if (!res.ok) {
-                setError(data.error || 'Failed to join private table');
+                if (res.status === 404) setError('This private table is unavailable. Ask the host for a new link.');
+                else if (res.status === 409) setError(data.error || 'This table is full or already playing.');
+                else setError(data.error || 'Failed to join private table');
+                return;
+            }
+            const matchId = roomActiveRedirectMatchId(data, leftMarker, roomId);
+            if (matchId) {
+                navigate(`/match/${matchId}`);
                 return;
             }
             if (data.status === 'active' && data.matchId) {
-                navigate(`/match/${data.matchId}`);
+                setActiveMatchId(data.matchId);
+                if (roomLeftMarker && roomLeftMarker.matchId !== data.matchId) {
+                    const updated = { roomId, matchId: data.matchId };
+                    saveLeftMatchMarker(updated);
+                    setLeftMarker(updated);
+                }
                 return;
             }
+            setActiveMatchId('');
             setTableState(data as PrivateTableState);
+            savePrivateRoomSession({ tableId: roomId });
         } catch (err: any) {
-            setError(err.message || 'Failed to join private table');
-        }
-    }, [navigate, roomId, handleAuthFailure]);
-
-    const handleGuestJoin = async () => {
-        if (!username.trim() || !roomId) return;
-        setError('');
-        setJoining(true);
-        try {
-            const authRes = await fetch(getApiUrl('/api/v1/auth/guest'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username }),
-            });
-            const authData = await authRes.json();
-            if (!authRes.ok) throw new Error(authData.error || 'Guest auth failed');
-
-            setGuestToken(authData.token);
-            savePrivateRoomSession({
-                tableId: roomId,
-                token: authData.token,
-                username: authData.user?.username || username.trim(),
-            });
-            connect(authData.token);
-            await performJoin(authData.token);
-        } catch (err: any) {
-            setError(err.message);
+            if (err?.name === 'AbortError') return;
+            setError(err instanceof TypeError ? 'The club is offline. Your invitation is unchanged.' : err.message || 'Failed to join private table');
         } finally {
-            setJoining(false);
+            if (!signal?.aborted) setJoining(false);
         }
-    };
+    }, [apiFetch, leftMarker, navigate, roomId, roomLeftMarker]);
+
+    useEffect(() => {
+        if (authStatus !== 'authenticated') return;
+        const controller = new AbortController();
+        void performJoin(controller.signal);
+        return () => controller.abort();
+    }, [authStatus, performJoin]);
 
     const mutateSeat = useCallback(async (seat: number, kind: 'bot' | 'empty', difficulty?: Difficulty) => {
-        if (!roomId || !guestToken) return;
+        if (!roomId || authStatus !== 'authenticated') return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/seat`), {
+            const res = await apiFetch(`/api/v1/rooms/${roomId}/seat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED }),
             });
-            if (res.status === 401) {
-                handleAuthFailure();
-                return;
-            }
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 setError(data.error || 'Failed to update seat');
@@ -310,20 +198,16 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to update seat');
         }
-    }, [guestToken, roomId, handleAuthFailure]);
+    }, [apiFetch, authStatus, roomId]);
 
     const setMatchMode = useCallback(async (mode: 'classic' | 'chongci', cfg?: { starting_score: number; bust_threshold: number; max_hands: number }) => {
-        if (!roomId || !guestToken) return;
+        if (!roomId || authStatus !== 'authenticated') return;
         try {
-            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/mode`), {
+            const res = await apiFetch(`/api/v1/rooms/${roomId}/mode`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode, chongci_config: cfg }),
             });
-            if (res.status === 401) {
-                handleAuthFailure();
-                return;
-            }
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 setError(data.error || 'Failed to update match mode');
@@ -331,7 +215,7 @@ export default function Table() {
         } catch (err: any) {
             setError(err.message || 'Failed to update match mode');
         }
-    }, [guestToken, roomId, handleAuthFailure]);
+    }, [apiFetch, authStatus, roomId]);
 
     useEffect(() => {
         const cfg = tableState?.chongciConfig;
@@ -348,20 +232,15 @@ export default function Table() {
         // Guard re-entry: once a start is in flight the table flips to
         // "started" and is removed from the configuring registry, so a second
         // request would 409/404 ("table not found"). One click only.
-        if (!roomId || !guestToken || starting) return;
+        if (!roomId || authStatus !== 'authenticated' || starting) return;
         setStarting(true);
         setError('');
         try {
-            const res = await fetch(getApiUrl(`/api/v1/rooms/${roomId}/start`), {
+            const res = await apiFetch(`/api/v1/rooms/${roomId}/start`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guestToken}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
             });
-            if (res.status === 401) {
-                handleAuthFailure();
-                setStarting(false);
-                return;
-            }
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 setError(data.error || 'Failed to start match');
@@ -384,26 +263,50 @@ export default function Table() {
         }
     };
 
-    if (!guestToken) {
+    const showingRejoin = Boolean(roomLeftMarker && activeMatchId);
+
+    if (authStatus === 'offline') {
+        return (
+            <ClubShell title="Private Table">
+                <Card>
+                    <PageHeader title="The club is offline" subtitle={roomId} />
+                    <Section title="Your invitation is safe" subtitle="Reconnect, then we’ll check this exact table again.">
+                        <ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>Try Again</Button></ToolsRow>
+                    </Section>
+                </Card>
+            </ClubShell>
+        );
+    }
+
+    if (authStatus !== 'authenticated' || joining || (!tableState && !showingRejoin)) {
         return (
             <ClubShell title="Private Table">
                     <Card>
-                        <PageHeader title="Join Room" subtitle={roomId} />
-                        <Section title="Enter as guest" subtitle="Pick a display name to join this private room.">
-                            <Field
-                                label="Display name"
-                                value={username}
-                                onChange={e => setUsername(e.target.value)}
-                                placeholder="Your name"
-                            />
+                        <PageHeader title={error ? 'Table unavailable' : 'Joining private table'} subtitle={roomId} />
+                        <Section title={error ? 'The invitation could not be opened' : 'Taking your seat'} subtitle={error ? 'This link never creates a replacement room.' : 'Your account is confirmed. We’re asking the host’s table for a seat.'}>
                             {error && <Note tone="error">{error}</Note>}
+                            {!error && <Note>{authStatus === 'loading' ? 'Checking your club pass…' : 'Joining table…'}</Note>}
                             <ToolsRow>
-                                <Button variant="primary" onClick={handleGuestJoin} disabled={joining || !username.trim()}>
-                                    {joining ? 'Joining…' : 'Join Room'}
-                                </Button>
+                                {error && <><Button variant="primary" onClick={() => void performJoin()}>Try Again</Button><Button onClick={() => navigate('/play')}>Back to Play</Button></>}
                             </ToolsRow>
                         </Section>
                     </Card>
+            </ClubShell>
+        );
+    }
+
+    if (showingRejoin) {
+        return (
+            <ClubShell title="Private Table">
+                <Card>
+                    <PageHeader title="Match in progress" subtitle={roomId} />
+                    <Section title="Your seat is being held" subtitle="A bot is playing while you're away. Rejoin whenever you're ready.">
+                        <ToolsRow>
+                            <Button variant="primary" onClick={handleRejoin}>Rejoin Match</Button>
+                            <Button variant="default" onClick={copyTableLink}>{shareState === 'copied' ? 'Link Copied' : shareState === 'failed' ? 'Copy Failed' : 'Share Table'}</Button>
+                        </ToolsRow>
+                    </Section>
+                </Card>
             </ClubShell>
         );
     }
@@ -420,19 +323,6 @@ export default function Table() {
 
     return (
         <ClubShell wide title="Private Table">
-                {roomLeftMarker && (
-                    <Card>
-                        <Section
-                            title="Match in progress"
-                            subtitle="A bot is playing your seat while you're away."
-                        >
-                            <ToolsRow>
-                                <Button variant="primary" onClick={handleRejoin}>Rejoin</Button>
-                                <Button variant="default" onClick={copyRejoinLink}>Copy rejoin link</Button>
-                            </ToolsRow>
-                        </Section>
-                    </Card>
-                )}
                 <Card>
                     <PageHeader
                         title="Private Table"
@@ -510,21 +400,4 @@ export default function Table() {
                 </Card>
         </ClubShell>
     );
-}
-
-function useMyUserId(token: string): number | null {
-    const [userId, setUserId] = useState<number | null>(null);
-    useEffect(() => {
-        if (!token) { setUserId(null); return; }
-        const parts = token.split('.');
-        if (parts.length !== 3) { setUserId(null); return; }
-        try {
-            const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-            const sub = typeof payload.sub === 'number' ? payload.sub : Number(payload.sub);
-            setUserId(Number.isFinite(sub) ? sub : null);
-        } catch {
-            setUserId(null);
-        }
-    }, [token]);
-    return userId;
 }

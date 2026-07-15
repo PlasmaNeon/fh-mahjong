@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,19 @@ import (
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+const privateTableAlphabet = "23456789abcdefghjkmnpqrstuvwxyz"
+
+func generatePrivateTableID() (string, error) {
+	bytes := make([]byte, 8)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	for i := range bytes {
+		bytes[i] = privateTableAlphabet[int(bytes[i])%len(privateTableAlphabet)]
+	}
+	return string(bytes), nil
+}
 
 // SeatConfig mirrors pb.SeatConfig for in-memory mutation. JSON marshalling
 // uses field names that match the proto, so the WebSocket lobby_update
@@ -72,7 +86,7 @@ func (t *PrivateTable) claimNextHumanSeat(userID uint, username string) (uint32,
 			return uint32(i), nil
 		}
 	}
-	return 0, errors.New("no empty seat available")
+	return 0, ErrPrivateTableFull
 }
 
 // setSeat applies a host seat-config change. The target seat must not be
@@ -243,14 +257,51 @@ func (s *Server) handlePrivateTableJoin(c *gin.Context) {
 		return
 	}
 
-	table, err := s.Matchmaker.JoinOrCreatePrivateTable(tableID, userID.(uint), username.(string))
+	table, err := s.Matchmaker.JoinPrivateTable(tableID, userID.(uint), username.(string))
 	if err != nil {
-		respondError(c, http.StatusBadRequest, err.Error())
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrPrivateTableNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, ErrPrivateTableFull) {
+			status = http.StatusConflict
+		}
+		respondError(c, status, err.Error())
 		return
 	}
 
 	s.broadcastPrivateTable(table)
 	c.Data(http.StatusOK, "application/json", marshalPrivateTableJSON(table))
+}
+
+func (s *Server) handlePrivateTableCreate(c *gin.Context) {
+	userID, _ := c.Get("userID")
+	username, _ := c.Get("username")
+	if s.Matchmaker == nil {
+		respondError(c, http.StatusServiceUnavailable, "Private matchmaking unavailable")
+		return
+	}
+	for attempt := 0; attempt < 10; attempt++ {
+		tableID, err := generatePrivateTableID()
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "Failed to generate private table")
+			return
+		}
+		if _, active := s.Matchmaker.GetActivePrivateTable(tableID); active {
+			continue
+		}
+		table, err := s.Matchmaker.CreatePrivateTable(tableID, userID.(uint), username.(string))
+		if errors.Is(err, ErrPrivateTableExists) {
+			continue
+		}
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "Failed to create private table")
+			return
+		}
+		s.broadcastPrivateTable(table)
+		c.Data(http.StatusCreated, "application/json", marshalPrivateTableJSON(table))
+		return
+	}
+	respondError(c, http.StatusServiceUnavailable, "Could not reserve a private table code")
 }
 
 func (s *Server) handlePrivateTableGet(c *gin.Context) {

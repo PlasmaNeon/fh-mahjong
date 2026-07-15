@@ -5,26 +5,6 @@ export type LeftMatchMarker = {
 
 const LEFT_MATCH_KEY = 'mahjong_left_match_v1'
 
-// ---- pure helpers (unit-tested) -------------------------------------------
-
-export function buildRejoinLink(origin: string, roomId: string, token: string): string {
-  const base = origin.replace(/\/+$/, '')
-  return `${base}/room/${encodeURIComponent(roomId)}?token=${encodeURIComponent(token)}`
-}
-
-export function extractRejoinToken(search: string): string | null {
-  const params = new URLSearchParams(search)
-  const token = params.get('token')
-  return token && token.length > 0 ? token : null
-}
-
-export function stripTokenFromUrl(href: string): string {
-  const url = new URL(href)
-  url.searchParams.delete('token')
-  const query = url.searchParams.toString()
-  return `${url.origin}${url.pathname}${query ? `?${query}` : ''}${url.hash}`
-}
-
 export function serializeLeftMatchMarker(marker: LeftMatchMarker): string {
   return JSON.stringify({ roomId: marker.roomId, matchId: marker.matchId })
 }

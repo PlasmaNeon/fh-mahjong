@@ -4,21 +4,83 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 )
 
-// User represents a player account. Email is the login identity; Username is a
-// (non-unique) display name shown at the table.
+// User represents a player account. Email and Username are both login
+// identities; UsernameKey is the case-insensitive normalized lookup key.
 type User struct {
 	ID           uint      `gorm:"primaryKey;autoIncrement:false" json:"id"` // random sparse id, app-generated
 	Email        string    `gorm:"uniqueIndex;not null;size:255" json:"email"`
-	Username     string    `gorm:"not null;size:255" json:"username"` // display name (no longer unique)
+	Username     string    `gorm:"not null;size:255" json:"username"`
+	UsernameKey  string    `gorm:"size:255" json:"-"`
 	PasswordHash string    `gorm:"not null" json:"-"`
 	Rating       int       `gorm:"default:1500" json:"rating"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// UserSession is a revocable browser login. TokenHash contains only the
+// SHA-256 digest of the opaque cookie value; CSRFToken is returned to the
+// authenticated frontend and must accompany state-changing requests.
+type UserSession struct {
+	ID        uint      `gorm:"primaryKey" json:"-"`
+	TokenHash string    `gorm:"uniqueIndex;not null;size:64" json:"-"`
+	UserID    uint      `gorm:"index;not null" json:"-"`
+	CSRFToken string    `gorm:"not null;size:64" json:"-"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
+// NormalizeUsername turns a friendly visible name into its canonical display
+// and case-insensitive lookup key. The API separately enforces the 2-30 rune
+// length; migration callers can apply deterministic fallbacks before saving.
+func NormalizeUsername(input string) (string, string) {
+	input = strings.ReplaceAll(input, "@", "-at-")
+	var out strings.Builder
+	lastSpace := false
+	lastDash := false
+	for _, r := range strings.TrimSpace(input) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_':
+			out.WriteRune(r)
+			lastSpace = false
+			lastDash = false
+		case unicode.IsSpace(r):
+			if out.Len() > 0 && !lastSpace {
+				out.WriteByte(' ')
+				lastSpace = true
+				lastDash = false
+			}
+		case r == '-':
+			if out.Len() > 0 && !lastDash {
+				out.WriteByte('-')
+				lastDash = true
+				lastSpace = false
+			}
+		default:
+			if out.Len() > 0 && !lastDash {
+				out.WriteByte('-')
+				lastDash = true
+				lastSpace = false
+			}
+		}
+	}
+	display := strings.Trim(out.String(), " -")
+	return display, strings.ToLower(display)
+}
+
+func truncateRunes(value string, max int) string {
+	if utf8.RuneCountInString(value) <= max {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:max])
 }
 
 const (
@@ -27,8 +89,7 @@ const (
 )
 
 // generateUserID returns a cryptographically-random id in [10000, 99999]. The
-// range is kept well under 2^53 so the id round-trips exactly through the JWT
-// `sub` claim, which is decoded as a float64.
+// range stays compact enough to round-trip exactly through every JSON client.
 func generateUserID() (uint, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(userIDSpan))
 	if err != nil {
@@ -46,6 +107,9 @@ func (u *User) BeforeCreate(tx *gorm.DB) error {
 			return err
 		}
 		u.ID = id
+	}
+	if u.Username != "" {
+		u.Username, u.UsernameKey = NormalizeUsername(u.Username)
 	}
 	return nil
 }
@@ -95,8 +159,8 @@ type MatchPlayer struct {
 	AutomatedDecisions uint64 `gorm:"not null;default:0" json:"automatedDecisions,omitempty"`
 
 	// NOTE: deliberately no gorm relation to User (and no users foreign key):
-	// bots persist with UserID 0 and guest accounts (9000000-range ids) have
-	// no users row by design, so a users FK would reject their rows.
+	// bots persist with UserID 0 and historical guest matches may contain user
+	// ids with no users row, so a users FK would reject those legacy records.
 	// AutoMigrate drops the constraint left behind by the old relations.
 }
 
@@ -117,8 +181,8 @@ type MatchReview struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
-// AutoMigrate brings the schema up to date and safely transitions a legacy
-// username-based users table to the email-based schema.
+// AutoMigrate brings the schema up to date and safely transitions legacy user
+// identities to case-insensitively unique username keys.
 //
 // The legacy schema is detected as a `users` table that has no `email` column.
 // If such a table still holds rows we FAIL CLOSED with a diagnostic, because the
@@ -143,8 +207,18 @@ func AutoMigrate(db *gorm.DB) error {
 		// Empty legacy table: AutoMigrate below adds the email column in place.
 	}
 
+	// The prior schema used username as either a unique legacy identity or a
+	// non-unique display name. Remove that old index before adding/backfilling
+	// the dedicated normalized key.
+	if m.HasIndex(&User{}, "idx_users_username") {
+		if err := m.DropIndex(&User{}, "idx_users_username"); err != nil {
+			return fmt.Errorf("dropping stale unique username index: %w", err)
+		}
+	}
+
 	if err := db.AutoMigrate(
 		&User{},
+		&UserSession{},
 		&Match{},
 		&MatchPlayer{},
 		&PaipuRecord{},
@@ -153,9 +227,23 @@ func AutoMigrate(db *gorm.DB) error {
 		return err
 	}
 
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := backfillUniqueUsernames(tx); err != nil {
+			return err
+		}
+		if !tx.Migrator().HasIndex(&User{}, "idx_users_username_key") {
+			if err := tx.Exec("CREATE UNIQUE INDEX idx_users_username_key ON users(username_key)").Error; err != nil {
+				return fmt.Errorf("creating unique username key index: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	// Drop the users foreign key(s) the old User↔MatchPlayer relations put on
 	// match_players. Bots persist with user_id 0 and guest accounts have no
-	// users row by design, so the constraint would reject their seat rows.
+	// users row, so the constraint would reject bot and historical guest rows.
 	// Both historical GORM constraint names are handled; idempotent.
 	for _, constraint := range []string{"fk_users_matches", "fk_match_players_user"} {
 		if m.HasConstraint(&MatchPlayer{}, constraint) {
@@ -165,18 +253,44 @@ func AutoMigrate(db *gorm.DB) error {
 		}
 	}
 
-	// Drop the stale unique index on username left by the old schema so display
-	// names can repeat (the new model intentionally has no uniqueIndex on it).
-	if m.HasIndex(&User{}, "idx_users_username") {
-		if err := m.DropIndex(&User{}, "idx_users_username"); err != nil {
-			return fmt.Errorf("dropping stale unique username index: %w", err)
-		}
-	}
-
 	// Backfill the legacy ruleset key: "hometown" was renamed to "fenghua" in
 	// 2026-06. Idempotent — only touches rows that still hold the old value.
 	if err := db.Model(&Match{}).Where("ruleset = ?", "hometown").Update("ruleset", "fenghua").Error; err != nil {
 		return fmt.Errorf("backfilling legacy ruleset key: %w", err)
+	}
+	return nil
+}
+
+func backfillUniqueUsernames(db *gorm.DB) error {
+	var users []User
+	if err := db.Order("created_at ASC").Order("id ASC").Find(&users).Error; err != nil {
+		return fmt.Errorf("loading users for username migration: %w", err)
+	}
+	used := make(map[string]struct{}, len(users))
+	for _, user := range users {
+		display, key := NormalizeUsername(user.Username)
+		if utf8.RuneCountInString(display) < 2 {
+			display = fmt.Sprintf("Player-%d", user.ID)
+			key = strings.ToLower(display)
+		}
+		display = truncateRunes(display, 30)
+		key = strings.ToLower(display)
+		baseDisplay := display
+		for suffix := 2; ; suffix++ {
+			if _, exists := used[key]; !exists {
+				break
+			}
+			tail := fmt.Sprintf("-%d", suffix)
+			display = truncateRunes(baseDisplay, 30-utf8.RuneCountInString(tail)) + tail
+			key = strings.ToLower(display)
+		}
+		used[key] = struct{}{}
+		if err := db.Model(&User{}).Where("id = ?", user.ID).Updates(map[string]any{
+			"username":     display,
+			"username_key": key,
+		}).Error; err != nil {
+			return fmt.Errorf("backfilling username for user %d: %w", user.ID, err)
+		}
 	}
 	return nil
 }

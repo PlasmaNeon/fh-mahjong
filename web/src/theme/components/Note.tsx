@@ -12,7 +12,7 @@ export default function Note({
 }) {
     const t = tone === 'ok' ? ' ldg-note--ok' : tone === 'error' ? ' ldg-note--err' : ''
     return (
-        <p className={`ldg-note${t}`} style={style}>
+        <p className={`ldg-note${t}`} style={style} role={tone === 'error' ? 'alert' : tone === 'ok' ? 'status' : undefined}>
             {children}
         </p>
     )

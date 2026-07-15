@@ -48,7 +48,7 @@ fh-mahjong/
 
 **Working:**
 - **Engine & rules** — Protobuf schemas, ruleset-agnostic game state machine, and the full Fenghua ruleset (wild tiles, flowers, kong bonuses, 35+ patterns, wait-pattern scoring) with DFS/DP hand evaluation.
-- **Backend** — Gin REST API with JWT/guest auth, gorilla WebSocket rooms, per-match goroutine orchestration, binary Protobuf replay logging, round-end payout flow, and multi-round ready flow.
+- **Backend** — Gin REST API with revocable HttpOnly cookie sessions, CSRF/origin protection, account-only private rooms, gorilla WebSocket rooms, replay logging, and multi-round play.
 - **Frontend** — React 19 client with `/login`, `/lobby`, `/table/:roomId`, `/game/:matchId`, `/calc` rules debugger, and a replay viewer; client-side move validation via the Go → WASM bridge.
 - **AI / RL** — Python RL package (`ai/`) with self-play data generation, BC/AWBC/IQL/offline-Q and PPO training, an MLflow-tracked pipeline, the `rlenv` environment wrapper + 204-action catalog, the `cmd/rlbridge` c-shared bridge, a deterministic heuristic bot, and an HTTP-served RL agent seat with heuristic fallback.
 

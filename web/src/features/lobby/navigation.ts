@@ -12,14 +12,3 @@ export function consumePlayIntent(store: IntentStore): PlayIntent | null {
   store.removeItem(PLAY_INTENT_KEY)
   return value === 'quick-match' ? value : null
 }
-
-export function createPrivateTablePath(makeId: () => string = defaultTableId): string {
-  return `/room/${makeId()}`
-}
-
-function defaultTableId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID().slice(0, 8)
-  }
-  return Math.random().toString(36).slice(2, 10)
-}

@@ -32,6 +32,7 @@ type Server struct {
 // NewServer initializes a new Server with all defined routes
 func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	router := gin.Default()
+	router.Use(credentialedCORSMiddleware())
 	if err := router.SetTrustedProxies(loadTrustedProxies()); err != nil {
 		log.Fatalf("invalid TRUSTED_PROXIES configuration: %v", err)
 	}
@@ -60,7 +61,8 @@ func (s *Server) setupRoutes() {
 		// Public routes
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
-		v1.POST("/auth/guest", authHandler.GuestLogin)
+		v1.GET("/auth/session", AuthMiddleware(s.DB), authHandler.Session)
+		v1.DELETE("/auth/session", AuthMiddleware(s.DB), authHandler.Logout)
 		v1.GET("/config", s.handleConfig)
 		v1.POST("/tools/calc", s.handleCalc)
 		v1.POST("/tools/shanten", s.handleShanten)
@@ -68,17 +70,18 @@ func (s *Server) setupRoutes() {
 		v1.POST("/replays/:matchId", s.handleUploadPaipu)
 		v1.GET("/matches/:matchId/review", s.handleGetReview)
 		v1.POST("/matches/:matchId/review", s.handlePostReview)
-		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, c) })
+		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, s.DB, c) })
 
 		// Protected routes
 		protected := v1.Group("/")
-		protected.Use(AuthMiddleware())
+		protected.Use(AuthMiddleware(s.DB))
 		{
 			protected.GET("/users/me", s.handleGetMe)
 			protected.PATCH("/users/me", authHandler.UpdateMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
 			protected.POST("/matchmaking/leave", s.handleLeaveQueue)
 
+			protected.POST("/rooms", s.handlePrivateTableCreate)
 			protected.GET("/rooms/:roomId", s.handlePrivateTableGet)
 			protected.POST("/rooms/:roomId/join", s.handlePrivateTableJoin)
 			protected.POST("/rooms/:roomId/seat", s.handlePrivateTableSeat)
