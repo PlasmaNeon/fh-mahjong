@@ -72,7 +72,7 @@ func TestStartPrivateTable_RecordsSeatComposition(t *testing.T) {
 	}
 	m.RLPolicyIdentity = func() string { return "champ.pt@step9" }
 
-	if _, err := m.JoinOrCreatePrivateTable("t1", 101, "alice"); err != nil {
+	if _, err := m.CreatePrivateTable("t1", 101, "alice"); err != nil {
 		t.Fatalf("join: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t1", func(pt *PrivateTable) error {

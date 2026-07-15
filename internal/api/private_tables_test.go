@@ -4,28 +4,45 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/glebarez/sqlite"
+	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
+	"gorm.io/gorm"
 )
 
 func privateTableAuthToken(t *testing.T, userID uint, username string) string {
 	t.Helper()
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":      userID,
-		"username": username,
-		"exp":      time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		t.Fatalf("failed to sign test token: %v", err)
+	return fmt.Sprintf("%d|%s", userID, username)
+}
+
+func privateTableSession(t *testing.T, server *Server, credential string) (*http.Cookie, string, uint, string) {
+	t.Helper()
+	parts := strings.SplitN(credential, "|", 2)
+	if len(parts) != 2 {
+		t.Fatalf("invalid test credential %q", credential)
 	}
-	return tokenString
+	id64, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		t.Fatalf("invalid test user id: %v", err)
+	}
+	userID, username := uint(id64), parts[1]
+	user := storage.User{ID: userID, Email: fmt.Sprintf("test-%d@example.com", userID), Username: username, PasswordHash: "test", Rating: 1500}
+	if err := server.DB.Where("id = ?", userID).FirstOrCreate(&user).Error; err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+	raw, session, err := createSession(server.DB, userID)
+	if err != nil {
+		t.Fatalf("create test session: %v", err)
+	}
+	return &http.Cookie{Name: devSessionCookieName, Value: raw, Path: "/"}, session.CSRFToken, userID, username
 }
 
 func doPrivateTableRequest(t *testing.T, server *Server, method, path, token string, body any) (*httptest.ResponseRecorder, map[string]any) {
@@ -45,7 +62,22 @@ func doPrivateTableRequest(t *testing.T, server *Server, method, path, token str
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		cookie, csrf, userID, username := privateTableSession(t, server, token)
+		req.AddCookie(cookie)
+		if requiresCSRF(method) {
+			req.Header.Set(csrfHeaderName, csrf)
+		}
+		// Older lifecycle tests begin at /join. Their setup now explicitly
+		// creates the room through this fixture adapter; the production join
+		// handler itself never creates missing state.
+		if method == http.MethodPost && strings.HasSuffix(path, "/join") {
+			roomID := strings.TrimSuffix(strings.TrimPrefix(path, "/api/v1/rooms/"), "/join")
+			if server.Matchmaker.GetConfiguringPrivateTable(roomID) == nil {
+				if _, active := server.Matchmaker.GetActivePrivateTable(roomID); !active {
+					_, _ = server.Matchmaker.CreatePrivateTable(roomID, userID, username)
+				}
+			}
+		}
 	}
 	recorder := httptest.NewRecorder()
 	server.Router.ServeHTTP(recorder, req)
@@ -58,10 +90,20 @@ func doPrivateTableRequest(t *testing.T, server *Server, method, path, token str
 }
 
 func newPrivateTableTestServer() *Server {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	if err := storage.AutoMigrate(db); err != nil {
+		panic(err)
+	}
 	hub := NewHub()
 	go hub.Run()
-	matchmaker := NewMatchmaker(NewInMemoryQueue(), nil, hub)
-	return NewServer(nil, hub, matchmaker)
+	matchmaker := NewMatchmaker(NewInMemoryQueue(), db, hub)
+	return NewServer(db, hub, matchmaker)
 }
 
 func TestPrivateTableJoinAssignsHost(t *testing.T) {

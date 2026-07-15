@@ -43,15 +43,18 @@ func TestPrivateTableGetDifferentRoomDoesNotLeakActiveMatch(t *testing.T) {
 	}
 }
 
-// A user who is creating a fresh, different room can still do so while a prior
-// match is live elsewhere — distinct links are distinct rooms.
-func TestPrivateTableJoinDifferentRoomCreatesDistinctTable(t *testing.T) {
+// A separately created room remains distinct while a prior match is live
+// elsewhere; joining it cannot leak the active match in alpha.
+func TestPrivateTableJoinDifferentExistingRoomStaysDistinct(t *testing.T) {
 	server := newPrivateTableTestServer()
 	server.Matchmaker.registerActivePrivateTable("alpha", "match-alpha", []uint{101, 102, 103, 104}, nil)
+	if _, err := server.Matchmaker.CreatePrivateTable("beta", 101, "alice"); err != nil {
+		t.Fatalf("create beta: %v", err)
+	}
 
 	rec, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/beta/join", privateTableAuthToken(t, 101, "alice"), map[string]any{})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 creating a distinct room, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 joining a distinct room, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if body["tableId"] != "beta" || body["state"] != "configuring" {
 		t.Fatalf("expected a fresh configuring table 'beta', got %#v", body)

@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSocket } from '../../contexts/SocketContext'
 import { useGameState } from '../../contexts/GameContext'
-import { getApiUrl } from '../../config'
 import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ToolsRow } from '../../theme'
 import AuthTicket from '../auth/AuthTicket'
-import { createPrivateTablePath } from './navigation'
+import { useAuth } from '../../contexts/AuthContext'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 
@@ -18,41 +17,48 @@ export default function Lobby() {
   const navigate = useNavigate()
   const { isConnected, connect } = useSocket()
   const { gameState } = useGameState()
+  const { status: authStatus, apiFetch } = useAuth()
 
   useEffect(() => {
-    const token = localStorage.getItem('fh_token')
-    if (token && !isConnected) connect(token)
+    if (authStatus === 'authenticated' && !isConnected) connect()
     if (gameState?.matchId) navigate(`/match/${gameState.matchId}`)
-  }, [isConnected, gameState, navigate, connect])
+  }, [authStatus, isConnected, gameState, navigate, connect])
 
-  const joinQueue = async (token = localStorage.getItem('fh_token')) => {
-    if (!token) { setAuthPending(true); return }
+  const joinQueue = async () => {
+    if (authStatus === 'offline') { setError('The club is offline. Check your connection and try again.'); return }
+    if (authStatus !== 'authenticated') { setAuthPending(true); return }
     setError('')
     setQueueState('joining')
     try {
-      const response = await fetch(getApiUrl('/api/v1/matchmaking/join'), {
+      const response = await apiFetch('/api/v1/matchmaking/join', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ruleset }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Failed to join queue')
       setQueueState('queued')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error contacting matchmaker')
+      setError(err instanceof TypeError ? 'The club is offline. Check your connection and try again.' : err instanceof Error ? err.message : 'Error contacting matchmaker')
       setQueueState('idle')
     }
   }
 
+  useEffect(() => {
+    if (authPending && authStatus === 'authenticated') {
+      setAuthPending(false)
+      void joinQueue()
+    }
+  }, [authPending, authStatus])
+
   const cancelQueue = async () => {
-    const token = localStorage.getItem('fh_token')
-    if (!token) return
+    if (authStatus !== 'authenticated') return
     setError('')
     setQueueState('leaving')
     try {
-      const response = await fetch(getApiUrl('/api/v1/matchmaking/leave'), {
+      const response = await apiFetch('/api/v1/matchmaking/leave', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ruleset }),
       })
       const data = await response.json().catch(() => ({}))
@@ -86,7 +92,7 @@ export default function Lobby() {
 
         {authPending ? (
           <Section title="Sign in to find a match" subtitle="You will continue searching automatically.">
-            <AuthTicket onAuthenticated={token => { connect(token); setAuthPending(false); void joinQueue(token) }} />
+            <AuthTicket onAuthenticated={() => { connect() }} />
           </Section>
         ) : searching ? (
           <Section title="Listening for players" subtitle={ruleset === 'fenghua' ? 'Fenghua · Classic table' : 'Fenghua · Chongci table'}>
@@ -97,13 +103,13 @@ export default function Lobby() {
         ) : (
           <>
             <Section title="Quick Match" subtitle="The fastest way to a live Fenghua table.">
-              <Button variant="primary" onClick={() => void joinQueue()} disabled={Boolean(localStorage.getItem('fh_token')) && !isConnected}>Find Match</Button>
-              {Boolean(localStorage.getItem('fh_token')) && !isConnected && <Note>Connecting to the club server before matchmaking…</Note>}
+              <Button variant="primary" onClick={() => void joinQueue()} disabled={authStatus === 'authenticated' && !isConnected}>Find Match</Button>
+              {authStatus === 'authenticated' && !isConnected && <Note>Connecting to the club server before matchmaking…</Note>}
               <button type="button" className="disclosure-button" onClick={() => setShowModes(value => !value)} aria-expanded={showModes}>Game mode · {ruleset === 'fenghua' ? 'Classic' : 'Chongci'} {showModes ? '−' : '+'}</button>
               {showModes && <Toggle value={ruleset} onChange={value => setRuleset(value as Ruleset)} options={[{ value: 'fenghua', label: 'Classic' }, { value: 'chongci-fh', label: 'Chongci' }]} />}
             </Section>
             <Section title="Private Table" subtitle="Open a table now, then invite friends from the waiting room.">
-              <Button onClick={() => navigate(createPrivateTablePath())}>Create Private Table</Button>
+              <Button onClick={() => navigate('/room/new')}>Create Private Table</Button>
             </Section>
           </>
         )}

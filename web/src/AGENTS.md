@@ -16,9 +16,8 @@ Contains all React components, context providers, custom hooks, and utility func
   - `getApiUrl(path)` uses `VITE_API_BASE_URL` when present, otherwise falls back to same-origin relative paths for local dev
   - `getWebSocketUrl(path)` uses `VITE_WS_BASE_URL` when present, otherwise falls back to browser-origin WebSocket URLs
   - `VITE_WS_BASE_URL` may be supplied as `http(s)` or `ws(s)`; the helper normalizes `http -> ws` and `https -> wss`
-- **features/game/privateRoomSession.ts** — Durable private-room session helper:
-  - Stores the active guest token, username, and `tableId` in tab-scoped session storage so refreshes reconnect cleanly without making every tab share the same guest identity
-  - Drops expired guest JWTs before the UI attempts a reconnect and clears the legacy local-storage key from the short-lived cross-tab experiment
+- **contexts/AuthContext.tsx** — Owns persistent-login bootstrap and the in-memory CSRF token; API credentials live only in the server-set HttpOnly cookie
+- **features/game/privateRoomSession.ts** — Stores only the non-sensitive current `tableId` so an expired login can return to the correct invite after authentication
 - **index.css** — Global reset and fixed-stage geometry (TailwindCSS + table layout); Rainy Club visual values live under `theme/` and `table/table-theme.css`
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
   - Includes the centered match HUD plus the fixed-stage seat-lane / discard-lane styling used by the shared table presenter
@@ -58,4 +57,4 @@ Contains all React components, context providers, custom hooks, and utility func
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
 - Every route shares the Rainy Mahjong Club identity: ink/rain backdrops, bone-paper work surfaces, jade controls, brass details, and seal-red danger treatment. The home route is the deliberate asymmetric exception, acting as the club entrance rather than another centered form card.
-- Private-room reconnects intentionally use per-tab browser storage so refreshes still reconnect, but opening multiple `/table/:tableId` tabs in the same browser can simulate multiple local players without all tabs sharing one guest identity.
+- Private-room identity is account-backed. Browser storage never contains a session token; multi-tab play uses the same signed-in account.

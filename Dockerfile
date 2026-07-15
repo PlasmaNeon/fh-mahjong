@@ -28,6 +28,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server
 # Stage 3: Final Production Image
 FROM alpine:latest
 WORKDIR /app
+ENV APP_ENV=production
 
 # Install root certificates in case we need to make HTTPS requests
 RUN apk --no-cache add ca-certificates tzdata

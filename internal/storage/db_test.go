@@ -2,6 +2,24 @@ package storage
 
 import "testing"
 
+func TestNormalizeUsernameFriendlyNames(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantDisplay string
+		wantKey     string
+	}{
+		{"  Rain   Player  ", "Rain Player", "rain player"},
+		{"雨夜_Club-2", "雨夜_Club-2", "雨夜_club-2"},
+		{"River@Home!!!", "River-at-Home", "river-at-home"},
+	}
+	for _, tc := range tests {
+		display, key := NormalizeUsername(tc.input)
+		if display != tc.wantDisplay || key != tc.wantKey {
+			t.Fatalf("NormalizeUsername(%q) = (%q, %q), want (%q, %q)", tc.input, display, key, tc.wantDisplay, tc.wantKey)
+		}
+	}
+}
+
 func TestGenerateUserIDInRange(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		id, err := generateUserID()

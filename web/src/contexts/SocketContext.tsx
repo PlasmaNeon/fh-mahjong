@@ -4,7 +4,7 @@ import { getWebSocketUrl } from '../config';
 interface SocketContextType {
     socket: WebSocket | null;
     isConnected: boolean;
-    connect: (token: string) => void;
+    connect: () => void;
     disconnect: () => void;
 }
 
@@ -20,34 +20,15 @@ export const useSocket = () => useContext(SocketContext);
 export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [socket, setSocket] = useState<WebSocket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
-    // Refs mirror the live socket + the token it was opened with, so connect()
-    // can compare against them without depending on a re-render.
     const socketRef = useRef<WebSocket | null>(null);
-    const tokenRef = useRef<string | null>(null);
 
-    const connect = (token: string) => {
-        // Already connected with this exact identity → idempotent no-op.
-        if (socketRef.current && tokenRef.current === token) return;
-
-        // A different token means a different identity/room (e.g. the user
-        // opened another private-room link). Tear down the previous socket so
-        // the new room gets its own live connection instead of silently reusing
-        // the old one — otherwise every new room shares the first room's socket
-        // (and game state), which made distinct links all open the same game.
-        if (socketRef.current) {
-            const stale = socketRef.current;
-            stale.onclose = null; // its handler would clobber the new socket's state
-            stale.close();
-            socketRef.current = null;
-            tokenRef.current = null;
-        }
-
-        const wsUrl = `${getWebSocketUrl('/api/v1/ws')}?token=${token}`;
+    const connect = () => {
+        if (socketRef.current) return;
+        const wsUrl = getWebSocketUrl('/api/v1/ws');
 
         const ws = new WebSocket(wsUrl);
         ws.binaryType = 'arraybuffer'; // We receive our StateDelta Protobufs as binary arrays!
         socketRef.current = ws;
-        tokenRef.current = token;
         setIsConnected(false);
 
         ws.onopen = () => {
@@ -62,7 +43,6 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             if (socketRef.current !== ws) return;
             console.log('WebSocket Disconnected');
             socketRef.current = null;
-            tokenRef.current = null;
             setIsConnected(false);
             setSocket(null);
         };
@@ -78,7 +58,6 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         const ws = socketRef.current;
         if (ws) {
             socketRef.current = null;
-            tokenRef.current = null;
             ws.close();
             setSocket(null);
             setIsConnected(false);

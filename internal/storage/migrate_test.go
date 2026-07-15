@@ -27,18 +27,70 @@ const legacyUsersDDL = `CREATE TABLE users (
 	updated_at datetime
 )`
 
-// A fresh database migrates cleanly and allows two accounts to share a display
-// name (the new schema must NOT enforce username uniqueness).
-func TestAutoMigrateFreshAllowsDuplicateUsernames(t *testing.T) {
+// A fresh database migrates cleanly and enforces case-insensitive username
+// uniqueness through the normalized username key.
+func TestAutoMigrateFreshEnforcesUniqueUsernames(t *testing.T) {
 	db := newMemDB(t)
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("AutoMigrate fresh: %v", err)
 	}
-	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", PasswordHash: "h"}).Error; err != nil {
+	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
 		t.Fatalf("create first user: %v", err)
 	}
-	if err := db.Create(&User{Email: "b@x.com", Username: "Sam", PasswordHash: "h"}).Error; err != nil {
-		t.Fatalf("expected duplicate display name to be allowed, got: %v", err)
+	if err := db.Create(&User{Email: "b@x.com", Username: "SAM", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
+		t.Fatal("expected duplicate normalized username to be rejected")
+	}
+}
+
+func TestAutoMigrateBackfillsAndSuffixesDuplicateUsernames(t *testing.T) {
+	db := newMemDB(t)
+	if err := db.Exec(`CREATE TABLE users (
+		id integer PRIMARY KEY,
+		email text NOT NULL,
+		username text NOT NULL,
+		password_hash text NOT NULL,
+		rating integer,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create users table: %v", err)
+	}
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	rows := []struct {
+		id       int
+		email    string
+		username string
+		created  time.Time
+	}{
+		{10003, "third@example.com", " RIVER ", created.Add(2 * time.Hour)},
+		{10001, "first@example.com", "River", created},
+		{10002, "second@example.com", "river", created.Add(time.Hour)},
+		{10004, "symbol@example.com", "雨@夜!!!", created.Add(3 * time.Hour)},
+	}
+	for _, row := range rows {
+		if err := db.Exec(`INSERT INTO users (id, email, username, password_hash, created_at) VALUES (?, ?, ?, 'h', ?)`, row.id, row.email, row.username, row.created).Error; err != nil {
+			t.Fatalf("seed user %d: %v", row.id, err)
+		}
+	}
+
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate: %v", err)
+	}
+
+	var users []User
+	if err := db.Order("id").Find(&users).Error; err != nil {
+		t.Fatalf("load migrated users: %v", err)
+	}
+	want := map[uint][2]string{
+		10001: {"River", "river"},
+		10002: {"river-2", "river-2"},
+		10003: {"RIVER-3", "river-3"},
+		10004: {"雨-at-夜", "雨-at-夜"},
+	}
+	for _, user := range users {
+		if got := [2]string{user.Username, user.UsernameKey}; got != want[user.ID] {
+			t.Fatalf("user %d migrated to %#v, want %#v", user.ID, got, want[user.ID])
+		}
 	}
 }
 
@@ -63,8 +115,7 @@ func TestAutoMigrateRefusesPopulatedLegacyTable(t *testing.T) {
 }
 
 // An empty legacy users table (no email column, with the old prod-named unique
-// username index) is migrated in place: the email column is added and the stale
-// unique index is dropped so display names become non-unique.
+// username index) is migrated in place with the normalized username key.
 func TestAutoMigrateEmptyLegacyTableMigratesInPlace(t *testing.T) {
 	db := newMemDB(t)
 	if err := db.Exec(legacyUsersDDL).Error; err != nil {
@@ -81,15 +132,14 @@ func TestAutoMigrateEmptyLegacyTableMigratesInPlace(t *testing.T) {
 	if !db.Migrator().HasColumn(&User{}, "email") {
 		t.Fatal("expected email column to be added by migration")
 	}
-	if db.Migrator().HasIndex(&User{}, "idx_users_username") {
-		t.Fatal("expected stale unique username index to be dropped")
+	if !db.Migrator().HasColumn(&User{}, "username_key") {
+		t.Fatal("expected username_key column to be added")
 	}
-	// Stale index gone -> duplicate display names allowed.
-	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", PasswordHash: "h"}).Error; err != nil {
+	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
 		t.Fatalf("create first user: %v", err)
 	}
-	if err := db.Create(&User{Email: "b@x.com", Username: "Sam", PasswordHash: "h"}).Error; err != nil {
-		t.Fatalf("expected duplicate display name after migration, got: %v", err)
+	if err := db.Create(&User{Email: "b@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
+		t.Fatal("expected duplicate normalized username after migration to be rejected")
 	}
 }
 

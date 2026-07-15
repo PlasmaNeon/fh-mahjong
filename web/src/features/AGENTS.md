@@ -14,9 +14,10 @@ Every page uses the shared Rainy Mahjong Club theme from `web/src/theme/`: ink/r
 
 Authentication pages. Routes: `/login`, `/account`.
 
-- **AuthTicket.tsx** — Shared inline/direct account ticket. Quick Match keeps authentication in context and resumes the queued action after success.
-- **Login.tsx** — Direct account route using `AuthTicket`; successful login continues to `/play`.
-- **Account.tsx** — Account settings page (`/account`). Lets real accounts edit their email and display name; on save stores the returned JWT and calls `connect(newToken)` to refresh the socket. Guests (404/503 from `GET /api/v1/users/me`) see a notice directing them to the sign-in page instead of the form. Linked from the lobby nav (`/play`).
+- **authClient.ts** — Credentialed fetch/CSRF helpers, safe internal return-path validation, and one-time cleanup of legacy JWT storage
+- **AuthTicket.tsx** — Shared sign-in/register ticket. Login accepts one username-or-email field; registration collects the unique friendly username, email, and password
+- **Login.tsx** — Invitation-aware login route; validates `returnTo` and resumes `/room/:roomId` automatically after authentication
+- **Account.tsx** — Edits the unique username/email and exposes explicit current-device logout
 
 ### `lobby/`
 
@@ -24,8 +25,8 @@ Lobby/matchmaking pages. Routes: `/` (Home), `/play` (Lobby), `/room/new` (Creat
 
 - **Home.tsx** — Asymmetric club entrance with three choices: Play, Table Tools, and Profile.
 - **Lobby.tsx** — Single Play screen for Quick Match and Private Table. Active searches must confirm `POST /matchmaking/leave` before the screen returns to idle; `409 match_forming` keeps the player connected.
-- **navigation.ts** — One-shot play intent and private-table route generation helpers.
-- **CreateRoom.tsx** — Compatibility redirect that generates a room id and immediately opens `/room/:roomId`.
+- **navigation.ts** — One-shot play-intent helper used by the simplified lobby flow.
+- **CreateRoom.tsx** — Auth gate plus protected `POST /rooms`; it navigates only after the server confirms creation, so an invite URL can never create state
 
 ### `calc/`
 
@@ -63,9 +64,9 @@ Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/mat
 - **actionOrdering.ts** — Pure live action priority: wins first, calls next, Pass last.
 - **MatchEndOverlay.tsx** — Chongci final standings with Back to Club as the primary action and Watch Replay as secondary.
 - **ExitMatchButton.tsx** — Button component for leaving the active match.
-- **privateRoomSession.ts** — Private-room browser session helpers. Persists active guest token, username, and `tableId` in tab-scoped session storage. Decodes JWT expiry to discard stale sessions. Shared by `Table.tsx` and `Game.tsx` so both routes recover the same private-room identity.
+- **privateRoomSession.ts** — Persists only the current non-sensitive table ID for login/rejoin navigation; authentication is owned by `AuthContext`
 - **rejoinMatch.ts** — Logic for rejoining an active match after a page refresh or reconnect.
-- **rejoinMatch.test.ts** — Vitest unit tests for the rejoin logic (11 tests).
+- **rejoinMatch.test.ts** — Vitest unit tests for non-sensitive left-match markers.
 
 ### `dev/`
 

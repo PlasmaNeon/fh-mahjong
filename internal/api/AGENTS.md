@@ -4,15 +4,17 @@
 
 ## Overview
 
-This package implements the network layer: HTTP routes via Gin, WebSocket connections via gorilla/websocket, JWT authentication, and the room/matchmaker orchestration that connects players to game instances. It is stateless with respect to game logic — all game mutations are delegated to `engine.Game`.
+This package implements the network layer: HTTP routes via Gin, WebSocket connections via gorilla/websocket, database-backed cookie sessions, and the room/matchmaker orchestration that connects players to game instances. All game mutations are delegated to `engine.Game`.
 
 ## Key Files
 
 - **server.go** — Gin HTTP server setup and route registration:
-  - Public: `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/guest`
+  - Public: `/api/v1/auth/register`, `/api/v1/auth/login`
+  - Session: `GET /api/v1/auth/session`, `DELETE /api/v1/auth/session`
   - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `/api/v1/matches/:matchId/review`, `/api/v1/ws`
-  - Protected routes (JWT required):
-    - `PATCH /api/v1/users/me` — update email/display name; returns fresh token
+  - Protected routes (30-day session cookie required; mutations also require `X-CSRF-Token`):
+    - `PATCH /api/v1/users/me` — update unique username and/or email
+    - `POST /api/v1/rooms` — explicitly create a private table and seat its host
     - `/api/v1/rooms/:roomId` (GET) — read current seat config.
     - `/api/v1/rooms/:roomId/join` (POST) — claim a seat.
     - `/api/v1/rooms/:roomId/seat` (POST, host-only) — assign or clear an AI seat.
@@ -23,13 +25,10 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 
-- **auth.go** — JWT authentication handlers (email+password auth; email is the unique identity, `Username` is the display name):
-  - `Register()` — Create account keyed by email (normalized to lowercase); bcrypt password hash; auto-logs in and returns `AuthResponse` (201)
-  - `Login()` — Authenticate by email+password; returns `AuthResponse` (200)
-  - `UpdateMe()` — `PATCH /api/v1/users/me` (protected): updates email and/or display name; email uniqueness is checked excluding self → **409** on conflict; **404** if no DB row; always returns a fresh 72h token in `AuthResponse` (200) so the `username` JWT claim stays current
-  - `GuestLogin()` — Anonymous play with auto-generated credentials (unchanged)
+- **auth.go** — Username/email + password auth backed by opaque revocable sessions. Login/register/session return `{user, csrfToken}` and set an HttpOnly cookie; no credential is serialized in JSON or stored by frontend JavaScript
+- **cors.go** — Exact `FRONTEND_ORIGINS` allowlist, credentialed CORS, and the shared HTTP/WebSocket origin policy
 
-- **ws.go** — WebSocket upgrade and client management:
+- **ws.go** — Cookie-authenticated, origin-checked WebSocket upgrade and client management:
   - `Hub` struct — Manages all active WebSocket clients
   - `HandleWebSocket()` — Upgrades HTTP → WS, creates `Client`
   - Binary Protobuf message protocol
@@ -76,11 +75,11 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Matchmaking joins are idempotent per user/ruleset. `POST /api/v1/matchmaking/leave` atomically removes a waiting user and returns `409 match_forming` when the watcher already claimed the entry.
   - Groups 4 players into a `Room`
   - `BotPolicyFactory` creates one automated-seat policy per new room; the server uses this to enable remote AI bots without sharing policy state across matches
-  - Tracks `configuringTables` (host + 4-seat config) and exposes `JoinOrCreatePrivateTable`, `MutatePrivateTable`, and `StartPrivateTable`. The first joiner of a `tableId` becomes the host; only the host can mutate seats or start the match.
+  - Tracks `configuringTables` and exposes separate `CreatePrivateTable`, `JoinPrivateTable`, `MutatePrivateTable`, and `StartPrivateTable` operations. Join never creates missing state
   - Tracks active private tables by `tableId` so the same `/table/:tableId` link cannot accidentally start a second game while the first one is still running
   - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
 
-- **middleware.go** — JWT token validation middleware for protected routes
+- **middleware.go** — Session-cookie lookup, expiry/revocation checks, current-user resolution, and constant-time CSRF validation
 
 - **response.go** — `respondError(c, status, msg)` / `abortError(c, status, msg)` — the single point for the API's `{"error": msg}` response shape. Handlers use `respondError` (`c.JSON`); middleware uses `abortError` (`c.AbortWithStatusJSON`, short-circuits the chain). Responses that carry extra keys beyond `error` stay inline.
 

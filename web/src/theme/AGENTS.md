@@ -33,6 +33,10 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
 - **components/** — `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`,
   `TextLink`, `Field`, `Note`, `Toggle`, `ToolsRow`, `ClubShell`, `ToolTabs`, and `GameDialog`.
 
+`Field` binds every visible label to its input. Success and error `Note` messages expose
+live status semantics so validation changes are announced without changing consumer props.
+`LoadingScreen` accepts an optional retry action for recoverable offline states.
+
 `ClubShell` owns ordinary-page club identity, context-aware Back, and Profile navigation;
 route pages must not recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
 stable Scoring/Shanten switcher while preserving both tool deep links.

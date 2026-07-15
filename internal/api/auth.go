@@ -1,47 +1,51 @@
 package api
 
 import (
-	"log"
-	"math/rand"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
-// AuthHandler groups the DB dependency
+const (
+	sessionTTL            = 30 * 24 * time.Hour
+	devSessionCookieName  = "fh_session"
+	prodSessionCookieName = "__Host-fh_session"
+)
+
 type AuthHandler struct {
 	DB *gorm.DB
 }
 
 type RegisterRequest struct {
 	Email       string `json:"email" binding:"required,email"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
 	Password    string `json:"password" binding:"required,min=8"`
-	DisplayName string `json:"displayName" binding:"required,min=2,max=30"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	Identifier string `json:"identifier"`
+	Email      string `json:"email"`
+	Password   string `json:"password" binding:"required"`
 }
 
 type AuthResponse struct {
-	Token string       `json:"token"`
-	User  storage.User `json:"user"`
+	User      storage.User `json:"user"`
+	CSRFToken string       `json:"csrfToken"`
 }
 
-var jwtSecret = []byte(getEnv("JWT_SECRET", "super-secret-key-change-in-prod"))
-
-// dummyPasswordHash equalizes the timing of the unknown-email login path with
-// the wrong-password path: on a lookup miss we still run one bcrypt comparison
-// against this fixed hash, so an attacker cannot distinguish registered emails
-// by response latency. Computed once at startup at the same cost as real hashes.
 var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("fh-login-timing-equalizer"), bcrypt.DefaultCost)
 
 func getEnv(key, fallback string) string {
@@ -51,30 +55,121 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func normalizeEmail(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+func normalizeEmail(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
-// issueToken builds a signed HS256 JWT carrying the user id (sub), display name
-// (username) and an expiry `ttl` from now. Used by Login, Register and GuestLogin.
-func issueToken(id uint, username string, ttl time.Duration) (string, error) {
-	return issueTokenWithExpiry(id, username, time.Now().Add(ttl).Unix())
+func resolveAlias(canonical, legacy, field string) (string, error) {
+	canonical = strings.TrimSpace(canonical)
+	legacy = strings.TrimSpace(legacy)
+	if canonical != "" && legacy != "" && canonical != legacy {
+		return "", fmt.Errorf("%s and legacy alias disagree", field)
+	}
+	if canonical != "" {
+		return canonical, nil
+	}
+	return legacy, nil
 }
 
-// issueTokenWithExpiry builds the same JWT but at an explicit absolute expiry.
-// UpdateMe uses it to refresh the `username` claim after a display-name change
-// WITHOUT extending the lifetime, so the endpoint can't be used to indefinitely
-// renew a stolen token by alternating display names.
-func issueTokenWithExpiry(id uint, username string, expUnix int64) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":      id,
-		"username": username,
-		"exp":      expUnix,
+func validateUsername(value string) (string, string, error) {
+	if strings.Contains(value, "@") {
+		return "", "", errors.New("username cannot contain @")
+	}
+	for _, r := range value {
+		if !(unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsSpace(r) || r == '_' || r == '-') {
+			return "", "", errors.New("username may contain letters, numbers, spaces, _ and -")
+		}
+	}
+	display, key := storage.NormalizeUsername(value)
+	count := utf8.RuneCountInString(display)
+	if count < 2 || count > 30 {
+		return "", "", errors.New("username must be 2 to 30 characters")
+	}
+	return display, key, nil
+}
+
+func randomCredential() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func createSession(db *gorm.DB, userID uint) (string, storage.UserSession, error) {
+	rawToken, err := randomCredential()
+	if err != nil {
+		return "", storage.UserSession{}, err
+	}
+	csrfToken, err := randomCredential()
+	if err != nil {
+		return "", storage.UserSession{}, err
+	}
+	session := storage.UserSession{
+		TokenHash: hashSessionToken(rawToken),
+		UserID:    userID,
+		CSRFToken: csrfToken,
+		ExpiresAt: time.Now().Add(sessionTTL),
+	}
+	if err := db.Create(&session).Error; err != nil {
+		return "", storage.UserSession{}, err
+	}
+	// Keep the session table bounded without introducing another background
+	// worker; this deletion is indexed and runs only when a new session starts.
+	db.Where("expires_at <= ?", time.Now()).Delete(&storage.UserSession{})
+	return rawToken, session, nil
+}
+
+func isProductionCookie() bool {
+	return strings.EqualFold(os.Getenv("APP_ENV"), "production") || strings.EqualFold(os.Getenv("GIN_MODE"), "release")
+}
+
+func setSessionCookie(c *gin.Context, rawToken string) {
+	production := isProductionCookie()
+	name := devSessionCookieName
+	if production {
+		name = prodSessionCookieName
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    rawToken,
+		Path:     "/",
+		MaxAge:   int(sessionTTL.Seconds()),
+		Expires:  time.Now().Add(sessionTTL),
+		HttpOnly: true,
+		Secure:   production,
+		SameSite: http.SameSiteLaxMode,
 	})
-	return token.SignedString(jwtSecret)
 }
 
-// Register creates an account keyed by email and auto-logs the user in.
+func clearSessionCookies(c *gin.Context) {
+	for _, cookie := range []http.Cookie{
+		{Name: prodSessionCookieName, Secure: true},
+		{Name: devSessionCookieName, Secure: false},
+	} {
+		cookie.Value = ""
+		cookie.Path = "/"
+		cookie.MaxAge = -1
+		cookie.Expires = time.Unix(1, 0)
+		cookie.HttpOnly = true
+		cookie.SameSite = http.SameSiteLaxMode
+		http.SetCookie(c.Writer, &cookie)
+	}
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unique constraint") || strings.Contains(message, "duplicate key")
+}
+
+func authResponse(user storage.User, csrfToken string) AuthResponse {
+	user.PasswordHash = ""
+	return AuthResponse{User: user, CSRFToken: csrfToken}
+}
+
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -82,58 +177,54 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	if h.DB == nil {
-		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled. Please use 'Guest Login'.")
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled.")
 		return
 	}
-
-	email := normalizeEmail(req.Email)
-
-	var existing storage.User
-	if err := h.DB.Where("email = ?", email).First(&existing).Error; err == nil {
-		respondError(c, http.StatusConflict, "Email already registered")
+	requestedName, err := resolveAlias(req.Username, req.DisplayName, "username")
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	username, usernameKey, err := validateUsername(requestedName)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "Failed to hash password")
 		return
 	}
-
 	user := storage.User{
-		Email:        email,
-		Username:     req.DisplayName,
-		PasswordHash: string(hashed),
+		Email:        normalizeEmail(req.Email),
+		Username:     username,
+		UsernameKey:  usernameKey,
+		PasswordHash: string(hashedPassword),
 		Rating:       1500,
 	}
-
-	// Random ids can (astronomically rarely) collide on the PK; retry a few times,
-	// zeroing the id so BeforeCreate regenerates it.
-	var createErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		user.ID = 0
-		createErr = h.DB.Create(&user).Error
-		if createErr == nil {
-			break
+	var rawToken string
+	var session storage.UserSession
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
 		}
-	}
-	if createErr != nil {
-		respondError(c, http.StatusInternalServerError, "Failed to create user")
-		return
-	}
-
-	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+		var err error
+		rawToken, session, err = createSession(tx, user.ID)
+		return err
+	})
 	if err != nil {
-		log.Printf("Failed to sign token: %v", err)
-		respondError(c, http.StatusInternalServerError, "Failed to generate token")
+		if isUniqueConstraintError(err) {
+			respondError(c, http.StatusConflict, "Email or username is already registered")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "Failed to create account")
 		return
 	}
-
-	user.PasswordHash = ""
-	c.JSON(http.StatusCreated, AuthResponse{Token: token, User: user})
+	setSessionCookie(c, rawToken)
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusCreated, authResponse(user, session.CSRFToken))
 }
 
-// Login authenticates by email + password and returns a JWT.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -141,50 +232,70 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	if h.DB == nil {
-		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled. Please use 'Guest Login'.")
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled.")
+		return
+	}
+	identifier, err := resolveAlias(req.Identifier, req.Email, "identifier")
+	if err != nil || identifier == "" {
+		respondError(c, http.StatusBadRequest, "Username or email is required")
 		return
 	}
 
-	email := normalizeEmail(req.Email)
-
 	var user storage.User
-	if err := h.DB.Where("email = ?", email).First(&user).Error; err != nil {
-		// Equalize timing with the wrong-password path so the unknown-email
-		// case can't be distinguished by latency (anti-enumeration).
+	var lookupErr error
+	if strings.Contains(identifier, "@") {
+		lookupErr = h.DB.Where("email = ?", normalizeEmail(identifier)).First(&user).Error
+	} else {
+		_, key := storage.NormalizeUsername(identifier)
+		lookupErr = h.DB.Where("username_key = ?", key).First(&user).Error
+	}
+	if lookupErr != nil {
 		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-		respondError(c, http.StatusUnauthorized, "Invalid email or password")
+		respondError(c, http.StatusUnauthorized, "Invalid username/email or password")
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		respondError(c, http.StatusUnauthorized, "Invalid email or password")
+		respondError(c, http.StatusUnauthorized, "Invalid username/email or password")
 		return
 	}
-
-	token, err := issueToken(user.ID, user.Username, 72*time.Hour)
+	rawToken, session, err := createSession(h.DB, user.ID)
 	if err != nil {
-		log.Printf("Failed to sign token: %v", err)
-		respondError(c, http.StatusInternalServerError, "Failed to generate token")
+		respondError(c, http.StatusInternalServerError, "Failed to start session")
 		return
 	}
+	setSessionCookie(c, rawToken)
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, authResponse(user, session.CSRFToken))
+}
 
-	user.PasswordHash = ""
-	c.JSON(http.StatusOK, AuthResponse{Token: token, User: user})
+func (h *AuthHandler) Session(c *gin.Context) {
+	user, ok := c.Get("authUser")
+	if !ok {
+		abortError(c, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+	csrf, _ := c.Get("csrfToken")
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, authResponse(user.(storage.User), csrf.(string)))
+}
+
+func (h *AuthHandler) Logout(c *gin.Context) {
+	if h.DB != nil {
+		if sessionID, ok := c.Get("sessionID"); ok {
+			h.DB.Delete(&storage.UserSession{}, sessionID)
+		}
+	}
+	clearSessionCookies(c)
+	c.Status(http.StatusNoContent)
 }
 
 type UpdateProfileRequest struct {
 	Email           *string `json:"email" binding:"omitempty,email"`
-	DisplayName     *string `json:"displayName" binding:"omitempty,min=2,max=30"`
+	Username        *string `json:"username"`
+	DisplayName     *string `json:"displayName"`
 	CurrentPassword *string `json:"currentPassword"`
 }
 
-// UpdateMe lets an authenticated account change its email and/or display name.
-//
-// Security: changing the login email is a sensitive operation, so it requires
-// reauthentication with the current password — otherwise a stolen bearer token
-// could silently take over the login identity. No-op requests are rejected, and
-// a fresh token is issued ONLY when the display name (carried in the `username`
-// claim) actually changes — so this endpoint can't be abused as an unrestricted
-// token-refresh that indefinitely renews a stolen token.
 func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -195,7 +306,6 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled.")
 		return
 	}
-
 	uid, _ := c.Get("userID")
 	var user storage.User
 	if err := h.DB.First(&user, uid).Error; err != nil {
@@ -203,22 +313,44 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	// Resolve the intended changes against the current record.
+	var requestedUsername string
+	if req.Username != nil || req.DisplayName != nil {
+		canonical, legacy := "", ""
+		if req.Username != nil {
+			canonical = *req.Username
+		}
+		if req.DisplayName != nil {
+			legacy = *req.DisplayName
+		}
+		var err error
+		requestedUsername, err = resolveAlias(canonical, legacy, "username")
+		if err != nil {
+			respondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	newEmail := ""
 	emailChange := false
 	if req.Email != nil {
 		newEmail = normalizeEmail(*req.Email)
 		emailChange = newEmail != user.Email
 	}
-	nameChange := req.DisplayName != nil && *req.DisplayName != user.Username
-
-	if !emailChange && !nameChange {
+	newUsername, newUsernameKey := user.Username, user.UsernameKey
+	usernameChange := false
+	if requestedUsername != "" {
+		var err error
+		newUsername, newUsernameKey, err = validateUsername(requestedUsername)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		usernameChange = newUsername != user.Username
+	}
+	if !emailChange && !usernameChange {
 		respondError(c, http.StatusBadRequest, "No changes requested")
 		return
 	}
-
 	if emailChange {
-		// Reauthenticate before changing the login identity.
 		if req.CurrentPassword == nil || *req.CurrentPassword == "" {
 			respondError(c, http.StatusBadRequest, "Current password is required to change email")
 			return
@@ -227,78 +359,27 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 			respondError(c, http.StatusUnauthorized, "Incorrect password")
 			return
 		}
-		var other storage.User
-		if err := h.DB.Where("email = ? AND id <> ?", newEmail, user.ID).First(&other).Error; err == nil {
-			respondError(c, http.StatusConflict, "Email already registered")
+	}
+	updates := map[string]any{}
+	if emailChange {
+		updates["email"] = newEmail
+	}
+	if usernameChange {
+		updates["username"] = newUsername
+		updates["username_key"] = newUsernameKey
+	}
+	if err := h.DB.Model(&user).Updates(updates).Error; err != nil {
+		if isUniqueConstraintError(err) {
+			respondError(c, http.StatusConflict, "Email or username is already registered")
 			return
 		}
-		user.Email = newEmail
-	}
-	if nameChange {
-		user.Username = *req.DisplayName
-	}
-
-	if err := h.DB.Save(&user).Error; err != nil {
 		respondError(c, http.StatusInternalServerError, "Failed to update profile")
 		return
 	}
-
-	// Only mint a fresh token when the display-name claim it carries changed — and
-	// preserve the ORIGINAL token's expiry so a rename refreshes the claim without
-	// extending the lifetime (otherwise alternating names would renew indefinitely).
-	resp := AuthResponse{}
-	if nameChange {
-		exp := time.Now().Add(72 * time.Hour).Unix()
-		if v, ok := c.Get("tokenExp"); ok {
-			if origExp, ok := v.(int64); ok {
-				exp = origExp
-			}
-		}
-		token, err := issueTokenWithExpiry(user.ID, user.Username, exp)
-		if err != nil {
-			log.Printf("Failed to sign token: %v", err)
-			respondError(c, http.StatusInternalServerError, "Failed to generate token")
-			return
-		}
-		resp.Token = token
-	}
-
-	user.PasswordHash = ""
-	resp.User = user
-	c.JSON(http.StatusOK, resp)
-}
-
-type GuestRequest struct {
-	Username string `json:"username" binding:"required"`
-}
-
-func (h *AuthHandler) GuestLogin(c *gin.Context) {
-	var req GuestRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondError(c, http.StatusBadRequest, err.Error())
+	if err := h.DB.First(&user, user.ID).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "Failed to reload profile")
 		return
 	}
-
-	// Generate a random temporary User ID (high number to avoid collision with standard DB IDs)
-	rand.Seed(time.Now().UnixNano())
-	tempUserID := uint(9000000 + rand.Intn(1000000))
-
-	tokenString, err := issueToken(tempUserID, req.Username, 24*time.Hour)
-	if err != nil {
-		log.Printf("Failed to sign guest token: %v", err)
-		respondError(c, http.StatusInternalServerError, "Failed to generate token")
-		return
-	}
-
-	// We return a mock user object to satisfy the frontend's expectations
-	mockUser := storage.User{
-		ID:       tempUserID,
-		Username: req.Username,
-		Rating:   1500,
-	}
-
-	c.JSON(http.StatusOK, AuthResponse{
-		Token: tokenString,
-		User:  mockUser,
-	})
+	csrf, _ := c.Get("csrfToken")
+	c.JSON(http.StatusOK, authResponse(user, csrf.(string)))
 }
