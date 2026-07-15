@@ -15965,6 +15965,46 @@ are product-side: labelled human-game corpus (accumulating in prod since the pai
 fix), the post-game review tool, serve-time ensembling for tail risk, and an
 eventual human-data SL refresh once the corpus is large.
 
+(2026-07-14 addendum: a GPT-5.6 methodology audit + independent literature survey
+overturned parts of this conclusion — see the Spec A entry below and the rebuild
+specs under docs/superpowers/specs/. The seven-lever record above stands as
+measured; its interpretation is now qualified by the observation defect and the
+evaluation-statistics findings.)
+
+### Experiment: Spec A close-out — obs double-count fix + eval hygiene (2026-07-14/15) — SHIPPED
+
+- What: PR #166 (main 88c6d59). Fixed the interrupt-window double-count in
+  `publicSeenCounts` (the claimable discard was counted twice in plane 37 and
+  publicDangerScore at EVERY pon/chii/ron decision, all campaign — the engine
+  appends to Discards before setting ActiveDiscard). Added seed-clustered CIs
+  (`mean_placement_ci95_clustered`, `cluster_design_effect`) to duplicate-seat
+  reports, persisted eval-config + simulator provenance (`bridge_lib_sha256`
+  of a pre-eval immutable library snapshot), and shipped `fh-mj-compare` —
+  the mandatory fail-closed gate tool (seed/config/protocol/provenance parity;
+  labeled opt-ins `--allow-missing-config`, `--allow-bridge-mismatch`).
+- Champion re-measurement (decision rule from the spec), screening window
+  910000+, 120 seeds x 4 rotations, chongci, deep4 iter_275 champion, paired
+  fixed-vs-buggy bridge via `fh-mj-compare --allow-bridge-mismatch`:
+  - FIXED encoder: mean placement +0.3500 (clustered CI95 ±0.0561, naive
+    ±0.0620), large_loss 0.0813.
+  - BUGGY encoder: +0.3431 (clustered ±0.0585), large_loss 0.0875.
+  - Paired delta (fixed − buggy): **+0.0069 ± 0.0176** — fixed ≥ buggy.
+    VERDICT: the fix ships unconditionally (serving + training + eval); no
+    compat flag. The champion is robust to the corrected input.
+- Measured `cluster_design_effect` on the screening window: **0.80 (fixed) /
+  0.88 (buggy)** — duplicate-seat rotations are mildly NEGATIVELY correlated
+  within a wall seed, i.e. the duplicate format's variance reduction is real
+  and the clustered CI is slightly TIGHTER than the naive one here. Spec B
+  run-size planning can use design effect ≈ 0.85 (do not assume >1).
+- Honesty note: the champion measures +0.3500 ± 0.056 on the FRESH screening
+  window vs the +0.4722 ± ~0.08 recorded on the burned 870000+ window — the
+  gap (≈ −0.12) exceeds the predicted ~0.035 winner's-curse bound, so window
+  effects and selection bias together were inflating the headline number.
+  All future comparisons are within-window paired deltas via fh-mj-compare;
+  cross-window level comparisons like this one are diagnostic only.
+- Artifacts: /root/fh-mahjong-runs/spec-a/{champion-fixed,champion-buggy,compare}.json
+  (box); pre-fix bridge built from ec6800e in /root/fh-mahjong-prefix.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
