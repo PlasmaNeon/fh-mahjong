@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
@@ -177,6 +178,32 @@ def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) ->
         "cluster_design_effect": design_effect,
         "num_seeds": num_seeds,
     }
+
+
+def _snapshot_bridge_library(
+    bridge_kind: str, bridge_library_path: Optional[str]
+) -> tuple[Optional[str], Optional[str], Optional[Any]]:
+    """Copy the resolved Go bridge library to a private snapshot.
+
+    Returns (effective library path, sha256 of that artifact, snapshot holder
+    to cleanup). The digest and every bridge dlopen then refer to the SAME
+    immutable bytes — a concurrent rebuild of the source library between
+    hashing and loading cannot make a report attest a binary other than the
+    one actually evaluated. Non-Go bridges and unreadable libraries pass
+    through unchanged with no digest.
+    """
+    if bridge_kind != "go":
+        return bridge_library_path, None, None
+    try:
+        source = resolve_bridge_library_path(bridge_library_path)
+        data = Path(source).read_bytes()
+    except OSError:
+        return bridge_library_path, None, None
+    digest = hashlib.sha256(data).hexdigest()
+    holder = tempfile.TemporaryDirectory(prefix="fh-bridge-snapshot-")
+    snapshot = Path(holder.name) / Path(source).name
+    snapshot.write_bytes(data)
+    return str(snapshot), digest, holder
 
 
 def _bridge_library_digest(bridge_kind: str, bridge_library_path: Optional[str]) -> Optional[str]:
@@ -897,10 +924,13 @@ def evaluate_duplicate_seats_policy(
 ) -> Dict[str, Any]:
     """Evaluate a policy factory with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
-    # Captured BEFORE the eval loop so the digest identifies the library
-    # actually loaded for this run, not whatever exists when the report is
-    # assembled.
-    bridge_lib_sha256 = _bridge_library_digest(bridge_kind, bridge_library_path)
+    # Snapshot the bridge library BEFORE the eval loop: the digest and every
+    # bridge dlopen refer to the same immutable copy (see
+    # _snapshot_bridge_library), so a concurrent rebuild cannot make the
+    # report attest a binary other than the one evaluated.
+    bridge_library_path, bridge_lib_sha256, _bridge_snapshot = _snapshot_bridge_library(
+        bridge_kind, bridge_library_path
+    )
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
@@ -916,37 +946,41 @@ def evaluate_duplicate_seats_policy(
     completed = 0
     truncations = 0
 
-    for seat in seat_list:
-        report = evaluate_policy_online(
-            policy=None,
-            policy_factory=lambda bridge, _seat=seat: _invoke_seat_policy_factory(policy_factory, _seat, bridge),
-            episodes=len(seeds),
-            seeds=list(seeds),
-            bridge_kind=bridge_kind,
-            bridge_library_path=bridge_library_path,
-            learning_seat=seat,
-            large_loss_threshold=large_loss_threshold,
-            match_mode=normalized_match_mode,
-            chongci_starting_score=chongci_starting_score,
-            chongci_bust_threshold=chongci_bust_threshold,
-            chongci_max_hands=chongci_max_hands,
-            max_steps_per_episode=max_steps_per_episode,
-            oracle_observation=oracle_observation,
-        )
-        seat_reports.append(report)
-        all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
-        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
-        action_counts.update(report["action_family_counts"])
-        outcome_counts.update(report.get("round_outcome_counts", {}))
-        choice_source_counts.update(report.get("policy_choice_counts", {}))
-        q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
-        policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
-        episode_summaries.extend(report.get("episode_summaries", []))
-        wins += int(report["win_count"])
-        large_losses += int(report["large_loss_count"])
-        completed += int(report["episodes"])
-        truncations += int(report.get("truncation_count", 0))
+    try:
+        for seat in seat_list:
+            report = evaluate_policy_online(
+                policy=None,
+                policy_factory=lambda bridge, _seat=seat: _invoke_seat_policy_factory(policy_factory, _seat, bridge),
+                episodes=len(seeds),
+                seeds=list(seeds),
+                bridge_kind=bridge_kind,
+                bridge_library_path=bridge_library_path,
+                learning_seat=seat,
+                large_loss_threshold=large_loss_threshold,
+                match_mode=normalized_match_mode,
+                chongci_starting_score=chongci_starting_score,
+                chongci_bust_threshold=chongci_bust_threshold,
+                chongci_max_hands=chongci_max_hands,
+                max_steps_per_episode=max_steps_per_episode,
+                oracle_observation=oracle_observation,
+            )
+            seat_reports.append(report)
+            all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+            all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
+            action_counts.update(report["action_family_counts"])
+            outcome_counts.update(report.get("round_outcome_counts", {}))
+            choice_source_counts.update(report.get("policy_choice_counts", {}))
+            q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
+            policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
+            episode_summaries.extend(report.get("episode_summaries", []))
+            wins += int(report["win_count"])
+            large_losses += int(report["large_loss_count"])
+            completed += int(report["episodes"])
+            truncations += int(report.get("truncation_count", 0))
 
+    finally:
+        if _bridge_snapshot is not None:
+            _bridge_snapshot.cleanup()
     rewards = reward_summary(all_rewards)
     placements = reward_summary(all_placements)
     seat_summary = {
@@ -1046,10 +1080,13 @@ def evaluate_duplicate_seats(
 ) -> Dict[str, Any]:
     """Evaluate the same seeds with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
-    # Captured BEFORE the eval loop so the digest identifies the library
-    # actually loaded for this run, not whatever exists when the report is
-    # assembled.
-    bridge_lib_sha256 = _bridge_library_digest(bridge_kind, bridge_library_path)
+    # Snapshot the bridge library BEFORE the eval loop: the digest and every
+    # bridge dlopen refer to the same immutable copy (see
+    # _snapshot_bridge_library), so a concurrent rebuild cannot make the
+    # report attest a binary other than the one evaluated.
+    bridge_library_path, bridge_lib_sha256, _bridge_snapshot = _snapshot_bridge_library(
+        bridge_kind, bridge_library_path
+    )
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
@@ -1062,34 +1099,38 @@ def evaluate_duplicate_seats(
     truncations = 0
     episode_summaries: list[dict[str, Any]] = []
 
-    for seat in seat_list:
-        report = evaluate_online(
-            model=model,
-            episodes=len(seeds),
-            seeds=list(seeds),
-            bridge_kind=bridge_kind,
-            bridge_library_path=bridge_library_path,
-            device=device,
-            learning_seat=seat,
-            large_loss_threshold=large_loss_threshold,
-            match_mode=normalized_match_mode,
-            chongci_starting_score=chongci_starting_score,
-            chongci_bust_threshold=chongci_bust_threshold,
-            chongci_max_hands=chongci_max_hands,
-            max_steps_per_episode=max_steps_per_episode,
-            oracle_observation=oracle_observation,
-        )
-        seat_reports.append(report)
-        all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
-        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
-        action_counts.update(report["action_family_counts"])
-        outcome_counts.update(report.get("round_outcome_counts", {}))
-        episode_summaries.extend(report.get("episode_summaries", []))
-        wins += int(report["win_count"])
-        large_losses += int(report["large_loss_count"])
-        completed += int(report["episodes"])
-        truncations += int(report.get("truncation_count", 0))
+    try:
+        for seat in seat_list:
+            report = evaluate_online(
+                model=model,
+                episodes=len(seeds),
+                seeds=list(seeds),
+                bridge_kind=bridge_kind,
+                bridge_library_path=bridge_library_path,
+                device=device,
+                learning_seat=seat,
+                large_loss_threshold=large_loss_threshold,
+                match_mode=normalized_match_mode,
+                chongci_starting_score=chongci_starting_score,
+                chongci_bust_threshold=chongci_bust_threshold,
+                chongci_max_hands=chongci_max_hands,
+                max_steps_per_episode=max_steps_per_episode,
+                oracle_observation=oracle_observation,
+            )
+            seat_reports.append(report)
+            all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+            all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
+            action_counts.update(report["action_family_counts"])
+            outcome_counts.update(report.get("round_outcome_counts", {}))
+            episode_summaries.extend(report.get("episode_summaries", []))
+            wins += int(report["win_count"])
+            large_losses += int(report["large_loss_count"])
+            completed += int(report["episodes"])
+            truncations += int(report.get("truncation_count", 0))
 
+    finally:
+        if _bridge_snapshot is not None:
+            _bridge_snapshot.cleanup()
     rewards = reward_summary(all_rewards)
     placements = reward_summary(all_placements)
     seat_summary = {

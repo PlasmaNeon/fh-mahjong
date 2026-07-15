@@ -316,3 +316,36 @@ def test_null_digests_are_not_provenance():
     b["bridge_lib_sha256"] = "a" * 64
     with pytest.raises(ValueError, match="report\\(s\\) A"):
         paired_comparison(a, b)
+
+
+def test_snapshot_bridge_library_immutable_artifact(tmp_path):
+    # The digest and the loaded path must refer to the same immutable bytes:
+    # mutating the SOURCE library after snapshotting must not desync the
+    # reported digest from the artifact the bridges load.
+    import hashlib
+
+    from fh_mahjong_ai.evaluate import _snapshot_bridge_library
+
+    source = tmp_path / "libfake_bridge.so"
+    source.write_bytes(b"simulator build 1")
+    expected = hashlib.sha256(b"simulator build 1").hexdigest()
+
+    path, digest, holder = _snapshot_bridge_library("go", str(source))
+    try:
+        assert digest == expected
+        assert path != str(source)
+        # Simulate a concurrent rebuild of the source AFTER the snapshot.
+        source.write_bytes(b"simulator build 2 -- rebuilt mid-eval")
+        snapshot_bytes = open(path, "rb").read()
+        assert hashlib.sha256(snapshot_bytes).hexdigest() == digest
+    finally:
+        if holder is not None:
+            holder.cleanup()
+
+    # Non-Go bridges and unreadable libraries pass through with no digest.
+    assert _snapshot_bridge_library("mock", None) == (None, None, None)
+    missing_path, missing_digest, missing_holder = _snapshot_bridge_library(
+        "go", str(tmp_path / "missing.so")
+    )
+    assert missing_digest is None and missing_holder is None
+    assert missing_path == str(tmp_path / "missing.so")
