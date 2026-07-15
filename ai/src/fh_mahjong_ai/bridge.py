@@ -421,9 +421,9 @@ class CtypesGoBridge(MahjongBridge):
         return int(self._library.FHEnvNew(pointer, len(payload)))
 
 
-def resolve_bridge_library(config: EnvConfig) -> Path:
-    if config.bridge_library_path is not None:
-        return config.bridge_library_path
+def resolve_bridge_library_path(bridge_library_path: Optional[str | Path]) -> Path:
+    if bridge_library_path is not None:
+        return Path(bridge_library_path)
 
     if env_path := os.getenv("FH_MAHJONG_BRIDGE_LIB"):
         return Path(env_path)
@@ -431,6 +431,10 @@ def resolve_bridge_library(config: EnvConfig) -> Path:
     repo_root = Path(__file__).resolve().parents[3]
     extension = {"darwin": ".dylib", "linux": ".so", "win32": ".dll"}.get(sys.platform, ".so")
     return repo_root / "build" / f"libfh_mahjong_bridge{extension}"
+
+
+def resolve_bridge_library(config: EnvConfig) -> Path:
+    return resolve_bridge_library_path(config.bridge_library_path)
 
 
 def build_bridge(config: EnvConfig) -> MahjongBridge:

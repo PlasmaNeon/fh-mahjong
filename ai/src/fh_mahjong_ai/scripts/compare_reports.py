@@ -26,6 +26,12 @@ _COMPAT_KEYS = (
     "max_steps_per_episode",
     "oracle_observation",
     "large_loss_threshold",
+    # SHA-256 of the Go simulator library — two reports from different
+    # simulator builds measure different games, not different checkpoints.
+    # Deliberate cross-simulator comparisons (e.g. the same checkpoint on a
+    # pre-fix vs post-fix encoder) use --allow-bridge-mismatch, which labels
+    # the result instead of refusing it.
+    "bridge_lib_sha256",
 )
 
 # Decision-protocol blocks the fh-mj-evaluate wrapper records only when
@@ -55,12 +61,15 @@ def _unwrap_report(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, A
     """Accept both a bare duplicate-seat report and the standard
     fh-mj-evaluate --report-output wrapper (which nests it under "online").
 
-    Returns (duplicate-seat report, decision protocol from the wrapper)."""
+    Returns (duplicate-seat report, effective decision protocol). The
+    evaluator persists the protocol blocks inside the online report as well,
+    so a bare extracted report keeps its protocol; the wrapper fills gaps for
+    reports written before the inner copy existed."""
     if "seeds" in payload:
-        return payload, {}
+        return payload, _wrapper_protocol(payload)
     online = payload.get("online")
     if isinstance(online, dict) and "seeds" in online:
-        return online, _wrapper_protocol(payload)
+        return online, {**_wrapper_protocol(payload), **_wrapper_protocol(online)}
     return payload, {}
 
 
@@ -70,6 +79,7 @@ def _check_comparable(
     protocol_a: Dict[str, Any],
     protocol_b: Dict[str, Any],
     allow_missing_config: bool,
+    allow_bridge_mismatch: bool,
 ) -> None:
     if protocol_a != protocol_b:
         label_a = protocol_a if protocol_a else "greedy"
@@ -91,9 +101,16 @@ def _check_comparable(
                 "(the result is then NOT a valid promotion gate)"
             )
         if report_a[key] != report_b[key]:
+            if key == "bridge_lib_sha256" and allow_bridge_mismatch:
+                continue
             raise ValueError(
                 f"reports are not comparable: {key} differs "
                 f"({report_a[key]!r} vs {report_b[key]!r})"
+                + (
+                    " — pass --allow-bridge-mismatch for a deliberate cross-simulator comparison"
+                    if key == "bridge_lib_sha256"
+                    else ""
+                )
             )
 
 
@@ -120,10 +137,14 @@ def paired_comparison(
     report_a: Dict[str, Any],
     report_b: Dict[str, Any],
     allow_missing_config: bool = False,
+    allow_bridge_mismatch: bool = False,
 ) -> Dict[str, Any]:
     report_a, protocol_a = _unwrap_report(report_a)
     report_b, protocol_b = _unwrap_report(report_b)
-    _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config)
+    _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config, allow_bridge_mismatch)
+    bridge_mismatched = (
+        report_a.get("bridge_lib_sha256") != report_b.get("bridge_lib_sha256")
+    )
     seeds_a = list(report_a.get("seeds", []))
     seeds_b = list(report_b.get("seeds", []))
     if not seeds_a or not seeds_b:
@@ -167,6 +188,7 @@ def paired_comparison(
         "large_loss_rate_b": report_b.get("large_loss_rate"),
         "significant": bool(ci95 > 0.0 and abs(mean_delta) > ci95),
         "config_check": "legacy" if allow_missing_config else "strict",
+        "bridge_check": "mismatch-allowed" if bridge_mismatched else "match",
     }
 
 
@@ -182,6 +204,8 @@ def _format_text(result: Dict[str, Any], label_a: str, label_b: str) -> str:
     ]
     if result.get("config_check") == "legacy":
         lines.append("  WARNING: --allow-missing-config used — NOT a valid promotion gate")
+    if result.get("bridge_check") == "mismatch-allowed":
+        lines.append("  WARNING: simulator libraries differ — cross-simulator comparison, not a checkpoint gate")
     return "\n".join(lines)
 
 
@@ -195,6 +219,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         action="store_true",
         help="compare legacy reports missing persisted evaluation settings; the result is NOT a valid promotion gate",
     )
+    parser.add_argument(
+        "--allow-bridge-mismatch",
+        action="store_true",
+        help="permit differing simulator library digests for a deliberate cross-simulator comparison "
+        "(e.g. the same checkpoint on a pre-fix vs post-fix encoder); the result is labeled, not a checkpoint gate",
+    )
     args = parser.parse_args(argv)
 
     with open(args.report_a) as fh:
@@ -202,7 +232,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     with open(args.report_b) as fh:
         report_b = json.load(fh)
 
-    result = paired_comparison(report_a, report_b, allow_missing_config=args.allow_missing_config)
+    result = paired_comparison(
+        report_a,
+        report_b,
+        allow_missing_config=args.allow_missing_config,
+        allow_bridge_mismatch=args.allow_bridge_mismatch,
+    )
     if args.json:
         print(json.dumps(result, indent=2))
     else:

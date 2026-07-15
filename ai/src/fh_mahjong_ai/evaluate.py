@@ -1,8 +1,10 @@
 """Evaluation utilities for comparing a learned policy against baselines."""
 from __future__ import annotations
 
+import hashlib
 import inspect
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
@@ -10,7 +12,7 @@ import torch
 from torch import nn
 
 from .action_catalog import action_family
-from .bridge import build_bridge
+from .bridge import build_bridge, resolve_bridge_library_path
 from .config import EnvConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
@@ -175,6 +177,22 @@ def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) ->
         "cluster_design_effect": design_effect,
         "num_seeds": num_seeds,
     }
+
+
+def _bridge_library_digest(bridge_kind: str, bridge_library_path: Optional[str]) -> Optional[str]:
+    """SHA-256 provenance of the Go simulator library behind this eval.
+
+    Recorded in duplicate-seat reports so fh-mj-compare can refuse to treat
+    simulator drift as checkpoint quality. None for non-Go bridges and when
+    the library cannot be read.
+    """
+    if bridge_kind != "go":
+        return None
+    try:
+        path = resolve_bridge_library_path(bridge_library_path)
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _clustered_report_fields(seat_reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -954,6 +972,7 @@ def evaluate_duplicate_seats_policy(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
+        "bridge_lib_sha256": _bridge_library_digest(bridge_kind, bridge_library_path),
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
         "mean_reward_sem": rewards["sem"],
@@ -1091,6 +1110,7 @@ def evaluate_duplicate_seats(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
+        "bridge_lib_sha256": _bridge_library_digest(bridge_kind, bridge_library_path),
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
         "mean_reward_sem": rewards["sem"],

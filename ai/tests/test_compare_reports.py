@@ -15,6 +15,7 @@ FULL_CONFIG = {
     "max_steps_per_episode": 4000,
     "oracle_observation": False,
     "large_loss_threshold": -800.0,
+    "bridge_lib_sha256": "a" * 64,
 }
 
 
@@ -249,3 +250,47 @@ def test_large_loss_threshold_mismatch_refused():
     b["large_loss_threshold"] = -500.0
     with pytest.raises(ValueError, match="not comparable.*large_loss_threshold"):
         paired_comparison(a, b)
+
+
+def test_bare_extracted_report_keeps_protocol():
+    # The evaluator persists sampling/search blocks INSIDE the online report:
+    # extracting it from the wrapper must not launder it into a greedy run.
+    seeds = list(range(4))
+    means = [0.1, -0.1, 0.2, 0.0]
+    sampled_inner = make_report(seeds, means)
+    sampled_inner["sampling"] = {"temperature": 0.8, "top_k": 3, "action_family": "discard", "seed": 1}
+    greedy_wrapped = {"checkpoint": "a.pt", "online": make_report(seeds, means)}
+    with pytest.raises(ValueError, match="decision protocol"):
+        paired_comparison(sampled_inner, greedy_wrapped)
+
+
+def test_bridge_digest_mismatch_refused_unless_opted_in(capsys):
+    seeds = list(range(4))
+    means = [0.1, -0.1, 0.2, 0.0]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    b["bridge_lib_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="bridge_lib_sha256.*cross-simulator"):
+        paired_comparison(a, b)
+
+    result = paired_comparison(a, b, allow_bridge_mismatch=True)
+    assert result["bridge_check"] == "mismatch-allowed"
+    same = paired_comparison(a, make_report(seeds, means))
+    assert same["bridge_check"] == "match"
+
+
+def test_bridge_library_digest_helper(tmp_path, monkeypatch):
+    import hashlib
+
+    from fh_mahjong_ai.evaluate import _bridge_library_digest
+
+    lib = tmp_path / "libfake_bridge.so"
+    lib.write_bytes(b"simulator build 1")
+    expected = hashlib.sha256(b"simulator build 1").hexdigest()
+    assert _bridge_library_digest("go", str(lib)) == expected
+
+    monkeypatch.setenv("FH_MAHJONG_BRIDGE_LIB", str(lib))
+    assert _bridge_library_digest("go", None) == expected
+
+    assert _bridge_library_digest("mock", None) is None
+    assert _bridge_library_digest("go", str(tmp_path / "missing.so")) is None

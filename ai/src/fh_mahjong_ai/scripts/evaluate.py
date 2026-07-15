@@ -412,6 +412,13 @@ def main() -> None:
                     oracle_observation=eval_oracle,
                 )
             final_report["online"] = online_report
+            # Persist the decision-protocol blocks inside the online report
+            # too (same dict object, stays in sync with fallback_count), so a
+            # bare extracted duplicate-seat report cannot masquerade as a
+            # greedy run in fh-mj-compare.
+            for protocol_key in ("sampling", "search"):
+                if protocol_key in final_report:
+                    online_report[protocol_key] = final_report[protocol_key]
             print(f"  Match Mode:  {online_report['match_mode']}")
             print(f"  Episodes:    {online_report['episodes']}")
             print(f"  Avg Reward:  {online_report['avg_reward']}")
