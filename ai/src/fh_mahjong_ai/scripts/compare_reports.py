@@ -73,6 +73,10 @@ def _unwrap_report(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, A
     return payload, {}
 
 
+def _valid_digest(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 def _check_comparable(
     report_a: Dict[str, Any],
     report_b: Dict[str, Any],
@@ -100,6 +104,23 @@ def _check_comparable(
                 "pass --allow-missing-config to compare a legacy report anyway "
                 "(the result is then NOT a valid promotion gate)"
             )
+        if key == "bridge_lib_sha256":
+            # A null/malformed digest is ABSENT provenance, not a match: two
+            # unverifiable reports must not pass as a strict gate.
+            invalid = [
+                label
+                for label, value in (("A", report_a[key]), ("B", report_b[key]))
+                if not _valid_digest(value)
+            ]
+            if invalid:
+                if allow_missing_config:
+                    continue
+                raise ValueError(
+                    f"reports are not comparable: report(s) {' and '.join(invalid)} carry no "
+                    f"verifiable simulator provenance (bridge_lib_sha256 null or malformed). "
+                    "Regenerate with a readable bridge library, or pass --allow-missing-config "
+                    "(the result is then NOT a valid promotion gate)"
+                )
         if report_a[key] != report_b[key]:
             if key == "bridge_lib_sha256" and allow_bridge_mismatch:
                 continue

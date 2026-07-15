@@ -294,3 +294,25 @@ def test_bridge_library_digest_helper(tmp_path, monkeypatch):
 
     assert _bridge_library_digest("mock", None) is None
     assert _bridge_library_digest("go", str(tmp_path / "missing.so")) is None
+
+
+def test_null_digests_are_not_provenance():
+    # Two reports with bridge_lib_sha256=null share NO verified simulator:
+    # strict mode refuses; the legacy opt-in compares but marks non-gating.
+    seeds = list(range(4))
+    means = [0.1, -0.1, 0.2, 0.0]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["bridge_lib_sha256"] = None
+    b["bridge_lib_sha256"] = None
+    with pytest.raises(ValueError, match="no\\s+verifiable simulator provenance"):
+        paired_comparison(a, b)
+
+    result = paired_comparison(a, b, allow_missing_config=True)
+    assert result["config_check"] == "legacy"
+
+    # Malformed digest strings are absent provenance too.
+    a["bridge_lib_sha256"] = "not-a-sha"
+    b["bridge_lib_sha256"] = "a" * 64
+    with pytest.raises(ValueError, match="report\\(s\\) A"):
+        paired_comparison(a, b)

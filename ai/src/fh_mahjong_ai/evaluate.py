@@ -897,6 +897,10 @@ def evaluate_duplicate_seats_policy(
 ) -> Dict[str, Any]:
     """Evaluate a policy factory with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
+    # Captured BEFORE the eval loop so the digest identifies the library
+    # actually loaded for this run, not whatever exists when the report is
+    # assembled.
+    bridge_lib_sha256 = _bridge_library_digest(bridge_kind, bridge_library_path)
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
@@ -972,7 +976,7 @@ def evaluate_duplicate_seats_policy(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
-        "bridge_lib_sha256": _bridge_library_digest(bridge_kind, bridge_library_path),
+        "bridge_lib_sha256": bridge_lib_sha256,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
         "mean_reward_sem": rewards["sem"],
@@ -1042,6 +1046,10 @@ def evaluate_duplicate_seats(
 ) -> Dict[str, Any]:
     """Evaluate the same seeds with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
+    # Captured BEFORE the eval loop so the digest identifies the library
+    # actually loaded for this run, not whatever exists when the report is
+    # assembled.
+    bridge_lib_sha256 = _bridge_library_digest(bridge_kind, bridge_library_path)
     seat_list = list(seats)
     seat_reports = []
     all_rewards: list[float] = []
@@ -1110,7 +1118,7 @@ def evaluate_duplicate_seats(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
-        "bridge_lib_sha256": _bridge_library_digest(bridge_kind, bridge_library_path),
+        "bridge_lib_sha256": bridge_lib_sha256,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
         "mean_reward_sem": rewards["sem"],
