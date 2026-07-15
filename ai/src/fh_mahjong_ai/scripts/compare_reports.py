@@ -19,21 +19,63 @@ from fh_mahjong_ai.evaluate import _t_critical_975, clustered_placement_stats
 # Evaluation settings that must match for a paired comparison to be a
 # measurement of the same experiment. Checked only when a key is present in
 # BOTH reports, so reports predating a field remain comparable.
-_COMPAT_KEYS = ("match_mode", "chongci_config", "seats", "max_steps_per_episode", "oracle_observation")
+_COMPAT_KEYS = (
+    "match_mode",
+    "chongci_config",
+    "seats",
+    "max_steps_per_episode",
+    "oracle_observation",
+    "large_loss_threshold",
+)
+
+# Decision-protocol blocks the fh-mj-evaluate wrapper records only when
+# active (greedy runs omit them). These must match EXACTLY across the pair —
+# a sampled or search-assisted run is a different policy than a greedy one,
+# even on identical seeds. A bare (unwrapped) report has no protocol block
+# and therefore only compares equal to another protocol-free report.
+_WRAPPER_PROTOCOL_KEYS = ("sampling", "search")
+
+# Run RESULTS recorded inside a protocol block (not parameters): two runs of
+# the same protocol legitimately differ on these.
+_PROTOCOL_RESULT_KEYS = ("fallback_count",)
 
 
-def _unwrap_report(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _wrapper_protocol(payload: Dict[str, Any]) -> Dict[str, Any]:
+    protocol: Dict[str, Any] = {}
+    for key in _WRAPPER_PROTOCOL_KEYS:
+        value = payload.get(key)
+        if isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k not in _PROTOCOL_RESULT_KEYS}
+        if value is not None:
+            protocol[key] = value
+    return protocol
+
+
+def _unwrap_report(payload: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Accept both a bare duplicate-seat report and the standard
-    fh-mj-evaluate --report-output wrapper (which nests it under "online")."""
+    fh-mj-evaluate --report-output wrapper (which nests it under "online").
+
+    Returns (duplicate-seat report, decision protocol from the wrapper)."""
     if "seeds" in payload:
-        return payload
+        return payload, {}
     online = payload.get("online")
     if isinstance(online, dict) and "seeds" in online:
-        return online
-    return payload
+        return online, _wrapper_protocol(payload)
+    return payload, {}
 
 
-def _check_comparable(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> None:
+def _check_comparable(
+    report_a: Dict[str, Any],
+    report_b: Dict[str, Any],
+    protocol_a: Dict[str, Any],
+    protocol_b: Dict[str, Any],
+) -> None:
+    if protocol_a != protocol_b:
+        label_a = protocol_a if protocol_a else "greedy"
+        label_b = protocol_b if protocol_b else "greedy"
+        raise ValueError(
+            f"reports are not comparable: decision protocol differs ({label_a!r} vs {label_b!r})"
+        )
     for key in _COMPAT_KEYS:
         if key in report_a and key in report_b and report_a[key] != report_b[key]:
             raise ValueError(
@@ -62,9 +104,9 @@ def _per_seed_means(report: Dict[str, Any], num_seeds: int) -> list[float]:
 
 
 def paired_comparison(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> Dict[str, Any]:
-    report_a = _unwrap_report(report_a)
-    report_b = _unwrap_report(report_b)
-    _check_comparable(report_a, report_b)
+    report_a, protocol_a = _unwrap_report(report_a)
+    report_b, protocol_b = _unwrap_report(report_b)
+    _check_comparable(report_a, report_b, protocol_a, protocol_b)
     seeds_a = list(report_a.get("seeds", []))
     seeds_b = list(report_b.get("seeds", []))
     if not seeds_a or not seeds_b:

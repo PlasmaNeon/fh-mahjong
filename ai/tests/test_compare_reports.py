@@ -151,3 +151,53 @@ def test_missing_config_keys_still_comparable():
     b = make_report(seeds, means)  # no match_mode at all
     result = paired_comparison(a, b)
     assert result["num_seeds"] == 3
+
+
+def test_protocol_mismatch_refused():
+    # A sampled or search-assisted run is a different decision protocol than
+    # a greedy one; identical seeds do not make them comparable.
+    seeds = list(range(4))
+    means = [0.1, -0.1, 0.2, 0.0]
+    greedy = {"checkpoint": "a.pt", "online": make_report(seeds, means)}
+    sampled = {
+        "checkpoint": "b.pt",
+        "online": make_report(seeds, means),
+        "sampling": {"temperature": 0.8, "top_k": 3, "action_family": "discard", "seed": 1},
+    }
+    searched = {
+        "checkpoint": "c.pt",
+        "online": make_report(seeds, means),
+        "search": {"num_determinizations": 16, "max_candidates": 4, "prior_mass_cutoff": 0.95,
+                   "max_rollout_decisions": 512, "seed": 7, "fallback_count": 0},
+    }
+    with pytest.raises(ValueError, match="decision protocol"):
+        paired_comparison(greedy, sampled)
+    with pytest.raises(ValueError, match="decision protocol"):
+        paired_comparison(sampled, searched)
+    # Bare (unwrapped) report == protocol-free == greedy wrapper: comparable.
+    result = paired_comparison(greedy, make_report(seeds, means))
+    assert result["num_seeds"] == 4
+
+
+def test_search_fallback_count_is_result_not_protocol():
+    # fallback_count is a run RESULT inside the search block; two runs of the
+    # identical search protocol may differ on it and stay comparable.
+    seeds = list(range(4))
+    means = [0.1, -0.1, 0.2, 0.0]
+    search_params = {"num_determinizations": 16, "max_candidates": 4, "prior_mass_cutoff": 0.95,
+                     "max_rollout_decisions": 512, "seed": 7}
+    a = {"online": make_report(seeds, means), "search": {**search_params, "fallback_count": 0}}
+    b = {"online": make_report(seeds, means), "search": {**search_params, "fallback_count": 3}}
+    result = paired_comparison(a, b)
+    assert result["num_seeds"] == 4
+
+
+def test_large_loss_threshold_mismatch_refused():
+    seeds = [1, 2, 3]
+    means = [0.0, 0.1, -0.1]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["large_loss_threshold"] = -800.0
+    b["large_loss_threshold"] = -500.0
+    with pytest.raises(ValueError, match="not comparable.*large_loss_threshold"):
+        paired_comparison(a, b)
