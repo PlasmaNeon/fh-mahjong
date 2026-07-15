@@ -94,3 +94,60 @@ def test_cli_text_mode(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "mean delta" in out
     assert "0.5" in out
+
+
+def test_wrapped_evaluate_report_unwrapped(tmp_path, capsys):
+    # fh-mj-evaluate --report-output nests the duplicate-seat report under
+    # "online"; the CLI must accept that exact serialized shape.
+    seeds = list(range(910000, 910008))
+    means = [0.1, -0.2, 0.3, 0.0, -0.1, 0.2, -0.3, 0.1]
+    wrapped_a = {"checkpoint": "a.pt", "online": make_report(seeds, [m + 0.2 for m in means]), "offline": None}
+    wrapped_b = {"checkpoint": "b.pt", "online": make_report(seeds, means), "offline": None}
+
+    result = paired_comparison(wrapped_a, wrapped_b)
+    assert result["mean_delta"] == pytest.approx(0.2, abs=1e-9)
+
+    path_a = tmp_path / "a.json"
+    path_b = tmp_path / "b.json"
+    path_a.write_text(json.dumps(wrapped_a))
+    path_b.write_text(json.dumps(wrapped_b))
+    main([str(path_a), str(path_b), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mean_delta"] == pytest.approx(0.2, abs=1e-9)
+
+
+def test_incompatible_configs_refused():
+    seeds = [1, 2, 3]
+    means = [0.0, 0.1, -0.1]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["match_mode"] = "chongci"
+    b["match_mode"] = "classic"
+    with pytest.raises(ValueError, match="not comparable.*match_mode"):
+        paired_comparison(a, b)
+
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["chongci_config"] = {"starting_score": 2000, "bust_threshold": 0, "max_hands": 50}
+    b["chongci_config"] = {"starting_score": 2000, "bust_threshold": 0, "max_hands": 40}
+    with pytest.raises(ValueError, match="not comparable.*chongci_config"):
+        paired_comparison(a, b)
+
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["seats"] = [0, 1, 2, 3]
+    b["seats"] = [0, 1]
+    with pytest.raises(ValueError, match="not comparable.*seats"):
+        paired_comparison(a, b)
+
+
+def test_missing_config_keys_still_comparable():
+    # Reports predating the persisted config fields must not be rejected:
+    # the compatibility check applies only to keys present in BOTH reports.
+    seeds = [1, 2, 3]
+    means = [0.0, 0.1, -0.1]
+    a = make_report(seeds, means)
+    a["match_mode"] = "chongci"
+    b = make_report(seeds, means)  # no match_mode at all
+    result = paired_comparison(a, b)
+    assert result["num_seeds"] == 3

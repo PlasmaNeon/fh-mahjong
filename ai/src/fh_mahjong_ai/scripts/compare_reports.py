@@ -16,6 +16,32 @@ import numpy as np
 from fh_mahjong_ai.evaluate import _t_critical_975, clustered_placement_stats
 
 
+# Evaluation settings that must match for a paired comparison to be a
+# measurement of the same experiment. Checked only when a key is present in
+# BOTH reports, so reports predating a field remain comparable.
+_COMPAT_KEYS = ("match_mode", "chongci_config", "seats", "max_steps_per_episode", "oracle_observation")
+
+
+def _unwrap_report(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept both a bare duplicate-seat report and the standard
+    fh-mj-evaluate --report-output wrapper (which nests it under "online")."""
+    if "seeds" in payload:
+        return payload
+    online = payload.get("online")
+    if isinstance(online, dict) and "seeds" in online:
+        return online
+    return payload
+
+
+def _check_comparable(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> None:
+    for key in _COMPAT_KEYS:
+        if key in report_a and key in report_b and report_a[key] != report_b[key]:
+            raise ValueError(
+                f"reports are not comparable: {key} differs "
+                f"({report_a[key]!r} vs {report_b[key]!r})"
+            )
+
+
 def _per_seed_means(report: Dict[str, Any], num_seeds: int) -> list[float]:
     """Per-seed mean placements: the report field when present, otherwise
     reconstructed from seat_reports (reports that predate the field)."""
@@ -36,6 +62,9 @@ def _per_seed_means(report: Dict[str, Any], num_seeds: int) -> list[float]:
 
 
 def paired_comparison(report_a: Dict[str, Any], report_b: Dict[str, Any]) -> Dict[str, Any]:
+    report_a = _unwrap_report(report_a)
+    report_b = _unwrap_report(report_b)
+    _check_comparable(report_a, report_b)
     seeds_a = list(report_a.get("seeds", []))
     seeds_b = list(report_b.get("seeds", []))
     if not seeds_a or not seeds_b:
