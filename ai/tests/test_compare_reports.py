@@ -349,3 +349,24 @@ def test_snapshot_bridge_library_immutable_artifact(tmp_path):
     )
     assert missing_digest is None and missing_holder is None
     assert missing_path == str(tmp_path / "missing.so")
+
+
+def test_constant_nonzero_delta_is_significant():
+    # A perfectly consistent per-seed delta collapses the CI to a point
+    # estimate — that is maximal evidence, not "no significance".
+    # Integer-valued means keep the per-seed deltas EXACTLY equal in float,
+    # so the CI width is exactly 0 (not rounding noise) — the case the old
+    # `ci95 > 0` rule wrongly reported as not significant.
+    seeds = list(range(6))
+    base = [1.0, -2.0, 3.0, 0.0, -1.0, 2.0]
+    result = paired_comparison(
+        make_report(seeds, [b + 1.0 for b in base]),
+        make_report(seeds, base),
+    )
+    assert result["mean_delta"] == pytest.approx(1.0)
+    assert result["delta_ci95_clustered"] == 0.0
+    assert result["significant"] is True
+
+    # But a single seed can never be significant (no degrees of freedom).
+    single = paired_comparison(make_report([1], [0.5]), make_report([1], [0.0]))
+    assert single["significant"] is False

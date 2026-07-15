@@ -207,7 +207,10 @@ def paired_comparison(
         "mean_placement_b": float(report_b.get("mean_placement", means_b.mean())),
         "large_loss_rate_a": report_a.get("large_loss_rate"),
         "large_loss_rate_b": report_b.get("large_loss_rate"),
-        "significant": bool(ci95 > 0.0 and abs(mean_delta) > ci95),
+        # A zero-width CI from perfectly consistent per-seed deltas is the
+        # point estimate: a constant nonzero delta IS significant. Only the
+        # single-seed case (no df) can never be.
+        "significant": bool(num_seeds > 1 and abs(mean_delta) > ci95),
         "config_check": "legacy" if allow_missing_config else "strict",
         "bridge_check": "mismatch-allowed" if bridge_mismatched else "match",
     }
