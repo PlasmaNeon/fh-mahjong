@@ -102,6 +102,103 @@ def reward_summary(rewards: Sequence[float]) -> Dict[str, Any]:
     }
 
 
+# Small-df lookup for the two-sided 95% Student-t critical value; the
+# Cornish-Fisher series below is accurate to ~1e-3 only for df >= 5.
+_T_CRITICAL_975_SMALL_DF = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776}
+
+
+def _t_critical_975(df: int) -> float:
+    """Two-sided 95% Student-t critical value (numpy-only, no scipy)."""
+    if df <= 0:
+        return float("inf")
+    if df in _T_CRITICAL_975_SMALL_DF:
+        return _T_CRITICAL_975_SMALL_DF[df]
+    z = 1.959963984540054
+    g1 = (z**3 + z) / 4.0
+    g2 = (5 * z**5 + 16 * z**3 + 3 * z) / 96.0
+    g3 = (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / 384.0
+    return float(z + g1 / df + g2 / df**2 + g3 / df**3)
+
+
+def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) -> Dict[str, Any]:
+    """Wall-seed-clustered placement statistics for duplicate-seat evals.
+
+    ``per_seat_placements`` holds one sequence per rotated seat, each ordered
+    by the SHARED seed list. The wall seed is the independent sampling unit;
+    the seat rotations of one seed are correlated replicates, so the interval
+    is a t-interval over per-seed means, not over the flattened placements.
+    ``cluster_design_effect`` is the ratio of the clustered to the naive
+    variance of the mean (>1 = positive within-seed correlation).
+    """
+    empty = {
+        "per_seed_mean_placements": [],
+        "mean_placement_clustered": 0.0,
+        "mean_placement_sem_clustered": 0.0,
+        "mean_placement_ci95_clustered": 0.0,
+        "cluster_design_effect": 0.0,
+        "num_seeds": 0,
+    }
+    rows = [list(map(float, seat)) for seat in per_seat_placements]
+    if not rows:
+        return empty
+    lengths = {len(row) for row in rows}
+    if len(lengths) != 1:
+        raise ValueError(
+            f"per-seat placement lists must share one length (one entry per seed); got lengths {sorted(lengths)}"
+        )
+    num_seeds = lengths.pop()
+    if num_seeds == 0:
+        return empty
+
+    matrix = np.asarray(rows, dtype=np.float64)  # (seats, seeds)
+    seed_means = matrix.mean(axis=0)
+    mean = float(seed_means.mean())
+    if num_seeds < 2:
+        return {
+            "per_seed_mean_placements": [float(v) for v in seed_means],
+            "mean_placement_clustered": mean,
+            "mean_placement_sem_clustered": 0.0,
+            "mean_placement_ci95_clustered": 0.0,
+            "cluster_design_effect": 0.0,
+            "num_seeds": num_seeds,
+        }
+
+    clustered_sem = float(np.std(seed_means, ddof=1) / np.sqrt(num_seeds))
+    flat = matrix.reshape(-1)
+    naive_var_of_mean = float(np.var(flat, ddof=1) / flat.size) if flat.size > 1 else 0.0
+    design_effect = (clustered_sem**2 / naive_var_of_mean) if naive_var_of_mean > 0 else 0.0
+    return {
+        "per_seed_mean_placements": [float(v) for v in seed_means],
+        "mean_placement_clustered": mean,
+        "mean_placement_sem_clustered": clustered_sem,
+        "mean_placement_ci95_clustered": _t_critical_975(num_seeds - 1) * clustered_sem,
+        "cluster_design_effect": design_effect,
+        "num_seeds": num_seeds,
+    }
+
+
+def _clustered_report_fields(seat_reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The three clustered fields added to duplicate-seat reports.
+
+    Falls back to empty stats (instead of raising) when seat reports are
+    ragged — a defensive path only; duplicate-seat runs always evaluate the
+    identical seed list on every seat.
+    """
+    per_seat = [
+        [float(p) for p in report.get("per_episode_placements", [])]
+        for report in seat_reports
+    ]
+    try:
+        stats = clustered_placement_stats(per_seat)
+    except ValueError:
+        stats = clustered_placement_stats([])
+    return {
+        "per_seed_mean_placements": stats["per_seed_mean_placements"],
+        "mean_placement_ci95_clustered": stats["mean_placement_ci95_clustered"],
+        "cluster_design_effect": stats["cluster_design_effect"],
+    }
+
+
 def action_family_rates(action_counts: Counter[str]) -> Dict[str, float]:
     total = sum(action_counts.values())
     if total == 0:
@@ -884,6 +981,7 @@ def evaluate_duplicate_seats_policy(
         "mean_placement": placements["mean"],
         "mean_placement_ci95": placements["ci95"],
         "placement_count": len(all_placements),
+        **_clustered_report_fields(seat_reports),
         "truncation_count": truncations,
         "truncation_rate": truncations / completed if completed else 0.0,
         "action_family_counts": dict(sorted(action_counts.items())),
@@ -1018,6 +1116,7 @@ def evaluate_duplicate_seats(
         "mean_placement": placements["mean"],
         "mean_placement_ci95": placements["ci95"],
         "placement_count": len(all_placements),
+        **_clustered_report_fields(seat_reports),
         "truncation_count": truncations,
         "truncation_rate": truncations / completed if completed else 0.0,
         "action_family_counts": dict(sorted(action_counts.items())),
