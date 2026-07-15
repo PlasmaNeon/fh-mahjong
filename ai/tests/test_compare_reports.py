@@ -37,12 +37,17 @@ def test_constant_shift_detected():
     seeds = list(range(910000, 910200))
     rng = np.random.default_rng(2)
     base = rng.normal(scale=0.1, size=200)
+    # Shift with small per-seed jitter: paired deltas have std ~0.01, so the
+    # paired CI95 is ~0.0014 — while an UNPAIRED computation over the two
+    # base-noise-dominated samples gives ~0.019. The 0.01 bound therefore
+    # fails any implementation that is not genuinely paired per seed.
+    jitter = rng.normal(scale=0.01, size=200)
     result = paired_comparison(
-        make_report(seeds, list(base + 0.5)),
+        make_report(seeds, list(base + 0.5 + jitter)),
         make_report(seeds, list(base)),
     )
-    assert result["mean_delta"] == pytest.approx(0.5, abs=1e-6)
-    assert result["delta_ci95_clustered"] < 0.1
+    assert result["mean_delta"] == pytest.approx(0.5, abs=5e-3)
+    assert result["delta_ci95_clustered"] < 0.01
     assert result["significant"] is True
 
 
