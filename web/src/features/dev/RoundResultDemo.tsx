@@ -12,12 +12,13 @@ import {
 // Default = control panel + resizable iframe. The iframe loads this same route
 // with ?embed=1 so its own viewport drives the responsive media queries.
 
-const VIEWPORTS = [
+export const ROUND_RESULT_VIEWPORTS = [
+  { key: 'compact-phone', label: 'Compact iPhone', width: 375, height: 667 },
   { key: 'phone', label: 'Portrait phone', width: 393, height: 852 },
   { key: 'landscape', label: 'Landscape', width: 852, height: 393 },
   { key: 'desktop', label: 'Desktop', width: 1280, height: 800 },
 ] as const
-type ViewportKey = (typeof VIEWPORTS)[number]['key']
+type ViewportKey = (typeof ROUND_RESULT_VIEWPORTS)[number]['key']
 
 function isScenarioKey(value: string | null): value is ScenarioKey {
   return value !== null && (SCENARIO_KEYS as readonly string[]).includes(value)
@@ -78,10 +79,10 @@ function segButton(active: boolean): string {
 
 function Playground() {
   const [scenario, setScenario] = useState<ScenarioKey>('tsumo')
-  const [viewport, setViewport] = useState<ViewportKey>('phone')
+  const [viewport, setViewport] = useState<ViewportKey>('compact-phone')
   const [ready, setReady] = useState(false)
 
-  const vp = VIEWPORTS.find((v) => v.key === viewport) ?? VIEWPORTS[0]
+  const vp = ROUND_RESULT_VIEWPORTS.find((v) => v.key === viewport) ?? ROUND_RESULT_VIEWPORTS[0]
   const src = `/tools/round-result?embed=1&scenario=${scenario}&ready=${ready ? '1' : '0'}`
 
   return (
@@ -108,7 +109,7 @@ function Playground() {
         <div className="flex flex-col gap-2">
           <span className="text-xs uppercase tracking-wider text-white/50">Viewport</span>
           <div className="flex flex-wrap gap-2">
-            {VIEWPORTS.map((v) => (
+            {ROUND_RESULT_VIEWPORTS.map((v) => (
               <button key={v.key} className={segButton(viewport === v.key)} onClick={() => setViewport(v.key)}>
                 {v.label}
                 <span className="ml-1 text-white/40">
@@ -120,7 +121,7 @@ function Playground() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-wider text-white/50">Ready badges</span>
+          <span className="text-xs uppercase tracking-wider text-white/50">Ready status</span>
           <button className={segButton(ready)} onClick={() => setReady((r) => !r)}>
             {ready ? 'On' : 'Off'}
           </button>

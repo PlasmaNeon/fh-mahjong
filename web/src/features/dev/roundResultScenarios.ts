@@ -23,7 +23,7 @@ export type ScenarioData = Omit<RoundResultView, 'actions'>
 function readyBadge(seat: number, ready: boolean): Pick<RoundResultPayout, 'readyLabel' | 'readyActive'> {
   if (!ready) return { readyLabel: null, readyActive: false }
   const active = seat % 2 === 0
-  return { readyLabel: active ? 'Ready' : '...', readyActive: active }
+  return { readyLabel: active ? 'Ready' : 'Waiting', readyActive: active }
 }
 
 // amounts must be given in seat order [0,1,2,3] and sum to zero.
