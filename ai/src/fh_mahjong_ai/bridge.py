@@ -369,6 +369,16 @@ class CtypesGoBridge(MahjongBridge):
         if action_mask.size == 0:
             action_mask = np.zeros((self.config.action_space_size,), dtype=np.int8)
 
+        requested_window = int(self.config.event_history_window)
+        if requested_window > 0 and int(observation.event_history_window) != requested_window:
+            # A pre-B1 c-shared bridge ignores the unknown config field and
+            # echoes window 0 — training/eval would silently run without its
+            # configured input while looking healthy. Fail loudly instead.
+            raise BridgeError(
+                f"bridge returned event_history_window={int(observation.event_history_window)} "
+                f"but the client requested {requested_window} — the Go bridge library predates "
+                "event history; rebuild it (go build -buildmode=c-shared ./cmd/rlbridge)"
+            )
         event_history = np.asarray(observation.event_history, dtype=np.uint32)
 
         return Observation(

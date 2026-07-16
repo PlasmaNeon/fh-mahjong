@@ -115,3 +115,48 @@ def test_go_pool_config_message_carries_window():
 
     message = GoEnvPool._config_message(_Stub())
     assert message.event_history_window == 128
+
+
+def test_stale_bridge_window_mismatch_raises():
+    # A pre-B1 Go library ignores the unknown config field and echoes
+    # event_history_window=0; the decoder must fail loudly, not silently
+    # run without the configured input.
+    from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge
+    from fh_mahjong_ai.config import EnvConfig
+    from fh_mahjong_ai.generated.proto import game_pb2
+
+    config = EnvConfig(bridge_kind="go", event_history_window=8)
+
+    class _Stub:
+        pass
+
+    stub = _Stub()
+    stub.config = config
+
+    channels, height, width = config.plane_shape
+    stale = game_pb2.SeatObservation(
+        seat=0,
+        planes=[0.0] * (channels * height * width),
+        scalars=[0.0] * config.scalar_features,
+        action_mask=bytes(config.action_space_size),
+        event_history_window=0,  # stale bridge: field unknown, defaults to 0
+    )
+    with pytest.raises(BridgeError, match="predates"):
+        CtypesGoBridge._decode_observation(stub, stale)
+
+    # A matching window decodes fine.
+    fresh = game_pb2.SeatObservation(
+        seat=0,
+        planes=[0.0] * (channels * height * width),
+        scalars=[0.0] * config.scalar_features,
+        action_mask=bytes(config.action_space_size),
+        event_history=[0x140],
+        event_history_window=8,
+    )
+    obs = CtypesGoBridge._decode_observation(stub, fresh)
+    assert obs.event_history.tolist() == [0x140]
+
+    # Window 0 clients accept anything (dormant path untouched).
+    stub.config = EnvConfig(bridge_kind="go")
+    obs = CtypesGoBridge._decode_observation(stub, stale)
+    assert obs.event_history.size == 0
