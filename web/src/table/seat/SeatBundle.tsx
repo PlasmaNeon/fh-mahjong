@@ -9,8 +9,9 @@ type SeatBundleProps = {
   isSelf: boolean
   player: PlayerTableView
   direction: SeatLaneDirection
-  canDiscard?: boolean
-  onDiscard?: (tile: TileLike) => void
+  interactive?: boolean
+  liftedTileId?: number | null
+  onHandTileClick?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -24,8 +25,9 @@ export function SeatBundle({
   isSelf,
   player,
   direction,
-  canDiscard = false,
-  onDiscard,
+  interactive = false,
+  liftedTileId = null,
+  onHandTileClick,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -48,8 +50,9 @@ export function SeatBundle({
         isSelf={isSelf}
         player={player}
         direction={direction}
-        canDiscard={canDiscard}
-        onDiscard={onDiscard}
+        interactive={interactive}
+        liftedTileId={liftedTileId}
+        onHandTileClick={onHandTileClick}
         isWildTile={isWildTile}
         hiddenTileIds={hiddenTileIds}
         hiddenSlots={hiddenSlots}

@@ -9,11 +9,16 @@ import { loadPrivateRoomSession } from './privateRoomSession';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
+import GameSettingsButton from './GameSettingsButton';
 import { preloadAllTileSvgs } from '../../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
+import { loadDiscardMode, saveDiscardMode } from './discardMode';
+import { resolveHandTileClick } from './handTileClick';
+import { shouldClearLift } from './clearLift';
+import { tileIdsEqual } from '../../table/meldOrdering';
 
 export default function Game() {
     const { matchId } = useParams();
@@ -74,6 +79,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     const autoFlowerRevealKeyRef = useRef<string>('');
     const [isReady, setIsReady] = useState(false);
     const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
+    const [discardMode, setDiscardMode] = useState(loadDiscardMode);
+    const [liftedTileId, setLiftedTileId] = useState<number | null>(null);
     const stageLayout = useGameStageLayout();
 
     // Reset ready state when a new round starts
@@ -185,11 +192,48 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     // Preload all tile SVGs on first mount so images are instant
     useEffect(() => { preloadAllTileSvgs(); }, []);
 
-    // Stable callback for discarding (passed to memoized TileComponent)
-    const onDiscard = useCallback((tile: game.ITile) => {
-        console.log('[Discard] Clicked tile:', tile);
-        handleAction(game.ActionType.ACTION_DISCARD, tile);
+    // "Can discard right now" mirrors the old canDiscardSeat gate.
+    const canDiscardNow = gameState.activePlayer === mySeatId && gameState.phase === 2
+        && validActions.some((action: any) => action.type === game.ActionType.ACTION_DISCARD);
+
+    // Volatile inputs for the click handler, refreshed every render so the
+    // handler below can stay a stable (memoized) reference.
+    const clickStateRef = useRef({ discardMode, liftedTileId, canDiscardNow });
+    clickStateRef.current = { discardMode, liftedTileId, canDiscardNow };
+
+    // Unified hand-tile click: lift / confirm-discard / drop, per the reducer.
+    const onHandTileClick = useCallback((tile: game.ITile) => {
+        const { discardMode, liftedTileId, canDiscardNow } = clickStateRef.current;
+        const isLifted = tileIdsEqual(tile.id, liftedTileId);
+        const { kind } = resolveHandTileClick({ mode: discardMode, isLifted, canDiscard: canDiscardNow });
+        if (kind === 'discard') {
+            handleAction(game.ActionType.ACTION_DISCARD, tile);
+            setLiftedTileId(null);
+        } else if (kind === 'lift') {
+            setLiftedTileId(tile.id);
+        } else {
+            setLiftedTileId(null); // unlift
+        }
     }, [socket]);
+
+    // Drop the lift when it can no longer refer to the tile the player raised:
+    // a new round (tile ids are recycled each round, so a surviving id would be
+    // a different physical tile) or the lifted tile leaving the self hand
+    // (discarded or consumed into a meld). Logic lives in shouldClearLift.
+    const handNumRef = useRef(gameState.handNum);
+    useEffect(() => {
+        const roundChanged = handNumRef.current !== gameState.handNum;
+        handNumRef.current = gameState.handNum;
+        const closedHandIds = (myPlayer?.closedHand || []).map((t: any) => t.id);
+        if (shouldClearLift({
+            liftedTileId,
+            roundChanged,
+            closedHandIds,
+            drawnTileId: myPlayer?.drawnTileId,
+        })) {
+            setLiftedTileId(null);
+        }
+    }, [gameState.handNum, liftedTileId, myPlayer]);
 
     // Check if a tile is wild (memoized per gameState.wildTiles)
     const wildTileSet = useRef(new Set<string>());
@@ -413,6 +457,12 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
             {gameState?.phase !== 5 && roomId && (
                 <ExitMatchButton roomId={roomId} onConfirmLeave={handleLeaveMatch} />
             )}
+            {gameState?.phase !== 5 && (
+                <GameSettingsButton
+                    mode={discardMode}
+                    onChange={(m) => { setDiscardMode(m); saveDiscardMode(m); }}
+                />
+            )}
             {gameState?.phase === 5 /* PHASE_MATCH_END */ && (
                 <MatchEndOverlay
                     state={gameState}
@@ -446,11 +496,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                                 </div>
                             </>
                         ) : null}
-                        canDiscardSeat={gameState.activePlayer === mySeatId && gameState.phase === 2
-                            && validActions.some((action: any) => action.type === game.ActionType.ACTION_DISCARD)
-                            ? mySeatId
-                            : null}
-                        onDiscard={onDiscard}
+                        liftedTileId={liftedTileId}
+                        onHandTileClick={onHandTileClick}
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}

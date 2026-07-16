@@ -5,26 +5,28 @@ import type { TileLike } from './types'
 type TileComponentProps = {
   tile: TileLike
   isInteractive?: boolean
+  isLifted?: boolean
   size?: 'normal' | 'small'
   noGlow?: boolean
   isWild?: boolean
-  onDiscard?: (tile: TileLike) => void
+  onTileClick?: (tile: TileLike) => void
 }
 
 export const TileComponent = memo(function TileComponent({
   tile,
   isInteractive = false,
+  isLifted = false,
   size = 'normal',
   noGlow = false,
   isWild = false,
-  onDiscard,
+  onTileClick,
 }: TileComponentProps) {
   const svgName = getTileSvgName(tile)
 
   return (
     <div
-      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${noGlow ? 'mahjong-tile--no-glow' : ''} ${isInteractive ? 'interactive' : ''} ${size === 'small' ? 'small' : ''}`}
-      onClick={() => isInteractive && onDiscard?.(tile)}
+      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${noGlow ? 'mahjong-tile--no-glow' : ''} ${isInteractive ? 'interactive' : ''} ${isLifted ? 'lifted' : ''} ${size === 'small' ? 'small' : ''}`}
+      onClick={() => isInteractive && onTileClick?.(tile)}
       style={{
         padding: 0,
         border: 'none',

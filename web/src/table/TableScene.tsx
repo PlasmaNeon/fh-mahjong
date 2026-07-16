@@ -38,8 +38,8 @@ type TableBoardProps = {
   hudChips?: HudChip[]
   actionBar?: ReactNode
   cornerInfo?: ReactNode
-  canDiscardSeat?: number | null
-  onDiscard?: (tile: TileLike) => void
+  liftedTileId?: number | null
+  onHandTileClick?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   animateDiscardTileIds?: Set<number>
   callableDiscard?: { seat: number; tileId: number } | null
@@ -60,8 +60,8 @@ export function TableBoard({
   hudChips = [],
   actionBar = null,
   cornerInfo = null,
-  canDiscardSeat = null,
-  onDiscard,
+  liftedTileId = null,
+  onHandTileClick,
   isWildTile = () => false,
   animateDiscardTileIds,
   callableDiscard = null,
@@ -113,8 +113,8 @@ export function TableBoard({
           key={`seat-${player.seat}`}
           direction={direction}
           player={player}
-          canDiscard={direction === 'bottom' && player.seat === canDiscardSeat}
-          onDiscard={onDiscard}
+          liftedTileId={liftedTileId}
+          onHandTileClick={onHandTileClick}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
           hiddenSlots={hiddenHandSlots.get(direction)}
