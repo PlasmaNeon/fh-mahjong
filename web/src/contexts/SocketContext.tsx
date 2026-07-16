@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useState, useRef, ReactNode } from 'react';
 import { getWebSocketUrl } from '../config';
 
+export const MATCH_LEAVE_CLOSE_CODE = 4000;
+export const MATCH_LEAVE_REASON = 'leave_match';
+
 interface SocketContextType {
     socket: WebSocket | null;
     isConnected: boolean;
     connect: () => void;
-    disconnect: () => void;
+    disconnect: (code?: number, reason?: string) => void;
 }
 
 const SocketContext = createContext<SocketContextType>({
@@ -54,11 +57,11 @@ export const SocketProvider: React.FC<{ children: ReactNode }> = ({ children }) 
         setSocket(ws);
     };
 
-    const disconnect = () => {
+    const disconnect = (code?: number, reason?: string) => {
         const ws = socketRef.current;
         if (ws) {
             socketRef.current = null;
-            ws.close();
+            ws.close(code, reason);
             setSocket(null);
             setIsConnected(false);
         }

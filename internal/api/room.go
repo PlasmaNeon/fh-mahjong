@@ -215,39 +215,23 @@ func (r *Room) Start() {
 	for {
 		select {
 		case <-r.Shutdown:
-			log.Printf("Room %s shutting down", r.ID)
-			// Persist BEFORE unregistering (OnShutdown): if SIGTERM lands
-			// in between, DrainActiveRooms must still see this room so the
-			// process can't exit mid-write. Transient DB failures get a few
-			// retries; a persistent failure leaves the row in_progress (a
-			// consistent state a backfill can find) and is logged loudly.
-			var persistErr error
-			for attempt := 1; attempt <= persistAttempts; attempt++ {
-				if persistErr = r.persistMatch(); persistErr == nil {
-					break
-				}
-				log.Printf("Room %s persist attempt %d/%d failed: %v", r.ID, attempt, persistAttempts, persistErr)
-				if attempt < persistAttempts {
-					time.Sleep(persistRetryBackoff)
-				}
-			}
-			if persistErr != nil {
-				log.Printf("Room %s GAVE UP persisting match after %d attempts; row remains in_progress", r.ID, persistAttempts)
-			}
-			if r.OnShutdown != nil {
-				r.OnShutdown()
-			}
-			close(r.Done)
+			r.finishShutdown()
 			return
 
 		case <-r.TimerResolveChan:
 			r.resolveInterruptsFromTimer()
 
 		case client := <-r.DisconnectedClient:
-			r.handleSeatDisconnect(client)
+			if r.handleSeatDisconnect(client) {
+				r.finishShutdown()
+				return
+			}
 
 		case client := <-r.seatReleaseChan:
-			r.releaseSeatAfterGrace(client)
+			if r.releaseSeatAfterGrace(client) {
+				r.finishShutdown()
+				return
+			}
 
 		case client := <-r.ReconnectedClient:
 			r.handleSeatReconnect(client)
@@ -259,6 +243,37 @@ func (r *Room) Start() {
 			r.dispatchClientAction(clientAction)
 		}
 	}
+}
+
+// finishShutdown persists and unregisters a room before its event loop exits.
+// It runs on the room goroutine both for externally requested shutdowns and
+// when the final human seat expires after its reconnect grace period.
+func (r *Room) finishShutdown() {
+	log.Printf("Room %s shutting down", r.ID)
+	// Persist BEFORE unregistering (OnShutdown): if SIGTERM lands in between,
+	// DrainActiveRooms must still see this room so the process cannot exit
+	// mid-write. Transient DB failures get a few retries; a persistent failure
+	// leaves the row in_progress and is logged loudly.
+	var persistErr error
+	for attempt := 1; attempt <= persistAttempts; attempt++ {
+		if persistErr = r.persistMatch(); persistErr == nil {
+			break
+		}
+		log.Printf("Room %s persist attempt %d/%d failed: %v", r.ID, attempt, persistAttempts, persistErr)
+		if attempt < persistAttempts {
+			time.Sleep(persistRetryBackoff)
+		}
+	}
+	if persistErr != nil {
+		log.Printf("Room %s GAVE UP persisting match after %d attempts; row remains in_progress", r.ID, persistAttempts)
+	}
+	if r.Hub != nil {
+		r.Hub.UnbindRoom <- r
+	}
+	if r.OnShutdown != nil {
+		r.OnShutdown()
+	}
+	close(r.Done)
 }
 
 // appendReplay accumulates broadcast payloads into the room's replay buffer.
@@ -453,18 +468,23 @@ func (r *Room) resolveInterruptsFromTimer() {
 }
 
 // handleSeatDisconnect holds a dropped seat for the grace window so a refresh
-// or brief blip can reconnect without losing turns; after that a bot takes
-// over. All matching is by pointer identity.
-func (r *Room) handleSeatDisconnect(client *Client) {
+// or brief blip can reconnect without losing turns. It reports true when an
+// immediate release removed the final human and the room must shut down.
+// All matching is by pointer identity.
+func (r *Room) handleSeatDisconnect(client *Client) bool {
 	seat, found := r.seatForClient(client)
 	if !found {
 		// Never seated, or already superseded by a reconnect.
 		safeClose(client.Send)
-		return
+		return false
 	}
-	if r.disconnectGrace <= 0 {
+	if client.IntentionalLeave || r.disconnectGrace <= 0 {
 		r.freeSeatForClient(client)
 		safeClose(client.Send)
+		if !r.hasConnectedHumans() {
+			log.Printf("Final human left room %s; ending match", r.ID)
+			return true
+		}
 		log.Printf("Seat %d disconnected in room %s; bot taking over", seat, r.ID)
 		r.maybeScheduleBotTick()
 	} else {
@@ -479,17 +499,30 @@ func (r *Room) handleSeatDisconnect(client *Client) {
 			}
 		}()
 	}
+	return false
 }
 
 // releaseSeatAfterGrace frees a seat whose grace window elapsed, but only if
-// the same connection still holds it (a reconnect replaces the pointer).
-func (r *Room) releaseSeatAfterGrace(client *Client) {
+// the same connection still holds it (a reconnect replaces the pointer). It
+// reports true when the released seat was the final connected human.
+func (r *Room) releaseSeatAfterGrace(client *Client) bool {
 	seat, found := r.freeSeatForClient(client)
 	safeClose(client.Send)
 	if found {
+		if !r.hasConnectedHumans() {
+			log.Printf("Final human left room %s; ending match", r.ID)
+			return true
+		}
 		log.Printf("Seat %d grace window elapsed in room %s; bot taking over", seat, r.ID)
 		r.maybeScheduleBotTick()
 	}
+	return false
+}
+
+// hasConnectedHumans reports whether any human socket still owns a seat.
+// Server-controlled bot seats are never inserted into Seats.
+func (r *Room) hasConnectedHumans() bool {
+	return len(r.Seats) > 0
 }
 
 // handleSeatReconnect rebinds a returning owner's seat (reclaiming it from a

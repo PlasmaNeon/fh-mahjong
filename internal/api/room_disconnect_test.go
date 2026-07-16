@@ -2,6 +2,7 @@ package api
 
 import (
 	"testing"
+	"time"
 )
 
 // When the seat that is currently on turn is held by a (human) client, the bots
@@ -69,5 +70,63 @@ func TestSeatForClient(t *testing.T) {
 	}
 	if _, ok := room.seatForClient(b); ok {
 		t.Fatal("seatForClient(b) should report no seat")
+	}
+}
+
+func TestReleaseSeatAfterGrace_EndsMatchWhenFinalHumanLeaves(t *testing.T) {
+	room := NewRoom("last-human-room", nil, nil)
+	human := &Client{UserID: 1, Send: make(chan []byte)}
+	room.Seats[0] = human
+
+	if shutdown := room.releaseSeatAfterGrace(human); !shutdown {
+		t.Fatal("releasing the final human seat should end the match")
+	}
+	if len(room.Seats) != 0 {
+		t.Fatalf("seats = %d, want no connected humans", len(room.Seats))
+	}
+}
+
+func TestHandleSeatDisconnect_IntentionalFinalLeaveEndsImmediately(t *testing.T) {
+	room := NewRoom("intentional-leave-room", nil, nil, WithDisconnectGrace(time.Hour))
+	human := &Client{UserID: 1, Send: make(chan []byte), IntentionalLeave: true}
+	room.Seats[0] = human
+
+	if shutdown := room.handleSeatDisconnect(human); !shutdown {
+		t.Fatal("an intentional final leave should not wait for reconnect grace")
+	}
+	if len(room.Seats) != 0 {
+		t.Fatalf("seats = %d, want no connected humans", len(room.Seats))
+	}
+}
+
+func TestReleaseSeatAfterGrace_KeepsMatchRunningWhileHumanRemains(t *testing.T) {
+	room := NewRoom("remaining-human-room", nil, nil)
+	leaving := &Client{UserID: 1, Send: make(chan []byte)}
+	remaining := &Client{UserID: 2, Send: make(chan []byte)}
+	room.Seats[0] = leaving
+	room.Seats[1] = remaining
+
+	if shutdown := room.releaseSeatAfterGrace(leaving); shutdown {
+		t.Fatal("match should continue while another human remains")
+	}
+	if room.Seats[1] != remaining {
+		t.Fatal("remaining human seat was disturbed")
+	}
+	if !room.isAutomatedSeat(0) {
+		t.Fatal("departed human seat should become bot-controlled")
+	}
+}
+
+func TestReleaseSeatAfterGrace_IgnoresStaleConnectionAfterReconnect(t *testing.T) {
+	room := NewRoom("stale-release-room", nil, nil)
+	oldConn := &Client{UserID: 1, Send: make(chan []byte)}
+	newConn := &Client{UserID: 1, Send: make(chan []byte)}
+	room.Seats[0] = newConn
+
+	if shutdown := room.releaseSeatAfterGrace(oldConn); shutdown {
+		t.Fatal("stale grace timer must not end a reconnected player's match")
+	}
+	if room.Seats[0] != newConn {
+		t.Fatal("reconnected human seat was disturbed")
 	}
 }

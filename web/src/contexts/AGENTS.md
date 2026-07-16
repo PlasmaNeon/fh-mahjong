@@ -14,11 +14,13 @@ Provides global state management via React Context API. Authentication bootstrap
   - Manages connection lifecycle (connect, reconnect, cleanup)
   - Sends/receives binary Protobuf messages
   - Opens `/api/v1/ws` without query credentials; the browser supplies the HttpOnly session cookie
+  - `disconnect(code?, reason?)` clears client socket state synchronously and supports the explicit-match-leave close code
 
 - **GameContext.tsx** — Game state provider:
   - `useGameState()` hook — Returns the current decoded `GameState`
   - Listens to WebSocket `onmessage`, decodes Protobuf with `game.GameState.decode()`
   - Tracks `mySeatId` (which seat this client controls)
+  - Exposes `clearGameState()` so intentional table exits cannot be redirected back by a stale `matchId`
 
 ## Architecture Notes
 

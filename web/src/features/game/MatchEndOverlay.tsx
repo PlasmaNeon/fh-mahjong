@@ -2,6 +2,8 @@
 import { useNavigate } from 'react-router-dom';
 import { game } from '../../proto/game';
 import { GameDialog } from '../../theme';
+import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../contexts/SocketContext';
+import { useGameState } from '../../contexts/GameContext';
 
 type Props = {
     state: game.IGameState;
@@ -26,6 +28,8 @@ const rankLabel = (rank: number) => {
 
 export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
     const navigate = useNavigate();
+    const { disconnect } = useSocket();
+    const { clearGameState } = useGameState();
     const result = state.matchEndResult;
     if (!result || !result.standings) return null;
 
@@ -36,7 +40,11 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
             tone="win"
             actions={<>
                 {matchId && <button onClick={() => navigate(`/replay/${matchId}`)} className="ldg-btn">Watch replay</button>}
-                <button onClick={() => navigate('/')} className="ldg-btn ldg-btn--primary">Back to club</button>
+                <button onClick={() => {
+                    clearGameState();
+                    disconnect(MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON);
+                    navigate('/');
+                }} className="ldg-btn ldg-btn--primary">Back to club</button>
             </>}
         >
                 <div className="match-standings">

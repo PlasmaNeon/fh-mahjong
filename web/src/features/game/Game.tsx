@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useSocket } from '../../contexts/SocketContext';
+import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../contexts/SocketContext';
 import { useGameState } from '../../contexts/GameContext';
 import { game } from '../../proto/game';
 import { useGameStageLayout } from '../../hooks/useGameStageLayout';
@@ -18,8 +18,8 @@ import { orderTableActions } from './actionOrdering';
 export default function Game() {
     const { matchId } = useParams();
     const navigate = useNavigate();
-    const { isConnected, socket, connect } = useSocket();
-    const { gameState, mySeatId } = useGameState();
+    const { isConnected, socket, connect, disconnect } = useSocket();
+    const { gameState, mySeatId, clearGameState } = useGameState();
     const { status: authStatus, refreshSession } = useAuth();
 
     useEffect(() => {
@@ -63,13 +63,15 @@ export default function Game() {
             matchId={matchId}
             navigate={navigate}
             socket={socket}
+            disconnect={disconnect}
+            clearGameState={clearGameState}
             gameState={gameState}
             mySeatId={mySeatId}
         />
     );
 }
 
-function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
+function GameTable({ matchId, navigate, socket, disconnect, clearGameState, gameState, mySeatId }) {
     const previousDiscardIdsRef = useRef<Record<number, number[]>>({});
     const autoFlowerRevealKeyRef = useRef<string>('');
     const [isReady, setIsReady] = useState(false);
@@ -341,7 +343,11 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                 {isReady ? 'Waiting...' : 'Ready'}
             </button>
             <button
-                onClick={() => { socket?.close(); navigate('/'); }}
+                onClick={() => {
+                    clearGameState();
+                    disconnect(MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON);
+                    navigate('/');
+                }}
                 className="round-result-action-btn round-result-action-btn-exit"
             >
                 Exit
@@ -403,7 +409,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         if (roomId && matchId) {
             saveLeftMatchMarker({ roomId, matchId });
         }
-        socket?.close();
+        clearGameState();
+        disconnect(MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON);
         navigate(roomId ? `/room/${roomId}` : '/');
     };
 
