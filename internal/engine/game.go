@@ -44,6 +44,10 @@ type Game struct {
 	interruptTimer     *time.Timer
 	wallSeedOverride   *[MT19937SeedSize]uint32
 	nextDealerOverride *uint32
+
+	// Per-round public event log (always on; see events.go). Cleared at
+	// round start, value-copied by CloneForBranch.
+	publicEvents []PublicEvent
 }
 
 // MatchOptions configures a freshly constructed Game. The zero value
@@ -287,6 +291,8 @@ func (g *Game) dealTiles() uint32 {
 		g.State.WildTiles = []*pb.Tile{wildIndicator}
 	}
 
+	g.resetRoundEvents()
+
 	if g.Recorder != nil {
 		var deals [4][]uint32
 		for i := 0; i < 4; i++ {
@@ -384,6 +390,7 @@ func (g *Game) revealInitialFlowers(dealer uint32) {
 				break
 			}
 			replacement := g.wall[drawIndex]
+			g.logEvent(PublicEvent{Type: EventFlower, Seat: seat, Face: faceOf(flower), FromSeat: -1})
 			if g.Recorder != nil {
 				g.Recorder.RecordInitialFlower(seat, flower.Id, replacement.Id)
 			}
@@ -522,6 +529,7 @@ func (g *Game) ExecuteSystemDraw(seat uint32) error {
 	g.State.WallCount--
 	g.updateWangpaiTilesLeft()
 
+	g.logEvent(PublicEvent{Type: EventDraw, Seat: seat, Face: faceOf(drawnTile), FromSeat: -1})
 	if g.Recorder != nil {
 		g.Recorder.RecordDraw(seat, drawnTile.Id)
 	}
@@ -637,6 +645,7 @@ func (g *Game) ExecuteDeadWallDraw(seat uint32) error {
 	g.State.WallCount--
 	g.updateWangpaiTilesLeft()
 
+	g.logEvent(PublicEvent{Type: EventDraw, Seat: seat, Face: faceOf(drawnTile), FromSeat: -1})
 	if g.Recorder != nil {
 		g.Recorder.RecordDraw(seat, drawnTile.Id)
 	}
@@ -764,6 +773,7 @@ func (g *Game) handleHaiteiAccept(seat uint32) error {
 	g.haiteiDrawIndex = haiteiIdx
 	g.updateWangpaiTilesLeft()
 
+	g.logEvent(PublicEvent{Type: EventDraw, Seat: seat, Face: faceOf(drawnTile), FromSeat: -1, Flags: EventFlagHaitei})
 	if g.Recorder != nil {
 		g.Recorder.RecordHaiteiAccept(seat, drawnTile.Id)
 	}
@@ -817,6 +827,11 @@ func (g *Game) handleDiscard(seat uint32, action *pb.PlayerAction) error {
 	// unlike ActiveDiscard, which is cleared the moment no interrupt is
 	// possible (the common no-interrupt path), before the state is broadcast.
 	player.LastDiscardFromDrawn = player.DrawnTileId != nil && *player.DrawnTileId == int32(action.Tile.Id)
+	discardFlags := uint8(0)
+	if player.DrawnTileId != nil && uint32(*player.DrawnTileId) == action.Tile.Id {
+		discardFlags = EventFlagTsumogiri
+	}
+	g.logEvent(PublicEvent{Type: EventDiscard, Seat: seat, Face: faceOf(action.Tile), FromSeat: -1, Flags: discardFlags})
 	player.DrawnTileId = nil
 	g.State.ActiveDiscard = action.Tile
 
@@ -920,6 +935,11 @@ func (g *Game) handleKongOrFlowerReveal(seat uint32, action *pb.PlayerAction) er
 			kongBloom = "closed"
 		}
 
+		if upgraded {
+			g.logEvent(PublicEvent{Type: EventKanUpgrade, Seat: seat, Face: faceOf(action.MeldTiles[0]), FromSeat: -1})
+		} else {
+			g.logEvent(PublicEvent{Type: EventKanClosed, Seat: seat, Face: faceOf(action.MeldTiles[0]), FromSeat: -1})
+		}
 		if g.Recorder != nil {
 			if upgraded {
 				g.Recorder.RecordUpgradeKan(seat, action.MeldTiles[0].Id)
@@ -935,6 +955,7 @@ func (g *Game) handleKongOrFlowerReveal(seat uint32, action *pb.PlayerAction) er
 		// Add to Flower Melds
 		player.FlowerMelds = append(player.FlowerMelds, action.MeldTiles...)
 
+		g.logEvent(PublicEvent{Type: EventFlower, Seat: seat, Face: faceOf(action.MeldTiles[0]), FromSeat: -1})
 		if g.Recorder != nil {
 			g.Recorder.RecordFlowerReveal(seat, action.MeldTiles[0].Id)
 		}
@@ -1092,6 +1113,15 @@ func (g *Game) ResolveInterrupts() {
 					break
 				}
 			}
+		}
+
+		switch winningAction.Type {
+		case pb.ActionType_ACTION_CHII:
+			g.logEvent(PublicEvent{Type: EventChii, Seat: winnerSeat, Face: faceOf(g.State.ActiveDiscard), FromSeat: int32(discarder)})
+		case pb.ActionType_ACTION_PON:
+			g.logEvent(PublicEvent{Type: EventPon, Seat: winnerSeat, Face: faceOf(g.State.ActiveDiscard), FromSeat: int32(discarder)})
+		case pb.ActionType_ACTION_KAN:
+			g.logEvent(PublicEvent{Type: EventKanOpen, Seat: winnerSeat, Face: faceOf(g.State.ActiveDiscard), FromSeat: int32(discarder)})
 		}
 
 		if g.Recorder != nil {
