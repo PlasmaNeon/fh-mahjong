@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useSocket } from '../../contexts/SocketContext'
 import { useGameState } from '../../contexts/GameContext'
 import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ToolsRow } from '../../theme'
-import AuthTicket from '../auth/AuthTicket'
 import { useAuth } from '../../contexts/AuthContext'
+import type { AuthRouteState } from '../auth/authModal'
+import { consumePlayIntent, rememberPlayIntent } from './navigation'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 
@@ -12,9 +13,9 @@ export default function Lobby() {
   const [queueState, setQueueState] = useState<'idle' | 'joining' | 'queued' | 'leaving'>('idle')
   const [ruleset, setRuleset] = useState<Ruleset>('fenghua')
   const [showModes, setShowModes] = useState(false)
-  const [authPending, setAuthPending] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
   const { isConnected, connect } = useSocket()
   const { gameState } = useGameState()
   const { status: authStatus, apiFetch } = useAuth()
@@ -26,7 +27,12 @@ export default function Lobby() {
 
   const joinQueue = async () => {
     if (authStatus === 'offline') { setError('The club is offline. Check your connection and try again.'); return }
-    if (authStatus !== 'authenticated') { setAuthPending(true); return }
+    if (authStatus !== 'authenticated') {
+      if (typeof window !== 'undefined') rememberPlayIntent(window.sessionStorage, 'quick-match')
+      const state: AuthRouteState = { backgroundLocation: location, optionalAuth: true, cancelIntent: 'quick-match' }
+      navigate(`/login?returnTo=${encodeURIComponent('/play')}`, { state })
+      return
+    }
     setError('')
     setQueueState('joining')
     try {
@@ -45,11 +51,8 @@ export default function Lobby() {
   }
 
   useEffect(() => {
-    if (authPending && authStatus === 'authenticated') {
-      setAuthPending(false)
-      void joinQueue()
-    }
-  }, [authPending, authStatus])
+    if (authStatus === 'authenticated' && typeof window !== 'undefined' && consumePlayIntent(window.sessionStorage) === 'quick-match') void joinQueue()
+  }, [authStatus])
 
   const cancelQueue = async () => {
     if (authStatus !== 'authenticated') return
@@ -90,11 +93,7 @@ export default function Lobby() {
         <PageHeader title="Choose a table" subtitle="今晚玩一圈 · one clear next move" />
         {error && <Note tone="error">{error}</Note>}
 
-        {authPending ? (
-          <Section title="Sign in to find a match" subtitle="You will continue searching automatically.">
-            <AuthTicket onAuthenticated={() => { connect() }} />
-          </Section>
-        ) : searching ? (
+        {searching ? (
           <Section title="Listening for players" subtitle={ruleset === 'fenghua' ? 'Fenghua · Classic table' : 'Fenghua · Chongci table'}>
             <div className="queue-compass" aria-hidden="true"><span>東</span></div>
             <Note>{queueState === 'joining' ? 'Joining the queue…' : queueState === 'leaving' ? 'Leaving the queue safely…' : 'Searching for three players. Keep this page open.'}</Note>

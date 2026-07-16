@@ -3,6 +3,7 @@ package storage
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 	"time"
@@ -257,6 +258,13 @@ func AutoMigrate(db *gorm.DB) error {
 	// 2026-06. Idempotent — only touches rows that still hold the old value.
 	if err := db.Model(&Match{}).Where("ruleset = ?", "hometown").Update("ruleset", "fenghua").Error; err != nil {
 		return fmt.Errorf("backfilling legacy ruleset key: %w", err)
+	}
+	stats, err := backfillLegacyMatchPlayers(db)
+	if err != nil {
+		return err
+	}
+	if stats.RecoveredMatches > 0 || stats.SkippedMatches > 0 {
+		log.Printf("match history backfill: recovered=%d skipped=%d", stats.RecoveredMatches, stats.SkippedMatches)
 	}
 	return nil
 }

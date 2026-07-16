@@ -17,10 +17,12 @@ Defines the database schema for user accounts and match history using GORM (Go O
   - `generateUserID()` — Package-private function that returns a cryptographically-random user ID in [10000, 99999]
   - `User.BeforeCreate(tx)` — GORM hook that assigns a random sparse ID when one isn't already set
   - `AutoMigrate(db)` — Creates/updates tables from struct definitions
+  - `match_history.go` — Idempotently recovers missing `MatchPlayer` ownership/result rows from valid completed legacy paipu. Existing indexed matches are never replaced; malformed records are counted and skipped without blocking startup
 
 ## Architecture Notes
 
 - Used by `internal/api/auth.go` for user CRUD and `internal/api/room.go` / `internal/api/paipu.go` for match replay persistence and retrieval.
 - `AutoMigrate` owns the username cutover: sanitize friendly names, preserve the oldest collision, append `-2`/`-3`, backfill `username_key`, then create its unique index.
+- `AutoMigrate` also owns the completed-match history cutover. It parses only the minimum paipu player/final-score fields, preserves competition ranking for ties, and logs recovered/skipped counts.
 - PostgreSQL connection is established in `cmd/server/main.go` and passed through.
 - Rating system and match history are Phase 3 features (not yet fully implemented).

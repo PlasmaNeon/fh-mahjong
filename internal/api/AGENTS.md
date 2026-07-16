@@ -14,6 +14,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `/api/v1/matches/:matchId/review`, `/api/v1/ws`
   - Protected routes (30-day session cookie required; mutations also require `X-CSRF-Token`):
     - `PATCH /api/v1/users/me` — update unique username and/or email
+    - `GET /api/v1/users/me/replays` — cursor-paginated completed paipu owned by the current account; malformed, aborted, active, and unowned matches are excluded
     - `POST /api/v1/rooms` — explicitly create a private table and seat its host
     - `/api/v1/rooms/:roomId` (GET) — read current seat config.
     - `/api/v1/rooms/:roomId/join` (POST) — claim a seat.
@@ -53,6 +54,10 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
   - Local-dev fallback: serves checked-in `testdata/paipu/<matchId>.json` fixtures when no in-memory/DB record exists, which keeps replay pages usable without a populated database
   - Only queries the legacy `matches` table for canonical UUID match IDs; per-hand IDs like `match-1` skip the UUID-only lookup to avoid noisy Postgres cast errors
+- **replay_history.go** — Account-owned replay index:
+  - `GET /api/v1/users/me/replays?cursor=&limit=` requires the session cookie, defaults to 20 rows, caps at 50, and orders by `(end_time, match_id)` descending
+  - Cursors are opaque base64url values containing the last completion time and match ID, so equal timestamps paginate without duplicates
+  - Summaries combine relational ownership/result fields from `MatchPlayer` with historical player names and round counts from validated `PaipuJSON`; public `GET /replays/:matchId` remains unchanged
 
 - **review.go** — Post-game review report API, cached via `storage.MatchReview`:
   - `(*Server) loadPaipuJSON(matchID) (string, bool)` — shared paipu source chain extracted from `paipu.go` (in-memory store → `paipu_records` → legacy `Match.PaipuJSON` UUID-guarded lookup → checked-in fixtures), reused by both `handleGetPaipu` and the review handlers so behavior stays identical between the two APIs.

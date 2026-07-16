@@ -16,14 +16,16 @@ Authentication pages. Routes: `/login`, `/account`.
 
 - **authClient.ts** — Credentialed fetch/CSRF helpers, safe internal return-path validation, and one-time cleanup of legacy JWT storage
 - **AuthTicket.tsx** — Shared sign-in/register ticket. Login accepts one username-or-email field; registration collects the unique friendly username, email, and password
-- **Login.tsx** — Invitation-aware login route; validates `returnTo` and resumes `/room/:roomId` automatically after authentication
+- **AuthDialog.tsx** — Focus-trapped bone-paper account popup. Optional background-location opens support close/Escape/backdrop dismissal and restore focus; protected/invitation continuations omit dismissal
+- **authModal.ts** — Shared route-state and optional-versus-required login presentation rules
+- **Login.tsx** — Invitation-aware login overlay; validates `returnTo` and resumes protected routes automatically after authentication
 - **Account.tsx** — Edits the unique username/email and exposes explicit current-device logout
 
 ### `lobby/`
 
 Lobby/matchmaking pages. Routes: `/` (Home), `/play` (Lobby), `/room/new` (CreateRoom).
 
-- **Home.tsx** — Asymmetric club entrance with three choices: Play, Table Tools, and Profile.
+- **Home.tsx** — Compact club switchboard with four literal choices: Play, Table Tools, Paipu Replay, and Profile. Decorative slogan, atmospheric description, and menu descriptions are intentionally absent.
 - **Lobby.tsx** — Single Play screen for Quick Match and Private Table. Active searches must confirm `POST /matchmaking/leave` before the screen returns to idle; `409 match_forming` keeps the player connected.
 - **navigation.ts** — One-shot play-intent helper used by the simplified lobby flow.
 - **CreateRoom.tsx** — Auth gate plus protected `POST /rooms`; it navigates only after the server confirms creation, so an invite URL can never create state
@@ -44,8 +46,10 @@ Shanten distance calculator tool. Route: `/tools/shanten`.
 
 ### `replay/`
 
-Replay viewer. Route: `/replay/:matchId`.
+Paipu library and replay viewer. Routes: `/replay`, `/replay/:matchId`.
 
+- **ReplayLibrary.tsx** — Opens raw match IDs or shared `/replay/:matchId` links and lists the signed-in account's cursor-paginated completed games with open/copy actions and full loading/offline/empty states
+- **replayReference.ts** — Strictly extracts a local replay match ID from raw IDs, relative routes, or HTTP(S) links; pasted origins are never navigated or fetched
 - **Replay.tsx** — Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play. Keeps replay transport controls, perspective selector, and "show all hands" toggle in a lacquer side drawer, which becomes a bottom sheet on narrow screens. `replay.css` owns all static palette/layout styling; only dynamic progress widths and severity colours stay inline.
 - **replayEngine.ts** — Stateful replay engine: processes recorded game actions step-by-step and produces board state for each moment in the replay. `jumpToAction(roundIndex, actionIndex)` (`jumpToRound` + a `stepForward` loop) supports deep-linking from the review panel to a specific decision.
 - **replayTypes.ts** — TypeScript types for replay data (paipu format, engine state).
@@ -78,6 +82,8 @@ Dev-only preview pages that render real components with mock data (no live match
 ## Architecture Notes
 
 - `dev/TableSample.tsx` exposes deterministic idle, active-turn, interrupt, callable-discard, round-result, match-end, and exit-dialog fixtures for visual QA without a backend.
+
+- Optional login entry points preserve the current route in `backgroundLocation`; required account, room-create, invitation, and expired-session continuations use direct non-dismissible `/login?returnTo=...` navigation.
 
 - All files in a feature folder use `'../../` to reference `src`-level directories (`proto`, `table`, `contexts`, `hooks`, `theme`, `utils`, `config`). Intra-feature imports (files in the same folder) use `'./'`.
 - `Game.tsx` consumes `useGameState()` and `useSocket()` from contexts.

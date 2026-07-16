@@ -1,23 +1,22 @@
-import { Link } from 'react-router-dom'
+import { Link, useLocation, type LinkProps } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import type { AuthRouteState } from '../auth/authModal'
 
 export default function Home() {
     const { status, user } = useAuth()
+    const location = useLocation()
+    const profileState: AuthRouteState | undefined = user ? undefined : { backgroundLocation: location, optionalAuth: true }
     return (
         <main className="ledger-page">
             <div className="club-home">
-                <section>
-                    <div className="club-home__brand">奉化麻将 · Rainy Mahjong Club</div>
-                    <h1 className="club-home__title">One more hand before the rain stops.</h1>
-                    <p className="club-home__lead">A late-night table for Fenghua rules—find a live match, open a private room, or work through a hand at the scoring desk.</p>
-                </section>
+                <div className="club-home__brand">奉化麻将 · Rainy Mahjong Club</div>
                 <nav className="club-home__menu" aria-label="Club menu">
                     <div className="club-home__compass" aria-hidden="true"><span>東</span></div>
-                    <div className="club-home__menu-label">Tonight at the club</div>
                     <div className="club-home__links">
-                        <HomeLink to="/play" title="Play" detail="Quick match or a private table" mark="ENTER" primary />
-                        <HomeLink to="/tools/calc" title="Table Tools" detail="Scoring and shanten workbench" mark="TOOLS" />
-                        <HomeLink to={user ? '/account' : '/login'} title="Profile" detail={status === 'loading' ? 'Checking your club pass…' : status === 'offline' ? 'Club connection unavailable' : user ? `Signed in as ${user.username}` : 'Sign in or create an account'} mark="YOU" />
+                        <HomeLink to="/play" title="Play" mark="ENTER" primary />
+                        <HomeLink to="/tools/calc" title="Table Tools" mark="TOOLS" />
+                        <HomeLink to="/replay" title="Paipu Replay" mark="PAIPU" />
+                        <HomeLink to={user ? '/account' : `/login?returnTo=${encodeURIComponent('/account')}`} state={profileState} title="Profile" mark={status === 'loading' ? '…' : 'YOU'} />
                     </div>
                 </nav>
             </div>
@@ -25,6 +24,6 @@ export default function Home() {
     )
 }
 
-function HomeLink({ to, title, detail, mark, primary = false }: { to: string; title: string; detail: string; mark: string; primary?: boolean }) {
-    return <Link className={`club-home__link${primary ? ' club-home__link--primary' : ''}`} to={to}><span><strong>{title}</strong><small>{detail}</small></span><span className="club-home__link-mark">{mark} →</span></Link>
+function HomeLink({ to, state, title, mark, primary = false }: { to: string; state?: LinkProps['state']; title: string; mark: string; primary?: boolean }) {
+    return <Link className={`club-home__link${primary ? ' club-home__link--primary' : ''}`} to={to} state={state}><strong>{title}</strong><span className="club-home__link-mark">{mark} →</span></Link>
 }
