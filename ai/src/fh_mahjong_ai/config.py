@@ -21,6 +21,7 @@ class EnvConfig:
     chongci_bust_threshold: int = 0
     chongci_max_hands: int = 50
     oracle_observation: bool = False
+    event_history_window: int = 0
 
     def __post_init__(self) -> None:
         # Oracle mode appends the 3 opponents' closed hands (39 -> 51 channels);

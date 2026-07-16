@@ -149,11 +149,35 @@ class MockMahjongBridge(MahjongBridge):
         legal_indices = self._rng.choice(self.config.action_space_size, size=legal_count, replace=False)
         action_mask[legal_indices] = 1
 
+        event_history = np.zeros(0, dtype=np.uint32)
+        window = int(getattr(self.config, "event_history_window", 0))
+        if window > 0:
+            from .events import Event, encode_event
+
+            count = int(self._rng.integers(low=1, high=window + 1))
+            event_history = np.asarray(
+                [
+                    encode_event(
+                        Event(
+                            type=int(self._rng.integers(0, 8)),
+                            rel_seat=int(self._rng.integers(0, 4)),
+                            face=int(self._rng.integers(0, 42)),
+                            rel_from=int(self._rng.integers(0, 4)),
+                            tsumogiri=bool(self._rng.integers(0, 2)),
+                            haitei=False,
+                        )
+                    )
+                    for _ in range(count)
+                ],
+                dtype=np.uint32,
+            )
+
         return Observation(
             seat=self._state.current_seat,
             planes=planes,
             scalars=scalars,
             action_mask=action_mask,
+            event_history=event_history,
             metadata={"step_index": self._state.step_index, "bridge": "mock"},
         )
 
@@ -297,6 +321,7 @@ class CtypesGoBridge(MahjongBridge):
         )
         message.learning_seats.extend(int(seat) for seat in self.config.learning_seats)
         message.oracle_observation = bool(self.config.oracle_observation)
+        message.event_history_window = int(self.config.event_history_window)
         if self.config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
             message.chongci_config.starting_score = int(self.config.chongci_starting_score)
@@ -344,11 +369,14 @@ class CtypesGoBridge(MahjongBridge):
         if action_mask.size == 0:
             action_mask = np.zeros((self.config.action_space_size,), dtype=np.int8)
 
+        event_history = np.asarray(observation.event_history, dtype=np.uint32)
+
         return Observation(
             seat=int(observation.seat),
             planes=planes,
             scalars=scalars,
             action_mask=action_mask,
+            event_history=event_history,
             metadata={
                 "decision_index": int(observation.decision_index),
                 "phase": int(observation.phase),
