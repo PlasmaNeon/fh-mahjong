@@ -954,7 +954,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 (If searchpool.go changed in Step 5, stage it too.)
 
----### Task 4: Python — events.py, config, bridge surfaces
+---
+
+### Task 4: Python — events.py, config, bridge surfaces
 
 **Files:**
 - Create: `ai/src/fh_mahjong_ai/events.py`
