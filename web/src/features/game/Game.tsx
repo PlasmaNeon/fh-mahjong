@@ -17,6 +17,7 @@ import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
 import { loadDiscardMode, saveDiscardMode } from './discardMode';
 import { resolveHandTileClick } from './handTileClick';
+import { shouldClearLift } from './clearLift';
 import { tileIdsEqual } from '../../table/meldOrdering';
 
 export default function Game() {
@@ -215,27 +216,24 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         }
     }, [socket]);
 
-    // Drop the lift once the lifted tile is no longer in the self hand
-    // (discarded, melded, or a fresh round is dealt — tile ids repeat across
-    // rounds, so this reset prevents a stale id lighting up a new tile).
-    useEffect(() => {
-        if (liftedTileId == null) return;
-        const inHand = (myPlayer?.closedHand || []).some((t: any) => tileIdsEqual(t.id, liftedTileId))
-            || tileIdsEqual(myPlayer?.drawnTileId, liftedTileId);
-        if (!inHand) setLiftedTileId(null);
-    }, [gameState, liftedTileId, myPlayer]);
-
-    // Tile ids are recycled every round, so the hand-membership effect below
-    // cannot tell a still-lifted tile from an unrelated new tile that reused
-    // its id. handNum increments on every new round (startNextRound), so force
-    // a clear on any round change.
+    // Drop the lift when it can no longer refer to the tile the player raised:
+    // a new round (tile ids are recycled each round, so a surviving id would be
+    // a different physical tile) or the lifted tile leaving the self hand
+    // (discarded or consumed into a meld). Logic lives in shouldClearLift.
     const handNumRef = useRef(gameState.handNum);
     useEffect(() => {
-        if (handNumRef.current !== gameState.handNum) {
-            handNumRef.current = gameState.handNum;
+        const roundChanged = handNumRef.current !== gameState.handNum;
+        handNumRef.current = gameState.handNum;
+        const closedHandIds = (myPlayer?.closedHand || []).map((t: any) => t.id);
+        if (shouldClearLift({
+            liftedTileId,
+            roundChanged,
+            closedHandIds,
+            drawnTileId: myPlayer?.drawnTileId,
+        })) {
             setLiftedTileId(null);
         }
-    }, [gameState.handNum]);
+    }, [gameState.handNum, liftedTileId, myPlayer]);
 
     // Check if a tile is wild (memoized per gameState.wildTiles)
     const wildTileSet = useRef(new Set<string>());

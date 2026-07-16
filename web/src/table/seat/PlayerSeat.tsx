@@ -45,7 +45,7 @@ export function PlayerSeat({
           isSelf={isSelf}
           player={player}
           direction={direction}
-          interactive={isSelf}
+          interactive={isSelf && !!onHandTileClick}
           liftedTileId={liftedTileId}
           onHandTileClick={onHandTileClick}
           isWildTile={isWildTile}
