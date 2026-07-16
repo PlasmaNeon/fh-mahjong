@@ -14,6 +14,9 @@ import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
+import { loadDiscardMode } from './discardMode';
+import { resolveHandTileClick } from './handTileClick';
+import { tileIdsEqual } from '../../table/meldOrdering';
 
 export default function Game() {
     const { matchId } = useParams();
@@ -74,6 +77,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     const autoFlowerRevealKeyRef = useRef<string>('');
     const [isReady, setIsReady] = useState(false);
     const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
+    const [discardMode, setDiscardMode] = useState(loadDiscardMode);
+    const [liftedTileId, setLiftedTileId] = useState<number | null>(null);
     const stageLayout = useGameStageLayout();
 
     // Reset ready state when a new round starts
@@ -185,11 +190,39 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
     // Preload all tile SVGs on first mount so images are instant
     useEffect(() => { preloadAllTileSvgs(); }, []);
 
-    // Stable callback for discarding (passed to memoized TileComponent)
-    const onDiscard = useCallback((tile: game.ITile) => {
-        console.log('[Discard] Clicked tile:', tile);
-        handleAction(game.ActionType.ACTION_DISCARD, tile);
+    // "Can discard right now" mirrors the old canDiscardSeat gate.
+    const canDiscardNow = gameState.activePlayer === mySeatId && gameState.phase === 2
+        && validActions.some((action: any) => action.type === game.ActionType.ACTION_DISCARD);
+
+    // Volatile inputs for the click handler, refreshed every render so the
+    // handler below can stay a stable (memoized) reference.
+    const clickStateRef = useRef({ discardMode, liftedTileId, canDiscardNow });
+    clickStateRef.current = { discardMode, liftedTileId, canDiscardNow };
+
+    // Unified hand-tile click: lift / confirm-discard / drop, per the reducer.
+    const onHandTileClick = useCallback((tile: game.ITile) => {
+        const { discardMode, liftedTileId, canDiscardNow } = clickStateRef.current;
+        const isLifted = tileIdsEqual(tile.id, liftedTileId);
+        const { kind } = resolveHandTileClick({ mode: discardMode, isLifted, canDiscard: canDiscardNow });
+        if (kind === 'discard') {
+            handleAction(game.ActionType.ACTION_DISCARD, tile);
+            setLiftedTileId(null);
+        } else if (kind === 'lift') {
+            setLiftedTileId(tile.id);
+        } else {
+            setLiftedTileId(null); // unlift
+        }
     }, [socket]);
+
+    // Drop the lift once the lifted tile is no longer in the self hand
+    // (discarded, melded, or a fresh round is dealt — tile ids repeat across
+    // rounds, so this reset prevents a stale id lighting up a new tile).
+    useEffect(() => {
+        if (liftedTileId == null) return;
+        const inHand = (myPlayer?.closedHand || []).some((t: any) => tileIdsEqual(t.id, liftedTileId))
+            || tileIdsEqual(myPlayer?.drawnTileId, liftedTileId);
+        if (!inHand) setLiftedTileId(null);
+    }, [gameState, liftedTileId, myPlayer]);
 
     // Check if a tile is wild (memoized per gameState.wildTiles)
     const wildTileSet = useRef(new Set<string>());
@@ -446,11 +479,8 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
                                 </div>
                             </>
                         ) : null}
-                        canDiscardSeat={gameState.activePlayer === mySeatId && gameState.phase === 2
-                            && validActions.some((action: any) => action.type === game.ActionType.ACTION_DISCARD)
-                            ? mySeatId
-                            : null}
-                        onDiscard={onDiscard}
+                        liftedTileId={liftedTileId}
+                        onHandTileClick={onHandTileClick}
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}

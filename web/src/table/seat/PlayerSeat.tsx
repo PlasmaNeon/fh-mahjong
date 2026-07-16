@@ -5,8 +5,8 @@ import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 type PlayerSeatProps = {
   direction: SeatLaneDirection
   player: PlayerTableView
-  canDiscard?: boolean
-  onDiscard?: (tile: TileLike) => void
+  liftedTileId?: number | null
+  onHandTileClick?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -17,8 +17,8 @@ type PlayerSeatProps = {
 export function PlayerSeat({
   direction,
   player,
-  canDiscard = false,
-  onDiscard,
+  liftedTileId = null,
+  onHandTileClick,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -45,8 +45,9 @@ export function PlayerSeat({
           isSelf={isSelf}
           player={player}
           direction={direction}
-          canDiscard={canDiscard}
-          onDiscard={onDiscard}
+          interactive={isSelf}
+          liftedTileId={liftedTileId}
+          onHandTileClick={onHandTileClick}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
           hiddenSlots={hiddenSlots}

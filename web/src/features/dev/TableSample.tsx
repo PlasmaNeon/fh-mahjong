@@ -157,7 +157,6 @@ export default function TableSample() {
               wildTiles={wildTiles}
               hudChips={[{ label: 'East 2' }, { label: '58 tiles' }]}
               actionBar={actionBar}
-              canDiscardSeat={fixture === 'active' ? 0 : null}
               callableDiscard={fixture === 'callable' ? { seat: 1, tileId: callableTile.id } : null}
               cornerInfo={<div className="wild-tile-corner-info-tag">Fenghua</div>}
             />

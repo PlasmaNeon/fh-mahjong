@@ -10,8 +10,9 @@ type ClosedHandProps = {
   isSelf: boolean
   player: PlayerTableView
   direction: SeatLaneDirection
-  canDiscard?: boolean
-  onDiscard?: (tile: TileLike) => void
+  interactive?: boolean
+  liftedTileId?: number | null
+  onHandTileClick?: (tile: TileLike) => void
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -25,8 +26,9 @@ export function ClosedHand({
   isSelf,
   player,
   direction,
-  canDiscard = false,
-  onDiscard,
+  interactive = false,
+  liftedTileId = null,
+  onHandTileClick,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -103,9 +105,10 @@ export function ClosedHand({
       >
         <TileComponent
           tile={tile}
-          isInteractive={canDiscard}
+          isInteractive={interactive}
+          isLifted={liftedTileId != null && tileIdsEqual(tile.id, liftedTileId)}
           isWild={isWildTile(tile)}
-          onDiscard={onDiscard}
+          onTileClick={onHandTileClick}
           size={isSelf ? 'normal' : 'small'}
         />
       </motion.div>
