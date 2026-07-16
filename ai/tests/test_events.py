@@ -79,3 +79,39 @@ def test_mock_bridge_emits_wellformed_history():
     # Window 0: empty array, decode yields nothing.
     off = build_bridge(EnvConfig(bridge_kind="mock", seed=3))
     assert off.reset(seed=3).event_history.size == 0
+
+
+def test_env_pools_reject_event_history_window():
+    # Flat pool rows drop event history (Spec B2 extends the layout); both
+    # Python pool constructors must fail fast — and _config_message must
+    # still serialize the true value so the Go-side guard is never bypassed.
+    from fh_mahjong_ai.config import EnvConfig
+    from fh_mahjong_ai.envpool import InProcessEnvPool, make_selfplay_pool
+
+    config = EnvConfig(bridge_kind="mock", event_history_window=128)
+    with pytest.raises(ValueError, match="event history"):
+        InProcessEnvPool(config, slots=2)
+
+    class _PPO:
+        max_steps_per_episode = 64
+        match_mode = "classic"
+
+    with pytest.raises(ValueError, match="event history"):
+        make_selfplay_pool(config, _PPO(), slots=2)
+
+
+def test_go_pool_config_message_carries_window():
+    from fh_mahjong_ai.config import EnvConfig
+    from fh_mahjong_ai.envpool import GoEnvPool
+
+    config = EnvConfig(bridge_kind="go", event_history_window=128)
+    with pytest.raises(ValueError, match="event history"):
+        GoEnvPool(config, slots=2)
+
+    # The serializer itself must carry the true value (defense in depth for
+    # the Go-side FHEnvPoolNew guard): call it unbound on a stub.
+    class _Stub:
+        env_config = config
+
+    message = GoEnvPool._config_message(_Stub())
+    assert message.event_history_window == 128

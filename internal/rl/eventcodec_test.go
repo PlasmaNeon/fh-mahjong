@@ -381,3 +381,44 @@ func TestPoolsRejectEventHistoryWindow(t *testing.T) {
 		t.Fatalf("NewSearchPool accepted event_history_window > 0")
 	}
 }
+
+// Heuristic trajectory generation must honor the requested window: a W>0
+// request yields samples whose observations carry bounded, nonempty event
+// histories (before the fix the per-episode EnvConfig dropped the field).
+func TestHeuristicTrajectoryCarriesEventHistory(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 31,
+		Config: &pb.EnvConfig{
+			MaxDecisions:       400,
+			EventHistoryWindow: 8,
+		},
+	})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("premise: no samples generated")
+	}
+	nonEmpty := 0
+	for _, sample := range dataset.Samples {
+		for _, obs := range []*pb.SeatObservation{sample.Observation, sample.NextObservation} {
+			if obs == nil {
+				continue
+			}
+			if obs.EventHistoryWindow != 8 {
+				t.Fatalf("sample window = %d, want 8", obs.EventHistoryWindow)
+			}
+			if len(obs.EventHistory) > 8 {
+				t.Fatalf("history exceeds window: %d", len(obs.EventHistory))
+			}
+			if len(obs.EventHistory) > 0 {
+				nonEmpty++
+			}
+		}
+	}
+	if nonEmpty == 0 {
+		t.Fatalf("every sample had an empty event history — window not propagated")
+	}
+}

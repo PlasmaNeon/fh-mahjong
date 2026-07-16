@@ -251,6 +251,7 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 			MaxDecisions:       config.MaxDecisions,
 			MatchMode:          config.MatchMode,
 			ChongciConfig:      engine.CloneChongciConfig(config.ChongciConfig),
+			EventHistoryWindow: config.EventHistoryWindow,
 		})
 
 		resetResponse, err := env.Reset(&pb.EnvResetRequest{
