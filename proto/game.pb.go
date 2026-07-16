@@ -1370,8 +1370,12 @@ type EnvConfig struct {
 	// When true the observation appends the three opponents' concealed (closed)
 	// hands as extra planes (39 -> 51 channels). Perfect-information oracle mode.
 	OracleObservation bool `protobuf:"varint,6,opt,name=oracle_observation,json=oracleObservation,proto3" json:"oracle_observation,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Number of public events rendered into SeatObservation.event_history
+	// (observer-relative, packed uint32s; see internal/rl/eventcodec.go).
+	// 0 (default) disables the field entirely — byte-identical observations.
+	EventHistoryWindow uint32 `protobuf:"varint,7,opt,name=event_history_window,json=eventHistoryWindow,proto3" json:"event_history_window,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *EnvConfig) Reset() {
@@ -1446,6 +1450,13 @@ func (x *EnvConfig) GetOracleObservation() bool {
 	return false
 }
 
+func (x *EnvConfig) GetEventHistoryWindow() uint32 {
+	if x != nil {
+		return x.EventHistoryWindow
+	}
+	return 0
+}
+
 type SeatObservation struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Seat            uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
@@ -1459,8 +1470,14 @@ type SeatObservation struct {
 	DecisionIndex   uint64                 `protobuf:"varint,9,opt,name=decision_index,json=decisionIndex,proto3" json:"decision_index,omitempty"`
 	Phase           GamePhase              `protobuf:"varint,10,opt,name=phase,proto3,enum=game.GamePhase" json:"phase,omitempty"`
 	ActivePlayer    uint32                 `protobuf:"varint,11,opt,name=active_player,json=activePlayer,proto3" json:"active_player,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Packed public events, oldest first, observer-relative. Bit layout owned
+	// by internal/rl/eventcodec.go and mirrored in ai/.../events.py. Empty
+	// unless EnvConfig.event_history_window > 0.
+	EventHistory []uint32 `protobuf:"varint,12,rep,packed,name=event_history,json=eventHistory,proto3" json:"event_history,omitempty"`
+	// The window W this env was configured with (0 = disabled).
+	EventHistoryWindow uint32 `protobuf:"varint,13,opt,name=event_history_window,json=eventHistoryWindow,proto3" json:"event_history_window,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SeatObservation) Reset() {
@@ -1566,6 +1583,20 @@ func (x *SeatObservation) GetPhase() GamePhase {
 func (x *SeatObservation) GetActivePlayer() uint32 {
 	if x != nil {
 		return x.ActivePlayer
+	}
+	return 0
+}
+
+func (x *SeatObservation) GetEventHistory() []uint32 {
+	if x != nil {
+		return x.EventHistory
+	}
+	return nil
+}
+
+func (x *SeatObservation) GetEventHistoryWindow() uint32 {
+	if x != nil {
+		return x.EventHistoryWindow
 	}
 	return 0
 }
@@ -3233,7 +3264,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0ediscarder_seat\x18\x04 \x01(\rR\rdiscarderSeat\x12\x1f\n" +
 	"\vtotal_score\x18\x05 \x01(\x05R\n" +
 	"totalScore\x12,\n" +
-	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xa4\x02\n" +
+	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xd6\x02\n" +
 	"\tEnvConfig\x12%\n" +
 	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
 	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
@@ -3241,7 +3272,8 @@ const file_proto_game_proto_rawDesc = "" +
 	"\n" +
 	"match_mode\x18\x04 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
 	"\x0echongci_config\x18\x05 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12-\n" +
-	"\x12oracle_observation\x18\x06 \x01(\bR\x11oracleObservation\"\x82\x03\n" +
+	"\x12oracle_observation\x18\x06 \x01(\bR\x11oracleObservation\x120\n" +
+	"\x14event_history_window\x18\a \x01(\rR\x12eventHistoryWindow\"\xd9\x03\n" +
 	"\x0fSeatObservation\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
 	"\x06planes\x18\x02 \x03(\x02R\x06planes\x12%\n" +
@@ -3256,7 +3288,9 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0edecision_index\x18\t \x01(\x04R\rdecisionIndex\x12%\n" +
 	"\x05phase\x18\n" +
 	" \x01(\x0e2\x0f.game.GamePhaseR\x05phase\x12#\n" +
-	"\ractive_player\x18\v \x01(\rR\factivePlayer\"N\n" +
+	"\ractive_player\x18\v \x01(\rR\factivePlayer\x12#\n" +
+	"\revent_history\x18\f \x03(\rR\feventHistory\x120\n" +
+	"\x14event_history_window\x18\r \x01(\rR\x12eventHistoryWindow\"N\n" +
 	"\x0fEnvResetRequest\x12\x12\n" +
 	"\x04seed\x18\x01 \x01(\x04R\x04seed\x12'\n" +
 	"\x06config\x18\x02 \x01(\v2\x0f.game.EnvConfigR\x06config\"\xdc\x01\n" +

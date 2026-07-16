@@ -4343,6 +4343,7 @@ export const game = $root.game = (() => {
          * @property {game.MatchMode|undefined} [matchMode] EnvConfig matchMode
          * @property {game.IChongciConfig|undefined} [chongciConfig] EnvConfig chongciConfig
          * @property {boolean|undefined} [oracleObservation] EnvConfig oracleObservation
+         * @property {number|undefined} [eventHistoryWindow] EnvConfig eventHistoryWindow
          */
 
         /**
@@ -4410,6 +4411,14 @@ export const game = $root.game = (() => {
         EnvConfig.prototype.oracleObservation = false;
 
         /**
+         * EnvConfig eventHistoryWindow.
+         * @member {number} eventHistoryWindow
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.eventHistoryWindow = 0;
+
+        /**
          * Creates a new EnvConfig instance using the specified properties.
          * @function create
          * @memberof game.EnvConfig
@@ -4449,6 +4458,8 @@ export const game = $root.game = (() => {
                 $root.game.ChongciConfig.encode(message.chongciConfig, writer.uint32(/* id 5, wireType 2 =*/42).fork()).ldelim();
             if (message.oracleObservation != null && Object.hasOwnProperty.call(message, "oracleObservation"))
                 writer.uint32(/* id 6, wireType 0 =*/48).bool(message.oracleObservation);
+            if (message.eventHistoryWindow != null && Object.hasOwnProperty.call(message, "eventHistoryWindow"))
+                writer.uint32(/* id 7, wireType 0 =*/56).uint32(message.eventHistoryWindow);
             return writer;
         };
 
@@ -4516,6 +4527,10 @@ export const game = $root.game = (() => {
                         message.oracleObservation = reader.bool();
                         break;
                     }
+                case 7: {
+                        message.eventHistoryWindow = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -4581,6 +4596,9 @@ export const game = $root.game = (() => {
             if (message.oracleObservation != null && message.hasOwnProperty("oracleObservation"))
                 if (typeof message.oracleObservation !== "boolean")
                     return "oracleObservation: boolean expected";
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                if (!$util.isInteger(message.eventHistoryWindow))
+                    return "eventHistoryWindow: integer expected";
             return null;
         };
 
@@ -4634,6 +4652,8 @@ export const game = $root.game = (() => {
             }
             if (object.oracleObservation != null)
                 message.oracleObservation = Boolean(object.oracleObservation);
+            if (object.eventHistoryWindow != null)
+                message.eventHistoryWindow = object.eventHistoryWindow >>> 0;
             return message;
         };
 
@@ -4658,6 +4678,7 @@ export const game = $root.game = (() => {
                 object.matchMode = options.enums === String ? "MATCH_MODE_UNSPECIFIED" : 0;
                 object.chongciConfig = null;
                 object.oracleObservation = false;
+                object.eventHistoryWindow = 0;
             }
             if (message.learningSeats && message.learningSeats.length) {
                 object.learningSeats = [];
@@ -4674,6 +4695,8 @@ export const game = $root.game = (() => {
                 object.chongciConfig = $root.game.ChongciConfig.toObject(message.chongciConfig, options);
             if (message.oracleObservation != null && message.hasOwnProperty("oracleObservation"))
                 object.oracleObservation = message.oracleObservation;
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                object.eventHistoryWindow = message.eventHistoryWindow;
             return object;
         };
 
@@ -4723,6 +4746,8 @@ export const game = $root.game = (() => {
          * @property {number|Long|undefined} [decisionIndex] SeatObservation decisionIndex
          * @property {game.GamePhase|undefined} [phase] SeatObservation phase
          * @property {number|undefined} [activePlayer] SeatObservation activePlayer
+         * @property {Array.<number>|undefined} [eventHistory] SeatObservation eventHistory
+         * @property {number|undefined} [eventHistoryWindow] SeatObservation eventHistoryWindow
          */
 
         /**
@@ -4736,6 +4761,7 @@ export const game = $root.game = (() => {
         function SeatObservation(properties) {
             this.planes = [];
             this.scalars = [];
+            this.eventHistory = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
@@ -4831,6 +4857,22 @@ export const game = $root.game = (() => {
         SeatObservation.prototype.activePlayer = 0;
 
         /**
+         * SeatObservation eventHistory.
+         * @member {Array.<number>} eventHistory
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.eventHistory = $util.emptyArray;
+
+        /**
+         * SeatObservation eventHistoryWindow.
+         * @member {number} eventHistoryWindow
+         * @memberof game.SeatObservation
+         * @instance
+         */
+        SeatObservation.prototype.eventHistoryWindow = 0;
+
+        /**
          * Creates a new SeatObservation instance using the specified properties.
          * @function create
          * @memberof game.SeatObservation
@@ -4884,6 +4926,14 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 10, wireType 0 =*/80).int32(message.phase);
             if (message.activePlayer != null && Object.hasOwnProperty.call(message, "activePlayer"))
                 writer.uint32(/* id 11, wireType 0 =*/88).uint32(message.activePlayer);
+            if (message.eventHistory != null && message.eventHistory.length) {
+                writer.uint32(/* id 12, wireType 2 =*/98).fork();
+                for (let i = 0; i < message.eventHistory.length; ++i)
+                    writer.uint32(message.eventHistory[i]);
+                writer.ldelim();
+            }
+            if (message.eventHistoryWindow != null && Object.hasOwnProperty.call(message, "eventHistoryWindow"))
+                writer.uint32(/* id 13, wireType 0 =*/104).uint32(message.eventHistoryWindow);
             return writer;
         };
 
@@ -4978,6 +5028,21 @@ export const game = $root.game = (() => {
                         message.activePlayer = reader.uint32();
                         break;
                     }
+                case 12: {
+                        if (!(message.eventHistory && message.eventHistory.length))
+                            message.eventHistory = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.eventHistory.push(reader.uint32());
+                        } else
+                            message.eventHistory.push(reader.uint32());
+                        break;
+                    }
+                case 13: {
+                        message.eventHistoryWindow = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -5063,6 +5128,16 @@ export const game = $root.game = (() => {
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
                 if (!$util.isInteger(message.activePlayer))
                     return "activePlayer: integer expected";
+            if (message.eventHistory != null && message.hasOwnProperty("eventHistory")) {
+                if (!Array.isArray(message.eventHistory))
+                    return "eventHistory: array expected";
+                for (let i = 0; i < message.eventHistory.length; ++i)
+                    if (!$util.isInteger(message.eventHistory[i]))
+                        return "eventHistory: integer[] expected";
+            }
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                if (!$util.isInteger(message.eventHistoryWindow))
+                    return "eventHistoryWindow: integer expected";
             return null;
         };
 
@@ -5150,6 +5225,15 @@ export const game = $root.game = (() => {
             }
             if (object.activePlayer != null)
                 message.activePlayer = object.activePlayer >>> 0;
+            if (object.eventHistory) {
+                if (!Array.isArray(object.eventHistory))
+                    throw TypeError(".game.SeatObservation.eventHistory: array expected");
+                message.eventHistory = [];
+                for (let i = 0; i < object.eventHistory.length; ++i)
+                    message.eventHistory[i] = object.eventHistory[i] >>> 0;
+            }
+            if (object.eventHistoryWindow != null)
+                message.eventHistoryWindow = object.eventHistoryWindow >>> 0;
             return message;
         };
 
@@ -5169,6 +5253,7 @@ export const game = $root.game = (() => {
             if (options.arrays || options.defaults) {
                 object.planes = [];
                 object.scalars = [];
+                object.eventHistory = [];
             }
             if (options.defaults) {
                 object.seat = 0;
@@ -5190,6 +5275,7 @@ export const game = $root.game = (() => {
                     object.decisionIndex = options.longs === String ? "0" : 0;
                 object.phase = options.enums === String ? "PHASE_INIT" : 0;
                 object.activePlayer = 0;
+                object.eventHistoryWindow = 0;
             }
             if (message.seat != null && message.hasOwnProperty("seat"))
                 object.seat = message.seat;
@@ -5222,6 +5308,13 @@ export const game = $root.game = (() => {
                 object.phase = options.enums === String ? $root.game.GamePhase[message.phase] === undefined ? message.phase : $root.game.GamePhase[message.phase] : message.phase;
             if (message.activePlayer != null && message.hasOwnProperty("activePlayer"))
                 object.activePlayer = message.activePlayer;
+            if (message.eventHistory && message.eventHistory.length) {
+                object.eventHistory = [];
+                for (let j = 0; j < message.eventHistory.length; ++j)
+                    object.eventHistory[j] = message.eventHistory[j];
+            }
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                object.eventHistoryWindow = message.eventHistoryWindow;
             return object;
         };
 

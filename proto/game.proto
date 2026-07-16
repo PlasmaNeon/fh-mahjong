@@ -271,6 +271,10 @@ message EnvConfig {
   // When true the observation appends the three opponents' concealed (closed)
   // hands as extra planes (39 -> 51 channels). Perfect-information oracle mode.
   bool oracle_observation = 6;
+  // Number of public events rendered into SeatObservation.event_history
+  // (observer-relative, packed uint32s; see internal/rl/eventcodec.go).
+  // 0 (default) disables the field entirely — byte-identical observations.
+  uint32 event_history_window = 7;
 }
 
 message SeatObservation {
@@ -285,6 +289,12 @@ message SeatObservation {
   uint64 decision_index = 9;
   GamePhase phase = 10;
   uint32 active_player = 11;
+  // Packed public events, oldest first, observer-relative. Bit layout owned
+  // by internal/rl/eventcodec.go and mirrored in ai/.../events.py. Empty
+  // unless EnvConfig.event_history_window > 0.
+  repeated uint32 event_history = 12;
+  // The window W this env was configured with (0 = disabled).
+  uint32 event_history_window = 13;
 }
 
 message EnvResetRequest {
