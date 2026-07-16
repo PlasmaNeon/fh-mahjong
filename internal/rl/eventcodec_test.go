@@ -363,3 +363,21 @@ func (e *Env) lastObservationForTest() *pb.SeatObservation {
 	}
 	return obs
 }
+
+// The flat pool layouts do not carry event history yet (Spec B2): both pool
+// constructors must fail fast rather than silently drop it.
+func TestPoolsRejectEventHistoryWindow(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       512,
+		EventHistoryWindow: 128,
+	}
+	env := New(config)
+	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 5, Config: config}); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if _, err := NewSearchPool(env, 2, 5, 64, 4); err == nil {
+		t.Fatalf("NewSearchPool accepted event_history_window > 0")
+	}
+}
