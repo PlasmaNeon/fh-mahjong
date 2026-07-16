@@ -356,7 +356,7 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 			// boundary. Emit THIS row (real decision state + real mask) with the
 			// captured outcome attached; Python scores and skips the clone.
 			if isRoot && clone.awaitingBootstrap {
-				obs, err := encodeObservation(state, seat, env.decisionCount, false)
+				obs, err := encodeObservation(state, seat, env.decisionCount, false, env.game.PublicEvents(), env.config.EventHistoryWindow)
 				if err != nil {
 					return slotResult{err: err}
 				}
@@ -368,14 +368,14 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 			// Decision cap, checked ONLY at a root decision so the truncation row is
 			// an in-distribution root decision state with a real mask.
 			if isRoot && p.maxDec > 0 && clone.decisions >= p.maxDec {
-				obs, err := encodeObservation(state, seat, env.decisionCount, false)
+				obs, err := encodeObservation(state, seat, env.decisionCount, false, env.game.PublicEvents(), env.config.EventHistoryWindow)
 				if err != nil {
 					return slotResult{err: err}
 				}
 				return slotResult{truncated: true, rewards: env.scoreDeltaReward(), observation: obs}
 			}
 			// Ordinary live-decision row: encode the acting seat to drive rollout.
-			obs, err := encodeObservation(state, seat, env.decisionCount, false)
+			obs, err := encodeObservation(state, seat, env.decisionCount, false, env.game.PublicEvents(), env.config.EventHistoryWindow)
 			if err != nil {
 				return slotResult{err: err}
 			}
@@ -402,7 +402,7 @@ func (p *SearchPool) cloneObservationForTest(i int, seat uint32) *pb.SeatObserva
 		return nil
 	}
 	clone := p.clones[i]
-	obs, err := encodeObservation(clone.env.game.State, seat, clone.env.decisionCount, false)
+	obs, err := encodeObservation(clone.env.game.State, seat, clone.env.decisionCount, false, clone.env.game.PublicEvents(), clone.env.config.EventHistoryWindow)
 	if err != nil {
 		return nil
 	}

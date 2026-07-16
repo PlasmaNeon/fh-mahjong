@@ -3,6 +3,7 @@ package rl
 import (
 	"math"
 
+	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"github.com/plasma/fh-mahjong/internal/tiles"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -21,7 +22,7 @@ const (
 	OracleObservationPlaneChannels = ObservationPlaneChannels + 12 // 51
 )
 
-func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, oracle bool) (*pb.SeatObservation, error) {
+func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, oracle bool, events []engine.PublicEvent, window uint32) (*pb.SeatObservation, error) {
 	mask, err := actionMask(state, seat)
 	if err != nil {
 		return nil, err
@@ -160,25 +161,27 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, o
 		planeChannels = uint32(OracleObservationPlaneChannels)
 	}
 	return &pb.SeatObservation{
-		Seat:            seat,
-		Planes:          planes,
-		PlaneChannels:   planeChannels,
-		PlaneHeight:     ObservationPlaneHeight,
-		PlaneWidth:      ObservationPlaneWidth,
-		Scalars:         scalars,
-		ActionMask:      mask,
-		ActionSpaceSize: ActionSpaceSize,
-		DecisionIndex:   decisionIndex,
-		Phase:           state.Phase,
-		ActivePlayer:    state.ActivePlayer,
+		Seat:               seat,
+		Planes:             planes,
+		PlaneChannels:      planeChannels,
+		PlaneHeight:        ObservationPlaneHeight,
+		PlaneWidth:         ObservationPlaneWidth,
+		Scalars:            scalars,
+		ActionMask:         mask,
+		ActionSpaceSize:    ActionSpaceSize,
+		DecisionIndex:      decisionIndex,
+		Phase:              state.Phase,
+		ActivePlayer:       state.ActivePlayer,
+		EventHistory:       renderEventHistory(events, seat, window),
+		EventHistoryWindow: window,
 	}, nil
 }
 
 func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
-	return encodeObservation(state, seat, decisionIndex, false)
+	return encodeObservation(state, seat, decisionIndex, false, nil, 0)
 }
 
-func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool) *pb.SeatObservation {
+func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool, window uint32) *pb.SeatObservation {
 	activePlayer := uint32(0)
 	phase := pb.GamePhase_PHASE_INIT
 	if state != nil {
@@ -191,17 +194,18 @@ func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool) *p
 		channels = OracleObservationPlaneChannels
 	}
 	return &pb.SeatObservation{
-		Seat:            activePlayer,
-		Planes:          make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth),
-		PlaneChannels:   uint32(channels),
-		PlaneHeight:     ObservationPlaneHeight,
-		PlaneWidth:      ObservationPlaneWidth,
-		Scalars:         make([]float32, ObservationScalarCount),
-		ActionMask:      make([]byte, ActionSpaceSize),
-		ActionSpaceSize: ActionSpaceSize,
-		DecisionIndex:   decisionIndex,
-		Phase:           phase,
-		ActivePlayer:    activePlayer,
+		Seat:               activePlayer,
+		Planes:             make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth),
+		PlaneChannels:      uint32(channels),
+		PlaneHeight:        ObservationPlaneHeight,
+		PlaneWidth:         ObservationPlaneWidth,
+		Scalars:            make([]float32, ObservationScalarCount),
+		ActionMask:         make([]byte, ActionSpaceSize),
+		ActionSpaceSize:    ActionSpaceSize,
+		DecisionIndex:      decisionIndex,
+		Phase:              phase,
+		ActivePlayer:       activePlayer,
+		EventHistoryWindow: window,
 	}
 }
 
@@ -722,17 +726,19 @@ func cloneObservation(observation *pb.SeatObservation) *pb.SeatObservation {
 	}
 
 	return &pb.SeatObservation{
-		Seat:            observation.Seat,
-		Planes:          append([]float32(nil), observation.Planes...),
-		PlaneChannels:   observation.PlaneChannels,
-		PlaneHeight:     observation.PlaneHeight,
-		PlaneWidth:      observation.PlaneWidth,
-		Scalars:         append([]float32(nil), observation.Scalars...),
-		ActionMask:      append([]byte(nil), observation.ActionMask...),
-		ActionSpaceSize: observation.ActionSpaceSize,
-		DecisionIndex:   observation.DecisionIndex,
-		Phase:           observation.Phase,
-		ActivePlayer:    observation.ActivePlayer,
+		Seat:               observation.Seat,
+		Planes:             append([]float32(nil), observation.Planes...),
+		PlaneChannels:      observation.PlaneChannels,
+		PlaneHeight:        observation.PlaneHeight,
+		PlaneWidth:         observation.PlaneWidth,
+		Scalars:            append([]float32(nil), observation.Scalars...),
+		ActionMask:         append([]byte(nil), observation.ActionMask...),
+		ActionSpaceSize:    observation.ActionSpaceSize,
+		DecisionIndex:      observation.DecisionIndex,
+		Phase:              observation.Phase,
+		ActivePlayer:       observation.ActivePlayer,
+		EventHistory:       append([]uint32(nil), observation.EventHistory...),
+		EventHistoryWindow: observation.EventHistoryWindow,
 	}
 }
 

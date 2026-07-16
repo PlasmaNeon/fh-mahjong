@@ -107,11 +107,11 @@ func TestObservationIgnoresHiddenOpponentTiles(t *testing.T) {
 	}
 	stateB.Players[opponentSeat].HandSize = stateA.Players[opponentSeat].HandSize
 
-	observationA, err := encodeObservation(stateA, seat, 0, false)
+	observationA, err := encodeObservation(stateA, seat, 0, false, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation A failed: %v", err)
 	}
-	observationB, err := encodeObservation(stateB, seat, 0, false)
+	observationB, err := encodeObservation(stateB, seat, 0, false, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation B failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 		player.Discards = nil
 		player.HandSize = 13
 	}
-	observation, err := encodeObservation(env.game.State, 0, 0, false)
+	observation, err := encodeObservation(env.game.State, 0, 0, false, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation failed: %v", err)
 	}

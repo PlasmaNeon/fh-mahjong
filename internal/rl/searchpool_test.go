@@ -18,7 +18,7 @@ import (
 // value-bootstrap observation.
 func assertEmittedRowEncodesSeat(t *testing.T, resp *pb.EnvPoolStepResponse, state *pb.GameState, seat uint32, decisionCount uint64) {
 	t.Helper()
-	want, err := encodeObservation(state, seat, decisionCount, false)
+	want, err := encodeObservation(state, seat, decisionCount, false, nil, 0)
 	if err != nil {
 		t.Fatalf("direct encode of seat %d: %v", seat, err)
 	}
@@ -57,7 +57,7 @@ func currentDecision(t *testing.T, env *Env) (uint32, *pb.SeatObservation) {
 	if !ok {
 		t.Fatalf("env is not at a decision point")
 	}
-	obs, err := encodeObservation(env.game.State, seat, env.decisionCount, false)
+	obs, err := encodeObservation(env.game.State, seat, env.decisionCount, false, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation: %v", err)
 	}
