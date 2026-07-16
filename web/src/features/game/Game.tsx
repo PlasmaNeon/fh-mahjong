@@ -9,12 +9,13 @@ import { loadPrivateRoomSession } from './privateRoomSession';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
+import GameSettingsButton from './GameSettingsButton';
 import { preloadAllTileSvgs } from '../../utils/tileUtils';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
-import { loadDiscardMode } from './discardMode';
+import { loadDiscardMode, saveDiscardMode } from './discardMode';
 import { resolveHandTileClick } from './handTileClick';
 import { tileIdsEqual } from '../../table/meldOrdering';
 
@@ -457,6 +458,12 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
             {gameState?.phase !== 5 && roomId && (
                 <ExitMatchButton roomId={roomId} onConfirmLeave={handleLeaveMatch} />
+            )}
+            {gameState?.phase !== 5 && (
+                <GameSettingsButton
+                    mode={discardMode}
+                    onChange={(m) => { setDiscardMode(m); saveDiscardMode(m); }}
+                />
             )}
             {gameState?.phase === 5 /* PHASE_MATCH_END */ && (
                 <MatchEndOverlay
