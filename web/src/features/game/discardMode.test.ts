@@ -1,5 +1,34 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadDiscardMode, parseDiscardMode, saveDiscardMode } from './discardMode'
+
+// discardMode.ts reads window.localStorage. The node test env has no window,
+// so stub one with a minimal in-memory Storage; a fresh store per test keeps
+// the round-trip cases isolated without relying on jsdom.
+function createStorageStub(): Storage {
+  const store = new Map<string, string>()
+  return {
+    get length() {
+      return store.size
+    },
+    clear: () => store.clear(),
+    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      store.delete(key)
+    },
+    setItem: (key: string, value: string) => {
+      store.set(key, String(value))
+    },
+  }
+}
+
+beforeEach(() => {
+  vi.stubGlobal('window', { localStorage: createStorageStub() })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('parseDiscardMode', () => {
   it('accepts the two valid modes', () => {
@@ -16,8 +45,6 @@ describe('parseDiscardMode', () => {
 })
 
 describe('load/save round-trip', () => {
-  afterEach(() => localStorage.clear())
-
   it('defaults to double when nothing is stored', () => {
     expect(loadDiscardMode()).toBe('double')
   })
