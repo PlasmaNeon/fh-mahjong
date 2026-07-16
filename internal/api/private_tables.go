@@ -49,7 +49,7 @@ type PrivateTable struct {
 	MatchID    string // populated when State == "started"
 
 	// MatchMode selects the match ruleset. The public constructor
-	// newConfiguringTable sets this to MATCH_MODE_CLASSIC; direct struct
+	// newConfiguringTable sets this to MATCH_MODE_CHONGCI; direct struct
 	// literal callers will see the zero value (MATCH_MODE_UNSPECIFIED).
 	MatchMode pb.MatchMode
 	// ChongciConfig is non-nil iff MatchMode == MATCH_MODE_CHONGCI.
@@ -57,13 +57,17 @@ type PrivateTable struct {
 }
 
 // newConfiguringTable returns a table with all four seats empty and the
-// default match mode (classic).
+// default match mode (chongci). Chongci is the default because classic mode
+// is endless — it never reaches PHASE_MATCH_END, so a classic match can never
+// persist as "completed" and would never appear in the paipu library. Hosts
+// can still opt into classic via setMatchMode.
 func newConfiguringTable(tableID string, hostUserID uint) *PrivateTable {
 	return &PrivateTable{
-		TableID:    tableID,
-		HostUserID: hostUserID,
-		State:      "configuring",
-		MatchMode:  pb.MatchMode_MATCH_MODE_CLASSIC,
+		TableID:       tableID,
+		HostUserID:    hostUserID,
+		State:         "configuring",
+		MatchMode:     pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig: defaultChongciConfig(),
 	}
 }
 
