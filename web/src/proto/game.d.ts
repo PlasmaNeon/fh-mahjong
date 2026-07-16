@@ -1343,6 +1343,9 @@ export namespace game {
 
         /** EnvConfig oracleObservation */
         oracleObservation?: (boolean|undefined);
+
+        /** EnvConfig eventHistoryWindow */
+        eventHistoryWindow?: (number|undefined);
     }
 
     /** Represents an EnvConfig. */
@@ -1371,6 +1374,9 @@ export namespace game {
 
         /** EnvConfig oracleObservation. */
         public oracleObservation: boolean;
+
+        /** EnvConfig eventHistoryWindow. */
+        public eventHistoryWindow: number;
 
         /**
          * Creates a new EnvConfig instance using the specified properties.
@@ -1485,6 +1491,12 @@ export namespace game {
 
         /** SeatObservation activePlayer */
         activePlayer?: (number|undefined);
+
+        /** SeatObservation eventHistory */
+        eventHistory?: (number[]|undefined);
+
+        /** SeatObservation eventHistoryWindow */
+        eventHistoryWindow?: (number|undefined);
     }
 
     /** Represents a SeatObservation. */
@@ -1528,6 +1540,12 @@ export namespace game {
 
         /** SeatObservation activePlayer. */
         public activePlayer: number;
+
+        /** SeatObservation eventHistory. */
+        public eventHistory: number[];
+
+        /** SeatObservation eventHistoryWindow. */
+        public eventHistoryWindow: number;
 
         /**
          * Creates a new SeatObservation instance using the specified properties.

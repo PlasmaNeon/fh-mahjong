@@ -63,6 +63,11 @@ class InProcessEnvPool:
     def __init__(self, env_config: EnvConfig, slots: int) -> None:
         if slots < 1:
             raise ValueError("slots must be >= 1")
+        if int(getattr(env_config, "event_history_window", 0)) > 0:
+            raise ValueError(
+                "env pools do not carry event history yet (flat row layout drops it; Spec B2) — "
+                "use a single-env bridge or event_history_window=0"
+            )
         self.env_config = env_config
         self.slots = int(slots)
         self._bridges = [build_bridge(env_config) for _ in range(self.slots)]
@@ -126,6 +131,11 @@ class GoEnvPool:
     def __init__(self, env_config: EnvConfig, slots: int) -> None:
         if slots < 1:
             raise ValueError("slots must be >= 1")
+        if int(getattr(env_config, "event_history_window", 0)) > 0:
+            raise ValueError(
+                "env pools do not carry event history yet (flat row layout drops it; Spec B2) — "
+                "use a single-env bridge or event_history_window=0"
+            )
         self.env_config = env_config
         self.slots = int(slots)
         self._handle = 0
@@ -211,6 +221,9 @@ class GoEnvPool:
         )
         message.learning_seats.extend(int(seat) for seat in config.learning_seats)
         message.oracle_observation = bool(config.oracle_observation)
+        # Serialized even though the constructor rejects nonzero windows: the
+        # Go-side FHEnvPoolNew guard must see the true value (defense in depth).
+        message.event_history_window = int(config.event_history_window)
         if config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
             message.chongci_config.starting_score = int(config.chongci_starting_score)
@@ -257,6 +270,7 @@ def make_selfplay_pool(env_config: EnvConfig, ppo_config, slots: int):
         max_steps_per_episode=ppo_config.max_steps_per_episode,
         match_mode=ppo_config.match_mode,
         oracle_observation=env_config.oracle_observation,
+        event_history_window=env_config.event_history_window,
     )
     if cfg.bridge_kind == "go":
         return GoEnvPool(cfg, slots)

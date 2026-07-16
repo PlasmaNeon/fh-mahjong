@@ -15,6 +15,7 @@ class Observation:
     planes: FloatArray
     scalars: FloatArray
     action_mask: IntArray
+    event_history: IntArray = field(default_factory=lambda: np.zeros(0, dtype=np.uint32))
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property

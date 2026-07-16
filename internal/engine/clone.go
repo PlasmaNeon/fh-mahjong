@@ -24,6 +24,7 @@ func (g *Game) CloneForBranch() *Game {
 		interruptQueue:     cloneInterruptQueue(g.interruptQueue),
 		wallSeedOverride:   cloneSeedOverride(g.wallSeedOverride),
 		nextDealerOverride: cloneDealerOverride(g.nextDealerOverride),
+		publicEvents:       append([]PublicEvent(nil), g.publicEvents...),
 	}
 	if g.State != nil {
 		cloned.State = proto.Clone(g.State).(*pb.GameState)
