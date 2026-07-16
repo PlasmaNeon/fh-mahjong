@@ -224,6 +224,18 @@ function GameTable({ matchId, navigate, socket, gameState, mySeatId }) {
         if (!inHand) setLiftedTileId(null);
     }, [gameState, liftedTileId, myPlayer]);
 
+    // Tile ids are recycled every round, so the hand-membership effect below
+    // cannot tell a still-lifted tile from an unrelated new tile that reused
+    // its id. handNum increments on every new round (startNextRound), so force
+    // a clear on any round change.
+    const handNumRef = useRef(gameState.handNum);
+    useEffect(() => {
+        if (handNumRef.current !== gameState.handNum) {
+            handNumRef.current = gameState.handNum;
+            setLiftedTileId(null);
+        }
+    }, [gameState.handNum]);
+
     // Check if a tile is wild (memoized per gameState.wildTiles)
     const wildTileSet = useRef(new Set<string>());
     wildTileSet.current = new Set(
