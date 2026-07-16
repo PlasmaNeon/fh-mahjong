@@ -77,6 +77,7 @@ func (s *Server) setupRoutes() {
 		protected.Use(AuthMiddleware(s.DB))
 		{
 			protected.GET("/users/me", s.handleGetMe)
+			protected.GET("/users/me/replays", s.handleReplayHistory)
 			protected.PATCH("/users/me", authHandler.UpdateMe)
 			protected.POST("/matchmaking/join", s.handleJoinQueue)
 			protected.POST("/matchmaking/leave", s.handleLeaveQueue)

@@ -12,3 +12,7 @@ export function consumePlayIntent(store: IntentStore): PlayIntent | null {
   store.removeItem(PLAY_INTENT_KEY)
   return value === 'quick-match' ? value : null
 }
+
+export function clearPlayIntent(store: IntentStore) {
+  store.removeItem(PLAY_INTENT_KEY)
+}

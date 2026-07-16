@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
+import type { AuthRouteState } from '../../features/auth/authModal'
 import Page from './Page'
 import Shell from './Shell'
 
@@ -9,9 +11,10 @@ export default function ClubShell({ children, wide = false, title, navigationLoc
   title?: string
   navigationLocked?: boolean
 }) {
-  const navigate = useNavigate()
   const location = useLocation()
-  const canGoBack = location.key !== 'default'
+  const { status } = useAuth()
+  const signedIn = status === 'authenticated'
+  const profileState: AuthRouteState | undefined = signedIn ? undefined : { backgroundLocation: location, optionalAuth: true }
 
   return (
     <Page>
@@ -23,12 +26,7 @@ export default function ClubShell({ children, wide = false, title, navigationLoc
         <div className="club-nav__context">{title}</div>
         <nav className="club-nav__actions" aria-label="Club navigation">
           {navigationLocked ? <span className="club-nav__locked">Search in progress</span> : <>
-          {location.pathname !== '/' && (
-            <button type="button" className="club-nav__back" onClick={() => canGoBack ? navigate(-1) : navigate('/')}>
-              Back
-            </button>
-          )}
-          <Link to="/account">Profile</Link>
+          <Link to={signedIn ? '/account' : `/login?returnTo=${encodeURIComponent('/account')}`} state={profileState}>Profile</Link>
           </>}
         </nav>
       </header>

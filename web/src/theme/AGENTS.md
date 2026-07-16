@@ -37,9 +37,13 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
 live status semantics so validation changes are announced without changing consumer props.
 `LoadingScreen` accepts an optional retry action for recoverable offline states.
 
-`ClubShell` owns ordinary-page club identity, context-aware Back, and Profile navigation;
-route pages must not recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
+`ClubShell` owns ordinary-page club identity and Profile navigation; it deliberately has no
+Back/breadcrumb control, leaving history navigation to the browser. Route pages must not
+recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
 stable Scoring/Shanten switcher while preserving both tool deep links.
+
+The bone-paper authentication popup is implemented by `features/auth/AuthDialog.tsx`, while
+its material classes live in `base.css` alongside the compact home switchboard and paipu slips.
 
 `GameDialog` is the semantic modal shell used by game exit and match-end surfaces. It
 owns labelled-dialog markup, initial focus, optional Escape cancellation, the compass

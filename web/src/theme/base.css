@@ -66,14 +66,96 @@
 .club-nav__brand strong { font-family: var(--font-display); font-size: 0.95rem; letter-spacing: 0.02em; }
 .club-nav__context { color: rgba(243,233,210,0.58); font-family: var(--mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; }
 .club-nav__actions { justify-self: end; display: flex; align-items: center; gap: 1rem; }
-.club-nav__actions a, .club-nav__back { color: rgba(243,233,210,0.75); background: none; border: 0; font: inherit; font-size: 0.82rem; text-decoration: none; cursor: pointer; }
-.club-nav__actions a:hover, .club-nav__back:hover { color: #f3e9d2; }
+.club-nav__actions a { color: rgba(243,233,210,0.75); font-size: 0.82rem; text-decoration: none; }
+.club-nav__actions a:hover { color: #f3e9d2; }
 .club-nav__locked { color: rgba(243,233,210,0.55); font: 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
 
 .auth-ticket { display: grid; gap: 0.85rem; }
 .auth-ticket__tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--rule); border-radius: 9px; overflow: hidden; }
 .auth-ticket__tabs button { padding: 0.65rem; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; }
 .auth-ticket__tabs button.is-active { background: var(--ink); color: var(--surface); }
+
+/* Account ticket modal: bone paper over the current club surface. */
+.auth-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 10, 12, 0.78);
+  backdrop-filter: blur(8px);
+}
+.auth-dialog {
+  position: relative;
+  isolation: isolate;
+  width: min(500px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  padding: clamp(1.35rem, 4vw, 2rem);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid rgba(230, 161, 92, 0.5);
+  border-radius: 18px 18px 6px 18px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58), inset 0 0 0 1px rgba(255,255,255,0.45);
+  outline: none;
+  animation: rain-dialog-in 220ms cubic-bezier(.2,.85,.25,1) both;
+}
+.auth-dialog::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.32;
+  background-image: radial-gradient(circle at 20% 30%, rgba(61,48,34,.12) 0 0.6px, transparent 0.8px), radial-gradient(circle at 72% 64%, rgba(61,48,34,.1) 0 0.55px, transparent 0.75px);
+  background-size: 17px 19px, 23px 21px;
+  border-radius: inherit;
+}
+.auth-dialog__compass {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 1rem;
+  color: var(--warning);
+  background: var(--ink);
+  border: 1px solid rgba(230, 161, 92, 0.65);
+  border-radius: 15px;
+  transform: rotate(6deg);
+  box-shadow: 0 8px 20px rgba(11, 20, 24, 0.22);
+}
+.auth-dialog__compass span { transform: rotate(-6deg); font: 1.55rem var(--font-display); }
+.auth-dialog__close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  font: 1.45rem/1 var(--font);
+  cursor: pointer;
+}
+.auth-dialog__close:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
+.auth-dialog__header { padding-bottom: 1rem; border-bottom: 1px solid var(--rule); }
+.auth-dialog__header h1 { margin: 0; font: 600 clamp(1.85rem, 7vw, 2.5rem)/1 var(--font-display); letter-spacing: -0.035em; }
+.auth-dialog__header p { margin: 0.65rem 0 0; color: var(--ink-3); line-height: 1.55; }
+.auth-dialog__ticket { margin-top: 1.25rem; }
+.auth-login-stage { min-height: 100vh; display: grid; place-items: center; }
+.auth-login-stage__compass {
+  width: 150px;
+  height: 150px;
+  display: grid;
+  place-items: center;
+  color: rgba(230, 161, 92, 0.35);
+  border: 1px solid rgba(230, 161, 92, 0.18);
+  border-radius: 50%;
+  font: 3.5rem var(--font-display);
+}
 .queue-compass { width: 88px; height: 88px; margin: 1rem auto; display: grid; place-items: center; border: 2px solid var(--warning); outline: 1px solid rgba(230,161,92,0.35); outline-offset: 6px; border-radius: 50%; color: var(--warning); font-family: var(--font-display); font-size: 2rem; }
 .disclosure-button { display: block; margin-top: 1rem; padding: 0; border: 0; background: transparent; color: var(--ink-3); font: inherit; font-size: 0.8rem; cursor: pointer; }
 .disclosure-button + .ldg-toggle { margin-top: 0.75rem; }
@@ -1105,25 +1187,23 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
   to { opacity: 1; transform: none; }
 }
 
-/* Home is the one deliberately asymmetric page: the compass acts as the club sign. */
+/* Home is a compact club switchboard: identity, compass, four literal actions. */
 .club-home {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-  align-items: center;
-  gap: clamp(2rem, 7vw, 7rem);
-  max-width: 1240px;
+  grid-template-columns: minmax(0, 560px);
+  align-content: center;
+  justify-content: center;
+  gap: 1.35rem;
   margin: 0 auto;
   padding: clamp(1.5rem, 6vw, 5rem);
 }
 
-.club-home__brand { color: var(--brass); font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; }
-.club-home__title { margin: 1.15rem 0 1rem; max-width: 720px; color: var(--on-dark); font-family: var(--font-display); font-size: clamp(3rem, 8vw, 6.8rem); font-weight: 600; line-height: 0.9; letter-spacing: -0.055em; }
-.club-home__lead { max-width: 600px; color: var(--on-dark-2); font-size: clamp(1rem, 2vw, 1.16rem); line-height: 1.7; }
-.club-home__account { display: inline-flex; margin-top: 1rem; color: var(--brass-light); font-family: var(--mono); font-size: 0.75rem; text-decoration: none; border-bottom: 1px solid rgba(210,168,95,0.35); }
+.club-home__brand { color: var(--brass); font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.2em; text-align: center; text-transform: uppercase; }
 
 .club-home__menu {
   position: relative;
+  margin-top: 2.5rem;
   padding: clamp(1.25rem, 4vw, 2rem);
   background: linear-gradient(145deg, rgba(28,45,49,0.96), rgba(14,27,31,0.98));
   border: 1px solid rgba(210,168,95,0.24);
@@ -1136,7 +1216,7 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
   height: 112px;
   display: grid;
   place-items: center;
-  margin: -4.5rem 0 1.35rem auto;
+  margin: -5rem auto 1.5rem;
   color: var(--brass-light);
   background: radial-gradient(circle, #253336 0 38%, #111d21 39% 100%);
   border: 1px solid rgba(210,168,95,0.5);
@@ -1148,13 +1228,37 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
 }
 
 .club-home__compass span { transform: rotate(-7deg); }
-.club-home__menu-label { margin-bottom: 0.8rem; color: var(--on-dark-3); font-family: var(--mono); font-size: 0.67rem; letter-spacing: 0.14em; text-transform: uppercase; }
 .club-home__links { display: grid; gap: 0.55rem; }
 .club-home__link { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; padding: 1rem; color: var(--on-dark); text-decoration: none; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px 12px 4px 12px; transition: transform 140ms ease, border-color 140ms ease, background 140ms ease; }
 .club-home__link:hover { transform: translateX(4px); background: rgba(47,127,112,0.13); border-color: rgba(47,127,112,0.46); }
 .club-home__link strong { font-family: var(--font-display); font-size: 1.12rem; }
-.club-home__link small { display: block; margin-top: 0.15rem; color: var(--on-dark-3); font-size: 0.72rem; }
 .club-home__link-mark { color: var(--brass); font-family: var(--mono); }
+
+/* Paipu library: score slips stacked on one lacquer-backed work surface. */
+.replay-open-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.75rem; }
+.paipu-list { display: grid; gap: 0.8rem; }
+.paipu-slip {
+  position: relative;
+  overflow: hidden;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--surface) 86%, var(--warning) 14%);
+  border: 1px solid var(--rule);
+  border-radius: 12px 12px 4px 12px;
+  box-shadow: 0 10px 24px rgba(35, 27, 18, 0.08);
+}
+.paipu-slip::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--accent); }
+.paipu-slip__header { display: flex; justify-content: space-between; gap: 1rem; padding-left: 0.35rem; }
+.paipu-slip__header > div:first-child { display: grid; gap: 0.15rem; }
+.paipu-slip__header strong { color: var(--ink); }
+.paipu-slip__header span, .paipu-slip__seat { color: var(--ink-3); font-size: 0.75rem; }
+.paipu-slip__result { display: grid; min-width: 4rem; text-align: right; }
+.paipu-slip__result strong { color: var(--accent); font: 700 1.45rem var(--font-display); }
+.paipu-slip__result span { font-family: var(--mono); }
+.paipu-slip__seat { margin: 0.75rem 0 0.55rem 0.35rem; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.07em; }
+.paipu-slip__players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem 0.8rem; margin-left: 0.35rem; color: var(--ink-2); font-size: 0.78rem; }
+.paipu-slip__players span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paipu-slip__actions { display: flex; gap: 0.55rem; margin: 0.9rem 0 0 0.35rem; }
+.paipu-slip__actions .ldg-btn { padding: 0.5rem 0.8rem; font-size: 0.76rem; }
 
 :where(button, a, input, select, [tabindex]):focus-visible {
   outline: 3px solid var(--focus);
@@ -1162,9 +1266,7 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
 }
 
 @media (max-width: 820px) {
-  .club-home { grid-template-columns: 1fr; align-content: start; padding-top: 4rem; }
-  .club-home__menu { margin-top: 2rem; }
-  .club-home__title { font-size: clamp(3rem, 15vw, 5.3rem); }
+  .club-home { align-content: center; }
 }
 
 @media (max-width: 580px) {
@@ -1180,6 +1282,9 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
   .rain-dialog__compass { opacity: 0.7; }
   .club-home { padding: 3.5rem 1rem 2rem; }
   .club-home__compass { width: 86px; height: 86px; margin-top: -3.5rem; font-size: 2rem; }
+  .replay-open-form { grid-template-columns: 1fr; }
+  .paipu-slip__players { grid-template-columns: 1fr; }
+  .paipu-slip__actions { display: grid; grid-template-columns: 1fr 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
