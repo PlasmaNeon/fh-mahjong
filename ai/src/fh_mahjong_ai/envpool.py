@@ -43,6 +43,7 @@ class PoolStepResult:
     planes: np.ndarray        # (rows, C, H, W) float32
     scalars: np.ndarray       # (rows, S) float32
     action_masks: np.ndarray  # (rows, A) int8
+    event_histories: list[np.ndarray] = field(default_factory=list)  # per-row uint32, TRUE length
     row_of_slot: dict[int, int] = field(default_factory=dict)
 
 
@@ -53,6 +54,7 @@ def _empty_result(env_config: EnvConfig, slots: list[SlotMeta]) -> PoolStepResul
         planes=np.zeros((0, channels, height, width), dtype=np.float32),
         scalars=np.zeros((0, env_config.scalar_features), dtype=np.float32),
         action_masks=np.zeros((0, env_config.action_space_size), dtype=np.int8),
+        event_histories=[],
         row_of_slot={},
     )
 
@@ -63,18 +65,13 @@ class InProcessEnvPool:
     def __init__(self, env_config: EnvConfig, slots: int) -> None:
         if slots < 1:
             raise ValueError("slots must be >= 1")
-        if int(getattr(env_config, "event_history_window", 0)) > 0:
-            raise ValueError(
-                "env pools do not carry event history yet (flat row layout drops it; Spec B2) — "
-                "use a single-env bridge or event_history_window=0"
-            )
         self.env_config = env_config
         self.slots = int(slots)
         self._bridges = [build_bridge(env_config) for _ in range(self.slots)]
 
     def step(self, commands: Sequence[PoolCommand]) -> PoolStepResult:
         metas: list[SlotMeta] = []
-        obs_rows: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, int]] = []
+        obs_rows: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, int, np.ndarray]] = []
         for command in sorted(commands, key=lambda c: c.slot):
             slot = int(command.slot)
             if slot >= self.slots:
@@ -105,6 +102,7 @@ class InProcessEnvPool:
                     np.asarray(observation.scalars, dtype=np.float32),
                     np.asarray(observation.action_mask, dtype=np.int8),
                     seat,
+                    np.asarray(observation.event_history, dtype=np.uint32),
                 ))
         if not obs_rows:
             return _empty_result(self.env_config, metas)
@@ -114,6 +112,7 @@ class InProcessEnvPool:
             planes=np.stack([r[1] for r in obs_rows]),
             scalars=np.stack([r[2] for r in obs_rows]),
             action_masks=np.stack([r[3] for r in obs_rows]),
+            event_histories=[r[5] for r in obs_rows],
             row_of_slot=row_of_slot,
         )
 
@@ -131,11 +130,6 @@ class GoEnvPool:
     def __init__(self, env_config: EnvConfig, slots: int) -> None:
         if slots < 1:
             raise ValueError("slots must be >= 1")
-        if int(getattr(env_config, "event_history_window", 0)) > 0:
-            raise ValueError(
-                "env pools do not carry event history yet (flat row layout drops it; Spec B2) — "
-                "use a single-env bridge or event_history_window=0"
-            )
         self.env_config = env_config
         self.slots = int(slots)
         self._handle = 0
@@ -161,7 +155,9 @@ class GoEnvPool:
                                request.SerializeToString())
         response = game_pb2.EnvPoolStepResponse()
         response.ParseFromString(raw)
+        return self._decode_response(response)
 
+    def _decode_response(self, response) -> PoolStepResult:
         metas: list[SlotMeta] = []
         live_slots: list[int] = []
         for state in response.slots:
@@ -177,6 +173,13 @@ class GoEnvPool:
             if state.has_observation:
                 live_slots.append(int(state.slot))
         rows = len(live_slots)
+        requested_window = int(self.env_config.event_history_window)
+        if rows > 0 and requested_window > 0 and int(response.event_history_window) != requested_window:
+            raise BridgeError(
+                f"pool returned event_history_window={int(response.event_history_window)} "
+                f"but the client requested {requested_window} — the Go bridge library predates "
+                "pool event history; rebuild it (go build -buildmode=c-shared ./cmd/rlbridge)"
+            )
         if rows == 0:
             return _empty_result(self.env_config, metas)
         channels, height, width = (int(response.plane_channels), int(response.plane_height),
@@ -185,8 +188,30 @@ class GoEnvPool:
         scalars = np.frombuffer(response.scalars, dtype="<f4").reshape(rows, int(response.scalar_count))
         masks = np.frombuffer(response.action_masks, dtype=np.uint8).astype(np.int8, copy=False)
         masks = masks.reshape(rows, int(response.action_space_size))
+
+        event_histories: list[np.ndarray] = []
+        window = int(response.event_history_window)
+        if window > 0:
+            counts = np.frombuffer(response.event_counts, dtype="<u4")
+            if counts.size != rows:
+                raise BridgeError(f"event_counts has {counts.size} rows, expected {rows}")
+            flat = np.frombuffer(response.event_histories, dtype="<u4")
+            if flat.size != rows * window:
+                raise BridgeError(
+                    f"event_histories has {flat.size} uint32s, expected rows*window={rows * window}"
+                )
+            grid = flat.reshape(rows, window)
+            for i in range(rows):
+                count = int(counts[i])
+                if count > window:
+                    raise BridgeError(f"row {i} event count {count} exceeds window {window}")
+                event_histories.append(grid[i, :count].copy())
+        else:
+            event_histories = [np.zeros(0, dtype=np.uint32) for _ in range(rows)]
+
         return PoolStepResult(
             slots=metas, planes=planes, scalars=scalars, action_masks=masks,
+            event_histories=event_histories,
             row_of_slot={slot: i for i, slot in enumerate(live_slots)},
         )
 
@@ -221,8 +246,6 @@ class GoEnvPool:
         )
         message.learning_seats.extend(int(seat) for seat in config.learning_seats)
         message.oracle_observation = bool(config.oracle_observation)
-        # Serialized even though the constructor rejects nonzero windows: the
-        # Go-side FHEnvPoolNew guard must see the true value (defense in depth).
         message.event_history_window = int(config.event_history_window)
         if config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
