@@ -23,7 +23,16 @@ class EnvConfig:
     oracle_observation: bool = False
     event_history_window: int = 0
 
+    # Mirrors internal/rl MaxEventHistoryWindow: the window sizes per-row
+    # pool allocations, so an unbounded value could OOM the bridge process.
+    MAX_EVENT_HISTORY_WINDOW = 512
+
     def __post_init__(self) -> None:
+        if self.event_history_window > self.MAX_EVENT_HISTORY_WINDOW:
+            raise ValueError(
+                f"event_history_window {self.event_history_window} exceeds maximum "
+                f"{self.MAX_EVENT_HISTORY_WINDOW}"
+            )
         # Oracle mode appends the 3 opponents' closed hands (39 -> 51 channels);
         # resolve plane_shape so callers don't have to remember the channel count.
         # An explicitly-set non-default plane_shape is respected.

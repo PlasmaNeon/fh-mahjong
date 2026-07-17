@@ -149,6 +149,11 @@ func FHEnvPoolNew(requestPtr *C.char, requestLen C.int) C.uint64_t {
 	if request.GetSlots() == 0 {
 		return 0
 	}
+	// The window sizes per-row response allocations; bound it before any
+	// pool/env construction (rl.Env.Reset enforces the same limit).
+	if request.GetConfig().GetEventHistoryWindow() > rl.MaxEventHistoryWindow {
+		return 0
+	}
 	poolMu.Lock()
 	defer poolMu.Unlock()
 

@@ -146,6 +146,10 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 	if cfg.OracleObservation {
 		return nil, fmt.Errorf("search pool: oracle observation is forbidden in search")
 	}
+	if cfg.EventHistoryWindow > MaxEventHistoryWindow {
+		return nil, fmt.Errorf("search pool: event_history_window %d exceeds maximum %d",
+			cfg.EventHistoryWindow, MaxEventHistoryWindow)
+	}
 	var seat uint32
 	if len(rootSeat) == 1 {
 		// Explicit root: validate the caller-chosen seat is genuinely actionable

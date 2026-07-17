@@ -664,3 +664,40 @@ func TestHeuristicTrajectoryCarriesEventHistory(t *testing.T) {
 		t.Fatalf("every sample had an empty event history — window not propagated")
 	}
 }
+
+// The configured window sizes per-row pool allocations (4*window bytes per
+// observation row), so it must be bounded at every construction path.
+func TestEventHistoryWindowBounded(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       200,
+		EventHistoryWindow: MaxEventHistoryWindow + 1,
+	}
+	env := New(config)
+	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 3, Config: config}); err == nil {
+		t.Fatalf("Reset accepted window %d > max %d", config.EventHistoryWindow, MaxEventHistoryWindow)
+	}
+
+	okConfig := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       200,
+		EventHistoryWindow: MaxEventHistoryWindow,
+	}
+	okEnv := New(okConfig)
+	if _, err := okEnv.Reset(&pb.EnvResetRequest{Seed: 3, Config: okConfig}); err != nil {
+		t.Fatalf("Reset rejected window == max: %v", err)
+	}
+	if _, err := NewSearchPool(okEnv, 1, 3, 32, 2); err != nil {
+		t.Fatalf("search pool rejected window == max: %v", err)
+	}
+	badEnv := New(okConfig)
+	if _, err := badEnv.Reset(&pb.EnvResetRequest{Seed: 3, Config: okConfig}); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	badEnv.config.EventHistoryWindow = MaxEventHistoryWindow + 1
+	if _, err := NewSearchPool(badEnv, 1, 3, 32, 2); err == nil {
+		t.Fatalf("NewSearchPool accepted window > max")
+	}
+}

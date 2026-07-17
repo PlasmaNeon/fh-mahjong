@@ -38,6 +38,11 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		e.learningSeats = learningSeatSet(e.config)
 	}
 
+	if e.config.EventHistoryWindow > MaxEventHistoryWindow {
+		return nil, fmt.Errorf("event_history_window %d exceeds maximum %d",
+			e.config.EventHistoryWindow, MaxEventHistoryWindow)
+	}
+
 	seed := uint64(1)
 	if request != nil && request.Seed != 0 {
 		seed = request.Seed

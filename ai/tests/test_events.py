@@ -337,3 +337,13 @@ def test_search_pool_decode_carries_event_rows():
     from fh_mahjong_ai.searchpool import GoSearchPool
 
     assert "_decode_response" in inspect.getsource(GoSearchPool.step)
+
+
+def test_event_history_window_bounded():
+    # The window sizes per-row pool allocations; the config rejects values
+    # above the documented cap (mirrors internal/rl MaxEventHistoryWindow).
+    from fh_mahjong_ai.config import EnvConfig
+
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        EnvConfig(bridge_kind="mock", event_history_window=513)
+    assert EnvConfig(bridge_kind="mock", event_history_window=512).event_history_window == 512
