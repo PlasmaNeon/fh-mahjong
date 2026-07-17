@@ -385,6 +385,130 @@ func TestPoolsRejectEventHistoryWindow(t *testing.T) {
 // Heuristic trajectory generation must honor the requested window: a W>0
 // request yields samples whose observations carry bounded, nonempty event
 // histories (before the fix the per-episode EnvConfig dropped the field).
+// buildRedealTestEnv drives a seeded random match ~40 decisions so the log
+// holds draws by several seats, then returns the env plus a seat that is
+// NOT the current acting seat and has drawn at least once.
+func buildRedealTestEnv(t *testing.T, seed uint64) (*Env, uint32, uint32) {
+	t.Helper()
+	env := newSeededHistoryEnv(t, seed, 128)
+	rng := rand.New(rand.NewSource(int64(seed)))
+	obs := env.lastObservationForTest()
+	for i := 0; i < 40 && obs != nil; i++ {
+		aid, ok := randomLegalActionID(obs.ActionMask, rng)
+		if !ok {
+			break
+		}
+		sr, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+		if err != nil || sr.Terminated || sr.Truncated {
+			break
+		}
+		obs = sr.Observation
+	}
+	rootSeat, ok := env.currentActionSeat()
+	if !ok {
+		rootSeat = env.game.State.ActivePlayer
+	}
+	var nonRoot uint32
+	found := false
+	for _, event := range env.game.PublicEvents() {
+		if event.Type == engine.EventDraw && event.Seat != rootSeat && event.Face >= 0 {
+			nonRoot = event.Seat
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("premise: no non-root draw with a real face at seed %d — pick another seed", seed)
+	}
+	return env, rootSeat, nonRoot
+}
+
+// Root invariance: the ROOT observer's rendered history must be
+// byte-identical before vs after the redeal rewrite — masking already hid
+// non-root draw faces from the root, so the rewrite removes EXACTLY the
+// information the root could never see, and nothing else.
+func TestRedealRewriteRootInvariance(t *testing.T) {
+	env, rootSeat, _ := buildRedealTestEnv(t, 17)
+	clone := env.game.CloneForBranch()
+	before := renderEventHistory(clone.PublicEvents(), rootSeat, 128)
+	if err := clone.RedealUnseen(rootSeat, 771); err != nil {
+		t.Fatalf("redeal: %v", err)
+	}
+	after := renderEventHistory(clone.PublicEvents(), rootSeat, 128)
+	if len(before) != len(after) {
+		t.Fatalf("root history length changed: %d -> %d", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("root history changed at %d: 0x%08X -> 0x%08X", i, before[i], after[i])
+		}
+	}
+}
+
+// Non-root honesty: after the rewrite a non-root seat's OWN view shows
+// UNKNOWN for its pre-redeal draws (its hand was redealt; the old faces are
+// inconsistent and correlated with the live hidden world).
+func TestRedealRewriteNonRootHonesty(t *testing.T) {
+	env, rootSeat, nonRoot := buildRedealTestEnv(t, 17)
+	clone := env.game.CloneForBranch()
+	if err := clone.RedealUnseen(rootSeat, 772); err != nil {
+		t.Fatalf("redeal: %v", err)
+	}
+	for i, event := range clone.PublicEvents() {
+		if event.Type != engine.EventDraw {
+			continue
+		}
+		if event.Seat == rootSeat {
+			continue // root faces stay truthful — its hand is fixed across clones
+		}
+		if event.Face != -1 {
+			t.Fatalf("event %d: non-root draw (seat %d) kept face %d after redeal", i, event.Seat, event.Face)
+		}
+	}
+	// And the rendered self-view: every DRAW by nonRoot shows UNKNOWN.
+	rendered := renderEventHistory(clone.PublicEvents(), nonRoot, 128)
+	for i, packed := range rendered {
+		if packed&0xF == uint32(engine.EventDraw) && (packed>>4)&0x3 == 0 {
+			if face := (packed >> 6) & 0x3F; face != EventFaceUnknown {
+				t.Fatalf("rendered %d: nonRoot's own pre-redeal draw shows face %d", i, face)
+			}
+		}
+	}
+	// Clone isolation: the LIVE game's log is untouched.
+	liveHasFace := false
+	for _, event := range env.game.PublicEvents() {
+		if event.Type == engine.EventDraw && event.Seat != rootSeat && event.Face >= 0 {
+			liveHasFace = true
+			break
+		}
+	}
+	if !liveHasFace {
+		t.Fatalf("live log lost its faces — rewrite leaked into the parent")
+	}
+}
+
+// Post-redeal appends render normally: a fresh draw logged in the clone
+// after the rewrite keeps its face for the drawing seat.
+func TestRedealRewriteDoesNotAffectNewEvents(t *testing.T) {
+	env, rootSeat, _ := buildRedealTestEnv(t, 17)
+	clone := env.game.CloneForBranch()
+	if err := clone.RedealUnseen(rootSeat, 773); err != nil {
+		t.Fatalf("redeal: %v", err)
+	}
+	preLen := len(clone.PublicEvents())
+	if err := clone.ExecuteSystemDraw(clone.State.ActivePlayer); err != nil {
+		t.Skipf("no draw available at this state: %v", err)
+	}
+	events := clone.PublicEvents()
+	if len(events) <= preLen {
+		t.Fatalf("draw appended no event")
+	}
+	last := events[len(events)-1]
+	if last.Type != engine.EventDraw || last.Face < 0 {
+		t.Fatalf("post-redeal draw event malformed: %+v", last)
+	}
+}
+
 func TestHeuristicTrajectoryCarriesEventHistory(t *testing.T) {
 	env := New(nil)
 	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
