@@ -11089,6 +11089,9 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [planeWidth] EnvPoolStepResponse planeWidth
          * @property {number|undefined} [scalarCount] EnvPoolStepResponse scalarCount
          * @property {number|undefined} [actionSpaceSize] EnvPoolStepResponse actionSpaceSize
+         * @property {Uint8Array|undefined} [eventHistories] EnvPoolStepResponse eventHistories
+         * @property {Uint8Array|undefined} [eventCounts] EnvPoolStepResponse eventCounts
+         * @property {number|undefined} [eventHistoryWindow] EnvPoolStepResponse eventHistoryWindow
          */
 
         /**
@@ -11180,6 +11183,30 @@ export const game = $root.game = (() => {
         EnvPoolStepResponse.prototype.actionSpaceSize = 0;
 
         /**
+         * EnvPoolStepResponse eventHistories.
+         * @member {Uint8Array} eventHistories
+         * @memberof game.EnvPoolStepResponse
+         * @instance
+         */
+        EnvPoolStepResponse.prototype.eventHistories = $util.newBuffer([]);
+
+        /**
+         * EnvPoolStepResponse eventCounts.
+         * @member {Uint8Array} eventCounts
+         * @memberof game.EnvPoolStepResponse
+         * @instance
+         */
+        EnvPoolStepResponse.prototype.eventCounts = $util.newBuffer([]);
+
+        /**
+         * EnvPoolStepResponse eventHistoryWindow.
+         * @member {number} eventHistoryWindow
+         * @memberof game.EnvPoolStepResponse
+         * @instance
+         */
+        EnvPoolStepResponse.prototype.eventHistoryWindow = 0;
+
+        /**
          * Creates a new EnvPoolStepResponse instance using the specified properties.
          * @function create
          * @memberof game.EnvPoolStepResponse
@@ -11222,6 +11249,12 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 8, wireType 0 =*/64).uint32(message.scalarCount);
             if (message.actionSpaceSize != null && Object.hasOwnProperty.call(message, "actionSpaceSize"))
                 writer.uint32(/* id 9, wireType 0 =*/72).uint32(message.actionSpaceSize);
+            if (message.eventHistories != null && Object.hasOwnProperty.call(message, "eventHistories"))
+                writer.uint32(/* id 10, wireType 2 =*/82).bytes(message.eventHistories);
+            if (message.eventCounts != null && Object.hasOwnProperty.call(message, "eventCounts"))
+                writer.uint32(/* id 11, wireType 2 =*/90).bytes(message.eventCounts);
+            if (message.eventHistoryWindow != null && Object.hasOwnProperty.call(message, "eventHistoryWindow"))
+                writer.uint32(/* id 12, wireType 0 =*/96).uint32(message.eventHistoryWindow);
             return writer;
         };
 
@@ -11296,6 +11329,18 @@ export const game = $root.game = (() => {
                         message.actionSpaceSize = reader.uint32();
                         break;
                     }
+                case 10: {
+                        message.eventHistories = reader.bytes();
+                        break;
+                    }
+                case 11: {
+                        message.eventCounts = reader.bytes();
+                        break;
+                    }
+                case 12: {
+                        message.eventHistoryWindow = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -11364,6 +11409,15 @@ export const game = $root.game = (() => {
             if (message.actionSpaceSize != null && message.hasOwnProperty("actionSpaceSize"))
                 if (!$util.isInteger(message.actionSpaceSize))
                     return "actionSpaceSize: integer expected";
+            if (message.eventHistories != null && message.hasOwnProperty("eventHistories"))
+                if (!(message.eventHistories && typeof message.eventHistories.length === "number" || $util.isString(message.eventHistories)))
+                    return "eventHistories: buffer expected";
+            if (message.eventCounts != null && message.hasOwnProperty("eventCounts"))
+                if (!(message.eventCounts && typeof message.eventCounts.length === "number" || $util.isString(message.eventCounts)))
+                    return "eventCounts: buffer expected";
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                if (!$util.isInteger(message.eventHistoryWindow))
+                    return "eventHistoryWindow: integer expected";
             return null;
         };
 
@@ -11414,6 +11468,18 @@ export const game = $root.game = (() => {
                 message.scalarCount = object.scalarCount >>> 0;
             if (object.actionSpaceSize != null)
                 message.actionSpaceSize = object.actionSpaceSize >>> 0;
+            if (object.eventHistories != null)
+                if (typeof object.eventHistories === "string")
+                    $util.base64.decode(object.eventHistories, message.eventHistories = $util.newBuffer($util.base64.length(object.eventHistories)), 0);
+                else if (object.eventHistories.length >= 0)
+                    message.eventHistories = object.eventHistories;
+            if (object.eventCounts != null)
+                if (typeof object.eventCounts === "string")
+                    $util.base64.decode(object.eventCounts, message.eventCounts = $util.newBuffer($util.base64.length(object.eventCounts)), 0);
+                else if (object.eventCounts.length >= 0)
+                    message.eventCounts = object.eventCounts;
+            if (object.eventHistoryWindow != null)
+                message.eventHistoryWindow = object.eventHistoryWindow >>> 0;
             return message;
         };
 
@@ -11459,6 +11525,21 @@ export const game = $root.game = (() => {
                 object.planeWidth = 0;
                 object.scalarCount = 0;
                 object.actionSpaceSize = 0;
+                if (options.bytes === String)
+                    object.eventHistories = "";
+                else {
+                    object.eventHistories = [];
+                    if (options.bytes !== Array)
+                        object.eventHistories = $util.newBuffer(object.eventHistories);
+                }
+                if (options.bytes === String)
+                    object.eventCounts = "";
+                else {
+                    object.eventCounts = [];
+                    if (options.bytes !== Array)
+                        object.eventCounts = $util.newBuffer(object.eventCounts);
+                }
+                object.eventHistoryWindow = 0;
             }
             if (message.slots && message.slots.length) {
                 object.slots = [];
@@ -11481,6 +11562,12 @@ export const game = $root.game = (() => {
                 object.scalarCount = message.scalarCount;
             if (message.actionSpaceSize != null && message.hasOwnProperty("actionSpaceSize"))
                 object.actionSpaceSize = message.actionSpaceSize;
+            if (message.eventHistories != null && message.hasOwnProperty("eventHistories"))
+                object.eventHistories = options.bytes === String ? $util.base64.encode(message.eventHistories, 0, message.eventHistories.length) : options.bytes === Array ? Array.prototype.slice.call(message.eventHistories) : message.eventHistories;
+            if (message.eventCounts != null && message.hasOwnProperty("eventCounts"))
+                object.eventCounts = options.bytes === String ? $util.base64.encode(message.eventCounts, 0, message.eventCounts.length) : options.bytes === Array ? Array.prototype.slice.call(message.eventCounts) : message.eventCounts;
+            if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
+                object.eventHistoryWindow = message.eventHistoryWindow;
             return object;
         };
 

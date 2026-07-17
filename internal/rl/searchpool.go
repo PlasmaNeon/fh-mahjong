@@ -146,12 +146,9 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 	if cfg.OracleObservation {
 		return nil, fmt.Errorf("search pool: oracle observation is forbidden in search")
 	}
-	if cfg.EventHistoryWindow > 0 {
-		// The pool's flat row layout would silently drop event history, and
-		// post-redeal clone logs still carry non-root seats' true pre-redeal
-		// draw faces (masking only protects OTHER observers). Both are Spec
-		// B2 work items; fail fast until then.
-		return nil, fmt.Errorf("search pool: event history is not supported (Spec B2)")
+	if cfg.EventHistoryWindow > MaxEventHistoryWindow {
+		return nil, fmt.Errorf("search pool: event_history_window %d exceeds maximum %d",
+			cfg.EventHistoryWindow, MaxEventHistoryWindow)
 	}
 	var seat uint32
 	if len(rootSeat) == 1 {

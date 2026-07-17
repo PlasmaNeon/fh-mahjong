@@ -17,10 +17,9 @@ import ctypes
 from dataclasses import dataclass, field
 from typing import Sequence
 
-import numpy as np
 
 from .bridge import BridgeError, CtypesGoBridge, FHBytesResult
-from .envpool import PoolCommand, PoolStepResult, SlotMeta, _empty_result
+from .envpool import GoEnvPool, PoolCommand, PoolStepResult, SlotMeta
 from .generated.proto import game_pb2
 
 __all__ = ["GoSearchPool", "SearchStepResult", "PoolCommand", "SlotMeta", "PoolStepResult"]
@@ -80,40 +79,20 @@ class GoSearchPool:
         response = game_pb2.EnvPoolStepResponse()
         response.ParseFromString(raw)
 
-        metas: list[SlotMeta] = []
+        # Decode via the SHARED GoEnvPool path (event buffers, validation and
+        # the stale-bridge window handshake included) — duplicating the
+        # decode here previously dropped event histories on exactly the path
+        # B1's fail-fast guard used to protect.
+        decoded = GoEnvPool._decode_response(self, response)
         round_ended: dict[int, bool] = {}
-        live_slots: list[int] = []
         for state in response.slots:
-            slot = int(state.slot)
-            metas.append(SlotMeta(
-                slot=slot,
-                seat=int(state.seat),
-                terminated=bool(state.terminated),
-                truncated=bool(state.truncated),
-                step_rewards=np.asarray(state.step_rewards, dtype=np.float32),
-                has_observation=bool(state.has_observation),
-                error=str(state.error),
-            ))
-            round_ended[slot] = bool(state.HasField("round_outcome")) and not bool(state.terminated)
-            if state.has_observation:
-                live_slots.append(slot)
-        rows = len(live_slots)
-        if rows == 0:
-            empty = _empty_result(self.env_config, metas)
-            return SearchStepResult(
-                slots=empty.slots, planes=empty.planes, scalars=empty.scalars,
-                action_masks=empty.action_masks, row_of_slot=empty.row_of_slot,
-                round_ended=round_ended,
+            round_ended[int(state.slot)] = (
+                bool(state.HasField("round_outcome")) and not bool(state.terminated)
             )
-        channels, height, width = (int(response.plane_channels), int(response.plane_height),
-                                   int(response.plane_width))
-        planes = np.frombuffer(response.planes, dtype="<f4").reshape(rows, channels, height, width)
-        scalars = np.frombuffer(response.scalars, dtype="<f4").reshape(rows, int(response.scalar_count))
-        masks = np.frombuffer(response.action_masks, dtype=np.uint8).astype(np.int8, copy=False)
-        masks = masks.reshape(rows, int(response.action_space_size))
         return SearchStepResult(
-            slots=metas, planes=planes, scalars=scalars, action_masks=masks,
-            row_of_slot={slot: i for i, slot in enumerate(live_slots)},
+            slots=decoded.slots, planes=decoded.planes, scalars=decoded.scalars,
+            action_masks=decoded.action_masks, event_histories=decoded.event_histories,
+            row_of_slot=decoded.row_of_slot,
             round_ended=round_ended,
         )
 

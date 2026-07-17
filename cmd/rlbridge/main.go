@@ -149,13 +149,11 @@ func FHEnvPoolNew(requestPtr *C.char, requestLen C.int) C.uint64_t {
 	if request.GetSlots() == 0 {
 		return 0
 	}
-	// The pool's flat observation layout (appendObservationRow) carries only
-	// planes/scalars/masks — it would silently DROP event history. Fail fast
-	// until Spec B2 extends the layout.
-	if request.GetConfig().GetEventHistoryWindow() > 0 {
+	// The window sizes per-row response allocations; bound it before any
+	// pool/env construction (rl.Env.Reset enforces the same limit).
+	if request.GetConfig().GetEventHistoryWindow() > rl.MaxEventHistoryWindow {
 		return 0
 	}
-
 	poolMu.Lock()
 	defer poolMu.Unlock()
 

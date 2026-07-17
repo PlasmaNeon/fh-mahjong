@@ -142,6 +142,19 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 		}
 		p.ValidActions = nil
 	}
+
+	// Search honesty: this clone's non-acting seats just got NEW hands, but
+	// the inherited event log still stores their true pre-redeal draw faces.
+	// packPublicEvent unmasks a draw's face for the DRAWING seat itself, so a
+	// rollout row encoded for a redealt seat would show faces inconsistent
+	// with its new hand and correlated with the live hidden world. Erase
+	// them; every other observer already saw these draws as unknown, so the
+	// acting (root) seat's rendered history is unchanged (tested).
+	for i := range g.publicEvents {
+		if g.publicEvents[i].Type == EventDraw && g.publicEvents[i].Seat != actingSeat {
+			g.publicEvents[i].Face = -1
+		}
+	}
 	return nil
 }
 

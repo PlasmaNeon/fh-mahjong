@@ -24,6 +24,12 @@ const (
 	// EventFaceUnknown is the face sentinel for information-illegal faces
 	// (an opponent's draw) and absent faces.
 	EventFaceUnknown = 63
+
+	// MaxEventHistoryWindow bounds the configured window. The window sizes
+	// PER-ROW pool allocations (4*window bytes each, rows*window*4 per
+	// response), so an unbounded uint32 from config could OOM the process.
+	// A Fenghua round tops out around ~200 events; B2 trains at 128.
+	MaxEventHistoryWindow = 512
 )
 
 func relativeSeatTo(observer, seat uint32) uint32 {

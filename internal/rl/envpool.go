@@ -115,9 +115,10 @@ func assemblePoolResponse(results []slotResult) (*pb.EnvPoolStepResponse, error)
 	return response, nil
 }
 
-// appendObservationRow appends one observation's planes/scalars/mask to the flat
-// little-endian response buffers, seeding the shared header dims on the first
-// row. Shared by EnvPool and SearchPool so the flat-buffer layout stays
+// appendObservationRow appends one observation's planes/scalars/mask — and,
+// when event history is enabled, its count + tail-padded event row — to the
+// flat little-endian response buffers, seeding the shared header dims on the
+// first row. Shared by EnvPool and SearchPool so the flat-buffer layout stays
 // identical across both pools.
 func appendObservationRow(response *pb.EnvPoolStepResponse, obs *pb.SeatObservation) {
 	if response.PlaneChannels == 0 {
@@ -126,10 +127,21 @@ func appendObservationRow(response *pb.EnvPoolStepResponse, obs *pb.SeatObservat
 		response.PlaneWidth = obs.PlaneWidth
 		response.ScalarCount = uint32(len(obs.Scalars))
 		response.ActionSpaceSize = obs.ActionSpaceSize
+		response.EventHistoryWindow = obs.EventHistoryWindow
 	}
 	response.Planes = appendFloat32LE(response.Planes, obs.Planes)
 	response.Scalars = appendFloat32LE(response.Scalars, obs.Scalars)
 	response.ActionMasks = append(response.ActionMasks, obs.ActionMask...)
+	if window := response.EventHistoryWindow; window > 0 {
+		response.EventCounts = appendUint32LE(response.EventCounts, []uint32{uint32(len(obs.EventHistory))})
+		response.EventHistories = appendUint32LE(response.EventHistories, obs.EventHistory)
+		// Tail-pad the row to exactly `window` uint32 slots. Padding is
+		// zeros and is never decoded: event_counts carries the true length
+		// (packed 0x0 is a VALID event, so padding alone would be ambiguous).
+		if pad := int(window) - len(obs.EventHistory); pad > 0 {
+			response.EventHistories = append(response.EventHistories, make([]byte, 4*pad)...)
+		}
+	}
 }
 
 func appendFloat32LE(dst []byte, values []float32) []byte {
@@ -137,6 +149,15 @@ func appendFloat32LE(dst []byte, values []float32) []byte {
 	dst = append(dst, make([]byte, 4*len(values))...)
 	for i, v := range values {
 		binary.LittleEndian.PutUint32(dst[off+4*i:], math.Float32bits(v))
+	}
+	return dst
+}
+
+func appendUint32LE(dst []byte, values []uint32) []byte {
+	off := len(dst)
+	dst = append(dst, make([]byte, 4*len(values))...)
+	for i, v := range values {
+		binary.LittleEndian.PutUint32(dst[off+4*i:], v)
 	}
 	return dst
 }

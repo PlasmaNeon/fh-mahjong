@@ -3850,6 +3850,15 @@ export namespace game {
 
         /** EnvPoolStepResponse actionSpaceSize */
         actionSpaceSize?: (number|undefined);
+
+        /** EnvPoolStepResponse eventHistories */
+        eventHistories?: (Uint8Array|undefined);
+
+        /** EnvPoolStepResponse eventCounts */
+        eventCounts?: (Uint8Array|undefined);
+
+        /** EnvPoolStepResponse eventHistoryWindow */
+        eventHistoryWindow?: (number|undefined);
     }
 
     /** Represents an EnvPoolStepResponse. */
@@ -3887,6 +3896,15 @@ export namespace game {
 
         /** EnvPoolStepResponse actionSpaceSize. */
         public actionSpaceSize: number;
+
+        /** EnvPoolStepResponse eventHistories. */
+        public eventHistories: Uint8Array;
+
+        /** EnvPoolStepResponse eventCounts. */
+        public eventCounts: Uint8Array;
+
+        /** EnvPoolStepResponse eventHistoryWindow. */
+        public eventHistoryWindow: number;
 
         /**
          * Creates a new EnvPoolStepResponse instance using the specified properties.
