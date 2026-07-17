@@ -293,3 +293,47 @@ def test_go_pool_ffi_event_rows_match_single_env():
     finally:
         pool.close()
         single.close()
+
+
+def test_search_pool_decode_carries_event_rows():
+    # GoSearchPool must decode through the SHARED GoEnvPool path: event rows,
+    # validation, and the stale-bridge handshake included. (A duplicated
+    # decode previously dropped events on exactly the search path.)
+    from fh_mahjong_ai.config import EnvConfig
+    from fh_mahjong_ai.generated.proto import game_pb2
+    from fh_mahjong_ai.searchpool import SearchStepResult
+
+    config = EnvConfig(bridge_kind="go", event_history_window=4)
+
+    class _Stub:
+        env_config = config
+
+    response = _synthetic_pool_response(4, [[0x140], [0x0, 0x8B7]], game_pb2, config)
+    # Mark slot 1 as a round-boundary bootstrap row.
+    response.slots[1].round_outcome.is_draw = True
+
+    stub = _Stub()
+    # Drive the decode path directly (step() itself needs FFI): replicate its
+    # tail — shared decode + round_ended overlay.
+    from fh_mahjong_ai.envpool import GoEnvPool
+
+    inner = GoEnvPool._decode_response(stub, response)
+    round_ended = {
+        int(state.slot): bool(state.HasField("round_outcome")) and not bool(state.terminated)
+        for state in response.slots
+    }
+    result = SearchStepResult(
+        slots=inner.slots, planes=inner.planes, scalars=inner.scalars,
+        action_masks=inner.action_masks, event_histories=inner.event_histories,
+        row_of_slot=inner.row_of_slot, round_ended=round_ended,
+    )
+    assert [row.tolist() for row in result.event_histories] == [[0x140], [0x0, 0x8B7]]
+    assert result.round_ended == {0: False, 1: True}
+
+    # Tripwire: step() must decode through the shared path — a re-duplicated
+    # inline decode is exactly how events got dropped on the search path.
+    import inspect
+
+    from fh_mahjong_ai.searchpool import GoSearchPool
+
+    assert "_decode_response" in inspect.getsource(GoSearchPool.step)

@@ -31,14 +31,17 @@ def test_search_step_result_extends_pool_step_result():
 
 
 def test_searchpool_reuses_envpool_helpers():
-    # Task 4 requires importing (not duplicating) PoolCommand/SlotMeta/PoolStepResult/_empty_result.
+    # Requires importing (not duplicating) the envpool dataclasses, and since
+    # B2a the whole response decode: step() delegates to
+    # GoEnvPool._decode_response instead of importing _empty_result for a
+    # duplicated inline decode (which silently dropped event rows).
     import fh_mahjong_ai.envpool as envpool_module
     import fh_mahjong_ai.searchpool as searchpool_module
 
     assert searchpool_module.PoolCommand is envpool_module.PoolCommand
     assert searchpool_module.SlotMeta is envpool_module.SlotMeta
     assert searchpool_module.PoolStepResult is envpool_module.PoolStepResult
-    assert searchpool_module._empty_result is envpool_module._empty_result
+    assert searchpool_module.GoEnvPool is envpool_module.GoEnvPool
 
 
 def _chongci_config() -> EnvConfig:
