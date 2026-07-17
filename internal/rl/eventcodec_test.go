@@ -2,6 +2,7 @@ package rl
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand"
 	"testing"
 
@@ -364,21 +365,138 @@ func (e *Env) lastObservationForTest() *pb.SeatObservation {
 	return obs
 }
 
-// The flat pool layouts do not carry event history yet (Spec B2): both pool
-// constructors must fail fast rather than silently drop it.
-func TestPoolsRejectEventHistoryWindow(t *testing.T) {
+// decodeEventRow pulls row i's true-length events from the flat buffers.
+func decodeEventRow(t *testing.T, response *pb.EnvPoolStepResponse, row int) []uint32 {
+	t.Helper()
+	window := int(response.EventHistoryWindow)
+	if window == 0 {
+		t.Fatalf("response has no event window")
+	}
+	if len(response.EventCounts) < 4*(row+1) {
+		t.Fatalf("event_counts too short for row %d", row)
+	}
+	count := int(binary.LittleEndian.Uint32(response.EventCounts[4*row:]))
+	if count > window {
+		t.Fatalf("row %d count %d exceeds window %d", row, count, window)
+	}
+	out := make([]uint32, count)
+	base := 4 * row * window
+	for i := 0; i < count; i++ {
+		out[i] = binary.LittleEndian.Uint32(response.EventHistories[base+4*i:])
+	}
+	// Padding beyond count must be zeros.
+	for i := count; i < window; i++ {
+		if v := binary.LittleEndian.Uint32(response.EventHistories[base+4*i:]); v != 0 {
+			t.Fatalf("row %d: nonzero padding 0x%08X at %d", row, v, i)
+		}
+	}
+	return out
+}
+
+// Pool/single-env parity: same seed, same config, same actions — the pool's
+// flat event row equals the single env's SeatObservation.EventHistory.
+func TestEnvPoolEventRowsMatchSingleEnv(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       3000,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CLASSIC,
+		EventHistoryWindow: 32,
+	}
+	single := New(config)
+	sr, err := single.Reset(&pb.EnvResetRequest{Seed: 61, Config: config})
+	if err != nil {
+		t.Fatalf("single reset: %v", err)
+	}
+	pool := NewEnvPool(config, 1)
+	resetResp, err := pool.ApplyCommands(&pb.EnvPoolStepRequest{Commands: []*pb.SlotCommand{
+		{Slot: 0, Cmd: &pb.SlotCommand_ResetSeed{ResetSeed: 61}},
+	}})
+	if err != nil {
+		t.Fatalf("pool reset: %v", err)
+	}
+	singleObs := sr.Observation
+	poolResp := resetResp
+	rng := rand.New(rand.NewSource(61))
+	compared := 0
+	for step := 0; step < 120 && singleObs != nil; step++ {
+		if !poolResp.Slots[0].HasObservation {
+			break
+		}
+		if poolResp.EventHistoryWindow != 32 {
+			t.Fatalf("step %d: pool window %d", step, poolResp.EventHistoryWindow)
+		}
+		poolEvents := decodeEventRow(t, poolResp, 0)
+		if len(poolEvents) != len(singleObs.EventHistory) {
+			t.Fatalf("step %d: pool %d events, single %d", step, len(poolEvents), len(singleObs.EventHistory))
+		}
+		for i := range poolEvents {
+			if poolEvents[i] != singleObs.EventHistory[i] {
+				t.Fatalf("step %d event %d: pool 0x%08X single 0x%08X", step, i, poolEvents[i], singleObs.EventHistory[i])
+			}
+		}
+		if len(poolEvents) > 0 {
+			compared++
+		}
+		aid, ok := randomLegalActionID(singleObs.ActionMask, rng)
+		if !ok {
+			break
+		}
+		ssr, err := single.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+		if err != nil {
+			t.Fatalf("single step: %v", err)
+		}
+		poolResp, err = pool.ApplyCommands(&pb.EnvPoolStepRequest{Commands: []*pb.SlotCommand{
+			{Slot: 0, Cmd: &pb.SlotCommand_ActionId{ActionId: uint32(aid)}},
+		}})
+		if err != nil {
+			t.Fatalf("pool step: %v", err)
+		}
+		if ssr.Terminated || ssr.Truncated {
+			break
+		}
+		singleObs = ssr.Observation
+	}
+	if compared < 10 {
+		t.Fatalf("premise: only %d nonempty comparisons — extend steps or change seed", compared)
+	}
+}
+
+// Dormancy: window 0 leaves all three new response fields empty.
+func TestEnvPoolEventBuffersDormantAtWindowZero(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       200,
+	}
+	pool := NewEnvPool(config, 1)
+	resp, err := pool.ApplyCommands(&pb.EnvPoolStepRequest{Commands: []*pb.SlotCommand{
+		{Slot: 0, Cmd: &pb.SlotCommand_ResetSeed{ResetSeed: 9}},
+	}})
+	if err != nil {
+		t.Fatalf("pool reset: %v", err)
+	}
+	if len(resp.EventHistories) != 0 || len(resp.EventCounts) != 0 || resp.EventHistoryWindow != 0 {
+		t.Fatalf("dormancy broken: hist=%d counts=%d window=%d",
+			len(resp.EventHistories), len(resp.EventCounts), resp.EventHistoryWindow)
+	}
+}
+
+// SearchPool accepts window>0 now (guard removed) and its clones share the
+// same flat layout via appendObservationRow.
+func TestSearchPoolAcceptsEventHistoryWindow(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
 		AutoPlayHeuristics: false,
 		MaxDecisions:       512,
-		EventHistoryWindow: 128,
+		EventHistoryWindow: 32,
 	}
 	env := New(config)
 	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 5, Config: config}); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if _, err := NewSearchPool(env, 2, 5, 64, 4); err == nil {
-		t.Fatalf("NewSearchPool accepted event_history_window > 0")
+	if _, err := NewSearchPool(env, 2, 5, 64, 4); err != nil {
+		t.Fatalf("NewSearchPool rejected window>0 after guard removal: %v", err)
 	}
 }
 
