@@ -17,7 +17,6 @@ import ctypes
 from dataclasses import dataclass, field
 from typing import Sequence
 
-import numpy as np
 
 from .bridge import BridgeError, CtypesGoBridge, FHBytesResult
 from .envpool import GoEnvPool, PoolCommand, PoolStepResult, SlotMeta
