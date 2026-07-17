@@ -476,6 +476,15 @@ message EnvPoolStepResponse {
   uint32 plane_width = 7;
   uint32 scalar_count = 8;
   uint32 action_space_size = 9;
+  // Flat event-history buffers for rows with has_observation, matching the
+  // planes/scalars row order. event_histories: uint32 LE
+  // [rows, event_history_window], tail-padded with zeros; event_counts:
+  // uint32 LE [rows] true lengths (an explicit count is required — packed
+  // value 0x0 is a VALID event, so padding alone is ambiguous). All three
+  // empty when event_history_window == 0 (dormant, zero cost).
+  bytes event_histories = 10;
+  bytes event_counts = 11;
+  uint32 event_history_window = 12;
 }
 
 // Test-time search: create K determinized clones of a live env's current

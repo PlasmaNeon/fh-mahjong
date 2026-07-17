@@ -2947,8 +2947,17 @@ type EnvPoolStepResponse struct {
 	PlaneWidth      uint32 `protobuf:"varint,7,opt,name=plane_width,json=planeWidth,proto3" json:"plane_width,omitempty"`
 	ScalarCount     uint32 `protobuf:"varint,8,opt,name=scalar_count,json=scalarCount,proto3" json:"scalar_count,omitempty"`
 	ActionSpaceSize uint32 `protobuf:"varint,9,opt,name=action_space_size,json=actionSpaceSize,proto3" json:"action_space_size,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Flat event-history buffers for rows with has_observation, matching the
+	// planes/scalars row order. event_histories: uint32 LE
+	// [rows, event_history_window], tail-padded with zeros; event_counts:
+	// uint32 LE [rows] true lengths (an explicit count is required — packed
+	// value 0x0 is a VALID event, so padding alone is ambiguous). All three
+	// empty when event_history_window == 0 (dormant, zero cost).
+	EventHistories     []byte `protobuf:"bytes,10,opt,name=event_histories,json=eventHistories,proto3" json:"event_histories,omitempty"`
+	EventCounts        []byte `protobuf:"bytes,11,opt,name=event_counts,json=eventCounts,proto3" json:"event_counts,omitempty"`
+	EventHistoryWindow uint32 `protobuf:"varint,12,opt,name=event_history_window,json=eventHistoryWindow,proto3" json:"event_history_window,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *EnvPoolStepResponse) Reset() {
@@ -3040,6 +3049,27 @@ func (x *EnvPoolStepResponse) GetScalarCount() uint32 {
 func (x *EnvPoolStepResponse) GetActionSpaceSize() uint32 {
 	if x != nil {
 		return x.ActionSpaceSize
+	}
+	return 0
+}
+
+func (x *EnvPoolStepResponse) GetEventHistories() []byte {
+	if x != nil {
+		return x.EventHistories
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetEventCounts() []byte {
+	if x != nil {
+		return x.EventCounts
+	}
+	return nil
+}
+
+func (x *EnvPoolStepResponse) GetEventHistoryWindow() uint32 {
+	if x != nil {
+		return x.EventHistoryWindow
 	}
 	return 0
 }
@@ -3407,7 +3437,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\fstep_rewards\x18\x05 \x03(\x02R\vstepRewards\x12'\n" +
 	"\x0fhas_observation\x18\x06 \x01(\bR\x0ehasObservation\x127\n" +
 	"\rround_outcome\x18\a \x01(\v2\x12.game.RoundOutcomeR\froundOutcome\x12\x14\n" +
-	"\x05error\x18\b \x01(\tR\x05error\"\xcb\x02\n" +
+	"\x05error\x18\b \x01(\tR\x05error\"\xc9\x03\n" +
 	"\x13EnvPoolStepResponse\x12%\n" +
 	"\x05slots\x18\x01 \x03(\v2\x0f.game.SlotStateR\x05slots\x12\x16\n" +
 	"\x06planes\x18\x02 \x01(\fR\x06planes\x12\x18\n" +
@@ -3418,7 +3448,11 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vplane_width\x18\a \x01(\rR\n" +
 	"planeWidth\x12!\n" +
 	"\fscalar_count\x18\b \x01(\rR\vscalarCount\x12*\n" +
-	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\"\xd2\x01\n" +
+	"\x11action_space_size\x18\t \x01(\rR\x0factionSpaceSize\x12'\n" +
+	"\x0fevent_histories\x18\n" +
+	" \x01(\fR\x0eeventHistories\x12!\n" +
+	"\fevent_counts\x18\v \x01(\fR\veventCounts\x120\n" +
+	"\x14event_history_window\x18\f \x01(\rR\x12eventHistoryWindow\"\xd2\x01\n" +
 	"\x14SearchPoolNewRequest\x12\x16\n" +
 	"\x06clones\x18\x01 \x01(\rR\x06clones\x12\x12\n" +
 	"\x04seed\x18\x02 \x01(\x04R\x04seed\x122\n" +
