@@ -263,6 +263,11 @@ class DuelingQHead(nn.Module):
                 final_layer.bias.copy_(policy_head.bias)
 
 
+from .events import NUM_EVENT_TYPES as _NUM_EVENT_TYPES
+
+assert _NUM_EVENT_TYPES == 8, "EventEncoder token layout assumes 8 event types — update NUM_TOKENS math"
+
+
 class EventEncoder(nn.Module):
     """GRU over the packed public-event history (Spec B2b).
 
@@ -272,7 +277,7 @@ class EventEncoder(nn.Module):
     Token = (type*4 + rel_seat)*64 + face  in [0, 2048).
     """
 
-    NUM_TOKENS = 8 * 4 * 64  # 2048
+    NUM_TOKENS = 8 * 4 * 64  # 2048; the 8 is events.NUM_EVENT_TYPES (asserted below)
 
     def __init__(self, embed_dim: int, hidden_dim: int) -> None:
         super().__init__()

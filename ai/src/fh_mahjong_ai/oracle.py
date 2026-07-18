@@ -710,7 +710,11 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 ev = np.asarray(obs.event_history, dtype=np.uint32)
                 ev_len = min(int(ev.shape[0]), window)
                 if ev_len > 0:
-                    row_events[:ev_len] = ev[:ev_len]
+                    # TAIL of the history (newest events) — matches the
+                    # serving-side TorchGreedyPolicy convention. Unreachable
+                    # difference today (bridge window == model window) but the
+                    # conventions must not drift.
+                    row_events[:ev_len] = ev[-ev_len:]
                 planes = torch.from_numpy(planes_np).unsqueeze(0).to(device)
                 scalars = torch.from_numpy(scalars_np).unsqueeze(0).to(device)
                 amask = torch.from_numpy(mask_np).unsqueeze(0).to(device)

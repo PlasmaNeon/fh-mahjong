@@ -13,12 +13,12 @@ Champion screening report: /root/fh-mahjong-runs/spec-a/champion-fixed.json.
      --model-residual-blocks 4 --event-window 128 \
      --iterations 150 --matches-per-iter 256 --num-workers 5 \
      --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 1.0 \
-     --match-mode chongci --max-steps-per-episode 4000 --device cuda \
-     --mlflow
+     --match-mode chongci --max-steps-per-episode 4000 --device cuda
 
-   (Confirm exact flag names against `fh-mj-train-b2b --help`; matches-per-iter
-   256 matches the champion phaseB1 pipeline — cross-check the progress note's
-   run command before launching.)
+   (No MLflow — fh-mj-train-b2b logs history.json + stdout, matching the
+   champion phaseB1 precedent. Confirm exact flag names against
+   `fh-mj-train-b2b --help`; matches-per-iter 256 matches the champion
+   pipeline — cross-check the progress note's run command before launching.)
 
 2. Screening at iters 25/50/75/100/125/150:
 
@@ -43,16 +43,12 @@ Champion screening report: /root/fh-mahjong-runs/spec-a/champion-fixed.json.
    BOTH the candidate (flags as in step 2) AND the champion
    (--model-residual-blocks 4, no event/priv/aux flags, no window) evaluated on
    --start-seed 950000 --online-episodes 1500 (~6h each), same bridge, then
-   fh-mj-compare candidate.json champion.json  (STRICT: both reports post-B2b
-   carry all keys; the window differs between them by design — the candidate
-   IS a different protocol, so pass --allow-bridge-mismatch? NO — bridges are
-   identical; the window key differs -> strict compare REFUSES. This is the
-   one legitimate cross-protocol promotion comparison: use
-   --allow-missing-config? Also no. DECISION: the promotion verdict uses the
-   per-seed paired delta computed by fh-mj-compare with the window key
-   temporarily excluded — pass --allow-missing-config and record in the
-   progress note that the sole config difference is event_history_window
-   128-vs-0, which is the intervention under test, not a confound.)
+   fh-mj-compare candidate.json champion.json --allow-window-mismatch
+   (Both reports post-B2b carry all keys; the ONLY config difference is
+   event_history_window 128-vs-0 — the intervention under test. The flag
+   permits exactly that mismatch and stamps window_check=mismatch-allowed
+   in the verdict; everything else stays strict: same bridge digest, same
+   seeds, same chongci config.)
 
 5. Record the outcome + per-head loss curves (belief/dealin/rank) in
    docs/rl-papers/chongci-rl-experiment-progress.md (win or lose).

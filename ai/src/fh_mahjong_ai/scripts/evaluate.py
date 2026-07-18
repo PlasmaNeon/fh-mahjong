@@ -158,6 +158,10 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
+    if args.model_event_window > 0 and args.event_history_window == 0 and args.online_episodes > 0:
+        # An event-hungry model with no bridge window would silently evaluate
+        # on empty histories under a report claiming window 0.
+        parser.error("--model-event-window > 0 requires --event-history-window > 0 for online eval")
     if args.event_history_window > 0 and (args.search or args.sample_temperature > 0.0):
         # The search/sampled paths route through CheckpointPolicy, which does
         # not thread events yet (B2c scope) — the model would silently

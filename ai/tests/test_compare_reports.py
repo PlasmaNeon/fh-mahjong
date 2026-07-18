@@ -382,3 +382,19 @@ def test_event_window_mismatch_refused():
     b["event_history_window"] = 0
     with pytest.raises(ValueError, match="not comparable.*event_history_window"):
         paired_comparison(a, b)
+
+
+def test_window_mismatch_allowed_with_flag():
+    # The promotion comparison: window-on candidate vs window-off champion —
+    # the window IS the intervention under test; labeled, never silent.
+    seeds = [1, 2, 3]
+    means = [0.0, 0.1, -0.1]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["event_history_window"] = 128
+    b["event_history_window"] = 0
+    result = paired_comparison(a, b, allow_window_mismatch=True)
+    assert result["window_check"] == "mismatch-allowed"
+
+    same = paired_comparison(make_report(seeds, means), make_report(seeds, means))
+    assert same["window_check"] == "match"
