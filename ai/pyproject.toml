@@ -60,6 +60,7 @@ fh-mj-selfplay-loop = "fh_mahjong_ai.scripts.selfplay_loop:main"
 fh-mj-train-ppo = "fh_mahjong_ai.scripts.train_ppo:main"
 fh-mj-train-oracle = "fh_mahjong_ai.scripts.train_oracle:main"
 fh-mj-train-selfplay-oracle = "fh_mahjong_ai.scripts.train_selfplay_oracle:main"
+fh-mj-train-b2b = "fh_mahjong_ai.scripts.train_b2b:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
