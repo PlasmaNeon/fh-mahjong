@@ -270,16 +270,26 @@ func TestPrivateTableJoinRejectsOutsiderForActiveTable(t *testing.T) {
 }
 
 func TestPrivateTable_DefaultMatchMode(t *testing.T) {
+	// Private tables default to Chongci so a game can actually reach
+	// PHASE_MATCH_END and persist as "completed" — the only status the paipu
+	// library lists. Classic mode is endless (never terminates) and would
+	// never produce a listable paipu.
 	pt := newConfiguringTable("table-x", 42)
-	if pt.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
-		t.Fatalf("default MatchMode = %v, want CLASSIC", pt.MatchMode)
+	if pt.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("default MatchMode = %v, want CHONGCI", pt.MatchMode)
 	}
-	if pt.ChongciConfig != nil {
-		t.Fatalf("default ChongciConfig should be nil, got %+v", pt.ChongciConfig)
+	if pt.ChongciConfig == nil {
+		t.Fatal("default ChongciConfig must be non-nil for a chongci table")
+	}
+	if got := pt.ChongciConfig; got.StartingScore != 2000 || got.BustThreshold != 0 || got.MaxHands != 50 {
+		t.Fatalf("default ChongciConfig = %+v, want {StartingScore:2000 BustThreshold:0 MaxHands:50}", got)
 	}
 	state := pt.SnapshotProto()
-	if state.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
-		t.Fatalf("proto MatchMode = %v, want CLASSIC", state.MatchMode)
+	if state.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("proto MatchMode = %v, want CHONGCI", state.MatchMode)
+	}
+	if state.ChongciConfig == nil || state.ChongciConfig.MaxHands != 50 {
+		t.Fatalf("proto ChongciConfig = %+v, want MaxHands=50", state.ChongciConfig)
 	}
 }
 

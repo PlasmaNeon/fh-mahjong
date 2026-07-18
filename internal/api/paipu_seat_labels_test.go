@@ -110,3 +110,39 @@ func TestStartPrivateTable_RecordsSeatComposition(t *testing.T) {
 		t.Fatalf("seat 2 mislabeled: %+v", p)
 	}
 }
+
+// End-to-end: a default private table must start a Chongci match, so it can
+// actually reach PHASE_MATCH_END and persist as a completed, listable paipu.
+// Classic mode is endless and would never produce one.
+func TestStartPrivateTable_DefaultsToChongciMatch(t *testing.T) {
+	hub := NewHub()
+	hub.BindRoom = make(chan RoomBind, 1)
+	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+	m.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) { return bot.NewPolicy(d) }
+
+	if _, err := m.CreatePrivateTable("t-chongci", 101, "alice"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := m.MutatePrivateTable("t-chongci", func(pt *PrivateTable) error {
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			return err
+		}
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			return err
+		}
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+	}); err != nil {
+		t.Fatalf("configure seats: %v", err)
+	}
+	if _, err := m.StartPrivateTable("t-chongci", 101); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	bind := <-hub.BindRoom
+
+	if got := bind.Room.Engine.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CHONGCI {
+		t.Fatalf("started default private table MatchMode = %v, want CHONGCI", got)
+	}
+	if cfg := bind.Room.Engine.State.ChongciConfig; cfg == nil || cfg.MaxHands != 50 {
+		t.Fatalf("started default private table ChongciConfig = %+v, want MaxHands=50", cfg)
+	}
+}

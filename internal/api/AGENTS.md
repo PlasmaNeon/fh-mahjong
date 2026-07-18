@@ -20,7 +20,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
     - `/api/v1/rooms/:roomId/join` (POST) — claim a seat.
     - `/api/v1/rooms/:roomId/seat` (POST, host-only) — assign or clear an AI seat.
     - `/api/v1/rooms/:roomId/start` (POST, host-only) — launch the match.
-    - `/api/v1/rooms/:roomId/mode` (POST, host-only) — set classic/chongci match mode.
+    - `/api/v1/rooms/:roomId/mode` (POST, host-only) — set classic/chongci match mode. Private tables **default to chongci** (`newConfiguringTable`, shared `defaultChongciConfig`: 2000 start / bust at 0 / 50-hand cap): classic mode is endless and never reaches `PHASE_MATCH_END`, so a classic match can never persist as `completed` and would never appear under `/users/me/replays`. Hosts can still opt into classic explicitly.
   - Optional SPA/static serving from `web/dist` for single-service production deploys
   - Production SPA asset mounts use explicit `GET`/`HEAD` file handlers for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
