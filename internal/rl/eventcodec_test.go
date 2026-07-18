@@ -739,7 +739,15 @@ func TestChongciStepPathSurfacesRoundOutcomes(t *testing.T) {
 					sawNonDraw = true
 				}
 			}
-			if sr.Terminated || sr.Truncated {
+			if sr.Terminated {
+				// The match-ending hand's outcome must arrive ON the
+				// terminal response — it used to be dropped entirely.
+				if sr.RoundOutcome == nil {
+					t.Fatalf("seed %d: terminal chongci response carried no RoundOutcome", seed)
+				}
+				break
+			}
+			if sr.Truncated {
 				break
 			}
 			obs = sr.Observation

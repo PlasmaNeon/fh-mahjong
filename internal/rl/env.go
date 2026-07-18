@@ -337,11 +337,19 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 	for {
 		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			// The final hand transitions straight to MATCH_END without the
+			// ROUND_END capture, so fall back to the live RoundResult — the
+			// match-ending hand (often the bust-causing ron) must not be the
+			// one hand trainers cannot label.
+			outcome := e.takePendingRoundOutcome()
+			if outcome == nil {
+				outcome = roundOutcome(e.game.State)
+			}
 			return &pb.EnvStepResponse{
 				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
 				Rewards:      e.scoreDeltaReward(),
 				Terminated:   true,
-				RoundOutcome: e.takePendingRoundOutcome(),
+				RoundOutcome: outcome,
 			}, nil
 		}
 
@@ -366,9 +374,10 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 
 		if e.config.MaxDecisions > 0 && e.decisionCount >= uint64(e.config.MaxDecisions) {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
-				Rewards:     e.scoreDeltaReward(),
-				Truncated:   true,
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Rewards:      e.scoreDeltaReward(),
+				Truncated:    true,
+				RoundOutcome: e.takePendingRoundOutcome(),
 			}, nil
 		}
 
