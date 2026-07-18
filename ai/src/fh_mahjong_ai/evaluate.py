@@ -525,6 +525,12 @@ def compute_action_agreement_from_batches(
     device: str = "cpu",
 ) -> Dict[str, Any]:
     """Compute action agreement from pre-batched observation/action arrays."""
+    if getattr(model, "wants_events", False):
+        raise ValueError(
+            "offline action agreement cannot evaluate an event-enabled model: "
+            "offline datasets carry no event histories (the model would silently "
+            "run with zeroed event features)"
+        )
     model.eval()
     exact_matches = 0
     top3_matches = 0

@@ -158,6 +158,11 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
+    if args.model_event_window > 0 and args.data is not None:
+        # Offline datasets carry no event histories; the agreement numbers
+        # would silently measure a zero-history policy.
+        parser.error("--data (offline action agreement) does not support event-enabled models "
+                     "(--model-event-window > 0): offline datasets carry no event histories")
     if args.model_event_window > 0 and args.online_episodes > 0 \
             and args.event_history_window != args.model_event_window:
         # An event-hungry model must see EXACTLY the horizon it was trained
