@@ -41,7 +41,18 @@ class TorchGreedyPolicy:
         scalars = torch.from_numpy(observation.scalars).unsqueeze(0).to(self.device)
         action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(self.device)
 
-        logits, value = self.model(planes, scalars, action_mask)
+        events = lengths = None
+        if getattr(self.model, "wants_events", False):
+            history = np.asarray(getattr(observation, "event_history", np.zeros(0, np.uint32)), dtype=np.uint32)
+            window = self.model.model_config.event_window
+            row = np.zeros((1, window), dtype=np.int64)
+            n = min(len(history), window)
+            if n:
+                row[0, :n] = history[-n:].astype(np.int64)
+            events = torch.from_numpy(row).to(self.device)
+            lengths = torch.tensor([n], dtype=torch.int64, device=self.device)
+
+        logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=lengths)
         action_id = int(torch.argmax(logits, dim=1).item())
         return ActionChoice(action_id=action_id, value=float(value.item()))
 

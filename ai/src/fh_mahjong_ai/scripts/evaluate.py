@@ -94,6 +94,12 @@ def main() -> None:
         default=None,
         help="Reward threshold for large-loss reporting; defaults by match mode",
     )
+    parser.add_argument(
+        "--event-history-window",
+        type=int,
+        default=0,
+        help="Bridge-side event history window (rows); 0 = off (dormant, default)",
+    )
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
@@ -257,6 +263,7 @@ def main() -> None:
                     "chongci_max_hands": args.chongci_max_hands,
                     "max_steps_per_episode": max_steps_per_episode,
                     "large_loss_threshold": args.large_loss_threshold,
+                    "event_history_window": args.event_history_window,
                     **model_config_params(model_config),
                 }
             )
@@ -345,6 +352,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
                 final_report["search"]["fallback_count"] = sum(p.fallback_count for p in search_policies)
             elif args.duplicate_seats and args.sample_temperature > 0.0:
@@ -379,6 +387,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
@@ -394,6 +403,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             else:
                 online_report = evaluate_online(
@@ -410,6 +420,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             final_report["online"] = online_report
             # Persist the decision-protocol blocks inside the online report

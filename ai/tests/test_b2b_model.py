@@ -102,3 +102,40 @@ def test_event_window_zero_forward_matches_legacy_signature():
     planes, scalars, mask = _rand_obs(2)
     logits, value = model(planes, scalars, mask)  # legacy 3-arg call still works
     assert logits.shape == (2, 204)
+
+
+def test_greedy_policy_threads_events():
+    from fh_mahjong_ai.policies import TorchGreedyPolicy
+    from fh_mahjong_ai.types import Observation
+
+    model = PolicyValueNet(ENV39, ModelConfig(
+        channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
+        trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16, event_window=8))
+    policy = TorchGreedyPolicy(model, device="cpu")
+    rng = np.random.default_rng(9)
+    mask = np.zeros(204, dtype=np.int8)
+    mask[:4] = 1
+    obs = Observation(
+        seat=0,
+        planes=rng.random((39, 42, 1), dtype=np.float32),
+        scalars=rng.random(58, dtype=np.float32),
+        action_mask=mask,
+        event_history=np.asarray([0x140, 0x4A51], dtype=np.uint32),
+    )
+
+    # Contract test: the model must actually receive a non-None events tensor
+    # when it wants_events, not just "the call doesn't crash" (which passes
+    # trivially even if TorchGreedyPolicy silently drops the history).
+    received = {}
+    real_forward = model.forward
+
+    def spying_forward(planes, scalars, action_mask, events=None, event_lengths=None):
+        received["events"] = events
+        received["event_lengths"] = event_lengths
+        return real_forward(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
+
+    model.forward = spying_forward
+    choice = policy.choose(obs)
+    assert received["events"] is not None
+    assert received["event_lengths"] is not None
+    assert 0 <= choice.action_id < 4

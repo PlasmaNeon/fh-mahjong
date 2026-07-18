@@ -14,6 +14,7 @@ FULL_CONFIG = {
     "seats": [0, 1, 2, 3],
     "max_steps_per_episode": 4000,
     "oracle_observation": False,
+    "event_history_window": 0,
     "large_loss_threshold": -800.0,
     "bridge_lib_sha256": "a" * 64,
 }
@@ -370,3 +371,14 @@ def test_constant_nonzero_delta_is_significant():
     # But a single seed can never be significant (no degrees of freedom).
     single = paired_comparison(make_report([1], [0.5]), make_report([1], [0.0]))
     assert single["significant"] is False
+
+
+def test_event_window_mismatch_refused():
+    seeds = [1, 2, 3]
+    means = [0.0, 0.1, -0.1]
+    a = make_report(seeds, means)
+    b = make_report(seeds, means)
+    a["event_history_window"] = 128
+    b["event_history_window"] = 0
+    with pytest.raises(ValueError, match="not comparable.*event_history_window"):
+        paired_comparison(a, b)

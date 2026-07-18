@@ -26,6 +26,8 @@ _COMPAT_KEYS = (
     "max_steps_per_episode",
     "oracle_observation",
     "large_loss_threshold",
+    # Window-on vs window-off is a different observation/decision protocol.
+    "event_history_window",
     # SHA-256 of the Go simulator library — two reports from different
     # simulator builds measure different games, not different checkpoints.
     # Deliberate cross-simulator comparisons (e.g. the same checkpoint on a
