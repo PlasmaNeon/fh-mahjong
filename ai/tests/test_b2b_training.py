@@ -131,7 +131,10 @@ def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
                        match_mode="chongci")
     from fh_mahjong_ai.oracle import collect_b2b_rollouts
-    collect_b2b_rollouts(env, model, config, base_seed=3)
+    # The mock bridge never surfaces round outcomes, so the stale-bridge
+    # capability guard fires after collection — config capture still happens.
+    with pytest.raises(RuntimeError, match="no round outcomes"):
+        collect_b2b_rollouts(env, model, config, base_seed=3)
     cfg = captured["cfg"]
     assert cfg.chongci_starting_score == 3333
     assert cfg.chongci_bust_threshold == 111
@@ -222,7 +225,10 @@ def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
                                   terminated=False, truncated=False, info={})
             return StepResult(observation=_obs(0),
                               rewards=np.zeros(4, dtype=np.float32),
-                              terminated=True, truncated=False, info={})
+                              terminated=True, truncated=False,
+                              info={"round_outcome": {"is_draw": True, "winner_seat": 0,
+                                                      "win_type_name": "ACTION_UNKNOWN",
+                                                      "discarder_seat": 0}})
 
     monkeypatch.setattr(oracle_mod, "MahjongEnv", _ScriptedEnv)
     monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
@@ -278,8 +284,11 @@ def test_rank_labels_exact_at_bust_threshold(monkeypatch):
             self._t += 1
             rewards = np.asarray([np.float32(-0.1), np.float32(0.1), 0.0, 0.0], dtype=np.float32)
             terminated = self._t >= 20
+            info = ({"round_outcome": {"is_draw": True, "winner_seat": 0,
+                                       "win_type_name": "ACTION_UNKNOWN", "discarder_seat": 0}}
+                    if terminated else {})
             return StepResult(observation=_obs(0), rewards=rewards,
-                              terminated=terminated, truncated=False, info={})
+                              terminated=terminated, truncated=False, info=info)
 
     monkeypatch.setattr(oracle_mod, "MahjongEnv", _DriftEnv)
     monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
@@ -294,3 +303,51 @@ def test_rank_labels_exact_at_bust_threshold(monkeypatch):
     batch = collect_b2b_rollouts(env, model, config, base_seed=2)
     # Seat 0 ends at exactly the bust threshold (2000 - 2000 = 0 <= 0): BUSTED.
     assert set(batch.rank_labels[:1].tolist()) == {4}
+
+
+def test_zero_outcome_chongci_collection_fails_fast(monkeypatch):
+    # A bridge predating chongci round-outcome delivery yields completed
+    # matches with zero outcomes — the collector must refuse, not silently
+    # train the deal-in head on all-negative labels.
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai.types import Observation, StepResult
+
+    rng = np.random.default_rng(4)
+
+    def _obs(seat):
+        mask = np.zeros(204, dtype=np.int8)
+        mask[:4] = 1
+        return Observation(seat=seat, planes=rng.random((51, 42, 1), dtype=np.float32),
+                           scalars=rng.random(58, dtype=np.float32), action_mask=mask,
+                           event_history=np.asarray([0x140], dtype=np.uint32))
+
+    class _NoOutcomeEnv:
+        def __init__(self, cfg, bridge=None):
+            self.last_reset_result = None
+            self._t = 0
+
+        def reset(self, seed=None):
+            self._t = 0
+            self.last_reset_result = StepResult(observation=_obs(0),
+                                                rewards=np.zeros(4, dtype=np.float32),
+                                                terminated=False, truncated=False, info={})
+            return _obs(0)
+
+        def step(self, action):
+            self._t += 1
+            return StepResult(observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                              terminated=self._t >= 4, truncated=False, info={})
+
+    monkeypatch.setattr(oracle_mod, "MahjongEnv", _NoOutcomeEnv)
+    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**_SMALL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
+                       match_mode="chongci")
+    with pytest.raises(RuntimeError, match="rebuild it"):
+        collect_b2b_rollouts(env, model, config, base_seed=5)

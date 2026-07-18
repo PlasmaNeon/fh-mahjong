@@ -159,9 +159,13 @@ compare as a strict gate.
 1. Rebuild bridge; warm-start from
    `/root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt`.
 2. Train: deep4 dims + `event_window=128`, `privileged_critic`, `aux_heads`;
-   GRP placement reward (γ=1), lr 2e-5, entropy 0, ppo-epochs 2, chongci,
-   5 workers, matches/iter as champion; **150 iters**, checkpoint every 5,
-   MLflow on.
+   dense per-hand score-delta reward at γ=1 — the EXACT champion
+   (train_selfplay_oracle/phaseB1) recipe, so the representation is the only
+   intervention (CORRECTION 2026-07-18: an earlier draft said "GRP placement
+   reward"; that was stale nomenclature from the train_ppo campaign — the
+   phaseB1 champion never used GRP shaping in this pipeline, and neither
+   does B2b); lr 2e-5, entropy 0, ppo-epochs 2, chongci, 5 workers,
+   matches/iter as champion; **150 iters**, checkpoint every 5.
 3. **Screening** every 25 iters: `fh-mj-evaluate --event-history-window 128`
    duplicate-seat vs the in-engine opponents on `--start-seed 910000`
    (120 seeds), compare vs the champion's fixed-encoder screening report

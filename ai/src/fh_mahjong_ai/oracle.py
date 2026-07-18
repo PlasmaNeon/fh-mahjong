@@ -686,6 +686,8 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
     events_l, lengths_l, dealin_l, rank_l = [], [], [], []
     truncated_matches = 0
+    completed_matches = 0
+    outcomes_seen = 0
     try:
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
@@ -759,12 +761,16 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                         seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
                 outcome = step.info.get("round_outcome")
                 if outcome:
+                    outcomes_seen += 1
+                if outcome:
                     hand_outcomes[hand_id] = outcome
                     hand_id += 1
                 if step.terminated or step.truncated:
                     break
                 obs = step.observation
             is_truncated = bool(step.truncated) if step is not None else False
+            if not is_truncated:
+                completed_matches += 1
             if is_truncated:
                 truncated_matches += 1
             final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
@@ -796,6 +802,18 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         close = getattr(bridge, "close", None)
         if callable(close):
             close()
+    if chongci and completed_matches > 0 and outcomes_seen == 0:
+        # A completed chongci match ALWAYS surfaces at least one round
+        # outcome on the step path (internal/rl/env.go attaches boundary and
+        # terminal outcomes). Zero outcomes across completed matches means
+        # the bridge library predates that fix — deal-in supervision would
+        # silently degenerate to all-negative labels for the whole run.
+        raise RuntimeError(
+            "no round outcomes surfaced across "
+            f"{completed_matches} completed chongci matches — the Go bridge library "
+            "predates chongci round-outcome delivery; rebuild it "
+            "(go build -buildmode=c-shared ./cmd/rlbridge)"
+        )
     if not actions_l:
         raise RuntimeError("collect_b2b_rollouts produced no decisions")
     return RolloutBatch(
@@ -946,6 +964,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             metrics["iteration"] = iteration
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
+            # Aux-supervision telemetry: an all-zero deal-in rate across many
+            # iters is the corrupted-labels signature — watch it in history.json.
+            if batch.dealin_labels is not None:
+                metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
+            if batch.rank_labels is not None:
+                metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
             save_checkpoint(
                 checkpoint_dir / f"iter_{iteration:03d}.pt", model,
                 # Pins the trained horizon/architecture so fh-mj-evaluate can

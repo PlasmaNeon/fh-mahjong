@@ -15,8 +15,13 @@ Champion screening report: /root/fh-mahjong-runs/spec-a/champion-fixed.json.
      --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 1.0 \
      --match-mode chongci --max-steps-per-episode 4000 --device cuda
 
-   (No MLflow — fh-mj-train-b2b logs history.json + stdout, matching the
-   champion phaseB1 precedent. Confirm exact flag names against
+   (Reward = dense per-hand score deltas at gamma 1.0 — the exact champion
+   phaseB1 recipe; the spec's earlier "GRP placement reward" wording was
+   stale nomenclature, corrected 2026-07-18. No MLflow — fh-mj-train-b2b
+   logs history.json + stdout, matching the champion phaseB1 precedent.
+   Watch dealin_positive_rate and rank_label_coverage in history.json: an
+   all-zero deal-in rate is the corrupted-supervision signature (the
+   collector also fails fast on zero outcomes). Confirm exact flag names against
    `fh-mj-train-b2b --help`; matches-per-iter 256 matches the champion
    pipeline — cross-check the progress note's run command before launching.)
 
