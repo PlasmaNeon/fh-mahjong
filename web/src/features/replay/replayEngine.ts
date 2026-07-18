@@ -93,10 +93,27 @@ export class ReplayEngine {
     }
   }
 
-  getActionDescription(): string {
-    if (this.actionIndex < 0) return 'Deal'
+  getActionDescription(lang: 'en' | 'zh' = 'en'): string {
+    if (this.actionIndex < 0) return lang === 'zh' ? '发牌' : 'Deal'
     const action = this.currentRound.actions[this.actionIndex]
-    const playerName = this.paipu.players[action.seat]?.name ?? `Seat ${action.seat}`
+    const playerName = this.paipu.players[action.seat]?.name ?? (lang === 'zh' ? `${action.seat}号座位` : `Seat ${action.seat}`)
+    if (lang === 'zh') {
+      switch (action.act) {
+        case 'draw': return `${playerName} 摸牌`
+        case 'discard': return `${playerName} 打出 ${getTileName(tileObjectFromId(action.tile as number))}`
+        case 'chii': return `${playerName} 吃`
+        case 'pon': return `${playerName} 碰`
+        case 'okan': return `${playerName} 明杠`
+        case 'ckan': return `${playerName} 暗杠`
+        case 'ukan': return `${playerName} 加杠`
+        case 'flower': return `${playerName} 补花`
+        case 'tsumo': return `${playerName} 自摸`
+        case 'ron': return `${playerName} 荣和`
+        case 'haitei': return `${playerName} 接受海底牌`
+        case 'haiteiRefuse': return `${playerName} 拒绝海底牌`
+        default: return action.act
+      }
+    }
     switch (action.act) {
       case 'draw': return `${playerName} draws`
       case 'discard': {

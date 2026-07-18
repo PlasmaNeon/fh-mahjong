@@ -8,6 +8,8 @@ Route page components are organized into feature folders corresponding to app do
 
 Every page uses the shared Rainy Mahjong Club theme from `web/src/theme/`: ink/rain backdrops, bone-paper work surfaces, jade controls, brass emphasis, and seal-red danger states. Menu pages compose typed primitives from `../../theme`; the live board adds the visual-only `table/table-theme.css` skin while retaining shared geometry.
 
+User-facing feature copy uses the shared `useI18n()` context. English and Simplified Chinese follow the device's first supported language preference, while language controls in the club shell and tool/review pages update that same global context.
+
 ## Feature Folders
 
 ### `auth/`
@@ -25,7 +27,7 @@ Authentication pages. Routes: `/login`, `/account`.
 
 Lobby/matchmaking pages. Routes: `/` (Home), `/play` (Lobby), `/room/new` (CreateRoom).
 
-- **Home.tsx** — Compact club switchboard with four literal choices: Play, Table Tools, Paipu Replay, and Profile. Decorative slogan, atmospheric description, and menu descriptions are intentionally absent.
+- **Home.tsx** — Compact localized club switchboard with four literal choices (Play, Table Tools, Paipu Replay, Profile) plus a separate language override in the brand row. Decorative slogan, atmospheric description, and menu descriptions are intentionally absent.
 - **Lobby.tsx** — Single Play screen for Quick Match and Private Table. Active searches must confirm `POST /matchmaking/leave` before the screen returns to idle; `409 match_forming` keeps the player connected.
 - **navigation.ts** — One-shot play-intent helper used by the simplified lobby flow.
 - **CreateRoom.tsx** — Auth gate plus protected `POST /rooms`; it navigates only after the server confirms creation, so an invite URL can never create state
@@ -51,7 +53,7 @@ Paipu library and replay viewer. Routes: `/replay`, `/replay/:matchId`.
 - **ReplayLibrary.tsx** — Opens raw match IDs or shared `/replay/:matchId` links and lists the signed-in account's cursor-paginated completed games with open/copy actions and full loading/offline/empty states
 - **replayReference.ts** — Strictly extracts a local replay match ID from raw IDs, relative routes, or HTTP(S) links; pasted origins are never navigated or fetched
 - **Replay.tsx** — Fetches paipu data, advances the local `ReplayEngine`, and adapts replay state into the shared `TableBoard` / `TableRoundResultOverlay` presenter used by live play. Keeps replay transport controls, perspective selector, and "show all hands" toggle in a lacquer side drawer, which becomes a bottom sheet on narrow screens. `replay.css` owns all static palette/layout styling; only dynamic progress widths and severity colours stay inline.
-- **replayEngine.ts** — Stateful replay engine: processes recorded game actions step-by-step and produces board state for each moment in the replay. `jumpToAction(roundIndex, actionIndex)` (`jumpToRound` + a `stepForward` loop) supports deep-linking from the review panel to a specific decision.
+- **replayEngine.ts** — Stateful replay engine: processes recorded game actions step-by-step and produces board state for each moment in the replay. `getActionDescription(lang?)` emits English or Simplified Chinese transport copy; `jumpToAction(roundIndex, actionIndex)` (`jumpToRound` + a `stepForward` loop) supports deep-linking from the review panel to a specific decision.
 - **replayTypes.ts** — TypeScript types for replay data (paipu format, engine state).
 - **reviewTypes.ts** — `ReviewReport`/`ReportDecision`/`SeatSummary`/`GapRef` types and `fetchReview`/`generateReview` API calls (`GET`/`POST /api/v1/matches/:matchId/review`). Field names are a cross-task contract with the backend (`internal/review/report.go`) — do not rename without updating that file. `fetchReview` returns `null` on 404 (no report generated yet); both throw `{status, message}` on other non-2xx responses (503 means no policy server is configured).
 - **reviewUtils.ts** — Pure helpers consumed by `ReviewPanel.tsx` and covered by `reviewUtils.test.ts`: `decisionSeverity(d, thresholds?)` classifies a decision as `ok`/`disagreement`/`mistake` from the gap between the top and chosen action probability (a chosen action ranked in the top N with non-trivial probability is always exempt, checked before the gap tiers); `decisionGap`; `decisionKey(round, actionIndex)` — the anchor string that ties a `ReportDecision` to the replay engine's `(engine.currentRoundIndex, state.actionIndex)` position (multiple seats can share one key during a call window); `buildDecisionIndex(report)` groups decisions by that key; `selectPanelDecisions`/`selectBarRows` filter/shape decisions for one seat's panel; `actionLabel(actionId)` maps the RL action-catalog id (mirrors `internal/rl/action.go`) to bilingual `{en, zh}` labels; `SEVERITY_THRESHOLDS`/`SEVERITY_COLORS`/`SEVERITY_LABELS` are the default severity contract shared by the bar chart, mistake-summary counts, and progress-bar ticks.

@@ -6,6 +6,7 @@ import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ToolsRow } 
 import { useAuth } from '../../contexts/AuthContext'
 import type { AuthRouteState } from '../auth/authModal'
 import { consumePlayIntent, rememberPlayIntent } from './navigation'
+import { useI18n } from '../../i18n/I18nContext'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 
@@ -19,6 +20,7 @@ export default function Lobby() {
   const { isConnected, connect } = useSocket()
   const { gameState } = useGameState()
   const { status: authStatus, apiFetch } = useAuth()
+  const { t } = useI18n()
 
   useEffect(() => {
     if (authStatus === 'authenticated' && !isConnected) connect()
@@ -26,7 +28,7 @@ export default function Lobby() {
   }, [authStatus, isConnected, gameState, navigate, connect])
 
   const joinQueue = async () => {
-    if (authStatus === 'offline') { setError('The club is offline. Check your connection and try again.'); return }
+    if (authStatus === 'offline') { setError(t('auth.offline')); return }
     if (authStatus !== 'authenticated') {
       if (typeof window !== 'undefined') rememberPlayIntent(window.sessionStorage, 'quick-match')
       const state: AuthRouteState = { backgroundLocation: location, optionalAuth: true, cancelIntent: 'quick-match' }
@@ -42,10 +44,10 @@ export default function Lobby() {
         body: JSON.stringify({ ruleset }),
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || 'Failed to join queue')
+      if (!response.ok) throw new Error(data.error || t('lobby.joinFailed'))
       setQueueState('queued')
     } catch (err) {
-      setError(err instanceof TypeError ? 'The club is offline. Check your connection and try again.' : err instanceof Error ? err.message : 'Error contacting matchmaker')
+      setError(err instanceof TypeError ? t('auth.offline') : err instanceof Error ? err.message : t('lobby.contactFailed'))
       setQueueState('idle')
     }
   }
@@ -66,14 +68,14 @@ export default function Lobby() {
       })
       const data = await response.json().catch(() => ({}))
       if (response.status === 409) {
-        setError(data.error || 'Your table is already forming. Stay connected.')
+        setError(data.error || t('lobby.forming'))
         setQueueState('queued')
         return
       }
-      if (!response.ok) throw new Error(data.error || 'Could not cancel search')
+      if (!response.ok) throw new Error(data.error || t('lobby.cancelFailed'))
       setQueueState('idle')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not cancel search')
+      setError(err instanceof Error ? err.message : t('lobby.cancelFailed'))
       setQueueState('queued')
     }
   }
@@ -88,27 +90,27 @@ export default function Lobby() {
   }, [searching])
 
   return (
-    <ClubShell title="Play" navigationLocked={searching}>
+    <ClubShell title={t('nav.play')} navigationLocked={searching}>
       <Card>
-        <PageHeader title="Choose a table" subtitle="今晚玩一圈 · one clear next move" />
+        <PageHeader title={t('lobby.choose')} subtitle={t('lobby.subtitle')} />
         {error && <Note tone="error">{error}</Note>}
 
         {searching ? (
-          <Section title="Listening for players" subtitle={ruleset === 'fenghua' ? 'Fenghua · Classic table' : 'Fenghua · Chongci table'}>
+          <Section title={t('lobby.listening')} subtitle={t(ruleset === 'fenghua' ? 'lobby.classicTable' : 'lobby.chongciTable')}>
             <div className="queue-compass" aria-hidden="true"><span>東</span></div>
-            <Note>{queueState === 'joining' ? 'Joining the queue…' : queueState === 'leaving' ? 'Leaving the queue safely…' : 'Searching for three players. Keep this page open.'}</Note>
-            <ToolsRow><Button onClick={cancelQueue} disabled={queueState !== 'queued'}>Cancel Search</Button></ToolsRow>
+            <Note>{t(queueState === 'joining' ? 'lobby.joining' : queueState === 'leaving' ? 'lobby.leaving' : 'lobby.searching')}</Note>
+            <ToolsRow><Button onClick={cancelQueue} disabled={queueState !== 'queued'}>{t('lobby.cancel')}</Button></ToolsRow>
           </Section>
         ) : (
           <>
-            <Section title="Quick Match" subtitle="The fastest way to a live Fenghua table.">
-              <Button variant="primary" onClick={() => void joinQueue()} disabled={authStatus === 'authenticated' && !isConnected}>Find Match</Button>
-              {authStatus === 'authenticated' && !isConnected && <Note>Connecting to the club server before matchmaking…</Note>}
-              <button type="button" className="disclosure-button" onClick={() => setShowModes(value => !value)} aria-expanded={showModes}>Game mode · {ruleset === 'fenghua' ? 'Classic' : 'Chongci'} {showModes ? '−' : '+'}</button>
-              {showModes && <Toggle value={ruleset} onChange={value => setRuleset(value as Ruleset)} options={[{ value: 'fenghua', label: 'Classic' }, { value: 'chongci-fh', label: 'Chongci' }]} />}
+            <Section title={t('lobby.quick')} subtitle={t('lobby.quickHelp')}>
+              <Button variant="primary" onClick={() => void joinQueue()} disabled={authStatus === 'authenticated' && !isConnected}>{t('lobby.find')}</Button>
+              {authStatus === 'authenticated' && !isConnected && <Note>{t('lobby.connecting')}</Note>}
+              <button type="button" className="disclosure-button" onClick={() => setShowModes(value => !value)} aria-expanded={showModes}>{t('lobby.mode')} · {t(ruleset === 'fenghua' ? 'lobby.classic' : 'lobby.chongci')} {showModes ? '−' : '+'}</button>
+              {showModes && <Toggle value={ruleset} onChange={value => setRuleset(value as Ruleset)} options={[{ value: 'fenghua', label: t('lobby.classic') }, { value: 'chongci-fh', label: t('lobby.chongci') }]} />}
             </Section>
-            <Section title="Private Table" subtitle="Open a table now, then invite friends from the waiting room.">
-              <Button onClick={() => navigate('/room/new')}>Create Private Table</Button>
+            <Section title={t('lobby.private')} subtitle={t('lobby.privateHelp')}>
+              <Button onClick={() => navigate('/room/new')}>{t('lobby.createPrivate')}</Button>
             </Section>
           </>
         )}

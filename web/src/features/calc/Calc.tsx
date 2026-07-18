@@ -4,6 +4,7 @@ import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
 import { game } from '../../proto/game'
 import { getTileName, getTileSvgName } from '../../utils/tileUtils'
 import { ClubShell, ToolTabs } from '../../theme'
+import { useI18n } from '../../i18n/I18nContext'
 import {
   buildCalcRequestPayload,
   CalcKongContextKey,
@@ -104,6 +105,12 @@ const UI_TEXT = {
     evaluateToCapture: 'Evaluate a hand to see the normalized request.',
     showDebug: 'Show normalized request',
     hideDebug: 'Hide normalized request',
+    tileTray: 'Tile tray',
+    tileTrayHelp: 'Choose a target, then use this one shared tray.',
+    tileTarget: 'Tile target',
+    addingTo: 'Adding to',
+    advancedSetup: 'Advanced setup',
+    advancedSetupHelp: 'melds, winds, flowers, and kan context',
   },
   zh: {
     language: 'English',
@@ -161,6 +168,12 @@ const UI_TEXT = {
     evaluateToCapture: '进行一次计算后，这里会显示标准化调试摘要。',
     showDebug: '显示标准化请求',
     hideDebug: '隐藏标准化请求',
+    tileTray: '选牌区',
+    tileTrayHelp: '先选择目标，再从共用牌盘中选牌。',
+    tileTarget: '选牌目标',
+    addingTo: '正在添加到',
+    advancedSetup: '高级设置',
+    advancedSetupHelp: '副露、风位、花牌与杠牌情境',
   },
 } as const
 
@@ -357,7 +370,7 @@ function localizeDebugValue(value: string, lang: Lang): string {
 // ─── Main page ───
 
 export default function Calc() {
-  const [lang, setLang] = useState<Lang>('en')
+  const { shortLanguage: lang, toggleLanguage } = useI18n()
   const [closedHand, setClosedHand] = useState<CalcTileDraft[]>([])
   const [winTile, setWinTile] = useState<CalcTileDraft | null>(null)
   const [wildTile, setWildTile] = useState<CalcTileDraft | null>(null)
@@ -627,7 +640,7 @@ export default function Calc() {
   }
 
   return (
-    <ClubShell wide title="Table Tools">
+    <ClubShell wide title={lang === 'en' ? 'Table Tools' : '牌桌工具'}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
@@ -644,7 +657,7 @@ export default function Calc() {
               <button
                 type="button"
                 className="ldg-link"
-                onClick={() => setLang((current) => (current === 'en' ? 'zh' : 'en'))}
+                onClick={toggleLanguage}
               >
                 {text.language}
               </button>
@@ -775,21 +788,21 @@ export default function Calc() {
 
           <section className="ldg-section workbench-palette">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">Tile tray<small>Choose a target, then use this one shared tray.</small></h2>
+              <h2 className="ldg-section-title">{text.tileTray}<small>{text.tileTrayHelp}</small></h2>
             </div>
-            <div className="ldg-chooser" aria-label="Tile target">
+            <div className="ldg-chooser" aria-label={text.tileTarget}>
               {([['hand', text.closedHand], ['win', text.winTile], ['wild', text.wildTile], ['meld', text.openMeldsTitle]] as const).map(([value, label]) => (
                 <button key={value} type="button" disabled={value === 'meld' && !activeMeldId} className={`ldg-chooser__btn${paletteTarget === value ? ' is-active' : ''}`} onClick={() => setPaletteTarget(value)}>{label}</button>
               ))}
             </div>
             <div className="ldg-palette-drawer">
-              <div className="ldg-palette-drawer__head">Adding to {paletteTarget === 'meld' ? text.openMeldsTitle : paletteTarget}</div>
+              <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : paletteTarget === 'win' ? text.winTile : paletteTarget === 'wild' ? text.wildTile : text.openMeldsTitle}</div>
               <PaletteGrid onTileClick={addPaletteTile} selectedTile={paletteTarget === 'win' ? winTile : paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
           <details className="advanced-setup">
-          <summary>Advanced setup <span>melds, winds, flowers, and kan context</span></summary>
+          <summary>{text.advancedSetup} <span>{text.advancedSetupHelp}</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">

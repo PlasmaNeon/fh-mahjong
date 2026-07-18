@@ -1,28 +1,29 @@
 import { useState } from 'react'
 import { GameDialog } from '../../theme'
 import type { DiscardMode } from './discardMode'
+import { useI18n } from '../../i18n/I18nContext'
 
 type Props = {
   mode: DiscardMode
   onChange: (mode: DiscardMode) => void
 }
 
-const OPTIONS: { value: DiscardMode; title: string; desc: string }[] = [
-  { value: 'single', title: 'Single-click', desc: 'Instant discard on tap' },
-  { value: 'double', title: 'Double-click', desc: 'Tap to lift, tap again to confirm' },
-]
-
 // Top-left gear control for the in-play table. Opens a settings dialog whose
 // only option (for now) is the discard interaction mode.
 export default function GameSettingsButton({ mode, onChange }: Props) {
   const [open, setOpen] = useState(false)
+  const { t } = useI18n()
+  const options = [
+    { value: 'single' as const, title: t('settings.single'), desc: t('settings.singleHelp') },
+    { value: 'double' as const, title: t('settings.double'), desc: t('settings.doubleHelp') },
+  ]
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
         className="table-settings-control"
-        aria-label="Settings"
+        aria-label={t('settings.label')}
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
         ⚙
@@ -30,19 +31,19 @@ export default function GameSettingsButton({ mode, onChange }: Props) {
 
       {open && (
         <GameDialog
-          eyebrow="Table preferences"
-          title="Settings"
+          eyebrow={t('settings.eyebrow')}
+          title={t('settings.label')}
           onCancel={() => setOpen(false)}
           actions={
             <button type="button" onClick={() => setOpen(false)} className="ldg-btn ldg-btn--primary">
-              Done
+              {t('settings.done')}
             </button>
           }
         >
           <div className="settings-field">
-            <div className="settings-field__label">Discard</div>
+            <div className="settings-field__label">{t('settings.discard')}</div>
             <div className="settings-choice">
-              {OPTIONS.map((opt) => (
+              {options.map((opt) => (
                 <button
                   key={opt.value}
                   type="button"

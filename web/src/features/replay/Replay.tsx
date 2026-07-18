@@ -14,6 +14,7 @@ import type { ReviewReport } from './reviewTypes'
 import { fetchReview, generateReview } from './reviewTypes'
 import { SEVERITY_THRESHOLDS, decisionSeverity, type SeverityThresholds } from './reviewUtils'
 import './replay.css'
+import { useI18n } from '../../i18n/I18nContext'
 
 /**
  * Compute calledDirection from seat layout:
@@ -27,6 +28,7 @@ function getCalledDirection(meldHolderSeat: number, fromSeat: number): number {
 }
 
 export default function Replay() {
+  const { shortLanguage, toggleLanguage, t } = useI18n()
   const { matchId } = useParams()
   const [paipu, setPaipu] = useState<Paipu | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +43,6 @@ export default function Replay() {
   const [review, setReview] = useState<ReviewReport | null>(null)
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('loading')
   const [reviewError, setReviewError] = useState<string | null>(null)
-  const [reviewLang, setReviewLang] = useState<'en' | 'zh'>('en')
   const [reviewThresholds, setReviewThresholds] = useState<SeverityThresholds>(SEVERITY_THRESHOLDS)
 
   useEffect(() => { preloadAllTileSvgs() }, [])
@@ -83,7 +84,7 @@ export default function Replay() {
   // Fetch paipu data
   useEffect(() => {
     if (!matchId) {
-      setError('No match ID provided')
+      setError(t('replay.noMatch'))
       setLoading(false)
       return
     }
@@ -99,10 +100,10 @@ export default function Replay() {
         setLoading(false)
       })
       .catch(err => {
-        setError(`Failed to load paipu: ${err.message}`)
+        setError(t('replay.loadFailed', { error: err.message }))
         setLoading(false)
       })
-  }, [matchId])
+  }, [matchId, t])
 
   const engine = engineRef.current
 
@@ -146,22 +147,22 @@ export default function Replay() {
   }, [playing, engine])
 
   if (loading) {
-    return <LoadingScreen label="Loading replay" />
+    return <LoadingScreen label={t('replay.loading')} />
   }
 
   if (error || !engine || !paipu) {
     return (
       <div className="ledger-page replay-error">
         <div className="replay-error__mark" aria-hidden="true">西</div>
-        <div className="replay-error__eyebrow">Replay room closed</div>
-        <h1>{error || 'Failed to initialize replay'}</h1>
-        <a href="/" className="replay-error__link">Return to the club</a>
+        <div className="replay-error__eyebrow">{t('replay.closed')}</div>
+        <h1>{error || t('replay.failed')}</h1>
+        <a href="/" className="replay-error__link">{t('replay.return')}</a>
       </div>
     )
   }
 
   const state: ReplayState = engine.getState()
-  const actionDesc = engine.getActionDescription()
+  const actionDesc = engine.getActionDescription(shortLanguage)
 
   const wildTileSet = new Set(
     (state.wildTiles || []).map(w => `${w.suit}-${w.value}`)
@@ -183,7 +184,7 @@ export default function Replay() {
   const stageFrameStyle = {} as React.CSSProperties
 
   const hudChips = [
-    { label: `Round ${state.roundNum}` },
+    { label: `${t('replay.round')} ${state.roundNum}` },
     { label: `${state.actionIndex + 1}/${state.totalActions}` },
   ]
 
@@ -294,8 +295,8 @@ export default function Replay() {
       <aside className="replay-drawer">
         {/* Match Info */}
         <div className="replay-drawer__head">
-          <div className="replay-drawer__eyebrow">After the last hand</div>
-          <div className="replay-drawer__title">Replay viewer</div>
+          <div className="replay-drawer__eyebrow">{t('replay.afterHand')}</div>
+          <div className="replay-drawer__title">{t('replay.viewer')}</div>
           <div className="replay-drawer__match">{paipu.matchId}</div>
         </div>
 
@@ -307,8 +308,8 @@ export default function Replay() {
         {/* Progress */}
         <div>
           <div className="replay-meta-row">
-            <span>Action {state.actionIndex + 1} / {state.totalActions}</span>
-            <span>Round {engine.currentRoundIndex + 1} / {engine.totalRounds}</span>
+            <span>{t('replay.action', { current: state.actionIndex + 1, total: state.totalActions })}</span>
+            <span>{t('replay.roundProgress', { current: engine.currentRoundIndex + 1, total: engine.totalRounds })}</span>
           </div>
           <div className="replay-progress">
             <div className="replay-progress__track">
@@ -347,7 +348,7 @@ export default function Replay() {
 
         {/* Round Selector */}
         <div>
-          <div className="replay-control-label">Round</div>
+          <div className="replay-control-label">{t('replay.round')}</div>
           <div className="replay-choice-row">
             {paipu.rounds.map((_, i) => (
               <button
@@ -363,7 +364,7 @@ export default function Replay() {
 
         {/* Perspective Selector */}
         <div>
-          <div className="replay-control-label">Perspective</div>
+          <div className="replay-control-label">{t('replay.perspective')}</div>
           <select
             value={viewSeat}
             onChange={e => setViewSeat(Number(e.target.value))}
@@ -371,7 +372,7 @@ export default function Replay() {
           >
             {paipu.players.map(p => (
               <option key={p.seat} value={p.seat}>
-                Seat {p.seat} — {p.name}
+                {t('common.seat', { seat: p.seat })} — {p.name}
               </option>
             ))}
           </select>
@@ -384,15 +385,15 @@ export default function Replay() {
             checked={showAllHands}
             onChange={e => setShowAllHands(e.target.checked)}
           />
-          Show all hands
+          {t('replay.showHands')}
         </label>
 
         {/* Scores */}
         <div className="replay-scores">
-          <div className="replay-control-label">Scores</div>
+          <div className="replay-control-label">{t('replay.scores')}</div>
           {state.players.map((p, i) => (
             <div key={i} className={`replay-score${i === state.activeSeat ? ' is-active' : ''}`}>
-              <span>{paipu.players[i]?.name ?? `Seat ${i}`}</span>
+              <span>{paipu.players[i]?.name ?? t('common.seat', { seat: i })}</span>
               <span>{p.score.toLocaleString()}</span>
             </div>
           ))}
@@ -411,17 +412,17 @@ export default function Replay() {
             setVersion(v => v + 1)
             setPlaying(false)
           }}
-          lang={reviewLang}
-          onLangToggle={() => setReviewLang(l => (l === 'en' ? 'zh' : 'en'))}
+          lang={shortLanguage}
+          onLangToggle={toggleLanguage}
           thresholds={reviewThresholds}
           onThresholdsChange={setReviewThresholds}
         />
 
         {/* Keyboard Shortcuts */}
         <div className="replay-shortcuts">
-          <div>← → Step back/forward</div>
-          <div>↑ ↓ Previous/next round</div>
-          <div>Space Play/pause</div>
+          <div>{t('replay.step')}</div>
+          <div>{t('replay.roundKeys')}</div>
+          <div>{t('replay.playPause')}</div>
         </div>
       </aside>
     </div>

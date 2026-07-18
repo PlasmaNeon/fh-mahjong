@@ -19,8 +19,10 @@ import { loadDiscardMode, saveDiscardMode } from './discardMode';
 import { resolveHandTileClick } from './handTileClick';
 import { shouldClearLift } from './clearLift';
 import { tileIdsEqual } from '../../table/meldOrdering';
+import { useI18n } from '../../i18n/I18nContext';
 
 export default function Game() {
+    const { t } = useI18n();
     const { matchId } = useParams();
     const navigate = useNavigate();
     const { isConnected, socket, connect, disconnect } = useSocket();
@@ -47,15 +49,15 @@ export default function Game() {
     }, [authStatus, isConnected, socket, navigate, connect]);
 
     if (authStatus === 'offline') {
-        return <LoadingScreen label="The club is offline. Reconnect, then refresh to reclaim your seat." onRetry={() => void refreshSession()} />;
+        return <LoadingScreen label={t('game.offline')} onRetry={() => void refreshSession()} />;
     }
 
     if (!gameState) {
-        return <LoadingScreen label="Waiting for server to deal" />;
+        return <LoadingScreen label={t('game.waitingDeal')} />;
     }
 
     if (mySeatId === null) {
-        return <LoadingScreen label="Assigning seat" />;
+        return <LoadingScreen label={t('game.assigningSeat')} />;
     }
 
     // Game data is present and our seat is assigned. Render the table in a
@@ -77,6 +79,7 @@ export default function Game() {
 }
 
 function GameTable({ matchId, navigate, socket, disconnect, clearGameState, gameState, mySeatId }) {
+    const { t } = useI18n();
     const previousDiscardIdsRef = useRef<Record<number, number[]>>({});
     const autoFlowerRevealKeyRef = useRef<string>('');
     const [isReady, setIsReady] = useState(false);
@@ -246,19 +249,19 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
 
     const getActionMeta = (action: any) => {
         if (action.type === game.ActionType.ACTION_CHII) {
-            return { label: 'CHII', accent: 'table-action-btn-chii' };
+            return { label: t('game.chii'), accent: 'table-action-btn-chii' };
         }
         if (action.type === game.ActionType.ACTION_PON) {
-            return { label: 'PON', accent: 'table-action-btn-pon' };
+            return { label: t('game.pon'), accent: 'table-action-btn-pon' };
         }
         if (action.type === game.ActionType.ACTION_KAN) {
-            return { label: 'KAN', accent: 'table-action-btn-kan' };
+            return { label: t('game.kan'), accent: 'table-action-btn-kan' };
         }
         if (action.type === game.ActionType.ACTION_RON) {
-            return { label: 'RON', accent: 'table-action-btn-ron' };
+            return { label: t('game.ron'), accent: 'table-action-btn-ron' };
         }
         if (action.type === game.ActionType.ACTION_TSUMO) {
-            return { label: 'TSUMO', accent: 'table-action-btn-tsumo' };
+            return { label: t('game.tsumo'), accent: 'table-action-btn-tsumo' };
         }
         if (action.type === game.ActionType.ACTION_ACCEPT_HAITEI) {
             return { label: '海底 ✓', accent: 'table-action-btn-tsumo' };
@@ -266,7 +269,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         if (action.type === game.ActionType.ACTION_REFUSE_HAITEI) {
             return { label: '海底 ✗', accent: 'table-action-btn-skip' };
         }
-        return { label: 'ACTION', accent: 'table-action-btn-neutral' };
+        return { label: t('game.action'), accent: 'table-action-btn-neutral' };
     };
 
     const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
@@ -294,7 +297,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         : null;
 
     const hudChips = [
-        { label: `Wall ${gameState.wallCount}` },
+        { label: t('game.wall', { count: gameState.wallCount }) },
         ...((gameState.dice1 > 0 || gameState.dice2 > 0 || gameState.diceSum > 0) ? [{
             label: `🎲 ${gameState.dice1 > 0 && gameState.dice2 > 0 ? `${gameState.dice1}+${gameState.dice2}` : gameState.diceSum}`
         }] : []),
@@ -325,7 +328,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                         );
                     })}
                     <button onClick={() => { setHasSubmittedInterrupt(true); handleAction(game.ActionType.ACTION_PASS); }} className="table-action-btn table-action-btn-skip">
-                        PASS
+                        {t('game.pass')}
                     </button>
                 </>
             )}
@@ -384,7 +387,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                 disabled={isReady}
                 className={`round-result-action-btn round-result-action-btn-ready ${isReady ? 'round-result-action-btn-disabled' : ''}`}
             >
-                {isReady ? 'Waiting...' : 'Ready'}
+                {isReady ? t('game.waitingEllipsis') : t('common.ready')}
             </button>
             <button
                 onClick={() => {
@@ -394,7 +397,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                 }}
                 className="round-result-action-btn round-result-action-btn-exit"
             >
-                Exit
+                {t('common.exit')}
             </button>
         </>
     );
@@ -419,8 +422,8 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const roundResultView = gameState.phase === 4 && gameState.roundResult ? {
         isDraw: !!gameState.roundResult.isDraw,
         winType: gameState.roundResult.winType === game.ActionType.ACTION_TSUMO ? 'tsumo' : 'ron',
-        winnerLabel: `Seat ${gameState.roundResult.winnerSeat} wins`,
-        discarderLabel: gameState.roundResult.winType === game.ActionType.ACTION_RON ? `From Seat ${gameState.roundResult.discarderSeat}` : null,
+        winnerLabel: t('game.seatWins', { seat: gameState.roundResult.winnerSeat }),
+        discarderLabel: gameState.roundResult.winType === game.ActionType.ACTION_RON ? t('game.fromSeat', { seat: gameState.roundResult.discarderSeat }) : null,
         closedHand: winningHandWithoutWinTile,
         winTile: gameState.roundResult.winTile || null,
         winningMelds: (gameState.roundResult.winningMelds || []).map((meld: any) => ({
@@ -437,10 +440,10 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         totalScore: gameState.roundResult.totalScore,
         payouts: (gameState.roundResult.payouts || []).map((payout: any) => ({
             seat: payout.seat,
-            label: `Seat ${payout.seat}`,
+            label: t('common.seat', { seat: payout.seat }),
             amount: payout.amount,
             readyLabel: gameState.playerReady && gameState.playerReady.length > payout.seat
-                ? (gameState.playerReady[payout.seat] ? 'Ready' : 'Waiting')
+                ? t(gameState.playerReady[payout.seat] ? 'common.ready' : 'common.waiting')
                 : null,
             readyActive: !!(gameState.playerReady && gameState.playerReady[payout.seat]),
         })),
@@ -490,16 +493,16 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                             <>
                                 <div className="wild-tile-corner-info-tag">Chongci</div>
                                 <div className="wild-tile-corner-info-row">
-                                    <span className="wild-tile-corner-info-row-label">Start</span>
+                                    <span className="wild-tile-corner-info-row-label">{t('game.start')}</span>
                                     <span>{Number(gameState.chongciConfig.startingScore)}</span>
                                 </div>
                                 <div className="wild-tile-corner-info-row">
-                                    <span className="wild-tile-corner-info-row-label">Bust ≤</span>
+                                    <span className="wild-tile-corner-info-row-label">{t('game.bust')}</span>
                                     <span>{Number(gameState.chongciConfig.bustThreshold)}</span>
                                 </div>
                                 <div className="wild-tile-corner-info-row">
-                                    <span className="wild-tile-corner-info-row-label">Cap</span>
-                                    <span>{Number(gameState.chongciConfig.maxHands) === 0 ? 'None' : Number(gameState.chongciConfig.maxHands)}</span>
+                                    <span className="wild-tile-corner-info-row-label">{t('game.cap')}</span>
+                                    <span>{Number(gameState.chongciConfig.maxHands) === 0 ? t('common.none') : Number(gameState.chongciConfig.maxHands)}</span>
                                 </div>
                             </>
                         ) : null}

@@ -17,6 +17,7 @@ import type {
   RoundResultPayout,
   RoundResultView,
 } from './types'
+import { useI18n } from '../i18n/I18nContext'
 
 export { TileComponent }
 export type {
@@ -66,6 +67,7 @@ export function TableBoard({
   animateDiscardTileIds,
   callableDiscard = null,
 }: TableBoardProps) {
+  const { t } = useI18n()
   const tableRef = useRef<HTMLDivElement | null>(null)
   const seatViews = useMemo(() => players.map((player) => ({
     player,
@@ -83,7 +85,7 @@ export function TableBoard({
       {wildTiles.length > 0 && (
         <div className="wild-tile-corner">
           <div className="wild-tile-corner-main">
-            <div className="wild-tile-corner-label">Wild Tile</div>
+            <div className="wild-tile-corner-label">{t('game.wildTile')}</div>
             <div className="wild-tile-corner-face">
               <TileComponent tile={wildTiles[0]} size="small" noGlow />
             </div>
@@ -135,6 +137,7 @@ export function TableRoundResultOverlay({
   result?: RoundResultView | null
   isWildTile?: (tile: TileLike) => boolean
 }) {
+  const { t } = useI18n()
   if (!result) return null
 
   const breakdown = result.breakdown || []
@@ -154,13 +157,13 @@ export function TableRoundResultOverlay({
         <div className="round-result-scroll" tabIndex={0}>
           {result.isDraw ? (
             <header className="round-result-heading round-result-heading-draw">
-              <div className="round-result-badge round-result-badge-draw">Draw</div>
+              <div className="round-result-badge round-result-badge-draw">{t('result.draw')}</div>
               <div>
-                <div className="round-result-eyebrow">Hand settled</div>
+                <div className="round-result-eyebrow">{t('result.settled')}</div>
                 <h2 id="round-result-title" className="round-result-title round-result-title-draw">
-                  Exhaustive Draw
+                  {t('result.exhaustiveDraw')}
                 </h2>
-                <p className="round-result-subtitle">No tiles remaining in the wall.</p>
+                <p className="round-result-subtitle">{t('result.noTiles')}</p>
               </div>
             </header>
           ) : (
@@ -168,10 +171,10 @@ export function TableRoundResultOverlay({
               <header className="round-result-heading">
                 <div className="round-result-heading-main">
                   <div className={`round-result-badge ${result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
-                    {result.winType === 'tsumo' ? 'Tsumo' : 'Ron'}
+                    {t(result.winType === 'tsumo' ? 'result.tsumo' : 'result.ron')}
                   </div>
                   <div>
-                    <div className="round-result-eyebrow">Hand settled</div>
+                    <div className="round-result-eyebrow">{t('result.settled')}</div>
                     <h2 id="round-result-title" className={`round-result-title ${result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
                       {result.winnerLabel}
                     </h2>
@@ -180,14 +183,14 @@ export function TableRoundResultOverlay({
                     )}
                   </div>
                 </div>
-                <div className="round-result-total" aria-label={`Total score ${result.totalScore ?? 0}`}>
-                  <span>Total</span>
+                <div className="round-result-total" aria-label={t('result.totalAria', { score: result.totalScore ?? 0 })}>
+                  <span>{t('result.total')}</span>
                   <strong>{result.totalScore ?? 0}</strong>
                 </div>
               </header>
 
-              <section className="round-result-section round-result-hand-section" aria-label="Winning hand">
-                <div className="round-result-section-label">Winning hand</div>
+              <section className="round-result-section round-result-hand-section" aria-label={t('result.winningHand')}>
+                <div className="round-result-section-label">{t('result.winningHand')}</div>
                 <div className="round-result-hand-rack">
                   <div className="round-result-hand-row">
                     <div className="round-result-closed-hand">
@@ -224,8 +227,8 @@ export function TableRoundResultOverlay({
               </section>
 
               {breakdown.length > 0 && (
-                <section className="round-result-section" aria-label="Scoring breakdown">
-                  <div className="round-result-section-label">Score ledger</div>
+                <section className="round-result-section" aria-label={t('result.breakdown')}>
+                  <div className="round-result-section-label">{t('result.ledger')}</div>
                   <div className="round-result-breakdown-grid">
                     {breakdown.map((entry, index) => (
                       <div key={`${entry.name}-${index}`} className="round-result-breakdown-item">
@@ -237,7 +240,7 @@ export function TableRoundResultOverlay({
                 </section>
               )}
 
-              <section className="round-result-section round-result-payout-section" aria-label="Seat payouts">
+              <section className="round-result-section round-result-payout-section" aria-label={t('result.payouts')}>
                 <div className="round-result-payout-grid">
                   {payouts.map((payout) => (
                     <div

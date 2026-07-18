@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { Button, Card, ClubShell, Field, Note, PageHeader, Section, ToolsRow } from '../../theme'
 import type { AuthRouteState } from '../auth/authModal'
 import { parseReplayReference } from './replayReference'
+import { useI18n } from '../../i18n/I18nContext'
 
 type ReplayPlayer = { seat: number; name: string; finalScore: number }
 type ReplaySummary = {
@@ -18,8 +19,6 @@ type ReplaySummary = {
 }
 type ReplayHistoryResponse = { replays: ReplaySummary[]; nextCursor: string | null }
 
-const winds = ['East', 'South', 'West', 'North']
-
 function placementLabel(placement: number) {
   if (placement === 1) return '1st'
   if (placement === 2) return '2nd'
@@ -27,14 +26,16 @@ function placementLabel(placement: number) {
   return `${placement}th`
 }
 
-function formatEndedAt(value: string) {
+function formatEndedAt(value: string, locale: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 export default function ReplayLibrary() {
   const { status, apiFetch, refreshSession } = useAuth()
+  const { t, language, shortLanguage } = useI18n()
+  const winds = [t('common.east'), t('common.south'), t('common.west'), t('common.north')]
   const location = useLocation()
   const navigate = useNavigate()
   const [reference, setReference] = useState('')
@@ -54,7 +55,7 @@ export default function ReplayLibrary() {
       const response = await apiFetch(`/api/v1/users/me/replays?${query}`, { signal })
       if (signal?.aborted) return
       const data = await response.json().catch(() => ({})) as Partial<ReplayHistoryResponse> & { error?: string }
-      if (!response.ok) throw new Error(data.error || 'Could not load your paipu history')
+      if (!response.ok) throw new Error(data.error || t('library.loadFailed'))
       setReplays(current => cursor ? [...current, ...(data.replays ?? [])] : (data.replays ?? []))
       setNextCursor(data.nextCursor ?? null)
       setHistoryState('ready')
@@ -62,13 +63,13 @@ export default function ReplayLibrary() {
       if (signal?.aborted) return
       if (reason instanceof TypeError) {
         setHistoryState('offline')
-        setHistoryError('The club is offline. Shared paipu links can still be entered when your connection returns.')
+        setHistoryError(t('library.historyOffline'))
       } else {
         setHistoryState('error')
-        setHistoryError(reason instanceof Error ? reason.message : 'Could not load your paipu history')
+        setHistoryError(reason instanceof Error ? reason.message : t('library.loadFailed'))
       }
     }
-  }, [apiFetch])
+  }, [apiFetch, t])
 
   useEffect(() => {
     if (status !== 'authenticated') {
@@ -86,7 +87,7 @@ export default function ReplayLibrary() {
     event.preventDefault()
     const matchID = parseReplayReference(reference)
     if (!matchID) {
-      setReferenceError('Enter a paipu ID or a link whose path is /replay/{matchId}.')
+      setReferenceError(t('library.referenceError'))
       return
     }
     setReferenceError('')
@@ -104,50 +105,50 @@ export default function ReplayLibrary() {
       setCopiedMatch(matchID)
     } catch {
       setCopiedMatch('')
-      setHistoryError('The replay link could not be copied. Open it and copy the address from your browser.')
+      setHistoryError(t('library.copyError'))
     }
   }
 
   return (
-    <ClubShell title="Paipu Replay" wide>
+    <ClubShell title={t('nav.replay')} wide>
       <Card>
-        <PageHeader title="Paipu Replay" subtitle="牌谱 · open a shared game or revisit your own" />
-        <Section title="Open a paipu" subtitle="Paste a replay link or enter its match ID.">
+        <PageHeader title={t('nav.replay')} subtitle={t('library.subtitle')} />
+        <Section title={t('library.openTitle')} subtitle={t('library.openHelp')}>
           <form className="replay-open-form" onSubmit={openReplay}>
-            <Field label="Paipu link or match ID" value={reference} onChange={event => setReference(event.target.value)} placeholder="/replay/…" autoComplete="off" />
-            <Button type="submit" variant="primary">Open Replay</Button>
+            <Field label={t('library.reference')} value={reference} onChange={event => setReference(event.target.value)} placeholder="/replay/…" autoComplete="off" />
+            <Button type="submit" variant="primary">{t('library.openReplay')}</Button>
           </form>
           {referenceError && <Note tone="error">{referenceError}</Note>}
         </Section>
 
-        <Section title="My Paipu" subtitle="Completed games from this account, newest first.">
-          {status === 'loading' && <Note>Checking your club pass…</Note>}
-          {status === 'anonymous' && <><Note>Sign in to see completed games from this account.</Note><ToolsRow><Button variant="primary" onClick={signIn}>Sign In to See My Paipu</Button></ToolsRow></>}
-          {status === 'offline' && <><Note tone="error">The club is offline. Your saved history is unchanged.</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>Try Again</Button></ToolsRow></>}
-          {historyState === 'loading' && <Note>Loading completed games…</Note>}
-          {(historyState === 'offline' || historyState === 'error') && <><Note tone="error">{historyError}</Note><ToolsRow><Button variant="primary" onClick={() => void loadHistory()}>Try Again</Button></ToolsRow></>}
-          {historyState === 'ready' && replays.length === 0 && <Note>No completed paipu yet. Finish a game and it will appear here.</Note>}
+        <Section title={t('library.mine')} subtitle={t('library.mineHelp')}>
+          {status === 'loading' && <Note>{t('account.checking')}</Note>}
+          {status === 'anonymous' && <><Note>{t('library.signInHelp')}</Note><ToolsRow><Button variant="primary" onClick={signIn}>{t('library.signIn')}</Button></ToolsRow></>}
+          {status === 'offline' && <><Note tone="error">{t('library.offline')}</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {historyState === 'loading' && <Note>{t('library.loading')}</Note>}
+          {(historyState === 'offline' || historyState === 'error') && <><Note tone="error">{historyError}</Note><ToolsRow><Button variant="primary" onClick={() => void loadHistory()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {historyState === 'ready' && replays.length === 0 && <Note>{t('library.empty')}</Note>}
           {replays.length > 0 && (
             <div className="paipu-list">
               {replays.map(replay => (
                 <article className="paipu-slip" key={replay.matchId}>
                   <div className="paipu-slip__header">
-                    <div><strong>{formatEndedAt(replay.endedAt)}</strong><span>{replay.ruleset} · {replay.roundCount} {replay.roundCount === 1 ? 'round' : 'rounds'}</span></div>
-                    <div className="paipu-slip__result"><strong>{placementLabel(replay.placement)}</strong><span>{replay.finalScore >= 0 ? '+' : ''}{replay.finalScore}</span></div>
+                    <div><strong>{formatEndedAt(replay.endedAt, language)}</strong><span>{replay.ruleset} · {replay.roundCount} {t(replay.roundCount === 1 ? 'library.round' : 'library.rounds')}</span></div>
+                    <div className="paipu-slip__result"><strong>{shortLanguage === 'zh' ? `第 ${replay.placement} 名` : placementLabel(replay.placement)}</strong><span>{replay.finalScore >= 0 ? '+' : ''}{replay.finalScore}</span></div>
                   </div>
-                  <div className="paipu-slip__seat">You played {winds[replay.seat] ?? `Seat ${replay.seat + 1}`}</div>
+                  <div className="paipu-slip__seat">{t('library.youPlayed', { wind: winds[replay.seat] ?? t('common.seat', { seat: replay.seat + 1 }) })}</div>
                   <div className="paipu-slip__players">
-                    {replay.players.map(player => <span key={player.seat}>{winds[player.seat] ?? player.seat + 1} · {player.name || 'Player'} · {player.finalScore}</span>)}
+                    {replay.players.map(player => <span key={player.seat}>{winds[player.seat] ?? player.seat + 1} · {player.name || t('common.player')} · {player.finalScore}</span>)}
                   </div>
                   <div className="paipu-slip__actions">
-                    <Button variant="primary" onClick={() => navigate(`/replay/${encodeURIComponent(replay.matchId)}`)}>Open</Button>
-                    <Button onClick={() => void copyReplay(replay.matchId)}>{copiedMatch === replay.matchId ? 'Link Copied' : 'Copy Link'}</Button>
+                    <Button variant="primary" onClick={() => navigate(`/replay/${encodeURIComponent(replay.matchId)}`)}>{t('library.open')}</Button>
+                    <Button onClick={() => void copyReplay(replay.matchId)}>{t(copiedMatch === replay.matchId ? 'library.copied' : 'library.copy')}</Button>
                   </div>
                 </article>
               ))}
             </div>
           )}
-          {nextCursor && <ToolsRow><Button onClick={() => void loadHistory(nextCursor)} disabled={historyState === 'loading-more'}>{historyState === 'loading-more' ? 'Loading…' : 'Load More'}</Button></ToolsRow>}
+          {nextCursor && <ToolsRow><Button onClick={() => void loadHistory(nextCursor)} disabled={historyState === 'loading-more'}>{t(historyState === 'loading-more' ? 'common.loading' : 'library.loadMore')}</Button></ToolsRow>}
         </Section>
       </Card>
     </ClubShell>
