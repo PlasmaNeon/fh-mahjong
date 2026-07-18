@@ -899,7 +899,15 @@ func TestFenghuaRuleset_FlowerBonus(t *testing.T) {
 			base = &pb.GameState{}
 		}
 		base.Players = []*pb.PlayerState{
-			{FlowerMelds: []*pb.Tile{{}, {}, {}, {}}}, // 4 flowers
+			// A complete seasons group 春夏秋冬 — Four Flowers needs a full
+			// group of one kind, not just any four flowers. SeatWind is 0
+			// here, so no Own Flower bonus is added.
+			{FlowerMelds: []*pb.Tile{
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 1},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 2},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 3},
+				{Suit: pb.Suit_SUIT_FLOWER, Value: 4},
+			}},
 		}
 		return base
 	}
@@ -1088,32 +1096,79 @@ func TestFenghuaRuleset_OwnFlower(t *testing.T) {
 	}
 	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 3}
 
-	t.Run("One Own Flower", func(t *testing.T) {
-		// Player seat=0 (East, wind=1). One flower with Value=1 matches.
-		// Base(1)+Tsumo(1)+NoWild(1)+OwnFlower(2)+SingleWait(1) = 6 (pon hand, no Common Win)
-		state := &pb.GameState{
-			Players: []*pb.PlayerState{{
-				SeatWind:    1,
-				FlowerMelds: []*pb.Tile{{Value: 1}},
-			}},
+	flowerState := func(seatWind uint32, values ...uint32) *pb.GameState {
+		melds := make([]*pb.Tile, 0, len(values))
+		for _, v := range values {
+			melds = append(melds, &pb.Tile{Suit: pb.Suit_SUIT_FLOWER, Value: v})
 		}
-		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		return &pb.GameState{
+			Players: []*pb.PlayerState{{SeatWind: seatWind, FlowerMelds: melds}},
+		}
+	}
+
+	t.Run("One Own Flower", func(t *testing.T) {
+		// Player seat=0 (East, wind=1). One flower with Value=1 (春) matches.
+		// Base(1)+Tsumo(1)+NoWild(1)+OwnFlower(2)+SingleWait(1) = 6 (pon hand, no Common Win)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, flowerState(1, 1), 0, true)
 		if !ok || s != 6 {
 			t.Errorf("want 6, got %d (canWin=%v)", s, ok)
 		}
 	})
 	t.Run("No Own Flower", func(t *testing.T) {
-		// Player seat=0 (East, wind=1). Flower Value=2 doesn't match.
+		// Player seat=0 (East, wind=1). Flower Value=2 (夏, South) doesn't match.
 		// Base(1)+Tsumo(1)+NoWild(1)+SingleWait(1) = 4 (pon hand, no Common Win)
-		state := &pb.GameState{
-			Players: []*pb.PlayerState{{
-				SeatWind:    1,
-				FlowerMelds: []*pb.Tile{{Value: 2}},
-			}},
-		}
-		s, _, ok := r.EvaluateHand(hand, nil, winTile, state, 0, true)
+		s, _, ok := r.EvaluateHand(hand, nil, winTile, flowerState(1, 2), 0, true)
 		if !ok || s != 4 {
 			t.Errorf("want 4, got %d (canWin=%v)", s, ok)
+		}
+	})
+
+	// Both flower groups map onto the four seats: 春/梅 East, 夏/兰 South,
+	// 秋/菊 West, 冬/竹 North. The plant group (values 5-8) must award Own
+	// Flower exactly like the seasons (values 1-4).
+	// Measure the Own Flower delta against a flowerless baseline at the same
+	// seat wind. The hand holds a 2z pung, so seat wind 2 also earns a wind
+	// bonus — the delta isolates the flower bonus from that.
+	ownFlowerDelta := func(t *testing.T, seatWind uint32, values ...uint32) int32 {
+		t.Helper()
+		base, _, ok := r.EvaluateHand(hand, nil, winTile, flowerState(seatWind), 0, true)
+		if !ok {
+			t.Fatalf("baseline hand should win on tsumo")
+		}
+		withFlowers, _, ok := r.EvaluateHand(hand, nil, winTile, flowerState(seatWind, values...), 0, true)
+		if !ok {
+			t.Fatalf("hand with flowers should win on tsumo")
+		}
+		return withFlowers - base
+	}
+
+	t.Run("Plant group maps onto seats", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			seatWind uint32
+			flower   uint32
+			want     int32
+		}{
+			{"梅 (Plum) is East", 1, 5, 2},
+			{"兰 (Orchid) is South", 2, 6, 2},
+			{"菊 (Chrysanthemum) is West", 3, 7, 2},
+			{"竹 (Bamboo) is North", 4, 8, 2},
+			{"梅 (Plum) does not match South", 2, 5, 0},
+			{"竹 (Bamboo) does not match West", 3, 8, 0},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := ownFlowerDelta(t, tc.seatWind, tc.flower); got != tc.want {
+					t.Errorf("Own Flower bonus = %d, want %d (seat wind %d, flower %d)", got, tc.want, tc.seatWind, tc.flower)
+				}
+			})
+		}
+	})
+
+	t.Run("Both own flowers stack", func(t *testing.T) {
+		// East holding both 春 and 梅 earns +2 twice.
+		if got := ownFlowerDelta(t, 1, 1, 5); got != 4 {
+			t.Errorf("Own Flower bonus = %d, want 4", got)
 		}
 	})
 }
@@ -1712,4 +1767,77 @@ func TestFenghuaRuleset_GetValidActions_KanRequiresDraw(t *testing.T) {
 			t.Fatalf("concealed Kan missing on legitimate self-draw with 4-of-a-kind")
 		}
 	})
+}
+
+// --- Four Flowers (四花) requires a complete group ---
+// Four Flowers is only awarded for a full set of ONE kind: seasons
+// 春夏秋冬 (values 1-4) or plants 梅兰菊竹 (values 5-8). Any four flowers
+// spanning both groups does NOT qualify.
+func TestFenghuaRuleset_FourFlowers_RequiresCompleteGroup(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+
+	// Common-win hand: 2s3s4s, 4p5p6p, 7m8m9m, 1m2m3m + pair 3z, tsumo on 3z.
+	hand := []*pb.Tile{
+		{Id: 1, Suit: pb.Suit_SUIT_SOU, Value: 2},
+		{Id: 2, Suit: pb.Suit_SUIT_SOU, Value: 3},
+		{Id: 3, Suit: pb.Suit_SUIT_SOU, Value: 4},
+		{Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+		{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5},
+		{Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},
+		{Id: 7, Suit: pb.Suit_SUIT_MAN, Value: 7},
+		{Id: 8, Suit: pb.Suit_SUIT_MAN, Value: 8},
+		{Id: 9, Suit: pb.Suit_SUIT_MAN, Value: 9},
+		{Id: 10, Suit: pb.Suit_SUIT_MAN, Value: 1},
+		{Id: 11, Suit: pb.Suit_SUIT_MAN, Value: 2},
+		{Id: 12, Suit: pb.Suit_SUIT_MAN, Value: 3},
+		{Id: 13, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+	}
+	winTile := &pb.Tile{Id: 14, Suit: pb.Suit_SUIT_JIHAI, Value: 3}
+
+	stateWithFlowers := func(values ...uint32) *pb.GameState {
+		melds := make([]*pb.Tile, 0, len(values))
+		for _, v := range values {
+			melds = append(melds, &pb.Tile{Suit: pb.Suit_SUIT_FLOWER, Value: v})
+		}
+		// SeatWind 0 keeps Own Flower (+2) out of the picture.
+		return &pb.GameState{
+			Players: []*pb.PlayerState{{Seat: 0, FlowerMelds: melds}},
+		}
+	}
+
+	hasFourFlowers := func(entries []*pb.ScoreEntry) bool {
+		for _, e := range entries {
+			if e.PatternId == rules.PatternFourFlowers {
+				return true
+			}
+		}
+		return false
+	}
+
+	cases := []struct {
+		name   string
+		values []uint32
+		want   bool
+	}{
+		{"seasons 春夏秋冬", []uint32{1, 2, 3, 4}, true},
+		{"plants 梅兰菊竹", []uint32{5, 6, 7, 8}, true},
+		{"mixed four (3 seasons + 1 flower)", []uint32{1, 2, 3, 5}, false},
+		{"mixed four (2 + 2)", []uint32{1, 2, 5, 6}, false},
+		{"five spanning both, seasons complete", []uint32{1, 2, 3, 4, 5}, true},
+		{"five spanning both, neither complete", []uint32{1, 2, 3, 5, 6}, false},
+		{"seven with flowers complete", []uint32{1, 2, 3, 5, 6, 7, 8}, true},
+		{"three seasons only", []uint32{1, 2, 3}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, entries, ok := r.EvaluateHand(hand, nil, winTile, stateWithFlowers(tc.values...), 0, true)
+			if !ok {
+				t.Fatalf("hand should win on tsumo")
+			}
+			if got := hasFourFlowers(entries); got != tc.want {
+				t.Errorf("Four Flowers awarded = %v, want %v (flowers %v)", got, tc.want, tc.values)
+			}
+		})
+	}
 }
