@@ -26,6 +26,8 @@ _COMPAT_KEYS = (
     "max_steps_per_episode",
     "oracle_observation",
     "large_loss_threshold",
+    # Window-on vs window-off is a different observation/decision protocol.
+    "event_history_window",
     # SHA-256 of the Go simulator library — two reports from different
     # simulator builds measure different games, not different checkpoints.
     # Deliberate cross-simulator comparisons (e.g. the same checkpoint on a
@@ -84,6 +86,7 @@ def _check_comparable(
     protocol_b: Dict[str, Any],
     allow_missing_config: bool,
     allow_bridge_mismatch: bool,
+    allow_window_mismatch: bool = False,
 ) -> None:
     if protocol_a != protocol_b:
         label_a = protocol_a if protocol_a else "greedy"
@@ -124,14 +127,19 @@ def _check_comparable(
         if report_a[key] != report_b[key]:
             if key == "bridge_lib_sha256" and allow_bridge_mismatch:
                 continue
+            if key == "event_history_window" and allow_window_mismatch:
+                # The ONE legitimate cross-protocol promotion comparison: a
+                # window-on candidate vs the window-off champion, where the
+                # window IS the intervention under test. Labeled, not silent.
+                continue
+            hint = ""
+            if key == "bridge_lib_sha256":
+                hint = " — pass --allow-bridge-mismatch for a deliberate cross-simulator comparison"
+            elif key == "event_history_window":
+                hint = " — pass --allow-window-mismatch when the window itself is the intervention under test"
             raise ValueError(
                 f"reports are not comparable: {key} differs "
-                f"({report_a[key]!r} vs {report_b[key]!r})"
-                + (
-                    " — pass --allow-bridge-mismatch for a deliberate cross-simulator comparison"
-                    if key == "bridge_lib_sha256"
-                    else ""
-                )
+                f"({report_a[key]!r} vs {report_b[key]!r})" + hint
             )
 
 
@@ -159,10 +167,12 @@ def paired_comparison(
     report_b: Dict[str, Any],
     allow_missing_config: bool = False,
     allow_bridge_mismatch: bool = False,
+    allow_window_mismatch: bool = False,
 ) -> Dict[str, Any]:
     report_a, protocol_a = _unwrap_report(report_a)
     report_b, protocol_b = _unwrap_report(report_b)
-    _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config, allow_bridge_mismatch)
+    _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config,
+                      allow_bridge_mismatch, allow_window_mismatch)
     bridge_mismatched = (
         report_a.get("bridge_lib_sha256") != report_b.get("bridge_lib_sha256")
     )
@@ -213,6 +223,11 @@ def paired_comparison(
         "significant": bool(num_seeds > 1 and abs(mean_delta) > ci95),
         "config_check": "legacy" if allow_missing_config else "strict",
         "bridge_check": "mismatch-allowed" if bridge_mismatched else "match",
+        "window_check": (
+            "mismatch-allowed"
+            if report_a.get("event_history_window") != report_b.get("event_history_window")
+            else "match"
+        ),
     }
 
 
@@ -230,6 +245,8 @@ def _format_text(result: Dict[str, Any], label_a: str, label_b: str) -> str:
         lines.append("  WARNING: --allow-missing-config used — NOT a valid promotion gate")
     if result.get("bridge_check") == "mismatch-allowed":
         lines.append("  WARNING: simulator libraries differ — cross-simulator comparison, not a checkpoint gate")
+    if result.get("window_check") == "mismatch-allowed":
+        lines.append("  NOTE: event_history_window differs — the window is the intervention under test")
     return "\n".join(lines)
 
 
@@ -242,6 +259,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "--allow-missing-config",
         action="store_true",
         help="compare legacy reports missing persisted evaluation settings; the result is NOT a valid promotion gate",
+    )
+    parser.add_argument(
+        "--allow-window-mismatch",
+        action="store_true",
+        help="permit differing event_history_window values — for the promotion comparison where "
+        "the window itself is the intervention under test; the result is labeled",
     )
     parser.add_argument(
         "--allow-bridge-mismatch",
@@ -261,6 +284,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         report_b,
         allow_missing_config=args.allow_missing_config,
         allow_bridge_mismatch=args.allow_bridge_mismatch,
+        allow_window_mismatch=args.allow_window_mismatch,
     )
     if args.json:
         print(json.dumps(result, indent=2))

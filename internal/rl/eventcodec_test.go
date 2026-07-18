@@ -701,3 +701,184 @@ func TestEventHistoryWindowBounded(t *testing.T) {
 		t.Fatalf("NewSearchPool accepted window > max")
 	}
 }
+
+// Chongci step-path round outcomes: the auto-ready past ROUND_END used to
+// swallow every RoundOutcome, leaving trainers unable to label completed
+// hands (deal-in supervision degenerated to all-zero). The outcome must
+// arrive on exactly the first response after each boundary.
+func TestChongciStepPathSurfacesRoundOutcomes(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       6000,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 4},
+	}
+	outcomes := 0
+	sawNonDraw := false
+	for seed := uint64(200); seed < 240 && !sawNonDraw; seed++ {
+		env := New(config)
+		reset, err := env.Reset(&pb.EnvResetRequest{Seed: seed, Config: config})
+		if err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		rng := rand.New(rand.NewSource(int64(seed)))
+		obs := reset.Observation
+		for step := 0; obs != nil && step < 6000; step++ {
+			aid, ok := randomLegalActionID(obs.ActionMask, rng)
+			if !ok {
+				break
+			}
+			sr, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+			if err != nil {
+				t.Fatalf("seed %d step %d: %v", seed, step, err)
+			}
+			if sr.RoundOutcome != nil {
+				outcomes++
+				if !sr.RoundOutcome.IsDraw {
+					sawNonDraw = true
+				}
+			}
+			if sr.Terminated {
+				// The match-ending hand's outcome must arrive ON the
+				// terminal response — it used to be dropped entirely.
+				if sr.RoundOutcome == nil {
+					t.Fatalf("seed %d: terminal chongci response carried no RoundOutcome", seed)
+				}
+				break
+			}
+			if sr.Truncated {
+				break
+			}
+			obs = sr.Observation
+		}
+	}
+	if outcomes == 0 {
+		t.Fatalf("no round outcome surfaced on the chongci step path across 40 matches")
+	}
+	if !sawNonDraw {
+		t.Fatalf("premise: 40 random matches produced only draws — widen the seed range")
+	}
+}
+
+// Multi-hand chongci trajectory exports: every sample's TerminalOutcome must
+// be the MATCH-terminal outcome — intermediate hand outcomes (which the step
+// path now surfaces) must never leak into per-row terminal labels.
+func TestChongciTrajectoryTerminalOutcomeUniform(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 77,
+		Config: &pb.EnvConfig{
+			MaxDecisions: 4000,
+			MatchMode:    pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000, BustThreshold: 0, MaxHands: 3,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("premise: no samples")
+	}
+	last := dataset.Samples[len(dataset.Samples)-1].TerminalOutcome
+	if last == nil {
+		t.Fatalf("terminal sample carries no outcome")
+	}
+	for i, sample := range dataset.Samples {
+		got := sample.TerminalOutcome
+		if got == nil {
+			t.Fatalf("sample %d: nil TerminalOutcome", i)
+		}
+		if got.IsDraw != last.IsDraw || got.WinnerSeat != last.WinnerSeat ||
+			got.WinType != last.WinType || got.DiscarderSeat != last.DiscarderSeat ||
+			got.TotalScore != last.TotalScore {
+			t.Fatalf("sample %d: TerminalOutcome differs from match-terminal outcome (%+v vs %+v)", i, got, last)
+		}
+	}
+}
+
+// Single-learning-seat autoplay (the EVAL configuration): the terminal
+// response must describe the match-ending hand even when whole hands
+// resolve between the learning seat's decisions — a stale pending outcome
+// must never be promoted to the terminal label.
+func TestChongciSingleSeatTerminalOutcome(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0},
+		AutoPlayHeuristics: true,
+		MaxDecisions:       6000,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 3},
+	}
+	terminals := 0
+	for seed := uint64(300); seed < 320; seed++ {
+		env := New(config)
+		reset, err := env.Reset(&pb.EnvResetRequest{Seed: seed, Config: config})
+		if err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		if reset.Terminated {
+			continue
+		}
+		obs := reset.Observation
+		rng := rand.New(rand.NewSource(int64(seed)))
+		for step := 0; obs != nil && step < 6000; step++ {
+			aid, ok := randomLegalActionID(obs.ActionMask, rng)
+			if !ok {
+				break
+			}
+			sr, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+			if err != nil {
+				t.Fatalf("seed %d step %d: %v", seed, step, err)
+			}
+			if sr.Terminated {
+				terminals++
+				if sr.RoundOutcome == nil {
+					t.Fatalf("seed %d: single-seat terminal response carried no RoundOutcome", seed)
+				}
+				break
+			}
+			if sr.Truncated {
+				break
+			}
+			obs = sr.Observation
+		}
+	}
+	if terminals == 0 {
+		t.Fatalf("premise: no match terminated across 20 seeds")
+	}
+}
+
+// Truncated trajectory episodes must NOT promote a completed-hand outcome
+// to a match-terminal label — TerminalOutcome stays nil on truncation.
+func TestTruncatedTrajectoryHasNoTerminalOutcome(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 88,
+		Config: &pb.EnvConfig{
+			MaxDecisions: 40, // far too small for a chongci match: guaranteed truncation
+			MatchMode:    pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000, BustThreshold: 0, MaxHands: 50,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("premise: no samples")
+	}
+	last := dataset.Samples[len(dataset.Samples)-1]
+	if !last.Truncated {
+		t.Fatalf("premise: episode did not truncate (MaxDecisions too high?)")
+	}
+	for i, sample := range dataset.Samples {
+		if sample.TerminalOutcome != nil {
+			t.Fatalf("sample %d: truncated episode carries TerminalOutcome %+v", i, sample.TerminalOutcome)
+		}
+	}
+}

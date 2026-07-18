@@ -18,6 +18,9 @@ def add_model_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model-channel-attention", action="store_true", default=defaults.channel_attention)
     parser.add_argument("--model-channel-attention-ratio", type=int, default=defaults.channel_attention_ratio)
     parser.add_argument("--model-no-dueling-q", action="store_true")
+    parser.add_argument("--model-event-window", type=int, default=defaults.event_window)
+    parser.add_argument("--model-privileged-critic", action="store_true", default=defaults.privileged_critic)
+    parser.add_argument("--model-aux-heads", action="store_true", default=defaults.aux_heads)
 
 
 def model_config_from_args(args: argparse.Namespace) -> ModelConfig:
@@ -33,6 +36,9 @@ def model_config_from_args(args: argparse.Namespace) -> ModelConfig:
         channel_attention=args.model_channel_attention,
         channel_attention_ratio=args.model_channel_attention_ratio,
         dueling_q=not args.model_no_dueling_q,
+        event_window=args.model_event_window,
+        privileged_critic=args.model_privileged_critic,
+        aux_heads=args.model_aux_heads,
     )
 
 
@@ -49,4 +55,7 @@ def model_config_params(model_config: ModelConfig) -> dict[str, object]:
         "model_channel_attention": model_config.channel_attention,
         "model_channel_attention_ratio": model_config.channel_attention_ratio,
         "model_dueling_q": model_config.dueling_q,
+        "model_event_window": model_config.event_window,
+        "model_privileged_critic": model_config.privileged_critic,
+        "model_aux_heads": model_config.aux_heads,
     }

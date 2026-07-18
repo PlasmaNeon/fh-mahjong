@@ -791,3 +791,91 @@ def test_evaluate_cli_sampling_flag_validation_and_t0_report_unchanged(tmp_path,
                 ["--sample-temperature", "0.5", "--sample-action-family", "bogus", "--duplicate-seats"]):
         with pytest.raises(SystemExit):
             run(["--online-episodes", "1", *bad], report_name="bad.json")
+
+
+def test_event_window_rejects_search_and_sampled_paths(capsys):
+    # CheckpointPolicy (search/sampled) does not thread events yet (B2c):
+    # combining it with a nonzero window must fail fast, not silently
+    # zero-fill event features under a report that claims the window.
+    import pytest as _pytest
+
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+
+    base = ["--checkpoint", "x.pt", "--duplicate-seats", "--event-history-window", "128"]
+    with _pytest.raises(SystemExit):
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", ["fh-mj-evaluate", *base, "--search"])
+            evaluate_cli.main()
+    assert "greedy path" in capsys.readouterr().err
+
+    with _pytest.raises(SystemExit):
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", ["fh-mj-evaluate", *base, "--sample-temperature", "0.8"])
+            evaluate_cli.main()
+    assert "greedy path" in capsys.readouterr().err
+
+
+def test_b2b_checkpoint_metadata_pins_eval_flags(tmp_path, capsys, monkeypatch):
+    # A checkpoint trained at window 128 must refuse to evaluate at any other
+    # effective window/config — silent horizon drift invalidates the gate.
+    import torch as _torch
+
+    from fh_mahjong_ai.config import EnvConfig as _EnvConfig
+    from fh_mahjong_ai.config import ModelConfig as _ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet as _PVN
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+    from fh_mahjong_ai.storage import save_checkpoint as _save
+
+    small = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
+                 trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
+    model = _PVN(_EnvConfig(bridge_kind="mock"),
+                 _ModelConfig(**small, event_window=128, privileged_critic=True, aux_heads=True))
+    ckpt = tmp_path / "b2b.pt"
+    _save(ckpt, model, metadata={"b2b": {"event_window": 128, "privileged_critic": True,
+                                          "aux_heads": True, "residual_blocks": 1}})
+
+    base = ["fh-mj-evaluate", "--checkpoint", str(ckpt), "--duplicate-seats",
+            "--online-episodes", "1", "--model-residual-blocks", "1",
+            "--model-privileged-critic", "--model-aux-heads"]
+
+    # Wrong model window (64 vs pinned 128) -> refused before simulation.
+    with pytest.raises(SystemExit):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", base + ["--model-event-window", "64", "--event-history-window", "64"])
+            evaluate_cli.main()
+    assert "pins event_window=128" in capsys.readouterr().err
+
+    # Bridge window differing from model window -> refused.
+    with pytest.raises(SystemExit):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", base + ["--model-event-window", "128", "--event-history-window", "64"])
+            evaluate_cli.main()
+    assert "must equal --model-event-window" in capsys.readouterr().err
+
+
+def test_offline_agreement_rejects_event_models(tmp_path, capsys):
+    # Offline datasets carry no event histories — an event-enabled model
+    # would silently measure a zero-history policy.
+    import pytest as _pytest
+    import torch as _torch
+
+    from fh_mahjong_ai.config import EnvConfig as _EnvConfig
+    from fh_mahjong_ai.config import ModelConfig as _ModelConfig
+    from fh_mahjong_ai.evaluate import compute_action_agreement_from_batches
+    from fh_mahjong_ai.model import PolicyValueNet as _PVN
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+
+    model = _PVN(_EnvConfig(bridge_kind="mock"),
+                 _ModelConfig(channels=16, residual_blocks=1, plane_feature_dim=32,
+                              scalar_hidden_dim=16, trunk_hidden_dim=32,
+                              value_hidden_dim=16, q_hidden_dim=16, event_window=8))
+    with _pytest.raises(ValueError, match="event histories"):
+        compute_action_agreement_from_batches(model, iter([]), device="cpu")
+
+    with _pytest.raises(SystemExit):
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", ["fh-mj-evaluate", "--checkpoint", "x.pt",
+                                    "--data", str(tmp_path / "d.jsonl"),
+                                    "--model-event-window", "8"])
+            evaluate_cli.main()
+    assert "offline datasets carry no event histories" in capsys.readouterr().err

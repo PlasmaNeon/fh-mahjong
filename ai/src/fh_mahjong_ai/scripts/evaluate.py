@@ -94,6 +94,12 @@ def main() -> None:
         default=None,
         help="Reward threshold for large-loss reporting; defaults by match mode",
     )
+    parser.add_argument(
+        "--event-history-window",
+        type=int,
+        default=0,
+        help="Bridge-side event history window (rows); 0 = off (dormant, default)",
+    )
     parser.add_argument("--device", type=str, default="cpu", help="Device")
     parser.add_argument("--offline-batch-size", type=int, default=4096, help="Batch size for offline action-agreement inference")
     parser.add_argument("--report-output", type=Path, default=None)
@@ -151,6 +157,47 @@ def main() -> None:
         if args.sample_action_family not in known_families:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
+
+    if args.model_event_window > 0 and args.data is not None:
+        # Offline datasets carry no event histories; the agreement numbers
+        # would silently measure a zero-history policy.
+        parser.error("--data (offline action agreement) does not support event-enabled models "
+                     "(--model-event-window > 0): offline datasets carry no event histories")
+    if args.model_event_window > 0 and args.online_episodes > 0 \
+            and args.event_history_window != args.model_event_window:
+        # An event-hungry model must see EXACTLY the horizon it was trained
+        # with: no window silently evaluates on empty histories; a different
+        # window silently changes the effective protocol under a report that
+        # claims otherwise.
+        parser.error("--event-history-window must equal --model-event-window for online eval "
+                     f"({args.event_history_window} != {args.model_event_window})")
+
+    # B2b checkpoints pin their trained horizon/architecture in metadata —
+    # refuse to evaluate under different flags BEFORE any simulation.
+    if args.checkpoint.exists():
+        try:
+            _meta = torch.load(args.checkpoint, map_location="cpu").get("metadata", {}) or {}
+        except Exception:
+            _meta = {}
+        _b2b_meta = _meta.get("b2b", {}) if isinstance(_meta, dict) else {}
+        if _b2b_meta:
+            _pinned = (
+                ("event_window", int(_b2b_meta.get("event_window", 0)), int(args.model_event_window)),
+                ("privileged_critic", bool(_b2b_meta.get("privileged_critic", False)), bool(args.model_privileged_critic)),
+                ("aux_heads", bool(_b2b_meta.get("aux_heads", False)), bool(args.model_aux_heads)),
+                ("residual_blocks", int(_b2b_meta.get("residual_blocks", 0)), int(args.model_residual_blocks)),
+            )
+            for _name, _saved, _flag in _pinned:
+                if _saved != _flag:
+                    parser.error(f"checkpoint metadata pins {_name}={_saved} but the flags say {_flag} "
+                                 "— evaluating a checkpoint under a different configuration than it "
+                                 "was trained with silently invalidates the measurement")
+    if args.event_history_window > 0 and (args.search or args.sample_temperature > 0.0):
+        # The search/sampled paths route through CheckpointPolicy, which does
+        # not thread events yet (B2c scope) — the model would silently
+        # zero-fill event features while the report claims the window.
+        parser.error("--event-history-window > 0 supports only the greedy path for now "
+                     "(the search/sampled policies do not thread events yet)")
 
     _search_numeric_flags = (
         "search_determinizations", "search_max_candidates", "search_prior_mass",
@@ -257,6 +304,7 @@ def main() -> None:
                     "chongci_max_hands": args.chongci_max_hands,
                     "max_steps_per_episode": max_steps_per_episode,
                     "large_loss_threshold": args.large_loss_threshold,
+                    "event_history_window": args.event_history_window,
                     **model_config_params(model_config),
                 }
             )
@@ -345,6 +393,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
                 final_report["search"]["fallback_count"] = sum(p.fallback_count for p in search_policies)
             elif args.duplicate_seats and args.sample_temperature > 0.0:
@@ -379,6 +428,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
@@ -394,6 +444,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             else:
                 online_report = evaluate_online(
@@ -410,6 +461,7 @@ def main() -> None:
                     chongci_max_hands=args.chongci_max_hands,
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
                 )
             final_report["online"] = online_report
             # Persist the decision-protocol blocks inside the online report

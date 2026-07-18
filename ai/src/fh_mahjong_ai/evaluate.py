@@ -525,6 +525,12 @@ def compute_action_agreement_from_batches(
     device: str = "cpu",
 ) -> Dict[str, Any]:
     """Compute action agreement from pre-batched observation/action arrays."""
+    if getattr(model, "wants_events", False):
+        raise ValueError(
+            "offline action agreement cannot evaluate an event-enabled model: "
+            "offline datasets carry no event histories (the model would silently "
+            "run with zeroed event features)"
+        )
     model.eval()
     exact_matches = 0
     top3_matches = 0
@@ -605,6 +611,7 @@ def evaluate_policy_online(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
+    event_history_window: int = 0,
     policy_factory: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
@@ -634,6 +641,7 @@ def evaluate_policy_online(
         chongci_bust_threshold=chongci_bust_threshold,
         chongci_max_hands=chongci_max_hands,
         oracle_observation=oracle_observation,
+        event_history_window=event_history_window,
     )
     if max_steps_per_episode is not None:
         config.max_steps_per_episode = int(max_steps_per_episode)
@@ -856,6 +864,7 @@ def evaluate_online(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
+    event_history_window: int = 0,
 ) -> Dict[str, Any]:
     """Run a model's greedy policy for one seat against heuristic opponents."""
     policy = TorchGreedyPolicy(model, device=device)
@@ -873,6 +882,7 @@ def evaluate_online(
         chongci_max_hands=chongci_max_hands,
         max_steps_per_episode=max_steps_per_episode,
         oracle_observation=oracle_observation,
+        event_history_window=event_history_window,
     )
 
 
@@ -921,6 +931,7 @@ def evaluate_duplicate_seats_policy(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
+    event_history_window: int = 0,
 ) -> Dict[str, Any]:
     """Evaluate a policy factory with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
@@ -963,6 +974,7 @@ def evaluate_duplicate_seats_policy(
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
                 oracle_observation=oracle_observation,
+                event_history_window=event_history_window,
             )
             seat_reports.append(report)
             all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -1010,6 +1022,7 @@ def evaluate_duplicate_seats_policy(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
+        "event_history_window": event_history_window,
         "bridge_lib_sha256": bridge_lib_sha256,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
@@ -1077,6 +1090,7 @@ def evaluate_duplicate_seats(
     chongci_max_hands: int = 50,
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
+    event_history_window: int = 0,
 ) -> Dict[str, Any]:
     """Evaluate the same seeds with the learning agent rotated through seats."""
     normalized_match_mode = _normalize_match_mode(match_mode)
@@ -1116,6 +1130,7 @@ def evaluate_duplicate_seats(
                 chongci_max_hands=chongci_max_hands,
                 max_steps_per_episode=max_steps_per_episode,
                 oracle_observation=oracle_observation,
+                event_history_window=event_history_window,
             )
             seat_reports.append(report)
             all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -1159,6 +1174,7 @@ def evaluate_duplicate_seats(
         "seats": seat_list,
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
+        "event_history_window": event_history_window,
         "bridge_lib_sha256": bridge_lib_sha256,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],
