@@ -11,19 +11,21 @@ Champion screening report: /root/fh-mahjong-runs/spec-a/champion-fixed.json.
      --champion /root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt \
      --checkpoint-dir /root/fh-mahjong-runs/b2b/ckpt \
      --model-residual-blocks 4 --event-window 128 \
-     --iterations 150 --matches-per-iter 256 --num-workers 5 \
-     --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 1.0 \
+     --iterations 150 --matches-per-iter 320 --num-workers 5 \
+     --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 0.99 \
      --match-mode chongci --max-steps-per-episode 4000 --device cuda
 
-   (Reward = dense per-hand score deltas at gamma 1.0 — the exact champion
-   phaseB1 recipe; the spec's earlier "GRP placement reward" wording was
-   stale nomenclature, corrected 2026-07-18. No MLflow — fh-mj-train-b2b
+   (Reward = dense per-hand score deltas at gamma 0.99, matches-per-iter
+   320 — the exact champion phaseB1 recipe per the authoritative manifest
+   (ai/checkpoints/best-checkpoints.json: matches_per_iter=320, gamma=0.99;
+   the 256->320 batch increase was itself the Phase B improvement). The
+   spec's earlier "GRP placement reward (gamma=1)" wording was stale
+   nomenclature, corrected 2026-07-18. No MLflow — fh-mj-train-b2b
    logs history.json + stdout, matching the champion phaseB1 precedent.
    Watch dealin_positive_rate and rank_label_coverage in history.json: an
    all-zero deal-in rate is the corrupted-supervision signature (the
    collector also fails fast on zero outcomes). Confirm exact flag names against
-   `fh-mj-train-b2b --help`; matches-per-iter 256 matches the champion
-   pipeline — cross-check the progress note's run command before launching.)
+   `fh-mj-train-b2b --help`; cross-check the progress note's run command before launching.)
 
 2. Screening at iters 25/50/75/100/125/150:
 
