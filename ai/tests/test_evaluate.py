@@ -813,3 +813,41 @@ def test_event_window_rejects_search_and_sampled_paths(capsys):
             mp.setattr("sys.argv", ["fh-mj-evaluate", *base, "--sample-temperature", "0.8"])
             evaluate_cli.main()
     assert "greedy path" in capsys.readouterr().err
+
+
+def test_b2b_checkpoint_metadata_pins_eval_flags(tmp_path, capsys, monkeypatch):
+    # A checkpoint trained at window 128 must refuse to evaluate at any other
+    # effective window/config — silent horizon drift invalidates the gate.
+    import torch as _torch
+
+    from fh_mahjong_ai.config import EnvConfig as _EnvConfig
+    from fh_mahjong_ai.config import ModelConfig as _ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet as _PVN
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+    from fh_mahjong_ai.storage import save_checkpoint as _save
+
+    small = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
+                 trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
+    model = _PVN(_EnvConfig(bridge_kind="mock"),
+                 _ModelConfig(**small, event_window=128, privileged_critic=True, aux_heads=True))
+    ckpt = tmp_path / "b2b.pt"
+    _save(ckpt, model, metadata={"b2b": {"event_window": 128, "privileged_critic": True,
+                                          "aux_heads": True, "residual_blocks": 1}})
+
+    base = ["fh-mj-evaluate", "--checkpoint", str(ckpt), "--duplicate-seats",
+            "--online-episodes", "1", "--model-residual-blocks", "1",
+            "--model-privileged-critic", "--model-aux-heads"]
+
+    # Wrong model window (64 vs pinned 128) -> refused before simulation.
+    with pytest.raises(SystemExit):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", base + ["--model-event-window", "64", "--event-history-window", "64"])
+            evaluate_cli.main()
+    assert "pins event_window=128" in capsys.readouterr().err
+
+    # Bridge window differing from model window -> refused.
+    with pytest.raises(SystemExit):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", base + ["--model-event-window", "128", "--event-history-window", "64"])
+            evaluate_cli.main()
+    assert "must equal --model-event-window" in capsys.readouterr().err

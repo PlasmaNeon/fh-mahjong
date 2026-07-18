@@ -158,10 +158,35 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
-    if args.model_event_window > 0 and args.event_history_window == 0 and args.online_episodes > 0:
-        # An event-hungry model with no bridge window would silently evaluate
-        # on empty histories under a report claiming window 0.
-        parser.error("--model-event-window > 0 requires --event-history-window > 0 for online eval")
+    if args.model_event_window > 0 and args.online_episodes > 0 \
+            and args.event_history_window != args.model_event_window:
+        # An event-hungry model must see EXACTLY the horizon it was trained
+        # with: no window silently evaluates on empty histories; a different
+        # window silently changes the effective protocol under a report that
+        # claims otherwise.
+        parser.error("--event-history-window must equal --model-event-window for online eval "
+                     f"({args.event_history_window} != {args.model_event_window})")
+
+    # B2b checkpoints pin their trained horizon/architecture in metadata —
+    # refuse to evaluate under different flags BEFORE any simulation.
+    if args.checkpoint.exists():
+        try:
+            _meta = torch.load(args.checkpoint, map_location="cpu").get("metadata", {}) or {}
+        except Exception:
+            _meta = {}
+        _b2b_meta = _meta.get("b2b", {}) if isinstance(_meta, dict) else {}
+        if _b2b_meta:
+            _pinned = (
+                ("event_window", int(_b2b_meta.get("event_window", 0)), int(args.model_event_window)),
+                ("privileged_critic", bool(_b2b_meta.get("privileged_critic", False)), bool(args.model_privileged_critic)),
+                ("aux_heads", bool(_b2b_meta.get("aux_heads", False)), bool(args.model_aux_heads)),
+                ("residual_blocks", int(_b2b_meta.get("residual_blocks", 0)), int(args.model_residual_blocks)),
+            )
+            for _name, _saved, _flag in _pinned:
+                if _saved != _flag:
+                    parser.error(f"checkpoint metadata pins {_name}={_saved} but the flags say {_flag} "
+                                 "— evaluating a checkpoint under a different configuration than it "
+                                 "was trained with silently invalidates the measurement")
     if args.event_history_window > 0 and (args.search or args.sample_temperature > 0.0):
         # The search/sampled paths route through CheckpointPolicy, which does
         # not thread events yet (B2c scope) — the model would silently

@@ -930,7 +930,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             metrics["iteration"] = iteration
             metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
             metrics["steps"] = len(batch)
-            save_checkpoint(checkpoint_dir / f"iter_{iteration:03d}.pt", model)
+            save_checkpoint(
+                checkpoint_dir / f"iter_{iteration:03d}.pt", model,
+                # Pins the trained horizon/architecture so fh-mj-evaluate can
+                # refuse to run this checkpoint under a different effective
+                # window (silent mis-evaluation guard).
+                metadata={"b2b": {
+                    "event_window": int(model_config.event_window),
+                    "privileged_critic": bool(model_config.privileged_critic),
+                    "aux_heads": bool(model_config.aux_heads),
+                    "residual_blocks": int(model_config.residual_blocks),
+                }})
             history.append(metrics)
             (checkpoint_dir / "history.json").write_text(json.dumps(history))
             print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
