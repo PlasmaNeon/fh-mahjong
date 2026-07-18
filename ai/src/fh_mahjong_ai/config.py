@@ -53,6 +53,12 @@ class ModelConfig:
     channel_attention: bool = False
     channel_attention_ratio: int = 16
     dueling_q: bool = True
+    # --- Spec B2b (all default-off => state_dict identical to pre-B2b) ---
+    event_window: int = 0          # 0 = no event encoder (dormant)
+    event_embed_dim: int = 32
+    event_hidden_dim: int = 128
+    privileged_critic: bool = False
+    aux_heads: bool = False
 
 
 @dataclass
