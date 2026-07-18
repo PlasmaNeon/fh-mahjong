@@ -18,6 +18,10 @@ type Env struct {
 	decisionCount uint64
 	baseSeed      uint64
 	lastScores    []int32
+	// Round outcome captured when the chongci step path crosses ROUND_END
+	// (readyAllPlayersForNextRound nils RoundResult), attached to the next
+	// decision's EnvStepResponse so trainers can label completed hands.
+	pendingRoundOutcome *pb.RoundOutcome
 }
 
 func New(config *pb.EnvConfig) *Env {
@@ -56,6 +60,7 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		return nil, err
 	}
 	e.lastScores = snapshotScores(e.game.State)
+	e.pendingRoundOutcome = nil
 	stepResponse, err := e.advanceToDecision()
 	if err != nil {
 		return nil, err
@@ -333,14 +338,19 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 	for {
 		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
-				Rewards:     e.scoreDeltaReward(),
-				Terminated:  true,
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Rewards:      e.scoreDeltaReward(),
+				Terminated:   true,
+				RoundOutcome: e.takePendingRoundOutcome(),
 			}, nil
 		}
 
 		if e.game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 			if e.game.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+				// Capture BEFORE readying: startNextRound nils RoundResult.
+				if outcome := roundOutcome(e.game.State); outcome != nil {
+					e.pendingRoundOutcome = outcome
+				}
 				if err := e.readyAllPlayersForNextRound(); err != nil {
 					return nil, err
 				}
@@ -368,8 +378,9 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 				return nil, err
 			}
 			return &pb.EnvStepResponse{
-				Observation: observation,
-				Rewards:     e.scoreDeltaReward(),
+				Observation:  observation,
+				Rewards:      e.scoreDeltaReward(),
+				RoundOutcome: e.takePendingRoundOutcome(),
 			}, nil
 		}
 
@@ -702,6 +713,15 @@ func matchOptionsFromConfig(config *pb.EnvConfig) engine.MatchOptions {
 		Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
 		ChongciConfig: engine.CloneChongciConfig(config.ChongciConfig),
 	}
+}
+
+// takePendingRoundOutcome returns and clears the outcome captured while the
+// chongci step path auto-readied past ROUND_END. Attached to exactly one
+// response: the first one after the boundary.
+func (e *Env) takePendingRoundOutcome() *pb.RoundOutcome {
+	outcome := e.pendingRoundOutcome
+	e.pendingRoundOutcome = nil
+	return outcome
 }
 
 func roundOutcome(state *pb.GameState) *pb.RoundOutcome {

@@ -701,3 +701,54 @@ func TestEventHistoryWindowBounded(t *testing.T) {
 		t.Fatalf("NewSearchPool accepted window > max")
 	}
 }
+
+// Chongci step-path round outcomes: the auto-ready past ROUND_END used to
+// swallow every RoundOutcome, leaving trainers unable to label completed
+// hands (deal-in supervision degenerated to all-zero). The outcome must
+// arrive on exactly the first response after each boundary.
+func TestChongciStepPathSurfacesRoundOutcomes(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       6000,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 4},
+	}
+	outcomes := 0
+	sawNonDraw := false
+	for seed := uint64(200); seed < 240 && !sawNonDraw; seed++ {
+		env := New(config)
+		reset, err := env.Reset(&pb.EnvResetRequest{Seed: seed, Config: config})
+		if err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		rng := rand.New(rand.NewSource(int64(seed)))
+		obs := reset.Observation
+		for step := 0; obs != nil && step < 6000; step++ {
+			aid, ok := randomLegalActionID(obs.ActionMask, rng)
+			if !ok {
+				break
+			}
+			sr, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+			if err != nil {
+				t.Fatalf("seed %d step %d: %v", seed, step, err)
+			}
+			if sr.RoundOutcome != nil {
+				outcomes++
+				if !sr.RoundOutcome.IsDraw {
+					sawNonDraw = true
+				}
+			}
+			if sr.Terminated || sr.Truncated {
+				break
+			}
+			obs = sr.Observation
+		}
+	}
+	if outcomes == 0 {
+		t.Fatalf("no round outcome surfaced on the chongci step path across 40 matches")
+	}
+	if !sawNonDraw {
+		t.Fatalf("premise: 40 random matches produced only draws — widen the seed range")
+	}
+}
