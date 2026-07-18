@@ -23,6 +23,8 @@ LEARNING_SEAT = 0
 
 HISTORY_FILENAME = "history.json"
 
+AUX_LOSS_WEIGHT = 0.1
+
 
 def _write_history_atomic(path: Path, history: List[dict]) -> None:
     """Persist `history` durably: write to a sibling temp file then atomically
@@ -132,6 +134,10 @@ class RolloutBatch:
     rewards: np.ndarray
     dones: np.ndarray  # 1.0 at each match's final learning-seat step
     truncated_matches: int = 0  # matches that hit the step limit (no final standings)
+    events: np.ndarray | None = None          # [N, W] uint32 packed codec values
+    event_lengths: np.ndarray | None = None   # [N] int32 true lengths
+    dealin_labels: np.ndarray | None = None   # [N] float32 hindsight deal-in
+    rank_labels: np.ndarray | None = None     # [N] int64 rank 0-3 / 4=bust / -1=masked
 
     def __len__(self) -> int:
         return int(self.actions.shape[0])
@@ -140,6 +146,10 @@ class RolloutBatch:
 _ROLLOUT_ARRAY_FIELDS = (
     "planes", "scalars", "action_mask", "actions",
     "old_logprobs", "values", "rewards", "dones",
+)
+
+_ROLLOUT_OPTIONAL_ARRAY_FIELDS = (
+    "events", "event_lengths", "dealin_labels", "rank_labels",
 )
 
 
@@ -155,7 +165,12 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
     bounds the concat peak near 2x-of-planes instead of 2x-of-everything —
     the difference between fitting and OOM at large matches_per_iter (the
     512x16 run was OOM-killed while assembling worker results). Consumed
-    inputs must not be reused."""
+    inputs must not be reused.
+
+    The B2b optional fields (events/event_lengths/dealin_labels/rank_labels)
+    are small relative to planes, so they skip the consume choreography; they
+    must be present in ALL batches or ABSENT in all — a mixed set would
+    silently misalign event rows against planes/scalars, so that raises."""
     nonempty = [b for b in batches if len(b) > 0]
     if not nonempty:
         raise RuntimeError("concat_rollout_batches: no rollout data")
@@ -166,6 +181,18 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
         if consume:
             for b in nonempty:
                 setattr(b, name, None)
+    for name in _ROLLOUT_OPTIONAL_ARRAY_FIELDS:
+        present = [getattr(b, name) is not None for b in nonempty]
+        if all(present):
+            fields[name] = np.concatenate([getattr(b, name) for b in nonempty], axis=0)
+        elif any(present):
+            raise ValueError(
+                f"concat_rollout_batches: '{name}' is present in some batches but "
+                "not others; this would silently misalign event rows against "
+                "planes/scalars."
+            )
+        else:
+            fields[name] = None
     return RolloutBatch(**fields, truncated_matches=truncated_matches)
 
 
@@ -222,13 +249,35 @@ def ppo_update(
     if config.normalize_advantages:
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
 
+    events_t = lengths_t = dealin_t = rank_t = None
+    if batch.events is not None:
+        events_t = torch.from_numpy(np.asarray(batch.events, dtype=np.int64)).to(device)
+        lengths_t = torch.from_numpy(np.asarray(batch.event_lengths, dtype=np.int64)).to(device)
+        dealin_t = torch.from_numpy(np.asarray(batch.dealin_labels, dtype=np.float32)).to(device)
+        rank_t = torch.from_numpy(np.asarray(batch.rank_labels, dtype=np.int64)).to(device)
+
+    model_config = getattr(model, "model_config", None)
+    has_aux = bool(getattr(model_config, "aux_heads", False))
+    belief_target = None
+    if has_aux:
+        if planes.shape[1] < 51:
+            raise ValueError(
+                f"model has aux_heads enabled but planes have only {planes.shape[1]} "
+                "channels (need 51 for the belief-target oracle-threshold planes "
+                "39:51); this would silently compute wrong belief targets."
+            )
+        belief_target = (planes[:, 39:51] > 0).float().squeeze(-1)
+
     last = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "approx_kl": 0.0, "clip_fraction": 0.0}
     model.train()
     for _ in range(config.ppo_epochs):
         perm = torch.randperm(n, device=device)
         for start in range(0, n, config.minibatch_size):
             idx = perm[start : start + config.minibatch_size]
-            masked_logits, value = model(planes[idx], scalars[idx], action_mask[idx])
+            mb_events = events_t[idx] if events_t is not None else None
+            mb_lengths = lengths_t[idx] if lengths_t is not None else None
+            masked_logits, value = model(planes[idx], scalars[idx], action_mask[idx],
+                                         events=mb_events, event_lengths=mb_lengths)
             dist = masked_policy_distribution(masked_logits)
             new_logprobs = dist.log_prob(actions[idx])
             ratio = torch.exp(new_logprobs - old_logprobs[idx])
@@ -239,6 +288,27 @@ def ppo_update(
             value_loss = torch.nn.functional.mse_loss(value, ret_t[idx])
             entropy = dist.entropy().mean()
             loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
+
+            aux_metrics = {}
+            if has_aux:
+                features = model.encode(planes[idx], scalars[idx], mb_events, mb_lengths)
+                aux = model.aux_predictions(features)
+                belief_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    aux["belief"], belief_target[idx])
+                dealin_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    aux["dealin"], dealin_t[idx])
+                rank_mask = rank_t[idx] >= 0
+                if rank_mask.any():
+                    rank_loss = torch.nn.functional.cross_entropy(
+                        aux["rank"][rank_mask], rank_t[idx][rank_mask])
+                else:
+                    rank_loss = torch.zeros((), device=device)
+                loss = loss + AUX_LOSS_WEIGHT * (belief_loss + dealin_loss + rank_loss)
+                aux_metrics = {
+                    "belief_loss": float(belief_loss.item()),
+                    "dealin_loss": float(dealin_loss.item()),
+                    "rank_loss": float(rank_loss.item()),
+                }
 
             optimizer.zero_grad()
             loss.backward()
@@ -254,6 +324,7 @@ def ppo_update(
                 "entropy": float(entropy.item()),
                 "approx_kl": float(approx_kl.item()),
                 "clip_fraction": float(clip_fraction.item()),
+                **aux_metrics,
             }
     return last
 
