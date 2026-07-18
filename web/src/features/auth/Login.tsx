@@ -8,11 +8,13 @@ import { safeReturnTo } from './authClient'
 import AuthDialog from './AuthDialog'
 import { resolveAuthDialogMode, type AuthRouteState } from './authModal'
 import { clearPlayIntent } from '../lobby/navigation'
+import { useI18n } from '../../i18n/I18nContext'
 
 export default function Login() {
   const navigate = useNavigate()
   const { connect } = useSocket()
   const { status } = useAuth()
+  const { t } = useI18n()
   const [searchParams] = useSearchParams()
   const location = useLocation()
   const routeState = location.state as AuthRouteState | null
@@ -29,12 +31,12 @@ export default function Login() {
 
   return (
     <AuthDialog
-      title={invite ? "You’ve been invited" : 'Enter the club'}
-      subtitle={invite ? `Private table ${invite}. Sign in or create an account to join.` : 'Sign in once and this device stays remembered for 30 days.'}
+      title={invite ? t('auth.invited') : t('auth.enterClub')}
+      subtitle={invite ? t('auth.inviteHelp', { table: invite }) : t('auth.remembered')}
       dismissible={dialogMode.dismissible}
       onCancel={dialogMode.dismissible ? close : undefined}
     >
-      {status === 'offline' && <Note tone="error">The club is offline. You can retry when your connection returns.</Note>}
+      {status === 'offline' && <Note tone="error">{t('auth.retryOffline')}</Note>}
       <AuthTicket intent={invite ? 'join table' : 'continue'} onAuthenticated={() => { connect(); navigate(returnTo, { replace: true }) }} />
     </AuthDialog>
   )

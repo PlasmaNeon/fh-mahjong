@@ -5,11 +5,14 @@ import { describe, expect, it } from 'vitest'
 import { AuthProvider } from '../../contexts/AuthContext'
 import ClubShell from '../../theme/components/ClubShell'
 import Home from './Home'
+import { I18nProvider } from '../../i18n/I18nContext'
 
 function renderAt(path: string, child: ReturnType<typeof createElement>) {
   return renderToStaticMarkup(
-    createElement(AuthProvider, null,
-      createElement(MemoryRouter, { initialEntries: [path] }, child),
+    createElement(I18nProvider, null,
+      createElement(AuthProvider, null,
+        createElement(MemoryRouter, { initialEntries: [path] }, child),
+      ),
     ),
   )
 }

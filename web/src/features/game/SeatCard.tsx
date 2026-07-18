@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { game } from '../../proto/game';
 import { Button } from '../../theme';
+import { useI18n } from '../../i18n/I18nContext';
 
 type SeatConfig = game.ISeatConfig;
 type Difficulty = game.Difficulty;
@@ -16,15 +17,6 @@ export interface SeatCardProps {
     onClearSeat: (seat: number) => void;
 }
 
-const DIFFICULTY_LABELS: Record<number, string> = {
-    [game.Difficulty.DIFFICULTY_HEURISTIC]: 'Heuristic',
-    [game.Difficulty.DIFFICULTY_RL]: 'RL Agent',
-};
-
-function difficultyLabel(difficulty: Difficulty | number | null | undefined): string {
-    return DIFFICULTY_LABELS[Number(difficulty ?? 0)] ?? 'Heuristic';
-}
-
 // Heuristic is always available. The RL Agent option is always shown so hosts
 // know it exists, but it stays disabled until the trained policy endpoint is
 // reachable (surfaced via GET /api/v1/config, polled by the room page so it
@@ -36,10 +28,10 @@ function difficultyOptions(rlAgentAvailable: boolean): Array<{ value: Difficulty
     ];
 }
 
-const SEAT_LABEL = ['East', 'South', 'West', 'North'];
 const SEAT_WIND = ['東', '南', '西', '北'];
 
 export default function SeatCard(props: SeatCardProps) {
+    const { t } = useI18n();
     const { seatIndex, seat, isHost, canEdit, hostUserId, rlAgentAvailable = false, onAssignBot, onClearSeat } = props;
 
     const isHumanHost = seat.kind === 'human' && Number(seat.userId ?? 0) === hostUserId;
@@ -49,26 +41,26 @@ export default function SeatCard(props: SeatCardProps) {
             <div className="seat-card__wind" aria-hidden="true">{SEAT_WIND[seatIndex]}</div>
             <div className="ldg-meld__head">
                 <div>
-                    <div className="ldg-meld__meta">Seat {seatIndex + 1} · {SEAT_LABEL[seatIndex]} wind</div>
+                    <div className="ldg-meld__meta">{t('room.seatWind', { seat: seatIndex + 1, wind: t((['common.east', 'common.south', 'common.west', 'common.north'] as const)[seatIndex]) })}</div>
                     <div className="ldg-meld__title" style={{ marginTop: 4 }}>
                         {seat.kind === 'human' && <>{seat.username || `Player ${seat.userId ?? ''}`}</>}
-                        {seat.kind === 'bot' && <>AI · {difficultyLabel(seat.difficulty)}</>}
+                        {seat.kind === 'bot' && <>AI · {t(Number(seat.difficulty) === game.Difficulty.DIFFICULTY_RL ? 'room.rlAgent' : 'room.heuristic')}</>}
                         {(seat.kind === 'empty' || !seat.kind) && (
-                            <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>Waiting for player…</span>
+                            <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>{t('room.waitingPlayer')}</span>
                         )}
                     </div>
                 </div>
-                {isHumanHost && <span className="ldg-chip ldg-chip--active">Host</span>}
+                {isHumanHost && <span className="ldg-chip ldg-chip--active">{t('room.host')}</span>}
             </div>
 
             {canEdit && (seat.kind === 'empty' || !seat.kind) && (
                 <div className="ldg-meld__actions">
-                    <Button onClick={() => onAssignBot(seatIndex, game.Difficulty.DIFFICULTY_HEURISTIC)}>Add AI</Button>
+                    <Button onClick={() => onAssignBot(seatIndex, game.Difficulty.DIFFICULTY_HEURISTIC)}>{t('room.addAI')}</Button>
                     <details className="seat-card__advanced">
-                        <summary>AI type</summary>
+                        <summary>{t('room.aiType')}</summary>
                         {difficultyOptions(rlAgentAvailable).map(opt => (
                             <button key={opt.value} disabled={opt.disabled} onClick={() => onAssignBot(seatIndex, opt.value)}>
-                                {opt.label}{opt.disabled ? ' · offline' : ''}
+                                {opt.value === game.Difficulty.DIFFICULTY_RL ? t('room.rlAgent') : t('room.heuristic')}{opt.disabled ? ` · ${t('room.offlineShort')}` : ''}
                             </button>
                         ))}
                     </details>
@@ -77,7 +69,7 @@ export default function SeatCard(props: SeatCardProps) {
 
             {canEdit && seat.kind === 'bot' && (
                 <div className="ldg-meld__actions">
-                    <Button variant="danger" onClick={() => onClearSeat(seatIndex)}>Remove AI</Button>
+                    <Button variant="danger" onClick={() => onClearSeat(seatIndex)}>{t('room.removeAI')}</Button>
                 </div>
             )}
         </div>

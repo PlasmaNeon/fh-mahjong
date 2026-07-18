@@ -8,7 +8,7 @@ Contains all React components, context providers, custom hooks, and utility func
 
 ## Key Files
 
-- **main.tsx** — React bootstrap, renders `<App />` into DOM
+- **main.tsx** — React bootstrap, wraps `<App />` in the device-aware `I18nProvider`, then renders into DOM
 - **App.tsx** — Router wrapper with context providers:
   - `SocketProvider` → `GameProvider` → route-backed login overlay + primary `Routes`
   - `/login` can preserve a background location for optional authentication; direct/protected login renders the same paper dialog over a neutral club stage
@@ -47,6 +47,7 @@ Contains all React components, context providers, custom hooks, and utility func
 - **table/** — Shared tabletop presentation primitives for live play and replay
 - **hooks/** — Custom React hooks (WASM loader)
 - **utils/** — Utility functions (tile name/SVG mapping)
+- **i18n/** — Typed English/Simplified Chinese resources, device-language selection, document-language synchronization, and the shared translation hook
 - **proto/** — Auto-generated Protobuf JS/TS bindings
 
 ## Architecture Notes

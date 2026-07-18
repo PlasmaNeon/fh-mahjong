@@ -37,10 +37,10 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
 live status semantics so validation changes are announced without changing consumer props.
 `LoadingScreen` accepts an optional retry action for recoverable offline states.
 
-`ClubShell` owns ordinary-page club identity and Profile navigation; it deliberately has no
+`ClubShell` owns ordinary-page localized club identity, the global language override, and Profile navigation; it deliberately has no
 Back/breadcrumb control, leaving history navigation to the browser. Route pages must not
 recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
-stable Scoring/Shanten switcher while preserving both tool deep links.
+localized Scoring/Shanten switcher while preserving both tool deep links.
 
 The bone-paper authentication popup is implemented by `features/auth/AuthDialog.tsx`, while
 its material classes live in `base.css` alongside the compact home switchboard and paipu slips.

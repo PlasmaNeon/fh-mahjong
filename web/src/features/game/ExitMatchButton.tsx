@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { GameDialog } from '../../theme'
+import { useI18n } from '../../i18n/I18nContext'
 
 type Props = {
   roomId: string
@@ -12,6 +13,7 @@ type Props = {
 // left-match marker, close the socket, and navigate to the waiting room.
 export default function ExitMatchButton({ onConfirmLeave }: Props) {
   const [open, setOpen] = useState(false)
+  const { t } = useI18n()
   return (
     <>
       <button
@@ -20,28 +22,25 @@ export default function ExitMatchButton({ onConfirmLeave }: Props) {
         className="table-exit-control"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
-        Exit
+        {t('common.exit')}
       </button>
 
       {open && (
         <GameDialog
-          eyebrow="Your seat will stay warm"
-          title="Leave the match?"
+          eyebrow={t('game.exitEyebrow')}
+          title={t('game.leaveTitle')}
           tone="danger"
           onCancel={() => setOpen(false)}
           actions={<>
             <button type="button" onClick={() => setOpen(false)} className="ldg-btn ldg-btn--primary">
-              Stay at table
+              {t('game.stay')}
             </button>
             <button type="button" onClick={() => { setOpen(false); onConfirmLeave() }} className="ldg-btn ldg-btn--danger">
-              Leave match
+              {t('game.leave')}
             </button>
           </>}
         >
-            <p>
-              A bot will play your seat while you&apos;re away. You can rejoin
-              anytime from the private table screen.
-            </p>
+            <p>{t('game.leaveHelp')}</p>
         </GameDialog>
       )}
     </>

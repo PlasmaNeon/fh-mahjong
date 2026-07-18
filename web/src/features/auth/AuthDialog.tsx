@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { useI18n } from '../../i18n/I18nContext'
 
 const focusableSelector = [
   'a[href]',
@@ -23,6 +24,7 @@ export default function AuthDialog({
   children: ReactNode
 }) {
   const titleId = useId()
+  const { t } = useI18n()
   const descriptionId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -88,7 +90,7 @@ export default function AuthDialog({
       >
         <div className="auth-dialog__compass" aria-hidden="true"><span>東</span></div>
         {dismissible && onCancel && (
-          <button type="button" className="auth-dialog__close" aria-label="Close sign in" onClick={onCancel}>×</button>
+          <button type="button" className="auth-dialog__close" aria-label={t('auth.close')} onClick={onCancel}>×</button>
         )}
         <header className="auth-dialog__header">
           <h1 id={titleId}>{title}</h1>

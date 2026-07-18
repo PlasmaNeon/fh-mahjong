@@ -1,17 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Children, createElement, type ReactElement, type ReactNode } from 'react'
+import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { TableRoundResultOverlay, type RoundResultView } from './TableScene'
-
-type ElementProps = {
-  children?: ReactNode
-  className?: string
-  role?: string
-  'aria-modal'?: boolean
-  'aria-labelledby'?: string
-}
+import { I18nProvider } from '../i18n/I18nContext'
 
 const result: RoundResultView = {
   isDraw: false,
@@ -33,21 +26,20 @@ const result: RoundResultView = {
 }
 
 describe('TableRoundResultOverlay', () => {
-  it('keeps a labelled scroll body before a persistent action footer', () => {
-    const overlay = TableRoundResultOverlay({ result }) as ReactElement<ElementProps>
-    const dialog = overlay.props.children as ReactElement<ElementProps>
-    const children = Children.toArray(dialog.props.children) as ReactElement<ElementProps>[]
+  const renderOverlay = (overlayResult: RoundResultView) => renderToStaticMarkup(
+    createElement(I18nProvider, null, createElement(TableRoundResultOverlay, { result: overlayResult })),
+  )
 
-    expect(dialog.props.role).toBe('dialog')
-    expect(dialog.props['aria-modal']).toBe(true)
-    expect(dialog.props['aria-labelledby']).toBe('round-result-title')
-    expect(children).toHaveLength(2)
-    expect(children[0].props.className).toBe('round-result-scroll')
-    expect(children[1].props.className).toBe('round-result-actions')
+  it('keeps a labelled scroll body before a persistent action footer', () => {
+    const markup = renderOverlay(result)
+    expect(markup).toContain('role="dialog"')
+    expect(markup).toContain('aria-modal="true"')
+    expect(markup).toContain('aria-labelledby="round-result-title"')
+    expect(markup.indexOf('round-result-scroll')).toBeLessThan(markup.indexOf('round-result-actions'))
   })
 
   it('renders four payouts as one accessible strip without a visible section title', () => {
-    const markup = renderToStaticMarkup(createElement(TableRoundResultOverlay, { result }))
+    const markup = renderOverlay(result)
 
     expect(markup).toContain('aria-label="Seat payouts"')
     expect(markup).not.toContain('>Payouts<')
@@ -62,7 +54,7 @@ describe('TableRoundResultOverlay', () => {
       ...result,
       payouts: result.payouts?.map(({ readyLabel: _readyLabel, readyActive: _readyActive, ...payout }) => payout),
     }
-    const markup = renderToStaticMarkup(createElement(TableRoundResultOverlay, { result: replayResult }))
+    const markup = renderOverlay(replayResult)
 
     expect(markup).not.toContain('round-result-payout-status')
   })

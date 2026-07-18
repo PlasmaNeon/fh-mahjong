@@ -1199,7 +1199,7 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
   padding: clamp(1.5rem, 6vw, 5rem);
 }
 
-.club-home__brand { color: var(--brass); font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.2em; text-align: center; text-transform: uppercase; }
+.club-home__brand { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--brass); font-family: var(--mono); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.2em; text-align: center; text-transform: uppercase; }
 
 .club-home__menu {
   position: relative;
@@ -1229,7 +1229,8 @@ button.ldg-tile:not(:disabled):hover { box-shadow: var(--tile-shadow-h); }
 
 .club-home__compass span { transform: rotate(-7deg); }
 .club-home__links { display: grid; gap: 0.55rem; }
-.club-home__link { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; padding: 1rem; color: var(--on-dark); text-decoration: none; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px 12px 4px 12px; transition: transform 140ms ease, border-color 140ms ease, background 140ms ease; }
+.club-home__language { color: var(--brass); font: inherit; cursor: pointer; background: transparent; border: 0; }
+.club-home__link { display: grid; width: 100%; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; padding: 1rem; color: var(--on-dark); font: inherit; text-align: left; text-decoration: none; cursor: pointer; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px 12px 4px 12px; transition: transform 140ms ease, border-color 140ms ease, background 140ms ease; }
 .club-home__link:hover { transform: translateX(4px); background: rgba(47,127,112,0.13); border-color: rgba(47,127,112,0.46); }
 .club-home__link strong { font-family: var(--font-display); font-size: 1.12rem; }
 .club-home__link-mark { color: var(--brass); font-family: var(--mono); }

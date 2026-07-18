@@ -15,11 +15,13 @@ import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
 import { game } from '../../proto/game';
 import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
+import { useI18n } from '../../i18n/I18nContext';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
 
 export default function Table() {
+    const { t } = useI18n();
     const { roomId } = useParams();
     const [joining, setJoining] = useState(false);
     const [starting, setStarting] = useState(false);
@@ -146,9 +148,9 @@ export default function Table() {
                 return;
             }
             if (!res.ok) {
-                if (res.status === 404) setError('This private table is unavailable. Ask the host for a new link.');
-                else if (res.status === 409) setError(data.error || 'This table is full or already playing.');
-                else setError(data.error || 'Failed to join private table');
+                if (res.status === 404) setError(t('room.unavailableLink'));
+                else if (res.status === 409) setError(data.error || t('room.full'));
+                else setError(data.error || t('room.joinFailed'));
                 return;
             }
             const matchId = roomActiveRedirectMatchId(data, leftMarker, roomId);
@@ -170,7 +172,7 @@ export default function Table() {
             savePrivateRoomSession({ tableId: roomId });
         } catch (err: any) {
             if (err?.name === 'AbortError') return;
-            setError(err instanceof TypeError ? 'The club is offline. Your invitation is unchanged.' : err.message || 'Failed to join private table');
+            setError(err instanceof TypeError ? t('room.offlineInvite') : err.message || t('room.joinFailed'));
         } finally {
             if (!signal?.aborted) setJoining(false);
         }
@@ -193,10 +195,10 @@ export default function Table() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                setError(data.error || 'Failed to update seat');
+                setError(data.error || t('room.updateSeatFailed'));
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to update seat');
+            setError(err.message || t('room.updateSeatFailed'));
         }
     }, [apiFetch, authStatus, roomId]);
 
@@ -210,10 +212,10 @@ export default function Table() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                setError(data.error || 'Failed to update match mode');
+                setError(data.error || t('room.updateModeFailed'));
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to update match mode');
+            setError(err.message || t('room.updateModeFailed'));
         }
     }, [apiFetch, authStatus, roomId]);
 
@@ -243,7 +245,7 @@ export default function Table() {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                setError(data.error || 'Failed to start match');
+                setError(data.error || t('room.startFailed'));
                 setStarting(false);
                 return;
             }
@@ -258,7 +260,7 @@ export default function Table() {
             // broadcast-driven redirect, but re-enable the button.
             setStarting(false);
         } catch (err: any) {
-            setError(err.message || 'Failed to start match');
+            setError(err.message || t('room.startFailed'));
             setStarting(false);
         }
     };
@@ -267,11 +269,11 @@ export default function Table() {
 
     if (authStatus === 'offline') {
         return (
-            <ClubShell title="Private Table">
+            <ClubShell title={t('lobby.private')}>
                 <Card>
-                    <PageHeader title="The club is offline" subtitle={roomId} />
-                    <Section title="Your invitation is safe" subtitle="Reconnect, then we’ll check this exact table again.">
-                        <ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>Try Again</Button></ToolsRow>
+                    <PageHeader title={t('room.clubOffline')} subtitle={roomId} />
+                    <Section title={t('room.inviteSafe')} subtitle={t('room.inviteSafeHelp')}>
+                        <ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow>
                     </Section>
                 </Card>
             </ClubShell>
@@ -280,14 +282,14 @@ export default function Table() {
 
     if (authStatus !== 'authenticated' || joining || (!tableState && !showingRejoin)) {
         return (
-            <ClubShell title="Private Table">
+            <ClubShell title={t('lobby.private')}>
                     <Card>
-                        <PageHeader title={error ? 'Table unavailable' : 'Joining private table'} subtitle={roomId} />
-                        <Section title={error ? 'The invitation could not be opened' : 'Taking your seat'} subtitle={error ? 'This link never creates a replacement room.' : 'Your account is confirmed. We’re asking the host’s table for a seat.'}>
+                        <PageHeader title={t(error ? 'room.unavailable' : 'room.joining')} subtitle={roomId} />
+                        <Section title={t(error ? 'room.inviteFailed' : 'room.takingSeat')} subtitle={t(error ? 'room.noReplacement' : 'room.takingSeatHelp')}>
                             {error && <Note tone="error">{error}</Note>}
-                            {!error && <Note>{authStatus === 'loading' ? 'Checking your club pass…' : 'Joining table…'}</Note>}
+                            {!error && <Note>{t(authStatus === 'loading' ? 'account.checking' : 'room.joiningShort')}</Note>}
                             <ToolsRow>
-                                {error && <><Button variant="primary" onClick={() => void performJoin()}>Try Again</Button><Button onClick={() => navigate('/play')}>Back to Play</Button></>}
+                                {error && <><Button variant="primary" onClick={() => void performJoin()}>{t('common.tryAgain')}</Button><Button onClick={() => navigate('/play')}>{t('room.backPlay')}</Button></>}
                             </ToolsRow>
                         </Section>
                     </Card>
@@ -297,13 +299,13 @@ export default function Table() {
 
     if (showingRejoin) {
         return (
-            <ClubShell title="Private Table">
+            <ClubShell title={t('lobby.private')}>
                 <Card>
-                    <PageHeader title="Match in progress" subtitle={roomId} />
-                    <Section title="Your seat is being held" subtitle="A bot is playing while you're away. Rejoin whenever you're ready.">
+                    <PageHeader title={t('room.matchProgress')} subtitle={roomId} />
+                    <Section title={t('room.seatHeld')} subtitle={t('room.seatHeldHelp')}>
                         <ToolsRow>
-                            <Button variant="primary" onClick={handleRejoin}>Rejoin Match</Button>
-                            <Button variant="default" onClick={copyTableLink}>{shareState === 'copied' ? 'Link Copied' : shareState === 'failed' ? 'Copy Failed' : 'Share Table'}</Button>
+                            <Button variant="primary" onClick={handleRejoin}>{t('room.rejoin')}</Button>
+                            <Button variant="default" onClick={copyTableLink}>{t(shareState === 'copied' ? 'room.linkCopied' : shareState === 'failed' ? 'room.copyFailed' : 'room.share')}</Button>
                         </ToolsRow>
                     </Section>
                 </Card>
@@ -322,34 +324,34 @@ export default function Table() {
     const modeLocked = !iAmHost || tableState?.state === 'started';
 
     return (
-        <ClubShell wide title="Private Table">
+        <ClubShell wide title={t('lobby.private')}>
                 <Card>
                     <PageHeader
-                        title="Private Table"
-                        subtitle={`${roomId} · ${isChongci ? 'Chongci' : 'Classic Fenghua'}`}
-                        nav={<Button onClick={copyTableLink}>{shareState === 'copied' ? 'Link Copied' : shareState === 'failed' ? 'Copy Failed' : 'Share Table'}</Button>}
+                        title={t('lobby.private')}
+                        subtitle={`${roomId} · ${t(isChongci ? 'lobby.chongci' : 'room.classicFenghua')}`}
+                        nav={<Button onClick={copyTableLink}>{t(shareState === 'copied' ? 'room.linkCopied' : shareState === 'failed' ? 'room.copyFailed' : 'room.share')}</Button>}
                     />
 
                     {error && <Note tone="error">{error}</Note>}
 
                     <details className="table-rules">
-                        <summary>Table Rules <span>{isChongci ? 'Chongci' : 'Classic Fenghua'}</span></summary>
-                        <Section title="Game mode">
+                        <summary>{t('room.rules')} <span>{t(isChongci ? 'lobby.chongci' : 'room.classicFenghua')}</span></summary>
+                        <Section title={t('room.gameMode')}>
                             <Toggle
                                 value={isChongci ? 'chongci' : 'classic'}
                                 disabled={modeLocked}
                                 onChange={(mode) => mode === 'chongci' ? setMatchMode('chongci', chongciDraft) : setMatchMode('classic')}
                                 options={[
-                                    { value: 'classic', label: 'Classic' },
-                                    { value: 'chongci', label: 'Chongci' },
+                                    { value: 'classic', label: t('lobby.classic') },
+                                    { value: 'chongci', label: t('lobby.chongci') },
                                 ]}
                             />
                             {isChongci && (
                             <div className="ldg-grid-3" style={{ marginTop: '0.85rem' }}>
                                 {[
-                                    { key: 'starting_score', label: 'Starting points', min: 100, max: 1_000_000 },
-                                    { key: 'bust_threshold', label: 'Bust threshold', min: -1_000_000, max: 0 },
-                                    { key: 'max_hands', label: 'Max hands (0=∞)', min: 0, max: 200 },
+                                    { key: 'starting_score', label: t('room.startingPoints'), min: 100, max: 1_000_000 },
+                                    { key: 'bust_threshold', label: t('room.bustThreshold'), min: -1_000_000, max: 0 },
+                                    { key: 'max_hands', label: t('room.maxHands'), min: 0, max: 200 },
                                 ].map(({ key, label, min, max }) => (
                                     <Field
                                         key={key}
@@ -365,11 +367,11 @@ export default function Table() {
                                 ))}
                             </div>
                             )}
-                            {!iAmHost && <Note>Only the host can change table rules.</Note>}
+                            {!iAmHost && <Note>{t('room.hostRules')}</Note>}
                         </Section>
                     </details>
 
-                    <Section title="Seats" meta={`${filledCount} / 4`}>
+                    <Section title={t('room.seats')} meta={`${filledCount} / 4`}>
                         <div className="ldg-grid-2">
                             {seats.map((seat, i) => (
                                 <SeatCard
@@ -386,16 +388,16 @@ export default function Table() {
                             ))}
                         </div>
 
-                        {iAmHost && !allSeatsFilled && <Note>Fill every seat with a player or AI before starting.</Note>}
-                        {!iAmHost && <Note>The host configures the table. You'll join automatically when the match begins.</Note>}
+                        {iAmHost && !allSeatsFilled && <Note>{t('room.fillSeats')}</Note>}
+                        {!iAmHost && <Note>{t('room.guestWait')}</Note>}
                     </Section>
 
                     <div className="waiting-room__primary">
                         {iAmHost ? (
                             <Button variant="primary" onClick={handleStart} disabled={!allSeatsFilled || starting}>
-                                {starting ? 'Starting…' : allSeatsFilled ? 'Start Match' : `Fill ${4 - filledCount} More Seat${4 - filledCount === 1 ? '' : 's'}`}
+                                {starting ? t('room.startingMatch') : allSeatsFilled ? t('room.startMatch') : t(4 - filledCount === 1 ? 'room.fillMore' : 'room.fillMorePlural', { count: 4 - filledCount })}
                             </Button>
-                        ) : <span>Waiting for the host to start the match.</span>}
+                        ) : <span>{t('room.waitHost')}</span>}
                     </div>
                 </Card>
         </ClubShell>

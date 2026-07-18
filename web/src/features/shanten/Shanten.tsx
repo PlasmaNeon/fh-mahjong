@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
 import { getTileName, getTileSvgName } from '../../utils/tileUtils'
 import { ClubShell, ToolTabs } from '../../theme'
+import { useI18n } from '../../i18n/I18nContext'
 import {
   countTiles,
   createDraft,
@@ -20,8 +21,6 @@ import {
   TileValue,
   tileKey,
 } from './shantenHelpers'
-
-type Lang = 'en' | 'zh'
 
 const TEXT = {
   en: {
@@ -55,6 +54,12 @@ const TEXT = {
     count: 'count',
     edit: 'Edit',
     expected: 'Expected',
+    tileTray: 'Tile tray',
+    tileTrayHelp: 'One tray for the hand and wild indicator.',
+    tileTarget: 'Tile target',
+    addingTo: 'Adding to',
+    advancedSetup: 'Advanced setup',
+    advancedSetupHelp: 'open meld count',
   },
   zh: {
     language: 'EN',
@@ -87,6 +92,12 @@ const TEXT = {
     count: '枚',
     edit: '编辑',
     expected: '需要',
+    tileTray: '选牌区',
+    tileTrayHelp: '手牌和搭牌共用一个牌盘。',
+    tileTarget: '选牌目标',
+    addingTo: '正在添加到',
+    advancedSetup: '高级设置',
+    advancedSetupHelp: '副露数量',
   },
 } as const
 
@@ -188,7 +199,7 @@ function PaletteGrid({ onTileClick, usedCounts, selectedTile = null, dimSelected
 // ─── Main page ───
 
 export default function Shanten() {
-  const [lang, setLang] = useState<Lang>('en')
+  const { shortLanguage: lang, toggleLanguage } = useI18n()
   const [hand, setHand] = useState<TileDraft[]>([])
   const [wildTile, setWildTile] = useState<TileValue | null>(null)
   const [openMelds, setOpenMelds] = useState(0)
@@ -332,7 +343,7 @@ export default function Shanten() {
   }, [result, text])
 
   return (
-    <ClubShell title="Table Tools">
+    <ClubShell title={lang === 'en' ? 'Table Tools' : '牌桌工具'}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
@@ -349,7 +360,7 @@ export default function Shanten() {
               <button
                 type="button"
                 className="ldg-link"
-                onClick={() => setLang(l => l === 'en' ? 'zh' : 'en')}
+                onClick={toggleLanguage}
               >
                 {text.language}
               </button>
@@ -432,20 +443,20 @@ export default function Shanten() {
 
           <section className="ldg-section workbench-palette">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">Tile tray<small>One tray for the hand and wild indicator.</small></h2>
+              <h2 className="ldg-section-title">{text.tileTray}<small>{text.tileTrayHelp}</small></h2>
             </div>
-            <div className="ldg-chooser" aria-label="Tile target">
+            <div className="ldg-chooser" aria-label={text.tileTarget}>
               <button type="button" className={`ldg-chooser__btn${paletteTarget === 'hand' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('hand')}>{text.closedHand}</button>
               <button type="button" className={`ldg-chooser__btn${paletteTarget === 'wild' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('wild')}>{text.wildTile}</button>
             </div>
             <div className="ldg-palette-drawer">
-              <div className="ldg-palette-drawer__head">Adding to {paletteTarget === 'hand' ? text.closedHand : text.wildTile}</div>
+              <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : text.wildTile}</div>
               <PaletteGrid onTileClick={paletteTarget === 'hand' ? addTile : selectWild} usedCounts={paletteTarget === 'hand' ? usedCounts : new Map()} selectedTile={paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
           <details className="advanced-setup">
-          <summary>Advanced setup <span>open meld count</span></summary>
+          <summary>{text.advancedSetup} <span>{text.advancedSetupHelp}</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
