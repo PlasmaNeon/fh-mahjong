@@ -52,8 +52,10 @@ type Game struct {
 
 // MatchOptions configures a freshly constructed Game. The zero value
 // yields the project's classic match (endless hands, random dealer per
-// hand, players start at 0). When Mode == MATCH_MODE_CHONGCI,
-// ChongciConfig must be non-nil and is copied onto State.
+// hand, players start at 0). When Mode == MATCH_MODE_CHONGCI, ChongciConfig
+// must be non-nil and is copied onto State. ChongciConfig may also be set on
+// a classic match to give it a hand/bust cap (e.g. the single-hand private
+// game): the match stays classic (random dealer) but terminates at the cap.
 type MatchOptions struct {
 	Mode          pb.MatchMode
 	ChongciConfig *pb.ChongciConfig
@@ -83,17 +85,22 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 	g.haiteiDrawIndex = -1
 
 	startingScore := int32(0)
-	if mode == pb.MatchMode_MATCH_MODE_CHONGCI {
-		if opts.ChongciConfig == nil {
-			// Defensive: caller passed CHONGCI without a config. Fall back to
-			// the default public-queue config so the engine never produces an
-			// inconsistent state.
-			opts.ChongciConfig = &pb.ChongciConfig{
-				StartingScore: 2000,
-				BustThreshold: 0,
-				MaxHands:      50,
-			}
+	if mode == pb.MatchMode_MATCH_MODE_CHONGCI && opts.ChongciConfig == nil {
+		// Defensive: caller passed CHONGCI without a config. Fall back to
+		// the default public-queue config so the engine never produces an
+		// inconsistent state.
+		opts.ChongciConfig = &pb.ChongciConfig{
+			StartingScore: 2000,
+			BustThreshold: 0,
+			MaxHands:      50,
 		}
+	}
+	// A cap config (StartingScore/BustThreshold/MaxHands) makes the match
+	// terminate. Chongci always carries one; classic may carry one too — a
+	// capped classic (e.g. the 1-hand private game) stays classic (random
+	// dealer, its own starting score) but reaches PHASE_MATCH_END. Uncapped
+	// classic leaves ChongciConfig nil and plays endless hands.
+	if opts.ChongciConfig != nil {
 		startingScore = opts.ChongciConfig.StartingScore
 		// Store a copy so future engine mutations cannot leak back to the caller.
 		g.State.ChongciConfig = CloneChongciConfig(opts.ChongciConfig)
@@ -1232,39 +1239,42 @@ func (g *Game) ResolveInterrupts() {
 }
 
 // finalizeRoundEnd is called at every hand-end to set up the next-round
-// transition. In classic mode it just arms PlayerReady so each player must
-// ack before the next hand starts. Chongci-specific behavior (dealer
-// succession, end-of-match detection) is wired into this helper in later
-// tasks; today it preserves the literal PlayerReady initialization that
-// every hand-end site used to perform inline.
+// transition. Chongci applies dealer succession (winner keeps the deal). Any
+// match carrying a cap config (chongci, or a capped classic like the 1-hand
+// private game) ends at PHASE_MATCH_END once the bust/hand cap is hit;
+// otherwise it arms PlayerReady so each player acks before the next hand.
 func (g *Game) finalizeRoundEnd() {
-	if g.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
-		if g.State.RoundResult != nil {
-			if g.State.RoundResult.IsDraw {
-				g.SetNextDealer(g.currentDealerSeat()) // renchan, no honba
-			} else {
-				g.SetNextDealer(g.State.RoundResult.WinnerSeat)
+	// Dealer succession is chongci-specific (the winner keeps the deal).
+	// Classic keeps its random dealer per hand.
+	if g.State.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI && g.State.RoundResult != nil {
+		if g.State.RoundResult.IsDraw {
+			g.SetNextDealer(g.currentDealerSeat()) // renchan, no honba
+		} else {
+			g.SetNextDealer(g.State.RoundResult.WinnerSeat)
+		}
+	}
+	// End-of-match detection applies to any match carrying a cap config —
+	// chongci, or a capped classic like the 1-hand private game.
+	// shouldEndChongciMatch is false when ChongciConfig is nil, so uncapped
+	// classic falls through and plays the next hand.
+	if g.shouldEndChongciMatch() {
+		reason := "bust"
+		cfg := g.State.ChongciConfig
+		if cfg != nil && cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
+			busted := false
+			for _, p := range g.State.Players {
+				if p.Score <= cfg.BustThreshold {
+					busted = true
+					break
+				}
+			}
+			if !busted {
+				reason = "hand_cap"
 			}
 		}
-		if g.shouldEndChongciMatch() {
-			reason := "bust"
-			cfg := g.State.ChongciConfig
-			if cfg != nil && cfg.MaxHands > 0 && g.State.HandNum >= cfg.MaxHands {
-				busted := false
-				for _, p := range g.State.Players {
-					if p.Score <= cfg.BustThreshold {
-						busted = true
-						break
-					}
-				}
-				if !busted {
-					reason = "hand_cap"
-				}
-			}
-			g.State.Phase = pb.GamePhase_PHASE_MATCH_END
-			g.State.MatchEndResult = g.computeMatchEndResult(reason)
-			return
-		}
+		g.State.Phase = pb.GamePhase_PHASE_MATCH_END
+		g.State.MatchEndResult = g.computeMatchEndResult(reason)
+		return
 	}
 	g.State.PlayerReady = []bool{false, false, false, false}
 }

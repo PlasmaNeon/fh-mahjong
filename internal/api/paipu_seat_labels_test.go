@@ -146,3 +146,42 @@ func TestStartPrivateTable_DefaultsToChongciMatch(t *testing.T) {
 		t.Fatalf("started default private table ChongciConfig = %+v, want MaxHands=50", cfg)
 	}
 }
+
+// A private table the host switches to classic must start a single-hand match
+// ("1-hand chongci"): the engine stays in classic mode but carries a 1-hand cap
+// so the game reaches MATCH_END and is recorded as a listable paipu.
+func TestStartPrivateTable_ClassicIsSingleHand(t *testing.T) {
+	hub := NewHub()
+	hub.BindRoom = make(chan RoomBind, 1)
+	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
+	m.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) { return bot.NewPolicy(d) }
+
+	if _, err := m.CreatePrivateTable("t-classic", 101, "alice"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := m.MutatePrivateTable("t-classic", func(pt *PrivateTable) error {
+		if err := pt.setMatchMode("classic", nil); err != nil {
+			return err
+		}
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			return err
+		}
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			return err
+		}
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+	}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if _, err := m.StartPrivateTable("t-classic", 101); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	bind := <-hub.BindRoom
+
+	if got := bind.Room.Engine.State.MatchMode; got != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("classic table MatchMode = %v, want CLASSIC (a capped classic stays classic)", got)
+	}
+	if cfg := bind.Room.Engine.State.ChongciConfig; cfg == nil || cfg.MaxHands != 1 {
+		t.Fatalf("classic table ChongciConfig = %+v, want MaxHands=1 (single-hand cap)", cfg)
+	}
+}

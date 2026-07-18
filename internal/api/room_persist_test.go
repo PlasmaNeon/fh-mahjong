@@ -88,6 +88,38 @@ func TestPersistMatch_CompletedAtMatchEnd(t *testing.T) {
 	}
 }
 
+// End-to-end: a classic private game (single-hand cap) played to its natural
+// end must persist as "completed" with a paipu, so it appears in the paipu
+// library. Regression guard for the "classic never completed" bug.
+func TestPersistMatch_ClassicSingleHandCompletes(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "classic-1hand-persist")
+
+	room := NewRoom("classic-1hand-persist", nil, db, WithMatchOptions(engine.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CLASSIC,
+		ChongciConfig: classicSingleHandConfig(),
+	}))
+	room.registerPaipuPlayers()
+
+	phase := runBotOnlyRoomUntilTerminal(t, room, 200_000)
+	if phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("phase = %v, want PHASE_MATCH_END (handNum=%d)", phase, room.Engine.State.HandNum)
+	}
+
+	room.persistMatch()
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "classic-1hand-persist").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	if row.Status != "completed" {
+		t.Fatalf("status = %q, want completed (a played-out classic game must list)", row.Status)
+	}
+	if row.PaipuJSON == "" {
+		t.Fatal("expected paipu to be persisted for a completed classic game")
+	}
+}
+
 // GAP 3: a server drain (SIGTERM before redeploy) must persist every active
 // room instead of orphaning in_progress rows with empty PaipuJSON.
 func TestDrainActiveRooms_PersistsRunningRoom(t *testing.T) {
