@@ -791,3 +791,25 @@ def test_evaluate_cli_sampling_flag_validation_and_t0_report_unchanged(tmp_path,
                 ["--sample-temperature", "0.5", "--sample-action-family", "bogus", "--duplicate-seats"]):
         with pytest.raises(SystemExit):
             run(["--online-episodes", "1", *bad], report_name="bad.json")
+
+
+def test_event_window_rejects_search_and_sampled_paths(capsys):
+    # CheckpointPolicy (search/sampled) does not thread events yet (B2c):
+    # combining it with a nonzero window must fail fast, not silently
+    # zero-fill event features under a report that claims the window.
+    import pytest as _pytest
+
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+
+    base = ["--checkpoint", "x.pt", "--duplicate-seats", "--event-history-window", "128"]
+    with _pytest.raises(SystemExit):
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", ["fh-mj-evaluate", *base, "--search"])
+            evaluate_cli.main()
+    assert "greedy path" in capsys.readouterr().err
+
+    with _pytest.raises(SystemExit):
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", ["fh-mj-evaluate", *base, "--sample-temperature", "0.8"])
+            evaluate_cli.main()
+    assert "greedy path" in capsys.readouterr().err

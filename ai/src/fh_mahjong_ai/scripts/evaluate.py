@@ -158,6 +158,13 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
+    if args.event_history_window > 0 and (args.search or args.sample_temperature > 0.0):
+        # The search/sampled paths route through CheckpointPolicy, which does
+        # not thread events yet (B2c scope) — the model would silently
+        # zero-fill event features while the report claims the window.
+        parser.error("--event-history-window > 0 supports only the greedy path for now "
+                     "(the search/sampled policies do not thread events yet)")
+
     _search_numeric_flags = (
         "search_determinizations", "search_max_candidates", "search_prior_mass",
         "search_max_rollout_decisions", "search_seed",
