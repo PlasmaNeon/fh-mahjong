@@ -15,6 +15,10 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 512
+	// Application close code sent by the table UI when the player explicitly
+	// leaves. Network drops and refreshes use ordinary WebSocket close codes and
+	// retain the reconnect grace period.
+	intentionalLeaveCloseCode = 4000
 )
 
 // Client tracks a single connected user over a WebSocket
@@ -24,6 +28,9 @@ type Client struct {
 	Send     chan []byte
 	UserID   uint
 	Username string
+	// IntentionalLeave is set by readPump before Unregister is sent, so the room
+	// can release this seat immediately instead of waiting out reconnect grace.
+	IntentionalLeave bool
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -40,7 +47,10 @@ func (c *Client) readPump() {
 	for {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+			if websocket.IsCloseError(err, intentionalLeaveCloseCode) {
+				c.IntentionalLeave = true
+			}
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, intentionalLeaveCloseCode) {
 				log.Printf("error: %v", err)
 			}
 			break

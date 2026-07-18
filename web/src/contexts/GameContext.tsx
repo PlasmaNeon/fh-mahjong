@@ -6,11 +6,13 @@ import { game } from '../proto/game';
 interface GameContextType {
     gameState: any | null;
     mySeatId: number | null;
+    clearGameState: () => void;
 }
 
 const GameContext = createContext<GameContextType>({
     gameState: null,
     mySeatId: null,
+    clearGameState: () => {},
 });
 
 export const useGameState = () => useContext(GameContext);
@@ -19,13 +21,16 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const { socket, isConnected } = useSocket();
     const [gameState, setGameState] = useState<any | null>(null);
     const [mySeatId, setMySeatId] = useState<number | null>(null);
+    const clearGameState = () => {
+        setGameState(null);
+        setMySeatId(null);
+    };
 
     useEffect(() => {
         // A new (or absent) socket means a new connection/room. Drop any state
         // from the previous one so a freshly-opened room never inherits the old
         // game — this is what let distinct room links show the same game.
-        setGameState(null);
-        setMySeatId(null);
+        clearGameState();
 
         if (!socket) return;
 
@@ -66,7 +71,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, [socket]);
 
     return (
-        <GameContext.Provider value={{ gameState, mySeatId }}>
+        <GameContext.Provider value={{ gameState, mySeatId, clearGameState }}>
             {children}
         </GameContext.Provider>
     );
