@@ -136,3 +136,18 @@ def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
     assert cfg.chongci_starting_score == 3333
     assert cfg.chongci_bust_threshold == 111
     assert cfg.chongci_max_hands == 7
+
+
+def test_hindsight_rank_labels_use_reward_scale():
+    # The Go env emits chongci rewards as score deltas / 1000: a seat whose
+    # net reward is -2.5 (i.e. -2500 points) from a 2000-point start is
+    # BUSTED (final -500 <= 0). Mixing raw points with reward-scale nets
+    # reconstructed 1997.5 and labeled it ranked — the corrupted-label bug.
+    from fh_mahjong_ai.oracle import _assemble_hindsight_labels
+
+    rows = [(0, 0), (1, 0), (2, 0), (3, 0)]
+    # Reward-scale final scores: start 2.0 (=2000 pts / 1000) + net deltas.
+    final_scores = {0: 2.0 + 1.5, 1: 2.0 + 1.0, 2: 2.0 - 2.5, 3: 2.0 + 0.0}
+    dealin, rank = _assemble_hindsight_labels(rows, {}, final_scores,
+                                              bust_threshold=0.0, truncated=False)
+    assert rank.tolist() == [0, 1, 4, 2]  # seat 2 busted, NOT ranked
