@@ -760,3 +760,42 @@ func TestChongciStepPathSurfacesRoundOutcomes(t *testing.T) {
 		t.Fatalf("premise: 40 random matches produced only draws — widen the seed range")
 	}
 }
+
+// Multi-hand chongci trajectory exports: every sample's TerminalOutcome must
+// be the MATCH-terminal outcome — intermediate hand outcomes (which the step
+// path now surfaces) must never leak into per-row terminal labels.
+func TestChongciTrajectoryTerminalOutcomeUniform(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 77,
+		Config: &pb.EnvConfig{
+			MaxDecisions: 4000,
+			MatchMode:    pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000, BustThreshold: 0, MaxHands: 3,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("premise: no samples")
+	}
+	last := dataset.Samples[len(dataset.Samples)-1].TerminalOutcome
+	if last == nil {
+		t.Fatalf("terminal sample carries no outcome")
+	}
+	for i, sample := range dataset.Samples {
+		got := sample.TerminalOutcome
+		if got == nil {
+			t.Fatalf("sample %d: nil TerminalOutcome", i)
+		}
+		if got.IsDraw != last.IsDraw || got.WinnerSeat != last.WinnerSeat ||
+			got.WinType != last.WinType || got.DiscarderSeat != last.DiscarderSeat ||
+			got.TotalScore != last.TotalScore {
+			t.Fatalf("sample %d: TerminalOutcome differs from match-terminal outcome (%+v vs %+v)", i, got, last)
+		}
+	}
+}

@@ -301,7 +301,6 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 				Truncated:       stepResponse.Truncated,
 				ActingSeat:      seat,
 				EpisodeIndex:    uint64(episode),
-				TerminalOutcome: cloneRoundOutcome(stepResponse.RoundOutcome),
 			}
 			episodeSamples = append(episodeSamples, sample)
 			observation = cloneObservation(stepResponse.Observation)
@@ -324,9 +323,11 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 
 		for _, sample := range episodeSamples {
 			sample.TerminalRewards = append([]float32(nil), finalRewards...)
-			if sample.TerminalOutcome == nil {
-				sample.TerminalOutcome = cloneRoundOutcome(resetResponse.RoundOutcome)
-			}
+			// TerminalOutcome is the MATCH-terminal outcome for every row.
+			// resetResponse holds the episode's final response here; per-step
+			// outcomes (chongci hand boundaries now surface them) must never
+			// leak into a per-row terminal label.
+			sample.TerminalOutcome = cloneRoundOutcome(resetResponse.RoundOutcome)
 			dataset.Samples = append(dataset.Samples, sample)
 		}
 	}
