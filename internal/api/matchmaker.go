@@ -656,12 +656,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		if m.BotPolicyFactory != nil {
 			roomOptions = append(roomOptions, WithBotPolicy(m.BotPolicyFactory()))
 		}
-		if table.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI && table.ChongciConfig != nil {
-			roomOptions = append(roomOptions, WithMatchOptions(engine.MatchOptions{
-				Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
-				ChongciConfig: engine.CloneChongciConfig(table.ChongciConfig),
-			}))
-		}
+		roomOptions = append(roomOptions, WithMatchOptions(matchOptionsForPrivateTable(table)))
 		room = NewRoom(matchID, m.Hub, m.DB, roomOptions...)
 		room.PaipuStore = m.PaipuStore
 		room.PrivateTableID = tableID
@@ -749,6 +744,38 @@ func defaultChongciConfig() *pb.ChongciConfig {
 		StartingScore: 2000,
 		BustThreshold: 0,
 		MaxHands:      50,
+	}
+}
+
+// classicSingleHandConfig makes a private "classic" table a single-hand match
+// ("a 1-hand chongci"): players start at 0 (the classic baseline) and the match
+// ends after exactly one hand, so it reaches PHASE_MATCH_END, persists as
+// completed, and appears in the paipu library. The bust threshold is set far
+// below any reachable single-hand score so the match always ends on the hand
+// cap (never a misleading "bust"). The engine keeps MatchMode == CLASSIC (random
+// dealer), so the in-game chongci UI stays hidden.
+func classicSingleHandConfig() *pb.ChongciConfig {
+	return &pb.ChongciConfig{
+		StartingScore: 0,
+		BustThreshold: -1_000_000,
+		MaxHands:      1,
+	}
+}
+
+// matchOptionsForPrivateTable maps a configured private table to the engine
+// MatchOptions its match should run with. Chongci tables carry their host
+// config; every other table (classic, the default) runs the single-hand classic
+// match so it can complete and be recorded.
+func matchOptionsForPrivateTable(t *PrivateTable) engine.MatchOptions {
+	if t.MatchMode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		return engine.MatchOptions{
+			Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: engine.CloneChongciConfig(t.ChongciConfig),
+		}
+	}
+	return engine.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CLASSIC,
+		ChongciConfig: classicSingleHandConfig(),
 	}
 }
 

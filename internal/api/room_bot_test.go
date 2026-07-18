@@ -263,3 +263,30 @@ func TestRoom_ChongciHandCap_Terminates(t *testing.T) {
 			})
 	}
 }
+
+// Classic mode carrying a single-hand cap ("1-hand chongci") must reach
+// PHASE_MATCH_END after one hand so the game persists as completed and appears
+// in the paipu library — while STAYING in classic mode (random dealer, start
+// at 0), so the in-game chongci UI stays hidden.
+func TestRoom_ClassicSingleHand_TerminatesViaPhaseMatchEnd(t *testing.T) {
+	cfg := &pb.ChongciConfig{
+		StartingScore: 0,
+		BustThreshold: -1_000_000, // effectively no bust in a single hand
+		MaxHands:      1,          // end after one hand
+	}
+	room := NewRoom("classic-1hand-test", nil, nil, WithMatchOptions(engine.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CLASSIC,
+		ChongciConfig: cfg,
+	}))
+
+	phase := runBotOnlyRoomUntilTerminal(t, room, 200_000)
+	if phase != pb.GamePhase_PHASE_MATCH_END {
+		t.Fatalf("phase = %v, want PHASE_MATCH_END (handNum=%d)", phase, room.Engine.State.HandNum)
+	}
+	if room.Engine.State.MatchMode != pb.MatchMode_MATCH_MODE_CLASSIC {
+		t.Fatalf("MatchMode = %v, want CLASSIC (a capped classic stays classic)", room.Engine.State.MatchMode)
+	}
+	if r := room.Engine.State.MatchEndResult; r == nil || len(r.Standings) != 4 {
+		t.Fatalf("MatchEndResult = %+v, want 4 standings", r)
+	}
+}
