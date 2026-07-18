@@ -50,6 +50,9 @@ type Hub struct {
 
 	// Room binding requests
 	BindRoom chan RoomBind
+	// Room shutdown notifications. The hub owns UserRooms, so room goroutines
+	// hand cleanup back here instead of mutating that map concurrently.
+	UnbindRoom chan *Room
 
 	// Lobby announcements
 	LobbyBroadcast chan []byte
@@ -60,10 +63,13 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		ActionStream:   make(chan ClientAction),
-		Register:       make(chan *Client),
-		Unregister:     make(chan *Client),
-		BindRoom:       make(chan RoomBind),
+		ActionStream: make(chan ClientAction),
+		Register:     make(chan *Client),
+		Unregister:   make(chan *Client),
+		BindRoom:     make(chan RoomBind),
+		// Buffered so a room can finish and close Done even when the hub is
+		// momentarily routing that room's final in-flight action.
+		UnbindRoom:     make(chan *Room, 256),
 		LobbyBroadcast: make(chan []byte),
 		Clients:        make(map[*Client]bool),
 		UserRooms:      make(map[uint]*Room),
@@ -109,7 +115,11 @@ func (h *Hub) Run() {
 		case payload := <-h.ActionStream:
 			// Route standard action to the specific match room
 			if room, exists := h.UserRooms[payload.Client.UserID]; exists {
-				room.ActionQueue <- payload
+				select {
+				case room.ActionQueue <- payload:
+				case <-room.Done:
+					log.Printf("User %d submitted action as room %s shut down", payload.Client.UserID, room.ID)
+				}
 			} else {
 				log.Printf("User %d submitted action but is not in a room", payload.Client.UserID)
 			}
@@ -134,6 +144,8 @@ func (h *Hub) Run() {
 			}
 			// Engine and web sockets are wired, start the room loop
 			go bind.Room.Start()
+		case room := <-h.UnbindRoom:
+			h.unbindRoom(room)
 		case msg := <-h.LobbyBroadcast:
 			// Broadcast JSON text message to all clients not currently in a room
 			for client := range h.Clients {
@@ -146,6 +158,15 @@ func (h *Hub) Run() {
 					}
 				}
 			}
+		}
+	}
+}
+
+func (h *Hub) unbindRoom(room *Room) {
+	for userID, currentRoom := range h.UserRooms {
+		// A late shutdown from an old room must not erase a newer assignment.
+		if currentRoom == room {
+			delete(h.UserRooms, userID)
 		}
 	}
 }

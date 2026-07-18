@@ -64,7 +64,7 @@ Paipu library and replay viewer. Routes: `/replay`, `/replay/:matchId`.
 
 Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/match/:matchId` (Game).
 
-- **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower reveal handling, and live round-result action buttons. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableScene.tsx`. Keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Uses tab-scoped private-room session helper for refresh reconnects.
+- **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower reveal handling, and live round-result action buttons. Intentional exits clear local game state and close the WebSocket with application code `4000`, allowing the server to release the seat immediately while ordinary refreshes retain reconnect grace. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableScene.tsx`. Keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Uses tab-scoped private-room session helper for refresh reconnects.
 - **Table.tsx** — Private-table waiting screen with persistent Share Table, disclosed rules, and one sticky host Start Match action.
 - **SeatCard.tsx** — Single seat plaque. Empty seats expose one default Add AI action; AI type is an advanced disclosure.
 - **actionOrdering.ts** — Pure live action priority: wins first, calls next, Pass last.

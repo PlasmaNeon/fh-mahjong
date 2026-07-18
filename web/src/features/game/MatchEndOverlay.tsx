@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { game } from '../../proto/game';
 import { GameDialog } from '../../theme';
 import { useI18n } from '../../i18n/I18nContext';
+import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../contexts/SocketContext';
+import { useGameState } from '../../contexts/GameContext';
 
 type Props = {
     state: game.IGameState;
@@ -20,6 +22,8 @@ const rankLabel = (rank: number) => {
 export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
     const navigate = useNavigate();
     const { t, shortLanguage } = useI18n();
+    const { disconnect } = useSocket();
+    const { clearGameState } = useGameState();
     const result = state.matchEndResult;
     if (!result || !result.standings) return null;
 
@@ -30,7 +34,11 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
             tone="win"
             actions={<>
                 {matchId && <button onClick={() => navigate(`/replay/${matchId}`)} className="ldg-btn">{t('game.watchReplay')}</button>}
-                <button onClick={() => navigate('/')} className="ldg-btn ldg-btn--primary">{t('game.backClub')}</button>
+                <button onClick={() => {
+                    clearGameState();
+                    disconnect(MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON);
+                    navigate('/');
+                }} className="ldg-btn ldg-btn--primary">{t('game.backClub')}</button>
             </>}
         >
                 <div className="match-standings">
@@ -46,7 +54,7 @@ export default function MatchEndOverlay({ state, seatNames, matchId }: Props) {
                         <tbody>
                             {result.standings.map(s => {
                                 const seat = Number(s.seat ?? 0);
-                                const name = seatNames[seat] ?? `Seat ${seat}`;
+                                const name = seatNames[seat] ?? t('common.seat', { seat });
                                 const net = Number(s.netChange ?? 0);
                                 return (
                                     <tr key={seat}>

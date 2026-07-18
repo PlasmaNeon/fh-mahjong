@@ -733,15 +733,22 @@ func defaultMatchOptionsFor(ruleset string) (engine.MatchOptions, bool) {
 	switch ruleset {
 	case "chongci-fh":
 		return engine.MatchOptions{
-			Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
-			ChongciConfig: &pb.ChongciConfig{
-				StartingScore: 2000,
-				BustThreshold: 0,
-				MaxHands:      50,
-			},
+			Mode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: defaultChongciConfig(),
 		}, true
 	default:
 		return engine.MatchOptions{}, false
+	}
+}
+
+// defaultChongciConfig is the canonical starting configuration shared by the
+// public chongci queue and private tables: bust-at-zero from 2000 points,
+// capped at 50 hands. Kept in one place so the two defaults cannot drift.
+func defaultChongciConfig() *pb.ChongciConfig {
+	return &pb.ChongciConfig{
+		StartingScore: 2000,
+		BustThreshold: 0,
+		MaxHands:      50,
 	}
 }
 
