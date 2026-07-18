@@ -23,13 +23,15 @@ This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin tha
   - `GetValidActions()` — Discard, Kan, Tsumo for active player. Kan (concealed 4-of-a-kind or added kan upgrading an open Pon) and Tsumo are gated on `player.DrawnTileId != nil`: they're only offered on the player's own turn after a wall/dead-wall draw, never immediately after a Pon/Chii steal (the engine clears `DrawnTileId` on a steal). This prevents the illegal kan-after-pon. Non-wild flower handling is owned by `engine.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
   - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
   - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1), with same-priority ties resolved by ascending seat for deterministic RL replay
-  - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
+  - Four Flowers (四花, 150) requires a COMPLETE group of one kind — seasons 春夏秋冬 (values 1-4) or plants 梅兰菊竹 (values 5-8) — via `hasCompleteFlowerGroup()`; four flowers spanning both groups do not qualify
+  - Own Flower (花, +2) matches a flower to the winner's seat wind through `flowerSeatWind()` = `((value-1) % 4) + 1`; BOTH groups map onto the seats (春/梅 East, 夏/兰 South, 秋/菊 West, 冬/竹 North), so never compare a raw flower value against `SeatWind`
+  - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `hasCompleteFlowerGroup`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
 
 - **fh_test.go** — Extensive test suite covering all 35+ patterns:
   - CommonWin, Independence, SevenPairs, Loner, AllPung, MixedOneSuit, PureOneSuit
-  - DragonPung, WindPung, OwnFlower, KongBonuses, WaitPatterns, PairCall
+  - DragonPung, WindPung, OwnFlower (both flower groups mapped onto seats), KongBonuses, WaitPatterns, PairCall
   - Wild tile injection (0/1/2/3 wilds), Tame Wild
-  - FlowerBonus (4 flowers, 8 flowers)
+  - FlowerBonus (4 flowers, 8 flowers), Four Flowers complete-group requirement
   - InterruptPriority resolution and deterministic same-priority tie-breaking
 
 - **shanten/** — Shared progress-analysis subpackage:

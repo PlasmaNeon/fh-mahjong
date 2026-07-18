@@ -121,8 +121,8 @@ All bonuses are additive on top of the base. Multiple bonuses can combine.
 - **Completed All Honors (清老头)**: 800 (All honors forming a valid standard hand).
 
 ### Flower Patterns
-- **Own Flower (花)**: +2 (Melded flower matching player's seat wind position).
-- **Four Flowers (四花)**: 150 (Four melded flowers of one kind — seasons or flowers).
+- **Own Flower (花)**: +2 (Melded flower matching player's seat wind position). Both groups map onto the seats: 春/梅 East, 夏/兰 South, 秋/菊 West, 冬/竹 North — so a plant flower scores exactly like the matching season.
+- **Four Flowers (四花)**: 150 (A COMPLETE group of one kind — 春夏秋冬 or 梅兰菊竹). Any four flowers spanning both groups do not qualify.
 - **Uncompleted Eight Flowers (八花直胡)**: 400 (Win by 8 melded flowers alone).
 - **Completed Eight Flowers (八花搓胡)**: 800 (8 melded flowers + completing a normal winning hand).
 

@@ -383,7 +383,7 @@ func (e *handEvaluation) applyFlowers(entries []*pb.ScoreEntry, canWin bool) ([]
 		} else {
 			entries = append(entries, NewScoreEntry(PatternCompletedEightFlowers, 800))
 		}
-	} else if len(myFlowers) >= 4 {
+	} else if hasCompleteFlowerGroup(myFlowers) {
 		entries = append(entries, NewScoreEntry(PatternFourFlowers, 150))
 	}
 
@@ -1170,13 +1170,53 @@ func (r *FenghuaRuleset) hasPungOfValue(hand []*pb.Tile, openMelds []*pb.Meld, s
 	return count >= 3
 }
 
+// hasCompleteFlowerGroup reports whether the melded flowers contain a full set
+// of ONE kind: the seasons 春夏秋冬 (values 1-4) or the plants 梅兰菊竹
+// (values 5-8). Four flowers spanning both groups do NOT score 四花.
+func hasCompleteFlowerGroup(myFlowers []*pb.Tile) bool {
+	var seasons, flowers [4]bool
+	for _, f := range myFlowers {
+		if f == nil || f.Suit != pb.Suit_SUIT_FLOWER {
+			continue
+		}
+		switch {
+		case f.Value >= 1 && f.Value <= 4:
+			seasons[f.Value-1] = true
+		case f.Value >= 5 && f.Value <= 8:
+			flowers[f.Value-5] = true
+		}
+	}
+	complete := func(group [4]bool) bool {
+		for _, present := range group {
+			if !present {
+				return false
+			}
+		}
+		return true
+	}
+	return complete(seasons) || complete(flowers)
+}
+
+// flowerSeatWind maps a flower tile value onto the seat wind it belongs to.
+// Both groups run East→South→West→North: 春/梅 East, 夏/兰 South, 秋/菊 West,
+// 冬/竹 North. Returns 0 for anything outside the 1-8 flower range.
+func flowerSeatWind(value uint32) uint32 {
+	if value < 1 || value > 8 {
+		return 0
+	}
+	return ((value - 1) % 4) + 1
+}
+
 func getFlowerBonuses(myFlowers []*pb.Tile, playerSeat uint32, state *pb.GameState) int32 {
 	var points int32
 	if state != nil && int(playerSeat) < len(state.Players) && state.Players[playerSeat] != nil {
 		seatWind := state.Players[playerSeat].SeatWind
 		if seatWind > 0 {
 			for _, f := range myFlowers {
-				if f.Value == seatWind {
+				if f == nil {
+					continue
+				}
+				if flowerSeatWind(f.Value) == seatWind {
 					points += 2 // Own flower
 				}
 			}
