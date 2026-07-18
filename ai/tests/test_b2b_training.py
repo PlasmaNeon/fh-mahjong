@@ -105,3 +105,34 @@ def test_train_b2b_two_iters_mock(tmp_path):
     assert (tmp_path / "ckpt" / "iter_002.pt").exists()
     for key in ("belief_loss", "dealin_loss", "rank_loss"):
         assert key in history[0]
+
+
+def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
+    # The bridge must simulate under the SAME chongci values the hindsight
+    # labels are computed with — a silent mismatch here mislabels every rank.
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.bridge import build_bridge as real_build_bridge
+
+    captured = {}
+
+    def capturing_build_bridge(cfg):
+        captured["cfg"] = cfg
+        return real_build_bridge(cfg)
+
+    monkeypatch.setattr(oracle_mod, "build_bridge", capturing_build_bridge)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16,
+                    chongci_starting_score=3333, chongci_bust_threshold=111,
+                    chongci_max_hands=7)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**_SMALL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
+                       match_mode="chongci")
+    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    collect_b2b_rollouts(env, model, config, base_seed=3)
+    cfg = captured["cfg"]
+    assert cfg.chongci_starting_score == 3333
+    assert cfg.chongci_bust_threshold == 111
+    assert cfg.chongci_max_hands == 7

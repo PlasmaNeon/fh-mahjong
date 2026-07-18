@@ -663,15 +663,20 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         auto_play_heuristics=False,
         max_steps_per_episode=config.max_steps_per_episode,
         match_mode=config.match_mode,
+        chongci_starting_score=env_config.chongci_starting_score,
+        chongci_bust_threshold=env_config.chongci_bust_threshold,
+        chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=True,
         event_history_window=window,
     )
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)
     model.eval()
+    # Label parameters read from `cfg` — the SAME config the bridge simulates
+    # under — so hindsight ranks can never diverge from the played match.
     chongci = config.match_mode == "chongci"
-    starting_score = float(env_config.chongci_starting_score) if chongci else 0.0
-    bust_threshold = float(env_config.chongci_bust_threshold) if chongci else float("-inf")
+    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
+    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
     planes_l, scalars_l, mask_l, actions_l = [], [], [], []
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
     events_l, lengths_l, dealin_l, rank_l = [], [], [], []
