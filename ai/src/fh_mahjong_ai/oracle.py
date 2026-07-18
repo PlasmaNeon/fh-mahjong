@@ -675,11 +675,13 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     # Label parameters read from `cfg` — the SAME config the bridge simulates
     # under — so hindsight ranks can never diverge from the played match.
     # UNITS: the Go env emits chongci rewards as score deltas / 1000
-    # (internal/rl/env.go), so the raw-point starting score and bust
-    # threshold are converted to the SAME reward scale before summing.
+    # (internal/rl/env.go) in float32. Labels are computed in EXACT integer
+    # points: the accumulated float net is scaled back by 1000 and rounded
+    # (float32 drift over a match is << 0.5 points), so exact-threshold
+    # busts and score ties cannot flip on rounding order.
     chongci = config.match_mode == "chongci"
-    starting_score = float(cfg.chongci_starting_score) / 1000.0 if chongci else 0.0
-    bust_threshold = float(cfg.chongci_bust_threshold) / 1000.0 if chongci else float("-inf")
+    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
+    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
     planes_l, scalars_l, mask_l, actions_l = [], [], [], []
     logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
     events_l, lengths_l, dealin_l, rank_l = [], [], [], []
@@ -765,7 +767,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             is_truncated = bool(step.truncated) if step is not None else False
             if is_truncated:
                 truncated_matches += 1
-            final_scores = {k: starting_score + float(match_net[k]) for k in range(4)}
+            final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
             rows: list[tuple[int, int]] = []
             for k in range(4):
                 rows.extend((k, hid) for hid in seat_hand_ids[k])

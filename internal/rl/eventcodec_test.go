@@ -799,3 +799,86 @@ func TestChongciTrajectoryTerminalOutcomeUniform(t *testing.T) {
 		}
 	}
 }
+
+// Single-learning-seat autoplay (the EVAL configuration): the terminal
+// response must describe the match-ending hand even when whole hands
+// resolve between the learning seat's decisions — a stale pending outcome
+// must never be promoted to the terminal label.
+func TestChongciSingleSeatTerminalOutcome(t *testing.T) {
+	config := &pb.EnvConfig{
+		LearningSeats:      []uint32{0},
+		AutoPlayHeuristics: true,
+		MaxDecisions:       6000,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 3},
+	}
+	terminals := 0
+	for seed := uint64(300); seed < 320; seed++ {
+		env := New(config)
+		reset, err := env.Reset(&pb.EnvResetRequest{Seed: seed, Config: config})
+		if err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		if reset.Terminated {
+			continue
+		}
+		obs := reset.Observation
+		rng := rand.New(rand.NewSource(int64(seed)))
+		for step := 0; obs != nil && step < 6000; step++ {
+			aid, ok := randomLegalActionID(obs.ActionMask, rng)
+			if !ok {
+				break
+			}
+			sr, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(aid)})
+			if err != nil {
+				t.Fatalf("seed %d step %d: %v", seed, step, err)
+			}
+			if sr.Terminated {
+				terminals++
+				if sr.RoundOutcome == nil {
+					t.Fatalf("seed %d: single-seat terminal response carried no RoundOutcome", seed)
+				}
+				break
+			}
+			if sr.Truncated {
+				break
+			}
+			obs = sr.Observation
+		}
+	}
+	if terminals == 0 {
+		t.Fatalf("premise: no match terminated across 20 seeds")
+	}
+}
+
+// Truncated trajectory episodes must NOT promote a completed-hand outcome
+// to a match-terminal label — TerminalOutcome stays nil on truncation.
+func TestTruncatedTrajectoryHasNoTerminalOutcome(t *testing.T) {
+	env := New(nil)
+	dataset, err := env.GenerateHeuristicTrajectory(&pb.TrajectoryRequest{
+		Episodes:  1,
+		StartSeed: 88,
+		Config: &pb.EnvConfig{
+			MaxDecisions: 40, // far too small for a chongci match: guaranteed truncation
+			MatchMode:    pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{
+				StartingScore: 2000, BustThreshold: 0, MaxHands: 50,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+	if len(dataset.Samples) == 0 {
+		t.Fatalf("premise: no samples")
+	}
+	last := dataset.Samples[len(dataset.Samples)-1]
+	if !last.Truncated {
+		t.Fatalf("premise: episode did not truncate (MaxDecisions too high?)")
+	}
+	for i, sample := range dataset.Samples {
+		if sample.TerminalOutcome != nil {
+			t.Fatalf("sample %d: truncated episode carries TerminalOutcome %+v", i, sample.TerminalOutcome)
+		}
+	}
+}

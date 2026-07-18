@@ -239,3 +239,58 @@ def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
     # seats 1/2 = 2.0. Ranks: seat3=0, {seat1,seat2}={1,2} by seat order,
     # seat0=3. Rows are seat-contiguous: seat 0 has 2 rows, seat 1 has 1.
     assert batch.rank_labels.tolist() == [3, 3, 1]
+
+
+def test_rank_labels_exact_at_bust_threshold(monkeypatch):
+    # float32 reward accumulation must not flip an exact-threshold bust:
+    # 20 deltas of -0.1 (float32) sum to ~-2.0000001; integer-point rounding
+    # reconstructs exactly -2000, so start 2000 -> final 0 <= 0 -> BUSTED.
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai.types import Observation, StepResult
+
+    rng = np.random.default_rng(1)
+
+    def _obs(seat):
+        mask = np.zeros(204, dtype=np.int8)
+        mask[:4] = 1
+        return Observation(
+            seat=seat,
+            planes=rng.random((51, 42, 1), dtype=np.float32),
+            scalars=rng.random(58, dtype=np.float32),
+            action_mask=mask,
+            event_history=np.asarray([0x140], dtype=np.uint32),
+        )
+
+    class _DriftEnv:
+        def __init__(self, cfg, bridge=None):
+            self.last_reset_result = None
+            self._t = 0
+
+        def reset(self, seed=None):
+            self._t = 0
+            self.last_reset_result = StepResult(
+                observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                terminated=False, truncated=False, info={})
+            return _obs(0)
+
+        def step(self, action):
+            self._t += 1
+            rewards = np.asarray([np.float32(-0.1), np.float32(0.1), 0.0, 0.0], dtype=np.float32)
+            terminated = self._t >= 20
+            return StepResult(observation=_obs(0), rewards=rewards,
+                              terminated=terminated, truncated=False, info={})
+
+    monkeypatch.setattr(oracle_mod, "MahjongEnv", _DriftEnv)
+    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=64)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**_SMALL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=64,
+                       match_mode="chongci")
+    batch = collect_b2b_rollouts(env, model, config, base_seed=2)
+    # Seat 0 ends at exactly the bust threshold (2000 - 2000 = 0 <= 0): BUSTED.
+    assert set(batch.rank_labels[:1].tolist()) == {4}

@@ -323,11 +323,14 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 
 		for _, sample := range episodeSamples {
 			sample.TerminalRewards = append([]float32(nil), finalRewards...)
-			// TerminalOutcome is the MATCH-terminal outcome for every row.
-			// resetResponse holds the episode's final response here; per-step
-			// outcomes (chongci hand boundaries now surface them) must never
-			// leak into a per-row terminal label.
-			sample.TerminalOutcome = cloneRoundOutcome(resetResponse.RoundOutcome)
+			// TerminalOutcome is the MATCH-terminal outcome for every row,
+			// set only when the episode genuinely TERMINATED. A truncated
+			// episode's final response may carry a completed-HAND outcome
+			// (the step path surfaces boundary outcomes) — promoting that to
+			// a terminal label would mislabel the whole episode.
+			if resetResponse.Terminated {
+				sample.TerminalOutcome = cloneRoundOutcome(resetResponse.RoundOutcome)
+			}
 			dataset.Samples = append(dataset.Samples, sample)
 		}
 	}
@@ -338,14 +341,17 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 	for {
 		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
-			// The final hand transitions straight to MATCH_END without the
-			// ROUND_END capture, so fall back to the live RoundResult — the
-			// match-ending hand (often the bust-causing ron) must not be the
-			// one hand trainers cannot label.
-			outcome := e.takePendingRoundOutcome()
+			// The terminal response must describe the MATCH-ENDING hand.
+			// Prefer the live RoundResult (still set at MATCH_END); a pending
+			// outcome may be a PRIOR hand's, captured at a boundary and never
+			// delivered because no learning-seat decision occurred before the
+			// match ended (single-learning-seat autoplay). Discard it rather
+			// than misattribute it.
+			outcome := roundOutcome(e.game.State)
 			if outcome == nil {
-				outcome = roundOutcome(e.game.State)
+				outcome = e.pendingRoundOutcome
 			}
+			e.pendingRoundOutcome = nil
 			return &pb.EnvStepResponse{
 				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
 				Rewards:      e.scoreDeltaReward(),
