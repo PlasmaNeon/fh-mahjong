@@ -374,3 +374,60 @@ def test_rank_labels_share_competition_rank_on_ties():
     _, rankb = _assemble_hindsight_labels(rows, {}, {0: 1500.0, 1: 1500.0, 2: -100.0, 3: 4000.0},
                                           bust_threshold=0.0, truncated=False)
     assert rankb.tolist() == [1, 1, 4, 0]
+
+
+def test_warm_start_rejects_architecture_mismatch(tmp_path):
+    # A 2-block B2b config warm-started from a 4-block champion silently
+    # dropped champion layers (step-0 logits drifted) — it must fail closed.
+    import pytest as _pytest
+
+    env39 = EnvConfig(bridge_kind="mock")
+    champion4 = PolicyValueNet(env39, ModelConfig(**{**_SMALL, "residual_blocks": 2}))
+    path = tmp_path / "champion4.pt"
+    from fh_mahjong_ai.storage import save_checkpoint as _save
+    _save(path, champion4)
+
+    mismatched = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    assert mismatched.residual_blocks == 1  # differs from the 2-block champion
+    with _pytest.raises(RuntimeError, match="architecturally incompatible"):
+        build_b2b_model(env39, mismatched, path)
+
+
+def test_train_b2b_halts_on_truncation_rate(tmp_path, monkeypatch):
+    # Truncated matches keep censored returns; a rising truncation rate is
+    # the stall-exploit signature and must halt the run loudly.
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.oracle import train_b2b
+    from fh_mahjong_ai.ppo import RolloutBatch
+
+    def _all_truncated_collect(env_config, model, config, base_seed):
+        n = 8
+        rng = np.random.default_rng(0)
+        return RolloutBatch(
+            planes=rng.random((n, 51, 42, 1), dtype=np.float32),
+            scalars=rng.random((n, 58), dtype=np.float32),
+            action_mask=np.ones((n, 204), dtype=np.int8),
+            actions=rng.integers(0, 204, size=n),
+            old_logprobs=(rng.random(n) * -1).astype(np.float32),
+            values=rng.random(n).astype(np.float32),
+            rewards=rng.random(n).astype(np.float32),
+            dones=np.ones(n, dtype=np.float32),
+            truncated_matches=2,  # 2 of 2 matches truncated
+            events=rng.integers(0, 0x10000, size=(n, 8), dtype=np.uint32),
+            event_lengths=rng.integers(0, 9, size=n).astype(np.int32),
+            dealin_labels=np.zeros(n, dtype=np.float32),
+            rank_labels=np.full(n, -1, dtype=np.int64),
+        )
+
+    monkeypatch.setattr(oracle_mod, "collect_b2b_rollouts", _all_truncated_collect)
+
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="chongci")
+    with pytest.raises(RuntimeError, match="truncation rate"):
+        train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+                                   aux_heads=True),
+                  champion_path, tmp_path / "ckpt2", config, base_seed=9)

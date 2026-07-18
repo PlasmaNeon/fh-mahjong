@@ -578,8 +578,25 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
     building a B2b net from an oracle env_config should first pass it through
     `_b2b_model_env_config`."""
     model = PolicyValueNet(env_config, model_config).to(device)
-    load_compatible_checkpoint(Path(champion_checkpoint), model)
+    _, report = load_compatible_checkpoint(Path(champion_checkpoint), model)
     payload = torch.load(Path(champion_checkpoint), map_location="cpu")
+    # FAIL CLOSED on architecture mismatch: every champion tensor must either
+    # load same-shape or be one of the two explicitly-widened tensors the
+    # surgery below repairs. Anything else (e.g. a residual-block count
+    # mismatch) would silently drop champion layers and break the step-0
+    # equivalence invariant.
+    surgical = {"trunk.0.weight", "value_head.0.weight"}
+    new_module_prefixes = ("event_encoder.", "privileged_encoder.",
+                           "belief_head.", "dealin_head.", "rank_head.")
+    bad_skipped = [k for k in report["skipped_keys"] if k not in surgical]
+    bad_missing = [k for k in report["missing_keys"]
+                   if k not in surgical and not k.startswith(new_module_prefixes)]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "champion checkpoint is architecturally incompatible with the B2b model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — check "
+            "--model-residual-blocks and width flags against the champion"
+        )
     old_trunk_w = payload["model"]["trunk.0.weight"]      # [T, P+S]
     old_value_w = payload["model"]["value_head.0.weight"]  # [V, T]
     with torch.no_grad():
@@ -974,6 +991,22 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
             if batch.rank_labels is not None:
                 metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+            metrics["truncated_matches"] = int(batch.truncated_matches)
+            matches_total = max(1, int(config.matches_per_iter))
+            truncation_rate = batch.truncated_matches / matches_total
+            metrics["truncation_rate"] = float(truncation_rate)
+            if truncation_rate > 0.02:
+                # Truncated matches keep censored partial returns with done=1
+                # (the champion recipe's semantics; truncations were ~0 at
+                # max-steps 4000). A policy could exploit that by stalling
+                # into the cap — a rising rate is that exploit's signature,
+                # so the run halts loudly instead of optimizing it.
+                raise RuntimeError(
+                    f"iter {iteration}: truncation rate {truncation_rate:.1%} exceeds 2% — "
+                    "a stalling policy can exploit censored truncation returns; "
+                    "investigate before continuing (raise max_steps_per_episode or "
+                    "inspect the policy)"
+                )
             save_checkpoint(
                 checkpoint_dir / f"iter_{iteration:03d}.pt", model,
                 # Pins the trained horizon/architecture so fh-mj-evaluate can
