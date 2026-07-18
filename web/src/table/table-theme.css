@@ -259,9 +259,16 @@
   filter: drop-shadow(0 3px 2px rgba(0,0,0,0.36));
   transition: transform 120ms ease, filter 120ms ease;
 }
-.mahjong-tile.interactive:hover { transform: translateY(-9px) rotate(-1deg); filter: brightness(1.05) drop-shadow(0 10px 8px rgba(0,0,0,0.36)); }
-.mahjong-tile.lifted { transform: translateY(-14px); filter: brightness(1.08) drop-shadow(0 0 8px rgba(230,161,92,0.85)) drop-shadow(0 12px 10px rgba(0,0,0,0.4)); z-index: 20; }
-.mahjong-tile.lifted.interactive:hover { transform: translateY(-16px) rotate(-1deg); }
+/* Self-hand tiles are clickable. Hover must NOT look like a lift: in double-click
+   mode a hover only highlights (no raise) — a raise means the tile is lifted.
+   Single-click mode keeps the raise as a "this tap discards" cue. The :not(.lifted)
+   guard leaves a lifted tile's raise governed solely by the .lifted rule below. */
+.game-stage .mahjong-tile.interactive { cursor: pointer; }
+.game-stage[data-discard-mode="double"] .mahjong-tile.interactive:not(.lifted):hover { transform: none; filter: brightness(1.08); }
+.game-stage[data-discard-mode="single"] .mahjong-tile.interactive:not(.lifted):hover { transform: translateY(-9px) rotate(-1deg); filter: brightness(1.08); }
+/* A lifted (selected) tile stays raised. No coloured glow — a brass glow would be
+   indistinguishable from the wild-tile indicator (below); the raise + z-index mark it. */
+.game-stage[data-discard-mode] .mahjong-tile.lifted { transform: translateY(-14px); z-index: 20; }
 .mahjong-tile.wild-tile:not(.mahjong-tile--no-glow) { filter: drop-shadow(0 0 7px rgba(230,161,92,0.95)) drop-shadow(0 5px 3px rgba(0,0,0,0.32)); }
 
 .discard-pool-tile-callable::after,

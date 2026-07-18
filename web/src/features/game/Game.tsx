@@ -481,7 +481,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                 />
             )}
             <div className="game-stage-frame" style={stageFrameStyle}>
-                <div className="game-stage" data-compact={stageLayout.compact ? 'true' : undefined} style={stageStyle}>
+                <div className="game-stage" data-discard-mode={discardMode} data-compact={stageLayout.compact ? 'true' : undefined} style={stageStyle}>
                     <TableBoard
                         viewSeat={mySeatId}
                         players={playerViews}
