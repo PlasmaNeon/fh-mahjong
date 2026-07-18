@@ -342,12 +342,17 @@
 .round-result-payout-positive { background: var(--accent-soft); }
 .round-result-payout-negative { background: var(--danger-soft); }
 .round-result-payout-seat,
-.round-result-payout-ready { color: var(--ink-3); }
+.round-result-payout-status-waiting { color: var(--ink-3); }
+.round-result-payout-status-ready { color: var(--accent-strong); }
 .round-result-payout-positive .round-result-payout-amount { color: var(--accent-strong); }
 .round-result-payout-negative .round-result-payout-amount { color: #9f4032; }
 .round-result-action-btn { min-height: 42px; border-radius: 9px 9px 3px 9px; font-family: var(--mono); letter-spacing: 0.06em; }
 .round-result-action-btn-ready { color: #fff8e9; background: var(--accent-strong); border-color: var(--accent-strong); }
 .round-result-action-btn-exit { color: var(--ink-2); background: transparent; border-color: var(--rule); }
+
+@container round-result (max-height: 500px) and (min-width: 600px) {
+  .round-result-modal::before { display: none; }
+}
 
 @keyframes score-slip-in { from { opacity: 0; transform: translateY(22px) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
 @keyframes seal-land { from { opacity: 0; transform: scale(1.6) rotate(18deg); } to { opacity: 1; transform: scale(1) rotate(8deg); } }

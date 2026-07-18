@@ -10,4 +10,13 @@ describe('round-result demo viewports', () => {
       height: 667,
     })
   })
+
+  it('includes the rotated phone shell shown during live portrait play', () => {
+    expect(ROUND_RESULT_VIEWPORTS).toContainEqual({
+      key: 'rotated-phone',
+      label: 'Rotated phone',
+      width: 667,
+      height: 375,
+    })
+  })
 })

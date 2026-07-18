@@ -79,7 +79,7 @@ Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/mat
 Dev-only preview pages that render real components with mock data (no live match). Not linked from the app UI; reached by URL.
 
 - **TableSample.tsx** — Renders the real `TableBoard` with mock game data so the table layout can be iterated without a live match. Route: `/tools/table-sample`.
-- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so the shared live/replay settlement UI can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · readiness toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own viewport drives the responsive `max-width: 720px` / landscape media queries. Presets include a 375x667 compact iPhone regression target. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
+- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so the shared live/replay settlement UI can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · readiness toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own container drives the responsive layout. Presets include 375x667 compact-iPhone and 667x375 rotated-phone regression targets; the rotated shell is the default. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
 
 ## Architecture Notes
 

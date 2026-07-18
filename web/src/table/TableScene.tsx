@@ -227,7 +227,7 @@ export function TableRoundResultOverlay({
               </section>
 
               {breakdown.length > 0 && (
-                <section className="round-result-section" aria-label={t('result.breakdown')}>
+                <section className="round-result-section round-result-breakdown-section" aria-label={t('result.breakdown')}>
                   <div className="round-result-section-label">{t('result.ledger')}</div>
                   <div className="round-result-breakdown-grid">
                     {breakdown.map((entry, index) => (
