@@ -691,6 +691,15 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
                 continue
+            # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
+            # reset-time autoplay rewards and payouts landing before a seat's
+            # first decision) — the transition-crediting buffers below only
+            # credit seats that have already acted, which is correct for PPO
+            # telescoping but would corrupt final scores for rank labels.
+            match_net = np.zeros(4, dtype=np.float64)
+            if reset_result is not None:
+                rr = np.asarray(reset_result.rewards, dtype=np.float64)
+                match_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
             seat_planes:   list[list] = [[], [], [], []]
             seat_scalars:  list[list] = [[], [], [], []]
             seat_masks:    list[list] = [[], [], [], []]
@@ -741,6 +750,8 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 seat_lengths[seat].append(ev_len)
                 seat_hand_ids[seat].append(hand_id)
                 step = env.step(action)
+                sr = np.asarray(step.rewards, dtype=np.float64)
+                match_net[: min(4, sr.shape[-1])] += sr[: min(4, sr.shape[-1])]
                 for k in range(4):
                     if seat_rewards[k]:
                         seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
@@ -754,7 +765,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             is_truncated = bool(step.truncated) if step is not None else False
             if is_truncated:
                 truncated_matches += 1
-            final_scores = {k: starting_score + float(sum(seat_rewards[k])) for k in range(4)}
+            final_scores = {k: starting_score + float(match_net[k]) for k in range(4)}
             rows: list[tuple[int, int]] = []
             for k in range(4):
                 rows.extend((k, hid) for hid in seat_hand_ids[k])

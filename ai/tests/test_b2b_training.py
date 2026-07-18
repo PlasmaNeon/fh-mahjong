@@ -151,3 +151,91 @@ def test_hindsight_rank_labels_use_reward_scale():
     dealin, rank = _assemble_hindsight_labels(rows, {}, final_scores,
                                               bust_threshold=0.0, truncated=False)
     assert rank.tolist() == [0, 1, 4, 2]  # seat 2 busted, NOT ranked
+
+
+def test_infer_model_config_rejects_b2b_checkpoints(tmp_path):
+    # CheckpointPolicy.from_checkpoint relies on infer_model_config, which
+    # cannot reconstruct B2b modules — it must fail with a CLEAR message
+    # (B2c scope), not a cryptic load_state_dict error.
+    import pytest as _pytest
+
+    from fh_mahjong_ai.model import infer_model_config
+
+    env39 = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env39, ModelConfig(**_SMALL, event_window=8,
+                                              privileged_critic=True, aux_heads=True))
+    with _pytest.raises(RuntimeError, match="Spec B2c"):
+        infer_model_config(model.state_dict())
+
+    # Legacy checkpoints still infer fine.
+    legacy = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    config = infer_model_config(legacy.state_dict())
+    assert config.residual_blocks == 1
+
+
+def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
+    # A payout landing BEFORE a seat's first decision (e.g. dealer tsumo on
+    # the opening hand) must still count toward that seat's final score for
+    # rank labels — the transition-crediting buffers drop it by design.
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai.types import Observation, StepResult
+
+    rng = np.random.default_rng(0)
+
+    def _obs(seat):
+        mask = np.zeros(204, dtype=np.int8)
+        mask[:4] = 1
+        return Observation(
+            seat=seat,
+            planes=rng.random((51, 42, 1), dtype=np.float32),
+            scalars=rng.random(58, dtype=np.float32),
+            action_mask=mask,
+            event_history=np.asarray([0x140], dtype=np.uint32),
+        )
+
+    class _ScriptedEnv:
+        """Seat 0 acts twice; seat 1's only decision comes AFTER a step whose
+        rewards already paid seat 3 (who never acts). Match ends on step 3."""
+
+        def __init__(self, cfg, bridge=None):
+            self.last_reset_result = None
+            self._t = 0
+
+        def reset(self, seed=None):
+            self._t = 0
+            self.last_reset_result = StepResult(
+                observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                terminated=False, truncated=False, info={})
+            return _obs(0)
+
+        def step(self, action):
+            self._t += 1
+            if self._t == 1:
+                # Seat 3 gets paid before ever acting; seat 0 loses.
+                return StepResult(observation=_obs(1),
+                                  rewards=np.asarray([-1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                                  terminated=False, truncated=False, info={})
+            if self._t == 2:
+                return StepResult(observation=_obs(0),
+                                  rewards=np.zeros(4, dtype=np.float32),
+                                  terminated=False, truncated=False, info={})
+            return StepResult(observation=_obs(0),
+                              rewards=np.zeros(4, dtype=np.float32),
+                              terminated=True, truncated=False, info={})
+
+    monkeypatch.setattr(oracle_mod, "MahjongEnv", _ScriptedEnv)
+    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**_SMALL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
+                       match_mode="chongci")
+    batch = collect_b2b_rollouts(env, model, config, base_seed=1)
+    # Final scores (reward scale, start 2.0): seat0 = 1.0, seat3 = 3.0,
+    # seats 1/2 = 2.0. Ranks: seat3=0, {seat1,seat2}={1,2} by seat order,
+    # seat0=3. Rows are seat-contiguous: seat 0 has 2 rows, seat 1 has 1.
+    assert batch.rank_labels.tolist() == [3, 3, 1]

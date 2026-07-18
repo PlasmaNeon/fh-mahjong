@@ -322,6 +322,15 @@ def infer_model_config(state_dict: dict[str, Tensor]) -> ModelConfig:
     architecture is fully determined by tensor shapes — loaders must not
     assume ModelConfig defaults.
     """
+    if any(key.startswith(("event_encoder.", "privileged_encoder.", "belief_head.",
+                           "dealin_head.", "rank_head.")) for key in state_dict):
+        raise RuntimeError(
+            "this checkpoint carries Spec B2b modules (event encoder / privileged critic / "
+            "aux heads), which infer_model_config cannot reconstruct — checkpoint-backed "
+            "serving and self-play for B2b models land in Spec B2c. Evaluate B2b checkpoints "
+            "with fh-mj-evaluate and explicit --model-event-window/--model-privileged-critic/"
+            "--model-aux-heads flags instead."
+        )
     defaults = ModelConfig()
     channels = int(state_dict["plane_stem.0.weight"].shape[0])
     block_indices = {
