@@ -614,8 +614,10 @@ def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[
 
     rank: -1 for every row when `truncated` (no valid final standings, since
     the match never reached a terminal state); otherwise each seat's 0-based
-    placement by descending final score with a stable ascending-seat tiebreak,
-    and 4 for any seat whose score is <= `bust_threshold` (busted seats never
+    COMPETITION rank (the count of non-busted seats with strictly greater
+    score — tied scores SHARE a rank, matching the engine's standings; an
+    arbitrary tiebreak would teach one tied leader it finished second), and
+    4 for any seat whose score is <= `bust_threshold` (busted seats never
     receive a numeric placement)."""
     dealin = np.zeros(len(rows), dtype=np.float32)
     for i, (seat, hand_id) in enumerate(rows):
@@ -632,8 +634,10 @@ def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[
     else:
         seats_sorted = sorted(final_scores)
         non_busted = [s for s in seats_sorted if final_scores[s] > bust_threshold]
-        ranked = sorted(non_busted, key=lambda s: (-final_scores[s], s))
-        rank_by_seat = {s: idx for idx, s in enumerate(ranked)}
+        rank_by_seat = {
+            s: sum(1 for other in non_busted if final_scores[other] > final_scores[s])
+            for s in non_busted
+        }
         for s in seats_sorted:
             rank_by_seat.setdefault(s, 4)
 

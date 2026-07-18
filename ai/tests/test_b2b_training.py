@@ -351,3 +351,26 @@ def test_zero_outcome_chongci_collection_fails_fast(monkeypatch):
                        match_mode="chongci")
     with pytest.raises(RuntimeError, match="rebuild it"):
         collect_b2b_rollouts(env, model, config, base_seed=5)
+
+
+def test_rank_labels_share_competition_rank_on_ties():
+    # Tied scores share a rank (competition ranking, matching the engine's
+    # standings) — an arbitrary tiebreak would teach one tied leader that it
+    # finished second, injecting contradictory gradients.
+    from fh_mahjong_ai.oracle import _assemble_hindsight_labels
+
+    rows = [(0, 0), (1, 0), (2, 0), (3, 0)]
+    # Two-way tie at the top.
+    _, rank = _assemble_hindsight_labels(rows, {}, {0: 3000.0, 1: 3000.0, 2: 1000.0, 3: 500.0},
+                                         bust_threshold=0.0, truncated=False)
+    assert rank.tolist() == [0, 0, 2, 3]
+
+    # Four-way tie: everyone shares rank 0.
+    _, rank4 = _assemble_hindsight_labels(rows, {}, {k: 2000.0 for k in range(4)},
+                                          bust_threshold=0.0, truncated=False)
+    assert rank4.tolist() == [0, 0, 0, 0]
+
+    # Tie below a bust: busted seat stays class 4, tie shares rank above it.
+    _, rankb = _assemble_hindsight_labels(rows, {}, {0: 1500.0, 1: 1500.0, 2: -100.0, 3: 4000.0},
+                                          bust_threshold=0.0, truncated=False)
+    assert rankb.tolist() == [1, 1, 4, 0]
