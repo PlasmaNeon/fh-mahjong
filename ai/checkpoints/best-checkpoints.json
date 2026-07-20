@@ -10,7 +10,7 @@
       "note": "4-block net; serving infers architecture via infer_model_config"
     },
     "notes": [
-      "Phase B run #1: deep4 champion (sp-big-ext iter_120) extended 155 iters at delta=1 with matches_per_iter 320 (vs 256) \u2014 the bigger-batch gradient-noise cut broke the iteration-scaling plateau.",
+      "Phase B run #1: deep4 champion (sp-big-ext iter_120) extended 155 iters at delta=1 with matches_per_iter 320 (vs 256) — the bigger-batch gradient-noise cut broke the iteration-scaling plateau.",
       "Deployable 39ch student extracted from phaseB1 iter_275; evaluated NON-oracle (plain 39ch, drop-in for serve_policy).",
       "Curve still rising at run end (iters 200/240/275 = +0.3903/+0.3861/+0.4722); Phase B run #2 (batch 448, post collector-memory-fix PR #146) continues from iter_275."
     ],
@@ -2044,7 +2044,7 @@
       "notes": [
         "Deployable 39ch student extracted from the 4-residual-block self-play feature-dropout net, sp-big-ext iter_120 (deeper net, warm-started from the 2-block anchor, then extended 60 more delta=1 iters).",
         "New campaign best: the deeper net was undertrained at 60 iters (+0.1875); given a fair 120-iter budget it clears the small-net longer-schedule iter_075 (+0.2125).",
-        "This checkpoint is residual_blocks=4 \u2014 CheckpointPolicy.from_checkpoint infers architecture from the state dict (infer_model_config), so no serving config change is needed to load it.",
+        "This checkpoint is residual_blocks=4 — CheckpointPolicy.from_checkpoint infers architecture from the state dict (infer_model_config), so no serving config change is needed to load it.",
         "Runner-up / fallback candidate: sp-long iter_075 39ch (+0.2125) at /root/fh-mahjong-runs/deploy/selfplay-student-iter075-39ch.pt."
       ],
       "evaluation": [
@@ -4286,5 +4286,42 @@
     "promotion_rule": "reward-trained checkpoint must beat the BC fallback on mean_reward across independent 1000-seed windows without regressing deal-in rate; win rate is tracked as a secondary metric.",
     "serving_validation": "Python returns an action_id from visible SeatObservation inputs; Go must still decode and validate the action_id against current legal actions before applying it."
   },
-  "updated_at": "2026-07-04T22:30:08.752610+00:00"
+  "updated_at": "2026-07-04T22:30:08.752610+00:00",
+  "gate_qualified_research_champion": {
+    "checkpoint_path": "/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt",
+    "checkpoint_sha256": "00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e",
+    "id": "chongci_b2b_eventgru_privcritic_iter075",
+    "match_mode": "chongci",
+    "method": "b2b_event_gru_privileged_critic_aux_heads_warmstart_iter275",
+    "serving_status": "blocked_on_b2c",
+    "model_config": {
+      "channels": 96,
+      "residual_blocks": 4,
+      "event_window": 128,
+      "privileged_critic": true,
+      "aux_heads": true,
+      "note": "B2b architecture pinned in checkpoint metadata; infer_model_config REFUSES this checkpoint by design (B2c makes serving metadata-aware). Evaluate with fh-mj-evaluate --model-residual-blocks 4 --model-event-window 128 --model-privileged-critic --model-aux-heads --event-history-window 128."
+    },
+    "notes": [
+      "GATE-QUALIFIED RESEARCH CHAMPION (2026-07-20) — first confirmed champion-beating candidate of the campaign. NOT the operational serving champion: the serving pointer (current_chongci_reward_trained_best) stays on iter275 until Spec B2c parity/smoke/canary pass (Codex-ratified two-status protocol, canonical consult session).",
+      "Warm-started from iter275 (step-0 logit-equivalent), trained 150 iters on the exact champion recipe (dense score deltas, gamma 0.99, 320 matches/iter); frozen at iter_075 = best of 6 screenings per the ratified gate protocol; determinism precheck bit-exact.",
+      "Confirmation (950000+, 1500 seeds, back-to-back, same bridge 3e656fc4…, provenance in /root/fh-mahjong-runs/b2b/gate-provenance.txt): paired placement +0.0408 ± 0.0203 (CI95, clears zero) over iter275; paired tail delta -0.0062 ± 0.0077 (large_loss 0.0552 vs 0.0613 — significantly better).",
+      "Once operational (post-B2c), iter_075 becomes the promotion anchor for all future candidates; iter275 is retained as rollback fallback and historical comparator only."
+    ],
+    "evaluation": [
+      {
+        "label": "confirmation_paired_dup_seat_1500seeds_start950000_vs_iter275_champion",
+        "mean_placement": 0.4229,
+        "champion_mean_placement": 0.3821,
+        "paired_placement_diff": 0.0408,
+        "paired_placement_ci95_clustered": 0.0203,
+        "large_loss_rate": 0.0552,
+        "champion_large_loss_rate": 0.0613,
+        "paired_tail_delta": -0.0062,
+        "paired_tail_ci95": 0.0077,
+        "verdict": "PASSES the ratified gate: placement CI clears zero (lower bound +0.0205) AND tail point rule -0.0062 <= +0.015 (tail significantly better).",
+        "reports": "/root/fh-mahjong-runs/b2b/confirm-{candidate,champion,compare}.json"
+      }
+    ]
+  }
 }
