@@ -16005,6 +16005,43 @@ evaluation-statistics findings.)
 - Artifacts: /root/fh-mahjong-runs/spec-a/{champion-fixed,champion-buggy,compare}.json
   (box); pre-fix bridge built from ec6800e in /root/fh-mahjong-prefix.
 
+### Experiment: Spec B2b — event GRU + privileged critic + auxiliaries (2026-07-18/20) — **PASSED THE GATE, NEW CHAMPION CANDIDATE PROMOTED**
+
+- What: warm-started deep4 iter275 with the B2b representation upgrade
+  (event-history GRU window 128, privileged 12ch critic branch, aux heads
+  belief/deal-in/rank-bust), trained 150 iters on the EXACT champion recipe
+  (dense score deltas, γ=0.99, 320 matches/iter, lr 2e-5, entropy 0,
+  ppo-epochs 2, chongci, 5 workers). PRs #169 (B1) + #172 (B2a) + #177 (B2b);
+  12-round adversarial gauntlet pre-merge (see ledger).
+- Gate protocol: the RATIFIED 10-item protocol (Codex debate-to-agreement,
+  2026-07-19, appended to the B2b runbook). Determinism precheck PASSED
+  bit-exact (480/480 identical champion-repeat placements). Frozen candidate
+  = iter_075 (best screening delta +0.0396 of {25..150}; extension trigger
+  not met — 100→125 screening decrease).
+- Screening trajectory (910000+, 120 seeds, same-bridge paired):
+  25:+0.0285 50:+0.0035 75:+0.0396 100:+0.0215 125:+0.0069 150:+0.0035.
+- **CONFIRMATION VERDICT (950000+, 1500 seeds, back-to-back, same bridge,
+  full provenance in /root/fh-mahjong-runs/b2b/gate-provenance.txt):**
+  - candidate +0.4229 vs champion +0.3821; paired placement delta
+    **+0.0408 ± 0.0203** (seed-clustered CI95) — CI clears zero
+    (lower bound +0.0205). SIGNIFICANT.
+  - tail criterion: large_loss 0.0552 vs 0.0613; point rule −0.0062 ≤ +0.015
+    PASS; paired per-seed tail delta **−0.0062 ± 0.0077** — the candidate's
+    tail is significantly BETTER, not merely non-inferior.
+  - zero truncations; config_check strict except the window key
+    (the intervention); bridge digests match.
+- Interpretation: the representation rebuild (audit direction #1) delivered
+  the campaign's FIRST confirmed champion-beating candidate, in the
+  predicted +0.04..+0.12 band, with improved tail risk — after seven
+  training levers and a search phase all failed. The +0.4722 headline was
+  never the true bar (window-inflated; Spec A); the honest bar was
+  +0.3821 ± 0.020 on this window, and the candidate clears it.
+- Artifacts: /root/fh-mahjong-runs/b2b/ (ckpt/iter_075.pt sha 00f469b0…,
+  confirm-{candidate,champion,compare}.json, gate-provenance.txt).
+- NEXT (per ratified item 10): Spec B2c — serving integration (room →
+  HTTPPolicy event threading, /act payload, review tool) BEFORE any
+  deployment of the new champion.
+
 ## Maintenance Protocol For This Note
 
 When a new experiment starts, append:
