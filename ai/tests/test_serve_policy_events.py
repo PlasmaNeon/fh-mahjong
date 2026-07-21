@@ -42,6 +42,13 @@ def _save_checkpoint(tmp_path: Path, model_config: ModelConfig, step: int = 1, n
     return path
 
 
+def _bearer(token: str) -> dict:
+    """The `Authorization: Bearer <token>` header POST /reload now requires
+    (adversarial round 15, Finding 1) — the admin token no longer travels as
+    a JSON body field."""
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _observation_payload(legal: list[int], **event_fields) -> dict:
     env = EnvConfig()
     mask = [0] * env.action_space_size
@@ -81,11 +88,15 @@ class _Server:
     def port(self) -> int:
         return self.server.server_address[1]
 
-    def request(self, method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    def request(
+        self, method: str, path: str, payload: dict | None = None, headers: dict | None = None,
+    ) -> tuple[int, dict]:
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         body = json.dumps(payload) if payload is not None else None
-        headers = {"content-type": "application/json"} if body is not None else {}
-        conn.request(method, path, body=body, headers=headers)
+        all_headers = {"content-type": "application/json"} if body is not None else {}
+        if headers:
+            all_headers.update(headers)
+        conn.request(method, path, body=body, headers=all_headers)
         response = conn.getresponse()
         data = json.loads(response.read().decode("utf-8"))
         status = response.status
@@ -605,7 +616,7 @@ def test_http_reload_incompatible_window_leaves_old_policy_serving(tmp_path: Pat
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         reload_status, reload_data = server.request(
-            "POST", "/reload", {"checkpoint": str(new), "admin_token": "op-token"}
+            "POST", "/reload", {"checkpoint": str(new)}, headers=_bearer("op-token"),
         )
         act_status, act_data = server.request(
             "POST", "/act",
@@ -733,7 +744,7 @@ def test_http_reload_wrong_admin_token_rejected_policy_unchanged(tmp_path: Path)
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         status, data = server.request(
-            "POST", "/reload", {"checkpoint": str(new), "admin_token": "wrong-token"}
+            "POST", "/reload", {"checkpoint": str(new)}, headers=_bearer("wrong-token"),
         )
         act_status, act_data = server.request(
             "POST", "/act",
@@ -757,7 +768,7 @@ def test_http_reload_correct_admin_token_swaps_policy(tmp_path: Path) -> None:
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         status, data = server.request(
-            "POST", "/reload", {"checkpoint": str(new), "admin_token": "op-token"}
+            "POST", "/reload", {"checkpoint": str(new)}, headers=_bearer("op-token"),
         )
     finally:
         server.close()
@@ -780,7 +791,7 @@ def test_http_reload_rejects_directory_path(tmp_path: Path) -> None:
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         status, data = server.request(
-            "POST", "/reload", {"checkpoint": str(a_directory), "admin_token": "op-token"}
+            "POST", "/reload", {"checkpoint": str(a_directory)}, headers=_bearer("op-token"),
         )
         act_status, act_data = server.request(
             "POST", "/act",
@@ -807,7 +818,7 @@ def test_http_reload_rejects_fifo_path(tmp_path: Path) -> None:
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         status, data = server.request(
-            "POST", "/reload", {"checkpoint": str(fifo_path), "admin_token": "op-token"}
+            "POST", "/reload", {"checkpoint": str(fifo_path)}, headers=_bearer("op-token"),
         )
     finally:
         server.close()
@@ -845,7 +856,7 @@ def test_http_reload_rejects_oversize_checkpoint(tmp_path: Path, monkeypatch: py
     server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
         status, data = server.request(
-            "POST", "/reload", {"checkpoint": str(huge), "admin_token": "op-token"}
+            "POST", "/reload", {"checkpoint": str(huge)}, headers=_bearer("op-token"),
         )
     finally:
         server.close()
@@ -886,7 +897,8 @@ def test_http_reload_rejects_expected_sha256_mismatch(tmp_path: Path) -> None:
     try:
         status, data = server.request(
             "POST", "/reload",
-            {"checkpoint": str(new), "admin_token": "op-token", "expected_sha256": "0" * 64},
+            {"checkpoint": str(new), "expected_sha256": "0" * 64},
+            headers=_bearer("op-token"),
         )
         act_status, act_data = server.request(
             "POST", "/act",
@@ -1018,3 +1030,361 @@ def test_http_act_without_return_logits_unaffected_by_export_token(tmp_path: Pat
 
     assert status == 200, data
     assert "logits" not in data
+
+
+# --- adversarial round 15, Finding 1: /reload authenticates before reading the body -----
+
+
+class _TripwireRFile:
+    """A stand-in for `rfile` that records whether `.read()` was ever
+    called, instead of raising — a raise would be silently swallowed by
+    `_handle_reload`'s broad `except Exception`, defeating the point (see
+    the docstring on `_handle_reload`'s ordering)."""
+
+    def __init__(self) -> None:
+        self.was_read = False
+
+    def read(self, *args: object, **kwargs: object) -> bytes:
+        self.was_read = True
+        return b""
+
+
+class _CaseInsensitiveHeaders(dict):
+    def get(self, key, default=None):  # type: ignore[override]
+        for k, v in self.items():
+            if k.lower() == key.lower():
+                return v
+        return default
+
+
+class _FakeReloadHandler:
+    """Enough of a `PolicyRequestHandler` stand-in to call `_handle_reload`
+    directly — no real socket/HTTP server involved — so tests can assert
+    on `rfile.was_read` deterministically instead of racing a timeout."""
+
+    def __init__(self, headers: dict, holder: PolicyHolder) -> None:
+        self.headers = _CaseInsensitiveHeaders(headers)
+        self.holder = holder
+        self.rfile = _TripwireRFile()
+        self.responses: list[tuple[int, dict]] = []
+
+    def _write_json(self, payload: dict, status: int = 200) -> None:
+        self.responses.append((status, payload))
+
+
+def _reload_holder(tmp_path: Path, admin_token: str | None) -> PolicyHolder:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    return PolicyHolder(
+        CheckpointPolicy.from_checkpoint(checkpoint),
+        manifest_path=tmp_path / "manifest.json",
+        admin_token=admin_token,
+    )
+
+
+def test_reload_no_admin_token_configured_rejected_without_reading_body(tmp_path: Path) -> None:
+    """No --admin-token configured at all: /reload must refuse immediately,
+    BEFORE even looking at Content-Length or any header — a caller could
+    supply neither and it must still never read the body."""
+    holder = _reload_holder(tmp_path, admin_token=None)
+    fake = _FakeReloadHandler(headers={}, holder=holder)
+
+    PolicyRequestHandler._handle_reload(fake)
+
+    assert fake.rfile.was_read is False
+    status, data = fake.responses[0]
+    assert status == 403
+    assert "error" in data
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_reload_oversized_content_length_rejected_without_reading_body(tmp_path: Path) -> None:
+    """A Content-Length far beyond the tiny reload cap must be rejected
+    before a single body byte is read, even when the caller's bearer token
+    is otherwise correct — this is the DoS surface Finding 1 closes."""
+    holder = _reload_holder(tmp_path, admin_token="op-token")
+    fake = _FakeReloadHandler(
+        headers={"Authorization": "Bearer op-token", "content-length": str(10 * 1024 * 1024)},
+        holder=holder,
+    )
+
+    PolicyRequestHandler._handle_reload(fake)
+
+    assert fake.rfile.was_read is False
+    status, data = fake.responses[0]
+    assert status == 400
+    assert "error" in data
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_reload_missing_content_length_rejected_without_reading_body(tmp_path: Path) -> None:
+    holder = _reload_holder(tmp_path, admin_token="op-token")
+    fake = _FakeReloadHandler(headers={"Authorization": "Bearer op-token"}, holder=holder)
+
+    PolicyRequestHandler._handle_reload(fake)
+
+    assert fake.rfile.was_read is False
+    status, data = fake.responses[0]
+    assert status == 400
+    assert "error" in data
+
+
+def test_reload_missing_bearer_header_rejected_without_reading_body(tmp_path: Path) -> None:
+    holder = _reload_holder(tmp_path, admin_token="op-token")
+    fake = _FakeReloadHandler(headers={"content-length": "2"}, holder=holder)
+
+    PolicyRequestHandler._handle_reload(fake)
+
+    assert fake.rfile.was_read is False
+    status, data = fake.responses[0]
+    assert status == 403
+    assert "error" in data
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_reload_wrong_bearer_token_rejected_without_reading_body(tmp_path: Path) -> None:
+    holder = _reload_holder(tmp_path, admin_token="op-token")
+    fake = _FakeReloadHandler(
+        headers={"Authorization": "Bearer wrong-token", "content-length": "2"}, holder=holder,
+    )
+
+    PolicyRequestHandler._handle_reload(fake)
+
+    assert fake.rfile.was_read is False
+    status, data = fake.responses[0]
+    assert status == 403
+    assert "error" in data
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_http_reload_correct_bearer_token_and_valid_size_swaps_policy(tmp_path: Path) -> None:
+    """End-to-end (real HTTP): the correct 'Authorization: Bearer <token>'
+    header plus a small body succeeds — the positive-path counterpart to
+    the tripwire tests above."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(new)}, headers=_bearer("op-token"),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["ok"] is True
+    assert data["checkpoint_step"] == 2
+
+
+def test_http_act_rejects_oversized_content_length(tmp_path: Path) -> None:
+    """/act is unauthenticated by design but still caps Content-Length
+    (adversarial round 15, Finding 1) — a generous cap, but not infinite."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.putrequest("POST", "/act")
+        conn.putheader("Content-Length", str(serve_policy_module.MAX_ACT_REQUEST_BYTES + 1))
+        conn.endheaders()
+        response = conn.getresponse()
+        data = json.loads(response.read().decode("utf-8"))
+        status = response.status
+        conn.close()
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "error" in data
+
+
+def test_http_evaluate_rejects_oversized_content_length(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.putrequest("POST", "/evaluate")
+        conn.putheader("Content-Length", str(serve_policy_module.MAX_EVALUATE_REQUEST_BYTES + 1))
+        conn.endheaders()
+        response = conn.getresponse()
+        data = json.loads(response.read().decode("utf-8"))
+        status = response.status
+        conn.close()
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "error" in data
+
+
+# --- adversarial round 15, Finding 2: /reload verifies expected_sha256 before deserializing --
+
+
+def _manifest_with_checkpoint(tmp_path: Path, checkpoint_path: Path, manifest_name: str = "manifest.json") -> Path:
+    manifest_path = tmp_path / manifest_name
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "current_reward_trained_best": {
+                    "id": "current",
+                    "method": "test",
+                    "checkpoint_path": str(checkpoint_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def test_policy_holder_reload_checkpoint_id_rejects_mismatch_before_deserializing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adversarial round 15, Finding 2: the checkpoint_id/manifest-resolved
+    reload branch must verify expected_sha256 BEFORE calling
+    CheckpointPolicy.from_checkpoint_bytes (torch.load) at all — a mismatch
+    must never reach the deserializer, not just fail to swap in afterward.
+    Pinned with a tripwire that counts calls to from_checkpoint_bytes."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    manifest_path = _manifest_with_checkpoint(tmp_path, new)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=manifest_path)
+
+    calls = {"n": 0}
+    real_from_checkpoint_bytes = CheckpointPolicy.from_checkpoint_bytes
+
+    def _counting_from_checkpoint_bytes(*args: object, **kwargs: object):
+        calls["n"] += 1
+        return real_from_checkpoint_bytes(*args, **kwargs)
+
+    monkeypatch.setattr(CheckpointPolicy, "from_checkpoint_bytes", _counting_from_checkpoint_bytes)
+
+    with pytest.raises(ValueError, match="expected_sha256"):
+        holder.reload(checkpoint_id="current", expected_sha256="0" * 64)
+
+    assert calls["n"] == 0
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_policy_holder_reload_checkpoint_id_accepts_matching_expected_sha256(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    manifest_path = _manifest_with_checkpoint(tmp_path, new)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=manifest_path)
+    new_sha256 = hashlib.sha256(new.read_bytes()).hexdigest()
+
+    calls = {"n": 0}
+    real_from_checkpoint_bytes = CheckpointPolicy.from_checkpoint_bytes
+
+    def _counting_from_checkpoint_bytes(*args: object, **kwargs: object):
+        calls["n"] += 1
+        return real_from_checkpoint_bytes(*args, **kwargs)
+
+    monkeypatch.setattr(CheckpointPolicy, "from_checkpoint_bytes", _counting_from_checkpoint_bytes)
+
+    holder.reload(checkpoint_id="current", expected_sha256=new_sha256)
+
+    assert calls["n"] == 1
+    assert holder.policy.checkpoint_step == 2
+
+
+# --- adversarial round 15, Finding 4: privileged-critic values are never published -------
+
+
+def _privileged_event_model_config(window: int = 8) -> ModelConfig:
+    return ModelConfig(**dict(_SMALL, event_window=window, privileged_critic=True, aux_heads=True))
+
+
+def test_http_act_privileged_critic_checkpoint_nulls_value(tmp_path: Path) -> None:
+    """A privileged-critic checkpoint's value head is out-of-distribution
+    against serving's public-only planes — /act must null the value out and
+    flag it, never publish a misleading number. Action selection is
+    unaffected."""
+    checkpoint = _save_checkpoint(tmp_path, _privileged_event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["action_id"] in (0, 1, 2)
+    assert data["value"] is None
+    assert data["value_calibrated"] is False
+
+
+def test_http_act_non_privileged_checkpoint_keeps_value(tmp_path: Path) -> None:
+    """Window-0 (or any non-privileged-critic) checkpoint: unchanged
+    behavior — a real float value, flagged calibrated."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))  # privileged_critic=False
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert isinstance(data["value"], float)
+    assert data["value_calibrated"] is True
+
+
+def test_http_evaluate_privileged_critic_checkpoint_nulls_values_and_flags_response(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _privileged_event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {
+                "observations": [
+                    _observation_payload(
+                        [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                        contract_version=EVENT_CONTRACT_V1,
+                    )
+                ]
+            },
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["values_calibrated"] is False
+    assert len(data["results"]) == 1
+    assert data["results"][0]["value"] is None
+    # Probs (action ranking) are unaffected by the calibration flag.
+    assert len(data["results"][0]["probs"]) == EnvConfig().action_space_size
+
+
+def test_http_evaluate_non_privileged_checkpoint_keeps_values(tmp_path: Path) -> None:
+    """Window-0 old-champion-style checkpoint: values unchanged, flag true."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0, privileged_critic=False
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {"observations": [_observation_payload([0, 1, 2])]},
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["values_calibrated"] is True
+    assert isinstance(data["results"][0]["value"], float)

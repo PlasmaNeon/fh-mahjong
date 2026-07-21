@@ -33,6 +33,16 @@ type Report struct {
 	GeneratedAt    time.Time        `json:"generatedAt"`
 	Decisions      []ReportDecision `json:"decisions"`
 	Seats          []SeatSummary    `json:"seats"` // exactly 4
+
+	// ValuesCalibrated is false when the served checkpoint is a
+	// privileged-critic model (adversarial round 15, Finding 4): serving
+	// only ever feeds such a checkpoint's value head the public planes it
+	// was NOT trained on, so every ReportDecision.Value in this report is
+	// nil/absent rather than a number. Action ranking (Actions/ChosenProb/
+	// TopGaps, all probability-based) is unaffected either way — a
+	// privileged-critic checkpoint still yields a fully meaningful
+	// action-ranking review, just not a value-based one.
+	ValuesCalibrated bool `json:"valuesCalibrated"`
 }
 
 // ReportDecision is one reviewed decision: the policy's legal-action
@@ -43,8 +53,12 @@ type ReportDecision struct {
 	ActionIndex int          `json:"actionIndex"`
 	ChosenID    int          `json:"chosenActionId"`
 	ChosenProb  float32      `json:"chosenProb"`
-	Value       float32      `json:"value"`
-	Actions     []ActionProb `json:"actions"` // legal actions, sorted by prob desc
+	// Value is nil when the report's ValuesCalibrated is false (a
+	// privileged-critic checkpoint served this decision) — see Report's doc.
+	// Omitted from JSON entirely in that case, rather than published as a
+	// misleading 0.0.
+	Value   *float32     `json:"value,omitempty"`
+	Actions []ActionProb `json:"actions"` // legal actions, sorted by prob desc
 }
 
 // ActionProb is one legal action's catalog id and probability.
@@ -103,14 +117,15 @@ func BuildReport(paipu *engine.Paipu, client PolicyClient, eventWindow uint32) (
 	}
 
 	report := &Report{
-		SchemaVersion:  1,
-		MatchID:        paipu.MatchID,
-		Ruleset:        paipu.Ruleset,
-		CheckpointPath: info.Path,
-		CheckpointStep: info.Step,
-		GeneratedAt:    time.Now().UTC(),
-		Decisions:      reportDecisions,
-		Seats:          buildSeatSummaries(reportDecisions),
+		SchemaVersion:    1,
+		MatchID:          paipu.MatchID,
+		Ruleset:          paipu.Ruleset,
+		CheckpointPath:   info.Path,
+		CheckpointStep:   info.Step,
+		GeneratedAt:      time.Now().UTC(),
+		Decisions:        reportDecisions,
+		Seats:            buildSeatSummaries(reportDecisions),
+		ValuesCalibrated: info.ValuesCalibrated,
 	}
 	return report, nil
 }
@@ -170,6 +185,12 @@ func buildReportDecision(d Decision, res PolicyResult) (ReportDecision, error) {
 		Actions:     actions,
 	}, nil
 }
+
+// buildSeatSummaries and every other rollup below is prob-based (ChosenProb,
+// TopGaps), never Value — so a nil Value (privileged-critic checkpoint,
+// Report.ValuesCalibrated == false) affects nothing here: the review's
+// action-ranking scoring is unaffected, only the per-decision Value display
+// is absent.
 
 // buildSeatSummaries computes the exactly-4 SeatSummary rollups from the
 // already-built ReportDecisions.

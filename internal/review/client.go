@@ -20,16 +20,28 @@ const evaluateChunkSize = 256
 
 // PolicyResult is one observation's evaluation from the served policy.
 // Probs is dense over the full 204-action catalog.
+//
+// Value is a pointer, not a plain float32 (adversarial round 15, Finding 4):
+// a privileged-critic checkpoint's value head is out-of-distribution against
+// serving's public-only planes, so the Python /evaluate endpoint sends JSON
+// `null` for Value on those checkpoints rather than a misleading number. A
+// plain float32 field would silently decode a JSON `null` as an
+// indistinguishable 0.0 (encoding/json leaves non-pointer fields at their
+// zero value on a null); the pointer preserves "absent" as nil instead of
+// coercing it into a fake real value. Probs/action ranking are unaffected
+// either way — only the value head is uncalibrated for these checkpoints.
 type PolicyResult struct {
 	Probs []float32
-	Value float32
+	Value *float32
 }
 
 // CheckpointInfo identifies which policy checkpoint produced a batch of
-// PolicyResults.
+// PolicyResults, plus whether the values in that batch mean anything
+// (ValuesCalibrated — see PolicyResult's doc).
 type CheckpointInfo struct {
-	Path string
-	Step int
+	Path             string
+	Step             int
+	ValuesCalibrated bool
 }
 
 // PolicyClient evaluates a batch of observations against a served policy.
@@ -83,7 +95,10 @@ type evaluateRequest struct {
 
 type evaluateResult struct {
 	Probs []float32 `json:"probs"`
-	Value float32   `json:"value"`
+	// Value is a pointer so a JSON `null` (sent for privileged-critic
+	// checkpoints — see PolicyResult's doc) decodes to nil rather than being
+	// silently coerced to 0.0.
+	Value *float32 `json:"value"`
 }
 
 type evaluateResponse struct {
@@ -91,6 +106,13 @@ type evaluateResponse struct {
 	CheckpointPath string           `json:"checkpoint_path"`
 	CheckpointStep int              `json:"checkpoint_step"`
 	Error          string           `json:"error"`
+	// ValuesCalibrated is false when the served checkpoint is a
+	// privileged-critic model (adversarial round 15, Finding 4): every
+	// result's Value in this response is nil in that case. Absent on
+	// responses from a server that predates this field decodes to the Go
+	// zero value (false) — the conservative default of "don't assume
+	// calibrated" rather than silently trusting an unknown response.
+	ValuesCalibrated bool `json:"values_calibrated"`
 }
 
 // Evaluate sends obs to the /evaluate endpoint in chunks of at most
@@ -198,7 +220,12 @@ func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyRes
 	for i, r := range decoded.Results {
 		out[i] = PolicyResult{Probs: r.Probs, Value: r.Value}
 	}
-	return out, CheckpointInfo{Path: decoded.CheckpointPath, Step: decoded.CheckpointStep}, nil
+	info := CheckpointInfo{
+		Path:             decoded.CheckpointPath,
+		Step:             decoded.CheckpointStep,
+		ValuesCalibrated: decoded.ValuesCalibrated,
+	}
+	return out, info, nil
 }
 
 func actionMaskToInts(mask []byte) []int {

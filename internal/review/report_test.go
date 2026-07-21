@@ -307,8 +307,11 @@ func TestHTTPClientChunksBatches(t *testing.T) {
 		t.Fatalf("expected %d results, got %d", total, len(results))
 	}
 	for i, res := range results {
-		if int(res.Value) != i {
-			t.Fatalf("result %d: expected order-preserving value %d, got %f", i, i, res.Value)
+		if res.Value == nil {
+			t.Fatalf("result %d: expected non-nil value", i)
+		}
+		if int(*res.Value) != i {
+			t.Fatalf("result %d: expected order-preserving value %d, got %f", i, i, *res.Value)
 		}
 	}
 	if info.Path != "stub.pt" || info.Step != 1 {

@@ -28,17 +28,17 @@ from typing import Optional
 def reload_payload(
     checkpoint: Optional[str],
     checkpoint_id: Optional[str],
-    admin_token: Optional[str] = None,
     expected_sha256: Optional[str] = None,
 ) -> dict:
-    """Build the /reload request body, requiring exactly one target.
+    """Build the /reload request BODY, requiring exactly one target.
 
-    `admin_token` (adversarial round 14, Finding 1a) is required by the
-    server for POST /reload to do anything at all — a server started
-    without --admin-token/FH_MJ_ADMIN_TOKEN refuses every /reload request,
-    regardless of what is sent here. `expected_sha256`, when given, is
-    checked against the checkpoint's actual bytes before the server swaps
-    in the new policy; a mismatch leaves the previous policy serving.
+    The admin token is NOT part of this body (adversarial round 15,
+    Finding 1): it travels as an `Authorization: Bearer <token>` HEADER
+    instead (see `_auth_headers`), so the server can authenticate the
+    caller before reading any of the (potentially attacker-supplied)
+    request body at all. `expected_sha256`, when given, is checked against
+    the checkpoint's actual bytes before the server swaps in the new
+    policy; a mismatch leaves the previous policy serving.
     """
     payload: dict = {}
     if checkpoint:
@@ -47,18 +47,27 @@ def reload_payload(
         payload["checkpoint_id"] = checkpoint_id
     if not payload:
         raise ValueError("provide --checkpoint or --checkpoint-id")
-    if admin_token:
-        payload["admin_token"] = admin_token
     if expected_sha256:
         payload["expected_sha256"] = expected_sha256
     return payload
 
 
-def _post_json(url: str, payload: dict, timeout: float) -> dict:
+def _auth_headers(admin_token: Optional[str]) -> dict:
+    """The admin-token header for POST /reload (adversarial round 15,
+    Finding 1): the server authenticates via `Authorization: Bearer
+    <token>` before it reads the request body, so the token must never be
+    sent as a body field."""
+    if not admin_token:
+        return {}
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+def _post_json(url: str, payload: dict, timeout: float, headers: Optional[dict] = None) -> dict:
     data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-    )
+    all_headers = {"Content-Type": "application/json"}
+    if headers:
+        all_headers.update(headers)
+    request = urllib.request.Request(url, data=data, headers=all_headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -98,8 +107,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps(_get_json(f"{base}/healthz", args.timeout), indent=2, sort_keys=True))
             return 0
 
-        payload = reload_payload(args.checkpoint, args.checkpoint_id, args.admin_token, args.expected_sha256)
-        body = _post_json(f"{base}/reload", payload, args.timeout)
+        payload = reload_payload(args.checkpoint, args.checkpoint_id, args.expected_sha256)
+        body = _post_json(f"{base}/reload", payload, args.timeout, headers=_auth_headers(args.admin_token))
         print(json.dumps(body, indent=2, sort_keys=True))
         return 0 if body.get("ok") else 1
     except urllib.error.HTTPError as exc:  # e.g. /reload 400 with a JSON error body

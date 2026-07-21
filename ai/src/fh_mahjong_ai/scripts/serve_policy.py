@@ -16,7 +16,11 @@ from typing import Optional
 
 import numpy as np
 
-from fh_mahjong_ai.checkpoint_manifest import DEFAULT_MANIFEST_PATH
+from fh_mahjong_ai.checkpoint_manifest import (
+    DEFAULT_MANIFEST_PATH,
+    load_checkpoint_manifest,
+    resolve_checkpoint_path,
+)
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.events import EVENT_CONTRACT_V1
 from fh_mahjong_ai.serving import (
@@ -37,6 +41,91 @@ MAX_EVALUATE_BATCH = 1024
 # make `Path.read_bytes()` block forever while exhausting memory. 2 GiB is
 # comfortably above any real checkpoint this project produces.
 MAX_RELOAD_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
+
+# Caps the HTTP REQUEST body (not the on-disk checkpoint file) each endpoint
+# is willing to read (adversarial round 15, Finding 1). /reload requests are
+# tiny hand-built JSON (a path/id, an optional sha256, an optional window) —
+# 64 KiB is generous headroom while making an oversized-Content-Length DoS
+# attempt trivially rejectable BEFORE a single body byte is read. /act and
+# /evaluate are unauthenticated by design and legitimately carry full
+# observations (plane tensors, event histories) or batches of them, so they
+# get a much larger — but still finite — cap. /evaluate's cap in particular
+# must clear the real worst case: MAX_EVALUATE_BATCH (1024) observations,
+# each with a full plane tensor, scalars, and a 128-wide event history, JSON-
+# encodes to ~39 MiB — 64 MiB leaves comfortable headroom above that without
+# being unbounded.
+MAX_RELOAD_REQUEST_BYTES = 64 * 1024
+MAX_ACT_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_EVALUATE_REQUEST_BYTES = 64 * 1024 * 1024
+
+
+def _parse_content_length(headers, cap: int) -> int:
+    """Validate the Content-Length header and return it as an int WITHOUT
+    reading any request body (adversarial round 15, Finding 1). Raises
+    ValueError when the header is absent, not an integer, negative, or
+    exceeds `cap` — in every one of those cases the caller must not read a
+    single byte from `rfile`, since an unauthenticated (or not-yet-
+    authenticated) caller could otherwise pin a ThreadingHTTPServer worker
+    thread reading an oversized or slow body."""
+    raw = headers.get("content-length")
+    if raw is None:
+        raise ValueError("Content-Length header is required")
+    try:
+        length = int(raw)
+    except ValueError as exc:
+        raise ValueError("Content-Length header must be an integer") from exc
+    if length < 0:
+        raise ValueError("Content-Length must be non-negative")
+    if length > cap:
+        raise ValueError(f"request body of {length} bytes exceeds the {cap}-byte cap")
+    return length
+
+
+def _read_capped_body(handler: "PolicyRequestHandler", cap: int) -> bytes:
+    """Validate Content-Length against `cap` (see `_parse_content_length`)
+    and only then read exactly that many bytes from `handler.rfile`."""
+    length = _parse_content_length(handler.headers, cap)
+    return handler.rfile.read(length) if length else b""
+
+
+_BEARER_PREFIX = "Bearer "
+
+
+def _extract_bearer_token(handler: "PolicyRequestHandler") -> Optional[str]:
+    """Pull the token out of an `Authorization: Bearer <token>` header, or
+    None if the header is absent or not in that form. Used by POST /reload
+    (adversarial round 15, Finding 1): the admin token now travels as a
+    header, checked BEFORE the request body is read, rather than as a body
+    field (which required reading the body first)."""
+    header = handler.headers.get("Authorization")
+    if not header or not header.startswith(_BEARER_PREFIX):
+        return None
+    return header[len(_BEARER_PREFIX):]
+
+
+def _read_and_verify_checkpoint(path: Path, expected_sha256: Optional[str]) -> tuple[bytes, str]:
+    """Read `path`'s bytes exactly once, compute their sha256, and — when the
+    caller supplied `expected_sha256` — verify it BEFORE the caller does any
+    deserialization at all (adversarial round 15, Finding 2).
+
+    Shared by both `PolicyHolder.reload` branches (an explicit `checkpoint`
+    path and a manifest-resolved `checkpoint_id`): a mismatch must be caught
+    before a single tensor is unpickled from these bytes via
+    `CheckpointPolicy.from_checkpoint_bytes` (which calls `torch.load`, a
+    pickle-based deserializer), regardless of which branch resolved the
+    path. Returns `(data, sha256)`; raises ValueError on a mismatch, in
+    which case `data` was still read from disk but never deserialized by
+    the caller.
+    """
+    data = path.read_bytes()
+    sha256 = hashlib.sha256(data).hexdigest()
+    if expected_sha256 is not None:
+        if not isinstance(expected_sha256, str) or not hmac.compare_digest(sha256, expected_sha256):
+            raise ValueError(
+                f"reload checkpoint sha256 {sha256} does not match the caller's "
+                f"expected_sha256 {expected_sha256!r}; refusing to swap"
+            )
+    return data, sha256
 
 
 def _validate_checkpoint_path_for_reload(path: Path) -> None:
@@ -212,57 +301,39 @@ class PolicyHolder:
                 # `_validate_checkpoint_path_for_reload`'s docstring.
                 checkpoint_path = Path(checkpoint)
                 _validate_checkpoint_path_for_reload(checkpoint_path)
-                # Read once, hash, and — when the caller supplied
-                # `expected_sha256` — verify BEFORE deserializing a single
-                # tensor: an integrity mismatch must never reach
-                # `CheckpointPolicy.from_checkpoint_bytes` (which calls
-                # `torch.load`, itself a pickle-based deserializer) at all,
-                # not just fail to swap in afterward.
-                data = checkpoint_path.read_bytes()
-                new_sha256 = hashlib.sha256(data).hexdigest()
-                if expected_sha256 is not None:
-                    if not isinstance(expected_sha256, str) or not hmac.compare_digest(
-                        new_sha256, expected_sha256
-                    ):
-                        raise ValueError(
-                            f"reload checkpoint sha256 {new_sha256} does not match the caller's "
-                            f"expected_sha256 {expected_sha256!r}; refusing to swap"
-                        )
-                new_policy = CheckpointPolicy.from_checkpoint_bytes(
-                    data,
-                    checkpoint_path=checkpoint_path,
-                    device=self._device,
-                    sample_temperature=current.sample_temperature,
-                    sample_top_k=current.sample_top_k,
-                    sample_action_family=current.sample_action_family,
-                    seed=current.sample_seed,
-                )
             else:
-                new_policy, new_sha256 = load_policy_from_manifest_with_hash(
-                    manifest_path=self._manifest_path,
-                    checkpoint_id=checkpoint_id,
-                    device=self._device,
-                    sample_temperature=current.sample_temperature,
-                    sample_top_k=current.sample_top_k,
-                    sample_action_family=current.sample_action_family,
-                    sample_seed=current.sample_seed,
+                # Resolve the manifest-tracked path the same way
+                # `load_policy_from_manifest_with_hash` does, but WITHOUT
+                # deserializing anything yet — see `_read_and_verify_checkpoint`
+                # below (adversarial round 15, Finding 2). Deserializing here
+                # before the caller's `expected_sha256` (if any) is verified
+                # was the bug: an integrity mismatch must be caught before a
+                # single tensor is unpickled, not just before the swap.
+                manifest = load_checkpoint_manifest(self._manifest_path)
+                checkpoint_path = resolve_checkpoint_path(
+                    manifest=manifest, checkpoint_id=checkpoint_id,
                 )
-                # Optional caller-supplied integrity check (adversarial round
-                # 14, Finding 1b), manifest-resolved branch: the `checkpoint`
-                # branch above already verified `expected_sha256` before
-                # deserializing anything; here the policy is already built by
-                # `load_policy_from_manifest_with_hash`, so this is a
-                # post-build confirmation instead — still strictly before the
-                # event-window check and the snapshot swap, so a mismatch
-                # leaves `current` (the old snapshot) completely untouched.
-                if expected_sha256 is not None:
-                    if not isinstance(expected_sha256, str) or not hmac.compare_digest(
-                        new_sha256, expected_sha256
-                    ):
-                        raise ValueError(
-                            f"reload checkpoint sha256 {new_sha256} does not match the caller's "
-                            f"expected_sha256 {expected_sha256!r}; refusing to swap"
-                        )
+            # Read the checkpoint bytes ONCE and derive both the sha256 AND
+            # (below) the loaded policy from that same buffer (adversarial
+            # round 5, Finding 2), and — when the caller supplied
+            # `expected_sha256` — verify it BEFORE deserializing a single
+            # tensor (adversarial round 15, Finding 2): an integrity mismatch
+            # must never reach `CheckpointPolicy.from_checkpoint_bytes`
+            # (which calls `torch.load`, itself a pickle-based deserializer)
+            # at all, not just fail to swap in afterward. This applies
+            # IDENTICALLY to both the `checkpoint` (path) branch and the
+            # `checkpoint_id` (manifest-resolved) branch above — there is no
+            # separate "verify after building" path anymore for either.
+            data, new_sha256 = _read_and_verify_checkpoint(checkpoint_path, expected_sha256)
+            new_policy = CheckpointPolicy.from_checkpoint_bytes(
+                data,
+                checkpoint_path=checkpoint_path,
+                device=self._device,
+                sample_temperature=current.sample_temperature,
+                sample_top_k=current.sample_top_k,
+                sample_action_family=current.sample_action_family,
+                seed=current.sample_seed,
+            )
             # Validate the NEW policy fully BEFORE swapping the reference: an
             # event-window mismatch against the currently-serving policy is a
             # contract break (the model's event encoder expects a fixed-width
@@ -293,6 +364,12 @@ class PolicyHolder:
 
 class PolicyRequestHandler(BaseHTTPRequestHandler):
     holder: PolicyHolder
+
+    # socketserver.StreamRequestHandler applies this as a socket timeout in
+    # setup() (adversarial round 15, Finding 1): bounds how long a worker
+    # thread can be pinned waiting on a slow/stalled client, on top of (not
+    # instead of) the per-endpoint Content-Length caps below.
+    timeout = 30
 
     def do_GET(self) -> None:
         if self.path != "/healthz":
@@ -333,8 +410,10 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_act(self) -> None:
         try:
-            length = int(self.headers.get("content-length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            # Adversarial round 15, Finding 1: /act is unauthenticated by
+            # design, but still gets a generous, finite Content-Length cap —
+            # validated before a single body byte is read.
+            payload = json.loads(_read_capped_body(self, MAX_ACT_REQUEST_BYTES).decode("utf-8"))
             return_logits = bool(payload.get("return_logits", False))
             # Adversarial round 12, Finding 1 / round 13, Finding 1: an
             # unauthenticated caller must never be able to pull the full
@@ -383,9 +462,18 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
+        # Adversarial round 15, Finding 4: a privileged-critic checkpoint's
+        # value head was trained on privileged (non-public) planes; serving
+        # only ever feeds it the 39 public planes (zeroed privileged
+        # features), so its value output is out-of-distribution for this
+        # model. Rather than publish a misleading number, null it out and
+        # flag it explicitly — action selection is unaffected either way
+        # (argmax was already taken over the policy logits, not the value).
+        values_calibrated = not bool(policy.model.model_config.privileged_critic)
         response: dict = {
             "action_id": action.action_id,
-            "value": action.value,
+            "value": action.value if values_calibrated else None,
+            "value_calibrated": values_calibrated,
             "checkpoint_path": action.checkpoint_path,
             "checkpoint_step": action.checkpoint_step,
         }
@@ -406,8 +494,10 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_evaluate(self) -> None:
         try:
-            length = int(self.headers.get("content-length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            # Adversarial round 15, Finding 1: /evaluate is unauthenticated by
+            # design, but still gets a generous, finite Content-Length cap —
+            # validated before a single body byte is read.
+            payload = json.loads(_read_capped_body(self, MAX_EVALUATE_REQUEST_BYTES).decode("utf-8"))
             observations = payload["observations"]
             if len(observations) > MAX_EVALUATE_BATCH:
                 raise ValueError(
@@ -451,28 +541,46 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
+        # Adversarial round 15, Finding 4: see the identical note in
+        # _handle_act — a privileged-critic checkpoint's value head is
+        # out-of-distribution against serving's public-only planes, so the
+        # /evaluate response (consumed by the post-game review pipeline,
+        # internal/review) must not publish those numbers as if they were
+        # meaningful. `values_calibrated` is a single flag for the whole
+        # response: every result in one /evaluate call comes from the same
+        # served checkpoint.
+        values_calibrated = not bool(policy.model.model_config.privileged_critic)
         self._write_json(
             {
                 "results": [
-                    {"probs": probs[i].tolist(), "value": float(values[i])}
+                    {
+                        "probs": probs[i].tolist(),
+                        "value": float(values[i]) if values_calibrated else None,
+                    }
                     for i in range(len(parsed))
                 ],
                 "checkpoint_path": str(policy.checkpoint_path),
                 "checkpoint_step": policy.checkpoint_step,
+                "values_calibrated": values_calibrated,
             }
         )
 
     def _handle_reload(self) -> None:
         status = 400
         try:
-            length = int(self.headers.get("content-length", "0"))
-            raw = self.rfile.read(length).decode("utf-8") if length else ""
-            payload = json.loads(raw) if raw.strip() else {}
-            # Adversarial round 14, Finding 1a: POST /reload is a remote
-            # policy-replacement primitive, so it must never be reachable by
-            # an unauthenticated caller. With no --admin-token/FH_MJ_ADMIN_TOKEN
-            # configured on this server at all, /reload is disabled
-            # ENTIRELY — every request is refused, never silently accepted.
+            # Adversarial round 15, Finding 1: POST /reload is a remote
+            # policy-replacement primitive gated behind an admin token, and
+            # authentication must happen BEFORE a single request-body byte is
+            # read — an unauthenticated (or not-yet-authenticated) caller
+            # must never be able to pin a ThreadingHTTPServer worker thread
+            # reading an oversized or slow body. In order:
+            #   1. no admin token configured on this server at all -> refuse
+            #      immediately (adversarial round 14, Finding 1a);
+            #   2. Content-Length missing/invalid/over the small reload cap
+            #      (reload requests are tiny JSON) -> refuse without reading;
+            #   3. the caller's bearer token doesn't match -> refuse without
+            #      reading.
+            # Only after all three checks pass does `rfile.read` run.
             configured_admin_token = self.holder.admin_token
             if not configured_admin_token:
                 status = 403
@@ -483,15 +591,21 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                     "WITHOUT an admin token configured unless an operator deliberately "
                     "enables reload for a maintenance window"
                 )
-            request_admin_token = payload.get("admin_token")
-            if not isinstance(request_admin_token, str) or not hmac.compare_digest(
-                configured_admin_token, request_admin_token
-            ):
+            length = _parse_content_length(self.headers, MAX_RELOAD_REQUEST_BYTES)
+            # Adversarial round 15, Finding 1: the admin token now travels as
+            # an `Authorization: Bearer <token>` HEADER, not a JSON body
+            # field — checking a body field would require reading the body
+            # first, defeating the whole point of authenticating before the
+            # read. `fh-mj-reload-policy` (reload_policy.py) sends this
+            # header; there is no body-field fallback to keep.
+            request_token = _extract_bearer_token(self)
+            if request_token is None or not hmac.compare_digest(configured_admin_token, request_token):
                 status = 403
                 raise PermissionError(
-                    "admin token missing or does not match this server's --admin-token; "
-                    "refusing reload"
+                    "missing or invalid 'Authorization: Bearer <token>' header; refusing reload"
                 )
+            raw = self.rfile.read(length).decode("utf-8") if length else ""
+            payload = json.loads(raw) if raw.strip() else {}
             checkpoint = payload.get("checkpoint")
             checkpoint_id = payload.get("checkpoint_id")
             expected_event_window = payload.get("expected_event_window")

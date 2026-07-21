@@ -357,9 +357,60 @@ exposure:** restart it WITHOUT `--logit-export-token` AND WITHOUT
 `--admin-token`/`FH_MJ_ADMIN_TOKEN` (same checkpoint, same port/URL — just
 drop both flags, since it is about to receive real user traffic and must
 not expose logit export or an authenticated remote-reload primitive to end
-users the way the candidate/parity steps needed them for). Re-verify
-`/healthz` reports `checkpoint_sha256` and `event_window: 128` unchanged
-after the restart.
+users the way the candidate/parity steps needed them for).
+
+**Dropping the CLI flags is not enough** (adversarial round 15, Finding 3):
+if the shell that launches the service still has `FH_MJ_LOGIT_EXPORT_TOKEN`
+and/or `FH_MJ_ADMIN_TOKEN` exported (e.g. left over from step 1's `export`
+lines), `serve_policy.py`'s argparse defaults fall back to those env vars
+and BOTH features stay enabled even with the flags gone — an environment
+that merely "doesn't pass the flag" is not the same as an environment where
+the feature is off. The restart command must explicitly unset both, not
+just omit the flags:
+
+```bash
+env -u FH_MJ_LOGIT_EXPORT_TOKEN -u FH_MJ_ADMIN_TOKEN \
+  uv run --project ai fh-mj-serve-policy \
+  --manifest ai/checkpoints/best-checkpoints.json \
+  --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
+  --port 8766
+```
+
+(`env -u NAME` unsets `NAME` for the child process only, regardless of
+whether the parent shell has it exported — this is more reliable than
+`unset FH_MJ_LOGIT_EXPORT_TOKEN; unset FH_MJ_ADMIN_TOKEN` in the same shell
+session, which is easy to forget or to run in the wrong shell/session.)
+
+**REQUIRED before cutover** — verify the restart actually turned both
+features off, not just that the process came back up. All three checks
+must pass; do not proceed to the `RL_AGENT_POLICY_URL` flip below until
+they do:
+
+```bash
+# 1. /healthz identity check: same checkpoint, same event_window, as before
+#    the restart (confirms this is still iter_075/window-128, not an
+#    accidental redeploy of something else).
+curl -s http://127.0.0.1:8766/healthz | python3 -m json.tool
+# expect: "checkpoint_sha256": "00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e",
+#         "event_window": 128, "contract_version": 1
+
+# 2. return_logits request -> 400 (logit export must be OFF)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8766/act \
+  -H 'Content-Type: application/json' \
+  -d '{"return_logits": true}'
+# expect: 400
+
+# 3. /reload -> 403 (admin/reload must be OFF)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8766/reload \
+  -H 'Content-Type: application/json' \
+  -d '{"checkpoint_id": "current"}'
+# expect: 403
+```
+
+If check 2 or 3 does not come back exactly as shown, the candidate service
+is STILL exposing logit export or remote reload to production traffic —
+stop and re-check the launching shell's environment (`env | grep FH_MJ_`)
+before proceeding.
 
 **PROMOTION = ONE backend revision** changing, together:
 - `RL_AGENT_POLICY_URL` → the candidate service's `/act` URL
