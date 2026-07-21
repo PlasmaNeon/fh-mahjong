@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plasma/fh-mahjong/internal/bot"
+	"github.com/plasma/fh-mahjong/internal/engine"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/tiles"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -309,5 +313,202 @@ func TestHTTPPolicyDecisionCounts(t *testing.T) {
 	remote, fallback := policy.DecisionCounts()
 	if remote != 2 || fallback != 1 {
 		t.Fatalf("DecisionCounts() = (%d, %d), want (2, 1)", remote, fallback)
+	}
+}
+
+func testPublicEvents(n int) []engine.PublicEvent {
+	events := make([]engine.PublicEvent, 0, n)
+	for i := 0; i < n; i++ {
+		events = append(events, engine.PublicEvent{
+			Type:     engine.EventDiscard,
+			Seat:     uint32(i % 4),
+			Face:     int16(i % 34),
+			FromSeat: -1,
+		})
+	}
+	return events
+}
+
+// ChooseActionCtx must encode via rl.EncodeObservationWithEvents using the
+// context's decision index (not the internal p.decisionIndex counter), and
+// the wire payload's compact event history must be exactly that observation's
+// EventHistory: len(event_history) == event_count <= event_window, no padding.
+func TestHTTPPolicyChooseActionCtxSendsCompactEventHistory(t *testing.T) {
+	state := testDiscardState()
+	events := testPublicEvents(10)
+	const window = 4
+	const decisionIndex = uint64(777)
+
+	wantObs, err := rl.EncodeObservationWithEvents(state, 0, decisionIndex, events, window)
+	if err != nil {
+		t.Fatalf("EncodeObservationWithEvents: %v", err)
+	}
+
+	var got actRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	action := policy.ChooseActionCtx(&bot.DecisionContext{
+		State:         state,
+		Seat:          0,
+		DecisionIndex: decisionIndex,
+		Events:        events,
+	})
+	if action == nil {
+		t.Fatal("expected remote action")
+	}
+
+	if got.EventWindow != window {
+		t.Fatalf("event_window = %d, want %d", got.EventWindow, window)
+	}
+	if got.ContractVersion != rl.EventContractV1 {
+		t.Fatalf("contract_version = %d, want %d", got.ContractVersion, rl.EventContractV1)
+	}
+	if len(got.EventHistory) != got.EventCount {
+		t.Fatalf("len(event_history)=%d != event_count=%d", len(got.EventHistory), got.EventCount)
+	}
+	if got.EventCount > window {
+		t.Fatalf("event_count=%d exceeds window=%d", got.EventCount, window)
+	}
+	if len(got.EventHistory) != len(wantObs.EventHistory) {
+		t.Fatalf("event_history len = %d, want %d", len(got.EventHistory), len(wantObs.EventHistory))
+	}
+	for i := range wantObs.EventHistory {
+		if got.EventHistory[i] != wantObs.EventHistory[i] {
+			t.Fatalf("event_history[%d] = %d, want %d", i, got.EventHistory[i], wantObs.EventHistory[i])
+		}
+	}
+	// Metadata's decision_index must come from the context, never from the
+	// internal (and here untouched/zero) p.decisionIndex counter.
+	if got.Metadata["decision_index"].(float64) != float64(decisionIndex) {
+		t.Fatalf("metadata decision_index = %v, want %d", got.Metadata["decision_index"], decisionIndex)
+	}
+}
+
+// When the window exceeds the available events, the compact wire form is
+// exactly len(events) long — no zero-padding out to the window size.
+func TestHTTPPolicyChooseActionCtxShortHistoryNotPadded(t *testing.T) {
+	state := testDiscardState()
+	events := testPublicEvents(3)
+	const window = 50
+
+	var got actRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	action := policy.ChooseActionCtx(&bot.DecisionContext{
+		State:         state,
+		Seat:          0,
+		DecisionIndex: 1,
+		Events:        events,
+	})
+	if action == nil {
+		t.Fatal("expected remote action")
+	}
+	if got.EventCount != len(events) {
+		t.Fatalf("event_count = %d, want %d (no padding)", got.EventCount, len(events))
+	}
+	if len(got.EventHistory) != len(events) {
+		t.Fatalf("len(event_history) = %d, want %d (no padding)", len(got.EventHistory), len(events))
+	}
+}
+
+// The legacy ChooseAction path must keep working unchanged, and must now
+// always send the additive event_window/event_count/contract_version scalars
+// (event_window:0) so the server can distinguish it from an event caller.
+func TestHTTPPolicyChooseActionSendsLegacyEventScalars(t *testing.T) {
+	state := testDiscardState()
+	var got actRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(actResponse{ActionID: 5})
+	}))
+	defer server.Close()
+
+	policy := NewHTTPPolicy(server.URL+"/act", WithLogger(nil))
+	action := policy.ChooseAction(state, 0)
+	if action == nil {
+		t.Fatal("expected remote action")
+	}
+	if got.EventWindow != 0 {
+		t.Fatalf("legacy event_window = %d, want 0", got.EventWindow)
+	}
+	if got.EventCount != 0 {
+		t.Fatalf("legacy event_count = %d, want 0", got.EventCount)
+	}
+	if got.ContractVersion != rl.EventContractV1 {
+		t.Fatalf("legacy contract_version = %d, want %d", got.ContractVersion, rl.EventContractV1)
+	}
+	if len(got.EventHistory) != 0 {
+		t.Fatalf("legacy event_history = %v, want empty", got.EventHistory)
+	}
+}
+
+func TestHTTPPolicyValidateServer(t *testing.T) {
+	const window = 8
+
+	matchingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":               true,
+			"event_window":     window,
+			"contract_version": rl.EventContractV1,
+		})
+	}))
+	defer matchingServer.Close()
+
+	mismatchedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"event_window":     window + 1,
+			"contract_version": rl.EventContractV1,
+		})
+	}))
+	defer mismatchedServer.Close()
+
+	legacyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer legacyServer.Close()
+
+	// Matching window+version passes for an event-enabled policy.
+	eventPolicy := NewHTTPPolicy(matchingServer.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	if err := eventPolicy.ValidateServer(context.Background()); err != nil {
+		t.Fatalf("expected matching healthz to pass, got %v", err)
+	}
+
+	// Mismatched window fails for an event-enabled policy.
+	mismatchedPolicy := NewHTTPPolicy(mismatchedServer.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	if err := mismatchedPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected mismatched event_window to fail validation")
+	}
+
+	// A legacy healthz body (no event-contract fields) fails validation for
+	// an event-enabled policy...
+	legacyForEventPolicy := NewHTTPPolicy(legacyServer.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	if err := legacyForEventPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected legacy healthz to fail validation for an event-enabled policy")
+	}
+
+	// ...but passes for a window-0 (event-free) policy.
+	legacyForZeroPolicy := NewHTTPPolicy(legacyServer.URL+"/act", WithLogger(nil))
+	if err := legacyForZeroPolicy.ValidateServer(context.Background()); err != nil {
+		t.Fatalf("expected legacy healthz to pass for a window-0 policy, got %v", err)
 	}
 }

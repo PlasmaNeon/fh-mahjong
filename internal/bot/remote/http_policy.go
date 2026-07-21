@@ -17,6 +17,8 @@ import (
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
+var _ bot.ContextPolicy = (*HTTPPolicy)(nil)
+
 const defaultTimeout = 750 * time.Millisecond
 
 const (
@@ -38,6 +40,7 @@ type HTTPPolicy struct {
 	decisionIndex uint64
 	logger        Logger
 	statsLogEvery uint64
+	eventWindow   uint32
 
 	remoteCalls     atomic.Uint64
 	remoteSuccesses atomic.Uint64
@@ -100,6 +103,16 @@ func WithStatsLogEvery(decisions uint64) Option {
 	}
 }
 
+// WithEventWindow enables the event-history wire contract: ChooseActionCtx
+// encodes via rl.EncodeObservationWithEvents with this tail window and the
+// three event scalar fields are populated accordingly. The default, 0, is
+// event-free legacy behavior (event_window:0, event_count:0, no history).
+func WithEventWindow(window uint32) Option {
+	return func(policy *HTTPPolicy) {
+		policy.eventWindow = window
+	}
+}
+
 func NewHTTPPolicy(endpoint string, opts ...Option) *HTTPPolicy {
 	policy := &HTTPPolicy{
 		endpoint: endpoint,
@@ -122,6 +135,38 @@ func (p *HTTPPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAc
 	}
 	callCount := p.remoteCalls.Add(1)
 	action, err := p.chooseRemote(state, seat)
+	if err == nil && action != nil {
+		p.remoteSuccesses.Add(1)
+		p.logStatsIfDue(callCount)
+		return action
+	}
+	reason := fallbackReason(err)
+	p.recordFallback(reason, err, seat)
+	p.logStatsIfDue(callCount)
+	if p.fallback == nil {
+		p.noFallback.Add(1)
+		return nil
+	}
+	return p.fallback.ChooseAction(state, seat)
+}
+
+// ChooseActionCtx is the ContextPolicy entry point: it speaks the compact
+// event-history wire form, encoding via rl.EncodeObservationWithEvents with
+// the DECISION INDEX FROM THE CONTEXT (not the internal p.decisionIndex
+// counter, which is only used by the legacy ChooseAction path). Fallback
+// semantics (heuristic + counters) are unchanged.
+func (p *HTTPPolicy) ChooseActionCtx(decisionCtx *bot.DecisionContext) *pb.PlayerAction {
+	if p == nil {
+		return nil
+	}
+	callCount := p.remoteCalls.Add(1)
+	var state *pb.GameState
+	var seat uint32
+	if decisionCtx != nil {
+		state = decisionCtx.State
+		seat = decisionCtx.Seat
+	}
+	action, err := p.chooseRemoteCtx(decisionCtx)
 	if err == nil && action != nil {
 		p.remoteSuccesses.Add(1)
 		p.logStatsIfDue(callCount)
@@ -178,16 +223,67 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 	p.decisionIndex++
 
 	requestPayload := actRequest{
-		Seat:       observation.Seat,
-		Planes:     observation.Planes,
-		Scalars:    observation.Scalars,
-		ActionMask: actionMaskJSON(observation.ActionMask),
+		Seat:            observation.Seat,
+		Planes:          observation.Planes,
+		Scalars:         observation.Scalars,
+		ActionMask:      actionMaskJSON(observation.ActionMask),
+		EventCount:      0,
+		EventWindow:     0,
+		ContractVersion: rl.EventContractV1,
 		Metadata: map[string]any{
 			"decision_index": observation.DecisionIndex,
 			"phase":          observation.Phase.String(),
 			"active_player":  observation.ActivePlayer,
 		},
 	}
+	return p.doAct(state, seat, requestPayload)
+}
+
+// chooseRemoteCtx mirrors chooseRemote's request/response/validation flow but
+// encodes the observation with the context's raw event log and the policy's
+// configured event window, and takes the decision index from the context
+// rather than the internal p.decisionIndex counter.
+func (p *HTTPPolicy) chooseRemoteCtx(decisionCtx *bot.DecisionContext) (*pb.PlayerAction, error) {
+	if p == nil {
+		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil remote policy")}
+	}
+	if decisionCtx == nil || decisionCtx.State == nil {
+		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil game state")}
+	}
+	if p.endpoint == "" {
+		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
+	}
+
+	state := decisionCtx.State
+	seat := decisionCtx.Seat
+
+	observation, err := rl.EncodeObservationWithEvents(state, seat, decisionCtx.DecisionIndex, decisionCtx.Events, p.eventWindow)
+	if err != nil {
+		return nil, policyError{reason: FallbackReasonEncode, err: err}
+	}
+
+	requestPayload := actRequest{
+		Seat:            observation.Seat,
+		Planes:          observation.Planes,
+		Scalars:         observation.Scalars,
+		ActionMask:      actionMaskJSON(observation.ActionMask),
+		EventHistory:    observation.EventHistory,
+		EventCount:      len(observation.EventHistory),
+		EventWindow:     p.eventWindow,
+		ContractVersion: rl.EventContractV1,
+		Metadata: map[string]any{
+			"decision_index": observation.DecisionIndex,
+			"phase":          observation.Phase.String(),
+			"active_player":  observation.ActivePlayer,
+		},
+	}
+	return p.doAct(state, seat, requestPayload)
+}
+
+// doAct is the shared HTTP/request logic for both the legacy and
+// context-aware serving paths: marshal the request, POST it, validate and
+// decode the response, and attribute the serving checkpoint on success.
+func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actRequest) (*pb.PlayerAction, error) {
 	body, err := json.Marshal(requestPayload)
 	if err != nil {
 		return nil, policyError{reason: FallbackReasonRequest, err: err}
@@ -256,12 +352,94 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 	return action, nil
 }
 
+// eventContractHealthz mirrors the event-contract handshake fields of
+// serve_policy.py's GET /healthz response. Extra fields are ignored; missing
+// fields decode as zero values, which is how a legacy server (one that
+// predates the event contract) is distinguished from a mismatched one.
+type eventContractHealthz struct {
+	EventWindow     uint32 `json:"event_window"`
+	ContractVersion uint32 `json:"contract_version"`
+}
+
+// ValidateServer probes the policy endpoint's GET /healthz route and checks
+// that the serving contract matches this policy's configuration. For a
+// window-0 (event-free) policy, any reachable healthz passes — including a
+// legacy body that carries no event-contract fields at all. For an
+// event-enabled policy (eventWindow > 0), the healthz body MUST report
+// event_window == p.eventWindow and contract_version == rl.EventContractV1;
+// a legacy healthz missing those fields decodes them as zero, which fails
+// this check, so an event-window policy talking to a pre-event-contract
+// server is caught here instead of silently serving a mismatched wire form.
+func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
+	if p == nil {
+		return fmt.Errorf("nil remote policy")
+	}
+	healthURL := deriveHealthURL(p.endpoint)
+	if healthURL == "" {
+		return fmt.Errorf("remote policy endpoint %q has no derivable /healthz URL", p.endpoint)
+	}
+
+	client := p.client
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	}
+	timeout := client.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("healthz status %d", resp.StatusCode)
+	}
+
+	if p.eventWindow == 0 {
+		return nil
+	}
+
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return err
+	}
+	var body eventContractHealthz
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return fmt.Errorf("healthz body is not valid JSON: %w", err)
+	}
+	if body.ContractVersion != rl.EventContractV1 {
+		return fmt.Errorf("healthz contract_version = %d, want %d", body.ContractVersion, rl.EventContractV1)
+	}
+	if body.EventWindow != p.eventWindow {
+		return fmt.Errorf("healthz event_window = %d, want %d", body.EventWindow, p.eventWindow)
+	}
+	return nil
+}
+
 type actRequest struct {
 	Seat       uint32         `json:"seat"`
 	Planes     []float32      `json:"planes"`
 	Scalars    []float32      `json:"scalars"`
 	ActionMask []int          `json:"action_mask"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+
+	// Event-history fields. EventHistory carries the compact, already
+	// tail-windowed wire form (rl.EncodeObservationWithEvents' output — no
+	// separate padding/truncation happens here). The three scalars are
+	// ALWAYS sent, even by the legacy (window==0) path, so the server can
+	// distinguish "legacy Go caller" (event_window:0, contract_version:1,
+	// no history) from "event caller with an empty history".
+	EventHistory    []uint32 `json:"event_history,omitempty"`
+	EventCount      int      `json:"event_count"`
+	EventWindow     uint32   `json:"event_window"`
+	ContractVersion uint32   `json:"contract_version"`
 }
 
 type actResponse struct {
