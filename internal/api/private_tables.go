@@ -368,7 +368,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 			if req.Difficulty == pb.Difficulty_DIFFICULTY_RL && !s.Matchmaker.rlAgentAvailable() {
 				return errRLAgentUnavailable
 			}
-			if _, perr := s.Matchmaker.resolveSeatPolicy(req.Difficulty); perr != nil {
+			if _, perr := s.Matchmaker.resolveSeatPolicy(req.Difficulty, tableID, req.Seat); perr != nil {
 				return perr
 			}
 		}

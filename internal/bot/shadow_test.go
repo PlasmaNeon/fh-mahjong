@@ -1,6 +1,9 @@
 package bot
 
 import (
+	"bytes"
+	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -8,6 +11,17 @@ import (
 	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
+
+// captureLog redirects the standard logger to a buffer for the duration of
+// the test and restores the previous output on cleanup.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
+}
 
 // fixedPolicy is a Policy/ContextPolicy stub that always returns the same
 // action, regardless of state.
@@ -340,5 +354,93 @@ func TestShadowPolicyConcurrentChooseActionDuringClose(t *testing.T) {
 	got := sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 9999})
 	if got != primaryAction {
 		t.Fatalf("expected primary action after Close, got %v", got)
+	}
+}
+
+// --- adversarial round 3, Finding 2: auditable per-decision telemetry -------------------
+
+// TestShadowPolicyPerDecisionLogIncludesLabelAndBothActionIDs pins the
+// per-decision log line's shape: it must carry the caller-supplied label
+// (so concurrent rooms/seats are distinguishable in shared server logs),
+// the decision index, and BOTH the primary's and the shadow's action so a
+// disagreement can be diagnosed without re-running anything.
+func TestShadowPolicyPerDecisionLogIncludesLabelAndBothActionIDs(t *testing.T) {
+	buf := captureLog(t)
+
+	primaryAction := testDiscardAction(1)
+	primary := &fixedPolicy{action: primaryAction}
+	shadow := &blockingShadow{action: testDiscardAction(2)} // deliberately disagrees
+
+	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=abc123 seat=2")
+	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 2, DecisionIndex: 7})
+	sp.Close()
+
+	out := buf.String()
+	if !strings.Contains(out, "room=abc123 seat=2") {
+		t.Fatalf("expected log to contain the label, got: %s", out)
+	}
+	if !strings.Contains(out, "decision_index=7") {
+		t.Fatalf("expected log to contain decision_index=7, got: %s", out)
+	}
+	if !strings.Contains(out, "tile=1") {
+		t.Fatalf("expected log to contain the primary action's tile id (1), got: %s", out)
+	}
+	if !strings.Contains(out, "tile=2") {
+		t.Fatalf("expected log to contain the shadow action's tile id (2), got: %s", out)
+	}
+	if !strings.Contains(out, "agree=false") {
+		t.Fatalf("expected log to report agree=false for a disagreement, got: %s", out)
+	}
+}
+
+// TestShadowPolicyPerDecisionLogOnNilShadowActionNamesConcreteReason pins the
+// "not just a bare nil" half of the fix: when the shadow returns nil (the
+// only failure signal ChooseActionCtx exposes, e.g. remote failure with
+// fallback disabled), the log line must carry a concrete, human-readable
+// reason rather than silently saying only error=true.
+func TestShadowPolicyPerDecisionLogOnNilShadowActionNamesConcreteReason(t *testing.T) {
+	buf := captureLog(t)
+
+	primary := &fixedPolicy{action: testDiscardAction(1)}
+	shadow := &blockingShadow{action: nil} // returns nil, no panic
+
+	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=xyz seat=0")
+	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 3})
+	sp.Close()
+
+	out := buf.String()
+	if !strings.Contains(out, "error=true") {
+		t.Fatalf("expected error=true in the log line, got: %s", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "nil action") && !strings.Contains(strings.ToLower(out), "fallback") {
+		t.Fatalf("expected a concrete reason naming the nil-action/fallback situation, got: %s", out)
+	}
+}
+
+// TestShadowPolicyCloseEmitsSummaryLineOnce pins that Close() logs exactly
+// one final per-wrapper summary line (label, decision/error/dropped/
+// agreement counts, p95 latency), and that summary is not duplicated by a
+// second (idempotent) Close call.
+func TestShadowPolicyCloseEmitsSummaryLineOnce(t *testing.T) {
+	buf := captureLog(t)
+
+	primary := &fixedPolicy{action: testDiscardAction(1)}
+	shadow := &blockingShadow{action: testDiscardAction(1)}
+
+	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=summary-test seat=1")
+	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 1, DecisionIndex: 1})
+	sp.Close()
+	sp.Close() // idempotent: must not emit a second summary line
+
+	out := buf.String()
+	count := strings.Count(out, "shadow summary")
+	if count != 1 {
+		t.Fatalf("expected exactly 1 shadow summary line, got %d: %s", count, out)
+	}
+	if !strings.Contains(out, "room=summary-test seat=1") {
+		t.Fatalf("expected summary line to contain the label, got: %s", out)
+	}
+	if !strings.Contains(out, "decisions=1") {
+		t.Fatalf("expected summary line to report decisions=1, got: %s", out)
 	}
 }

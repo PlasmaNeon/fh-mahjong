@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -261,16 +262,20 @@ func newShadowHTTPPolicy(shadowPolicyURL string, httpClient *http.Client, eventW
 // newSeatPolicyResolver builds the api.Matchmaker.SeatPolicyResolver closure:
 // DIFFICULTY_RL seats get a freshly-constructed RL primary (see
 // newRLPrimaryPolicy's doc comment for why it must not be shared across
-// seats), optionally wrapped in a bot.NewShadowPolicy when shadowPolicy is
-// configured; every other difficulty falls through to bot.NewPolicy. Split
-// out from main() so the no-shadow branch's per-call freshness is directly
-// testable (main's SeatPolicyResolver is otherwise just an inline closure).
-func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEventWindow uint32, shadowPolicy bot.ContextPolicy) func(pb.Difficulty) (bot.Policy, error) {
-	return func(d pb.Difficulty) (bot.Policy, error) {
+// seats), optionally wrapped in a bot.NewShadowPolicyWithLabel when
+// shadowPolicy is configured; every other difficulty falls through to
+// bot.NewPolicy. The label is built from the roomID/seat the resolver is
+// called with (adversarial round 3, Finding 2) so shadow-mode log lines from
+// concurrent private tables are distinguishable. Split out from main() so
+// the no-shadow branch's per-call freshness is directly testable (main's
+// SeatPolicyResolver is otherwise just an inline closure).
+func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEventWindow uint32, shadowPolicy bot.ContextPolicy) func(pb.Difficulty, string, uint32) (bot.Policy, error) {
+	return func(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
 			primary := newRLPrimaryPolicy(rlPolicyURL, rlHTTPClient, rlEventWindow)
 			if shadowPolicy != nil {
-				return bot.NewShadowPolicy(primary, shadowPolicy, 64), nil
+				label := fmt.Sprintf("room=%s seat=%d", roomID, seat)
+				return bot.NewShadowPolicyWithLabel(primary, shadowPolicy, 64, label), nil
 			}
 			return primary, nil
 		}

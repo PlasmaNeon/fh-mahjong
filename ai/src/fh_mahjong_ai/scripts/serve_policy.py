@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -24,29 +24,42 @@ from fh_mahjong_ai.types import Observation
 MAX_EVALUATE_BATCH = 1024
 
 
+@dataclass(frozen=True)
+class _PolicySnapshot:
+    """An immutable (policy, checkpoint_sha256) pair. /act and /healthz both
+    read a single snapshot reference, so they can never observe a policy
+    paired with the wrong checkpoint's hash — see PolicyHolder's docstring."""
+
+    policy: CheckpointPolicy
+    checkpoint_sha256: str
+
+
 class PolicyHolder:
     """Thread-safe holder for the active policy so it can be hot-swapped at
     runtime via POST /reload without restarting the server.
 
-    Readers (/act, /healthz) take the current reference lock-free; reloads are
-    serialized and only swap in the new policy after it loads successfully, so a
-    bad checkpoint returns an error and leaves the previous model serving.
+    Readers (/act, /healthz) take the current snapshot lock-free; reloads are
+    serialized and build a COMPLETE new snapshot (load policy, validate the
+    event window, compute the new checkpoint's sha256) entirely before
+    swapping it in. The swap is a single attribute assignment (atomic under
+    the GIL), so any failure along the way — including the checkpoint file
+    vanishing or being replaced between load and hashing — leaves the
+    previous snapshot (policy AND hash together) fully intact and serving.
     """
 
     def __init__(self, policy: CheckpointPolicy, manifest_path: Path, device: str = "cpu") -> None:
-        self._policy = policy
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
-        self._checkpoint_sha256 = self._sha256_of(policy.checkpoint_path)
+        self._snapshot = _PolicySnapshot(policy=policy, checkpoint_sha256=self._sha256_of(policy.checkpoint_path))
 
     @property
     def policy(self) -> CheckpointPolicy:
-        return self._policy
+        return self._snapshot.policy
 
     @property
     def checkpoint_sha256(self) -> str:
-        return self._checkpoint_sha256
+        return self._snapshot.checkpoint_sha256
 
     @staticmethod
     def _sha256_of(path: Path) -> str:
@@ -72,7 +85,7 @@ class PolicyHolder:
             # promotion events and real-play trajectories diverge immediately,
             # so transferring generator state would add complexity for no
             # observable benefit.
-            current = self._policy
+            current = self._snapshot.policy
             if checkpoint:
                 new_policy = CheckpointPolicy.from_checkpoint(
                     Path(checkpoint),
@@ -110,8 +123,16 @@ class PolicyHolder:
                     f"required window {required_window} (current policy's window unless "
                     "overridden by 'expected_event_window'); refusing to swap"
                 )
-            self._policy = new_policy
-            self._checkpoint_sha256 = self._sha256_of(new_policy.checkpoint_path)
+            # Compute the new checkpoint's hash BEFORE swapping anything in:
+            # if this raises (e.g. the checkpoint file was deleted/replaced
+            # on disk after `new_policy` was loaded above), the old snapshot
+            # must still be the one /act and /healthz observe.
+            new_sha256 = self._sha256_of(new_policy.checkpoint_path)
+            # Single reference assignment — atomic under the GIL — is the
+            # only mutation of shared state; either both the new policy and
+            # its hash become visible together, or (on any earlier exception)
+            # neither does.
+            self._snapshot = _PolicySnapshot(policy=new_policy, checkpoint_sha256=new_sha256)
             return new_policy
 
 

@@ -398,3 +398,50 @@ def test_http_reload_incompatible_window_leaves_old_policy_serving(tmp_path: Pat
     assert "error" in reload_data
     assert act_status == 200, act_data
     assert act_data["checkpoint_step"] == 1
+
+
+def test_policy_holder_reload_failure_after_load_leaves_policy_and_hash_consistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adversarial round 3, Finding 1: if computing the new checkpoint's
+    sha256 fails AFTER the new policy has already been loaded (e.g. the
+    checkpoint file was deleted/replaced on disk between load and hashing),
+    the reload must fail WITHOUT having swapped in the new policy — /act and
+    /healthz must both keep observing the OLD policy and the OLD hash
+    together, never a new policy paired with a stale hash or vice versa."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+    old_policy = holder.policy
+    old_sha256 = holder.checkpoint_sha256
+
+    calls = {"n": 0}
+
+    def flaky_sha256_of(path: Path) -> str:
+        # The holder's constructor already computed the OLD checkpoint's hash
+        # with the real implementation before this monkeypatch was installed;
+        # any call reaching this stub is reload()'s hash of the NEW
+        # checkpoint, which must fail.
+        calls["n"] += 1
+        raise OSError("checkpoint file vanished after load")
+
+    monkeypatch.setattr(PolicyHolder, "_sha256_of", staticmethod(flaky_sha256_of))
+
+    with pytest.raises(OSError):
+        holder.reload(checkpoint=str(new))
+
+    assert holder.policy is old_policy
+    assert holder.policy.checkpoint_step == 1
+    assert holder.checkpoint_sha256 == old_sha256
+
+
+def test_policy_holder_reload_success_updates_policy_and_hash_together(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+
+    holder.reload(checkpoint=str(new))
+
+    assert holder.policy.checkpoint_step == 2
+    assert holder.policy.checkpoint_path == new
+    assert holder.checkpoint_sha256 == hashlib.sha256(new.read_bytes()).hexdigest()

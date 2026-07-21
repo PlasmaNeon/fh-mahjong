@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	"github.com/plasma/fh-mahjong/internal/rl"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -167,11 +168,11 @@ func TestNewShadowHTTPPolicy_FallbackDisabled(t *testing.T) {
 func TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) {
 	resolver := newSeatPolicyResolver("http://127.0.0.1:1/act", &http.Client{}, 0, nil)
 
-	first, err := resolver(pb.Difficulty_DIFFICULTY_RL)
+	first, err := resolver(pb.Difficulty_DIFFICULTY_RL, "room-1", 0)
 	if err != nil {
 		t.Fatalf("resolver first call: %v", err)
 	}
-	second, err := resolver(pb.Difficulty_DIFFICULTY_RL)
+	second, err := resolver(pb.Difficulty_DIFFICULTY_RL, "room-2", 1)
 	if err != nil {
 		t.Fatalf("resolver second call: %v", err)
 	}
@@ -199,5 +200,37 @@ func TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) 
 	}
 	if secondRemote != 0 || secondFallback != 0 {
 		t.Fatalf("second policy's counters were affected by the first instance's activity: remote=%d fallback=%d, want 0/0", secondRemote, secondFallback)
+	}
+}
+
+// TestNewSeatPolicyResolver_ShadowPolicyIsLabeledWithRoomAndSeat pins the
+// adversarial round 3, Finding 2 fix: when a shadow candidate is configured,
+// the resolver must wrap the primary in a bot.NewShadowPolicyWithLabel whose
+// label identifies the room and seat this resolution was called for, so
+// concurrent private tables' shadow-mode log lines are distinguishable.
+func TestNewSeatPolicyResolver_ShadowPolicyIsLabeledWithRoomAndSeat(t *testing.T) {
+	var buf bytes.Buffer
+	prevOutput := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prevOutput)
+
+	shadowCandidate := newShadowHTTPPolicy("http://127.0.0.1:1/act", &http.Client{}, 0)
+	resolver := newSeatPolicyResolver("http://127.0.0.1:1/act", &http.Client{}, 0, shadowCandidate)
+
+	policy, err := resolver(pb.Difficulty_DIFFICULTY_RL, "table-42", 3)
+	if err != nil {
+		t.Fatalf("resolver call: %v", err)
+	}
+	shadowPolicy, ok := policy.(*bot.ShadowPolicy)
+	if !ok {
+		t.Fatalf("resolved policy is %T, want *bot.ShadowPolicy", policy)
+	}
+
+	shadowPolicy.ChooseActionCtx(&bot.DecisionContext{State: &pb.GameState{}, Seat: 3, DecisionIndex: 0})
+	shadowPolicy.Close()
+
+	out := buf.String()
+	if !strings.Contains(out, "room=table-42 seat=3") {
+		t.Fatalf("expected shadow policy log output to contain the room/seat label, got: %s", out)
 	}
 }

@@ -253,6 +253,46 @@ def test_endpoint_mode_catches_logit_drift_with_same_argmax(
         server.close()
 
 
+# FINDING 3 (adversarial round 3): a NaN in either logit vector makes every
+# NaN comparison false, so `logit_diff > logit_tolerance` is False and the
+# gate silently PASSES even though the served logits are garbage. This drifts
+# the SERVING side's reported logit for a NON-argmax legal action to NaN
+# (the reported action_id, computed from the true undrifted logits, is
+# unaffected) and asserts the harness still fails the gate.
+def test_endpoint_mode_catches_nan_logits_even_with_matching_argmax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    original_choose = CheckpointPolicy.choose
+
+    def _nan_choose(self, observation, return_logits: bool = False):
+        action = original_choose(self, observation, return_logits=return_logits)
+        if return_logits and action.logits is not None:
+            drifted = action.logits.copy()
+            legal = observation.legal_actions
+            target = next((a for a in legal if a != action.greedy_action_id), legal[0])
+            drifted[target] = float("nan")
+            action = dataclasses.replace(action, logits=drifted)
+        return action
+
+    monkeypatch.setattr(CheckpointPolicy, "choose", _nan_choose)
+    try:
+        with pytest.raises(ServingParityError, match="(?i)nan|non-finite|finite"):
+            run_serving_parity(
+                checkpoint=checkpoint,
+                event_history_window=_WINDOW,
+                episodes=2,
+                start_seed=8500,
+                device="cpu",
+                endpoint=f"http://127.0.0.1:{server.port}/act",
+                bridge_kind="mock",
+                max_decisions=5,
+            )
+    finally:
+        server.close()
+
+
 def test_endpoint_mode_fails_when_server_omits_logits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -399,6 +439,51 @@ def test_verify_endpoint_checkpoint_identity_proceeds_with_warning_when_field_ab
     finally:
         server.close()
     assert "WARNING" in capsys.readouterr().err
+
+
+# --- --logit-tolerance CLI validation (finding 3, adversarial round 3) -----------------
+
+
+def _run_main_with_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> int:
+    from fh_mahjong_ai.scripts import serving_parity as serving_parity_module
+
+    monkeypatch.setattr("sys.argv", ["fh-mj-serving-parity", *argv])
+    with pytest.raises(SystemExit) as excinfo:
+        serving_parity_module.main()
+    return int(excinfo.value.code)
+
+
+def _base_argv(tmp_path: Path, logit_tolerance: str) -> list[str]:
+    return [
+        "--checkpoint", str(tmp_path / "doesnotmatter.pt"),
+        "--event-history-window", "0",
+        "--episodes", "1",
+        "--start-seed", "1",
+        "--in-process",
+        "--logit-tolerance", logit_tolerance,
+    ]
+
+
+def test_logit_tolerance_nan_rejected_at_cli_parse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code = _run_main_with_argv(monkeypatch, _base_argv(tmp_path, "nan"))
+    assert code == 2
+
+
+def test_logit_tolerance_inf_rejected_at_cli_parse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code = _run_main_with_argv(monkeypatch, _base_argv(tmp_path, "inf"))
+    assert code == 2
+
+
+def test_logit_tolerance_negative_rejected_at_cli_parse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code = _run_main_with_argv(monkeypatch, _base_argv(tmp_path, "-1.0"))
+    assert code == 2
+
+
+def test_logit_tolerance_normal_value_accepted_at_cli_parse(tmp_path: Path) -> None:
+    from fh_mahjong_ai.scripts.serving_parity import _finite_nonnegative_float
+
+    assert _finite_nonnegative_float("1e-4") == pytest.approx(1e-4)
+    assert _finite_nonnegative_float("0") == 0.0
 
 
 # --- payload shape sanity ---------------------------------------------------------------

@@ -158,8 +158,12 @@ type Matchmaker struct {
 	// SeatPolicyResolver builds the bot.Policy for a private-room seat of the
 	// given difficulty. When nil, resolveSeatPolicy falls back to
 	// bot.NewPolicy (heuristic-only). cmd/server installs a resolver that maps
-	// DIFFICULTY_RL to the remote HTTP policy.
-	SeatPolicyResolver func(pb.Difficulty) (bot.Policy, error)
+	// DIFFICULTY_RL to the remote HTTP policy. roomID and seat identify the
+	// private table and seat index this resolution is for — cmd/server uses
+	// them (adversarial round 3, Finding 2) to label any bot.ShadowPolicy it
+	// wraps the primary in, so concurrent rooms/seats are distinguishable in
+	// shared server logs; callers that don't need this may ignore both.
+	SeatPolicyResolver func(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error)
 
 	// RLAgentAvailable reports whether the trained RL agent can currently be
 	// offered as a seat option. cmd/server wires this to a health-checked
@@ -308,9 +312,9 @@ func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
 // heuristic-only bot.NewPolicy. It is the single point used by both seat
 // validation and the match-start loop, so an unsupported difficulty (e.g.
 // DIFFICULTY_RL when no resolver is installed) is rejected consistently.
-func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty) (bot.Policy, error) {
+func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error) {
 	if m.SeatPolicyResolver != nil {
-		return m.SeatPolicyResolver(d)
+		return m.SeatPolicyResolver(d, roomID, seat)
 	}
 	return bot.NewPolicy(d)
 }
@@ -622,7 +626,7 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 				humanSeats[seat] = s.UserID
 				seatInfos[seat] = SeatInfo{Kind: "human", Name: s.Username, UserID: s.UserID}
 			case "bot":
-				policy, perr := m.resolveSeatPolicy(s.Difficulty)
+				policy, perr := m.resolveSeatPolicy(s.Difficulty, tableID, seat)
 				if perr != nil {
 					return fmt.Errorf("seat %d: %w", i, perr)
 				}

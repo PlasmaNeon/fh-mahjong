@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 import urllib.error
 import urllib.parse
@@ -53,6 +54,42 @@ class ServingParityError(RuntimeError):
     """Raised on the first parity violation; the message carries the full
     failure dump (seed, decision index, offending state summary) required by
     the hard-gate contract."""
+
+
+def _finite_nonnegative_float(value: str) -> float:
+    """argparse `type=` for --logit-tolerance: rejects NaN/Inf/negative at
+    parse time (adversarial round 3, Finding 3). A NaN tolerance would make
+    every `logit_diff > tolerance` comparison False (NaN compares false
+    against everything), silently disabling the hard gate; Inf has the same
+    effect since nothing can ever exceed it. argparse reports a clean usage
+    error (exit code 2) rather than letting a bad value reach the episode
+    loop."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
+    if not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError(f"--logit-tolerance must be finite, got {value!r}")
+    if parsed < 0.0:
+        raise argparse.ArgumentTypeError(f"--logit-tolerance must be >= 0, got {value!r}")
+    return parsed
+
+
+def _assert_finite_logits(logits: np.ndarray, legal: np.ndarray, *, side: str, seed: int, decision_index: int) -> None:
+    """Hard-gate guard (Finding 3, adversarial round 3): a NaN or Inf entry in
+    either logit vector, over the legal actions actually compared, makes the
+    `abs(diff) > tolerance` check silently pass (NaN comparisons are always
+    False; Inf - Inf is NaN too). Any non-finite legal-action logit is an
+    immediate, explicit failure naming which side produced it, never a value
+    that reaches the subtraction."""
+    legal_logits = np.asarray(logits, dtype=np.float64)[legal]
+    if not np.all(np.isfinite(legal_logits)):
+        bad = [int(a) for a, v in zip(legal.tolist(), legal_logits.tolist()) if not math.isfinite(v)]
+        raise ServingParityError(
+            f"serving parity FAILED seed={seed} decision_index={decision_index}: "
+            f"{side} logits contain non-finite values (NaN/Inf) at legal action ids {bad} "
+            "— cannot be trusted for a tolerance comparison"
+        )
 
 
 @dataclass
@@ -333,6 +370,12 @@ def run_serving_parity(
                         )
                     reference_logits = _forward_logits(model, observation, device)
                     legal = np.asarray(observation.legal_actions, dtype=np.int64)
+                    _assert_finite_logits(
+                        reference_logits, legal, side="reference", seed=seed, decision_index=decision_index,
+                    )
+                    _assert_finite_logits(
+                        serving_logits, legal, side="served", seed=seed, decision_index=decision_index,
+                    )
                     logit_diff = float(np.max(np.abs(reference_logits[legal] - serving_logits[legal])))
                     report.max_logit_diff = max(report.max_logit_diff, logit_diff)
                     if logit_diff > logit_tolerance:
@@ -357,6 +400,13 @@ def run_serving_parity(
 
                     reference_logits = _forward_logits(model, observation, device)
                     serving_logits = _forward_logits(model, served_observation, device)
+                    legal = np.asarray(observation.legal_actions, dtype=np.int64)
+                    _assert_finite_logits(
+                        reference_logits, legal, side="reference", seed=seed, decision_index=decision_index,
+                    )
+                    _assert_finite_logits(
+                        serving_logits, legal, side="served", seed=seed, decision_index=decision_index,
+                    )
                     logit_diff = float(np.max(np.abs(reference_logits - serving_logits)))
                     report.max_logit_diff = max(report.max_logit_diff, logit_diff)
                     if logit_diff > logit_tolerance:
@@ -448,9 +498,11 @@ def main() -> None:
     parser.add_argument("--max-decisions", type=int, default=64, help="Bridge decision cap per episode")
     parser.add_argument("--http-timeout", type=float, default=5.0, help="Per-request timeout in seconds (--endpoint mode)")
     parser.add_argument(
-        "--logit-tolerance", type=float, default=LOGIT_TOLERANCE,
+        "--logit-tolerance", type=_finite_nonnegative_float, default=LOGIT_TOLERANCE,
         help="Max-abs logit difference over legal actions allowed before failing the hard gate "
-        "(same-hardware assumption: exact reproducibility is expected on identical CPU/GPU/dtype)",
+        "(same-hardware assumption: exact reproducibility is expected on identical CPU/GPU/dtype). "
+        "Must be a finite value >= 0 (adversarial round 3, Finding 3): NaN/Inf would silently "
+        "disable the gate.",
     )
     args = parser.parse_args()
 

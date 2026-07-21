@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"sync"
@@ -56,9 +57,18 @@ type ShadowPolicy struct {
 	primary Policy
 	shadow  ContextPolicy
 
-	queue      chan shadowJob
-	workerDone chan struct{}
-	closeOnce  sync.Once
+	// label identifies this wrapper instance in every log line it emits
+	// (per-decision lines and Close's summary) — e.g. "room=<id> seat=<n>".
+	// Set via NewShadowPolicyWithLabel; empty ("") for plain NewShadowPolicy,
+	// same as before this field existed. Opaque and read-only after
+	// construction, so no synchronization is needed to read it from the
+	// worker goroutine.
+	label string
+
+	queue       chan shadowJob
+	workerDone  chan struct{}
+	closeOnce   sync.Once
+	summaryOnce sync.Once
 
 	// closeMu protects the send-vs-close race on queue: enqueueShadow takes
 	// RLock (so concurrent enqueues never block each other) and re-checks
@@ -137,12 +147,25 @@ func (s *ShadowPolicy) ObservedPolicyIDs() []string {
 // be in flight before new ones are dropped (Metrics().Dropped) rather than
 // blocking the primary's answer; queueSize <= 0 is treated as 1.
 func NewShadowPolicy(primary Policy, shadow ContextPolicy, queueSize int) *ShadowPolicy {
+	return NewShadowPolicyWithLabel(primary, shadow, queueSize, "")
+}
+
+// NewShadowPolicyWithLabel is NewShadowPolicy plus a caller-supplied label
+// attached to every log line this wrapper emits (per-decision lines and
+// Close's final summary). Per-seat-per-room wrappers are otherwise
+// indistinguishable in shared server logs when multiple rooms run
+// concurrently; callers that have a room/match id and seat available (e.g.
+// cmd/server's newSeatPolicyResolver) should pass something like
+// "room=<id> seat=<n>". label is opaque free-form text and may be empty
+// (identical behavior to NewShadowPolicy).
+func NewShadowPolicyWithLabel(primary Policy, shadow ContextPolicy, queueSize int, label string) *ShadowPolicy {
 	if queueSize <= 0 {
 		queueSize = 1
 	}
 	policy := &ShadowPolicy{
 		primary:    primary,
 		shadow:     shadow,
+		label:      label,
 		queue:      make(chan shadowJob, queueSize),
 		workerDone: make(chan struct{}),
 	}
@@ -264,11 +287,13 @@ func (s *ShadowPolicy) evaluate(job shadowJob) {
 	start := time.Now()
 	var shadowAction *pb.PlayerAction
 	errored := false
+	reason := ""
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				errored = true
-				log.Printf("bot: shadow policy panic seat=%d decision_index=%d: %v", job.Ctx.Seat, job.Ctx.DecisionIndex, r)
+				reason = fmt.Sprintf("panic: %v", r)
+				log.Printf("bot: shadow policy panic label=%q seat=%d decision_index=%d: %v", s.label, job.Ctx.Seat, job.Ctx.DecisionIndex, r)
 			}
 		}()
 		shadowAction = s.shadow.ChooseActionCtx(job.Ctx)
@@ -277,6 +302,12 @@ func (s *ShadowPolicy) evaluate(job shadowJob) {
 
 	if !errored && shadowAction == nil {
 		errored = true
+		// ChooseActionCtx's contract exposes no error detail beyond a nil
+		// return (see the type's doc comment) — the concrete HTTP/remote
+		// failure or fallback-disabled reason, if any, is already logged by
+		// the policy server / remote.HTTPPolicy itself. Name the situation
+		// plainly rather than leaving only error=true for a reader to guess at.
+		reason = "shadow returned nil action (remote failure/fallback disabled)"
 	}
 	if errored {
 		s.shadowErrors.Add(1)
@@ -291,17 +322,34 @@ func (s *ShadowPolicy) evaluate(job shadowJob) {
 	count := s.decisions.Add(1)
 
 	log.Printf(
-		"bot: shadow decision seat=%d decision_index=%d latency_ms=%.2f agree=%v error=%v",
-		job.Ctx.Seat, job.Ctx.DecisionIndex, latencyMs, agree, errored,
+		"bot: shadow decision label=%q seat=%d decision_index=%d primary_action=%s shadow_action=%s agree=%v error=%v reason=%q latency_ms=%.2f",
+		s.label, job.Ctx.Seat, job.Ctx.DecisionIndex, actionLogSummary(job.PrimaryAction), actionLogSummary(shadowAction),
+		agree, errored, reason, latencyMs,
 	)
 
 	if count%shadowStatsLogEvery == 0 {
 		metrics := s.Metrics()
 		log.Printf(
-			"bot: shadow stats decisions=%d errors=%d dropped=%d agreements=%d p95_latency_ms=%.2f",
-			metrics.Decisions, metrics.ShadowErrors, metrics.Dropped, metrics.Agreements, metrics.P95LatencyMs,
+			"bot: shadow stats label=%q decisions=%d errors=%d dropped=%d agreements=%d p95_latency_ms=%.2f",
+			s.label, metrics.Decisions, metrics.ShadowErrors, metrics.Dropped, metrics.Agreements, metrics.P95LatencyMs,
 		)
 	}
+}
+
+// actionLogSummary renders a *pb.PlayerAction as a compact, human-readable
+// identifier for log lines: the action type plus the tile it acted on, when
+// present. There is no single numeric "action id" in the domain model (that
+// concept belongs to the RL encoding, not bot.Policy's wire types), so this
+// is the closest stable, greppable stand-in — good enough to tell whether
+// two logged actions agree at a glance.
+func actionLogSummary(action *pb.PlayerAction) string {
+	if action == nil {
+		return "nil"
+	}
+	if action.Tile != nil {
+		return fmt.Sprintf("%s:tile=%d", action.Type, action.Tile.Id)
+	}
+	return action.Type.String()
 }
 
 func (s *ShadowPolicy) recordLatency(ms float64) {
@@ -369,4 +417,14 @@ func (s *ShadowPolicy) Close() {
 		s.closeMu.Unlock()
 	})
 	<-s.workerDone
+	// Emitted once per wrapper instance, after the worker has fully drained
+	// (so the counts below are final), regardless of how many times Close is
+	// called concurrently or repeatedly.
+	s.summaryOnce.Do(func() {
+		metrics := s.Metrics()
+		log.Printf(
+			"bot: shadow summary label=%q decisions=%d errors=%d dropped=%d agreements=%d p95_latency_ms=%.2f",
+			s.label, metrics.Decisions, metrics.ShadowErrors, metrics.Dropped, metrics.Agreements, metrics.P95LatencyMs,
+		)
+	})
 }
