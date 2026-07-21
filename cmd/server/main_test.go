@@ -143,6 +143,30 @@ func TestResolveAIBotEventWindow(t *testing.T) {
 			envAIBotWindow:      "0",
 			want:                0,
 		},
+		{
+			// Round 9: "/act" vs "/act/" are the same endpoint, just spelled
+			// with a trailing slash. A byte-for-byte comparison would treat
+			// these as different services and zero the window.
+			name:                "trailing slash on AI_BOT_POLICY_URL's /act is still the same service",
+			aiBotPolicyURL:      "http://shared.example/act/",
+			rlPolicyURLOverride: "http://shared.example/act",
+			rlEventWindow:       128,
+			want:                128,
+		},
+		{
+			name:                "uppercase host in AI_BOT_POLICY_URL is still the same service",
+			aiBotPolicyURL:      "http://SHARED.example/act",
+			rlPolicyURLOverride: "http://shared.example/act",
+			rlEventWindow:       128,
+			want:                128,
+		},
+		{
+			name:                "explicit default port :80 in AI_BOT_POLICY_URL is still the same service",
+			aiBotPolicyURL:      "http://shared.example:80/act",
+			rlPolicyURLOverride: "http://shared.example/act",
+			rlEventWindow:       128,
+			want:                128,
+		},
 	}
 
 	for _, tc := range tests {

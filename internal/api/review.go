@@ -5,12 +5,12 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/review"
 	"github.com/plasma/fh-mahjong/internal/rl"
@@ -93,32 +93,13 @@ func reviewEventWindow(policyURL string) uint32 {
 // production-shaped setup POLICY_SERVER_URL=http://policy:8765 and
 // RL_AGENT_POLICY_URL=http://policy:8765/act describe the same server, but
 // compare unequal, which forced the review window to 0 and made every
-// uncached review 502 once RL_AGENT_EVENT_WINDOW mattered. Canonicalize both
-// to scheme+host(+port) plus a path with the RL side's trailing "/act" (and
-// trailing slashes on both sides) stripped before comparing — mirroring how
-// internal/bot/remote's deriveHealthURL maps an /act endpoint to its sibling
-// route on the same service. Unparseable URLs are treated as NOT the same
-// service (fail closed, matching this function's caller).
+// uncached review 502 once RL_AGENT_EVENT_WINDOW mattered. Delegates to
+// remote.SameServiceEndpoint — the single shared endpoint-identity
+// normalization also used by cmd/server's resolveAIBotEventWindow
+// (adversarial round 9: two separate ad hoc normalizations here and there
+// drifted in what they tolerated, e.g. host case and default ports).
 func sameReviewService(baseURL, rlURL string) bool {
-	bu, err := url.Parse(baseURL)
-	if err != nil || bu.Scheme == "" || bu.Host == "" {
-		return false
-	}
-	ru, err := url.Parse(rlURL)
-	if err != nil || ru.Scheme == "" || ru.Host == "" {
-		return false
-	}
-	if bu.Scheme != ru.Scheme || bu.Host != ru.Host {
-		return false
-	}
-
-	basePath := strings.TrimSuffix(bu.Path, "/")
-
-	rlPath := strings.TrimSuffix(ru.Path, "/")
-	rlPath = strings.TrimSuffix(rlPath, "/act")
-	rlPath = strings.TrimSuffix(rlPath, "/")
-
-	return basePath == rlPath
+	return remote.SameServiceEndpoint(baseURL, rlURL)
 }
 
 // handleGetReview serves the newest cached MatchReview for a match. It is a

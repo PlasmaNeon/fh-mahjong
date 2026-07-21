@@ -363,15 +363,24 @@ func parseEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 // fallback exactly once (in main(), via rlEndpointURL) and feeding the result
 // in here keeps that logic from existing in two places.
 //
-// When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and effectiveRLURL are
-// the identical non-empty string (both resolve to one shared service),
-// inherit rlEventWindow — the two clients speak the same server, so the same
-// window is safe. Otherwise — genuinely different services, or neither URL
+// When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and effectiveRLURL
+// name the same backing service (per remote.SameServiceEndpoint — not just
+// byte-for-byte equal; see adversarial round 9, Finding below), inherit
+// rlEventWindow — the two clients speak the same server, so the same window
+// is safe. Otherwise — genuinely different services, or neither URL
 // configured — default to 0 (event-free) and fail closed rather than guess a
 // contract the bot policy might not actually speak.
+//
+// Round 9: a bare == undercounts equivalent spellings of the same endpoint
+// (e.g. "http://policy:8765/act" vs "http://policy:8765/act/", host case,
+// an explicit default port like ":80"/":443") as different services, which
+// zeroed the window and made the event server reject every /act call even
+// though it was the correct service. remote.SameServiceEndpoint is the one
+// shared normalization also used by internal/api's sameReviewService, so
+// this logic exists in exactly one place.
 func resolveAIBotEventWindow(aiBotPolicyURL, effectiveRLURL string, rlEventWindow uint32) uint32 {
 	defaultWindow := uint32(0)
-	if aiBotPolicyURL != "" && aiBotPolicyURL == effectiveRLURL {
+	if aiBotPolicyURL != "" && remote.SameServiceEndpoint(aiBotPolicyURL, effectiveRLURL) {
 		defaultWindow = rlEventWindow
 	}
 	return parseEventWindowEnv("AI_BOT_EVENT_WINDOW", defaultWindow)
