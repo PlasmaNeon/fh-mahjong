@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/review"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"gorm.io/gorm"
 )
@@ -19,8 +20,10 @@ import (
 // reviewEventWindow reads RL_AGENT_EVENT_WINDOW (the same env family as
 // RL_AGENT_POLICY_URL/RL_AGENT_CHECKPOINT_ID in cmd/server/main.go), the
 // event_window of the checkpoint served at POLICY_SERVER_URL. Unset, empty,
-// or unparseable values default to 0 (no event history — byte-identical to
-// pre-event-history review behavior).
+// unparseable, or out-of-bound (> rl.MaxEventHistoryWindow) values default to
+// 0 (no event history — byte-identical to pre-event-history review
+// behavior). Out-of-bound values are rejected outright rather than clamped,
+// matching internal/rl's refusal semantics (env.go, searchpool.go).
 func reviewEventWindow() uint32 {
 	raw := strings.TrimSpace(os.Getenv("RL_AGENT_EVENT_WINDOW"))
 	if raw == "" {
@@ -29,6 +32,10 @@ func reviewEventWindow() uint32 {
 	n, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil {
 		log.Printf("review: ignoring invalid RL_AGENT_EVENT_WINDOW %q: %v", raw, err)
+		return 0
+	}
+	if n > rl.MaxEventHistoryWindow {
+		log.Printf("review: ignoring RL_AGENT_EVENT_WINDOW %q: exceeds maximum %d", raw, rl.MaxEventHistoryWindow)
 		return 0
 	}
 	return uint32(n)
