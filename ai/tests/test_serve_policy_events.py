@@ -403,29 +403,39 @@ def test_http_reload_incompatible_window_leaves_old_policy_serving(tmp_path: Pat
 def test_policy_holder_reload_failure_after_load_leaves_policy_and_hash_consistent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Adversarial round 3, Finding 1: if computing the new checkpoint's
-    sha256 fails AFTER the new policy has already been loaded (e.g. the
-    checkpoint file was deleted/replaced on disk between load and hashing),
-    the reload must fail WITHOUT having swapped in the new policy — /act and
-    /healthz must both keep observing the OLD policy and the OLD hash
-    together, never a new policy paired with a stale hash or vice versa."""
+    """Adversarial round 3, Finding 1 (re-scoped for round 5's Finding 2 fix):
+    if ANYTHING fails after the new checkpoint's policy+hash have already been
+    produced but before they are swapped in, the reload must fail WITHOUT
+    having swapped in the new policy — /act and /healthz must both keep
+    observing the OLD policy and the OLD hash together, never a new policy
+    paired with a stale hash or vice versa.
+
+    Since round 5's Finding 2 fix, policy and hash are derived together from a
+    single read of the checkpoint bytes (`load_checkpoint_policy_with_hash`),
+    so the old "hash the path a second time and make THAT call fail" seam
+    (`PolicyHolder._sha256_of`) no longer sits on `reload`'s hot path at all.
+    This exercises the equivalent seam instead: `load_checkpoint_policy_with_hash`
+    succeeds (producing a real new policy+hash pair, mirroring "the new
+    checkpoint was fully loaded and hashed"), then something else fails before
+    the snapshot swap — the holder must still show only the OLD snapshot."""
     old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
     new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
     holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
     old_policy = holder.policy
     old_sha256 = holder.checkpoint_sha256
 
-    calls = {"n": 0}
+    import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
 
-    def flaky_sha256_of(path: Path) -> str:
-        # The holder's constructor already computed the OLD checkpoint's hash
-        # with the real implementation before this monkeypatch was installed;
-        # any call reaching this stub is reload()'s hash of the NEW
-        # checkpoint, which must fail.
-        calls["n"] += 1
-        raise OSError("checkpoint file vanished after load")
+    real_load_with_hash = serve_policy_module.load_checkpoint_policy_with_hash
 
-    monkeypatch.setattr(PolicyHolder, "_sha256_of", staticmethod(flaky_sha256_of))
+    def _flaky_load_with_hash(*args: object, **kwargs: object):
+        # Fully load the new checkpoint AND compute its hash from the same
+        # buffer (the real, fixed single-read path succeeds normally) — then
+        # fail afterward, before `reload` gets a chance to swap the snapshot.
+        real_load_with_hash(*args, **kwargs)
+        raise OSError("simulated failure after policy+hash were produced, before the snapshot swap")
+
+    monkeypatch.setattr(serve_policy_module, "load_checkpoint_policy_with_hash", _flaky_load_with_hash)
 
     with pytest.raises(OSError):
         holder.reload(checkpoint=str(new))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -113,8 +114,17 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     torch.save(payload, path)
 
 
-def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> int:
-    payload = torch.load(path, map_location="cpu")
+def load_checkpoint_from_bytes(
+    data: bytes, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None
+) -> int:
+    """Same contract as `load_checkpoint`, but deserializes from an in-memory
+    buffer instead of re-opening a path. Used by callers (e.g. `serving.py`'s
+    `CheckpointPolicy.from_checkpoint_bytes`) that must read a checkpoint's
+    bytes exactly once and derive both the loaded weights AND a sha256 of
+    those same bytes — reopening the path a second time would let an atomic
+    file replacement land in between, decoupling the hash from the weights
+    actually loaded (adversarial round 5, Finding 2)."""
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
     checkpoint_state = _adapt_checkpoint_state(payload["model"], model.state_dict())
     missing, unexpected = model.load_state_dict(checkpoint_state, strict=False)
     compatible_optional_prefixes = ("q_head.", "large_loss_head.", "action_risk_probability_head.", "action_risk_severity_head.")
@@ -128,6 +138,10 @@ def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     if optimizer is not None and "optimizer" in payload:
         optimizer.load_state_dict(payload["optimizer"])
     return int(payload.get("step", 0))
+
+
+def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> int:
+    return load_checkpoint_from_bytes(Path(path).read_bytes(), model, optimizer)
 
 
 def load_compatible_checkpoint(path: Path, model: torch.nn.Module) -> tuple[int, dict[str, object]]:

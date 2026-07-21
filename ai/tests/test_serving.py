@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
@@ -344,6 +346,64 @@ def test_policy_holder_reload_preserves_sampling(tmp_path: Path) -> None:
     assert policy.sample_temperature == 0.7
     assert policy.sample_top_k == 3
     assert policy.sample_action_family == "discard"
+
+
+# FINDING 2 (adversarial round 5): the OLD reload() flow loaded the model
+# from `checkpoint` and only afterward re-opened the SAME path to compute its
+# sha256 — an atomic file replacement landing between those two independent
+# opens would make /healthz attest the NEW bytes while the OLD weights kept
+# serving. The fix reads the checkpoint's bytes exactly once and derives both
+# the loaded policy and its hash from that same buffer
+# (`load_checkpoint_policy_with_hash`). This test simulates the race directly:
+# it patches `Path.read_bytes` so that, immediately after ANY read of the
+# checkpoint path completes, the file on disk is swapped for different
+# content — mirroring "an atomic replace lands between load and hash" in the
+# old two-open flow. With the fix, the holder's reported hash matches the
+# bytes actually used to build the policy (the original ones), never the
+# swapped-in bytes, and the deserialized policy matches too.
+def test_policy_holder_reload_hash_matches_bytes_actually_loaded_despite_concurrent_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint_path = tmp_path / "model.pt"
+    save_checkpoint(checkpoint_path, PolicyValueNet(EnvConfig(), ModelConfig()), step=1)
+    original_bytes = checkpoint_path.read_bytes()
+    original_sha256 = hashlib.sha256(original_bytes).hexdigest()
+
+    swapped_path = tmp_path / "swapped.pt"
+    save_checkpoint(swapped_path, PolicyValueNet(EnvConfig(), ModelConfig()), step=99)
+    swapped_bytes = swapped_path.read_bytes()
+    swapped_sha256 = hashlib.sha256(swapped_bytes).hexdigest()
+    assert swapped_sha256 != original_sha256
+
+    holder = PolicyHolder(
+        CheckpointPolicy.from_checkpoint(checkpoint_path),
+        manifest_path=tmp_path / "manifest.json",
+    )
+
+    real_read_bytes = Path.read_bytes
+    swap_done = False
+
+    def _read_then_swap(self: Path, *args: object, **kwargs: object) -> bytes:
+        data = real_read_bytes(self, *args, **kwargs)
+        nonlocal swap_done
+        if self == checkpoint_path and not swap_done:
+            # Simulate an atomic file replacement landing immediately after
+            # this read of the checkpoint returns — the old flow's SECOND
+            # open (for hashing) would observe these new bytes instead of the
+            # ones just loaded into the model.
+            swap_done = True
+            checkpoint_path.write_bytes(swapped_bytes)
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", _read_then_swap)
+
+    holder.reload(checkpoint=str(checkpoint_path))
+
+    assert holder.checkpoint_sha256 == original_sha256
+    assert holder.checkpoint_sha256 != swapped_sha256
+    # The deserialized policy must also come from the original bytes (step=1),
+    # not the swapped-in checkpoint (step=99) — hash and weights stay coupled.
+    assert holder.policy.checkpoint_step == 1
 
 
 def test_policy_holder_manifest_reload_preserves_sampling_and_seed(tmp_path: Path) -> None:

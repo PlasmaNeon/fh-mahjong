@@ -16,7 +16,11 @@ import numpy as np
 from fh_mahjong_ai.checkpoint_manifest import DEFAULT_MANIFEST_PATH
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.events import EVENT_CONTRACT_V1
-from fh_mahjong_ai.serving import CheckpointPolicy, load_policy_from_manifest
+from fh_mahjong_ai.serving import (
+    CheckpointPolicy,
+    load_checkpoint_policy_with_hash,
+    load_policy_from_manifest_with_hash,
+)
 from fh_mahjong_ai.types import Observation
 
 # Caps a single /evaluate request. The Go review client (internal/review/client.go)
@@ -47,11 +51,30 @@ class PolicyHolder:
     previous snapshot (policy AND hash together) fully intact and serving.
     """
 
-    def __init__(self, policy: CheckpointPolicy, manifest_path: Path, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        policy: CheckpointPolicy,
+        manifest_path: Path,
+        device: str = "cpu",
+        checkpoint_sha256: Optional[str] = None,
+    ) -> None:
+        """`checkpoint_sha256`, when given, MUST be the hash of the exact
+        bytes `policy` was deserialized from (see
+        `serving.load_checkpoint_policy_with_hash` /
+        `load_policy_from_manifest_with_hash`) — the production startup path
+        (`main()`) always passes it, so the policy and its attested hash come
+        from a single read of the checkpoint file, never two independent
+        opens (adversarial round 5, Finding 2). When omitted (test/back-compat
+        convenience callers that already hold a constructed `policy` and have
+        no bytes to hash), this falls back to re-hashing `policy.checkpoint_path`
+        from disk, which does not have that guarantee."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
-        self._snapshot = _PolicySnapshot(policy=policy, checkpoint_sha256=self._sha256_of(policy.checkpoint_path))
+        resolved_sha256 = (
+            checkpoint_sha256 if checkpoint_sha256 is not None else self._sha256_of(policy.checkpoint_path)
+        )
+        self._snapshot = _PolicySnapshot(policy=policy, checkpoint_sha256=resolved_sha256)
 
     @property
     def policy(self) -> CheckpointPolicy:
@@ -86,8 +109,16 @@ class PolicyHolder:
             # so transferring generator state would add complexity for no
             # observable benefit.
             current = self._snapshot.policy
+            # Read the checkpoint bytes ONCE and derive both the loaded policy
+            # AND its sha256 from that same buffer (adversarial round 5,
+            # Finding 2): the old flow loaded the model from `checkpoint_path`
+            # and then separately re-opened the same path to hash it, so an
+            # atomic file replacement landing in between could make the
+            # reported hash attest bytes different from the ones actually
+            # deserialized. `load_checkpoint_policy_with_hash` /
+            # `load_policy_from_manifest_with_hash` read the path exactly once.
             if checkpoint:
-                new_policy = CheckpointPolicy.from_checkpoint(
+                new_policy, new_sha256 = load_checkpoint_policy_with_hash(
                     Path(checkpoint),
                     device=self._device,
                     sample_temperature=current.sample_temperature,
@@ -96,7 +127,7 @@ class PolicyHolder:
                     seed=current.sample_seed,
                 )
             else:
-                new_policy = load_policy_from_manifest(
+                new_policy, new_sha256 = load_policy_from_manifest_with_hash(
                     manifest_path=self._manifest_path,
                     checkpoint_id=checkpoint_id,
                     device=self._device,
@@ -123,11 +154,8 @@ class PolicyHolder:
                     f"required window {required_window} (current policy's window unless "
                     "overridden by 'expected_event_window'); refusing to swap"
                 )
-            # Compute the new checkpoint's hash BEFORE swapping anything in:
-            # if this raises (e.g. the checkpoint file was deleted/replaced
-            # on disk after `new_policy` was loaded above), the old snapshot
-            # must still be the one /act and /healthz observe.
-            new_sha256 = self._sha256_of(new_policy.checkpoint_path)
+            # `new_sha256` above was computed from the SAME bytes `new_policy`
+            # was deserialized from — no second open of the checkpoint path.
             # Single reference assignment — atomic under the GIL — is the
             # only mutation of shared state; either both the new policy and
             # its hash become visible together, or (on any earlier exception)
@@ -402,7 +430,10 @@ def main() -> None:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
 
-    policy = load_policy_from_manifest(
+    # Single-read construction at startup (adversarial round 5, Finding 2):
+    # the policy and its attested checkpoint_sha256 must come from the same
+    # buffer, not a load followed by an independent re-open for hashing.
+    policy, checkpoint_sha256 = load_policy_from_manifest_with_hash(
         manifest_path=args.manifest,
         checkpoint_id=args.checkpoint_id,
         checkpoint_override=args.checkpoint,
@@ -412,7 +443,9 @@ def main() -> None:
         sample_action_family=args.sample_action_family,
         sample_seed=args.sample_seed,
     )
-    holder = PolicyHolder(policy, manifest_path=args.manifest, device=args.device)
+    holder = PolicyHolder(
+        policy, manifest_path=args.manifest, device=args.device, checkpoint_sha256=checkpoint_sha256
+    )
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"Serving {policy.checkpoint_path} on http://{args.host}:{args.port}")

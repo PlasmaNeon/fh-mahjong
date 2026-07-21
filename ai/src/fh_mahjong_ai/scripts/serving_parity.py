@@ -303,6 +303,27 @@ def run_serving_parity(
     served_reference = CheckpointPolicy.from_checkpoint(checkpoint, device=device)
     model = served_reference.model
     model_event_window = model.model_config.event_window
+
+    # Finding 1 (adversarial round 5): the requested --event-history-window
+    # must EXACTLY match the checkpoint's own model_config.event_window
+    # before any episode/decision runs. The old code built the bridge with
+    # max(requested, model_window) and built payloads from model_window, so a
+    # deliberately wrong --event-history-window (e.g. 0 against a window-128
+    # model — exactly the backend-misconfiguration a real deployment would
+    # hit) silently got "corrected" to the model's window and the gate
+    # PASSED, hiding the exact failure it exists to catch. A real serving
+    # backend is configured with ONE window; if the CLI value doesn't match
+    # the checkpoint, that mismatch itself is the bug under test.
+    if int(event_history_window) != model_event_window:
+        raise ServingParityError(
+            "serving parity FAILED: --event-history-window="
+            f"{int(event_history_window)} does not match the checkpoint's "
+            f"model_config.event_window={model_event_window}; a real serving "
+            "backend must be configured with the checkpoint's own event window "
+            "exactly — this is a backend-misconfiguration failure, not "
+            "something to silently widen and pass"
+        )
+
     reference_policy = TorchGreedyPolicy(model=model, device=device)
 
     if endpoint is not None:
@@ -319,7 +340,9 @@ def run_serving_parity(
         learning_seats=(0, 1, 2, 3),
         auto_play_heuristics=False,
         max_steps_per_episode=max_decisions,
-        event_history_window=max(int(event_history_window), model_event_window),
+        # Validated equal to model_event_window above; use the checkpoint's
+        # own window (the only value that can reach this line).
+        event_history_window=model_event_window,
     )
     bridge = build_bridge(env_config)
     report = ParityReport()

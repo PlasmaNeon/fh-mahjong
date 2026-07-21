@@ -341,6 +341,61 @@ def test_endpoint_mode_reports_failure_on_connection_error(tmp_path: Path) -> No
         )
 
 
+# --- --event-history-window must match the checkpoint exactly (finding 1, round 5) -----
+
+
+def test_run_serving_parity_fails_fast_on_event_history_window_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old code built the bridge with max(requested, model_window) and
+    built payloads from model_window, so `--event-history-window 0` against a
+    window-8 model silently got "corrected" and PASSED — hiding exactly the
+    backend-misconfiguration failure a real deployment would hit. The fix
+    requires the two to match EXACTLY, checked before any bridge/episode is
+    built (asserted here by making `build_bridge` blow up if it's ever
+    reached)."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())  # event_window=8
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("build_bridge must not run when the event-history window mismatches")
+
+    monkeypatch.setattr("fh_mahjong_ai.scripts.serving_parity.build_bridge", _must_not_be_called)
+
+    with pytest.raises(ServingParityError, match=r"--event-history-window=0.*event_window=8"):
+        run_serving_parity(
+            checkpoint=checkpoint,
+            event_history_window=0,
+            episodes=2,
+            start_seed=1,
+            device="cpu",
+            endpoint=None,
+            bridge_kind="mock",
+            max_decisions=5,
+        )
+
+
+def test_run_serving_parity_passes_bridge_construction_when_window_matches(tmp_path: Path) -> None:
+    """Sanity companion to the mismatch test: the matching value must still
+    work end-to-end (already pinned by
+    test_in_process_parity_passes_on_mock_bridge_event_model, repeated here
+    tightly scoped to the window-equality gate itself)."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())  # event_window=8
+
+    report = run_serving_parity(
+        checkpoint=checkpoint,
+        event_history_window=8,
+        episodes=1,
+        start_seed=1,
+        device="cpu",
+        endpoint=None,
+        bridge_kind="mock",
+        max_decisions=3,
+    )
+
+    assert report.all_agree
+    assert report.decisions_checked == 3
+
+
 # --- endpoint checkpoint-identity verification (finding 4) -----------------------------
 
 

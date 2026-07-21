@@ -1,6 +1,8 @@
 """Checkpoint-backed inference helpers for serving Mahjong actions."""
 from __future__ import annotations
 
+import hashlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -13,7 +15,7 @@ from .bridge import build_bridge
 from .checkpoint_manifest import DEFAULT_MANIFEST_PATH, load_checkpoint_manifest, resolve_checkpoint_path
 from .config import EnvConfig
 from .model import PolicyValueNet, infer_model_config
-from .storage import load_checkpoint
+from .storage import load_checkpoint_from_bytes
 from .types import Observation
 
 
@@ -61,6 +63,49 @@ class CheckpointPolicy:
         self.model.eval()
 
     @classmethod
+    def from_checkpoint_bytes(
+        cls,
+        data: bytes,
+        checkpoint_path: Path,
+        device: str = "cpu",
+        sample_temperature: float = 0.0,
+        sample_top_k: int = 0,
+        sample_action_family: str = "all",
+        seed: int = 1,
+    ) -> "CheckpointPolicy":
+        """Deserialize a policy from an already-read checkpoint buffer.
+
+        `checkpoint_path` is retained only for display/provenance (`/act`
+        responses, `/healthz`'s `checkpoint` field) — it is NEVER re-opened
+        here. This lets a caller read a checkpoint's bytes exactly once, hash
+        those bytes, and load the policy from the SAME buffer, so a
+        `checkpoint_sha256` can never describe bytes different from the ones
+        actually deserialized (adversarial round 5, Finding 2: an atomic file
+        replacement landing between a separate load and a separate re-open-
+        for-hashing would otherwise decouple the two).
+        """
+        # Architecture varies across promoted checkpoints (e.g. residual-block
+        # depth, or Spec B2b's event encoder / privileged critic / aux heads);
+        # recover it from the saved tensors (plus any checkpoint metadata)
+        # instead of assuming defaults.
+        payload = torch.load(io.BytesIO(data), map_location="cpu")
+        saved_state = payload["model"]
+        metadata = payload.get("metadata")
+        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state, metadata))
+        step = load_checkpoint_from_bytes(data, model)
+        model.to(device)
+        return cls(
+            model=model,
+            checkpoint_path=Path(checkpoint_path),
+            checkpoint_step=step,
+            device=device,
+            sample_temperature=sample_temperature,
+            sample_top_k=sample_top_k,
+            sample_action_family=sample_action_family,
+            seed=seed,
+        )
+
+    @classmethod
     def from_checkpoint(
         cls,
         checkpoint_path: Path,
@@ -70,20 +115,10 @@ class CheckpointPolicy:
         sample_action_family: str = "all",
         seed: int = 1,
     ) -> "CheckpointPolicy":
-        # Architecture varies across promoted checkpoints (e.g. residual-block
-        # depth, or Spec B2b's event encoder / privileged critic / aux heads);
-        # recover it from the saved tensors (plus any checkpoint metadata)
-        # instead of assuming defaults.
-        payload = torch.load(checkpoint_path, map_location="cpu")
-        saved_state = payload["model"]
-        metadata = payload.get("metadata")
-        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state, metadata))
-        step = load_checkpoint(checkpoint_path, model)
-        model.to(device)
-        return cls(
-            model=model,
+        data = Path(checkpoint_path).read_bytes()
+        return cls.from_checkpoint_bytes(
+            data,
             checkpoint_path=checkpoint_path,
-            checkpoint_step=step,
             device=device,
             sample_temperature=sample_temperature,
             sample_top_k=sample_top_k,
@@ -242,6 +277,69 @@ def load_policy_from_manifest(
         checkpoint_override=checkpoint_override,
     )
     return CheckpointPolicy.from_checkpoint(
+        checkpoint_path,
+        device=device,
+        sample_temperature=sample_temperature,
+        sample_top_k=sample_top_k,
+        sample_action_family=sample_action_family,
+        seed=sample_seed,
+    )
+
+
+def load_checkpoint_policy_with_hash(
+    checkpoint_path: Path,
+    device: str = "cpu",
+    sample_temperature: float = 0.0,
+    sample_top_k: int = 0,
+    sample_action_family: str = "all",
+    seed: int = 1,
+) -> tuple[CheckpointPolicy, str]:
+    """Read `checkpoint_path`'s bytes exactly once, sha256 those bytes, and
+    build the policy from the SAME buffer.
+
+    This is the single-read counterpart to `CheckpointPolicy.from_checkpoint`
+    + a separate hash-of-path call: computing the hash from a second, later
+    open of the file (the old flow) lets an atomic file replacement land in
+    between, so the reported hash could attest bytes different from the ones
+    actually deserialized (adversarial round 5, Finding 2). Callers that need
+    a policy AND a trustworthy checkpoint_sha256 together (serve_policy.py's
+    `PolicyHolder`) must use this instead of hashing `policy.checkpoint_path`
+    after the fact.
+    """
+    data = Path(checkpoint_path).read_bytes()
+    checkpoint_sha256 = hashlib.sha256(data).hexdigest()
+    policy = CheckpointPolicy.from_checkpoint_bytes(
+        data,
+        checkpoint_path=checkpoint_path,
+        device=device,
+        sample_temperature=sample_temperature,
+        sample_top_k=sample_top_k,
+        sample_action_family=sample_action_family,
+        seed=seed,
+    )
+    return policy, checkpoint_sha256
+
+
+def load_policy_from_manifest_with_hash(
+    manifest_path: Path = DEFAULT_MANIFEST_PATH,
+    checkpoint_id: str = "current",
+    checkpoint_override: Optional[Path] = None,
+    device: str = "cpu",
+    sample_temperature: float = 0.0,
+    sample_top_k: int = 0,
+    sample_action_family: str = "all",
+    sample_seed: int = 1,
+) -> tuple[CheckpointPolicy, str]:
+    """Manifest-resolving counterpart to `load_checkpoint_policy_with_hash`:
+    resolves the checkpoint path the same way `load_policy_from_manifest`
+    does, then reads/hashes/loads it as a single buffer."""
+    manifest = load_checkpoint_manifest(manifest_path)
+    checkpoint_path = resolve_checkpoint_path(
+        manifest=manifest,
+        checkpoint_id=checkpoint_id,
+        checkpoint_override=checkpoint_override,
+    )
+    return load_checkpoint_policy_with_hash(
         checkpoint_path,
         device=device,
         sample_temperature=sample_temperature,
