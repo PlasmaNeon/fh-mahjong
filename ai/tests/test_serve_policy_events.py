@@ -241,6 +241,95 @@ def test_http_act_rejects_each_invalid_event_condition(tmp_path: Path, event_fie
     assert expected_snippet in data["error"]
 
 
+# --- HTTP /evaluate contract ------------------------------------------------------------
+
+
+def test_http_evaluate_threads_event_history_into_evaluate_batch(tmp_path: Path) -> None:
+    """/evaluate must feed each observation's validated event_history into
+    evaluate_batch, not silently score against a zero history. We pin this by
+    comparing the HTTP response against a direct evaluate_batch call with the
+    same histories threaded (must match) and against the same call with
+    events=None (must NOT match — guards against the fields being dropped)."""
+    model_config = _event_model_config(window=8)
+    checkpoint = _save_checkpoint(tmp_path, model_config)
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        obs_a = _observation_payload(
+            [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+            contract_version=EVENT_CONTRACT_V1,
+        )
+        obs_b = _observation_payload(
+            [0, 1, 2], event_history=[4, 5, 6, 7], event_count=4, event_window=8,
+            contract_version=EVENT_CONTRACT_V1,
+        )
+        status, data = server.request("POST", "/evaluate", {"observations": [obs_a, obs_b]})
+    finally:
+        server.close()
+
+    assert status == 200, data
+    results = data["results"]
+    assert len(results) == 2
+
+    policy = CheckpointPolicy.from_checkpoint(checkpoint)
+    env = EnvConfig()
+    planes = np.zeros((2, *env.plane_shape), dtype=np.float32)
+    scalars = np.zeros((2, env.scalar_features), dtype=np.float32)
+    mask = np.zeros((2, env.action_space_size), dtype=np.int8)
+    mask[:, [0, 1, 2]] = 1
+    events = np.zeros((2, 8), dtype=np.int64)
+    events[0, :3] = [1, 2, 3]
+    events[1, :4] = [4, 5, 6, 7]
+    event_lengths = np.array([3, 4], dtype=np.int64)
+
+    _, expected_values = policy.evaluate_batch(planes, scalars, mask, events=events, event_lengths=event_lengths)
+    _, zero_history_values = policy.evaluate_batch(planes, scalars, mask, events=None, event_lengths=None)
+
+    for i in range(2):
+        assert results[i]["value"] == pytest.approx(float(expected_values[i]), abs=1e-5)
+    # Guard against a tautological pass: the events=None baseline must actually
+    # differ, otherwise this test wouldn't catch events being dropped.
+    assert not (
+        results[0]["value"] == pytest.approx(float(zero_history_values[0]), abs=1e-5)
+        and results[1]["value"] == pytest.approx(float(zero_history_values[1]), abs=1e-5)
+    )
+
+
+def test_http_evaluate_window_zero_model_ignores_event_fields(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {"observations": [_observation_payload([0, 1, 2], event_history="garbage", event_count=-999)]},
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert len(data["results"]) == 1
+
+
+def test_http_evaluate_accepts_zero_count_event_row(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {
+                "observations": [
+                    _observation_payload(
+                        [0, 1, 2], event_count=0, event_window=8, contract_version=EVENT_CONTRACT_V1,
+                    )
+                ]
+            },
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert len(data["results"]) == 1
+
+
 # --- /healthz --------------------------------------------------------------------------
 
 

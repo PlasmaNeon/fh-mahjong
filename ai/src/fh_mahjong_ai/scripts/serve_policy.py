@@ -190,7 +190,29 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             action_masks = np.stack([obs.action_mask for obs in parsed]) if parsed else np.zeros(
                 (0, EnvConfig().action_space_size), dtype=np.int8
             )
-            probs, values = policy.evaluate_batch(planes, scalars, action_masks)
+            events = event_lengths = None
+            if model_event_window > 0:
+                # `observation_from_json` already validated event_history/event_count/
+                # event_window/contract_version for every row above; here we only
+                # thread the validated compact histories into the fixed-width rows
+                # `evaluate_batch` expects. An observation with event_count == 0 (a
+                # legitimate early-round state) becomes a length-0 row rather than
+                # being rejected: unlike `choose`, `evaluate_batch` has no per-row
+                # Observation to raise against, so this asymmetry with the /act path
+                # (which refuses empty histories) is deliberate, per Task 4's
+                # evaluate_batch contract.
+                n = len(parsed)
+                events = np.zeros((n, model_event_window), dtype=np.int64)
+                event_lengths = np.zeros((n,), dtype=np.int64)
+                for i, obs in enumerate(parsed):
+                    history = obs.event_history
+                    count = min(history.size, model_event_window)
+                    if count:
+                        events[i, :count] = history[-count:].astype(np.int64)
+                    event_lengths[i] = count
+            probs, values = policy.evaluate_batch(
+                planes, scalars, action_masks, events=events, event_lengths=event_lengths
+            )
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
