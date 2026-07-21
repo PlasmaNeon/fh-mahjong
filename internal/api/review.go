@@ -58,25 +58,32 @@ func parseReviewEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 // When REVIEW_EVENT_WINDOW is unset, falling back to RL_AGENT_EVENT_WINDOW is
 // only safe when review traffic and RL traffic actually hit the same
 // service: policyURL is empty (no reviewer configured — moot), or policyURL
-// equals the resolved RL agent endpoint (RL_AGENT_POLICY_URL, else
-// AI_BOT_POLICY_URL — mirroring cmd/server's rlEndpointURL fallback chain,
-// minus the local-default case, which review — a POLICY_SERVER_URL-only
-// path — never hits). Otherwise this fails closed to 0 (event-free) rather
-// than guessing a wire contract POLICY_SERVER_URL might not actually speak,
-// the same fail-closed contract resolveAIBotEventWindow established in
-// cmd/server for the AI_BOT_POLICY_URL/RL_AGENT_POLICY_URL split.
+// equals the resolved RL agent endpoint, via
+// remote.EffectiveRLEndpointURLFromEnv() — the SAME fallback chain
+// cmd/server's rlEndpointURL applies (RL_AGENT_POLICY_URL, else
+// AI_BOT_POLICY_URL, else the local default http://127.0.0.1:8765/act).
+//
+// Round 11 fix: this used to resolve the RL endpoint locally (RL_AGENT_
+// POLICY_URL, else AI_BOT_POLICY_URL, "minus the local-default case") and
+// skip the same-service guard whenever that came up empty. But cmd/server
+// itself never leaves the RL endpoint unresolved — with both overrides unset
+// it still serves RL traffic on the local default. So "both overrides
+// unset" isn't "no RL endpoint", it's "RL endpoint is the local default",
+// and any POLICY_SERVER_URL naming a different service must still fail
+// closed to 0 rather than silently inheriting RL_AGENT_EVENT_WINDOW.
+// Resolving through the shared helper (also used by cmd/server) closes that
+// gap. Otherwise this fails closed to 0 (event-free) rather than guessing a
+// wire contract POLICY_SERVER_URL might not actually speak, the same
+// fail-closed contract resolveAIBotEventWindow established in cmd/server for
+// the AI_BOT_POLICY_URL/RL_AGENT_POLICY_URL split.
 func reviewEventWindow(policyURL string) uint32 {
 	if raw := strings.TrimSpace(os.Getenv("REVIEW_EVENT_WINDOW")); raw != "" {
 		return parseReviewEventWindowEnv("REVIEW_EVENT_WINDOW", 0)
 	}
 
-	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
-	effectiveRLURL := rlOverride
-	if effectiveRLURL == "" {
-		effectiveRLURL = strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
-	}
+	effectiveRLURL, _ := remote.EffectiveRLEndpointURLFromEnv()
 
-	if policyURL != "" && effectiveRLURL != "" && !sameReviewService(policyURL, effectiveRLURL) {
+	if policyURL != "" && !sameReviewService(policyURL, effectiveRLURL) {
 		log.Printf("review: POLICY_SERVER_URL (%s) differs from the resolved RL agent endpoint (%s); REVIEW_EVENT_WINDOW is unset — defaulting review event window to 0 rather than inheriting RL_AGENT_EVENT_WINDOW for a possibly different service", policyURL, effectiveRLURL)
 		return 0
 	}

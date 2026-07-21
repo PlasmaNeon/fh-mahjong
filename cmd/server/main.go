@@ -26,7 +26,12 @@ import (
 // private-room RL agent when AI_BOT_POLICY_URL is not set. The option is only
 // offered when this endpoint passes its /healthz probe, so defaulting it is
 // safe even when no model server is running.
-const defaultRLPolicyURL = "http://127.0.0.1:8765/act"
+//
+// Alias for remote.DefaultRLPolicyURL (adversarial round 11): the constant now
+// lives in internal/bot/remote so internal/api's reviewEventWindow can resolve
+// the same effective RL endpoint cmd/server does, without internal/api
+// importing package main.
+const defaultRLPolicyURL = remote.DefaultRLPolicyURL
 
 // defaultShadowEventWindow is used for RL_AGENT_SHADOW_EVENT_WINDOW when the
 // env var is unset.

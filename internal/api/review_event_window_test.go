@@ -181,6 +181,30 @@ func TestReviewEventWindow_FallbackGatedByPolicyURL(t *testing.T) {
 			rlEventWindow: "128",
 			want:          0,
 		},
+		{
+			// Adversarial round 11: with RL_AGENT_POLICY_URL and
+			// AI_BOT_POLICY_URL both unset, cmd/server still resolves the RL
+			// endpoint to the local default (remote.DefaultRLPolicyURL,
+			// http://127.0.0.1:8765/act) rather than "no RL endpoint at
+			// all". A POLICY_SERVER_URL pointed at a genuinely different
+			// service during a staggered rollout must still fail closed to
+			// 0, not inherit RL_AGENT_EVENT_WINDOW just because both
+			// overrides happened to be unset.
+			name:          "both RL overrides unset, POLICY_SERVER_URL is a different service -> fails closed to 0",
+			policyURL:     "http://other:9999",
+			rlEventWindow: "128",
+			want:          0,
+		},
+		{
+			// Same round-11 gap, other side: both RL overrides unset means
+			// the resolved RL endpoint is the local default
+			// (http://127.0.0.1:8765/act); POLICY_SERVER_URL naming that
+			// same local default must still inherit RL_AGENT_EVENT_WINDOW.
+			name:          "both RL overrides unset, POLICY_SERVER_URL matches the local default -> inherits RL window",
+			policyURL:     "http://127.0.0.1:8765",
+			rlEventWindow: "128",
+			want:          128,
+		},
 	}
 
 	for _, tc := range tests {
