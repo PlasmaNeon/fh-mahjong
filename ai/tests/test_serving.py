@@ -182,7 +182,7 @@ def test_observation_from_json_validates_shapes() -> None:
         "action_mask": np.ones(204, dtype=np.int8).tolist(),
     }
 
-    observation = observation_from_json(payload)
+    observation = observation_from_json(payload, model_event_window=0)
 
     assert observation.seat == 1
     assert observation.planes.shape == (39, 42, 1)

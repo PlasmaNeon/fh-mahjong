@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import threading
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -13,6 +15,7 @@ import numpy as np
 
 from fh_mahjong_ai.checkpoint_manifest import DEFAULT_MANIFEST_PATH
 from fh_mahjong_ai.config import EnvConfig
+from fh_mahjong_ai.events import EVENT_CONTRACT_V1
 from fh_mahjong_ai.serving import CheckpointPolicy, load_policy_from_manifest
 from fh_mahjong_ai.types import Observation
 
@@ -35,12 +38,30 @@ class PolicyHolder:
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
+        self._checkpoint_sha256 = self._sha256_of(policy.checkpoint_path)
 
     @property
     def policy(self) -> CheckpointPolicy:
         return self._policy
 
-    def reload(self, checkpoint: Optional[str] = None, checkpoint_id: str = "current") -> CheckpointPolicy:
+    @property
+    def checkpoint_sha256(self) -> str:
+        return self._checkpoint_sha256
+
+    @staticmethod
+    def _sha256_of(path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def reload(
+        self,
+        checkpoint: Optional[str] = None,
+        checkpoint_id: str = "current",
+        expected_event_window: Optional[int] = None,
+    ) -> CheckpointPolicy:
         with self._lock:
             # Carry the current sampling config into the new policy: a hot-swap
             # must not silently change serving behavior — whatever sampling was
@@ -71,7 +92,26 @@ class PolicyHolder:
                     sample_action_family=current.sample_action_family,
                     sample_seed=current.sample_seed,
                 )
+            # Validate the NEW policy fully BEFORE swapping the reference: an
+            # event-window mismatch against the currently-serving policy is a
+            # contract break (the model's event encoder expects a fixed-width
+            # history) and must never silently take over serving. Callers that
+            # deliberately promote to a different window pass
+            # expected_event_window to override the check explicitly.
+            required_window = (
+                expected_event_window
+                if expected_event_window is not None
+                else current.model.model_config.event_window
+            )
+            new_window = new_policy.model.model_config.event_window
+            if new_window != required_window:
+                raise ValueError(
+                    f"reload checkpoint event_window={new_window} does not match the "
+                    f"required window {required_window} (current policy's window unless "
+                    "overridden by 'expected_event_window'); refusing to swap"
+                )
             self._policy = new_policy
+            self._checkpoint_sha256 = self._sha256_of(new_policy.checkpoint_path)
             return new_policy
 
 
@@ -83,15 +123,20 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         policy = self.holder.policy
+        model_config = policy.model.model_config
         self._write_json(
             {
                 "ok": True,
                 "checkpoint": str(policy.checkpoint_path),
                 "checkpoint_step": policy.checkpoint_step,
+                "checkpoint_sha256": self.holder.checkpoint_sha256,
                 "sample_temperature": policy.sample_temperature,
                 "sample_top_k": policy.sample_top_k,
                 "sample_action_family": policy.sample_action_family,
                 "sample_seed": policy.sample_seed,
+                "model_config": asdict(model_config),
+                "event_window": model_config.event_window,
+                "contract_version": EVENT_CONTRACT_V1,
             }
         )
 
@@ -109,8 +154,9 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("content-length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            observation = observation_from_json(payload)
-            action = self.holder.policy.choose(observation)
+            policy = self.holder.policy
+            observation = observation_from_json(payload, policy.model.model_config.event_window)
+            action = policy.choose(observation)
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
@@ -133,7 +179,8 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                     f"batch of {len(observations)} observations exceeds max of {MAX_EVALUATE_BATCH}"
                 )
             policy = self.holder.policy
-            parsed = [observation_from_json(item) for item in observations]
+            model_event_window = policy.model.model_config.event_window
+            parsed = [observation_from_json(item, model_event_window) for item in observations]
             planes = np.stack([obs.planes for obs in parsed]) if parsed else np.zeros(
                 (0, *EnvConfig().plane_shape), dtype=np.float32
             )
@@ -165,9 +212,14 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             payload = json.loads(raw) if raw.strip() else {}
             checkpoint = payload.get("checkpoint")
             checkpoint_id = payload.get("checkpoint_id")
+            expected_event_window = payload.get("expected_event_window")
             if not checkpoint and not checkpoint_id:
                 raise ValueError("provide 'checkpoint' (path) or 'checkpoint_id'")
-            policy = self.holder.reload(checkpoint=checkpoint, checkpoint_id=checkpoint_id or "current")
+            policy = self.holder.reload(
+                checkpoint=checkpoint,
+                checkpoint_id=checkpoint_id or "current",
+                expected_event_window=expected_event_window,
+            )
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
@@ -191,7 +243,19 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
-def observation_from_json(payload: dict) -> Observation:
+def observation_from_json(payload: dict, model_event_window: int) -> Observation:
+    """Decode a Go /act or /evaluate request body into an `Observation`.
+
+    `model_event_window` is the SERVING model's `ModelConfig.event_window`
+    (0 for the event-free champion). When it is 0, the compact event fields
+    (`event_history`/`event_count`/`event_window`/`contract_version`) are
+    IGNORED entirely — this is the regression bar: behavior must stay
+    byte-identical to before the event contract existed. When it is > 0, all
+    three scalar fields are REQUIRED (Go always sends them, per the compact
+    /act contract in internal/rl's HTTPPolicy); `event_history` may be
+    omitted only when `event_count == 0` (Go's `omitempty` drops the empty
+    array) and is then treated as `[]`.
+    """
     env_config = EnvConfig()
     planes = np.asarray(payload["planes"], dtype=np.float32).reshape(env_config.plane_shape)
     scalars = np.asarray(payload["scalars"], dtype=np.float32)
@@ -204,11 +268,44 @@ def observation_from_json(payload: dict) -> Observation:
         raise ValueError(f"expected {env_config.scalar_features} scalars, got shape {scalars.shape}")
     if action_mask.shape != (env_config.action_space_size,):
         raise ValueError(f"expected action mask of length {env_config.action_space_size}, got shape {action_mask.shape}")
+
+    event_history = np.zeros(0, dtype=np.uint32)
+    if model_event_window > 0:
+        if "event_count" not in payload or "event_window" not in payload or "contract_version" not in payload:
+            raise ValueError(
+                "event model (event_window="
+                f"{model_event_window}) requires 'event_count', 'event_window', and "
+                "'contract_version' on every /act and /evaluate observation"
+            )
+        event_count = payload["event_count"]
+        event_window = payload["event_window"]
+        contract_version = payload["contract_version"]
+        raw_history = payload.get("event_history")
+        if raw_history is None:
+            raw_history = []
+        if len(raw_history) != event_count:
+            raise ValueError(
+                f"event_history length {len(raw_history)} does not match event_count {event_count}"
+            )
+        if event_count > event_window:
+            raise ValueError(f"event_count {event_count} exceeds event_window {event_window}")
+        if event_window != model_event_window:
+            raise ValueError(
+                f"event_window {event_window} does not match the serving model's "
+                f"event_window {model_event_window}"
+            )
+        if contract_version != EVENT_CONTRACT_V1:
+            raise ValueError(
+                f"unsupported contract_version {contract_version!r}; expected {EVENT_CONTRACT_V1}"
+            )
+        event_history = np.asarray(raw_history, dtype=np.uint32)
+
     return Observation(
         seat=int(payload.get("seat", 0)),
         planes=planes,
         scalars=scalars,
         action_mask=action_mask,
+        event_history=event_history,
         metadata=dict(payload.get("metadata", {})),
     )
 
