@@ -25,8 +25,40 @@ that sets `return_logits: true` must carry the SAME token in a
 `logit_export_token` field (checked with `hmac.compare_digest`) or it gets
 HTTP 400 with no logits in the body. Every command below that launches a
 candidate/private serving instance for `fh-mj-serving-parity --endpoint`
-picks a throwaway token and passes the matching `--logit-export-token` to the
-parity command too. **The production `policy` service never sets this flag.**
+uses the generated token below and passes the matching
+`--logit-export-token` to the parity command too. **The production `policy`
+service never sets this flag.**
+
+**Reload authentication (adversarial round 14, Finding 1a/1b):**
+`serve_policy.py`'s POST `/reload` is a remote policy-replacement primitive,
+so it is disabled ENTIRELY unless the server is launched with
+`--admin-token TOKEN` (or `FH_MJ_ADMIN_TOKEN`); every `/reload` request must
+then carry the SAME token in an `admin_token` field (`hmac.compare_digest`)
+or it is refused with the previous policy left serving. The server also
+rejects the checkpoint path outright unless it is a regular file under a
+2 GiB cap, before reading a single byte, and honors an optional
+`expected_sha256` field (verified before the new checkpoint is
+deserialized). **Production instances should normally run WITHOUT
+`--admin-token`/`FH_MJ_ADMIN_TOKEN` set at all (reload disabled) — only
+configure it deliberately, for the duration of a maintenance window, on
+the specific instance being reloaded.**
+
+**Generate both secrets once, before starting (adversarial round 14,
+Finding 2):** never hard-code a literal token in a command, a script, or
+anything committed to the repo. Generate both once per deployment window
+and reference the env vars for every command below that needs them:
+
+```
+export FH_MJ_LOGIT_EXPORT_TOKEN="$(openssl rand -hex 32)"
+export FH_MJ_ADMIN_TOKEN="$(openssl rand -hex 32)"
+```
+
+Treat both as secrets for the lifetime of the deployment window (do not
+log them, do not commit them, rotate by re-running the commands above for
+the next window). Where practical, keep the candidate/parity serving
+instances non-public (bind to `127.0.0.1`, a local tunnel, or an
+internal-only Zeabur service) — token auth is not a substitute for
+reducing public exposure of these endpoints.
 
 ## 1. Verify the NEW policy server image at window 0 (old champion, unchanged serving)
 
@@ -67,7 +99,7 @@ uv run --project ai fh-mj-serve-policy \
   --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt \
   --port 8767 \
-  --logit-export-token throwaway-window0-parity-token
+  --logit-export-token "$FH_MJ_LOGIT_EXPORT_TOKEN"
 ```
 
 ```
@@ -77,7 +109,7 @@ uv run --project ai fh-mj-serving-parity \
   --episodes 50 --start-seed 970000 \
   --bridge-kind go --match-mode chongci \
   --endpoint http://127.0.0.1:8767/act \
-  --logit-export-token throwaway-window0-parity-token
+  --logit-export-token "$FH_MJ_LOGIT_EXPORT_TOKEN"
 ```
 
 Expect: `result: PASS`, 0 fallbacks, 0 mismatches. Any failure here is a
@@ -134,8 +166,13 @@ uv run --project ai fh-mj-serve-policy \
   --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --port 8766 \
-  --logit-export-token candidate-b2c-iter075-token
+  --logit-export-token "$FH_MJ_LOGIT_EXPORT_TOKEN" \
+  --admin-token "$FH_MJ_ADMIN_TOKEN"
 ```
+
+`--admin-token` is what makes the in-place `/reload` swap below possible at
+all (adversarial round 14, Finding 1a) — without it this instance's
+`/reload` is disabled and the candidate would need a restart instead.
 
 `--logit-export-token` is REQUIRED on this candidate instance for step 2
 (adversarial round 12, Finding 1; adversarial round 13, Finding 1): step 2's
@@ -165,14 +202,25 @@ CANDIDATE service's URL only, never the production one):
 ```
 curl -X POST http://127.0.0.1:8766/reload \
   -H 'Content-Type: application/json' \
-  -d '{"checkpoint": "/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt", "expected_event_window": 128}'
+  -d "{\"checkpoint\": \"/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt\", \"expected_event_window\": 128, \"expected_sha256\": \"00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e\", \"admin_token\": \"$FH_MJ_ADMIN_TOKEN\"}"
 ```
 
-(`expected_event_window=128` makes the reload refuse to swap if the
+(`admin_token` must match this instance's `--admin-token`/`FH_MJ_ADMIN_TOKEN`
+or the request is refused with the previous policy left serving (adversarial
+round 14, Finding 1a) — a server started without `--admin-token` refuses
+this request outright, no matter what is sent. `expected_sha256` is the
+`gate_qualified_research_champion` entry's checkpoint hash — the server
+verifies it against the checkpoint's actual bytes before deserializing
+anything, and rejects a mismatch (adversarial round 14, Finding 1b).
+`expected_event_window=128` makes the reload refuse to swap if the
 checkpoint's own metadata disagrees, per `serve_policy.py`'s `reload()`
-contract check — belt-and-suspenders against loading the wrong file. `/reload`
-does not change a running server's `--logit-export-token`; that is fixed at
-launch.)
+contract check — belt-and-suspenders against loading the wrong file. Same as
+before, `/reload` does not change a running server's `--logit-export-token`;
+that is fixed at launch. Equivalently, `fh-mj-reload-policy --checkpoint
+/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt --expected-sha256
+00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e
+--admin-token "$FH_MJ_ADMIN_TOKEN" --port 8766` does the same thing through
+the CLI wrapper.)
 
 **Before proceeding to step 4 (shadowing), verify the candidate itself is
 actually serving iter_075**, not a stale or misconfigured checkpoint:
@@ -197,7 +245,7 @@ uv run --project ai fh-mj-serving-parity \
   --episodes 200 --start-seed 971000 \
   --bridge-kind go --match-mode chongci \
   --endpoint http://127.0.0.1:8766/act \
-  --logit-export-token candidate-b2c-iter075-token
+  --logit-export-token "$FH_MJ_LOGIT_EXPORT_TOKEN"
 ```
 
 (Substitute the candidate service's URL if it's a second Zeabur service or
@@ -305,11 +353,13 @@ backend's expected window disagree. Instead:
   do not edit its `Dockerfile.deploy`, do not touch the manifest yet.
 
 **Before flipping traffic, harden the candidate service for production
-exposure:** restart it WITHOUT `--logit-export-token` (same checkpoint, same
-port/URL — just drop the flag, since it is about to receive real user
-traffic and must not expose logit export to end users the way the
-candidate/parity gates needed it to). Re-verify `/healthz` reports
-`checkpoint_sha256` and `event_window: 128` unchanged after the restart.
+exposure:** restart it WITHOUT `--logit-export-token` AND WITHOUT
+`--admin-token`/`FH_MJ_ADMIN_TOKEN` (same checkpoint, same port/URL — just
+drop both flags, since it is about to receive real user traffic and must
+not expose logit export or an authenticated remote-reload primitive to end
+users the way the candidate/parity steps needed them for). Re-verify
+`/healthz` reports `checkpoint_sha256` and `event_window: 128` unchanged
+after the restart.
 
 **PROMOTION = ONE backend revision** changing, together:
 - `RL_AGENT_POLICY_URL` → the candidate service's `/act` URL

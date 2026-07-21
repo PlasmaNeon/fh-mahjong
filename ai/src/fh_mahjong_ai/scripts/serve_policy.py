@@ -7,6 +7,7 @@ import hmac
 import json
 import math
 import os
+import stat
 import threading
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,43 @@ from fh_mahjong_ai.types import Observation
 # Caps a single /evaluate request. The Go review client (internal/review/client.go)
 # chunks its calls at 256 observations, well under this limit.
 MAX_EVALUATE_BATCH = 1024
+
+# Caps the size of a checkpoint file POST /reload is willing to read from disk
+# (adversarial round 14, Finding 1b). An unauthenticated (or, now, merely
+# poorly-authenticated) /reload caller supplies an arbitrary server-local
+# path; without a cap, pointing that path at something like /dev/zero would
+# make `Path.read_bytes()` block forever while exhausting memory. 2 GiB is
+# comfortably above any real checkpoint this project produces.
+MAX_RELOAD_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def _validate_checkpoint_path_for_reload(path: Path) -> None:
+    """Reject anything that isn't a plain, size-bounded regular file BEFORE a
+    single byte is read from it (adversarial round 14, Finding 1b).
+
+    `os.stat` alone is enough to answer both questions this needs — "is this
+    a regular file" (`stat.S_ISREG`) and "how big is it" — without opening or
+    reading the file. A FIFO, character/block device (e.g. /dev/zero), or
+    directory either has no meaningful size or would block/loop when read;
+    checking `S_ISREG` first rejects all of those outright. A regular file
+    that merely happens to be huge is rejected by the size cap. Both checks
+    run before `load_checkpoint_policy_with_hash` (or the inline single-read
+    path below) ever calls `read_bytes()`.
+    """
+    try:
+        st = os.stat(path)
+    except OSError as exc:
+        raise ValueError(f"reload checkpoint path {path} is not accessible: {exc}") from exc
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(
+            f"reload checkpoint path {path} is not a regular file (refusing to read a FIFO, "
+            "device, directory, or other special file)"
+        )
+    if st.st_size > MAX_RELOAD_CHECKPOINT_BYTES:
+        raise ValueError(
+            f"reload checkpoint path {path} is {st.st_size} bytes, exceeding the "
+            f"{MAX_RELOAD_CHECKPOINT_BYTES}-byte reload cap"
+        )
 
 
 @dataclass(frozen=True)
@@ -60,6 +98,7 @@ class PolicyHolder:
         device: str = "cpu",
         checkpoint_sha256: Optional[str] = None,
         logit_export_token: Optional[str] = None,
+        admin_token: Optional[str] = None,
     ) -> None:
         """`checkpoint_sha256`, when given, MUST be the hash of the exact
         bytes `policy` was deserialized from (see
@@ -84,11 +123,25 @@ class PolicyHolder:
         `logit_export_token` field, compared with `hmac.compare_digest` (never
         `==`, which leaks timing information about how many leading bytes
         matched). Only the candidate/parity serving instance used for
-        `fh-mj-serving-parity --endpoint` sets this; production never does."""
+        `fh-mj-serving-parity --endpoint` sets this; production never does.
+
+        `admin_token` gates POST /reload the same way (adversarial round 14,
+        Finding 1a): an unauthenticated /reload lets any network caller
+        replace the serving policy with an arbitrary server-local checkpoint
+        path, or (before Finding 1b's path/size checks) turn a hostile path
+        into a memory-exhaustion DoS. When `admin_token` is None (the
+        default), /reload is disabled ENTIRELY — every request gets a 4xx
+        refusal, never a silent no-op that still swaps the policy. When set,
+        a request must carry a matching `admin_token` field (again compared
+        with `hmac.compare_digest`) or it is rejected without touching the
+        currently-serving policy. Production instances should normally run
+        WITHOUT an admin token configured (reload disabled) unless an
+        operator deliberately enables it for a maintenance window."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
         self.logit_export_token = logit_export_token
+        self.admin_token = admin_token
         resolved_sha256 = (
             checkpoint_sha256 if checkpoint_sha256 is not None else self._sha256_of(policy.checkpoint_path)
         )
@@ -131,6 +184,7 @@ class PolicyHolder:
         checkpoint: Optional[str] = None,
         checkpoint_id: str = "current",
         expected_event_window: Optional[int] = None,
+        expected_sha256: Optional[str] = None,
     ) -> CheckpointPolicy:
         with self._lock:
             # Carry the current sampling config into the new policy: a hot-swap
@@ -152,8 +206,31 @@ class PolicyHolder:
             # deserialized. `load_checkpoint_policy_with_hash` /
             # `load_policy_from_manifest_with_hash` read the path exactly once.
             if checkpoint:
-                new_policy, new_sha256 = load_checkpoint_policy_with_hash(
-                    Path(checkpoint),
+                # Adversarial round 14, Finding 1b: a caller-supplied path is
+                # untrusted input, so it is stat'd (regular file, size cap)
+                # BEFORE any bytes are read from it — see
+                # `_validate_checkpoint_path_for_reload`'s docstring.
+                checkpoint_path = Path(checkpoint)
+                _validate_checkpoint_path_for_reload(checkpoint_path)
+                # Read once, hash, and — when the caller supplied
+                # `expected_sha256` — verify BEFORE deserializing a single
+                # tensor: an integrity mismatch must never reach
+                # `CheckpointPolicy.from_checkpoint_bytes` (which calls
+                # `torch.load`, itself a pickle-based deserializer) at all,
+                # not just fail to swap in afterward.
+                data = checkpoint_path.read_bytes()
+                new_sha256 = hashlib.sha256(data).hexdigest()
+                if expected_sha256 is not None:
+                    if not isinstance(expected_sha256, str) or not hmac.compare_digest(
+                        new_sha256, expected_sha256
+                    ):
+                        raise ValueError(
+                            f"reload checkpoint sha256 {new_sha256} does not match the caller's "
+                            f"expected_sha256 {expected_sha256!r}; refusing to swap"
+                        )
+                new_policy = CheckpointPolicy.from_checkpoint_bytes(
+                    data,
+                    checkpoint_path=checkpoint_path,
                     device=self._device,
                     sample_temperature=current.sample_temperature,
                     sample_top_k=current.sample_top_k,
@@ -170,6 +247,22 @@ class PolicyHolder:
                     sample_action_family=current.sample_action_family,
                     sample_seed=current.sample_seed,
                 )
+                # Optional caller-supplied integrity check (adversarial round
+                # 14, Finding 1b), manifest-resolved branch: the `checkpoint`
+                # branch above already verified `expected_sha256` before
+                # deserializing anything; here the policy is already built by
+                # `load_policy_from_manifest_with_hash`, so this is a
+                # post-build confirmation instead — still strictly before the
+                # event-window check and the snapshot swap, so a mismatch
+                # leaves `current` (the old snapshot) completely untouched.
+                if expected_sha256 is not None:
+                    if not isinstance(expected_sha256, str) or not hmac.compare_digest(
+                        new_sha256, expected_sha256
+                    ):
+                        raise ValueError(
+                            f"reload checkpoint sha256 {new_sha256} does not match the caller's "
+                            f"expected_sha256 {expected_sha256!r}; refusing to swap"
+                        )
             # Validate the NEW policy fully BEFORE swapping the reference: an
             # event-window mismatch against the currently-serving policy is a
             # contract break (the model's event encoder expects a fixed-width
@@ -370,22 +463,50 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_reload(self) -> None:
+        status = 400
         try:
             length = int(self.headers.get("content-length", "0"))
             raw = self.rfile.read(length).decode("utf-8") if length else ""
             payload = json.loads(raw) if raw.strip() else {}
+            # Adversarial round 14, Finding 1a: POST /reload is a remote
+            # policy-replacement primitive, so it must never be reachable by
+            # an unauthenticated caller. With no --admin-token/FH_MJ_ADMIN_TOKEN
+            # configured on this server at all, /reload is disabled
+            # ENTIRELY — every request is refused, never silently accepted.
+            configured_admin_token = self.holder.admin_token
+            if not configured_admin_token:
+                status = 403
+                raise PermissionError(
+                    "POST /reload is disabled on this server; launch serve_policy with "
+                    "--admin-token TOKEN (or FH_MJ_ADMIN_TOKEN) to enable it (adversarial "
+                    "round 14, Finding 1) — production instances should normally run "
+                    "WITHOUT an admin token configured unless an operator deliberately "
+                    "enables reload for a maintenance window"
+                )
+            request_admin_token = payload.get("admin_token")
+            if not isinstance(request_admin_token, str) or not hmac.compare_digest(
+                configured_admin_token, request_admin_token
+            ):
+                status = 403
+                raise PermissionError(
+                    "admin token missing or does not match this server's --admin-token; "
+                    "refusing reload"
+                )
             checkpoint = payload.get("checkpoint")
             checkpoint_id = payload.get("checkpoint_id")
             expected_event_window = payload.get("expected_event_window")
+            expected_sha256 = payload.get("expected_sha256")
+            status = 400
             if not checkpoint and not checkpoint_id:
                 raise ValueError("provide 'checkpoint' (path) or 'checkpoint_id'")
             policy = self.holder.reload(
                 checkpoint=checkpoint,
                 checkpoint_id=checkpoint_id or "current",
                 expected_event_window=expected_event_window,
+                expected_sha256=expected_sha256,
             )
         except Exception as exc:
-            self._write_json({"error": str(exc)}, status=400)
+            self._write_json({"error": str(exc)}, status=status)
             return
         self._write_json(
             {
@@ -537,6 +658,18 @@ def main() -> None:
         "fh-mj-serving-parity --endpoint (see the B2c runbook) — never in production. Can also be "
         "set via FH_MJ_LOGIT_EXPORT_TOKEN; the CLI flag takes precedence when both are given.",
     )
+    parser.add_argument(
+        "--admin-token", type=str, default=os.environ.get("FH_MJ_ADMIN_TOKEN"),
+        help="Shared-secret admin token required for POST /reload (adversarial round 14, "
+        "Finding 1a): an unauthenticated /reload lets any network caller replace the serving "
+        "policy with an arbitrary server-local checkpoint. Unset (default): /reload is DISABLED "
+        "entirely — every request gets HTTP 403, never a silent no-op that still swaps the "
+        "policy. Set: a request must carry a matching 'admin_token' field (constant-time "
+        "compare) or it gets HTTP 403 with the previous policy left serving. Can also be set "
+        "via FH_MJ_ADMIN_TOKEN; the CLI flag takes precedence when both are given. Production "
+        "instances should normally run WITHOUT this set unless an operator deliberately enables "
+        "reload for a maintenance window.",
+    )
     args = parser.parse_args()
 
     # Fail loudly on misconfigured sampling: a typo here would otherwise start
@@ -575,15 +708,23 @@ def main() -> None:
         device=args.device,
         checkpoint_sha256=checkpoint_sha256,
         logit_export_token=args.logit_export_token,
+        admin_token=args.admin_token,
     )
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"Serving {policy.checkpoint_path} on http://{args.host}:{args.port}")
     print("POST /act with visible SeatObservation JSON. Go must still validate the returned action_id.")
-    print('POST /reload {"checkpoint": "/path/to/model.pt"} to hot-swap the model without restarting.')
+    print(
+        'POST /reload {"checkpoint": "/path/to/model.pt", "admin_token": "..."} to hot-swap '
+        "the model without restarting (requires --admin-token/FH_MJ_ADMIN_TOKEN)."
+    )
     print(
         "Logit export (return_logits): "
         f"{'ENABLED (token required)' if args.logit_export_token else 'disabled'}"
+    )
+    print(
+        "Reload (/reload): "
+        f"{'ENABLED (admin token required)' if args.admin_token else 'disabled'}"
     )
     server.serve_forever()
 

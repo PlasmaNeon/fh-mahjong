@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -60,9 +61,17 @@ class _Server:
     """A ThreadingHTTPServer bound to port 0, serving a real PolicyHolder, for
     exercising the /act, /healthz, and /reload HTTP contract end to end."""
 
-    def __init__(self, checkpoint_path: Path, manifest_path: Path, logit_export_token: str | None = None) -> None:
+    def __init__(
+        self,
+        checkpoint_path: Path,
+        manifest_path: Path,
+        logit_export_token: str | None = None,
+        admin_token: str | None = None,
+    ) -> None:
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
-        self.holder = PolicyHolder(policy, manifest_path=manifest_path, logit_export_token=logit_export_token)
+        self.holder = PolicyHolder(
+            policy, manifest_path=manifest_path, logit_export_token=logit_export_token, admin_token=admin_token,
+        )
         handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": self.holder})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -593,9 +602,11 @@ def test_policy_holder_reload_allows_override_via_expected_event_window(tmp_path
 def test_http_reload_incompatible_window_leaves_old_policy_serving(tmp_path: Path) -> None:
     old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
     new = _save_checkpoint(tmp_path, _event_model_config(window=16), step=2, name="new.pt")
-    server = _Server(old, tmp_path / "manifest.json")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
     try:
-        reload_status, reload_data = server.request("POST", "/reload", {"checkpoint": str(new)})
+        reload_status, reload_data = server.request(
+            "POST", "/reload", {"checkpoint": str(new), "admin_token": "op-token"}
+        )
         act_status, act_data = server.request(
             "POST", "/act",
             _observation_payload(
@@ -623,31 +634,31 @@ def test_policy_holder_reload_failure_after_load_leaves_policy_and_hash_consiste
     paired with a stale hash or vice versa.
 
     Since round 5's Finding 2 fix, policy and hash are derived together from a
-    single read of the checkpoint bytes (`load_checkpoint_policy_with_hash`),
-    so the old "hash the path a second time and make THAT call fail" seam
+    single read of the checkpoint bytes; since round 14's Finding 1b fix, the
+    `checkpoint=` (path) branch reads bytes, hashes them, and only then builds
+    the policy via `CheckpointPolicy.from_checkpoint_bytes` — so the old
+    "hash the path a second time and make THAT call fail" seam
     (`PolicyHolder._sha256_of`) no longer sits on `reload`'s hot path at all.
-    This exercises the equivalent seam instead: `load_checkpoint_policy_with_hash`
-    succeeds (producing a real new policy+hash pair, mirroring "the new
-    checkpoint was fully loaded and hashed"), then something else fails before
-    the snapshot swap — the holder must still show only the OLD snapshot."""
+    This exercises the equivalent seam instead: `from_checkpoint_bytes`
+    succeeds (producing a real new policy, mirroring "the new checkpoint was
+    fully loaded and hashed"), then something else fails before the snapshot
+    swap — the holder must still show only the OLD snapshot."""
     old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
     new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
     holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
     old_policy = holder.policy
     old_sha256 = holder.checkpoint_sha256
 
-    import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+    real_from_checkpoint_bytes = CheckpointPolicy.from_checkpoint_bytes
 
-    real_load_with_hash = serve_policy_module.load_checkpoint_policy_with_hash
-
-    def _flaky_load_with_hash(*args: object, **kwargs: object):
-        # Fully load the new checkpoint AND compute its hash from the same
-        # buffer (the real, fixed single-read path succeeds normally) — then
-        # fail afterward, before `reload` gets a chance to swap the snapshot.
-        real_load_with_hash(*args, **kwargs)
+    def _flaky_from_checkpoint_bytes(*args: object, **kwargs: object):
+        # Fully deserialize the new checkpoint (the real path succeeds
+        # normally) — then fail afterward, before `reload` gets a chance to
+        # swap the snapshot.
+        real_from_checkpoint_bytes(*args, **kwargs)
         raise OSError("simulated failure after policy+hash were produced, before the snapshot swap")
 
-    monkeypatch.setattr(serve_policy_module, "load_checkpoint_policy_with_hash", _flaky_load_with_hash)
+    monkeypatch.setattr(CheckpointPolicy, "from_checkpoint_bytes", _flaky_from_checkpoint_bytes)
 
     with pytest.raises(OSError):
         holder.reload(checkpoint=str(new))
@@ -667,6 +678,230 @@ def test_policy_holder_reload_success_updates_policy_and_hash_together(tmp_path:
     assert holder.policy.checkpoint_step == 2
     assert holder.policy.checkpoint_path == new
     assert holder.checkpoint_sha256 == hashlib.sha256(new.read_bytes()).hexdigest()
+
+
+# --- adversarial round 14, Finding 1a: /reload admin-token authentication ---------------
+
+
+def test_http_reload_disabled_when_no_admin_token_configured(tmp_path: Path) -> None:
+    """No --admin-token configured on the server at all (adversarial round
+    14, Finding 1a): POST /reload must be refused entirely, never silently
+    accepted, even when the request itself carries no admin_token field."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json")  # admin_token defaults None
+    try:
+        status, data = server.request("POST", "/reload", {"checkpoint": str(new)})
+        healthz_status, healthz_data = server.request("GET", "/healthz")
+    finally:
+        server.close()
+
+    assert status in (400, 403)
+    assert "error" in data
+    assert healthz_status == 200
+    assert healthz_data["checkpoint_step"] == 1
+
+
+def test_http_reload_missing_admin_token_rejected_policy_unchanged(tmp_path: Path) -> None:
+    """A server DOES have an admin token configured, but the request omits
+    'admin_token' entirely — must be rejected exactly like a wrong token, not
+    treated as an implicit disable."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request("POST", "/reload", {"checkpoint": str(new)})
+        act_status, act_data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status in (400, 403)
+    assert "error" in data
+    assert act_status == 200, act_data
+    assert act_data["checkpoint_step"] == 1
+
+
+def test_http_reload_wrong_admin_token_rejected_policy_unchanged(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(new), "admin_token": "wrong-token"}
+        )
+        act_status, act_data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status in (400, 403)
+    assert "error" in data
+    assert act_status == 200, act_data
+    assert act_data["checkpoint_step"] == 1
+
+
+def test_http_reload_correct_admin_token_swaps_policy(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(new), "admin_token": "op-token"}
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["ok"] is True
+    assert data["checkpoint_step"] == 2
+
+
+# --- adversarial round 14, Finding 1b: /reload checkpoint path safety -------------------
+
+
+def test_http_reload_rejects_directory_path(tmp_path: Path) -> None:
+    """A directory is not a regular file — must be rejected by the os.stat
+    check before anything attempts to read it, and the old policy must keep
+    serving."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    a_directory = tmp_path / "not_a_file"
+    a_directory.mkdir()
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(a_directory), "admin_token": "op-token"}
+        )
+        act_status, act_data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "regular file" in data["error"]
+    assert act_status == 200, act_data
+    assert act_data["checkpoint_step"] == 1
+
+
+def test_http_reload_rejects_fifo_path(tmp_path: Path) -> None:
+    """A FIFO has no meaningful size and would block on read — must be
+    rejected by the S_ISREG check without ever calling read_bytes() on it."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    fifo_path = tmp_path / "a.fifo"
+    os.mkfifo(fifo_path)
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(fifo_path), "admin_token": "op-token"}
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "regular file" in data["error"]
+
+
+def test_policy_holder_reload_rejects_oversize_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A regular file that exceeds the reload size cap must be rejected
+    before any bytes are read from it."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    huge = tmp_path / "huge.pt"
+    huge.write_bytes(b"\x00" * 16)
+
+    import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+
+    monkeypatch.setattr(serve_policy_module, "MAX_RELOAD_CHECKPOINT_BYTES", 8)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+
+    with pytest.raises(ValueError, match="exceeding"):
+        holder.reload(checkpoint=str(huge))
+
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_http_reload_rejects_oversize_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    huge = tmp_path / "huge.pt"
+    huge.write_bytes(b"\x00" * 16)
+
+    import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+
+    monkeypatch.setattr(serve_policy_module, "MAX_RELOAD_CHECKPOINT_BYTES", 8)
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint": str(huge), "admin_token": "op-token"}
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "exceeding" in data["error"]
+
+
+# --- adversarial round 14, Finding 1b: /reload expected_sha256 verification -------------
+
+
+def test_policy_holder_reload_rejects_expected_sha256_mismatch(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+
+    with pytest.raises(ValueError, match="expected_sha256"):
+        holder.reload(checkpoint=str(new), expected_sha256="0" * 64)
+
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_policy_holder_reload_accepts_matching_expected_sha256(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+    new_sha256 = hashlib.sha256(new.read_bytes()).hexdigest()
+
+    holder.reload(checkpoint=str(new), expected_sha256=new_sha256)
+
+    assert holder.policy.checkpoint_step == 2
+
+
+def test_http_reload_rejects_expected_sha256_mismatch(tmp_path: Path) -> None:
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    server = _Server(old, tmp_path / "manifest.json", admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload",
+            {"checkpoint": str(new), "admin_token": "op-token", "expected_sha256": "0" * 64},
+        )
+        act_status, act_data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "expected_sha256" in data["error"]
+    assert act_status == 200, act_data
+    assert act_data["checkpoint_step"] == 1
 
 
 # --- adversarial round 12/13, Finding 1: /act logit export gating ---------------------

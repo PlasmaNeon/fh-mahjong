@@ -18,14 +18,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 from typing import Optional
 
 
-def reload_payload(checkpoint: Optional[str], checkpoint_id: Optional[str]) -> dict:
-    """Build the /reload request body, requiring exactly one target."""
+def reload_payload(
+    checkpoint: Optional[str],
+    checkpoint_id: Optional[str],
+    admin_token: Optional[str] = None,
+    expected_sha256: Optional[str] = None,
+) -> dict:
+    """Build the /reload request body, requiring exactly one target.
+
+    `admin_token` (adversarial round 14, Finding 1a) is required by the
+    server for POST /reload to do anything at all — a server started
+    without --admin-token/FH_MJ_ADMIN_TOKEN refuses every /reload request,
+    regardless of what is sent here. `expected_sha256`, when given, is
+    checked against the checkpoint's actual bytes before the server swaps
+    in the new policy; a mismatch leaves the previous policy serving.
+    """
     payload: dict = {}
     if checkpoint:
         payload["checkpoint"] = checkpoint
@@ -33,6 +47,10 @@ def reload_payload(checkpoint: Optional[str], checkpoint_id: Optional[str]) -> d
         payload["checkpoint_id"] = checkpoint_id
     if not payload:
         raise ValueError("provide --checkpoint or --checkpoint-id")
+    if admin_token:
+        payload["admin_token"] = admin_token
+    if expected_sha256:
+        payload["expected_sha256"] = expected_sha256
     return payload
 
 
@@ -60,6 +78,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     target.add_argument("--checkpoint-id", help="Checkpoint id resolved from the server manifest")
     target.add_argument("--status", action="store_true", help="Only show the currently served model")
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument(
+        "--admin-token", default=os.environ.get("FH_MJ_ADMIN_TOKEN"),
+        help="Shared-secret admin token the server requires for POST /reload (adversarial "
+        "round 14, Finding 1a); also settable via FH_MJ_ADMIN_TOKEN. A server started without "
+        "--admin-token/FH_MJ_ADMIN_TOKEN refuses ALL reloads regardless of what is sent here.",
+    )
+    parser.add_argument(
+        "--expected-sha256", default=None,
+        help="Optional sha256 the server must confirm the checkpoint's bytes match before "
+        "swapping it in; a mismatch leaves the previously-serving policy untouched.",
+    )
     args = parser.parse_args(argv)
 
     base = (args.url or f"http://{args.host}:{args.port}").rstrip("/")
@@ -69,7 +98,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps(_get_json(f"{base}/healthz", args.timeout), indent=2, sort_keys=True))
             return 0
 
-        payload = reload_payload(args.checkpoint, args.checkpoint_id)
+        payload = reload_payload(args.checkpoint, args.checkpoint_id, args.admin_token, args.expected_sha256)
         body = _post_json(f"{base}/reload", payload, args.timeout)
         print(json.dumps(body, indent=2, sort_keys=True))
         return 0 if body.get("ok") else 1
