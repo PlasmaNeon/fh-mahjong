@@ -23,9 +23,11 @@ Exit 0 only when every decision checked agreed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,6 +132,64 @@ def _forward_logits(model: torch.nn.Module, observation: Observation, device: st
     return logits.detach().cpu().numpy()[0]
 
 
+def _derive_healthz_url(act_endpoint: str) -> str:
+    """Map an /act endpoint to its /healthz route: same scheme+host(+port),
+    path replaced wholesale. Mirrors `deriveHealthURL` in
+    internal/bot/remote/health.go, which the Go server uses to derive the
+    same URL from the same /act endpoint."""
+    parsed = urllib.parse.urlsplit(act_endpoint)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "/healthz", "", ""))
+
+
+def _sha256_of_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_endpoint_checkpoint_identity(endpoint: str, checkpoint: Path, timeout: float = 5.0) -> None:
+    """Hard-gate guard for `--endpoint` mode: before trusting any action-id
+    agreement, confirm the running `serve_policy` server is actually serving
+    the SAME checkpoint file under test, not a stale or swapped one. GETs
+    `/healthz` (deriving its URL from the /act `endpoint`) and, if the
+    response reports `checkpoint_sha256` (see serve_policy.py's
+    `PolicyHolder.checkpoint_sha256`), compares it against the sha256 of
+    `checkpoint`. A mismatch is an immediate `ServingParityError` — parity
+    checked against the wrong weights is worse than no check at all. An
+    older server whose `/healthz` predates this field omits it entirely;
+    that case proceeds (nothing to compare against) but prints a warning so
+    a silent identity gap doesn't go unnoticed.
+    """
+    healthz_url = _derive_healthz_url(endpoint)
+    request = urllib.request.Request(healthz_url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise ServingParityError(
+            f"serving parity FAILED: endpoint error: could not reach {healthz_url} to verify "
+            f"checkpoint identity: {exc}"
+        ) from exc
+    body = json.loads(raw)
+    reported_sha256 = body.get("checkpoint_sha256")
+    if reported_sha256 is None:
+        print(
+            f"WARNING: {healthz_url} reports no checkpoint_sha256 (older server); "
+            "proceeding without endpoint checkpoint-identity verification.",
+            file=sys.stderr,
+        )
+        return
+    expected_sha256 = _sha256_of_file(checkpoint)
+    if reported_sha256 != expected_sha256:
+        raise ServingParityError(
+            f"serving parity FAILED: endpoint {endpoint} is serving checkpoint_sha256="
+            f"{reported_sha256}, but --checkpoint {checkpoint} hashes to {expected_sha256} — "
+            "the server under test is not serving the checkpoint being verified."
+        )
+
+
 def _post_act(endpoint: str, payload: dict, timeout: float) -> tuple[int, Optional[str]]:
     """Real HTTP POST to a running serve_policy `/act` endpoint. Returns
     (action_id, error); error is non-None on ANY failure (HTTP status,
@@ -192,6 +252,14 @@ def run_serving_parity(
     model = served_reference.model
     model_event_window = model.model_config.event_window
     reference_policy = TorchGreedyPolicy(model=model, device=device)
+
+    if endpoint is not None:
+        # Before trusting a single action-id agreement, confirm the endpoint
+        # is actually serving THIS checkpoint's weights (see
+        # verify_endpoint_checkpoint_identity's docstring) — an endpoint
+        # quietly serving a different checkpoint would otherwise look like a
+        # clean parity pass for the wrong reason.
+        verify_endpoint_checkpoint_identity(endpoint, checkpoint, timeout=http_timeout)
 
     env_config = EnvConfig(
         bridge_kind=bridge_kind,

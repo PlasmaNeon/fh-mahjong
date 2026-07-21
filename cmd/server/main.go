@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -94,6 +95,18 @@ func main() {
 
 	// 4. Start Matchmaking Service
 	matchmaker := api.NewMatchmaker(inMemoryQueue, db, hub)
+
+	// RL_AGENT_EVENT_WINDOW declares the event-history wire contract every
+	// PRIMARY remote policy speaks (matchmaking-queue bots AND the
+	// private-room RL agent) — same env family as RL_AGENT_POLICY_URL /
+	// RL_AGENT_CHECKPOINT_ID / RL_AGENT_SHADOW_EVENT_WINDOW, and the same
+	// parsing semantics internal/api's reviewEventWindow uses for the review
+	// path. Unset/invalid/out-of-bound values fail closed to 0 (event-free,
+	// byte-identical to pre-event-contract behavior) rather than serving a
+	// mismatched wire form.
+	rlEventWindow := parseEventWindowEnv("RL_AGENT_EVENT_WINDOW", 0)
+	log.Printf("Primary remote policy event window: %d (RL_AGENT_EVENT_WINDOW)", rlEventWindow)
+
 	// An explicit AI_BOT_POLICY_URL routes ALL matchmaking-queue bots through
 	// the remote policy (unchanged behavior). For the private-room RL agent we
 	// fall back to a local default endpoint, so the option works out of the box
@@ -101,9 +114,15 @@ func main() {
 	explicitPolicyURL := strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
 	if explicitPolicyURL != "" {
 		log.Printf("Using remote AI bot policy endpoint for matchmaking seats: %s", explicitPolicyURL)
+		// Shared instance (HTTPPolicy is safe for concurrent use — atomic
+		// stats counters, no other mutable state) rather than a fresh policy
+		// per bot: lets one startup healthz validation cover every
+		// matchmaking-queue bot this factory ever hands out.
+		botPolicy := remote.NewHTTPPolicy(explicitPolicyURL, remote.WithEventWindow(rlEventWindow))
 		matchmaker.BotPolicyFactory = func() bot.Policy {
-			return remote.NewHTTPPolicy(explicitPolicyURL)
+			return botPolicy
 		}
+		validatePolicyContractAsync("matchmaking bot policy (AI_BOT_POLICY_URL)", botPolicy)
 	}
 
 	// RL endpoint for the private-room agent. RL_AGENT_POLICY_URL points it at a
@@ -129,27 +148,34 @@ func main() {
 	var shadowPolicy bot.ContextPolicy
 	if shadowPolicyURL != "" {
 		window := shadowEventWindow(defaultShadowEventWindow)
-		shadowPolicy = remote.NewHTTPPolicy(
+		shadowHTTPPolicy := remote.NewHTTPPolicy(
 			shadowPolicyURL,
 			remote.WithHTTPClient(rlHTTPClient),
 			remote.WithEventWindow(window),
 		)
+		shadowPolicy = shadowHTTPPolicy
 		log.Printf(
 			"RL agent shadow policy enabled: endpoint=%s event_window=%d (mirrors private-room RL decisions only; never serves them)",
 			shadowPolicyURL, window,
 		)
+		validatePolicyContractAsync("RL shadow policy", shadowHTTPPolicy)
 	}
+
+	// The RL primary is shared (like the matchmaking bot policy above) rather
+	// than rebuilt per seat, so one startup healthz validation covers every
+	// private-room RL seat the resolver ever hands out.
+	rlPrimaryPolicy := remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient), remote.WithEventWindow(rlEventWindow))
+	validatePolicyContractAsync("RL primary policy", rlPrimaryPolicy)
 
 	// Let private-room hosts assign a trained RL agent per seat. The remote
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
 	matchmaker.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
-			primary := remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient))
 			if shadowPolicy != nil {
-				return bot.NewShadowPolicy(primary, shadowPolicy, 64), nil
+				return bot.NewShadowPolicy(rlPrimaryPolicy, shadowPolicy, 64), nil
 			}
-			return primary, nil
+			return rlPrimaryPolicy, nil
 		}
 		return bot.NewPolicy(d)
 	}
@@ -208,24 +234,59 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// shadowEventWindow reads RL_AGENT_SHADOW_EVENT_WINDOW: unset/empty falls
-// back to defaultWindow; unparseable or exceeding rl.MaxEventHistoryWindow
-// (512 — same bound internal/api's reviewEventWindow enforces) is rejected
-// outright (logged, not clamped) rather than silently truncated, matching
-// internal/rl's refusal semantics elsewhere (env.go, searchpool.go).
+// shadowEventWindow reads RL_AGENT_SHADOW_EVENT_WINDOW, falling back to
+// defaultWindow per parseEventWindowEnv's semantics.
 func shadowEventWindow(defaultWindow uint32) uint32 {
-	raw := strings.TrimSpace(os.Getenv("RL_AGENT_SHADOW_EVENT_WINDOW"))
+	return parseEventWindowEnv("RL_AGENT_SHADOW_EVENT_WINDOW", defaultWindow)
+}
+
+// parseEventWindowEnv reads envVar as an event-history window: unset/empty
+// falls back to defaultWindow; unparseable or exceeding
+// rl.MaxEventHistoryWindow (512 — same bound internal/api's
+// reviewEventWindow enforces) is rejected outright (logged, not clamped)
+// rather than silently truncated, matching internal/rl's refusal semantics
+// elsewhere (env.go, searchpool.go). Shared by every event-window env var in
+// this package (RL_AGENT_EVENT_WINDOW, RL_AGENT_SHADOW_EVENT_WINDOW) so their
+// parsing/rejection rules can never drift apart.
+func parseEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
+	raw := strings.TrimSpace(os.Getenv(envVar))
 	if raw == "" {
 		return defaultWindow
 	}
 	n, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil {
-		log.Printf("ignoring invalid RL_AGENT_SHADOW_EVENT_WINDOW %q: %v (using default %d)", raw, err, defaultWindow)
+		log.Printf("ignoring invalid %s %q: %v (using default %d)", envVar, raw, err, defaultWindow)
 		return defaultWindow
 	}
 	if n > rl.MaxEventHistoryWindow {
-		log.Printf("ignoring RL_AGENT_SHADOW_EVENT_WINDOW %q: exceeds maximum %d (using default %d)", raw, rl.MaxEventHistoryWindow, defaultWindow)
+		log.Printf("ignoring %s %q: exceeds maximum %d (using default %d)", envVar, raw, rl.MaxEventHistoryWindow, defaultWindow)
 		return defaultWindow
 	}
 	return uint32(n)
+}
+
+// validatePolicyContractAsync probes policy's /healthz in the background at
+// startup (HTTPPolicy.ValidateServer — previously constructed but never
+// invoked), confirming the served checkpoint's event-window/contract-version
+// match what this Go server was configured to speak. Failures are logged
+// LOUDLY but never fatal and never block boot: the policy server commonly
+// isn't up yet when the backend starts (autostart launches it as a child
+// process, and the RL option only surfaces once its own health check
+// passes), and a genuine mismatch is still caught fail-closed at decision
+// time by the heuristic fallback and serve_policy's own 400s. label
+// identifies which policy in the logs (matchmaking bot / RL primary / RL
+// shadow).
+func validatePolicyContractAsync(label string, policy *remote.HTTPPolicy) {
+	if policy == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := policy.ValidateServer(ctx); err != nil {
+			log.Printf("POLICY CONTRACT MISMATCH / server unreachable (%s): %v — serving falls back to heuristic per-decision until this is resolved", label, err)
+			return
+		}
+		log.Printf("policy contract validated (%s)", label)
+	}()
 }

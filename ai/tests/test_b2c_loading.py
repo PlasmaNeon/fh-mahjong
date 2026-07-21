@@ -99,7 +99,7 @@ def test_infer_model_config_round_trips_complete_metadata(tmp_path):
 
 def test_infer_model_config_raises_without_metadata_for_b2b_modules():
     model = PolicyValueNet(_ENV39, _b2b_config())
-    with pytest.raises(RuntimeError, match="Spec B2c"):
+    with pytest.raises(RuntimeError, match="no usable metadata"):
         infer_model_config(model.state_dict())
 
 

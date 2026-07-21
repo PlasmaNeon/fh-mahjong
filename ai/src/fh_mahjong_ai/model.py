@@ -465,10 +465,11 @@ def infer_model_config(state_dict: dict[str, Tensor], metadata: dict | None = No
     elif has_b2b_modules:
         raise RuntimeError(
             "this checkpoint carries Spec B2b modules (event encoder / privileged critic / "
-            "aux heads), which infer_model_config cannot reconstruct — checkpoint-backed "
-            "serving and self-play for B2b models land in Spec B2c. Evaluate B2b checkpoints "
-            "with fh-mj-evaluate and explicit --model-event-window/--model-privileged-critic/"
-            "--model-aux-heads flags instead."
+            "aux heads) but no usable metadata (\"model_config\" or \"b2b\"), so "
+            "infer_model_config cannot reconstruct its ModelConfig from shapes alone. "
+            "Re-save the checkpoint with metadata (save_checkpoint(..., metadata={\"model_config\": "
+            "model_config_metadata(config)})), or evaluate it with fh-mj-evaluate and explicit "
+            "--model-event-window/--model-privileged-critic/--model-aux-heads flags instead."
         )
     else:
         config = ModelConfig(**_shape_inferred_fields(state_dict))
