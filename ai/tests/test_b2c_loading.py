@@ -110,6 +110,24 @@ def test_infer_model_config_legacy_checkpoints_still_infer_fine():
     assert config.event_window == 0
 
 
+def test_infer_model_config_tolerates_whole_prefix_absent_optional_head():
+    # Pins the "_cross_check_shapes" exemption for _COMPATIBLE_OPTIONAL_PREFIXES:
+    # a prefix is exempt only when ALL keys under it are absent on one side (the
+    # legitimate "older checkpoint predates this optional head" case). Every
+    # current PolicyValueNet always instantiates `large_loss_head`, so no
+    # existing checkpoint in these tests exercises that branch; strip it
+    # entirely here to simulate an older checkpoint saved before that head
+    # existed, and confirm the exemption lets reconstruction through cleanly.
+    legacy = PolicyValueNet(_ENV39, ModelConfig(**_SMALL))
+    state_dict = {
+        key: value for key, value in legacy.state_dict().items()
+        if not key.startswith("large_loss_head.")
+    }
+    config = infer_model_config(state_dict)
+    assert config.residual_blocks == 1
+    assert config.event_window == 0
+
+
 # --- (d) doctored metadata contradicting tensor shapes: raises "shape cross-check" ---
 
 def test_infer_model_config_doctored_metadata_raises_shape_cross_check():
