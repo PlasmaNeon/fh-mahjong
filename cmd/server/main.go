@@ -4,12 +4,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/api"
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -23,6 +25,10 @@ import (
 // offered when this endpoint passes its /healthz probe, so defaulting it is
 // safe even when no model server is running.
 const defaultRLPolicyURL = "http://127.0.0.1:8765/act"
+
+// defaultShadowEventWindow is used for RL_AGENT_SHADOW_EVENT_WINDOW when the
+// env var is unset.
+const defaultShadowEventWindow = 128
 
 func main() {
 	log.Println("Booting Mahjong Server...")
@@ -111,12 +117,39 @@ func main() {
 	// Reusing connections avoids socket churn/exhaustion when many RL seats or
 	// rooms start. 750ms matches the remote package's default per-call timeout.
 	rlHTTPClient := &http.Client{Timeout: 750 * time.Millisecond}
+	// RL_AGENT_SHADOW_POLICY_URL, if set, wraps the RESOLVED RL primary policy
+	// (the currently-deployed champion serving real seats) with a
+	// bot.ShadowPolicy that silently mirrors each decision to a second,
+	// candidate event-aware HTTPPolicy for comparison. Shadow mode never
+	// affects what actually gets played — the primary always answers, the
+	// shadow's evaluation runs on a background worker — so a candidate policy
+	// can be evaluated against live traffic before it is ever promoted to
+	// serve directly.
+	shadowPolicyURL := strings.TrimSpace(os.Getenv("RL_AGENT_SHADOW_POLICY_URL"))
+	var shadowPolicy bot.ContextPolicy
+	if shadowPolicyURL != "" {
+		window := shadowEventWindow(defaultShadowEventWindow)
+		shadowPolicy = remote.NewHTTPPolicy(
+			shadowPolicyURL,
+			remote.WithHTTPClient(rlHTTPClient),
+			remote.WithEventWindow(window),
+		)
+		log.Printf(
+			"RL agent shadow policy enabled: endpoint=%s event_window=%d (mirrors private-room RL decisions only; never serves them)",
+			shadowPolicyURL, window,
+		)
+	}
+
 	// Let private-room hosts assign a trained RL agent per seat. The remote
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
 	matchmaker.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
-			return remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient)), nil
+			primary := remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient))
+			if shadowPolicy != nil {
+				return bot.NewShadowPolicy(primary, shadowPolicy, 64), nil
+			}
+			return primary, nil
 		}
 		return bot.NewPolicy(d)
 	}
@@ -173,4 +206,26 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// shadowEventWindow reads RL_AGENT_SHADOW_EVENT_WINDOW: unset/empty falls
+// back to defaultWindow; unparseable or exceeding rl.MaxEventHistoryWindow
+// (512 — same bound internal/api's reviewEventWindow enforces) is rejected
+// outright (logged, not clamped) rather than silently truncated, matching
+// internal/rl's refusal semantics elsewhere (env.go, searchpool.go).
+func shadowEventWindow(defaultWindow uint32) uint32 {
+	raw := strings.TrimSpace(os.Getenv("RL_AGENT_SHADOW_EVENT_WINDOW"))
+	if raw == "" {
+		return defaultWindow
+	}
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		log.Printf("ignoring invalid RL_AGENT_SHADOW_EVENT_WINDOW %q: %v (using default %d)", raw, err, defaultWindow)
+		return defaultWindow
+	}
+	if n > rl.MaxEventHistoryWindow {
+		log.Printf("ignoring RL_AGENT_SHADOW_EVENT_WINDOW %q: exceeds maximum %d (using default %d)", raw, rl.MaxEventHistoryWindow, defaultWindow)
+		return defaultWindow
+	}
+	return uint32(n)
 }
