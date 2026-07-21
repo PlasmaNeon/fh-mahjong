@@ -199,3 +199,32 @@ func TestHealthChecker_WindowZeroAcceptsExplicitlyPublishedMatch(t *testing.T) {
 		t.Fatal("expected healthy: window-0 checker vs server explicitly publishing event_window=0")
 	}
 }
+
+// A non-JSON/undecodable healthz body is aligned with HTTPPolicy.ValidateServer
+// (http_policy.go): a window-0 checker treats it as acceptable legacy
+// reachability (healthy — nothing to verify), while a window>0 (event-enabled)
+// checker still fails closed, since it cannot confirm the contract match it
+// requires.
+func TestHealthChecker_NonJSONBodyWindowZeroIsHealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if !h.Healthy() {
+		t.Fatal("expected healthy: window-0 checker vs non-JSON healthz body (legacy reachability only)")
+	}
+}
+
+func TestHealthChecker_NonJSONBodyWindowNonZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window>0 checker vs non-JSON healthz body (contract unverifiable)")
+	}
+}

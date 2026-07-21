@@ -414,6 +414,15 @@ func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
 	}
 	var body eventContractHealthz
 	if err := json.Unmarshal(payload, &body); err != nil {
+		// A non-JSON/undecodable body means the event contract (if this
+		// policy expects one) cannot be verified — fail closed rather than
+		// assume a match. A window-0 policy keeps the legacy
+		// reachability-only behavior (mirrors HealthChecker.probe in
+		// health.go: window-0 + undecodable body => acceptable legacy
+		// reachability, window>0 stays strict in both).
+		if p.eventWindow == 0 {
+			return nil
+		}
 		return fmt.Errorf("healthz body is not valid JSON: %w", err)
 	}
 

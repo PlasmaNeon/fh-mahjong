@@ -33,7 +33,8 @@ service never sets this flag.**
 `serve_policy.py`'s POST `/reload` is a remote policy-replacement primitive,
 so it is disabled ENTIRELY unless the server is launched with
 `--admin-token TOKEN` (or `FH_MJ_ADMIN_TOKEN`); every `/reload` request must
-then carry the SAME token in an `admin_token` field (`hmac.compare_digest`)
+then carry the SAME token in an `Authorization: Bearer <token>` HEADER
+(`hmac.compare_digest`, checked before the request body is read)
 or it is refused with the previous policy left serving. The server also
 rejects the checkpoint path outright unless it is a regular file under a
 2 GiB cap, before reading a single byte, and honors an optional
@@ -202,13 +203,16 @@ CANDIDATE service's URL only, never the production one):
 ```
 curl -X POST http://127.0.0.1:8766/reload \
   -H 'Content-Type: application/json' \
-  -d "{\"checkpoint\": \"/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt\", \"expected_event_window\": 128, \"expected_sha256\": \"00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e\", \"admin_token\": \"$FH_MJ_ADMIN_TOKEN\"}"
+  -H "Authorization: Bearer $FH_MJ_ADMIN_TOKEN" \
+  -d "{\"checkpoint\": \"/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt\", \"expected_event_window\": 128, \"expected_sha256\": \"00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e\"}"
 ```
 
-(`admin_token` must match this instance's `--admin-token`/`FH_MJ_ADMIN_TOKEN`
-or the request is refused with the previous policy left serving (adversarial
-round 14, Finding 1a) — a server started without `--admin-token` refuses
-this request outright, no matter what is sent. `expected_sha256` is the
+(the `Authorization: Bearer` header must match this instance's
+`--admin-token`/`FH_MJ_ADMIN_TOKEN` or the request is refused with the
+previous policy left serving (adversarial round 14, Finding 1a; header-based
+auth since adversarial round 15, Finding 1) — a server started without
+`--admin-token` refuses this request outright, no matter what is sent.
+`expected_sha256` is the
 `gate_qualified_research_champion` entry's checkpoint hash — the server
 verifies it against the checkpoint's actual bytes before deserializing
 anything, and rejects a mismatch (adversarial round 14, Finding 1b).
@@ -219,8 +223,11 @@ before, `/reload` does not change a running server's `--logit-export-token`;
 that is fixed at launch. Equivalently, `fh-mj-reload-policy --checkpoint
 /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt --expected-sha256
 00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e
---admin-token "$FH_MJ_ADMIN_TOKEN" --port 8766` does the same thing through
-the CLI wrapper.)
+--expected-event-window 128 --admin-token "$FH_MJ_ADMIN_TOKEN" --port 8766`
+does the same thing through the CLI wrapper (`--expected-event-window` is
+what makes this — or any cross-window swap — a deliberate, checked
+promotion rather than being refused by the server's default "must match
+the currently-serving policy's window" contract check).)
 
 **Before proceeding to step 4 (shadowing), verify the candidate itself is
 actually serving iter_075**, not a stale or misconfigured checkpoint:
@@ -382,9 +389,14 @@ whether the parent shell has it exported — this is more reliable than
 session, which is easy to forget or to run in the wrong shell/session.)
 
 **REQUIRED before cutover** — verify the restart actually turned both
-features off, not just that the process came back up. All three checks
-must pass; do not proceed to the `RL_AGENT_POLICY_URL` flip below until
-they do:
+features off, not just that the process came back up. A bare HTTP status
+code is NOT enough here: an unauthenticated request against an
+ENABLED-but-still-secret server (i.e. the flags leaked back in via
+`FH_MJ_LOGIT_EXPORT_TOKEN`/`FH_MJ_ADMIN_TOKEN` still being exported —
+exactly the failure mode this check exists to catch) returns the SAME
+status code (400 / 403) as a genuinely disabled server. All four checks
+below must pass; do not proceed to the `RL_AGENT_POLICY_URL` flip below
+until they do:
 
 ```bash
 # 1. /healthz identity check: same checkpoint, same event_window, as before
@@ -394,23 +406,54 @@ curl -s http://127.0.0.1:8766/healthz | python3 -m json.tool
 # expect: "checkpoint_sha256": "00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e",
 #         "event_window": 128, "contract_version": 1
 
-# 2. return_logits request -> 400 (logit export must be OFF)
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8766/act \
+# 2. PRIMARY check — the server's own startup log lines (main() in
+#    serve_policy.py prints these once, at launch, from the SAME
+#    args.logit_export_token/args.admin_token that gate every request —
+#    unlike a curl status code, this can't be confused with an
+#    enabled-but-unauthenticated response):
+#      "Logit export (return_logits): disabled"
+#      "Reload (/reload): disabled"
+#    grep the restarted process's stdout/log for both exact lines. If
+#    either instead reads "ENABLED (...)", the flags/env leaked back in —
+#    stop and re-check the launching shell's environment (env | grep FH_MJ_)
+#    before proceeding.
+
+# 3. Secondary check — return_logits request, checking the RESPONSE BODY
+#    (not just the status code): a disabled server's 400 body always
+#    contains "logit export disabled on this server"; an ENABLED server
+#    given no/wrong token instead returns a DIFFERENT 400 body containing
+#    "logit export token missing or does not match" — status code alone
+#    cannot tell these apart, the message can.
+curl -s -X POST http://127.0.0.1:8766/act \
   -H 'Content-Type: application/json' \
   -d '{"return_logits": true}'
-# expect: 400
+# expect body to contain: "logit export disabled on this server"
+# if it instead contains "token missing or does not match", logit export
+# is still ENABLED (leaked token) even though this also returns HTTP 400 —
+# do not treat the status code alone as a pass.
 
-# 3. /reload -> 403 (admin/reload must be OFF)
-curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8766/reload \
+# 4. Secondary check — /reload, checking the RESPONSE BODY: a disabled
+#    server's 403 body always contains "is disabled on this server"; an
+#    ENABLED server given no/wrong Authorization header instead returns a
+#    DIFFERENT 403 body containing "missing or invalid 'Authorization:
+#    Bearer <token>' header" — again, the status code alone cannot
+#    distinguish these.
+curl -s -X POST http://127.0.0.1:8766/reload \
   -H 'Content-Type: application/json' \
   -d '{"checkpoint_id": "current"}'
-# expect: 403
+# expect body to contain: "is disabled on this server"
+# if it instead contains "missing or invalid ... header", reload is still
+# ENABLED (leaked token) even though this also returns HTTP 403 — do not
+# treat the status code alone as a pass.
 ```
 
-If check 2 or 3 does not come back exactly as shown, the candidate service
-is STILL exposing logit export or remote reload to production traffic —
-stop and re-check the launching shell's environment (`env | grep FH_MJ_`)
-before proceeding.
+If check 2's log lines read "ENABLED", or check 3/4's response bodies
+contain the "enabled-but-unauthenticated" message instead of the
+"disabled on this server" message, the candidate service is STILL
+exposing logit export or remote reload to production traffic (the
+`FH_MJ_LOGIT_EXPORT_TOKEN`/`FH_MJ_ADMIN_TOKEN` env vars leaked back into
+the restart) — stop and re-check the launching shell's environment
+(`env | grep FH_MJ_`) before proceeding.
 
 **PROMOTION = ONE backend revision** changing, together:
 - `RL_AGENT_POLICY_URL` → the candidate service's `/act` URL

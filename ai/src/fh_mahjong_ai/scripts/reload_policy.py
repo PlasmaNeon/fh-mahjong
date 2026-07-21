@@ -29,6 +29,7 @@ def reload_payload(
     checkpoint: Optional[str],
     checkpoint_id: Optional[str],
     expected_sha256: Optional[str] = None,
+    expected_event_window: Optional[int] = None,
 ) -> dict:
     """Build the /reload request BODY, requiring exactly one target.
 
@@ -38,7 +39,12 @@ def reload_payload(
     caller before reading any of the (potentially attacker-supplied)
     request body at all. `expected_sha256`, when given, is checked against
     the checkpoint's actual bytes before the server swaps in the new
-    policy; a mismatch leaves the previous policy serving.
+    policy; a mismatch leaves the previous policy serving. `expected_event_window`,
+    when given, overrides the server's default "must match the currently-serving
+    policy's event_window" contract check — this is what makes a deliberate
+    cross-window swap (e.g. window-0 -> window-128) possible through this CLI;
+    omitted, the server requires the new checkpoint's window to match the one
+    it is currently serving.
     """
     payload: dict = {}
     if checkpoint:
@@ -49,6 +55,8 @@ def reload_payload(
         raise ValueError("provide --checkpoint or --checkpoint-id")
     if expected_sha256:
         payload["expected_sha256"] = expected_sha256
+    if expected_event_window is not None:
+        payload["expected_event_window"] = expected_event_window
     return payload
 
 
@@ -98,6 +106,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Optional sha256 the server must confirm the checkpoint's bytes match before "
         "swapping it in; a mismatch leaves the previously-serving policy untouched.",
     )
+    parser.add_argument(
+        "--expected-event-window", type=int, default=None,
+        help="Optional event_window the server must confirm the NEW checkpoint reports before "
+        "swapping it in. Without this, the server requires the new checkpoint's event_window to "
+        "match the CURRENTLY-serving policy's window, which refuses a deliberate cross-window "
+        "swap (e.g. window-0 to window-128). Set this to the new checkpoint's own window to "
+        "allow that swap explicitly; a mismatch leaves the previously-serving policy untouched.",
+    )
     args = parser.parse_args(argv)
 
     base = (args.url or f"http://{args.host}:{args.port}").rstrip("/")
@@ -107,7 +123,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps(_get_json(f"{base}/healthz", args.timeout), indent=2, sort_keys=True))
             return 0
 
-        payload = reload_payload(args.checkpoint, args.checkpoint_id, args.expected_sha256)
+        payload = reload_payload(
+            args.checkpoint, args.checkpoint_id, args.expected_sha256, args.expected_event_window
+        )
         body = _post_json(f"{base}/reload", payload, args.timeout, headers=_auth_headers(args.admin_token))
         print(json.dumps(body, indent=2, sort_keys=True))
         return 0 if body.get("ok") else 1

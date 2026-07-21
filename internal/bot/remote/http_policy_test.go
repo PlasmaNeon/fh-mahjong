@@ -535,4 +535,24 @@ func TestHTTPPolicyValidateServer(t *testing.T) {
 	if err := zeroVsPublished0Policy.ValidateServer(context.Background()); err != nil {
 		t.Fatalf("expected window-0 policy vs server explicitly publishing event_window=0 to pass, got %v", err)
 	}
+
+	// Non-JSON/undecodable healthz body: aligned with HealthChecker.probe
+	// (health.go) — a window-0 policy treats this as acceptable legacy
+	// reachability (pass, contract unverifiable but nothing to verify),
+	// while a window>0 (event-enabled) policy still fails closed, since it
+	// cannot confirm the contract match it requires.
+	nonJSONServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer nonJSONServer.Close()
+
+	nonJSONForZeroPolicy := NewHTTPPolicy(nonJSONServer.URL+"/act", WithLogger(nil))
+	if err := nonJSONForZeroPolicy.ValidateServer(context.Background()); err != nil {
+		t.Fatalf("expected non-JSON healthz body to pass for a window-0 policy (legacy reachability only), got %v", err)
+	}
+
+	nonJSONForEventPolicy := NewHTTPPolicy(nonJSONServer.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	if err := nonJSONForEventPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected non-JSON healthz body to fail validation for an event-enabled (window>0) policy")
+	}
 }

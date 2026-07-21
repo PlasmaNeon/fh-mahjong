@@ -40,6 +40,33 @@ def test_reload_payload_omits_expected_sha256_when_absent() -> None:
     }
 
 
+def test_reload_payload_carries_expected_event_window() -> None:
+    """Enables a deliberate cross-window swap (e.g. window-0 -> window-128)
+    through the CLI: without this field the server requires the new
+    checkpoint's event_window to match the currently-serving policy's
+    window, which refuses exactly that kind of swap."""
+    assert reload_payload("/models/a.pt", None, expected_event_window=128) == {
+        "checkpoint": "/models/a.pt",
+        "expected_event_window": 128,
+    }
+
+
+def test_reload_payload_omits_expected_event_window_when_absent() -> None:
+    assert reload_payload("/models/a.pt", None, expected_event_window=None) == {
+        "checkpoint": "/models/a.pt",
+    }
+
+
+def test_reload_payload_combines_sha256_and_event_window() -> None:
+    assert reload_payload(
+        "/models/a.pt", None, expected_sha256="deadbeef", expected_event_window=128
+    ) == {
+        "checkpoint": "/models/a.pt",
+        "expected_sha256": "deadbeef",
+        "expected_event_window": 128,
+    }
+
+
 def test_auth_headers_carries_bearer_token() -> None:
     """Adversarial round 15, Finding 1: the CLI must thread --admin-token
     (or FH_MJ_ADMIN_TOKEN) through as an `Authorization: Bearer <token>`

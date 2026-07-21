@@ -221,11 +221,13 @@ class PolicyHolder:
         into a memory-exhaustion DoS. When `admin_token` is None (the
         default), /reload is disabled ENTIRELY — every request gets a 4xx
         refusal, never a silent no-op that still swaps the policy. When set,
-        a request must carry a matching `admin_token` field (again compared
-        with `hmac.compare_digest`) or it is rejected without touching the
-        currently-serving policy. Production instances should normally run
-        WITHOUT an admin token configured (reload disabled) unless an
-        operator deliberately enables it for a maintenance window."""
+        a request must carry a matching token in an `Authorization: Bearer
+        <token>` HEADER (again compared with `hmac.compare_digest`, checked
+        BEFORE the request body is read — adversarial round 15, Finding 1)
+        or it is rejected without touching the currently-serving policy.
+        Production instances should normally run WITHOUT an admin token
+        configured (reload disabled) unless an operator deliberately
+        enables it for a maintenance window."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
@@ -778,9 +780,10 @@ def main() -> None:
         "Finding 1a): an unauthenticated /reload lets any network caller replace the serving "
         "policy with an arbitrary server-local checkpoint. Unset (default): /reload is DISABLED "
         "entirely — every request gets HTTP 403, never a silent no-op that still swaps the "
-        "policy. Set: a request must carry a matching 'admin_token' field (constant-time "
-        "compare) or it gets HTTP 403 with the previous policy left serving. Can also be set "
-        "via FH_MJ_ADMIN_TOKEN; the CLI flag takes precedence when both are given. Production "
+        "policy. Set: a request must carry a matching token in an 'Authorization: Bearer "
+        "<token>' header (constant-time compare, checked before the request body is read) or "
+        "it gets HTTP 403 with the previous policy left serving. Can also be set via "
+        "FH_MJ_ADMIN_TOKEN; the CLI flag takes precedence when both are given. Production "
         "instances should normally run WITHOUT this set unless an operator deliberately enables "
         "reload for a maintenance window.",
     )
@@ -829,8 +832,9 @@ def main() -> None:
     print(f"Serving {policy.checkpoint_path} on http://{args.host}:{args.port}")
     print("POST /act with visible SeatObservation JSON. Go must still validate the returned action_id.")
     print(
-        'POST /reload {"checkpoint": "/path/to/model.pt", "admin_token": "..."} to hot-swap '
-        "the model without restarting (requires --admin-token/FH_MJ_ADMIN_TOKEN)."
+        'POST /reload {"checkpoint": "/path/to/model.pt"} with an '
+        "'Authorization: Bearer <token>' header to hot-swap the model without restarting "
+        "(requires --admin-token/FH_MJ_ADMIN_TOKEN)."
     )
     print(
         "Logit export (return_logits): "
