@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
 
@@ -12,6 +13,17 @@ from .types import Observation, Transition
 
 SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
 SHARDED_TRANSITIONS_SCHEMA_VERSION = 1
+
+
+def model_config_metadata(model_config: object) -> dict:
+    """Serialize a ModelConfig into a plain dict for checkpoint metadata.
+
+    Saved verbatim under ``metadata["model_config"]`` so `infer_model_config`
+    can reconstruct the exact architecture later instead of re-deriving it
+    from tensor shapes (shape inference cannot recover fields like
+    `event_window`, which no weight tensor encodes).
+    """
+    return asdict(model_config)
 
 
 class ShardedTransitionWriter:

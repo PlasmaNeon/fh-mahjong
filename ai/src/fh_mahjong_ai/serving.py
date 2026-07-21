@@ -64,9 +64,13 @@ class CheckpointPolicy:
         seed: int = 1,
     ) -> "CheckpointPolicy":
         # Architecture varies across promoted checkpoints (e.g. residual-block
-        # depth); recover it from the saved tensors instead of assuming defaults.
-        saved_state = torch.load(checkpoint_path, map_location="cpu")["model"]
-        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state))
+        # depth, or Spec B2b's event encoder / privileged critic / aux heads);
+        # recover it from the saved tensors (plus any checkpoint metadata)
+        # instead of assuming defaults.
+        payload = torch.load(checkpoint_path, map_location="cpu")
+        saved_state = payload["model"]
+        metadata = payload.get("metadata")
+        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state, metadata))
         step = load_checkpoint(checkpoint_path, model)
         model.to(device)
         return cls(
@@ -94,7 +98,35 @@ class CheckpointPolicy:
         elif scalars.shape[1] > expected_scalars:
             raise ValueError(f"expected at most {expected_scalars} scalars, got {scalars.shape[1]}")
         action_mask = torch.from_numpy(observation.action_mask).unsqueeze(0).to(self.device)
-        logits, value = self.model(planes, scalars, action_mask)
+
+        events = event_lengths = None
+        if getattr(self.model, "wants_events", False):
+            window = self.model.model_config.event_window
+            history = np.asarray(
+                getattr(observation, "event_history", np.zeros(0, np.uint32)), dtype=np.uint32
+            )
+            if history.size == 0:
+                # Defense-in-depth: serve_policy's own validation is the first
+                # line of defense against this, but an event model (window>0)
+                # must never silently zero-fill a missing history — that
+                # would serve a decision the model was never trained to make.
+                # A genuinely early-round history is short, not empty: this
+                # codebase's bridges always emit at least a deal/draw event
+                # before any decision reaches serving (see test_events.py's
+                # test_mock_bridge_emits_wellformed_history), so an empty
+                # history here indicates an upstream bug, not a legitimate
+                # round start.
+                raise ValueError(
+                    f"event model (event_window={window}) received an observation with an "
+                    "EMPTY event_history; refusing to silently zero-fill it"
+                )
+            row = np.zeros((1, window), dtype=np.int64)
+            n = min(history.size, window)
+            row[0, :n] = history[-n:].astype(np.int64)
+            events = torch.from_numpy(row).to(self.device)
+            event_lengths = torch.tensor([n], dtype=torch.int64, device=self.device)
+
+        logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
         greedy_action_id = int(torch.argmax(logits, dim=1).item())
         sampling_actions = self._sampling_actions(legal_actions)
         sampling_applied = self.sample_temperature > 0.0 and bool(sampling_actions)
@@ -133,11 +165,20 @@ class CheckpointPolicy:
         scalars: np.ndarray,
         action_masks: np.ndarray,
         chunk_size: int = 256,
+        events: Optional[np.ndarray] = None,
+        event_lengths: Optional[np.ndarray] = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Masked policy distribution + value for a batch of visible observations.
 
         Deterministic: no temperature/top-k sampling. Illegal actions get exactly
         zero probability. Used by the post-game review pipeline.
+
+        `events`/`event_lengths` are optional int64/int32 arrays shaped like
+        `TorchGreedyPolicy`'s per-row tensors (`[n, model_config.event_window]`
+        and `[n]`); omit them for window-0 models. Unlike `choose`, this batch
+        entry point has no per-row Observation to validate against, so it does
+        not raise on a missing/empty history — callers that batch event-model
+        observations are responsible for supplying real histories.
         """
         n = planes.shape[0]
         no_legal_rows = np.flatnonzero(~action_masks.astype(bool).any(axis=1))
@@ -155,7 +196,11 @@ class CheckpointPolicy:
             elif s.shape[1] > expected_scalars:
                 raise ValueError(f"expected at most {expected_scalars} scalars, got {s.shape[1]}")
             m = torch.from_numpy(action_masks[start:end]).to(self.device)
-            logits, value = self.model(p, s, m)
+            ev = ev_len = None
+            if events is not None and event_lengths is not None:
+                ev = torch.from_numpy(events[start:end]).to(self.device)
+                ev_len = torch.from_numpy(event_lengths[start:end]).to(self.device)
+            logits, value = self.model(p, s, m, events=ev, event_lengths=ev_len)
             legal = m.to(dtype=torch.bool)
             masked = logits.masked_fill(~legal, float("-inf"))
             probs = torch.softmax(masked, dim=1)

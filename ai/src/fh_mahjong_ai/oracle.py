@@ -24,7 +24,7 @@ from .ppo import (
     masked_policy_distribution, _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
     cpu_state_snapshot,
 )
-from .storage import load_compatible_checkpoint, save_checkpoint
+from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
 
 
 def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
@@ -1011,13 +1011,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 checkpoint_dir / f"iter_{iteration:03d}.pt", model,
                 # Pins the trained horizon/architecture so fh-mj-evaluate can
                 # refuse to run this checkpoint under a different effective
-                # window (silent mis-evaluation guard).
-                metadata={"b2b": {
-                    "event_window": int(model_config.event_window),
-                    "privileged_critic": bool(model_config.privileged_critic),
-                    "aux_heads": bool(model_config.aux_heads),
-                    "residual_blocks": int(model_config.residual_blocks),
-                }})
+                # window (silent mis-evaluation guard). The "b2b" four-flag
+                # block stays for older readers; "model_config" is the
+                # complete ModelConfig so Spec B2c loaders (infer_model_config)
+                # can reconstruct the architecture exactly instead of
+                # re-deriving it from tensor shapes.
+                metadata={
+                    "b2b": {
+                        "event_window": int(model_config.event_window),
+                        "privileged_critic": bool(model_config.privileged_critic),
+                        "aux_heads": bool(model_config.aux_heads),
+                        "residual_blocks": int(model_config.residual_blocks),
+                    },
+                    "model_config": model_config_metadata(model_config),
+                })
             history.append(metrics)
             (checkpoint_dir / "history.json").write_text(json.dumps(history))
             print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
