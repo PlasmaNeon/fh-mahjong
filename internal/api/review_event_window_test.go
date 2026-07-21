@@ -114,16 +114,16 @@ func TestReviewEventWindow_FallbackGatedByPolicyURL(t *testing.T) {
 			want:          128,
 		},
 		{
-			name:          "policy URL equals RL_AGENT_POLICY_URL -> inherits RL window",
-			policyURL:     "http://shared.example/act",
-			rlOverride:    "http://shared.example/act",
+			name:          "policy URL equals RL_AGENT_POLICY_URL literally -> inherits RL window",
+			policyURL:     "http://shared.example",
+			rlOverride:    "http://shared.example",
 			rlEventWindow: "128",
 			want:          128,
 		},
 		{
 			name:          "policy URL equals AI_BOT_POLICY_URL fallback (no RL override) -> inherits RL window",
-			policyURL:     "http://shared.example/act",
-			aiBotURL:      "http://shared.example/act",
+			policyURL:     "http://shared.example",
+			aiBotURL:      "http://shared.example",
 			rlEventWindow: "128",
 			want:          128,
 		},
@@ -131,6 +131,53 @@ func TestReviewEventWindow_FallbackGatedByPolicyURL(t *testing.T) {
 			name:          "policy URL differs from resolved RL endpoint -> fails closed to 0",
 			policyURL:     "http://review-only.example/evaluate",
 			rlOverride:    "http://rl.example/act",
+			rlEventWindow: "128",
+			want:          0,
+		},
+		{
+			// Production-shaped same-service config: POLICY_SERVER_URL is a
+			// BASE URL (HTTPPolicyClient appends "/evaluate"), while
+			// RL_AGENT_POLICY_URL ends in "/act". Round 8 finding: comparing
+			// these literally treats them as different services and forces
+			// the window to 0. They must be recognized as the same service.
+			name:          "base policy URL vs RL /act endpoint, same host -> inherits RL window",
+			policyURL:     "http://policy:8765",
+			rlOverride:    "http://policy:8765/act",
+			rlEventWindow: "128",
+			want:          128,
+		},
+		{
+			name:          "base policy URL with trailing slash vs RL /act endpoint -> inherits RL window",
+			policyURL:     "http://policy:8765/",
+			rlOverride:    "http://policy:8765/act",
+			rlEventWindow: "128",
+			want:          128,
+		},
+		{
+			name:          "base policy URL vs RL /act/ endpoint with trailing slash -> inherits RL window",
+			policyURL:     "http://policy:8765",
+			rlOverride:    "http://policy:8765/act/",
+			rlEventWindow: "128",
+			want:          128,
+		},
+		{
+			name:          "same path shape but different host -> fails closed to 0",
+			policyURL:     "http://policy-a:8765",
+			rlOverride:    "http://policy-b:8765/act",
+			rlEventWindow: "128",
+			want:          0,
+		},
+		{
+			name:          "unparseable policy URL -> fails closed to 0",
+			policyURL:     "http://policy:8765\x7f",
+			rlOverride:    "http://policy:8765/act",
+			rlEventWindow: "128",
+			want:          0,
+		},
+		{
+			name:          "unparseable RL endpoint -> fails closed to 0",
+			policyURL:     "http://policy:8765",
+			rlOverride:    "http://policy:8765/act\x7f",
 			rlEventWindow: "128",
 			want:          0,
 		},

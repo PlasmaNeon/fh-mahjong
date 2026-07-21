@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -75,12 +76,49 @@ func reviewEventWindow(policyURL string) uint32 {
 		effectiveRLURL = strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
 	}
 
-	if policyURL != "" && effectiveRLURL != "" && policyURL != effectiveRLURL {
+	if policyURL != "" && effectiveRLURL != "" && !sameReviewService(policyURL, effectiveRLURL) {
 		log.Printf("review: POLICY_SERVER_URL (%s) differs from the resolved RL agent endpoint (%s); REVIEW_EVENT_WINDOW is unset — defaulting review event window to 0 rather than inheriting RL_AGENT_EVENT_WINDOW for a possibly different service", policyURL, effectiveRLURL)
 		return 0
 	}
 
 	return parseReviewEventWindowEnv("RL_AGENT_EVENT_WINDOW", 0)
+}
+
+// sameReviewService reports whether baseURL (POLICY_SERVER_URL, a BASE URL —
+// HTTPPolicyClient appends "/evaluate" to it) and rlURL (the resolved RL
+// agent endpoint, RL_AGENT_POLICY_URL/AI_BOT_POLICY_URL, which ends in
+// "/act") name the same backing service (adversarial round 8).
+//
+// A literal string comparison undercounts same-service configs: in the
+// production-shaped setup POLICY_SERVER_URL=http://policy:8765 and
+// RL_AGENT_POLICY_URL=http://policy:8765/act describe the same server, but
+// compare unequal, which forced the review window to 0 and made every
+// uncached review 502 once RL_AGENT_EVENT_WINDOW mattered. Canonicalize both
+// to scheme+host(+port) plus a path with the RL side's trailing "/act" (and
+// trailing slashes on both sides) stripped before comparing — mirroring how
+// internal/bot/remote's deriveHealthURL maps an /act endpoint to its sibling
+// route on the same service. Unparseable URLs are treated as NOT the same
+// service (fail closed, matching this function's caller).
+func sameReviewService(baseURL, rlURL string) bool {
+	bu, err := url.Parse(baseURL)
+	if err != nil || bu.Scheme == "" || bu.Host == "" {
+		return false
+	}
+	ru, err := url.Parse(rlURL)
+	if err != nil || ru.Scheme == "" || ru.Host == "" {
+		return false
+	}
+	if bu.Scheme != ru.Scheme || bu.Host != ru.Host {
+		return false
+	}
+
+	basePath := strings.TrimSuffix(bu.Path, "/")
+
+	rlPath := strings.TrimSuffix(ru.Path, "/")
+	rlPath = strings.TrimSuffix(rlPath, "/act")
+	rlPath = strings.TrimSuffix(rlPath, "/")
+
+	return basePath == rlPath
 }
 
 // handleGetReview serves the newest cached MatchReview for a match. It is a
