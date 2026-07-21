@@ -59,6 +59,7 @@ export default function ReviewPanel(props: ReviewPanelProps) {
       mistake: '失误阈值',
       caption: '冠军模型以冲刺名次为目标，仅供参考',
       decisions: '决策数',
+      valuesUncalibrated: '该策略未提供价值估计',
     }
     : {
       title: 'Review',
@@ -77,6 +78,7 @@ export default function ReviewPanel(props: ReviewPanelProps) {
       mistake: 'Mistake',
       caption: 'The champion optimizes final placement (Chongci) and is strong but not an oracle',
       decisions: 'decisions',
+      valuesUncalibrated: 'Value estimates are unavailable for this policy',
     }
 
   return (
@@ -131,6 +133,7 @@ interface CopyBundle {
   mistake: string
   caption: string
   decisions: string
+  valuesUncalibrated: string
 }
 
 function ReviewRequestState({ status, errorMessage, onRequestReview, t }: {
@@ -216,7 +219,14 @@ function ReviewContent({ report, decisionIndex, viewSeat, position, onJump, lang
         )}
       </div>
 
-      <ValueSparkline decisions={seatDecisions} position={position} onJump={onJump} label={t.timeline} />
+      <ValueSparkline
+        decisions={seatDecisions}
+        position={position}
+        onJump={onJump}
+        label={t.timeline}
+        valuesCalibrated={report.valuesCalibrated}
+        uncalibratedLabel={t.valuesUncalibrated}
+      />
 
       <details className="review-panel__advanced">
         <summary>{t.thresholds}</summary>
@@ -301,24 +311,43 @@ function DecisionAnalysis({ decision, lang, thresholds, noDecisionLabel, analysi
   )
 }
 
-function ValueSparkline({ decisions, position, onJump, label }: {
+function ValueSparkline({ decisions, position, onJump, label, valuesCalibrated, uncalibratedLabel }: {
   decisions: ReportDecision[]
   position: { round: number; actionIndex: number }
   onJump: (round: number, actionIndex: number) => void
   label: string
+  valuesCalibrated: boolean
+  uncalibratedLabel: string
 }) {
   if (decisions.length === 0) {
     return null
   }
+  if (!valuesCalibrated) {
+    return (
+      <div>
+        <div className="review-panel__heading">{label}</div>
+        <div className="review-panel__warning">{uncalibratedLabel}</div>
+      </div>
+    )
+  }
+
+  // Values are non-null whenever valuesCalibrated is true (see
+  // ReviewReport.valuesCalibrated), but guard defensively against a
+  // partially-populated report.
+  const withValue = decisions.filter((d): d is ReportDecision & { value: number } => d.value != null)
+  if (withValue.length === 0) {
+    return null
+  }
+
   const width = 248
   const height = 40
-  const values = decisions.map(d => d.value)
+  const values = withValue.map(d => d.value)
   const min = Math.min(...values)
   const max = Math.max(...values)
   const span = max - min || 1
 
-  const points = decisions.map((d, i) => {
-    const x = decisions.length > 1 ? (i / (decisions.length - 1)) * width : width / 2
+  const points = withValue.map((d, i) => {
+    const x = withValue.length > 1 ? (i / (withValue.length - 1)) * width : width / 2
     const y = height - ((d.value - min) / span) * height
     return { x, y, d }
   })

@@ -14,7 +14,9 @@ export interface ReportDecision {
   actionIndex: number
   chosenActionId: number
   chosenProb: number
-  value: number
+  // null when the report's valuesCalibrated is false (a privileged-critic
+  // checkpoint served this decision) — see ReviewReport.valuesCalibrated.
+  value: number | null
   actions: ActionProb[]
 }
 
@@ -39,6 +41,10 @@ export interface ReviewReport {
   generatedAt: string
   decisions: ReportDecision[]
   seats: SeatSummary[]
+  // False when the served checkpoint is a privileged-critic model: every
+  // ReportDecision.value in this report is null rather than a number.
+  // Action-ranking fields (actions/chosenProb/topGaps) are unaffected.
+  valuesCalibrated: boolean
 }
 
 /** GET the review report for a match. Returns null if none exists yet (404). */

@@ -108,6 +108,7 @@ describe('fetchReview / generateReview', () => {
     generatedAt: '2026-01-01T00:00:00Z',
     decisions: [],
     seats: [],
+    valuesCalibrated: true,
   }
 
   it('fetchReview returns null on 404', async () => {
@@ -154,6 +155,7 @@ describe('selectPanelDecisions', () => {
       { ...dec([[5, 0.9], [6, 0.1]], 5), seat: 0, round: 1, actionIndex: 4 },
     ],
     seats: [],
+    valuesCalibrated: true,
   }
 
   it('filters decisions by seat', () => {
@@ -181,6 +183,7 @@ describe('buildDecisionIndex', () => {
         { ...dec([[5, 0.9], [6, 0.1]], 5), round: 1, actionIndex: 4 }, // different key
       ],
       seats: [],
+      valuesCalibrated: true,
     }
     const index = buildDecisionIndex(report)
     expect(index.get(decisionKey(0, 3))).toHaveLength(2)
