@@ -71,16 +71,27 @@ func TestRLAgentEventWindowDefaultsToZero(t *testing.T) {
 	}
 }
 
-// TestResolveAIBotEventWindow pins adversarial round 6, Finding 1:
-// AI_BOT_POLICY_URL (matchmaking bots) and RL_AGENT_POLICY_URL (private-room
-// RL agent) can point at DIFFERENT services during a staggered rollout, so
+// TestResolveAIBotEventWindow pins adversarial round 6, Finding 1, and its
+// round-7 correction (Finding 1): AI_BOT_POLICY_URL (matchmaking bots) and the
+// EFFECTIVE RL endpoint (RL_AGENT_POLICY_URL, falling back to
+// AI_BOT_POLICY_URL, falling back to the local default — see rlEndpointURL)
+// can point at DIFFERENT services during a staggered rollout, so
 // AI_BOT_EVENT_WINDOW must be resolvable independently of
 // RL_AGENT_EVENT_WINDOW rather than always inheriting it. When
 // AI_BOT_EVENT_WINDOW is unset, the only safe default is to inherit
-// rlEventWindow when both URLs are the literal same non-empty string (single
-// shared service); anything else (different services, or only one of the two
-// configured) must fail closed to 0 rather than guess a contract the
+// rlEventWindow when AI_BOT_POLICY_URL equals the RESOLVED effective RL URL
+// (single shared service, whether that equality came from an explicit
+// RL_AGENT_POLICY_URL match or from RL_AGENT_POLICY_URL being unset and
+// falling back onto AI_BOT_POLICY_URL itself); anything else (genuinely
+// different services) must fail closed to 0 rather than guess a contract the
 // matchmaking bot policy might not actually speak.
+//
+// resolveAIBotEventWindow itself takes the already-resolved effective RL URL
+// (computed once via rlEndpointURL, the same helper main() uses to pick
+// rlPolicyURL) rather than re-deriving the fallback inline — see round 7,
+// Finding 1: duplicating the fallback logic is what let AI_BOT_POLICY_URL set
+// + RL_AGENT_POLICY_URL unset silently diverge from the real effective RL
+// endpoint.
 func TestResolveAIBotEventWindow(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -105,11 +116,16 @@ func TestResolveAIBotEventWindow(t *testing.T) {
 			want:                128,
 		},
 		{
-			name:                "AI_BOT_POLICY_URL set, RL_AGENT_POLICY_URL not set -> bot window 0",
+			// Round 7, Finding 1: RL_AGENT_POLICY_URL unset means
+			// rlEndpointURL resolves the effective RL endpoint to
+			// AI_BOT_POLICY_URL itself (main's own fallback chain) — so the
+			// two clients DO speak the same service, and the window must be
+			// inherited rather than defaulted to 0.
+			name:                "AI_BOT_POLICY_URL set, RL_AGENT_POLICY_URL not set -> effective RL URL falls back to AI_BOT_POLICY_URL, inherits RL window",
 			aiBotPolicyURL:      "http://bots.example/act",
 			rlPolicyURLOverride: "",
 			rlEventWindow:       128,
-			want:                0,
+			want:                128,
 		},
 		{
 			name:                "explicit AI_BOT_EVENT_WINDOW honored even when URLs differ",
@@ -132,10 +148,14 @@ func TestResolveAIBotEventWindow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("AI_BOT_EVENT_WINDOW", tc.envAIBotWindow)
-			got := resolveAIBotEventWindow(tc.aiBotPolicyURL, tc.rlPolicyURLOverride, tc.rlEventWindow)
+			// Mirror main(): resolve the effective RL URL first via the same
+			// helper main() uses, then feed it (never the raw override) to
+			// resolveAIBotEventWindow.
+			effectiveRLURL, _ := rlEndpointURL(tc.rlPolicyURLOverride, tc.aiBotPolicyURL)
+			got := resolveAIBotEventWindow(tc.aiBotPolicyURL, effectiveRLURL, tc.rlEventWindow)
 			if got != tc.want {
-				t.Fatalf("resolveAIBotEventWindow(%q, %q, %d) with AI_BOT_EVENT_WINDOW=%q = %d, want %d",
-					tc.aiBotPolicyURL, tc.rlPolicyURLOverride, tc.rlEventWindow, tc.envAIBotWindow, got, tc.want)
+				t.Fatalf("resolveAIBotEventWindow(%q, effectiveRLURL=%q, %d) with AI_BOT_EVENT_WINDOW=%q = %d, want %d",
+					tc.aiBotPolicyURL, effectiveRLURL, tc.rlEventWindow, tc.envAIBotWindow, got, tc.want)
 			}
 		})
 	}

@@ -221,6 +221,18 @@ an inconsistent intermediate state is a rollback risk):
    every `/act` 400s into the heuristic fallback. Restart the backend after
    setting it.
 
+   Post-game review's own client (`internal/api/review.go`'s
+   `reviewEventWindow`, talking to `POLICY_SERVER_URL`) is governed
+   separately by `REVIEW_EVENT_WINDOW`, NOT `RL_AGENT_EVENT_WINDOW` directly
+   — the two env vars can describe different servers (adversarial round 7,
+   Finding 2). If `POLICY_SERVER_URL` is the same service as the resolved RL
+   agent endpoint (the common case — one `policy` service serves both
+   private-room RL and review), leaving `REVIEW_EVENT_WINDOW` unset is fine:
+   it falls back to `RL_AGENT_EVENT_WINDOW` automatically when the two URLs
+   match (or when `POLICY_SERVER_URL` is unset). If review points at a
+   DIFFERENT server/checkpoint, set `REVIEW_EVENT_WINDOW` explicitly instead
+   of relying on the fallback.
+
 From this point iter_075 is the promotion anchor for all future candidates
 (future gates compare against iter_075, not iter275).
 

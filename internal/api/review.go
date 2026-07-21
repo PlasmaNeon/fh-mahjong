@@ -17,28 +17,70 @@ import (
 	"gorm.io/gorm"
 )
 
-// reviewEventWindow reads RL_AGENT_EVENT_WINDOW (the same env family as
-// RL_AGENT_POLICY_URL/RL_AGENT_CHECKPOINT_ID in cmd/server/main.go), the
-// event_window of the checkpoint served at POLICY_SERVER_URL. Unset, empty,
-// unparseable, or out-of-bound (> rl.MaxEventHistoryWindow) values default to
-// 0 (no event history — byte-identical to pre-event-history review
-// behavior). Out-of-bound values are rejected outright rather than clamped,
-// matching internal/rl's refusal semantics (env.go, searchpool.go).
-func reviewEventWindow() uint32 {
-	raw := strings.TrimSpace(os.Getenv("RL_AGENT_EVENT_WINDOW"))
+// parseReviewEventWindowEnv reads envVar as an event-history window using the
+// same semantics as cmd/server's parseEventWindowEnv (which this package
+// cannot import — it lives in package main): unset/empty falls back to
+// defaultWindow; unparseable or exceeding rl.MaxEventHistoryWindow is
+// rejected outright (logged, not clamped) rather than silently truncated,
+// matching internal/rl's refusal semantics elsewhere (env.go, searchpool.go).
+// Shared by every event-window env var this package reads (REVIEW_EVENT_WINDOW,
+// RL_AGENT_EVENT_WINDOW) so their parsing/rejection rules can never drift
+// apart.
+func parseReviewEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
+	raw := strings.TrimSpace(os.Getenv(envVar))
 	if raw == "" {
-		return 0
+		return defaultWindow
 	}
 	n, err := strconv.ParseUint(raw, 10, 32)
 	if err != nil {
-		log.Printf("review: ignoring invalid RL_AGENT_EVENT_WINDOW %q: %v", raw, err)
-		return 0
+		log.Printf("review: ignoring invalid %s %q: %v", envVar, raw, err)
+		return defaultWindow
 	}
 	if n > rl.MaxEventHistoryWindow {
-		log.Printf("review: ignoring RL_AGENT_EVENT_WINDOW %q: exceeds maximum %d", raw, rl.MaxEventHistoryWindow)
-		return 0
+		log.Printf("review: ignoring %s %q: exceeds maximum %d", envVar, raw, rl.MaxEventHistoryWindow)
+		return defaultWindow
 	}
 	return uint32(n)
+}
+
+// reviewEventWindow resolves the event-history window for the review
+// client, which talks to POLICY_SERVER_URL (policyURL) — a server that may
+// serve a DIFFERENT checkpoint than the one RL_AGENT_POLICY_URL/
+// AI_BOT_POLICY_URL and RL_AGENT_EVENT_WINDOW describe in cmd/server/main.go
+// (adversarial round 7, Finding 2).
+//
+// REVIEW_EVENT_WINDOW, when set (same parse/bound semantics as every other
+// event-window env var, via parseReviewEventWindowEnv), always wins — it
+// describes POLICY_SERVER_URL's own contract directly and is never
+// overridden by RL_AGENT_EVENT_WINDOW.
+//
+// When REVIEW_EVENT_WINDOW is unset, falling back to RL_AGENT_EVENT_WINDOW is
+// only safe when review traffic and RL traffic actually hit the same
+// service: policyURL is empty (no reviewer configured — moot), or policyURL
+// equals the resolved RL agent endpoint (RL_AGENT_POLICY_URL, else
+// AI_BOT_POLICY_URL — mirroring cmd/server's rlEndpointURL fallback chain,
+// minus the local-default case, which review — a POLICY_SERVER_URL-only
+// path — never hits). Otherwise this fails closed to 0 (event-free) rather
+// than guessing a wire contract POLICY_SERVER_URL might not actually speak,
+// the same fail-closed contract resolveAIBotEventWindow established in
+// cmd/server for the AI_BOT_POLICY_URL/RL_AGENT_POLICY_URL split.
+func reviewEventWindow(policyURL string) uint32 {
+	if raw := strings.TrimSpace(os.Getenv("REVIEW_EVENT_WINDOW")); raw != "" {
+		return parseReviewEventWindowEnv("REVIEW_EVENT_WINDOW", 0)
+	}
+
+	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
+	effectiveRLURL := rlOverride
+	if effectiveRLURL == "" {
+		effectiveRLURL = strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
+	}
+
+	if policyURL != "" && effectiveRLURL != "" && policyURL != effectiveRLURL {
+		log.Printf("review: POLICY_SERVER_URL (%s) differs from the resolved RL agent endpoint (%s); REVIEW_EVENT_WINDOW is unset — defaulting review event window to 0 rather than inheriting RL_AGENT_EVENT_WINDOW for a possibly different service", policyURL, effectiveRLURL)
+		return 0
+	}
+
+	return parseReviewEventWindowEnv("RL_AGENT_EVENT_WINDOW", 0)
 }
 
 // handleGetReview serves the newest cached MatchReview for a match. It is a
@@ -122,7 +164,7 @@ func (s *Server) handlePostReview(c *gin.Context) {
 		return
 	}
 
-	eventWindow := reviewEventWindow()
+	eventWindow := reviewEventWindow(policyURL)
 	report, err := review.BuildReport(&paipu, review.NewHTTPPolicyClient(policyURL, eventWindow), eventWindow)
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {

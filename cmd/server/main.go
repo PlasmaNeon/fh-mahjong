@@ -113,16 +113,26 @@ func main() {
 	// fall back to a local default endpoint, so the option works out of the box
 	// in local dev without any env var.
 	explicitPolicyURL := strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
-	// RL_AGENT_POLICY_URL, read here (raw, pre-fallback) so it can also feed
-	// resolveAIBotEventWindow below; the fallback-resolved rlPolicyURL is
-	// computed further down once rlHTTPClient exists.
+	// RL_AGENT_POLICY_URL, read raw so it can feed rlEndpointURL below.
 	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
-	// AI_BOT_POLICY_URL and RL_AGENT_POLICY_URL may be DIFFERENT services
-	// during a staggered rollout (adversarial round 6, Finding 1) — applying
-	// rlEventWindow to both would make one of them silently speak the wrong
-	// wire contract and degrade to heuristic per-decision. Resolve the AI bot
-	// policy's own window independently.
-	aiBotEventWindow := resolveAIBotEventWindow(explicitPolicyURL, rlOverride, rlEventWindow)
+	// Resolve the EFFECTIVE RL endpoint URL (same fallback chain used to pick
+	// rlPolicyURL further down: RL_AGENT_POLICY_URL, else AI_BOT_POLICY_URL,
+	// else the local default) BEFORE computing aiBotEventWindow. Round 7,
+	// Finding 1: resolveAIBotEventWindow previously compared AI_BOT_POLICY_URL
+	// against the RAW rlOverride, so "AI_BOT_POLICY_URL set, RL_AGENT_POLICY_URL
+	// unset" looked like "different services" even though rlEndpointURL's own
+	// fallback resolves the RL side to that SAME AI_BOT_POLICY_URL — matchmaking
+	// and the private-room RL agent then silently spoke different event-window
+	// contracts to the identical service. Resolving once here and reusing the
+	// result for both aiBotEventWindow and rlPolicyURL keeps the fallback logic
+	// in exactly one place (rlEndpointURL).
+	effectiveRLURL, rlIsLocalDefault := rlEndpointURL(rlOverride, explicitPolicyURL)
+	// AI_BOT_POLICY_URL and the effective RL endpoint may still be DIFFERENT
+	// services during a staggered rollout (adversarial round 6, Finding 1) —
+	// applying rlEventWindow to both would make one of them silently speak the
+	// wrong wire contract and degrade to heuristic per-decision. Resolve the AI
+	// bot policy's own window independently.
+	aiBotEventWindow := resolveAIBotEventWindow(explicitPolicyURL, effectiveRLURL, rlEventWindow)
 	log.Printf("Matchmaking bot policy event window: %d (AI_BOT_EVENT_WINDOW)", aiBotEventWindow)
 	if explicitPolicyURL != "" {
 		log.Printf("Using remote AI bot policy endpoint for matchmaking seats: %s", explicitPolicyURL)
@@ -140,8 +150,10 @@ func main() {
 	// RL endpoint for the private-room agent. RL_AGENT_POLICY_URL points it at a
 	// dedicated policy server (e.g. the docker-compose `policy` service) without
 	// routing matchmaking bots through it; otherwise it follows AI_BOT_POLICY_URL,
-	// and finally the local default that the Go server can autostart.
-	rlPolicyURL, rlIsLocalDefault := rlEndpointURL(rlOverride, explicitPolicyURL)
+	// and finally the local default that the Go server can autostart. Already
+	// resolved above (effectiveRLURL) so aiBotEventWindow can compare against it;
+	// reuse rather than re-deriving.
+	rlPolicyURL := effectiveRLURL
 	// Share one HTTP client (and its connection pool) across every RL seat the
 	// resolver creates, rather than letting each NewHTTPPolicy spin up its own.
 	// Reusing connections avoids socket churn/exhaustion when many RL seats or
@@ -334,25 +346,32 @@ func parseEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 // resolveAIBotEventWindow computes the event-history window for the
 // matchmaking bot policy (AI_BOT_POLICY_URL), independently of rlEventWindow
 // (RL_AGENT_EVENT_WINDOW, which governs the private-room RL primary). The two
-// URLs can point at DIFFERENT policy services during a staggered rollout
+// can point at DIFFERENT policy services during a staggered rollout
 // (adversarial round 6, Finding 1); blindly sharing rlEventWindow across both
 // would make one of them silently speak the wrong wire contract and degrade
 // to heuristic on every /act call. AI_BOT_EVENT_WINDOW, parsed with the same
 // parseEventWindowEnv helper as every other event-window env var in this
 // package, lets operators set it independently.
 //
-// When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and
-// rlPolicyURLOverride are the identical non-empty string (both env vars point
-// at one shared service), inherit rlEventWindow — the two clients speak the
-// same server, so the same window is safe. Otherwise — different services,
-// or only one of the two URLs configured (including AI_BOT_POLICY_URL set
-// with RL_AGENT_POLICY_URL unset, which resolves the RL side to a DIFFERENT
-// endpoint via rlEndpointURL's own fallback) — default to 0 (event-free) and
-// fail closed rather than guess a contract the bot policy might not actually
-// speak.
-func resolveAIBotEventWindow(aiBotPolicyURL, rlPolicyURLOverride string, rlEventWindow uint32) uint32 {
+// effectiveRLURL must be the RESOLVED RL endpoint (rlEndpointURL's return
+// value — RL_AGENT_POLICY_URL, else AI_BOT_POLICY_URL, else the local
+// default), never the raw RL_AGENT_POLICY_URL env var. Round 7, Finding 1:
+// passing the raw override made "AI_BOT_POLICY_URL set, RL_AGENT_POLICY_URL
+// unset" look like two different services, when rlEndpointURL's own fallback
+// actually resolves the RL side onto AI_BOT_POLICY_URL itself — a single
+// shared service whose window must be inherited, not zeroed. Resolving the
+// fallback exactly once (in main(), via rlEndpointURL) and feeding the result
+// in here keeps that logic from existing in two places.
+//
+// When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and effectiveRLURL are
+// the identical non-empty string (both resolve to one shared service),
+// inherit rlEventWindow — the two clients speak the same server, so the same
+// window is safe. Otherwise — genuinely different services, or neither URL
+// configured — default to 0 (event-free) and fail closed rather than guess a
+// contract the bot policy might not actually speak.
+func resolveAIBotEventWindow(aiBotPolicyURL, effectiveRLURL string, rlEventWindow uint32) uint32 {
 	defaultWindow := uint32(0)
-	if aiBotPolicyURL != "" && aiBotPolicyURL == rlPolicyURLOverride {
+	if aiBotPolicyURL != "" && aiBotPolicyURL == effectiveRLURL {
 		defaultWindow = rlEventWindow
 	}
 	return parseEventWindowEnv("AI_BOT_EVENT_WINDOW", defaultWindow)
