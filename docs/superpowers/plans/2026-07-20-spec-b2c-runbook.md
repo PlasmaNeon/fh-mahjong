@@ -62,9 +62,12 @@ uv run --project ai fh-mj-serving-smoke \
 ```
 
 Expect: all episodes complete, legal actions throughout, 0 fallbacks
-(`report['decisions'] > 0`, no exceptions). This exercises the full HTTP
-path end-to-end through real bridge legality, distinct from the
-in-process/endpoint action-parity check in step 2.
+(`report['decisions'] > 0`, no exceptions). `run_bridge_serving_smoke` drives
+`CheckpointPolicy` **in-process** (no HTTP round-trip) against real bridge
+legality — it exercises the in-process serving stack (observation encoding,
+event-history windowing, action decoding) end-to-end, distinct from step 2's
+`--endpoint` mode, which is the only step that actually POSTs to the running
+`/act` HTTP endpoint.
 
 ## 4. Shadow >= 50 games
 
@@ -101,6 +104,17 @@ manifest-scoped `--checkpoint-id` override — do NOT flip the production
 pointer yet) and play/observe >= 20 completed private-room matches with
 iter_075 actually controlling play (not shadow).
 
+The canary deployment's backend MUST also set `RL_AGENT_EVENT_WINDOW=128`
+alongside `RL_AGENT_POLICY_URL` — iter_075 is an event model (window 128);
+leaving the backend at its default `RL_AGENT_EVENT_WINDOW=0` while the
+policy service serves iter_075 makes the health/contract checker (see
+`internal/bot/remote/health.go`'s `HealthChecker`, `http_policy.go`'s
+`HTTPPolicy.ValidateServer`) report the endpoint as an event_window mismatch
+— the RL agent is then reported unavailable, or every `/act` 400s into the
+heuristic fallback, defeating the canary. Verify with the `/healthz` response
+(`event_window: 128, contract_version: 1`) and `HTTPPolicy.Stats().Fallbacks`
+before counting canary matches.
+
 Exit criteria (ALL required):
 - zero fallbacks (`HTTPPolicy.Stats().Fallbacks == 0` across the canary
   matches — check via the room/API path used for post-game review, or the
@@ -129,6 +143,13 @@ an inconsistent intermediate state is a rollback risk):
    git commit -am "feat(ai): promote iter_075 to operational serving champion (B2c)"
    git push   # Zeabur auto-redeploys ALL services on push — expected, not a bug
    ```
+3. Set the production backend's `RL_AGENT_EVENT_WINDOW=128` (was `0`) as
+   part of this same switch — iter_075 is an event model, and the backend
+   env var must match what the `policy` service now serves or the
+   contract-aware health/`/act` gate (`internal/bot/remote/health.go`,
+   `http_policy.go`'s `ValidateServer`) reports the endpoint unavailable /
+   every `/act` 400s into the heuristic fallback. Restart the backend after
+   setting it.
 
 From this point iter_075 is the promotion anchor for all future candidates
 (future gates compare against iter_075, not iter275).
@@ -143,7 +164,12 @@ regression in live win-rate monitoring):
    commit, mirroring the atomic-switch discipline.
 2. Redeploy the Zeabur `policy` service from the reverted `Dockerfile.deploy`
    (iter275 checkpoint is still committed in history — do not delete it).
-3. Re-run step 2's `fh-mj-serving-parity --endpoint` hard gate against
+3. Set the production backend's `RL_AGENT_EVENT_WINDOW` back to `0` —
+   iter275 is a window-0 (event-free) checkpoint; leaving the backend at 128
+   after rolling the `policy` service back to iter275 makes the same
+   contract gate report the endpoint unavailable. Restart the backend after
+   unsetting/resetting it.
+4. Re-run step 2's `fh-mj-serving-parity --endpoint` hard gate against
    iter275 post-rollback to confirm the rollback itself is byte-identical
    to pre-B2c production behavior before declaring the incident closed.
 

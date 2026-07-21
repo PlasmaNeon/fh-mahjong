@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +10,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.serve_policy import PolicyHolder, observation_from_json
 from fh_mahjong_ai.serving import CheckpointPolicy, run_bridge_serving_smoke
-from fh_mahjong_ai.storage import save_checkpoint
+from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
 from fh_mahjong_ai.types import Observation
 
 
@@ -131,10 +133,99 @@ def test_checkpoint_policy_rejects_empty_mask(tmp_path: Path) -> None:
         raise AssertionError("expected empty mask to be rejected")
 
 
+# FINDING 3 (adversarial round 2): the masked-logits list `choose(...,
+# return_logits=True)` attaches (and serve_policy.py's /act serializes for
+# `return_logits: true` requests) must round-trip through JSON without
+# error. Illegal-action entries carry `torch.finfo(dtype).min` — a large but
+# FINITE negative float, not -inf — so no NaN/Infinity ever reaches
+# `json.dumps` (which raises ValueError on those by default).
+def test_choose_return_logits_illegal_entries_are_finite_and_json_serializable(tmp_path: Path) -> None:
+    policy = CheckpointPolicy.from_checkpoint(_checkpoint(tmp_path))
+    mask = np.zeros(204, dtype=np.int8)
+    mask[5:8] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
+        action_mask=mask,
+    )
+
+    action = policy.choose(observation, return_logits=True)
+
+    assert action.logits is not None
+    assert action.logits.shape == (204,)
+    illegal_value = float(action.logits[0])  # index 0 is masked out (outside 5:8)
+    assert math.isfinite(illegal_value)
+    assert illegal_value < -1e30  # torch.finfo(float32).min-scale sentinel, not a real logit
+
+    encoded = json.dumps([float(v) for v in action.logits.tolist()])
+    decoded = json.loads(encoded)
+    assert math.isfinite(decoded[0])
+    assert decoded[5:8] == [float(v) for v in action.logits[5:8].tolist()]
+
+
+def test_choose_without_return_logits_leaves_logits_none(tmp_path: Path) -> None:
+    policy = CheckpointPolicy.from_checkpoint(_checkpoint(tmp_path))
+    mask = np.zeros(204, dtype=np.int8)
+    mask[5:8] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(42, dtype=np.float32),
+        action_mask=mask,
+    )
+
+    action = policy.choose(observation)
+
+    assert action.logits is None
+
+
 def test_serving_smoke_uses_bridge_validation(tmp_path: Path) -> None:
     policy = CheckpointPolicy.from_checkpoint(_checkpoint(tmp_path))
 
     report = run_bridge_serving_smoke(policy, episodes=2, start_seed=3, bridge_kind="mock", max_decisions=4)
+
+    assert report["episodes"] == 2
+    assert report["decisions"] > 0
+
+
+def _event_checkpoint(tmp_path: Path, event_window: int = 8) -> Path:
+    # Mirrors ai/tests/test_b2c_loading.py's small event-model helpers: a tiny
+    # PolicyValueNet with event_window > 0 (a B2b-style event checkpoint),
+    # saved with complete model_config metadata so CheckpointPolicy.from_checkpoint
+    # reconstructs model_config.event_window == event_window.
+    small = dict(
+        channels=16,
+        residual_blocks=1,
+        plane_feature_dim=32,
+        scalar_hidden_dim=16,
+        trunk_hidden_dim=32,
+        value_hidden_dim=16,
+        q_hidden_dim=16,
+        event_window=event_window,
+        privileged_critic=True,
+        aux_heads=True,
+    )
+    model_config = ModelConfig(**small)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), model_config)
+    metadata = {"model_config": model_config_metadata(model_config)}
+    path = tmp_path / "event_checkpoint.pt"
+    save_checkpoint(path, model, metadata=metadata)
+    return path
+
+
+# FINDING 2 (adversarial round 2): run_bridge_serving_smoke built its EnvConfig
+# without event_history_window, so the mock bridge returned empty event
+# histories on every step. For an event model (event_window > 0),
+# CheckpointPolicy.choose raises "EMPTY event_history" on the very first
+# decision, so the serving smoke could never actually exercise an event
+# checkpoint end-to-end. Threading policy.model.model_config.event_window into
+# EnvConfig(event_history_window=...) fixes this.
+def test_serving_smoke_runs_event_model_via_mock_bridge(tmp_path: Path) -> None:
+    policy = CheckpointPolicy.from_checkpoint(_event_checkpoint(tmp_path), device="cpu")
+    assert policy.model.model_config.event_window == 8
+
+    report = run_bridge_serving_smoke(policy, episodes=2, start_seed=5, bridge_kind="mock", max_decisions=4)
 
     assert report["episodes"] == 2
     assert report["decisions"] > 0

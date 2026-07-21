@@ -10,6 +10,7 @@ Three things are pinned:
 """
 from __future__ import annotations
 
+import dataclasses
 import http.client
 import json
 import threading
@@ -27,6 +28,7 @@ from fh_mahjong_ai.scripts.serving_parity import (
     run_serving_parity,
     verify_endpoint_checkpoint_identity,
 )
+from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
 
 _SMALL = dict(
@@ -200,8 +202,86 @@ def test_endpoint_mode_parity_passes_against_real_server(tmp_path: Path) -> None
 
     assert report.all_agree
     assert report.decisions_checked == 2 * 5
-    # Endpoint mode never computes local logits (no logits over the wire).
-    assert report.max_logit_diff == 0.0
+    # Finding 3 (adversarial round 2): endpoint mode now requests logits
+    # (return_logits=true) and checks them against the tolerance too, not
+    # just argmax agreement — same weights served over HTTP should reproduce
+    # bit-for-bit (well within tolerance).
+    assert report.max_logit_diff <= 1e-4
+
+
+# FINDING 3 (adversarial round 2): endpoint mode previously checked ONLY
+# argmax agreement, so preprocessing drift that happens to preserve argmax
+# would pass the "hard gate" silently. This drifts the SERVING side's
+# reported logits (via return_logits) while leaving the actual served
+# action_id (computed from the true, undrifted logits) untouched — proving
+# the endpoint-mode logit-tolerance check independently catches drift that
+# argmax comparison alone would miss.
+def test_endpoint_mode_catches_logit_drift_with_same_argmax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    original_choose = CheckpointPolicy.choose
+
+    def _drifted_choose(self, observation, return_logits: bool = False):
+        action = original_choose(self, observation, return_logits=return_logits)
+        if return_logits and action.logits is not None:
+            drifted = action.logits.copy()
+            legal = observation.legal_actions
+            target = next((a for a in legal if a != action.greedy_action_id), legal[0])
+            # Large enough to blow through the 1e-4 tolerance; the reported
+            # action_id (computed by `original_choose` before this drift is
+            # applied) is completely unaffected.
+            drifted[target] += 5.0
+            action = dataclasses.replace(action, logits=drifted)
+        return action
+
+    monkeypatch.setattr(CheckpointPolicy, "choose", _drifted_choose)
+    try:
+        with pytest.raises(ServingParityError, match="logit"):
+            run_serving_parity(
+                checkpoint=checkpoint,
+                event_history_window=_WINDOW,
+                episodes=2,
+                start_seed=8000,
+                device="cpu",
+                endpoint=f"http://127.0.0.1:{server.port}/act",
+                bridge_kind="mock",
+                max_decisions=5,
+            )
+    finally:
+        server.close()
+
+
+def test_endpoint_mode_fails_when_server_omits_logits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A "legacy" server that ignores return_logits and never includes the
+    field is a hard-gate failure, not a silently-skipped check — there is no
+    legacy event server in this deployment (per the runbook)."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    original_choose = CheckpointPolicy.choose
+
+    def _no_logits_choose(self, observation, return_logits: bool = False):
+        # Simulate a legacy server: never populate logits even when asked.
+        return original_choose(self, observation, return_logits=False)
+
+    monkeypatch.setattr(CheckpointPolicy, "choose", _no_logits_choose)
+    try:
+        with pytest.raises(ServingParityError, match="logits"):
+            run_serving_parity(
+                checkpoint=checkpoint,
+                event_history_window=_WINDOW,
+                episodes=1,
+                start_seed=9000,
+                device="cpu",
+                endpoint=f"http://127.0.0.1:{server.port}/act",
+                bridge_kind="mock",
+                max_decisions=5,
+            )
+    finally:
+        server.close()
 
 
 def test_endpoint_mode_reports_failure_on_connection_error(tmp_path: Path) -> None:

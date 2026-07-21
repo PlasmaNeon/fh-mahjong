@@ -511,4 +511,28 @@ func TestHTTPPolicyValidateServer(t *testing.T) {
 	if err := legacyForZeroPolicy.ValidateServer(context.Background()); err != nil {
 		t.Fatalf("expected legacy healthz to pass for a window-0 policy, got %v", err)
 	}
+
+	// FINDING 1 (adversarial round 2): a window-0 policy (default
+	// RL_AGENT_EVENT_WINDOW=0) talking to a server that EXPLICITLY PUBLISHES
+	// an incompatible event_window (e.g. the policy service is serving
+	// iter_075 at window 128) must fail validation — every /act would 400
+	// and silently fall back to the heuristic otherwise.
+	zeroVsPublished128Policy := NewHTTPPolicy(matchingServer.URL+"/act", WithLogger(nil))
+	if err := zeroVsPublished128Policy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected window-0 policy vs server explicitly publishing event_window=8 to fail validation")
+	}
+
+	// A window-0 policy vs a server that explicitly publishes event_window=0
+	// (a claim that matches) still passes.
+	zeroServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"event_window":     0,
+			"contract_version": rl.EventContractV1,
+		})
+	}))
+	defer zeroServer.Close()
+	zeroVsPublished0Policy := NewHTTPPolicy(zeroServer.URL+"/act", WithLogger(nil))
+	if err := zeroVsPublished0Policy.ValidateServer(context.Background()); err != nil {
+		t.Fatalf("expected window-0 policy vs server explicitly publishing event_window=0 to pass, got %v", err)
+	}
 }

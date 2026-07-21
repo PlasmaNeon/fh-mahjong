@@ -120,14 +120,17 @@ func (h *HealthChecker) refreshLocked() {
 }
 
 // healthzPayload mirrors the identity and event-contract fields of
-// serve_policy.py's GET /healthz response. Extra fields are ignored; a
-// legacy server that predates the event contract decodes EventWindow/
-// ContractVersion as zero values.
+// serve_policy.py's GET /healthz response. Extra fields are ignored.
+// EventWindow/ContractVersion are pointers so ABSENT (a legacy server that
+// predates the event contract, decodes as nil) can be told apart from
+// EXPLICITLY PUBLISHED zero values — a server that publishes event_window:0
+// is making a claim that must still match what this checker expects, unlike
+// a legacy server that says nothing at all.
 type healthzPayload struct {
-	Checkpoint      string `json:"checkpoint"`
-	CheckpointStep  int64  `json:"checkpoint_step"`
-	EventWindow     uint32 `json:"event_window"`
-	ContractVersion uint32 `json:"contract_version"`
+	Checkpoint      string  `json:"checkpoint"`
+	CheckpointStep  int64   `json:"checkpoint_step"`
+	EventWindow     *uint32 `json:"event_window"`
+	ContractVersion *uint32 `json:"contract_version"`
 }
 
 func (h *HealthChecker) probe() (healthy bool, identity string) {
@@ -162,13 +165,28 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 		return true, ""
 	}
 
-	if h.expectedEventWindow > 0 {
-		if payload.ContractVersion != rl.EventContractV1 || payload.EventWindow != h.expectedEventWindow {
+	// A server that PUBLISHES the event contract (event_window present in
+	// its /healthz body) is making an explicit claim about its wire form —
+	// that claim must match this checker's expectation regardless of
+	// whether the checker itself expects events (window > 0) or not
+	// (window == 0, e.g. expected 0 vs published 128). A server that omits
+	// the field entirely (nil) is legacy and keeps today's behavior: healthy
+	// for window-0 checkers, unhealthy for event checkers (handled below).
+	if payload.EventWindow != nil {
+		var contractVersion uint32
+		if payload.ContractVersion != nil {
+			contractVersion = *payload.ContractVersion
+		}
+		if contractVersion != rl.EventContractV1 || *payload.EventWindow != h.expectedEventWindow {
 			// Reachable but speaking the wrong wire contract: every /act
 			// against this endpoint would be rejected or mis-decoded, so it
 			// must not be offered as available.
 			return false, ""
 		}
+	} else if h.expectedEventWindow > 0 {
+		// Event checker talking to a legacy server that never mentions the
+		// contract at all: cannot verify a match, fail closed.
+		return false, ""
 	}
 
 	// Identity is best-effort: a healthz body without checkpoint info still

@@ -156,18 +156,31 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             policy = self.holder.policy
             observation = observation_from_json(payload, policy.model.model_config.event_window)
-            action = policy.choose(observation)
+            return_logits = bool(payload.get("return_logits", False))
+            action = policy.choose(observation, return_logits=return_logits)
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
-        self._write_json(
-            {
-                "action_id": action.action_id,
-                "value": action.value,
-                "checkpoint_path": action.checkpoint_path,
-                "checkpoint_step": action.checkpoint_step,
-            }
-        )
+        response: dict = {
+            "action_id": action.action_id,
+            "value": action.value,
+            "checkpoint_path": action.checkpoint_path,
+            "checkpoint_step": action.checkpoint_step,
+        }
+        if return_logits and action.logits is not None:
+            # These are the MASKED logits argmax was actually taken over
+            # (see PolicyValueNet.forward): illegal-action entries carry
+            # `torch.finfo(dtype).min`, a large but finite negative value, so
+            # this list round-trips through JSON without any -inf sentinel
+            # substitution being necessary. Used by fh-mj-serving-parity's
+            # --endpoint logit-tolerance gate (Finding 3, adversarial round 2).
+            # `action.logits` can be None even when `return_logits` was
+            # requested (defense-in-depth against a policy implementation
+            # that ignores the flag) — the field is simply omitted, and the
+            # parity harness's hard-gate check for a missing 'logits' field
+            # is exactly what catches that.
+            response["logits"] = [float(value) for value in action.logits.tolist()]
+        self._write_json(response)
 
     def _handle_evaluate(self) -> None:
         try:

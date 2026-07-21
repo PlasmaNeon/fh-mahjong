@@ -150,17 +150,52 @@ func TestHealthChecker_ExpectedEventWindowMatchIsHealthy(t *testing.T) {
 }
 
 // A window-0 checker (no WithExpectedEventWindow, the default / legacy
-// primary-policy case) must keep reachability-only behavior: a mismatched or
-// entirely absent event_window field never makes it unhealthy.
-func TestHealthChecker_WindowZeroIgnoresContractMismatch(t *testing.T) {
+// primary-policy case) talking to a server that never mentions the event
+// contract at all (a genuinely legacy /healthz body) keeps reachability-only
+// behavior: absent fields never make it unhealthy.
+func TestHealthChecker_WindowZeroLegacyNoFieldsIsHealthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":64,"contract_version":1}`))
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
 	}))
 	defer srv.Close()
 
 	h := NewHealthChecker(srv.URL + "/act")
 	if !h.Healthy() {
-		t.Fatal("expected healthy: window-0 checker validates reachability only, not contract fields")
+		t.Fatal("expected healthy: window-0 checker vs legacy server with no event-contract fields at all")
+	}
+}
+
+// FINDING 1 (adversarial round 2): a window-0 checker (default
+// RL_AGENT_EVENT_WINDOW=0) must NOT accept a server that explicitly PUBLISHES
+// an incompatible event_window (e.g. the policy service is serving iter_075
+// at window 128 while the backend is still configured for window 0) — every
+// /act call would 400 and silently fall back to the heuristic. Publishing the
+// contract is a claim that must match, even for a window-0 client.
+func TestHealthChecker_WindowZeroRejectsExplicitlyPublishedMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/iter_075.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs server explicitly publishing event_window=128")
+	}
+}
+
+// A window-0 checker vs a server that explicitly publishes event_window=0
+// (a claim that matches) stays healthy.
+func TestHealthChecker_WindowZeroAcceptsExplicitlyPublishedMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":0,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if !h.Healthy() {
+		t.Fatal("expected healthy: window-0 checker vs server explicitly publishing event_window=0")
 	}
 }

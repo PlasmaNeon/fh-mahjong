@@ -75,13 +75,18 @@ class ParityReport:
         return self.decisions_checked > 0 and self.agreements == self.decisions_checked
 
 
-def build_act_payload(observation: Observation, decision_index: int, event_window: int) -> dict:
+def build_act_payload(
+    observation: Observation, decision_index: int, event_window: int, return_logits: bool = False,
+) -> dict:
     """Build the exact /act JSON payload `HTTPPolicy.chooseRemoteCtx` would
     send for this observation: the compact wire form, tail-windowed to
     `event_window` (the SERVING policy's declared window — the room hands
     each policy the raw, unwindowed event log; each policy applies its own
     contract, per the DecisionContext design). Field names/shapes mirror
-    `actRequest` in internal/bot/remote/http_policy.go exactly."""
+    `actRequest` in internal/bot/remote/http_policy.go exactly, plus the
+    harness-only `return_logits` field (Finding 3, adversarial round 2) that
+    real Go callers never send — `serve_policy.py`'s `/act` handler treats it
+    as opt-in and legacy servers simply ignore the unknown field."""
     history = np.asarray(observation.event_history, dtype=np.uint32)
     windowed_count = min(history.size, event_window) if event_window > 0 else 0
     windowed = history[-windowed_count:].tolist() if windowed_count else []
@@ -99,6 +104,8 @@ def build_act_payload(observation: Observation, decision_index: int, event_windo
             "active_player": int(observation.seat),
         },
     }
+    if return_logits:
+        payload["return_logits"] = True
     # Go's `EventHistory []uint32 \`json:"event_history,omitempty"\`` drops an
     # empty slice entirely rather than sending `[]`; mirror that so the
     # decode path (`observation_from_json`'s "missing history + count==0 is
@@ -190,11 +197,16 @@ def verify_endpoint_checkpoint_identity(endpoint: str, checkpoint: Path, timeout
         )
 
 
-def _post_act(endpoint: str, payload: dict, timeout: float) -> tuple[int, Optional[str]]:
+def _post_act(
+    endpoint: str, payload: dict, timeout: float,
+) -> tuple[int, Optional[str], Optional[np.ndarray]]:
     """Real HTTP POST to a running serve_policy `/act` endpoint. Returns
-    (action_id, error); error is non-None on ANY failure (HTTP status,
-    connection error, or an `{"error": ...}` response body) — the hard gate
-    tolerates none of these."""
+    (action_id, error, logits); error is non-None on ANY failure (HTTP
+    status, connection error, or an `{"error": ...}` response body) — the
+    hard gate tolerates none of these. `logits` is the response's `logits`
+    field (present when the request set `return_logits: true` and the server
+    supports it), or None (a legacy server that omits it, or when logits were
+    not requested)."""
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         endpoint, data=body, headers={"Content-Type": "application/json"}, method="POST"
@@ -204,16 +216,18 @@ def _post_act(endpoint: str, payload: dict, timeout: float) -> tuple[int, Option
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        return -1, f"HTTP {exc.code}: {detail}"
+        return -1, f"HTTP {exc.code}: {detail}", None
     except urllib.error.URLError as exc:
-        return -1, f"connection error: {exc.reason}"
+        return -1, f"connection error: {exc.reason}", None
     data = json.loads(raw)
     if data.get("error"):
-        return -1, str(data["error"])
+        return -1, str(data["error"]), None
     action_id = data.get("action_id")
     if action_id is None:
-        return -1, "response missing 'action_id'"
-    return int(action_id), None
+        return -1, "response missing 'action_id'", None
+    logits_field = data.get("logits")
+    logits = np.asarray(logits_field, dtype=np.float64) if logits_field is not None else None
+    return int(action_id), None, logits
 
 
 def _failure_message(seed: int, decision_index: int, reason: str, observation: Observation) -> str:
@@ -235,6 +249,7 @@ def run_serving_parity(
     bridge_library_path: Optional[Path] = None,
     max_decisions: int = 64,
     http_timeout: float = 5.0,
+    logit_tolerance: float = LOGIT_TOLERANCE,
 ) -> ParityReport:
     """Drive `episodes` seeded bridge episodes (seeds `start_seed ..
     start_seed + episodes - 1`), checking eval-vs-serving action parity on
@@ -285,15 +300,52 @@ def run_serving_parity(
             decision_index = 0
             while True:
                 reference_action = reference_policy.choose(observation)
-                act_payload = build_act_payload(observation, decision_index, model_event_window)
 
                 if endpoint is not None:
-                    serving_action_id, served_error = _post_act(endpoint, act_payload, timeout=http_timeout)
+                    # Finding 3 (adversarial round 2): endpoint mode must
+                    # check tight logit parity too, not just argmax agreement
+                    # — preprocessing drift that happens to preserve argmax
+                    # would otherwise pass this "hard gate" silently.
+                    act_payload = build_act_payload(
+                        observation, decision_index, model_event_window, return_logits=True,
+                    )
+                    serving_action_id, served_error, serving_logits = _post_act(
+                        endpoint, act_payload, timeout=http_timeout
+                    )
                     if served_error is not None:
                         raise ServingParityError(
                             _failure_message(seed, decision_index, f"endpoint error: {served_error}", observation)
                         )
+                    if serving_logits is None:
+                        # Hard gate: there is no legacy event server in this
+                        # deployment (see the runbook) — an endpoint that
+                        # doesn't return logits when asked cannot have its
+                        # logit parity verified, and silently skipping the
+                        # check is exactly the gap this fix closes.
+                        raise ServingParityError(
+                            _failure_message(
+                                seed, decision_index,
+                                "endpoint response has no 'logits' field (requested return_logits=true); "
+                                "cannot verify logit parity — this is a hard-gate failure, not a legacy "
+                                "server exemption",
+                                observation,
+                            )
+                        )
+                    reference_logits = _forward_logits(model, observation, device)
+                    legal = np.asarray(observation.legal_actions, dtype=np.int64)
+                    logit_diff = float(np.max(np.abs(reference_logits[legal] - serving_logits[legal])))
+                    report.max_logit_diff = max(report.max_logit_diff, logit_diff)
+                    if logit_diff > logit_tolerance:
+                        raise ServingParityError(
+                            _failure_message(
+                                seed, decision_index,
+                                f"endpoint logit max-abs diff {logit_diff:.6g} over legal actions exceeds "
+                                f"tolerance {logit_tolerance:.0e}",
+                                observation,
+                            )
+                        )
                 else:
+                    act_payload = build_act_payload(observation, decision_index, model_event_window)
                     served_observation = serve_policy_module.observation_from_json(act_payload, model_event_window)
                     try:
                         served = served_reference.choose(served_observation)
@@ -307,11 +359,11 @@ def run_serving_parity(
                     serving_logits = _forward_logits(model, served_observation, device)
                     logit_diff = float(np.max(np.abs(reference_logits - serving_logits)))
                     report.max_logit_diff = max(report.max_logit_diff, logit_diff)
-                    if logit_diff > LOGIT_TOLERANCE:
+                    if logit_diff > logit_tolerance:
                         raise ServingParityError(
                             _failure_message(
                                 seed, decision_index,
-                                f"logit max-abs diff {logit_diff:.6g} exceeds tolerance {LOGIT_TOLERANCE:.0e}",
+                                f"logit max-abs diff {logit_diff:.6g} exceeds tolerance {logit_tolerance:.0e}",
                                 observation,
                             )
                         )
@@ -351,14 +403,15 @@ def run_serving_parity(
     return report
 
 
-def _print_summary(report: ParityReport, *, mode: str, checkpoint: Path, device: str) -> None:
+def _print_summary(
+    report: ParityReport, *, mode: str, checkpoint: Path, device: str, logit_tolerance: float,
+) -> None:
     print(f"fh-mj-serving-parity report ({mode}, device={device})")
     print(f"  checkpoint:        {checkpoint}")
     print(f"  episodes:          {len(report.episodes)}")
     print(f"  decisions checked: {report.decisions_checked}")
     print(f"  agreements:        {report.agreements}")
-    if mode == "in-process":
-        print(f"  max logit diff:    {report.max_logit_diff:.3e} (tolerance {LOGIT_TOLERANCE:.0e})")
+    print(f"  max logit diff:    {report.max_logit_diff:.3e} (tolerance {logit_tolerance:.0e})")
     print("  per-episode:")
     for episode in report.episodes:
         print(
@@ -394,6 +447,11 @@ def main() -> None:
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library (--bridge-kind go)")
     parser.add_argument("--max-decisions", type=int, default=64, help="Bridge decision cap per episode")
     parser.add_argument("--http-timeout", type=float, default=5.0, help="Per-request timeout in seconds (--endpoint mode)")
+    parser.add_argument(
+        "--logit-tolerance", type=float, default=LOGIT_TOLERANCE,
+        help="Max-abs logit difference over legal actions allowed before failing the hard gate "
+        "(same-hardware assumption: exact reproducibility is expected on identical CPU/GPU/dtype)",
+    )
     args = parser.parse_args()
 
     try:
@@ -408,13 +466,14 @@ def main() -> None:
             bridge_library_path=args.bridge_lib,
             max_decisions=args.max_decisions,
             http_timeout=args.http_timeout,
+            logit_tolerance=args.logit_tolerance,
         )
     except ServingParityError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
     mode = "endpoint" if args.endpoint else "in-process"
-    _print_summary(report, mode=mode, checkpoint=args.checkpoint, device=args.device)
+    _print_summary(report, mode=mode, checkpoint=args.checkpoint, device=args.device, logit_tolerance=args.logit_tolerance)
     if not report.all_agree:
         print("serving parity FAILED: not every checked decision agreed", file=sys.stderr)
         sys.exit(1)

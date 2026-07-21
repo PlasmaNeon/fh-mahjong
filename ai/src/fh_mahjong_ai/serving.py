@@ -26,6 +26,13 @@ class ServedAction:
     greedy_action_id: int = -1
     sampling_applied: bool = False
     sampled_from_greedy: bool = False
+    # Masked logits (the ones argmax was actually taken over), populated only
+    # when `choose(..., return_logits=True)` is requested (see
+    # serve_policy.py's `return_logits` /act field, added for Finding 3's
+    # endpoint-mode logit-parity gate). Illegal-action entries carry
+    # `torch.finfo(dtype).min` — a large but FINITE negative value (not
+    # -inf), so it round-trips through `json.dumps` without special-casing.
+    logits: Optional[np.ndarray] = None
 
 
 class CheckpointPolicy:
@@ -85,7 +92,7 @@ class CheckpointPolicy:
         )
 
     @torch.inference_mode()
-    def choose(self, observation: Observation) -> ServedAction:
+    def choose(self, observation: Observation, return_logits: bool = False) -> ServedAction:
         legal_actions = observation.legal_actions
         if not legal_actions:
             raise ValueError("observation has no legal actions")
@@ -156,6 +163,7 @@ class CheckpointPolicy:
             greedy_action_id=greedy_action_id,
             sampling_applied=sampling_applied,
             sampled_from_greedy=sampling_applied and action_id != greedy_action_id,
+            logits=logits[0].detach().cpu().numpy() if return_logits else None,
         )
 
     @torch.inference_mode()
@@ -254,12 +262,19 @@ def run_bridge_serving_smoke(
     """Step a served policy through a bridge so Go/mock legality validates actions."""
     completed = 0
     decisions = 0
+    # Thread the served model's event window into the bridge config: an event
+    # model (model_config.event_window > 0) requires a non-empty event
+    # history on every decision (CheckpointPolicy.choose fails closed
+    # otherwise, see the EMPTY event_history guard above), so the bridge must
+    # be told to actually populate one. Leaving this at the EnvConfig default
+    # (0) made this smoke unable to exercise any event checkpoint at all.
     config = EnvConfig(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
         learning_seats=(0, 1, 2, 3),
         auto_play_heuristics=False,
         max_steps_per_episode=max_decisions,
+        event_history_window=int(policy.model.model_config.event_window),
     )
     bridge = build_bridge(config)
     try:

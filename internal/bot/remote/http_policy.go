@@ -353,23 +353,29 @@ func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actR
 }
 
 // eventContractHealthz mirrors the event-contract handshake fields of
-// serve_policy.py's GET /healthz response. Extra fields are ignored; missing
-// fields decode as zero values, which is how a legacy server (one that
-// predates the event contract) is distinguished from a mismatched one.
+// serve_policy.py's GET /healthz response. Extra fields are ignored.
+// EventWindow/ContractVersion are pointers so an ABSENT field (a legacy
+// server that predates the event contract, decodes as nil) can be told apart
+// from an EXPLICITLY PUBLISHED value — a server that publishes
+// event_window:0 is making a claim that must still match what this policy
+// expects, unlike a legacy server that says nothing at all.
 type eventContractHealthz struct {
-	EventWindow     uint32 `json:"event_window"`
-	ContractVersion uint32 `json:"contract_version"`
+	EventWindow     *uint32 `json:"event_window"`
+	ContractVersion *uint32 `json:"contract_version"`
 }
 
 // ValidateServer probes the policy endpoint's GET /healthz route and checks
-// that the serving contract matches this policy's configuration. For a
-// window-0 (event-free) policy, any reachable healthz passes — including a
-// legacy body that carries no event-contract fields at all. For an
-// event-enabled policy (eventWindow > 0), the healthz body MUST report
-// event_window == p.eventWindow and contract_version == rl.EventContractV1;
-// a legacy healthz missing those fields decodes them as zero, which fails
-// this check, so an event-window policy talking to a pre-event-contract
-// server is caught here instead of silently serving a mismatched wire form.
+// that the serving contract matches this policy's configuration. A server
+// that PUBLISHES the event contract (event_window present in its /healthz
+// body) is making an explicit claim that must match p.eventWindow AND
+// contract_version == rl.EventContractV1 regardless of whether p is itself
+// event-enabled — this is what catches a window-0 policy left pointed at a
+// server that is actually serving an event checkpoint (e.g.
+// RL_AGENT_EVENT_WINDOW=0 against a policy service serving iter_075 at
+// window 128): every /act call would otherwise 400 and silently fall back to
+// the heuristic. A legacy healthz that omits the field entirely (nil) keeps
+// today's behavior: passes for a window-0 policy, fails for an event-enabled
+// one (cannot verify a match, fail closed).
 func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
 	if p == nil {
 		return fmt.Errorf("nil remote policy")
@@ -402,10 +408,6 @@ func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
 		return fmt.Errorf("healthz status %d", resp.StatusCode)
 	}
 
-	if p.eventWindow == 0 {
-		return nil
-	}
-
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
 		return err
@@ -414,11 +416,26 @@ func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return fmt.Errorf("healthz body is not valid JSON: %w", err)
 	}
-	if body.ContractVersion != rl.EventContractV1 {
-		return fmt.Errorf("healthz contract_version = %d, want %d", body.ContractVersion, rl.EventContractV1)
+
+	if body.EventWindow == nil {
+		// Legacy server: no contract published at all. Fine for a window-0
+		// policy (nothing to check); fails closed for an event-enabled one,
+		// since a match can't be verified.
+		if p.eventWindow == 0 {
+			return nil
+		}
+		return fmt.Errorf("healthz reports no event_window (legacy server), want event_window %d", p.eventWindow)
 	}
-	if body.EventWindow != p.eventWindow {
-		return fmt.Errorf("healthz event_window = %d, want %d", body.EventWindow, p.eventWindow)
+
+	var contractVersion uint32
+	if body.ContractVersion != nil {
+		contractVersion = *body.ContractVersion
+	}
+	if contractVersion != rl.EventContractV1 {
+		return fmt.Errorf("healthz contract_version = %d, want %d", contractVersion, rl.EventContractV1)
+	}
+	if *body.EventWindow != p.eventWindow {
+		return fmt.Errorf("healthz event_window = %d, want %d", *body.EventWindow, p.eventWindow)
 	}
 	return nil
 }
