@@ -181,6 +181,18 @@ func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 	return encodeObservation(state, seat, decisionIndex, false, nil, 0)
 }
 
+// EncodeObservationWithEvents is the serving-side entry point for encoding a
+// SeatObservation with event history attached. It is a thin, non-oracle
+// wrapper over the same internal chokepoint (encodeObservation) the eval
+// path uses, so a serving-time observation and an eval-time observation for
+// identical (state, seat, decisionIndex, events, window) inputs are
+// guaranteed byte-identical on the wire — see
+// internal/rl/serving_parity_test.go (gate layer 1 of the Spec B2c hard
+// parity gate).
+func EncodeObservationWithEvents(state *pb.GameState, seat uint32, decisionIndex uint64, events []engine.PublicEvent, window uint32) (*pb.SeatObservation, error) {
+	return encodeObservation(state, seat, decisionIndex, false, events, window)
+}
+
 func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool, window uint32) *pb.SeatObservation {
 	activePlayer := uint32(0)
 	phase := pb.GamePhase_PHASE_INIT
