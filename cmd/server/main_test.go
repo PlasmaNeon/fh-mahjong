@@ -137,6 +137,24 @@ func TestValidatePolicyContractAsync_UnreachableLogsLoudlyWithoutBlocking(t *tes
 	}
 }
 
+// FINDING 2: the shadow candidate policy must be built with its fallback
+// disabled — otherwise an unreachable/contract-rejecting candidate still
+// returns a (heuristic) action on every decision, and ShadowPolicy's worker
+// never sees the nil that would count it as a shadow error, masking the
+// candidate being down from the runbook's zero-shadow-error gate.
+func TestNewShadowHTTPPolicy_FallbackDisabled(t *testing.T) {
+	policy := newShadowHTTPPolicy("http://127.0.0.1:1/act", &http.Client{}, 64)
+
+	action := policy.ChooseAction(nil, 0) // nil state -> config-error fallback path
+	if action != nil {
+		t.Fatalf("expected nil action with fallback disabled, got %+v", action)
+	}
+	stats := policy.Stats()
+	if stats.NoFallback != 1 {
+		t.Fatalf("expected NoFallback=1 (fallback disabled), got %+v", stats)
+	}
+}
+
 // TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances pins the
 // regression fix: in a no-shadow config, two DIFFICULTY_RL resolutions from
 // the SAME resolver must return two DISTINCT *remote.HTTPPolicy instances,

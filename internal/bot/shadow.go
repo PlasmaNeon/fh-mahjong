@@ -84,6 +84,54 @@ type ShadowPolicy struct {
 var _ Policy = (*ShadowPolicy)(nil)
 var _ ContextPolicy = (*ShadowPolicy)(nil)
 
+// decisionCounter and identityReporter mirror the unexported
+// policyDecisionCounter/policyIdentityReporter shapes that
+// internal/api/room.go's reconcileRLPolicyIDs type-asserts a seat's policy
+// against (Go interface satisfaction is structural, so no shared type is
+// needed — only matching method sets, per remote.HTTPPolicy's
+// DecisionCounts/ObservedPolicyIDs). Declared locally so ShadowPolicy can
+// forward to whichever of these its wrapped primary implements.
+type decisionCounter interface {
+	DecisionCounts() (remote, fallback uint64)
+}
+
+type identityReporter interface {
+	ObservedPolicyIDs() []string
+}
+
+// DecisionCounts forwards to the wrapped primary's own DecisionCounts when it
+// reports remote-vs-fallback decision provenance (e.g. remote.HTTPPolicy).
+// Without this, wrapping an RL seat's primary in ShadowPolicy would silently
+// discard that attribution from the dataset (room.reconcileRLPolicyIDs type-
+// asserts the seat's *ShadowPolicy itself, which never satisfied
+// policyDecisionCounter before this method existed). Zero values when the
+// primary doesn't implement it.
+func (s *ShadowPolicy) DecisionCounts() (remote, fallback uint64) {
+	if s == nil || s.primary == nil {
+		return 0, 0
+	}
+	if counter, ok := s.primary.(decisionCounter); ok {
+		return counter.DecisionCounts()
+	}
+	return 0, 0
+}
+
+// ObservedPolicyIDs forwards to the wrapped primary's own ObservedPolicyIDs
+// when it reports which checkpoints actually served its actions (e.g.
+// remote.HTTPPolicy). Same rationale as DecisionCounts: without forwarding,
+// shadow-mode paipu would keep the stale match-start policy label instead of
+// the checkpoints that actually served. nil when the primary doesn't
+// implement it.
+func (s *ShadowPolicy) ObservedPolicyIDs() []string {
+	if s == nil || s.primary == nil {
+		return nil
+	}
+	if reporter, ok := s.primary.(identityReporter); ok {
+		return reporter.ObservedPolicyIDs()
+	}
+	return nil
+}
+
 // NewShadowPolicy starts the background worker and returns a ShadowPolicy
 // ready to serve decisions. queueSize bounds how many mirrored decisions may
 // be in flight before new ones are dropped (Metrics().Dropped) rather than

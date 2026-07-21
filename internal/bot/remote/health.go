@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/plasma/fh-mahjong/internal/rl"
 )
 
 const (
@@ -21,9 +23,10 @@ const (
 // ask freely without hammering the model server. A zero-value or nil checker
 // reports unhealthy.
 type HealthChecker struct {
-	healthURL string
-	client    *http.Client
-	ttl       time.Duration
+	healthURL           string
+	client              *http.Client
+	ttl                 time.Duration
+	expectedEventWindow uint32
 
 	mu        sync.Mutex
 	checkedAt time.Time
@@ -32,14 +35,37 @@ type HealthChecker struct {
 	identity  string
 }
 
+// HealthCheckerOption configures optional HealthChecker behavior beyond bare
+// reachability.
+type HealthCheckerOption func(*HealthChecker)
+
+// WithExpectedEventWindow makes the recurring health check also validate the
+// serving contract: a reachable endpoint whose /healthz reports a different
+// event_window (or a contract_version other than rl.EventContractV1) than
+// window is reported UNHEALTHY, not just anonymous. This is what lets
+// RLAgentAvailable catch a reachable-but-contract-mismatched server (the
+// one-shot boot probe, validatePolicyContractAsync, only ever runs once at
+// startup — often before a locally-managed policy server is even up — so it
+// can miss a contract drift that only appears later). window <= 0 keeps the
+// default reachability-only behavior.
+func WithExpectedEventWindow(window uint32) HealthCheckerOption {
+	return func(h *HealthChecker) {
+		h.expectedEventWindow = window
+	}
+}
+
 // NewHealthChecker builds a checker for the given /act endpoint. The /healthz
 // URL is derived from it (same scheme+host, path "/healthz").
-func NewHealthChecker(actEndpoint string) *HealthChecker {
-	return &HealthChecker{
+func NewHealthChecker(actEndpoint string, opts ...HealthCheckerOption) *HealthChecker {
+	h := &HealthChecker{
 		healthURL: deriveHealthURL(actEndpoint),
 		client:    &http.Client{Timeout: defaultHealthTimeout},
 		ttl:       defaultHealthTTL,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // deriveHealthURL maps an /act endpoint to the serve_policy.py /healthz route.
@@ -93,11 +119,15 @@ func (h *HealthChecker) refreshLocked() {
 	h.primed = true
 }
 
-// healthzPayload mirrors the identity fields of serve_policy.py's GET /healthz
-// response. Extra fields are ignored.
+// healthzPayload mirrors the identity and event-contract fields of
+// serve_policy.py's GET /healthz response. Extra fields are ignored; a
+// legacy server that predates the event contract decodes EventWindow/
+// ContractVersion as zero values.
 type healthzPayload struct {
-	Checkpoint     string `json:"checkpoint"`
-	CheckpointStep int64  `json:"checkpoint_step"`
+	Checkpoint      string `json:"checkpoint"`
+	CheckpointStep  int64  `json:"checkpoint_step"`
+	EventWindow     uint32 `json:"event_window"`
+	ContractVersion uint32 `json:"contract_version"`
 }
 
 func (h *HealthChecker) probe() (healthy bool, identity string) {
@@ -119,10 +149,31 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, ""
 	}
-	// Identity is best-effort: a healthz body without checkpoint info (or
-	// that isn't JSON) still counts as healthy, just anonymous.
+
 	var payload healthzPayload
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil || payload.Checkpoint == "" {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil {
+		// A non-JSON/undecodable body means the event contract (if this
+		// checker expects one) cannot be verified — fail closed rather than
+		// assume a match. Window-0 checkers keep the legacy reachability-only
+		// behavior: still healthy, just anonymous.
+		if h.expectedEventWindow > 0 {
+			return false, ""
+		}
+		return true, ""
+	}
+
+	if h.expectedEventWindow > 0 {
+		if payload.ContractVersion != rl.EventContractV1 || payload.EventWindow != h.expectedEventWindow {
+			// Reachable but speaking the wrong wire contract: every /act
+			// against this endpoint would be rejected or mis-decoded, so it
+			// must not be offered as available.
+			return false, ""
+		}
+	}
+
+	// Identity is best-effort: a healthz body without checkpoint info still
+	// counts as healthy, just anonymous.
+	if payload.Checkpoint == "" {
 		return true, ""
 	}
 	return true, checkpointIdentity(payload.Checkpoint, payload.CheckpointStep)

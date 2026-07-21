@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/plasma/fh-mahjong/internal/rl"
 )
 
 func TestDeriveHealthURL(t *testing.T) {
@@ -112,5 +114,53 @@ func TestHealthChecker_IdentityUnreachableAndNil(t *testing.T) {
 	var nilChecker *HealthChecker
 	if got := nilChecker.Identity(); got != "" {
 		t.Fatalf("nil Identity() = %q, want empty", got)
+	}
+}
+
+// FINDING 3: a reachable server whose healthz reports a different
+// event_window than this checker expects must be reported unhealthy — a
+// contract mismatch means every /act on this endpoint would be rejected (or
+// worse, silently mis-decoded), so RLAgentAvailable must not offer the seat.
+func TestHealthChecker_ExpectedEventWindowMismatchIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":64,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: reachable server reports event_window=64, checker expects 128")
+	}
+}
+
+// A matching event_window/contract_version must still report healthy.
+func TestHealthChecker_ExpectedEventWindowMatchIsHealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if !h.Healthy() {
+		t.Fatal("expected healthy: event_window/contract_version match the checker's expectation")
+	}
+	_ = rl.EventContractV1 // pin: the server's contract_version field must match this constant
+}
+
+// A window-0 checker (no WithExpectedEventWindow, the default / legacy
+// primary-policy case) must keep reachability-only behavior: a mismatched or
+// entirely absent event_window field never makes it unhealthy.
+func TestHealthChecker_WindowZeroIgnoresContractMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":64,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if !h.Healthy() {
+		t.Fatal("expected healthy: window-0 checker validates reachability only, not contract fields")
 	}
 }

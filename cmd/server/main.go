@@ -148,11 +148,7 @@ func main() {
 	var shadowPolicy bot.ContextPolicy
 	if shadowPolicyURL != "" {
 		window := shadowEventWindow(defaultShadowEventWindow)
-		shadowHTTPPolicy := remote.NewHTTPPolicy(
-			shadowPolicyURL,
-			remote.WithHTTPClient(rlHTTPClient),
-			remote.WithEventWindow(window),
-		)
+		shadowHTTPPolicy := newShadowHTTPPolicy(shadowPolicyURL, rlHTTPClient, window)
 		shadowPolicy = shadowHTTPPolicy
 		log.Printf(
 			"RL agent shadow policy enabled: endpoint=%s event_window=%d (mirrors private-room RL decisions only; never serves them)",
@@ -171,8 +167,15 @@ func main() {
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
 	matchmaker.SeatPolicyResolver = newSeatPolicyResolver(rlPolicyURL, rlHTTPClient, rlEventWindow, shadowPolicy)
-	// Surface the RL option only while the model server is actually reachable.
-	rlHealth := remote.NewHealthChecker(rlPolicyURL)
+	// Surface the RL option only while the model server is actually
+	// reachable AND (when the primary policy speaks the event-history
+	// contract) actually serving the contract this Go server expects — a
+	// window mismatch would otherwise silently fall back on every /act
+	// forever while still showing as "available". The one-shot
+	// validatePolicyContractAsync probe above catches this at boot, but only
+	// once, often before a locally-managed policy server is even up; this
+	// recurring check re-validates on every RLAgentAvailable poll.
+	rlHealth := remote.NewHealthChecker(rlPolicyURL, remote.WithExpectedEventWindow(rlEventWindow))
 	matchmaker.RLAgentAvailable = rlHealth.Healthy
 	// Label RL seats in the paipu with the served checkpoint identity
 	// (basename@step from /healthz — paipu are public, so never a URL or
@@ -232,6 +235,27 @@ func main() {
 // instance.
 func newRLPrimaryPolicy(rlPolicyURL string, httpClient *http.Client, eventWindow uint32) *remote.HTTPPolicy {
 	return remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(httpClient), remote.WithEventWindow(eventWindow))
+}
+
+// newShadowHTTPPolicy builds the candidate policy that RL_AGENT_SHADOW_POLICY_URL
+// wires into bot.NewShadowPolicy. Unlike the primary/matchmaking policies, its
+// fallback is explicitly disabled (remote.WithFallback(nil)): the shadow
+// candidate never serves a real decision, it only gets compared against the
+// primary's action, so a dead or contract-rejecting candidate endpoint must
+// surface as a ShadowPolicy shadow error, not silently succeed by returning
+// the local heuristic's action. With the default heuristic fallback, a
+// candidate that is completely down would still return a (heuristic) action
+// on every decision, ChooseActionCtx would never see nil, and the runbook's
+// zero-shadow-error gate would pass even though nothing candidate-side is
+// actually being evaluated. Split out from main() so this wiring is directly
+// testable.
+func newShadowHTTPPolicy(shadowPolicyURL string, httpClient *http.Client, eventWindow uint32) *remote.HTTPPolicy {
+	return remote.NewHTTPPolicy(
+		shadowPolicyURL,
+		remote.WithHTTPClient(httpClient),
+		remote.WithEventWindow(eventWindow),
+		remote.WithFallback(nil),
+	)
 }
 
 // newSeatPolicyResolver builds the api.Matchmaker.SeatPolicyResolver closure:
