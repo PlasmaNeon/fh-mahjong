@@ -72,8 +72,11 @@ type GapRef struct {
 // them against client in chunked batches, and assembles the resulting
 // Report. It never returns a partial report: any failure in decision
 // reconstruction or policy evaluation aborts with an error and a nil report.
-func BuildReport(paipu *engine.Paipu, client PolicyClient) (*Report, error) {
-	decisions, err := ExtractDecisions(paipu)
+//
+// eventWindow is forwarded to ExtractDecisions (see its doc); pass 0 unless
+// the served policy has event_window > 0.
+func BuildReport(paipu *engine.Paipu, client PolicyClient, eventWindow uint32) (*Report, error) {
+	decisions, err := ExtractDecisions(paipu, eventWindow)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreviewable, err)
 	}

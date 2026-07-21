@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/plasma/fh-mahjong/internal/rl"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -40,16 +41,23 @@ type PolicyClient interface {
 // It mirrors the request encoding of internal/bot/remote.HTTPPolicy's /act
 // calls but batches many observations per request instead of one.
 type HTTPPolicyClient struct {
-	baseURL string
-	client  *http.Client
+	baseURL     string
+	client      *http.Client
+	eventWindow uint32
 }
 
 // NewHTTPPolicyClient returns an HTTPPolicyClient that POSTs to
-// {baseURL}/evaluate.
-func NewHTTPPolicyClient(baseURL string) *HTTPPolicyClient {
+// {baseURL}/evaluate. eventWindow must match the served model's configured
+// event_window (0 for a model with no event history): with eventWindow==0,
+// batched requests are byte-identical to the pre-event-history wire format;
+// with eventWindow>0, every observation in the request gains the compact
+// event fields the Python /evaluate endpoint requires for an event-aware
+// model (see evaluateChunk).
+func NewHTTPPolicyClient(baseURL string, eventWindow uint32) *HTTPPolicyClient {
 	return &HTTPPolicyClient{
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 120 * time.Second},
+		baseURL:     baseURL,
+		client:      &http.Client{Timeout: 120 * time.Second},
+		eventWindow: eventWindow,
 	}
 }
 
@@ -58,6 +66,15 @@ type evaluateObservation struct {
 	Planes     []float32 `json:"planes"`
 	Scalars    []float32 `json:"scalars"`
 	ActionMask []int     `json:"action_mask"`
+
+	// Compact event-history fields, set only when the client is configured
+	// with eventWindow > 0 (see evaluateChunk). Pointer types so a nil value
+	// is dropped by omitempty regardless of the pointee's zero-ness — this
+	// is what keeps the eventWindow==0 payload byte-identical to before.
+	EventHistory    []uint32 `json:"event_history,omitempty"`
+	EventCount      *int     `json:"event_count,omitempty"`
+	EventWindow     *uint32  `json:"event_window,omitempty"`
+	ContractVersion *int     `json:"contract_version,omitempty"`
 }
 
 type evaluateRequest struct {
@@ -116,12 +133,22 @@ func (c *HTTPPolicyClient) Evaluate(obs []*pb.SeatObservation) ([]PolicyResult, 
 func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error) {
 	payload := evaluateRequest{Observations: make([]evaluateObservation, len(obs))}
 	for i, o := range obs {
-		payload.Observations[i] = evaluateObservation{
+		row := evaluateObservation{
 			Seat:       o.Seat,
 			Planes:     o.Planes,
 			Scalars:    o.Scalars,
 			ActionMask: actionMaskToInts(o.ActionMask),
 		}
+		if c.eventWindow > 0 {
+			count := len(o.EventHistory)
+			window := c.eventWindow
+			version := rl.EventContractV1
+			row.EventHistory = o.EventHistory
+			row.EventCount = &count
+			row.EventWindow = &window
+			row.ContractVersion = &version
+		}
+		payload.Observations[i] = row
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

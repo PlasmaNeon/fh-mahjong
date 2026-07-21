@@ -27,14 +27,20 @@ type Decision struct {
 // ExtractDecisions replays every round of the paipu deterministically and
 // returns each seat's decisions in chronological order. Any divergence
 // between the paipu and the engine aborts with an error.
-func ExtractDecisions(paipu *engine.Paipu) ([]Decision, error) {
+//
+// eventWindow is forwarded verbatim to rl.EncodeObservationWithEvents for
+// every decision's observation (see recordDecision); 0 is byte-identical to
+// the legacy rl.EncodeObservation behavior (see
+// internal/rl/serving_parity_test.go), so callers that don't need event
+// history simply pass 0.
+func ExtractDecisions(paipu *engine.Paipu, eventWindow uint32) ([]Decision, error) {
 	if paipu == nil || len(paipu.Rounds) == 0 {
 		return nil, fmt.Errorf("paipu has no rounds")
 	}
 	var decisions []Decision
 	var decisionIndex uint64
 	for roundIdx := range paipu.Rounds {
-		roundDecisions, next, err := replayRound(paipu, roundIdx, decisionIndex)
+		roundDecisions, next, err := replayRound(paipu, roundIdx, decisionIndex, eventWindow)
 		if err != nil {
 			return nil, fmt.Errorf("round %d: %w", roundIdx, err)
 		}
@@ -49,7 +55,7 @@ func ExtractDecisions(paipu *engine.Paipu) ([]Decision, error) {
 // dealer, so a fresh classic game (not the original chongci match) is
 // sufficient — the paipu never records the original ChongciConfig, and none
 // is needed since each round's wall/dealer/deal are self-contained.
-func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64) ([]Decision, uint64, error) {
+func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventWindow uint32) ([]Decision, uint64, error) {
 	round := &paipu.Rounds[roundIdx]
 	seed, err := engine.SeedFromBase64(round.WallSeed)
 	if err != nil {
@@ -86,6 +92,7 @@ func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64) ([]Dec
 		round:         round,
 		roundIdx:      roundIdx,
 		decisionIndex: decisionIndex,
+		eventWindow:   eventWindow,
 		lastDiscard:   -1,
 	}
 	if err := r.run(); err != nil {
@@ -138,6 +145,7 @@ type roundReplayer struct {
 	cursor        int // next unconsumed index into round.Actions
 	lastDiscard   int // action index of the most recent discard (pass anchor); -1 if none yet
 	decisionIndex uint64
+	eventWindow   uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
 	decisions     []Decision
 	flowerIndex   map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
 }
@@ -331,8 +339,17 @@ func matchingPendingSeat(pending []uint32, discarder uint32, peeked *engine.Paip
 // always runs in classic mode with zero scores, so encoding straight off
 // r.game.State would feed the champion match context it was never trained to
 // see.
+//
+// Event history comes straight from the live r.game (not the dressed
+// clone) via PublicEvents(): the engine regenerates its per-round public
+// event log naturally as replay drives it forward, so it is already exactly
+// the log a live decision at this point would have seen. This always goes
+// through the EncodeObservationWithEvents wrapper — with eventWindow==0 it
+// is byte-identical to rl.EncodeObservation (see
+// internal/rl/serving_parity_test.go), so this is not a behavior change for
+// existing (window-0) callers.
 func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenAction int) error {
-	obs, err := rl.EncodeObservation(reviewState(r.game.State, r.paipu, r.roundIdx), seat, r.decisionIndex)
+	obs, err := rl.EncodeObservationWithEvents(reviewState(r.game.State, r.paipu, r.roundIdx), seat, r.decisionIndex, r.game.PublicEvents(), r.eventWindow)
 	if err != nil {
 		return fmt.Errorf("round %d: encode observation for seat %d: %w", r.roundIdx, seat, err)
 	}

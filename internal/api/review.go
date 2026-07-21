@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/internal/engine"
@@ -13,6 +15,24 @@ import (
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"gorm.io/gorm"
 )
+
+// reviewEventWindow reads RL_AGENT_EVENT_WINDOW (the same env family as
+// RL_AGENT_POLICY_URL/RL_AGENT_CHECKPOINT_ID in cmd/server/main.go), the
+// event_window of the checkpoint served at POLICY_SERVER_URL. Unset, empty,
+// or unparseable values default to 0 (no event history — byte-identical to
+// pre-event-history review behavior).
+func reviewEventWindow() uint32 {
+	raw := strings.TrimSpace(os.Getenv("RL_AGENT_EVENT_WINDOW"))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		log.Printf("review: ignoring invalid RL_AGENT_EVENT_WINDOW %q: %v", raw, err)
+		return 0
+	}
+	return uint32(n)
+}
 
 // handleGetReview serves the newest cached MatchReview for a match. It is a
 // pure cache lookup — it never builds a report. DB nil or no cached row →
@@ -95,7 +115,8 @@ func (s *Server) handlePostReview(c *gin.Context) {
 		return
 	}
 
-	report, err := review.BuildReport(&paipu, review.NewHTTPPolicyClient(policyURL))
+	eventWindow := reviewEventWindow()
+	report, err := review.BuildReport(&paipu, review.NewHTTPPolicyClient(policyURL, eventWindow), eventWindow)
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {
 			// Divergence/extraction detail is the whole point of a 422 and
