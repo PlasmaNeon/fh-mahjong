@@ -161,20 +161,32 @@ def test_harness_catches_corrupted_event_history(tmp_path: Path, monkeypatch: py
 # --- (c) endpoint mode against a real in-thread serve_policy server --------------------
 
 
+# The throwaway token this in-thread candidate server is configured with by
+# default, and the token `run_serving_parity(logit_export_token=...)` must
+# send to match it (adversarial round 13, Finding 1).
+_TEST_LOGIT_EXPORT_TOKEN = "test-candidate-token"
+
+
 class _Server:
-    def __init__(self, checkpoint_path: Path, manifest_path: Path, enable_logit_export: bool = True) -> None:
+    def __init__(
+        self, checkpoint_path: Path, manifest_path: Path,
+        logit_export_token: str | None = _TEST_LOGIT_EXPORT_TOKEN,
+    ) -> None:
         from fh_mahjong_ai.serving import CheckpointPolicy
 
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
         # run_serving_parity's --endpoint mode always requests return_logits
         # (Finding 3, adversarial round 2): this in-thread server stands in
         # for the CANDIDATE serving instance the B2c runbook launches with
-        # --enable-logit-export for exactly this reason (adversarial round
-        # 12, Finding 1) — never the production instance. Defaults to True so
-        # existing endpoint-mode parity tests are unaffected; the one test
-        # exercising the disabled case passes False explicitly.
+        # --logit-export-token for exactly this reason (adversarial round 12,
+        # Finding 1; adversarial round 13, Finding 1: a shared-secret token,
+        # not a process-wide boolean) — never the production instance.
+        # Defaults to a fixed throwaway token so existing endpoint-mode
+        # parity tests are unaffected as long as they pass the same token to
+        # `run_serving_parity`; the tests exercising the disabled/mismatched
+        # cases pass None or an explicit override.
         self.holder = serve_policy_module.PolicyHolder(
-            policy, manifest_path=manifest_path, enable_logit_export=enable_logit_export,
+            policy, manifest_path=manifest_path, logit_export_token=logit_export_token,
         )
         handler = type(
             "BoundPolicyRequestHandler", (serve_policy_module.PolicyRequestHandler,), {"holder": self.holder}
@@ -211,6 +223,7 @@ def test_endpoint_mode_parity_passes_against_real_server(tmp_path: Path) -> None
             # bridge/match-mode requirement (adversarial round 10, Finding 1) —
             # a mock bridge is deliberately fast here.
             allow_non_production=True,
+            logit_export_token=_TEST_LOGIT_EXPORT_TOKEN,
         )
     finally:
         server.close()
@@ -264,6 +277,7 @@ def test_endpoint_mode_catches_logit_drift_with_same_argmax(
                 bridge_kind="mock",
                 max_decisions=5,
                 allow_non_production=True,  # plumbing test, not the production hard gate
+                logit_export_token=_TEST_LOGIT_EXPORT_TOKEN,
             )
     finally:
         server.close()
@@ -305,6 +319,7 @@ def test_endpoint_mode_catches_nan_logits_even_with_matching_argmax(
                 bridge_kind="mock",
                 max_decisions=5,
                 allow_non_production=True,  # plumbing test, not the production hard gate
+                logit_export_token=_TEST_LOGIT_EXPORT_TOKEN,
             )
     finally:
         server.close()
@@ -337,21 +352,22 @@ def test_endpoint_mode_fails_when_server_omits_logits(
                 bridge_kind="mock",
                 max_decisions=5,
                 allow_non_production=True,  # plumbing test, not the production hard gate
+                logit_export_token=_TEST_LOGIT_EXPORT_TOKEN,
             )
     finally:
         server.close()
 
 
-def test_endpoint_mode_points_operator_at_enable_logit_export_flag(tmp_path: Path) -> None:
-    """Adversarial round 12, Finding 1(d): if the endpoint under test was
-    launched WITHOUT --enable-logit-export, the harness's always-on
+def test_endpoint_mode_points_operator_at_logit_export_token_flag(tmp_path: Path) -> None:
+    """Adversarial round 13, Finding 1: if the endpoint under test was
+    launched WITHOUT a --logit-export-token at all, the harness's always-on
     return_logits=true request gets a 400 — the resulting ServingParityError
-    must name the fix (--enable-logit-export on the CANDIDATE service), not
+    must name the fix (--logit-export-token on the CANDIDATE service), not
     just surface a bare "endpoint error"."""
     checkpoint = _save_checkpoint(tmp_path, _event_model_config())
-    server = _Server(checkpoint, tmp_path / "manifest.json", enable_logit_export=False)
+    server = _Server(checkpoint, tmp_path / "manifest.json", logit_export_token=None)
     try:
-        with pytest.raises(ServingParityError, match="--enable-logit-export"):
+        with pytest.raises(ServingParityError, match="--logit-export-token"):
             run_serving_parity(
                 checkpoint=checkpoint,
                 event_history_window=_WINDOW,
@@ -362,6 +378,31 @@ def test_endpoint_mode_points_operator_at_enable_logit_export_flag(tmp_path: Pat
                 bridge_kind="mock",
                 max_decisions=5,
                 allow_non_production=True,  # plumbing test, not the production hard gate
+            )
+    finally:
+        server.close()
+
+
+def test_endpoint_mode_wrong_logit_export_token_rejected(tmp_path: Path) -> None:
+    """Adversarial round 13, Finding 1: the CANDIDATE server has a token
+    configured, but the harness is (mis)configured with a different one — the
+    request must be rejected exactly like the no-token-configured case, not
+    silently accepted."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json", logit_export_token=_TEST_LOGIT_EXPORT_TOKEN)
+    try:
+        with pytest.raises(ServingParityError, match="--logit-export-token"):
+            run_serving_parity(
+                checkpoint=checkpoint,
+                event_history_window=_WINDOW,
+                episodes=1,
+                start_seed=9600,
+                device="cpu",
+                endpoint=f"http://127.0.0.1:{server.port}/act",
+                bridge_kind="mock",
+                max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
+                logit_export_token="definitely-wrong-token",
             )
     finally:
         server.close()
@@ -679,6 +720,7 @@ def test_endpoint_mode_with_allow_non_production_and_mock_runs(tmp_path: Path) -
             match_mode="classic",
             max_decisions=5,
             allow_non_production=True,
+            logit_export_token=_TEST_LOGIT_EXPORT_TOKEN,
         )
     finally:
         server.close()

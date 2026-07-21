@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -58,7 +59,7 @@ class PolicyHolder:
         manifest_path: Path,
         device: str = "cpu",
         checkpoint_sha256: Optional[str] = None,
-        enable_logit_export: bool = False,
+        logit_export_token: Optional[str] = None,
     ) -> None:
         """`checkpoint_sha256`, when given, MUST be the hash of the exact
         bytes `policy` was deserialized from (see
@@ -71,16 +72,23 @@ class PolicyHolder:
         no bytes to hash), this falls back to re-hashing `policy.checkpoint_path`
         from disk, which does not have that guarantee.
 
-        `enable_logit_export` gates whether ANY caller's `return_logits: true`
-        on /act is honored (adversarial round 12, Finding 1): the full masked
-        logit vector is a material model-extraction surface on a publicly
-        deployed endpoint, so it defaults to OFF. Only the candidate/parity
-        serving instance used for `fh-mj-serving-parity --endpoint` needs it
-        on; production never sets it."""
+        `logit_export_token` gates whether ANY caller's `return_logits: true`
+        on /act is honored (adversarial round 12, Finding 1; adversarial round
+        13, Finding 1): the full masked logit vector is a material model-
+        extraction surface on a publicly deployed endpoint, so `return_logits`
+        requires a shared-secret token, not just a process-wide on/off switch
+        — a bare boolean flag would let ANY network caller harvest logits the
+        instant it was set. When `logit_export_token` is None (the default,
+        and production's posture), `return_logits` is refused unconditionally.
+        When set, a request is honored ONLY when it carries a matching
+        `logit_export_token` field, compared with `hmac.compare_digest` (never
+        `==`, which leaks timing information about how many leading bytes
+        matched). Only the candidate/parity serving instance used for
+        `fh-mj-serving-parity --endpoint` sets this; production never does."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
-        self.enable_logit_export = enable_logit_export
+        self.logit_export_token = logit_export_token
         resolved_sha256 = (
             checkpoint_sha256 if checkpoint_sha256 is not None else self._sha256_of(policy.checkpoint_path)
         )
@@ -235,19 +243,37 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("content-length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             return_logits = bool(payload.get("return_logits", False))
-            # Adversarial round 12, Finding 1: an unauthenticated caller must
-            # never be able to pull the full masked logit vector off a
-            # publicly deployed /act endpoint — that is a material model-
-            # extraction surface. Fail loudly (400) rather than silently
-            # ignoring the request, so the parity harness's hard gate (which
-            # relies on --enable-logit-export being set on the CANDIDATE
-            # service) fails clearly instead of comparing nothing.
-            if return_logits and not self.holder.enable_logit_export:
-                raise ValueError(
-                    "logit export disabled on this server; launch serve_policy with "
-                    "--enable-logit-export to allow return_logits (candidate/parity "
-                    "service only — never enable this on the production endpoint)"
-                )
+            # Adversarial round 12, Finding 1 / round 13, Finding 1: an
+            # unauthenticated caller must never be able to pull the full
+            # masked logit vector off a publicly deployed /act endpoint —
+            # that is a material model-extraction surface, and a process-wide
+            # boolean flag would let ANY caller harvest it the instant the
+            # flag was on. Require a shared-secret token instead: with no
+            # token configured, return_logits is refused outright (400); with
+            # a token configured, the request must carry a matching
+            # 'logit_export_token' field (constant-time compare) or it is
+            # rejected (400) with no logits in the response either way. Fail
+            # loudly rather than silently ignoring the request, so the parity
+            # harness's hard gate (which relies on --logit-export-token being
+            # set on the CANDIDATE service) fails clearly instead of
+            # comparing nothing.
+            if return_logits:
+                configured_token = self.holder.logit_export_token
+                if not configured_token:
+                    raise ValueError(
+                        "logit export disabled on this server; launch serve_policy with "
+                        "--logit-export-token TOKEN (or FH_MJ_LOGIT_EXPORT_TOKEN) to allow "
+                        "return_logits (candidate/parity service only — never enable this "
+                        "on the production endpoint)"
+                    )
+                request_token = payload.get("logit_export_token")
+                if not isinstance(request_token, str) or not hmac.compare_digest(
+                    configured_token, request_token
+                ):
+                    raise ValueError(
+                        "logit export token missing or does not match this server's "
+                        "--logit-export-token; refusing return_logits"
+                    )
             policy = self.holder.policy
             observation = observation_from_json(payload, policy.model.model_config.event_window)
             # `observation_from_json` is the ONLY thing that produced `observation`
@@ -500,14 +526,16 @@ def main() -> None:
                         help="only sample when every legal action is in this family (e.g. 'discard')")
     parser.add_argument("--sample-seed", type=int, default=1)
     parser.add_argument(
-        "--enable-logit-export", action="store_true",
-        default=os.environ.get("FH_MJ_ENABLE_LOGIT_EXPORT") == "1",
-        help="Allow /act callers to request 'return_logits: true' and receive the full masked "
-        "logit vector (adversarial round 12, Finding 1: a material model-extraction surface). "
-        "Default OFF; a request with return_logits=true against a server without this flag gets "
-        "HTTP 400, never a silent no-op. Enable ONLY on the candidate/parity serving instance "
-        "used for fh-mj-serving-parity --endpoint (see the B2c runbook) — never in production. "
-        "Can also be set via FH_MJ_ENABLE_LOGIT_EXPORT=1; the CLI flag is primary.",
+        "--logit-export-token", type=str, default=os.environ.get("FH_MJ_LOGIT_EXPORT_TOKEN"),
+        help="Shared-secret token required for /act callers to request 'return_logits: true' and "
+        "receive the full masked logit vector (adversarial round 12, Finding 1; adversarial round "
+        "13, Finding 1: a bare on/off flag would let ANY network caller harvest logits once set, "
+        "so this must be a token the caller has to present). Unset (default): return_logits is "
+        "refused unconditionally with HTTP 400, never a silent no-op. Set: a request must carry a "
+        "matching 'logit_export_token' field (constant-time compare) or it gets HTTP 400 with no "
+        "logits in the body. Set ONLY on the candidate/parity serving instance used for "
+        "fh-mj-serving-parity --endpoint (see the B2c runbook) — never in production. Can also be "
+        "set via FH_MJ_LOGIT_EXPORT_TOKEN; the CLI flag takes precedence when both are given.",
     )
     args = parser.parse_args()
 
@@ -546,14 +574,17 @@ def main() -> None:
         manifest_path=args.manifest,
         device=args.device,
         checkpoint_sha256=checkpoint_sha256,
-        enable_logit_export=args.enable_logit_export,
+        logit_export_token=args.logit_export_token,
     )
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"Serving {policy.checkpoint_path} on http://{args.host}:{args.port}")
     print("POST /act with visible SeatObservation JSON. Go must still validate the returned action_id.")
     print('POST /reload {"checkpoint": "/path/to/model.pt"} to hot-swap the model without restarting.')
-    print(f"Logit export (return_logits): {'ENABLED' if args.enable_logit_export else 'disabled'}")
+    print(
+        "Logit export (return_logits): "
+        f"{'ENABLED (token required)' if args.logit_export_token else 'disabled'}"
+    )
     server.serve_forever()
 
 

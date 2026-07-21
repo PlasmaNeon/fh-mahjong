@@ -26,6 +26,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -125,6 +126,7 @@ class ParityReport:
 
 def build_act_payload(
     observation: Observation, decision_index: int, event_window: int, return_logits: bool = False,
+    logit_export_token: Optional[str] = None,
 ) -> dict:
     """Build the exact /act JSON payload `HTTPPolicy.chooseRemoteCtx` would
     send for this observation: the compact wire form, tail-windowed to
@@ -132,9 +134,10 @@ def build_act_payload(
     each policy the raw, unwindowed event log; each policy applies its own
     contract, per the DecisionContext design). Field names/shapes mirror
     `actRequest` in internal/bot/remote/http_policy.go exactly, plus the
-    harness-only `return_logits` field (Finding 3, adversarial round 2) that
-    real Go callers never send — `serve_policy.py`'s `/act` handler treats it
-    as opt-in and legacy servers simply ignore the unknown field."""
+    harness-only `return_logits`/`logit_export_token` fields (Finding 3,
+    adversarial round 2; adversarial round 13, Finding 1) that real Go
+    callers never send — `serve_policy.py`'s `/act` handler treats them as
+    opt-in and legacy servers simply ignore the unknown fields."""
     history = np.asarray(observation.event_history, dtype=np.uint32)
     windowed_count = min(history.size, event_window) if event_window > 0 else 0
     windowed = history[-windowed_count:].tolist() if windowed_count else []
@@ -154,6 +157,8 @@ def build_act_payload(
     }
     if return_logits:
         payload["return_logits"] = True
+        if logit_export_token is not None:
+            payload["logit_export_token"] = logit_export_token
     # Go's `EventHistory []uint32 \`json:"event_history,omitempty"\`` drops an
     # empty slice entirely rather than sending `[]`; mirror that so the
     # decode path (`observation_from_json`'s "missing history + count==0 is
@@ -300,10 +305,17 @@ def run_serving_parity(
     logit_tolerance: float = LOGIT_TOLERANCE,
     match_mode: str = "classic",
     allow_non_production: bool = False,
+    logit_export_token: Optional[str] = None,
 ) -> ParityReport:
     """Drive `episodes` seeded bridge episodes (seeds `start_seed ..
     start_seed + episodes - 1`), checking eval-vs-serving action parity on
     every decision. Raises `ServingParityError` on the first violation.
+
+    `logit_export_token`, when given, is sent as the `logit_export_token`
+    field on every `--endpoint` mode /act request (adversarial round 13,
+    Finding 1: `serve_policy.py` requires a caller-supplied token to match
+    before it honors `return_logits`, replacing the old process-wide
+    `--enable-logit-export` boolean). It has no effect in `--in-process` mode.
     """
     # Adversarial round 10, Finding 1: --endpoint is the release HARD GATE
     # (spec's promotion runbook step 2). The runbook's own command supplied
@@ -423,17 +435,20 @@ def run_serving_parity(
                     # would otherwise pass this "hard gate" silently.
                     act_payload = build_act_payload(
                         observation, decision_index, model_event_window, return_logits=True,
+                        logit_export_token=logit_export_token,
                     )
                     serving_action_id, served_error, serving_logits = _post_act(
                         endpoint, act_payload, timeout=http_timeout
                     )
                     if served_error is not None:
-                        # Adversarial round 12, Finding 1(d): a 400 whose body
-                        # mentions the logit-export gate means the endpoint
-                        # under test was launched WITHOUT --enable-logit-export
-                        # — this harness always sends return_logits=true, so
-                        # that flag is required on the CANDIDATE service (see
-                        # the B2c runbook's step 2 launch command). Point the
+                        # Adversarial round 12, Finding 1(d) / round 13,
+                        # Finding 1: a 400 whose body mentions the logit-export
+                        # gate means the endpoint under test was launched
+                        # without a --logit-export-token (or this harness was
+                        # not given the matching --logit-export-token to send)
+                        # — this harness always sends return_logits=true, so a
+                        # token is required on the CANDIDATE service (see the
+                        # B2c runbook's step 2 launch command). Point the
                         # operator straight at the fix rather than a bare
                         # "endpoint error".
                         if "logit export" in served_error.lower():
@@ -443,8 +458,9 @@ def run_serving_parity(
                                     f"endpoint error: {served_error} — the fh-mj-serving-parity "
                                     "--endpoint hard gate always requests return_logits=true; "
                                     "relaunch the CANDIDATE serve_policy instance with "
-                                    "--enable-logit-export (never the production instance) and "
-                                    "re-run this gate",
+                                    "--logit-export-token TOKEN (never the production instance) "
+                                    "and pass the same --logit-export-token TOKEN to this command, "
+                                    "then re-run this gate",
                                     observation,
                                 )
                             )
@@ -620,6 +636,14 @@ def main() -> None:
         "Must be a finite value >= 0 (adversarial round 3, Finding 3): NaN/Inf would silently "
         "disable the gate.",
     )
+    parser.add_argument(
+        "--logit-export-token", type=str, default=os.environ.get("FH_MJ_LOGIT_EXPORT_TOKEN"),
+        help="Shared-secret token sent as 'logit_export_token' on every --endpoint mode /act "
+        "request (adversarial round 13, Finding 1). Must match the --logit-export-token the "
+        "CANDIDATE serve_policy instance under test was launched with, or every request gets HTTP "
+        "400 and the gate fails with a pointer at this flag. No effect in --in-process mode. Can "
+        "also be set via FH_MJ_LOGIT_EXPORT_TOKEN.",
+    )
     args = parser.parse_args()
 
     try:
@@ -637,6 +661,7 @@ def main() -> None:
             logit_tolerance=args.logit_tolerance,
             match_mode=args.match_mode,
             allow_non_production=args.allow_non_production,
+            logit_export_token=args.logit_export_token,
         )
     except ServingParityError as exc:
         print(str(exc), file=sys.stderr)

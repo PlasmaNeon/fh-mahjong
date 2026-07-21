@@ -16,12 +16,59 @@ entry) — checkpoint `/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt`, sha256
 `aux_heads=True`. Rollback fallback: iter275
 (`current_chongci_reward_trained_best`, unchanged today).
 
-## 1. Deploy the NEW policy server image at window 0 (old champion, unchanged serving)
+**Logit-export authentication (adversarial round 13, Finding 1):**
+`serve_policy.py`'s `/act` no longer has an `--enable-logit-export` on/off
+switch — a process-wide boolean would let ANY network caller harvest full
+logit vectors the instant it was set. Instead, a `--logit-export-token TOKEN`
+(or `FH_MJ_LOGIT_EXPORT_TOKEN` env var) must be configured, and every request
+that sets `return_logits: true` must carry the SAME token in a
+`logit_export_token` field (checked with `hmac.compare_digest`) or it gets
+HTTP 400 with no logits in the body. Every command below that launches a
+candidate/private serving instance for `fh-mj-serving-parity --endpoint`
+picks a throwaway token and passes the matching `--logit-export-token` to the
+parity command too. **The production `policy` service never sets this flag.**
+
+## 1. Verify the NEW policy server image at window 0 (old champion, unchanged serving)
 
 Ship the new loader/serving image (metadata-aware `infer_model_config`,
 `/act` compact event fields, enriched `/healthz`) to Zeabur's `policy`
 service, still pointing at iter275 — this MUST be byte-identical to
 current production behavior (parity layer 1 covers window-0 states too).
+
+**This step's hard gate does NOT run against the live production URL**
+(adversarial round 13, Finding 2): the production endpoint never configures
+`--logit-export-token`, and `fh-mj-serving-parity --endpoint` always requests
+`return_logits: true` as part of its tight logit-tolerance check — every
+request against the live URL would get an immediate HTTP 400, so the gate
+could never pass there even when the new image is perfectly correct. Split
+"is prod actually running this image+checkpoint" from "does this image+
+checkpoint reproduce the reference exactly":
+
+1a. Deploy the new server image to Zeabur, still pointing at iter275 (window
+0), by the usual push/redeploy path.
+
+1b. Confirm the LIVE prod deployment's identity via `/healthz` — this needs
+no logits, so it works against the real public URL:
+
+```
+curl -s https://<policy-service>.zeabur.app/healthz | python3 -m json.tool
+```
+
+Confirm `checkpoint_sha256` matches the iter275 entry in
+`ai/checkpoints/best-checkpoints.json` and `event_window == 0`.
+
+1c. Run the window-0 parity HARD GATE against a **PRIVATE/local instance of
+the same production image+checkpoint** (iter275, window 0) — on the operator
+machine or a non-public staging service, launched with a throwaway
+`--logit-export-token`, never against the public prod URL:
+
+```
+uv run --project ai fh-mj-serve-policy \
+  --manifest ai/checkpoints/best-checkpoints.json \
+  --checkpoint /root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt \
+  --port 8767 \
+  --logit-export-token throwaway-window0-parity-token
+```
 
 ```
 uv run --project ai fh-mj-serving-parity \
@@ -29,12 +76,14 @@ uv run --project ai fh-mj-serving-parity \
   --event-history-window 0 \
   --episodes 50 --start-seed 970000 \
   --bridge-kind go --match-mode chongci \
-  --endpoint https://<policy-service>.zeabur.app/act
+  --endpoint http://127.0.0.1:8767/act \
+  --logit-export-token throwaway-window0-parity-token
 ```
 
 Expect: `result: PASS`, 0 fallbacks, 0 mismatches. Any failure here is a
 regression in the NEW server image itself (not iter_075) — stop and fix
-before touching the champion pointer.
+before touching the champion pointer. Kill the private instance afterward
+(port 8767); it is throwaway and never receives real traffic.
 
 (`--bridge-kind go --match-mode chongci` is REQUIRED here — as of adversarial
 round 10, Finding 1, `--endpoint` is a hard gate that refuses to run against
@@ -43,12 +92,21 @@ Chongci event streams: round transitions/resets, interrupts, tail
 truncation. `--allow-non-production` exists only for local experimentation,
 never for this gate.)
 
-## 2-4 preamble: candidate runs on a SEPARATE service instance, never the live primary
+Together, 1b (healthz identity check against the live URL) and 1c (parity
+hard gate against a private instance of the same bits) are the complete
+step-1 gate. A separate no-logit "action-only" mode against the live prod
+URL was considered and deliberately NOT added: it would require a new
+`serving_parity.py` CLI mode with weaker guarantees (argmax-only, no logit
+tolerance) purely so it could run against production, duplicating a gate
+1c already covers more strictly — not worth the extra surface for a step
+that already has a solid two-part answer.
 
-**Steps 2, 3, and 4 all evaluate iter_075 through a candidate policy-service
+## 2-5 preamble: candidate runs on a SEPARATE service instance, never the live primary
+
+**Steps 2 through 5 all evaluate iter_075 through a candidate policy-service
 instance that is distinct from the production primary.** The production
 `policy` service (`RL_AGENT_POLICY_URL`) stays on iter275 at window 0,
-untouched, until step 6's atomic switch. This is the fix for an earlier draft
+untouched, until step 6's cutover. This is the fix for an earlier draft
 of this runbook, which had steps 2-4 reload the PRODUCTION service in place to
 iter_075 while the backend's `RL_AGENT_EVENT_WINDOW` stayed at its default 0.
 That reload would have made the live `RL Agent` seat's own primary policy
@@ -60,6 +118,13 @@ Worse, step 4's shadow gate would then be comparing iter_075 against
 heuristic fallback traffic, not against the actual iter275 incumbent it needs
 to be compared against — an invalid gate that would still report "pass".
 
+**This candidate service is not throwaway** (adversarial round 13, Finding
+3): as of step 6 below, it IS the promotion target — the same running
+process/service is what production traffic gets pointed at, blue/green
+style, rather than being torn down and replaced. Keep that in mind when
+choosing where to run it (a stable host/service, not a scratch machine you
+plan to reclaim).
+
 **Local option (primary — the backend can always reach localhost or a second
 service on the same host):** run a second `fh-mj-serve-policy` process on a
 different port serving iter_075, e.g.:
@@ -69,22 +134,24 @@ uv run --project ai fh-mj-serve-policy \
   --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --port 8766 \
-  --enable-logit-export
+  --logit-export-token candidate-b2c-iter075-token
 ```
 
-`--enable-logit-export` is REQUIRED on this candidate/parity instance (adversarial
-round 12, Finding 1): step 2's `fh-mj-serving-parity --endpoint` hard gate always
-requests `return_logits: true` to verify tight logit parity, not just argmax
-agreement, and `serve_policy.py` refuses that field with an HTTP 400 unless the
-server was launched with this flag (or `FH_MJ_ENABLE_LOGIT_EXPORT=1`). The
-production `policy` service's launch command (`ai/Dockerfile.deploy`'s `CMD`)
-deliberately does **not** set `--enable-logit-export` — the full masked logit
-vector is a material model-extraction surface and must never be exposed on the
-publicly deployed primary endpoint. This is exactly why the parity gate in step
-2 must run against the **candidate** service (already the case as of step
-2-4's preamble above, not the production primary).
+`--logit-export-token` is REQUIRED on this candidate instance for step 2
+(adversarial round 12, Finding 1; adversarial round 13, Finding 1): step 2's
+`fh-mj-serving-parity --endpoint` hard gate always requests
+`return_logits: true` to verify tight logit parity, not just argmax
+agreement, and `serve_policy.py` refuses that field with an HTTP 400 unless
+the request carries a token matching the server's configured
+`--logit-export-token` (or `FH_MJ_LOGIT_EXPORT_TOKEN`). The production
+`policy` service's launch command (`ai/Dockerfile.deploy`'s `CMD`)
+deliberately does **not** set a logit-export token — the full masked logit
+vector is a material model-extraction surface and must never be exposed on
+the publicly deployed primary endpoint. This is exactly why the parity gate
+in step 2 must run against the **candidate** service (already the case as of
+this preamble, not the production primary).
 
-This is the **candidate service** referenced in steps 2-4 below
+This is the **candidate service** referenced in steps 2-5 below
 (`http://127.0.0.1:8766`, or `https://<candidate>.zeabur.app` if deployed as
 a second Zeabur service — e.g. `policy-candidate` — or reached via a local
 tunnel to a staging instance). The production `policy` service keeps serving
@@ -103,7 +170,9 @@ curl -X POST http://127.0.0.1:8766/reload \
 
 (`expected_event_window=128` makes the reload refuse to swap if the
 checkpoint's own metadata disagrees, per `serve_policy.py`'s `reload()`
-contract check — belt-and-suspenders against loading the wrong file.)
+contract check — belt-and-suspenders against loading the wrong file. `/reload`
+does not change a running server's `--logit-export-token`; that is fixed at
+launch.)
 
 **Before proceeding to step 4 (shadowing), verify the candidate itself is
 actually serving iter_075**, not a stale or misconfigured checkpoint:
@@ -127,14 +196,15 @@ uv run --project ai fh-mj-serving-parity \
   --event-history-window 128 \
   --episodes 200 --start-seed 971000 \
   --bridge-kind go --match-mode chongci \
-  --endpoint http://127.0.0.1:8766/act
+  --endpoint http://127.0.0.1:8766/act \
+  --logit-export-token candidate-b2c-iter075-token
 ```
 
 (Substitute the candidate service's URL if it's a second Zeabur service or
-tunnel instead of a local port. `--bridge-kind go --match-mode chongci` is
-REQUIRED — see the note on step 1 above; the seeded episodes' natural chongci
-round transitions are exactly what makes this a real hard gate rather than a
-single-round mock smoke test.)
+tunnel instead of a local port, and the actual token it was launched with.
+`--bridge-kind go --match-mode chongci` is REQUIRED — see the note on step 1
+above; the seeded episodes' natural chongci round transitions are exactly
+what makes this a real hard gate rather than a single-round mock smoke test.)
 
 Expect: `result: PASS`, `decisions checked` in the thousands, 0 fallbacks,
 0 mismatches. This is the HARD GATE (spec §3, item 2) — real HTTP POSTs to
@@ -197,7 +267,8 @@ Point a private room's empty-seat `RL Agent` button directly at iter_075
 (temporary `RL_AGENT_POLICY_URL` override on a canary deployment, or a
 manifest-scoped `--checkpoint-id` override — do NOT flip the production
 pointer yet) and play/observe >= 20 completed private-room matches with
-iter_075 actually controlling play (not shadow).
+iter_075 actually controlling play (not shadow). This continues to target the
+SAME candidate service from steps 2-4 (it is not torn down between steps).
 
 The canary deployment's backend MUST also set `RL_AGENT_EVENT_WINDOW=128`
 alongside `RL_AGENT_POLICY_URL` — iter_075 is an event model (window 128);
@@ -216,10 +287,55 @@ Exit criteria (ALL required):
   server's stats log line at `--stats-log-every`)
 - no crashes or incidents
 
-## 6. Atomic switch: manifest pointer + Zeabur deploy
+## 6. Atomic switch: blue/green backend cutover (no policy redeploy)
 
-ONE commit that does both of the following (never split across commits —
-an inconsistent intermediate state is a rollback risk):
+**Promotion is a backend env-var flip, not a policy-service redeploy or a
+manifest edit** (adversarial round 13, Finding 3). The earlier draft of this
+step promoted by editing the manifest pointer and redeploying
+`Dockerfile.deploy`'s committed checkpoint AND separately changing the
+backend's `RL_AGENT_EVENT_WINDOW` — two independent moving parts that could
+land at different times, leaving a window where the policy image and the
+backend's expected window disagree. Instead:
+
+- The **candidate** `iter_075`/window-128 service already running from steps
+  2-5 becomes the promotion target in place — it is not redeployed or
+  recreated.
+- The **production** `iter275`/window-0 `policy` service is left running,
+  completely untouched, as the "blue" rollback target — do not redeploy it,
+  do not edit its `Dockerfile.deploy`, do not touch the manifest yet.
+
+**Before flipping traffic, harden the candidate service for production
+exposure:** restart it WITHOUT `--logit-export-token` (same checkpoint, same
+port/URL — just drop the flag, since it is about to receive real user
+traffic and must not expose logit export to end users the way the
+candidate/parity gates needed it to). Re-verify `/healthz` reports
+`checkpoint_sha256` and `event_window: 128` unchanged after the restart.
+
+**PROMOTION = ONE backend revision** changing, together:
+- `RL_AGENT_POLICY_URL` → the candidate service's `/act` URL
+- `RL_AGENT_EVENT_WINDOW` → `128`
+- `POLICY_SERVER_URL` (post-game review's client,
+  `internal/api/review.go`'s `reviewEventWindow`) → the SAME candidate
+  service's URL, if review should follow the new champion (the common case —
+  one `policy` service serves both private-room RL and review). Leaving
+  `REVIEW_EVENT_WINDOW` unset is then fine: it falls back to
+  `RL_AGENT_EVENT_WINDOW` automatically once `POLICY_SERVER_URL` matches the
+  resolved RL agent endpoint (adversarial round 7, Finding 2). If review
+  should stay on a DIFFERENT server/checkpoint, leave `POLICY_SERVER_URL`
+  alone and set `REVIEW_EVENT_WINDOW` explicitly instead.
+
+Deploy this single revision and restart the backend.
+
+**In-flight rooms**: rooms are in-process state (no external session store),
+so a backend restart ends every live match regardless of whether the
+switch is atomic — blue/green does not change this. Schedule the cutover
+in a quiet window; this is inherent to the current architecture, not
+something to try to work around here.
+
+**AFTER** the cutover is confirmed healthy (health checks pass, a spot-check
+match plays correctly against the new primary), do the following as a
+**bookkeeping commit** — it records history, it is no longer the switching
+mechanism:
 
 1. In `ai/checkpoints/best-checkpoints.json`, set
    `current_chongci_reward_trained_best` to the `gate_qualified_research_champion`
@@ -227,58 +343,55 @@ an inconsistent intermediate state is a rollback risk):
    promotion_gate — carry the confirmation-gate record forward), retaining
    the previous entry as `previous_best_checkpoint_path` /
    `previous_best_id` per the existing manifest convention (see how the
-   iter275 entry itself records its predecessor). Update `gate_qualified_research_champion.serving_status`
-   from `blocked_on_b2c` to `deployed` (or remove the entry if the schema
-   treats "current" and "gate-qualified-pending" as mutually exclusive —
-   confirm against `checkpoint_manifest.py`'s schema before editing).
-2. Update the Zeabur `policy` service's committed champion checkpoint
-   (`Dockerfile.deploy`) to iter_075 and deploy:
+   iter275 entry itself records its predecessor). Update
+   `gate_qualified_research_champion.serving_status` from `blocked_on_b2c` to
+   `deployed` (or remove the entry if the schema treats "current" and
+   "gate-qualified-pending" as mutually exclusive — confirm against
+   `checkpoint_manifest.py`'s schema before editing).
+2. Optionally update the Zeabur `policy` service's committed champion
+   checkpoint (`Dockerfile.deploy`) to iter_075 at a later, unhurried deploy
+   — this only matters for what a FRESH deploy of the `policy` service
+   defaults to; the currently-running candidate service (now receiving real
+   traffic per the backend env vars above) already IS iter_075, so this is
+   not time-pressured the way the env-var flip was. When it does land:
 
    ```
    git commit -am "feat(ai): promote iter_075 to operational serving champion (B2c)"
    git push   # Zeabur auto-redeploys ALL services on push — expected, not a bug
    ```
-3. Set the production backend's `RL_AGENT_EVENT_WINDOW=128` (was `0`) as
-   part of this same switch — iter_075 is an event model, and the backend
-   env var must match what the `policy` service now serves or the
-   contract-aware health/`/act` gate (`internal/bot/remote/health.go`,
-   `http_policy.go`'s `ValidateServer`) reports the endpoint unavailable /
-   every `/act` 400s into the heuristic fallback. Restart the backend after
-   setting it.
 
-   Post-game review's own client (`internal/api/review.go`'s
-   `reviewEventWindow`, talking to `POLICY_SERVER_URL`) is governed
-   separately by `REVIEW_EVENT_WINDOW`, NOT `RL_AGENT_EVENT_WINDOW` directly
-   — the two env vars can describe different servers (adversarial round 7,
-   Finding 2). If `POLICY_SERVER_URL` is the same service as the resolved RL
-   agent endpoint (the common case — one `policy` service serves both
-   private-room RL and review), leaving `REVIEW_EVENT_WINDOW` unset is fine:
-   it falls back to `RL_AGENT_EVENT_WINDOW` automatically when the two URLs
-   match (or when `POLICY_SERVER_URL` is unset). If review points at a
-   DIFFERENT server/checkpoint, set `REVIEW_EVENT_WINDOW` explicitly instead
-   of relying on the fallback.
+Keep all existing gate criteria from steps 4-5 intact (shadow >= 50, canary
+>= 20, zero fallbacks, p95 latency) — nothing about the switch mechanism
+changes what had to pass before reaching this step.
 
 From this point iter_075 is the promotion anchor for all future candidates
 (future gates compare against iter_075, not iter275).
 
 ## Rollback path (iter275)
 
-If any post-switch signal regresses (elevated fallback rate, incident,
-regression in live win-rate monitoring):
+Because iter275's `policy` service was NEVER taken down (it stayed live as
+the "blue" target throughout steps 2-6), rollback is also a pure backend
+env-var flip, not a policy-service redeploy:
 
-1. Revert the manifest-pointer commit from step 6 (`git revert <sha>`) —
-   this restores `current_chongci_reward_trained_best` to iter275 in one
-   commit, mirroring the atomic-switch discipline.
-2. Redeploy the Zeabur `policy` service from the reverted `Dockerfile.deploy`
-   (iter275 checkpoint is still committed in history — do not delete it).
-3. Set the production backend's `RL_AGENT_EVENT_WINDOW` back to `0` —
-   iter275 is a window-0 (event-free) checkpoint; leaving the backend at 128
-   after rolling the `policy` service back to iter275 makes the same
-   contract gate report the endpoint unavailable. Restart the backend after
-   unsetting/resetting it.
-4. Re-run step 2's `fh-mj-serving-parity --endpoint` hard gate against
-   iter275 post-rollback to confirm the rollback itself is byte-identical
-   to pre-B2c production behavior before declaring the incident closed.
+1. Deploy ONE backend revision reverting `RL_AGENT_POLICY_URL`,
+   `RL_AGENT_EVENT_WINDOW`, `POLICY_SERVER_URL`, and (if it was set)
+   `REVIEW_EVENT_WINDOW` back to their pre-switch values (pointing at the
+   still-running iter275 "blue" service) and restart the backend. No policy
+   image redeploy is needed — iter275 was never stopped.
+2. As with the promotion switch, this restart ends any in-flight rooms
+   (inherent to in-process room state, not specific to rollback) — schedule
+   accordingly if the rollback itself isn't already an emergency.
+3. If the bookkeeping commit (manifest pointer / `Dockerfile.deploy`) from
+   step 6 had already landed, revert it (`git revert <sha>`) for consistency
+   with the manifest's recorded history — this is bookkeeping cleanup, not
+   what makes the rollback effective; the effective rollback already
+   happened in step 1 above.
+4. Re-run step 1's window-0 parity gate to reconfirm iter275 behavior
+   post-rollback: as in step 1, run it against a **private/local instance**
+   of the iter275 image+checkpoint with a throwaway `--logit-export-token`
+   (never directly against the live "blue" service, which — like the
+   original production endpoint — has no token configured and would 400
+   every request) before declaring the incident closed.
 
 ## Recording outcomes
 

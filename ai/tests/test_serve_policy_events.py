@@ -60,9 +60,9 @@ class _Server:
     """A ThreadingHTTPServer bound to port 0, serving a real PolicyHolder, for
     exercising the /act, /healthz, and /reload HTTP contract end to end."""
 
-    def __init__(self, checkpoint_path: Path, manifest_path: Path, enable_logit_export: bool = False) -> None:
+    def __init__(self, checkpoint_path: Path, manifest_path: Path, logit_export_token: str | None = None) -> None:
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
-        self.holder = PolicyHolder(policy, manifest_path=manifest_path, enable_logit_export=enable_logit_export)
+        self.holder = PolicyHolder(policy, manifest_path=manifest_path, logit_export_token=logit_export_token)
         handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": self.holder})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -669,17 +669,17 @@ def test_policy_holder_reload_success_updates_policy_and_hash_together(tmp_path:
     assert holder.checkpoint_sha256 == hashlib.sha256(new.read_bytes()).hexdigest()
 
 
-# --- adversarial round 12, Finding 1: /act logit export gating -------------------------
+# --- adversarial round 12/13, Finding 1: /act logit export gating ---------------------
 
 
-def test_http_act_return_logits_disabled_by_default_gets_400(tmp_path: Path) -> None:
-    """Unauthenticated logit export (adversarial round 12, Finding 1): a
-    request with return_logits=true against a server that was NOT launched
-    with --enable-logit-export must get a loud HTTP 400, never a silent
-    no-op — the parity harness's --endpoint hard gate must fail clearly
-    rather than comparing nothing when misconfigured."""
+def test_http_act_return_logits_no_token_configured_gets_400(tmp_path: Path) -> None:
+    """No --logit-export-token configured on the server at all (adversarial
+    round 12/13, Finding 1): a request with return_logits=true must get a
+    loud HTTP 400, never a silent no-op — the parity harness's --endpoint
+    hard gate must fail clearly rather than comparing nothing when
+    misconfigured."""
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json")  # enable_logit_export defaults False
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # logit_export_token defaults None
     try:
         status, data = server.request(
             "POST", "/act",
@@ -693,11 +693,62 @@ def test_http_act_return_logits_disabled_by_default_gets_400(tmp_path: Path) -> 
 
     assert status == 400
     assert "logit export" in data["error"]
+    assert "logits" not in data
 
 
-def test_http_act_return_logits_enabled_returns_logits(tmp_path: Path) -> None:
+def test_http_act_return_logits_correct_token_returns_logits(tmp_path: Path) -> None:
+    """Adversarial round 13, Finding 1: a shared-secret token replaces the
+    old process-wide --enable-logit-export boolean. A request that carries
+    the SAME token the server was configured with gets logits back."""
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json", enable_logit_export=True)
+    server = _Server(checkpoint, tmp_path / "manifest.json", logit_export_token="s3cr3t-token")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1, return_logits=True,
+                logit_export_token="s3cr3t-token",
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert "logits" in data
+    assert isinstance(data["logits"], list)
+
+
+def test_http_act_return_logits_wrong_token_rejected_no_logits(tmp_path: Path) -> None:
+    """Adversarial round 13, Finding 1: a token IS configured on the server,
+    but the request carries the wrong one — this must be rejected (no
+    unauthenticated-once-flag-is-on mode), and the response must not leak
+    logits."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json", logit_export_token="s3cr3t-token")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1, return_logits=True,
+                logit_export_token="wrong-token",
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "logits" not in data
+
+
+def test_http_act_return_logits_missing_token_rejected_no_logits(tmp_path: Path) -> None:
+    """Adversarial round 13, Finding 1: a token IS configured on the server,
+    but the request omits 'logit_export_token' entirely — this is the exact
+    "any network caller" scenario the finding calls out, and must be
+    rejected just like a wrong token, not treated as an implicit disable."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json", logit_export_token="s3cr3t-token")
     try:
         status, data = server.request(
             "POST", "/act",
@@ -709,17 +760,16 @@ def test_http_act_return_logits_enabled_returns_logits(tmp_path: Path) -> None:
     finally:
         server.close()
 
-    assert status == 200, data
-    assert "logits" in data
-    assert isinstance(data["logits"], list)
+    assert status == 400
+    assert "logits" not in data
 
 
-def test_http_act_without_return_logits_unaffected_by_export_flag(tmp_path: Path) -> None:
+def test_http_act_without_return_logits_unaffected_by_export_token(tmp_path: Path) -> None:
     """A normal /act request (no return_logits) must succeed regardless of
-    the server's --enable-logit-export setting — the gate only applies to
-    requests that actually ask for logits."""
+    whether the server has a --logit-export-token configured — the gate
+    only applies to requests that actually ask for logits."""
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json")  # export disabled
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # no token configured
     try:
         status, data = server.request(
             "POST", "/act",
