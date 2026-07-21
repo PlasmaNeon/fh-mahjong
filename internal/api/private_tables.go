@@ -365,10 +365,12 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 			return ErrPrivateTableAlreadyStarted
 		}
 		if req.Kind == "bot" {
-			if req.Difficulty == pb.Difficulty_DIFFICULTY_RL && !s.Matchmaker.rlAgentAvailable() {
-				return errRLAgentUnavailable
-			}
-			if _, perr := s.Matchmaker.resolveSeatPolicy(req.Difficulty, tableID, req.Seat); perr != nil {
+			// Validate only — never construct a policy here. There is no Room
+			// yet to own (and later close) whatever the resolver would build,
+			// so calling it purely to check the difficulty risks leaking a
+			// closeable policy's background resources (see
+			// ValidateSeatDifficulty's doc comment).
+			if perr := s.Matchmaker.ValidateSeatDifficulty(req.Difficulty); perr != nil {
 				return perr
 			}
 		}

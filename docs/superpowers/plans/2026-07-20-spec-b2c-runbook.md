@@ -35,23 +35,88 @@ Expect: `result: PASS`, 0 fallbacks, 0 mismatches. Any failure here is a
 regression in the NEW server image itself (not iter_075) — stop and fix
 before touching the champion pointer.
 
-## 2. `fh-mj-serving-parity` hard gate — iter_075 against the prod image
+## 2-4 preamble: candidate runs on a SEPARATE service instance, never the live primary
 
-Point the same policy service (or a staging copy) at iter_075 via
-`/reload` (or redeploy with `--checkpoint` overridden), THEN:
+**Steps 2, 3, and 4 all evaluate iter_075 through a candidate policy-service
+instance that is distinct from the production primary.** The production
+`policy` service (`RL_AGENT_POLICY_URL`) stays on iter275 at window 0,
+untouched, until step 6's atomic switch. This is the fix for an earlier draft
+of this runbook, which had steps 2-4 reload the PRODUCTION service in place to
+iter_075 while the backend's `RL_AGENT_EVENT_WINDOW` stayed at its default 0.
+That reload would have made the live `RL Agent` seat's own primary policy
+start returning event_window=128 responses to a window-0-configured backend —
+the contract-aware health/`/act` checker (`internal/bot/remote/health.go`,
+`http_policy.go`'s `ValidateServer`) would then reject every response and
+every live RL seat would silently fall back to the heuristic bot mid-match.
+Worse, step 4's shadow gate would then be comparing iter_075 against
+heuristic fallback traffic, not against the actual iter275 incumbent it needs
+to be compared against — an invalid gate that would still report "pass".
+
+**Local option (primary — the backend can always reach localhost or a second
+service on the same host):** run a second `fh-mj-serve-policy` process on a
+different port serving iter_075, e.g.:
+
+```
+uv run --project ai fh-mj-serve-policy \
+  --manifest ai/checkpoints/best-checkpoints.json \
+  --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
+  --port 8766
+```
+
+This is the **candidate service** referenced in steps 2-4 below
+(`http://127.0.0.1:8766`, or `https://<candidate>.zeabur.app` if deployed as
+a second Zeabur service — e.g. `policy-candidate` — or reached via a local
+tunnel to a staging instance). The production `policy` service keeps serving
+iter275 on its usual port/URL throughout; nothing about its traffic changes
+until step 6.
+
+If an already-running candidate service needs to be swapped to iter_075
+in-place instead of restarted, use the exact `/reload` request (against the
+CANDIDATE service's URL only, never the production one):
+
+```
+curl -X POST http://127.0.0.1:8766/reload \
+  -H 'Content-Type: application/json' \
+  -d '{"checkpoint": "/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt", "expected_event_window": 128}'
+```
+
+(`expected_event_window=128` makes the reload refuse to swap if the
+checkpoint's own metadata disagrees, per `serve_policy.py`'s `reload()`
+contract check — belt-and-suspenders against loading the wrong file.)
+
+**Before proceeding to step 4 (shadowing), verify the candidate itself is
+actually serving iter_075**, not a stale or misconfigured checkpoint:
+
+```
+curl -s http://127.0.0.1:8766/healthz | python3 -m json.tool
+```
+
+Confirm both:
+- `checkpoint_sha256 == 00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e`
+  (the `gate_qualified_research_champion` entry's `checkpoint_sha256` in
+  `ai/checkpoints/best-checkpoints.json` — re-read the live value from that
+  file rather than trusting this copy if the manifest has moved on)
+- `event_window == 128`
+
+## 2. `fh-mj-serving-parity` hard gate — iter_075 against the candidate service
 
 ```
 uv run --project ai fh-mj-serving-parity \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --event-history-window 128 \
   --episodes 200 --start-seed 971000 \
-  --endpoint https://<policy-service>.zeabur.app/act
+  --endpoint http://127.0.0.1:8766/act
 ```
+
+(Substitute the candidate service's URL if it's a second Zeabur service or
+tunnel instead of a local port.)
 
 Expect: `result: PASS`, `decisions checked` in the thousands, 0 fallbacks,
 0 mismatches. This is the HARD GATE (spec §3, item 2) — real HTTP POSTs to
-the actual `/act` endpoint of the running production image, not a mock.
-Any single mismatch, illegal action, or HTTP error is an immediate stop.
+the actual `/act` endpoint of the candidate serving image (the same
+loader/serving code the production image runs, just a separate process/
+service so production traffic is never touched), not a mock. Any single
+mismatch, illegal action, or HTTP error is an immediate stop.
 
 ## 3. Serving smoke
 
@@ -63,25 +128,30 @@ uv run --project ai fh-mj-serving-smoke \
 
 Expect: all episodes complete, legal actions throughout, 0 fallbacks
 (`report['decisions'] > 0`, no exceptions). `run_bridge_serving_smoke` drives
-`CheckpointPolicy` **in-process** (no HTTP round-trip) against real bridge
-legality — it exercises the in-process serving stack (observation encoding,
-event-history windowing, action decoding) end-to-end, distinct from step 2's
-`--endpoint` mode, which is the only step that actually POSTs to the running
-`/act` HTTP endpoint.
+`CheckpointPolicy` **in-process** (no HTTP round-trip, no service involved at
+all) against real bridge legality — it exercises the in-process serving stack
+(observation encoding, event-history windowing, action decoding) end-to-end,
+distinct from step 2's `--endpoint` mode, which is the only step that
+actually POSTs to a running `/act` HTTP endpoint (the candidate's).
 
 ## 4. Shadow >= 50 games
 
-Enable shadow mode on the live `RL Agent` seat: set on the backend
+Enable shadow mode on the live `RL Agent` seat: set on the PRODUCTION backend
+(the primary stays iter275/window-0; only the shadow target changes)
 
 ```
-RL_AGENT_SHADOW_POLICY_URL=https://<policy-service-or-staging>.zeabur.app/act
+RL_AGENT_SHADOW_POLICY_URL=http://127.0.0.1:8766/act
 RL_AGENT_SHADOW_EVENT_WINDOW=128
 ```
 
-and restart the backend. `bot.ShadowPolicy` sends the primary's live traffic
-to iter_075 asynchronously (bounded FIFO, drop-on-backpressure, never blocks
+pointing at the candidate service verified above (not a reload of the
+production `policy` service), and restart the backend. `bot.ShadowPolicy`
+sends the primary's (iter275's) live traffic to iter_075 on the candidate
+service asynchronously (bounded FIFO, drop-on-backpressure, never blocks
 play) and logs `{decision_index, primary_action, shadow_action, agree?,
-shadow_latency_ms, shadow_error?}` per decision.
+shadow_latency_ms, shadow_error?}` per decision. Because the primary is
+untouched, this is a true iter_075-vs-iter275 shadow comparison, not a
+comparison against fallback traffic.
 
 Exit criteria (ALL required, over >= 50 completed games):
 - zero shadow-side errors/fallbacks (`shadow_error` empty on every logged

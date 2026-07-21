@@ -316,22 +316,35 @@ type closeableBotPolicy interface {
 // via a set so a policy installed as both a seat override and the room
 // default is only closed once.
 func (r *Room) closeSeatPolicies() {
+	policies := make([]bot.Policy, 0, len(r.SeatPolicies)+1)
+	for _, policy := range r.SeatPolicies {
+		policies = append(policies, policy)
+	}
+	closeBotPolicies(append(policies, r.BotPolicy)...)
+}
+
+// closeBotPolicies calls Close on every distinct closeableBotPolicy among the
+// given policies, once each (pointer-deduped, same as closeSeatPolicies'
+// former inline logic). Shared by Room.closeSeatPolicies (tearing down a
+// finished match's seat policies) and Matchmaker.StartPrivateTable
+// (internal/api/matchmaker.go) — the latter calls this on every pre-handoff
+// failure path (a later seat's resolution erroring, match persistence
+// failing, or registerActiveRoom refusing the room because the server is
+// draining) so policies already constructed for earlier seats are never
+// leaked just because no Room was ever created to own them.
+func closeBotPolicies(policies ...bot.Policy) {
 	seen := make(map[closeableBotPolicy]struct{})
-	closeOnce := func(policy bot.Policy) {
+	for _, policy := range policies {
 		closeable, ok := policy.(closeableBotPolicy)
 		if !ok || closeable == nil {
-			return
+			continue
 		}
 		if _, already := seen[closeable]; already {
-			return
+			continue
 		}
 		seen[closeable] = struct{}{}
 		closeable.Close()
 	}
-	for _, policy := range r.SeatPolicies {
-		closeOnce(policy)
-	}
-	closeOnce(r.BotPolicy)
 }
 
 // appendReplay accumulates broadcast payloads into the room's replay buffer.

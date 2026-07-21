@@ -319,6 +319,38 @@ func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty, roomID string, seat uint
 	return bot.NewPolicy(d)
 }
 
+// ValidateSeatDifficulty reports whether d is an assignable bot-seat
+// difficulty, WITHOUT constructing a policy for it. This is the validate-only
+// counterpart to resolveSeatPolicy, used by handlePrivateTableSeat when a
+// host merely picks a difficulty for a seat (no match has started, no Room
+// exists yet to ever own or close a constructed policy).
+//
+// It deliberately never calls SeatPolicyResolver: cmd/server's resolver is
+// where a real DIFFICULTY_RL seat gets wrapped in a bot.NewShadowPolicy when
+// shadow mode is configured, and constructing a ShadowPolicy starts its
+// background worker goroutine immediately. Calling the resolver purely to
+// validate and discarding the result (adversarial round 4, Finding 1) leaked
+// one goroutine+queue per seat-assignment request — an authenticated host
+// repeating the request could exhaust the server. Validation instead mirrors
+// resolveSeatPolicy's rejection rules using only side-effect-free checks:
+// DIFFICULTY_RL is acceptable iff the RL agent is currently available (the
+// same knowledge cmd/server's resolver closure would otherwise need to
+// consult before constructing anything), and every other difficulty is
+// acceptable iff bot.NewPolicy recognizes it (NewPolicy itself has no side
+// effects — it either errors or returns a plain, non-closeable
+// HeuristicPolicy). StartPrivateTable still calls resolveSeatPolicy to build
+// the real per-seat policy at match start, once a Room exists to own it.
+func (m *Matchmaker) ValidateSeatDifficulty(d pb.Difficulty) error {
+	if d == pb.Difficulty_DIFFICULTY_RL {
+		if !m.rlAgentAvailable() {
+			return errRLAgentUnavailable
+		}
+		return nil
+	}
+	_, err := bot.NewPolicy(d)
+	return err
+}
+
 // rlAgentAvailable reports whether the trained RL agent can currently be
 // offered. It is nil-safe (both for the receiver and the probe) and consults
 // the health-checked RLAgentAvailable function installed by cmd/server.
@@ -619,6 +651,26 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		seatPolicies := make(map[uint32]bot.Policy)
 		seatInfos := make(map[uint32]SeatInfo)
 		humanSeats = make(map[uint32]uint)
+
+		// handedOff flips to true only once a Room has been constructed and
+		// taken ownership of seatPolicies (it will close them itself at
+		// shutdown, via closeSeatPolicies). Every return path before that
+		// point — a later seat's resolveSeatPolicy failing, match persistence
+		// failing, or registerActiveRoom refusing the room because the server
+		// is draining — must close whatever was already constructed for
+		// earlier seats itself, or a closeable policy (e.g. a ShadowPolicy's
+		// worker goroutine) leaks for good (adversarial round 4, Finding 1b).
+		handedOff := false
+		defer func() {
+			if !handedOff {
+				policies := make([]bot.Policy, 0, len(seatPolicies))
+				for _, p := range seatPolicies {
+					policies = append(policies, p)
+				}
+				closeBotPolicies(policies...)
+			}
+		}()
+
 		for i, s := range table.Seats {
 			seat := uint32(i)
 			switch s.Kind {
@@ -683,6 +735,11 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 		}
 
 		m.registerActivePrivateTable(tableID, matchID, mapValues(humanSeats), room)
+
+		// From here on, room (holding seatPolicies) is the durable owner: its
+		// own closeSeatPolicies will run at shutdown, so the deferred cleanup
+		// above must stand down.
+		handedOff = true
 
 		table.State = "started"
 		table.MatchID = matchID
