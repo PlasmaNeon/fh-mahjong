@@ -428,6 +428,26 @@ def run_serving_parity(
                         endpoint, act_payload, timeout=http_timeout
                     )
                     if served_error is not None:
+                        # Adversarial round 12, Finding 1(d): a 400 whose body
+                        # mentions the logit-export gate means the endpoint
+                        # under test was launched WITHOUT --enable-logit-export
+                        # — this harness always sends return_logits=true, so
+                        # that flag is required on the CANDIDATE service (see
+                        # the B2c runbook's step 2 launch command). Point the
+                        # operator straight at the fix rather than a bare
+                        # "endpoint error".
+                        if "logit export" in served_error.lower():
+                            raise ServingParityError(
+                                _failure_message(
+                                    seed, decision_index,
+                                    f"endpoint error: {served_error} — the fh-mj-serving-parity "
+                                    "--endpoint hard gate always requests return_logits=true; "
+                                    "relaunch the CANDIDATE serve_policy instance with "
+                                    "--enable-logit-export (never the production instance) and "
+                                    "re-run this gate",
+                                    observation,
+                                )
+                            )
                         raise ServingParityError(
                             _failure_message(seed, decision_index, f"endpoint error: {served_error}", observation)
                         )

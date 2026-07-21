@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import threading
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -57,6 +58,7 @@ class PolicyHolder:
         manifest_path: Path,
         device: str = "cpu",
         checkpoint_sha256: Optional[str] = None,
+        enable_logit_export: bool = False,
     ) -> None:
         """`checkpoint_sha256`, when given, MUST be the hash of the exact
         bytes `policy` was deserialized from (see
@@ -67,10 +69,18 @@ class PolicyHolder:
         opens (adversarial round 5, Finding 2). When omitted (test/back-compat
         convenience callers that already hold a constructed `policy` and have
         no bytes to hash), this falls back to re-hashing `policy.checkpoint_path`
-        from disk, which does not have that guarantee."""
+        from disk, which does not have that guarantee.
+
+        `enable_logit_export` gates whether ANY caller's `return_logits: true`
+        on /act is honored (adversarial round 12, Finding 1): the full masked
+        logit vector is a material model-extraction surface on a publicly
+        deployed endpoint, so it defaults to OFF. Only the candidate/parity
+        serving instance used for `fh-mj-serving-parity --endpoint` needs it
+        on; production never sets it."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
+        self.enable_logit_export = enable_logit_export
         resolved_sha256 = (
             checkpoint_sha256 if checkpoint_sha256 is not None else self._sha256_of(policy.checkpoint_path)
         )
@@ -224,9 +234,22 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("content-length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            return_logits = bool(payload.get("return_logits", False))
+            # Adversarial round 12, Finding 1: an unauthenticated caller must
+            # never be able to pull the full masked logit vector off a
+            # publicly deployed /act endpoint — that is a material model-
+            # extraction surface. Fail loudly (400) rather than silently
+            # ignoring the request, so the parity harness's hard gate (which
+            # relies on --enable-logit-export being set on the CANDIDATE
+            # service) fails clearly instead of comparing nothing.
+            if return_logits and not self.holder.enable_logit_export:
+                raise ValueError(
+                    "logit export disabled on this server; launch serve_policy with "
+                    "--enable-logit-export to allow return_logits (candidate/parity "
+                    "service only — never enable this on the production endpoint)"
+                )
             policy = self.holder.policy
             observation = observation_from_json(payload, policy.model.model_config.event_window)
-            return_logits = bool(payload.get("return_logits", False))
             # `observation_from_json` is the ONLY thing that produced `observation`
             # above, and for an event model (event_window > 0) it never returns
             # successfully with an empty `event_history` unless the wire payload's
@@ -358,18 +381,74 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
+# The four wire fields that make up the compact event contract. Presence of
+# ANY of these on a payload is what triggers validation against a window-0
+# model (adversarial round 12, Finding 2) — see `observation_from_json`.
+_EVENT_CONTRACT_FIELDS = ("event_count", "event_window", "contract_version", "event_history")
+
+
+def _decode_and_validate_event_history(payload: dict, model_event_window: int) -> np.ndarray:
+    """Validate and decode the compact event-contract fields against
+    `model_event_window`, shared by both the "event model" branch and the
+    "window-0 model that was sent contract fields anyway" branch of
+    `observation_from_json` — the checks are IDENTICAL either way (adversarial
+    round 12, Finding 2: validation must be symmetric in model_event_window,
+    including 0)."""
+    if "event_count" not in payload or "event_window" not in payload or "contract_version" not in payload:
+        raise ValueError(
+            "event-contract fields are partially present: 'event_count', 'event_window', and "
+            "'contract_version' must ALL be present together (or all absent for a true legacy "
+            f"caller) on every /act and /evaluate observation — got payload keys {sorted(k for k in payload if k in _EVENT_CONTRACT_FIELDS)}"
+        )
+    event_count = payload["event_count"]
+    event_window = payload["event_window"]
+    contract_version = payload["contract_version"]
+    raw_history = payload.get("event_history")
+    if raw_history is None:
+        raw_history = []
+    if len(raw_history) != event_count:
+        raise ValueError(
+            f"event_history length {len(raw_history)} does not match event_count {event_count}"
+        )
+    if event_count > event_window:
+        raise ValueError(f"event_count {event_count} exceeds event_window {event_window}")
+    if event_window != model_event_window:
+        raise ValueError(
+            f"event_window {event_window} does not match the serving model's "
+            f"event_window {model_event_window}"
+        )
+    if contract_version != EVENT_CONTRACT_V1:
+        raise ValueError(
+            f"unsupported contract_version {contract_version!r}; expected {EVENT_CONTRACT_V1}"
+        )
+    return np.asarray(raw_history, dtype=np.uint32)
+
+
 def observation_from_json(payload: dict, model_event_window: int) -> Observation:
     """Decode a Go /act or /evaluate request body into an `Observation`.
 
     `model_event_window` is the SERVING model's `ModelConfig.event_window`
-    (0 for the event-free champion). When it is 0, the compact event fields
-    (`event_history`/`event_count`/`event_window`/`contract_version`) are
-    IGNORED entirely — this is the regression bar: behavior must stay
-    byte-identical to before the event contract existed. When it is > 0, all
-    three scalar fields are REQUIRED (Go always sends them, per the compact
-    /act contract in internal/rl's HTTPPolicy); `event_history` may be
-    omitted only when `event_count == 0` (Go's `omitempty` drops the empty
-    array) and is then treated as `[]`.
+    (0 for the event-free champion). When it is > 0, all three scalar event
+    fields (`event_count`/`event_window`/`contract_version`) are REQUIRED (Go
+    always sends them, per the compact /act contract in internal/rl's
+    HTTPPolicy); `event_history` may be omitted only when `event_count == 0`
+    (Go's `omitempty` drops the empty array) and is then treated as `[]`.
+
+    When `model_event_window == 0`, a request that omits ALL FOUR event
+    fields entirely is a true legacy caller (pre-B2c Go, or old test
+    payloads) and is accepted with an empty event history, unchanged from
+    before the event contract existed. But if the payload sends ANY of the
+    four fields — e.g. a caller still configured for an event model
+    (event_window=128, or a stale contract_version) that got rolled back
+    (skewed) onto a window-0 checkpoint without noticing — validation is
+    symmetric with the event-model branch above: contract_version must match
+    EVENT_CONTRACT_V1, event_window must equal model_event_window (0, here),
+    and event_count/event_history length must be consistent. This closes a
+    silent-acceptance gap (adversarial round 12, Finding 2) where rollback
+    skew against a window-0 model produced fake remote successes instead of
+    a loud rejection. The Go legacy path always sends the three scalars as
+    0/0/1 against a window-0 model, which satisfies this validation exactly
+    (event_window 0 == 0, contract_version 1 matches) and keeps passing.
     """
     env_config = EnvConfig()
     planes = np.asarray(payload["planes"], dtype=np.float32).reshape(env_config.plane_shape)
@@ -386,34 +465,12 @@ def observation_from_json(payload: dict, model_event_window: int) -> Observation
 
     event_history = np.zeros(0, dtype=np.uint32)
     if model_event_window > 0:
-        if "event_count" not in payload or "event_window" not in payload or "contract_version" not in payload:
-            raise ValueError(
-                "event model (event_window="
-                f"{model_event_window}) requires 'event_count', 'event_window', and "
-                "'contract_version' on every /act and /evaluate observation"
-            )
-        event_count = payload["event_count"]
-        event_window = payload["event_window"]
-        contract_version = payload["contract_version"]
-        raw_history = payload.get("event_history")
-        if raw_history is None:
-            raw_history = []
-        if len(raw_history) != event_count:
-            raise ValueError(
-                f"event_history length {len(raw_history)} does not match event_count {event_count}"
-            )
-        if event_count > event_window:
-            raise ValueError(f"event_count {event_count} exceeds event_window {event_window}")
-        if event_window != model_event_window:
-            raise ValueError(
-                f"event_window {event_window} does not match the serving model's "
-                f"event_window {model_event_window}"
-            )
-        if contract_version != EVENT_CONTRACT_V1:
-            raise ValueError(
-                f"unsupported contract_version {contract_version!r}; expected {EVENT_CONTRACT_V1}"
-            )
-        event_history = np.asarray(raw_history, dtype=np.uint32)
+        event_history = _decode_and_validate_event_history(payload, model_event_window)
+    elif any(key in payload for key in _EVENT_CONTRACT_FIELDS):
+        event_history = _decode_and_validate_event_history(payload, model_event_window)
+    # else: model_event_window == 0 and NO event-contract field is present at
+    # all — a true legacy caller; event_history stays empty, byte-identical
+    # to pre-event-contract behavior.
 
     return Observation(
         seat=int(payload.get("seat", 0)),
@@ -442,6 +499,16 @@ def main() -> None:
     parser.add_argument("--sample-action-family", type=str, default="all",
                         help="only sample when every legal action is in this family (e.g. 'discard')")
     parser.add_argument("--sample-seed", type=int, default=1)
+    parser.add_argument(
+        "--enable-logit-export", action="store_true",
+        default=os.environ.get("FH_MJ_ENABLE_LOGIT_EXPORT") == "1",
+        help="Allow /act callers to request 'return_logits: true' and receive the full masked "
+        "logit vector (adversarial round 12, Finding 1: a material model-extraction surface). "
+        "Default OFF; a request with return_logits=true against a server without this flag gets "
+        "HTTP 400, never a silent no-op. Enable ONLY on the candidate/parity serving instance "
+        "used for fh-mj-serving-parity --endpoint (see the B2c runbook) — never in production. "
+        "Can also be set via FH_MJ_ENABLE_LOGIT_EXPORT=1; the CLI flag is primary.",
+    )
     args = parser.parse_args()
 
     # Fail loudly on misconfigured sampling: a typo here would otherwise start
@@ -475,13 +542,18 @@ def main() -> None:
         sample_seed=args.sample_seed,
     )
     holder = PolicyHolder(
-        policy, manifest_path=args.manifest, device=args.device, checkpoint_sha256=checkpoint_sha256
+        policy,
+        manifest_path=args.manifest,
+        device=args.device,
+        checkpoint_sha256=checkpoint_sha256,
+        enable_logit_export=args.enable_logit_export,
     )
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"Serving {policy.checkpoint_path} on http://{args.host}:{args.port}")
     print("POST /act with visible SeatObservation JSON. Go must still validate the returned action_id.")
     print('POST /reload {"checkpoint": "/path/to/model.pt"} to hot-swap the model without restarting.')
+    print(f"Logit export (return_logits): {'ENABLED' if args.enable_logit_export else 'disabled'}")
     server.serve_forever()
 
 

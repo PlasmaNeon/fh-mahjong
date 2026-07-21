@@ -162,11 +162,20 @@ def test_harness_catches_corrupted_event_history(tmp_path: Path, monkeypatch: py
 
 
 class _Server:
-    def __init__(self, checkpoint_path: Path, manifest_path: Path) -> None:
+    def __init__(self, checkpoint_path: Path, manifest_path: Path, enable_logit_export: bool = True) -> None:
         from fh_mahjong_ai.serving import CheckpointPolicy
 
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
-        self.holder = serve_policy_module.PolicyHolder(policy, manifest_path=manifest_path)
+        # run_serving_parity's --endpoint mode always requests return_logits
+        # (Finding 3, adversarial round 2): this in-thread server stands in
+        # for the CANDIDATE serving instance the B2c runbook launches with
+        # --enable-logit-export for exactly this reason (adversarial round
+        # 12, Finding 1) — never the production instance. Defaults to True so
+        # existing endpoint-mode parity tests are unaffected; the one test
+        # exercising the disabled case passes False explicitly.
+        self.holder = serve_policy_module.PolicyHolder(
+            policy, manifest_path=manifest_path, enable_logit_export=enable_logit_export,
+        )
         handler = type(
             "BoundPolicyRequestHandler", (serve_policy_module.PolicyRequestHandler,), {"holder": self.holder}
         )
@@ -323,6 +332,31 @@ def test_endpoint_mode_fails_when_server_omits_logits(
                 event_history_window=_WINDOW,
                 episodes=1,
                 start_seed=9000,
+                device="cpu",
+                endpoint=f"http://127.0.0.1:{server.port}/act",
+                bridge_kind="mock",
+                max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
+            )
+    finally:
+        server.close()
+
+
+def test_endpoint_mode_points_operator_at_enable_logit_export_flag(tmp_path: Path) -> None:
+    """Adversarial round 12, Finding 1(d): if the endpoint under test was
+    launched WITHOUT --enable-logit-export, the harness's always-on
+    return_logits=true request gets a 400 — the resulting ServingParityError
+    must name the fix (--enable-logit-export on the CANDIDATE service), not
+    just surface a bare "endpoint error"."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json", enable_logit_export=False)
+    try:
+        with pytest.raises(ServingParityError, match="--enable-logit-export"):
+            run_serving_parity(
+                checkpoint=checkpoint,
+                event_history_window=_WINDOW,
+                episodes=1,
+                start_seed=9500,
                 device="cpu",
                 endpoint=f"http://127.0.0.1:{server.port}/act",
                 bridge_kind="mock",

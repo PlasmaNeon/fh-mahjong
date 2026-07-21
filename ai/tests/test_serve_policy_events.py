@@ -60,9 +60,9 @@ class _Server:
     """A ThreadingHTTPServer bound to port 0, serving a real PolicyHolder, for
     exercising the /act, /healthz, and /reload HTTP contract end to end."""
 
-    def __init__(self, checkpoint_path: Path, manifest_path: Path) -> None:
+    def __init__(self, checkpoint_path: Path, manifest_path: Path, enable_logit_export: bool = False) -> None:
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
-        self.holder = PolicyHolder(policy, manifest_path=manifest_path)
+        self.holder = PolicyHolder(policy, manifest_path=manifest_path, enable_logit_export=enable_logit_export)
         handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": self.holder})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -92,15 +92,62 @@ class _Server:
 # --- observation_from_json unit tests -----------------------------------------------------
 
 
-def test_observation_from_json_window_zero_ignores_event_fields() -> None:
+def test_observation_from_json_window_zero_rejects_garbage_event_fields() -> None:
+    """Adversarial round 12, Finding 2 (deliberate contract tightening): a
+    window-0 model used to silently ignore ANY event fields sent alongside
+    the observation. That let rollback skew (a caller still configured for
+    an event model, or with a stale contract_version) succeed against a
+    window-0 checkpoint instead of failing loudly. Now, once ANY of the four
+    event-contract fields is present, validation is symmetric with the
+    event-model branch — garbage values are rejected, not ignored."""
     payload = _observation_payload(
         [0, 1, 2], event_history="not even a list", event_count=-999,
         event_window="garbage", contract_version=None,
     )
 
+    with pytest.raises(ValueError):
+        observation_from_json(payload, model_event_window=0)
+
+
+def test_observation_from_json_window_zero_accepts_no_event_fields_at_all() -> None:
+    """True legacy callers (pre-B2c Go, or old test payloads) that omit ALL
+    FOUR event-contract fields keep the pre-existing window-0 acceptance."""
+    payload = _observation_payload([0, 1, 2])
+
     observation = observation_from_json(payload, model_event_window=0)
 
     assert observation.event_history.size == 0
+
+
+def test_observation_from_json_window_zero_accepts_go_legacy_scalars() -> None:
+    """The branch's Go legacy path always sends event_count/event_window/
+    contract_version as 0/0/1 even against a window-0 model — this must still
+    pass (window 0 == 0, version 1 matches EVENT_CONTRACT_V1)."""
+    payload = _observation_payload(
+        [0, 1, 2], event_count=0, event_window=0, contract_version=EVENT_CONTRACT_V1,
+    )
+
+    observation = observation_from_json(payload, model_event_window=0)
+
+    assert observation.event_history.size == 0
+
+
+def test_observation_from_json_window_zero_rejects_wrong_event_window() -> None:
+    payload = _observation_payload(
+        [0, 1, 2], event_count=0, event_window=128, contract_version=EVENT_CONTRACT_V1,
+    )
+
+    with pytest.raises(ValueError, match="event_window"):
+        observation_from_json(payload, model_event_window=0)
+
+
+def test_observation_from_json_window_zero_rejects_wrong_contract_version() -> None:
+    payload = _observation_payload(
+        [0, 1, 2], event_count=0, event_window=0, contract_version=EVENT_CONTRACT_V1 + 1,
+    )
+
+    with pytest.raises(ValueError, match="contract_version"):
+        observation_from_json(payload, model_event_window=0)
 
 
 def test_observation_from_json_accepts_valid_short_history() -> None:
@@ -260,7 +307,11 @@ def test_http_act_still_400s_when_event_fields_missing_for_event_model(tmp_path:
     assert "error" in data
 
 
-def test_http_act_window_zero_model_ignores_garbage_event_fields(tmp_path: Path) -> None:
+def test_http_act_window_zero_model_rejects_garbage_event_fields(tmp_path: Path) -> None:
+    """Adversarial round 12, Finding 2 (deliberate contract tightening): a
+    window-0 model no longer silently ignores garbage event fields — see
+    test_observation_from_json_window_zero_rejects_garbage_event_fields for
+    the unit-level version of this same tightening."""
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
@@ -269,6 +320,38 @@ def test_http_act_window_zero_model_ignores_garbage_event_fields(tmp_path: Path)
             _observation_payload(
                 [0, 1, 2], event_history="garbage", event_count=-999,
                 event_window="garbage", contract_version=None,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "error" in data
+
+
+def test_http_act_window_zero_model_accepts_no_event_fields(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request("POST", "/act", _observation_payload([0, 1, 2]))
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["action_id"] in (0, 1, 2)
+
+
+def test_http_act_window_zero_model_accepts_go_legacy_scalars(tmp_path: Path) -> None:
+    """The Go legacy path always sends event_count/event_window/
+    contract_version as 0/0/1 even against a window-0 model — must still
+    succeed (window 0 == 0, version 1 matches)."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_count=0, event_window=0, contract_version=EVENT_CONTRACT_V1,
             ),
         )
     finally:
@@ -352,13 +435,32 @@ def test_http_evaluate_threads_event_history_into_evaluate_batch(tmp_path: Path)
     )
 
 
-def test_http_evaluate_window_zero_model_ignores_event_fields(tmp_path: Path) -> None:
+def test_http_evaluate_window_zero_model_rejects_garbage_event_fields(tmp_path: Path) -> None:
+    """Adversarial round 12, Finding 2 (deliberate contract tightening):
+    /evaluate applies the same symmetric validation as /act — a window-0
+    model no longer silently ignores partially-present garbage event
+    fields."""
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
         status, data = server.request(
             "POST", "/evaluate",
             {"observations": [_observation_payload([0, 1, 2], event_history="garbage", event_count=-999)]},
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "error" in data
+
+
+def test_http_evaluate_window_zero_model_accepts_no_event_fields(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {"observations": [_observation_payload([0, 1, 2])]},
         )
     finally:
         server.close()
@@ -565,3 +667,69 @@ def test_policy_holder_reload_success_updates_policy_and_hash_together(tmp_path:
     assert holder.policy.checkpoint_step == 2
     assert holder.policy.checkpoint_path == new
     assert holder.checkpoint_sha256 == hashlib.sha256(new.read_bytes()).hexdigest()
+
+
+# --- adversarial round 12, Finding 1: /act logit export gating -------------------------
+
+
+def test_http_act_return_logits_disabled_by_default_gets_400(tmp_path: Path) -> None:
+    """Unauthenticated logit export (adversarial round 12, Finding 1): a
+    request with return_logits=true against a server that was NOT launched
+    with --enable-logit-export must get a loud HTTP 400, never a silent
+    no-op — the parity harness's --endpoint hard gate must fail clearly
+    rather than comparing nothing when misconfigured."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # enable_logit_export defaults False
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1, return_logits=True,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "logit export" in data["error"]
+
+
+def test_http_act_return_logits_enabled_returns_logits(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json", enable_logit_export=True)
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1, return_logits=True,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert "logits" in data
+    assert isinstance(data["logits"], list)
+
+
+def test_http_act_without_return_logits_unaffected_by_export_flag(tmp_path: Path) -> None:
+    """A normal /act request (no return_logits) must succeed regardless of
+    the server's --enable-logit-export setting — the gate only applies to
+    requests that actually ask for logits."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # export disabled
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert "logits" not in data

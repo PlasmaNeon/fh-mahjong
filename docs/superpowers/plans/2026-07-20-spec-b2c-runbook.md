@@ -68,8 +68,21 @@ different port serving iter_075, e.g.:
 uv run --project ai fh-mj-serve-policy \
   --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
-  --port 8766
+  --port 8766 \
+  --enable-logit-export
 ```
+
+`--enable-logit-export` is REQUIRED on this candidate/parity instance (adversarial
+round 12, Finding 1): step 2's `fh-mj-serving-parity --endpoint` hard gate always
+requests `return_logits: true` to verify tight logit parity, not just argmax
+agreement, and `serve_policy.py` refuses that field with an HTTP 400 unless the
+server was launched with this flag (or `FH_MJ_ENABLE_LOGIT_EXPORT=1`). The
+production `policy` service's launch command (`ai/Dockerfile.deploy`'s `CMD`)
+deliberately does **not** set `--enable-logit-export` — the full masked logit
+vector is a material model-extraction surface and must never be exposed on the
+publicly deployed primary endpoint. This is exactly why the parity gate in step
+2 must run against the **candidate** service (already the case as of step
+2-4's preamble above, not the production primary).
 
 This is the **candidate service** referenced in steps 2-4 below
 (`http://127.0.0.1:8766`, or `https://<candidate>.zeabur.app` if deployed as
