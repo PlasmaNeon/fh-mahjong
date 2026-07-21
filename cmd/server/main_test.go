@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,6 +77,27 @@ func TestValidatePolicyContractAsync_NilPolicyDoesNotPanic(t *testing.T) {
 	validatePolicyContractAsync("nil policy", nil)
 }
 
+// syncBuffer is a mutex-guarded bytes.Buffer: the validation goroutine
+// spawned by validatePolicyContractAsync writes to the log output while the
+// test goroutine polls it, so an unsynchronized bytes.Buffer is a data race
+// under -race even though the test's assertions would still pass.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestValidatePolicyContractAsync_UnreachableLogsLoudlyWithoutBlocking pins
 // finding 2's contract: ValidateServer failure (here, an endpoint nothing is
 // listening on) must be logged LOUDLY with the "POLICY CONTRACT MISMATCH"
@@ -83,7 +105,7 @@ func TestValidatePolicyContractAsync_NilPolicyDoesNotPanic(t *testing.T) {
 // caller — startup continues regardless, since the policy server may simply
 // not be up yet.
 func TestValidatePolicyContractAsync_UnreachableLogsLoudlyWithoutBlocking(t *testing.T) {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	origOutput := log.Writer()
 	origFlags := log.Flags()
 	log.SetOutput(&buf)
