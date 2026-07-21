@@ -333,6 +333,58 @@ def test_http_evaluate_accepts_zero_count_event_row(tmp_path: Path) -> None:
 # --- /healthz --------------------------------------------------------------------------
 
 
+def test_healthz_reads_single_consistent_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adversarial round 6, Finding 2: do_GET must derive every /healthz field
+    from ONE snapshot read, not two independent PolicyHolder property reads
+    (holder.policy then holder.checkpoint_sha256). We simulate a /reload
+    landing in between those two reads by making the `policy` property itself
+    trigger a reload (as a side effect, mimicking a concurrent request) the
+    first time it's accessed, then confirm the response never mixes the old
+    checkpoint's identity with the new one's."""
+    old_config = _event_model_config(window=8)
+    new_config = _event_model_config(window=16)
+    old_checkpoint = _save_checkpoint(tmp_path, old_config, step=1, name="old.pt")
+    new_checkpoint = _save_checkpoint(tmp_path, new_config, step=2, name="new.pt")
+
+    server = _Server(old_checkpoint, tmp_path / "manifest.json")
+    holder = server.holder
+
+    original_policy_getter = type(holder).policy.fget
+    swapped = {"done": False}
+
+    def racy_policy_getter(self: PolicyHolder) -> CheckpointPolicy:
+        result = original_policy_getter(self)
+        if not swapped["done"]:
+            swapped["done"] = True
+            # Simulate a concurrent /reload completing right after the
+            # handler's first field read.
+            self.reload(checkpoint=str(new_checkpoint), expected_event_window=16)
+        return result
+
+    monkeypatch.setattr(PolicyHolder, "policy", property(racy_policy_getter))
+
+    try:
+        status, data = server.request("GET", "/healthz")
+    finally:
+        server.close()
+
+    assert status == 200, data
+    old_sha = hashlib.sha256(old_checkpoint.read_bytes()).hexdigest()
+    new_sha = hashlib.sha256(new_checkpoint.read_bytes()).hexdigest()
+
+    if data["checkpoint_step"] == 1:
+        assert data["checkpoint"] == str(old_checkpoint)
+        assert data["checkpoint_sha256"] == old_sha
+        assert data["event_window"] == 8
+        assert data["model_config"]["event_window"] == 8
+    else:
+        assert data["checkpoint_step"] == 2
+        assert data["checkpoint"] == str(new_checkpoint)
+        assert data["checkpoint_sha256"] == new_sha
+        assert data["event_window"] == 16
+        assert data["model_config"]["event_window"] == 16
+
+
 def test_healthz_carries_sha256_window_and_contract_version(tmp_path: Path) -> None:
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
     server = _Server(checkpoint, tmp_path / "manifest.json")

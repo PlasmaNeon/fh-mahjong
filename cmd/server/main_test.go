@@ -71,6 +71,76 @@ func TestRLAgentEventWindowDefaultsToZero(t *testing.T) {
 	}
 }
 
+// TestResolveAIBotEventWindow pins adversarial round 6, Finding 1:
+// AI_BOT_POLICY_URL (matchmaking bots) and RL_AGENT_POLICY_URL (private-room
+// RL agent) can point at DIFFERENT services during a staggered rollout, so
+// AI_BOT_EVENT_WINDOW must be resolvable independently of
+// RL_AGENT_EVENT_WINDOW rather than always inheriting it. When
+// AI_BOT_EVENT_WINDOW is unset, the only safe default is to inherit
+// rlEventWindow when both URLs are the literal same non-empty string (single
+// shared service); anything else (different services, or only one of the two
+// configured) must fail closed to 0 rather than guess a contract the
+// matchmaking bot policy might not actually speak.
+func TestResolveAIBotEventWindow(t *testing.T) {
+	tests := []struct {
+		name                string
+		aiBotPolicyURL      string
+		rlPolicyURLOverride string
+		rlEventWindow       uint32
+		envAIBotWindow      string // "" means unset
+		want                uint32
+	}{
+		{
+			name:                "distinct URLs, AI_BOT_EVENT_WINDOW unset -> bot window 0",
+			aiBotPolicyURL:      "http://bots.example/act",
+			rlPolicyURLOverride: "http://rl.example/act",
+			rlEventWindow:       128,
+			want:                0,
+		},
+		{
+			name:                "same URL, AI_BOT_EVENT_WINDOW unset -> inherits RL window",
+			aiBotPolicyURL:      "http://shared.example/act",
+			rlPolicyURLOverride: "http://shared.example/act",
+			rlEventWindow:       128,
+			want:                128,
+		},
+		{
+			name:                "AI_BOT_POLICY_URL set, RL_AGENT_POLICY_URL not set -> bot window 0",
+			aiBotPolicyURL:      "http://bots.example/act",
+			rlPolicyURLOverride: "",
+			rlEventWindow:       128,
+			want:                0,
+		},
+		{
+			name:                "explicit AI_BOT_EVENT_WINDOW honored even when URLs differ",
+			aiBotPolicyURL:      "http://bots.example/act",
+			rlPolicyURLOverride: "http://rl.example/act",
+			rlEventWindow:       128,
+			envAIBotWindow:      "128",
+			want:                128,
+		},
+		{
+			name:                "explicit AI_BOT_EVENT_WINDOW honored even when URLs equal",
+			aiBotPolicyURL:      "http://shared.example/act",
+			rlPolicyURLOverride: "http://shared.example/act",
+			rlEventWindow:       64,
+			envAIBotWindow:      "0",
+			want:                0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AI_BOT_EVENT_WINDOW", tc.envAIBotWindow)
+			got := resolveAIBotEventWindow(tc.aiBotPolicyURL, tc.rlPolicyURLOverride, tc.rlEventWindow)
+			if got != tc.want {
+				t.Fatalf("resolveAIBotEventWindow(%q, %q, %d) with AI_BOT_EVENT_WINDOW=%q = %d, want %d",
+					tc.aiBotPolicyURL, tc.rlPolicyURLOverride, tc.rlEventWindow, tc.envAIBotWindow, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestValidatePolicyContractAsync_NilPolicyDoesNotPanic covers the guard
 // clause: a nil *remote.HTTPPolicy (e.g. shadow disabled) must be a no-op,
 // never a nil-pointer panic at startup.

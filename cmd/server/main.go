@@ -113,13 +113,24 @@ func main() {
 	// fall back to a local default endpoint, so the option works out of the box
 	// in local dev without any env var.
 	explicitPolicyURL := strings.TrimSpace(os.Getenv("AI_BOT_POLICY_URL"))
+	// RL_AGENT_POLICY_URL, read here (raw, pre-fallback) so it can also feed
+	// resolveAIBotEventWindow below; the fallback-resolved rlPolicyURL is
+	// computed further down once rlHTTPClient exists.
+	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
+	// AI_BOT_POLICY_URL and RL_AGENT_POLICY_URL may be DIFFERENT services
+	// during a staggered rollout (adversarial round 6, Finding 1) — applying
+	// rlEventWindow to both would make one of them silently speak the wrong
+	// wire contract and degrade to heuristic per-decision. Resolve the AI bot
+	// policy's own window independently.
+	aiBotEventWindow := resolveAIBotEventWindow(explicitPolicyURL, rlOverride, rlEventWindow)
+	log.Printf("Matchmaking bot policy event window: %d (AI_BOT_EVENT_WINDOW)", aiBotEventWindow)
 	if explicitPolicyURL != "" {
 		log.Printf("Using remote AI bot policy endpoint for matchmaking seats: %s", explicitPolicyURL)
 		// Shared instance (HTTPPolicy is safe for concurrent use — atomic
 		// stats counters, no other mutable state) rather than a fresh policy
 		// per bot: lets one startup healthz validation cover every
 		// matchmaking-queue bot this factory ever hands out.
-		botPolicy := remote.NewHTTPPolicy(explicitPolicyURL, remote.WithEventWindow(rlEventWindow))
+		botPolicy := remote.NewHTTPPolicy(explicitPolicyURL, remote.WithEventWindow(aiBotEventWindow))
 		matchmaker.BotPolicyFactory = func() bot.Policy {
 			return botPolicy
 		}
@@ -130,7 +141,6 @@ func main() {
 	// dedicated policy server (e.g. the docker-compose `policy` service) without
 	// routing matchmaking bots through it; otherwise it follows AI_BOT_POLICY_URL,
 	// and finally the local default that the Go server can autostart.
-	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))
 	rlPolicyURL, rlIsLocalDefault := rlEndpointURL(rlOverride, explicitPolicyURL)
 	// Share one HTTP client (and its connection pool) across every RL seat the
 	// resolver creates, rather than letting each NewHTTPPolicy spin up its own.
@@ -319,6 +329,33 @@ func parseEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 		return defaultWindow
 	}
 	return uint32(n)
+}
+
+// resolveAIBotEventWindow computes the event-history window for the
+// matchmaking bot policy (AI_BOT_POLICY_URL), independently of rlEventWindow
+// (RL_AGENT_EVENT_WINDOW, which governs the private-room RL primary). The two
+// URLs can point at DIFFERENT policy services during a staggered rollout
+// (adversarial round 6, Finding 1); blindly sharing rlEventWindow across both
+// would make one of them silently speak the wrong wire contract and degrade
+// to heuristic on every /act call. AI_BOT_EVENT_WINDOW, parsed with the same
+// parseEventWindowEnv helper as every other event-window env var in this
+// package, lets operators set it independently.
+//
+// When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and
+// rlPolicyURLOverride are the identical non-empty string (both env vars point
+// at one shared service), inherit rlEventWindow — the two clients speak the
+// same server, so the same window is safe. Otherwise — different services,
+// or only one of the two URLs configured (including AI_BOT_POLICY_URL set
+// with RL_AGENT_POLICY_URL unset, which resolves the RL side to a DIFFERENT
+// endpoint via rlEndpointURL's own fallback) — default to 0 (event-free) and
+// fail closed rather than guess a contract the bot policy might not actually
+// speak.
+func resolveAIBotEventWindow(aiBotPolicyURL, rlPolicyURLOverride string, rlEventWindow uint32) uint32 {
+	defaultWindow := uint32(0)
+	if aiBotPolicyURL != "" && aiBotPolicyURL == rlPolicyURLOverride {
+		defaultWindow = rlEventWindow
+	}
+	return parseEventWindowEnv("AI_BOT_EVENT_WINDOW", defaultWindow)
 }
 
 // validatePolicyContractAsync probes policy's /healthz in the background at

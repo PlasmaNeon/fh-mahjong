@@ -84,6 +84,22 @@ class PolicyHolder:
     def checkpoint_sha256(self) -> str:
         return self._snapshot.checkpoint_sha256
 
+    @property
+    def snapshot(self) -> _PolicySnapshot:
+        """The current (policy, checkpoint_sha256) pair as a single
+        attribute read. Handlers that need MULTIPLE fields describing "the
+        currently-serving checkpoint" (e.g. /healthz: path, step, sha256,
+        model_config, event_window all in one response) MUST capture this
+        once at the start of the request and derive every field from that
+        one local reference — never read `.policy` and `.checkpoint_sha256`
+        (or call `.snapshot` more than once) across the same request. A
+        concurrent `reload()` swaps `self._snapshot` to a new
+        `_PolicySnapshot` in a single attribute assignment (atomic under the
+        GIL) between any two separate reads, which would otherwise produce a
+        response mixing one snapshot's path/step/config with another
+        snapshot's sha256 (adversarial round 6, Finding 2)."""
+        return self._snapshot
+
     @staticmethod
     def _sha256_of(path: Path) -> str:
         digest = hashlib.sha256()
@@ -171,14 +187,19 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         if self.path != "/healthz":
             self.send_error(404)
             return
-        policy = self.holder.policy
+        # Captured ONCE: every field below describes THIS snapshot, so a
+        # concurrent /reload landing mid-request can never make this response
+        # mix one checkpoint's path/step/config with another's sha256 (see
+        # PolicyHolder.snapshot's docstring; adversarial round 6, Finding 2).
+        snapshot = self.holder.snapshot
+        policy = snapshot.policy
         model_config = policy.model.model_config
         self._write_json(
             {
                 "ok": True,
                 "checkpoint": str(policy.checkpoint_path),
                 "checkpoint_step": policy.checkpoint_step,
-                "checkpoint_sha256": self.holder.checkpoint_sha256,
+                "checkpoint_sha256": snapshot.checkpoint_sha256,
                 "sample_temperature": policy.sample_temperature,
                 "sample_top_k": policy.sample_top_k,
                 "sample_action_family": policy.sample_action_family,
