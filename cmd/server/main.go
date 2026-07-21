@@ -161,24 +161,16 @@ func main() {
 		validatePolicyContractAsync("RL shadow policy", shadowHTTPPolicy)
 	}
 
-	// The RL primary is shared (like the matchmaking bot policy above) rather
-	// than rebuilt per seat, so one startup healthz validation covers every
-	// private-room RL seat the resolver ever hands out.
-	rlPrimaryPolicy := remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(rlHTTPClient), remote.WithEventWindow(rlEventWindow))
-	validatePolicyContractAsync("RL primary policy", rlPrimaryPolicy)
+	// Startup healthz validation only needs to cover the URL/window config,
+	// not any particular seat's instance, so a single dedicated probe built
+	// the same way as every per-seat instance is enough — one goroutine at
+	// boot, not one per seat.
+	validatePolicyContractAsync("RL primary policy", newRLPrimaryPolicy(rlPolicyURL, rlHTTPClient, rlEventWindow))
 
 	// Let private-room hosts assign a trained RL agent per seat. The remote
 	// HTTP policy already falls back to heuristic per-decision, so a transient
 	// outage mid-match degrades gracefully rather than stalling.
-	matchmaker.SeatPolicyResolver = func(d pb.Difficulty) (bot.Policy, error) {
-		if d == pb.Difficulty_DIFFICULTY_RL {
-			if shadowPolicy != nil {
-				return bot.NewShadowPolicy(rlPrimaryPolicy, shadowPolicy, 64), nil
-			}
-			return rlPrimaryPolicy, nil
-		}
-		return bot.NewPolicy(d)
-	}
+	matchmaker.SeatPolicyResolver = newSeatPolicyResolver(rlPolicyURL, rlHTTPClient, rlEventWindow, shadowPolicy)
 	// Surface the RL option only while the model server is actually reachable.
 	rlHealth := remote.NewHealthChecker(rlPolicyURL)
 	matchmaker.RLAgentAvailable = rlHealth.Healthy
@@ -224,6 +216,41 @@ func main() {
 
 	if err := server.Router.Run(":" + port); err != nil {
 		log.Fatalf("Server exited with error: %v", err)
+	}
+}
+
+// newRLPrimaryPolicy builds a fresh *remote.HTTPPolicy configured for the
+// private-room RL primary. Every call returns a brand-new instance sharing
+// only httpClient (and its connection pool) — never the counters. This
+// matters because HTTPPolicy.DecisionCounts and ObservedPolicyIDs are
+// per-instance counters that Room.reconcileRLPolicyIDs (internal/api/room.go)
+// reads to attribute paipu per seat; a shared instance would let one seat's
+// fallback/reload counters bleed into every other room's dataset, corrupting
+// the pure-RL filter and checkpoint labeling across the server's whole
+// lifetime. newSeatPolicyResolver calls this once per RL seat resolution; the
+// startup contract probe calls it once more for a throwaway validation-only
+// instance.
+func newRLPrimaryPolicy(rlPolicyURL string, httpClient *http.Client, eventWindow uint32) *remote.HTTPPolicy {
+	return remote.NewHTTPPolicy(rlPolicyURL, remote.WithHTTPClient(httpClient), remote.WithEventWindow(eventWindow))
+}
+
+// newSeatPolicyResolver builds the api.Matchmaker.SeatPolicyResolver closure:
+// DIFFICULTY_RL seats get a freshly-constructed RL primary (see
+// newRLPrimaryPolicy's doc comment for why it must not be shared across
+// seats), optionally wrapped in a bot.NewShadowPolicy when shadowPolicy is
+// configured; every other difficulty falls through to bot.NewPolicy. Split
+// out from main() so the no-shadow branch's per-call freshness is directly
+// testable (main's SeatPolicyResolver is otherwise just an inline closure).
+func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEventWindow uint32, shadowPolicy bot.ContextPolicy) func(pb.Difficulty) (bot.Policy, error) {
+	return func(d pb.Difficulty) (bot.Policy, error) {
+		if d == pb.Difficulty_DIFFICULTY_RL {
+			primary := newRLPrimaryPolicy(rlPolicyURL, rlHTTPClient, rlEventWindow)
+			if shadowPolicy != nil {
+				return bot.NewShadowPolicy(primary, shadowPolicy, 64), nil
+			}
+			return primary, nil
+		}
+		return bot.NewPolicy(d)
 	}
 }
 

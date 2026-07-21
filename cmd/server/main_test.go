@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	"github.com/plasma/fh-mahjong/internal/rl"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 // TestParseEventWindowEnv covers the shared event-window env-var parser used
@@ -110,5 +112,52 @@ func TestValidatePolicyContractAsync_UnreachableLogsLoudlyWithoutBlocking(t *tes
 	}
 	if !strings.Contains(got, "test policy") {
 		t.Fatalf("expected the log line to carry the label %q, got: %q", "test policy", got)
+	}
+}
+
+// TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances pins the
+// regression fix: in a no-shadow config, two DIFFICULTY_RL resolutions from
+// the SAME resolver must return two DISTINCT *remote.HTTPPolicy instances,
+// never a shared one. Room.reconcileRLPolicyIDs (internal/api/room.go) reads
+// each seat's policy's DecisionCounts/ObservedPolicyIDs to attribute paipu
+// per seat; if the resolver ever went back to handing out one shared
+// instance (as commit 2c45bed regressed to), one seat's fallback/reload
+// counters would bleed into every other room's dataset, corrupting the
+// pure-RL filter and checkpoint labeling server-lifetime-wide.
+func TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) {
+	resolver := newSeatPolicyResolver("http://127.0.0.1:1/act", &http.Client{}, 0, nil)
+
+	first, err := resolver(pb.Difficulty_DIFFICULTY_RL)
+	if err != nil {
+		t.Fatalf("resolver first call: %v", err)
+	}
+	second, err := resolver(pb.Difficulty_DIFFICULTY_RL)
+	if err != nil {
+		t.Fatalf("resolver second call: %v", err)
+	}
+
+	firstPolicy, ok := first.(*remote.HTTPPolicy)
+	if !ok {
+		t.Fatalf("first resolved policy is %T, want *remote.HTTPPolicy", first)
+	}
+	secondPolicy, ok := second.(*remote.HTTPPolicy)
+	if !ok {
+		t.Fatalf("second resolved policy is %T, want *remote.HTTPPolicy", second)
+	}
+	if firstPolicy == secondPolicy {
+		t.Fatalf("two RL seat resolutions returned the SAME *remote.HTTPPolicy instance %p — per-seat paipu attribution (DecisionCounts/ObservedPolicyIDs) would be corrupted across seats/rooms", firstPolicy)
+	}
+
+	// Independence check: mutating one instance's counters must not affect
+	// the other's — the concrete symptom the shared-instance regression
+	// produced (Room.reconcileRLPolicyIDs reading cross-contaminated counts).
+	firstPolicy.ChooseAction(nil, 0) // nil state -> config-error fallback path, bumps fallback counters only
+	_, firstFallback := firstPolicy.DecisionCounts()
+	secondRemote, secondFallback := secondPolicy.DecisionCounts()
+	if firstFallback == 0 {
+		t.Fatalf("expected first policy's fallback counter to be nonzero after ChooseAction")
+	}
+	if secondRemote != 0 || secondFallback != 0 {
+		t.Fatalf("second policy's counters were affected by the first instance's activity: remote=%d fallback=%d, want 0/0", secondRemote, secondFallback)
 	}
 }

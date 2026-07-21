@@ -37,7 +37,7 @@ type HTTPPolicy struct {
 	endpoint      string
 	client        *http.Client
 	fallback      bot.Policy
-	decisionIndex uint64
+	decisionIndex atomic.Uint64
 	logger        Logger
 	statsLogEvery uint64
 	eventWindow   uint32
@@ -216,11 +216,11 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
 	}
 
-	observation, err := rl.EncodeObservation(state, seat, p.decisionIndex)
+	observation, err := rl.EncodeObservation(state, seat, p.decisionIndex.Load())
 	if err != nil {
 		return nil, policyError{reason: FallbackReasonEncode, err: err}
 	}
-	p.decisionIndex++
+	p.decisionIndex.Add(1)
 
 	requestPayload := actRequest{
 		Seat:            observation.Seat,

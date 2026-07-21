@@ -305,12 +305,16 @@ type closeableBotPolicy interface {
 // resolver call — is deliberately NOT touched: bot.ShadowPolicy.Close only
 // closes its own queue/worker, never the wrapped shadow or primary policy,
 // so this stays safe even though that policy is long-lived and shared.
-// BotPolicy (from BotPolicyFactory, when set) is likewise constructed fresh
-// per room in StartPrivateTable/registerActiveRoom, so it is safe to close
-// here too. Non-closeable policies (heuristic bot.NewPolicy, plain
-// remote.HTTPPolicy) simply don't implement closeableBotPolicy and are
-// skipped. Pointer-deduped via a set so a policy installed as both a seat
-// override and the room default is only closed once.
+// BotPolicy (from BotPolicyFactory, when set) is, by contrast, a single
+// *remote.HTTPPolicy shared across every room/bot cmd/server/main.go's
+// AI_BOT_POLICY_URL factory ever hands out — unlike the RL primary above,
+// matchmaking-bot seats aren't paipu-attributed per instance, so sharing
+// it is safe. Either way it's a plain remote.HTTPPolicy, which doesn't
+// implement closeableBotPolicy, so closeOnce is a no-op for it regardless.
+// Non-closeable policies (heuristic bot.NewPolicy, plain remote.HTTPPolicy)
+// simply don't implement closeableBotPolicy and are skipped. Pointer-deduped
+// via a set so a policy installed as both a seat override and the room
+// default is only closed once.
 func (r *Room) closeSeatPolicies() {
 	seen := make(map[closeableBotPolicy]struct{})
 	closeOnce := func(policy bot.Policy) {
