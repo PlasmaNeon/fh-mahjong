@@ -113,6 +113,12 @@ type Room struct {
 	// reconciled into the paipu/MatchPlayer rows at persist time.
 	automatedDecisions map[uint32]uint64
 
+	// policyDecisionIndex is a room-owned, per-game monotonically increasing
+	// counter incremented once per ContextPolicy dispatch (buildDecisionContext).
+	// It lets a remote policy server correlate decisions/events across calls.
+	// Room-goroutine only (same mutex context as automatedDecisions).
+	policyDecisionIndex uint64
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.

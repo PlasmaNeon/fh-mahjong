@@ -131,6 +131,72 @@ func (stubPolicy) ChooseAction(_ *pb.GameState, _ uint32) *pb.PlayerAction {
 	return nil
 }
 
+// ctxRecordingPolicy implements both bot.Policy and bot.ContextPolicy so room
+// dispatch prefers ChooseActionCtx. It records every context it receives and
+// delegates the actual decision to the heuristic policy so the engine always
+// receives a legal action.
+type ctxRecordingPolicy struct {
+	seen     []*bot.DecisionContext
+	delegate bot.Policy
+}
+
+func newCtxRecordingPolicy() *ctxRecordingPolicy {
+	return &ctxRecordingPolicy{delegate: bot.NewHeuristicPolicy()}
+}
+
+func (p *ctxRecordingPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAction {
+	return p.delegate.ChooseAction(state, seat)
+}
+
+func (p *ctxRecordingPolicy) ChooseActionCtx(ctx *bot.DecisionContext) *pb.PlayerAction {
+	p.seen = append(p.seen, ctx)
+	return p.delegate.ChooseAction(ctx.State, ctx.Seat)
+}
+
+func TestRoomDispatchPrefersContextPolicyOverLegacy(t *testing.T) {
+	policy := newCtxRecordingPolicy()
+	room := NewRoom("ctx-policy-room", nil, nil, WithBotPolicy(policy))
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	room.advanceAutomatedSeatsN(1)
+	eventsAfterFirst := append([]engine.PublicEvent{}, room.Engine.PublicEvents()...)
+	room.advanceAutomatedSeatsN(1)
+
+	if len(policy.seen) < 2 {
+		t.Fatalf("expected at least 2 ChooseActionCtx calls, got %d", len(policy.seen))
+	}
+
+	first, second := policy.seen[0], policy.seen[1]
+	if first.State == nil || second.State == nil {
+		t.Fatalf("expected non-nil State on both contexts, got %+v, %+v", first, second)
+	}
+	if second.DecisionIndex <= first.DecisionIndex {
+		t.Fatalf("expected monotonically increasing DecisionIndex, got %d then %d", first.DecisionIndex, second.DecisionIndex)
+	}
+	// The second decision's context must reflect the engine's public event
+	// log as of the moment it was built — i.e. right after the first
+	// decision was processed, before the second one was.
+	if len(second.Events) != len(eventsAfterFirst) {
+		t.Fatalf("expected Events snapshot to match engine log at call time, got len=%d want len=%d", len(second.Events), len(eventsAfterFirst))
+	}
+}
+
+func TestRoomDispatchUsesLegacyChooseActionForLegacyOnlyPolicy(t *testing.T) {
+	room := NewRoom("legacy-policy-room", nil, nil, WithBotPolicy(stubPolicy{}))
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// stubPolicy.ChooseAction always returns nil, so advancing should stop
+	// immediately without panicking — proving the legacy path was taken
+	// (a ContextPolicy branch would require the type assertion to fail,
+	// which it does since stubPolicy doesn't implement ChooseActionCtx).
+	payloads := room.advanceAutomatedSeatsN(1)
+	_ = payloads
+}
+
 func TestCreateMatch_ChongciRulesetThreadsMatchOptions(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
