@@ -122,6 +122,22 @@ def test_infer_model_config_doctored_metadata_raises_shape_cross_check():
         infer_model_config(model.state_dict(), metadata)
 
 
+def test_infer_model_config_doctored_dueling_q_flag_raises_shape_cross_check():
+    # Flipping `dueling_q` reconstructs a disjoint q_head architecture
+    # (DuelingQHead vs plain nn.Linear) whose parameter names both live under
+    # the "q_head." prefix that _cross_check_shapes otherwise exempts for
+    # legitimate "optional head absent in older checkpoint" cases. The
+    # exemption must not swallow this: the key sets differ on both sides, so
+    # this must still raise.
+    model_config = _b2b_config(dueling_q=True)
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["dueling_q"] = False
+    metadata = {"model_config": doctored}
+    with pytest.raises(RuntimeError, match="shape cross-check"):
+        infer_model_config(model.state_dict(), metadata)
+
+
 def test_infer_model_config_doctored_b2b_flags_raise_shape_cross_check():
     model_config = _b2b_config()
     model = PolicyValueNet(_ENV39, model_config)

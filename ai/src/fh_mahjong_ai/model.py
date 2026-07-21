@@ -396,8 +396,22 @@ def _reconstruct_env_config(state_dict: dict[str, Tensor], model_config: ModelCo
 def _cross_check_shapes(state_dict: dict[str, Tensor], reference_state: dict[str, Tensor]) -> None:
     given_keys = set(state_dict)
     ref_keys = set(reference_state)
-    missing = sorted(k for k in ref_keys - given_keys if not k.startswith(_COMPATIBLE_OPTIONAL_PREFIXES))
-    unexpected = sorted(k for k in given_keys - ref_keys if not k.startswith(_COMPATIBLE_OPTIONAL_PREFIXES))
+
+    # A prefix is only exempt when the *entire* optional head is absent on one
+    # side (the legitimate "older checkpoint predates this head" case). If both
+    # sides carry keys under the prefix but the key sets differ (e.g. a
+    # doctored `dueling_q` flag reconstructs DuelingQHead vs plain nn.Linear
+    # under the same "q_head." prefix), that is a real architecture mismatch
+    # and must not be exempted.
+    exempt_prefixes = tuple(
+        prefix
+        for prefix in _COMPATIBLE_OPTIONAL_PREFIXES
+        if not any(k.startswith(prefix) for k in given_keys)
+        or not any(k.startswith(prefix) for k in ref_keys)
+    )
+
+    missing = sorted(k for k in ref_keys - given_keys if not k.startswith(exempt_prefixes))
+    unexpected = sorted(k for k in given_keys - ref_keys if not k.startswith(exempt_prefixes))
     mismatched = sorted(
         key for key in given_keys & ref_keys
         if tuple(state_dict[key].shape) != tuple(reference_state[key].shape)
