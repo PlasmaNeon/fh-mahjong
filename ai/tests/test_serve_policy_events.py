@@ -202,6 +202,64 @@ def test_http_act_accepts_valid_short_event_history(tmp_path: Path) -> None:
     assert data["action_id"] in (0, 1, 2)
 
 
+def test_http_act_accepts_valid_zero_count_early_round(tmp_path: Path) -> None:
+    """Adversarial round 10, Finding 2: a contract-valid zero-event request
+    (explicit event_count=0, a documented legitimate early-round case) must
+    NOT 400 — CheckpointPolicy.choose's defense-in-depth empty-history raise
+    must not fire for a request that observation_from_json already validated
+    as explicitly, consistently empty."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[], event_count=0, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["action_id"] in (0, 1, 2)
+
+
+def test_http_act_accepts_valid_zero_count_with_missing_event_history_field(tmp_path: Path) -> None:
+    """Same as above but with `event_history` omitted entirely (Go's
+    `omitempty` drops an empty slice) rather than sent as `[]` — both wire
+    shapes are equally valid for event_count=0."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_count=0, event_window=8, contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["action_id"] in (0, 1, 2)
+
+
+def test_http_act_still_400s_when_event_fields_missing_for_event_model(tmp_path: Path) -> None:
+    """A request that omits the event fields altogether (not an explicit
+    count==0) is the "silently missing" case this fix must keep rejecting —
+    contrast with the explicit-zero cases above."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request("POST", "/act", _observation_payload([0, 1, 2]))
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "error" in data
+
+
 def test_http_act_window_zero_model_ignores_garbage_event_fields(tmp_path: Path) -> None:
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")

@@ -28,12 +28,20 @@ uv run --project ai fh-mj-serving-parity \
   --checkpoint /root/fh-mahjong-runs/deploy/selfplay-deep4-student-iter275-39ch.pt \
   --event-history-window 0 \
   --episodes 50 --start-seed 970000 \
+  --bridge-kind go --match-mode chongci \
   --endpoint https://<policy-service>.zeabur.app/act
 ```
 
 Expect: `result: PASS`, 0 fallbacks, 0 mismatches. Any failure here is a
 regression in the NEW server image itself (not iter_075) — stop and fix
 before touching the champion pointer.
+
+(`--bridge-kind go --match-mode chongci` is REQUIRED here — as of adversarial
+round 10, Finding 1, `--endpoint` is a hard gate that refuses to run against
+anything else, since a mock/classic bridge never exercises production-shaped
+Chongci event streams: round transitions/resets, interrupts, tail
+truncation. `--allow-non-production` exists only for local experimentation,
+never for this gate.)
 
 ## 2-4 preamble: candidate runs on a SEPARATE service instance, never the live primary
 
@@ -105,11 +113,15 @@ uv run --project ai fh-mj-serving-parity \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --event-history-window 128 \
   --episodes 200 --start-seed 971000 \
+  --bridge-kind go --match-mode chongci \
   --endpoint http://127.0.0.1:8766/act
 ```
 
 (Substitute the candidate service's URL if it's a second Zeabur service or
-tunnel instead of a local port.)
+tunnel instead of a local port. `--bridge-kind go --match-mode chongci` is
+REQUIRED — see the note on step 1 above; the seeded episodes' natural chongci
+round transitions are exactly what makes this a real hard gate rather than a
+single-round mock smoke test.)
 
 Expect: `result: PASS`, `decisions checked` in the thousands, 0 fallbacks,
 0 mismatches. This is the HARD GATE (spec §3, item 2) — real HTTP POSTs to

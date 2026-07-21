@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import http.client
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -196,6 +197,11 @@ def test_endpoint_mode_parity_passes_against_real_server(tmp_path: Path) -> None
             endpoint=f"http://127.0.0.1:{server.port}/act",
             bridge_kind="mock",
             max_decisions=5,
+            # This test exercises endpoint-mode plumbing (real HTTP round-trip
+            # against an in-thread server), not the production hard gate's
+            # bridge/match-mode requirement (adversarial round 10, Finding 1) —
+            # a mock bridge is deliberately fast here.
+            allow_non_production=True,
         )
     finally:
         server.close()
@@ -248,6 +254,7 @@ def test_endpoint_mode_catches_logit_drift_with_same_argmax(
                 endpoint=f"http://127.0.0.1:{server.port}/act",
                 bridge_kind="mock",
                 max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
             )
     finally:
         server.close()
@@ -288,6 +295,7 @@ def test_endpoint_mode_catches_nan_logits_even_with_matching_argmax(
                 endpoint=f"http://127.0.0.1:{server.port}/act",
                 bridge_kind="mock",
                 max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
             )
     finally:
         server.close()
@@ -319,6 +327,7 @@ def test_endpoint_mode_fails_when_server_omits_logits(
                 endpoint=f"http://127.0.0.1:{server.port}/act",
                 bridge_kind="mock",
                 max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
             )
     finally:
         server.close()
@@ -338,6 +347,7 @@ def test_endpoint_mode_reports_failure_on_connection_error(tmp_path: Path) -> No
             bridge_kind="mock",
             max_decisions=3,
             http_timeout=1.0,
+            allow_non_production=True,  # plumbing test, not the production hard gate
         )
 
 
@@ -440,6 +450,7 @@ def test_run_serving_parity_fails_fast_on_checkpoint_mismatch_before_any_decisio
                 endpoint=f"http://127.0.0.1:{server.port}/act",
                 bridge_kind="mock",
                 max_decisions=5,
+                allow_non_production=True,  # plumbing test, not the production hard gate
             )
     finally:
         server.close()
@@ -564,3 +575,258 @@ def test_build_act_payload_matches_go_actrequest_field_names(tmp_path: Path) -> 
     assert payload["event_window"] == _WINDOW
     assert payload["event_count"] == len(payload.get("event_history", []))
     assert payload["event_count"] <= _WINDOW
+
+
+# --- adversarial round 10, Finding 1: --endpoint production hard gate -------------------
+#
+# --endpoint is the release gate (the runbook's promotion steps 1-2). Running
+# it against the default mock/classic bridge never exercises production-
+# shaped Chongci event streams (round transitions/resets, interrupts, tail
+# truncation) — a real deployment risk this section pins shut. This is
+# deliberately about EPISODE SHAPE (which bridge/match-mode drives each
+# decision), not wire-payload byte-equality: the JSON payload construction in
+# `build_act_payload` stays Python-side either way, and Go's own byte-for-
+# byte wire encoding is independently pinned by
+# internal/rl/serving_parity_test.go (layer 1) + internal/bot/remote's wire
+# tests.
+
+
+def test_endpoint_mode_without_escape_hatch_and_mock_bridge_fails_fast(tmp_path: Path) -> None:
+    """The hard gate itself: --endpoint (no --allow-non-production) against
+    the default mock/classic bridge must refuse immediately, before even
+    attempting to load the checkpoint or contact the endpoint — a checkpoint
+    path that doesn't exist and an endpoint nothing listens on both prove
+    this fails on the gate check itself, not some downstream I/O error."""
+    with pytest.raises(ServingParityError, match=r"(?i)hard gate.*bridge.*go.*chongci|bridge_kind.*match_mode"):
+        run_serving_parity(
+            checkpoint=tmp_path / "does-not-exist.pt",
+            event_history_window=0,
+            episodes=1,
+            start_seed=1,
+            device="cpu",
+            endpoint="http://127.0.0.1:1/act",  # nothing listens here
+            bridge_kind="mock",
+            match_mode="classic",
+        )
+
+
+def test_endpoint_mode_without_escape_hatch_and_go_bridge_wrong_match_mode_fails_fast(tmp_path: Path) -> None:
+    """bridge_kind='go' alone is not enough — match_mode must ALSO be
+    'chongci' (a classic match is a single truncated round, still not
+    production-shaped)."""
+    with pytest.raises(ServingParityError):
+        run_serving_parity(
+            checkpoint=tmp_path / "does-not-exist.pt",
+            event_history_window=0,
+            episodes=1,
+            start_seed=1,
+            device="cpu",
+            endpoint="http://127.0.0.1:1/act",
+            bridge_kind="go",
+            match_mode="classic",
+        )
+
+
+def test_endpoint_mode_with_allow_non_production_and_mock_runs(tmp_path: Path) -> None:
+    """The escape hatch: with --allow-non-production, --endpoint mode against
+    the mock/classic bridge runs normally (local experimentation only) — uses
+    the same in-thread real server harness as the other endpoint-mode tests."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        report = run_serving_parity(
+            checkpoint=checkpoint,
+            event_history_window=_WINDOW,
+            episodes=2,
+            start_seed=10000,
+            device="cpu",
+            endpoint=f"http://127.0.0.1:{server.port}/act",
+            bridge_kind="mock",
+            match_mode="classic",
+            max_decisions=5,
+            allow_non_production=True,
+        )
+    finally:
+        server.close()
+
+    assert report.all_agree
+    assert report.decisions_checked == 2 * 5
+
+
+def test_in_process_mode_unaffected_by_production_gate(tmp_path: Path) -> None:
+    """--in-process (endpoint=None) never triggers the production gate, even
+    with the default mock/classic bridge and no escape hatch — CI's fast path
+    stays exactly as it was."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+
+    report = run_serving_parity(
+        checkpoint=checkpoint,
+        event_history_window=_WINDOW,
+        episodes=2,
+        start_seed=11000,
+        device="cpu",
+        endpoint=None,
+        bridge_kind="mock",
+        match_mode="classic",
+        max_decisions=5,
+    )
+
+    assert report.all_agree
+
+
+# --- adversarial round 10, Finding 1c: chongci episode length -----------------------------
+
+
+def test_max_decisions_defaults_to_legacy_value_for_classic_mock(tmp_path: Path) -> None:
+    """Unset --max-decisions in classic mode keeps the pre-Finding-1 64-decision
+    default (in-process, mock — no behavior change for existing callers)."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+
+    report = run_serving_parity(
+        checkpoint=checkpoint,
+        event_history_window=_WINDOW,
+        episodes=1,
+        start_seed=12000,
+        device="cpu",
+        endpoint=None,
+        bridge_kind="mock",
+        match_mode="classic",
+        max_decisions=None,
+    )
+
+    assert report.decisions_checked == 64
+
+
+def test_max_decisions_defaults_to_chongci_budget_when_match_mode_chongci_and_unset(tmp_path: Path) -> None:
+    """Finding 1c: chongci episodes must be long enough to have a realistic
+    chance of crossing round boundaries — reuses evaluate.py's chongci
+    online-eval budget (CHONGCI_DEFAULT_MAX_STEPS) rather than the small
+    classic default, whenever --max-decisions is left unset."""
+    from fh_mahjong_ai.scripts.evaluate import CHONGCI_DEFAULT_MAX_STEPS
+
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+    # Use a tiny mock bridge episode with allow_non_production=True purely to
+    # exercise the max_decisions RESOLUTION logic cheaply (a real go+chongci
+    # run of CHONGCI_DEFAULT_MAX_STEPS decisions would be slow in a unit
+    # test); the mock bridge still honors config.max_steps_per_episode, so
+    # decisions_checked reflects the resolved value either way.
+    report = run_serving_parity(
+        checkpoint=checkpoint,
+        event_history_window=_WINDOW,
+        episodes=1,
+        start_seed=13000,
+        device="cpu",
+        endpoint=None,
+        bridge_kind="mock",
+        match_mode="chongci",
+        max_decisions=None,
+    )
+
+    assert report.decisions_checked == CHONGCI_DEFAULT_MAX_STEPS
+
+
+def test_explicit_max_decisions_always_wins_over_match_mode_default(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config())
+
+    report = run_serving_parity(
+        checkpoint=checkpoint,
+        event_history_window=_WINDOW,
+        episodes=1,
+        start_seed=14000,
+        device="cpu",
+        endpoint=None,
+        bridge_kind="mock",
+        match_mode="chongci",
+        max_decisions=7,
+    )
+
+    assert report.decisions_checked == 7
+
+
+# --- adversarial round 10, Finding 1: CLI argument validation ----------------------------
+
+
+def test_cli_endpoint_mode_without_bridge_go_chongci_exits_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fh_mahjong_ai.scripts import serving_parity as serving_parity_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "fh-mj-serving-parity",
+            "--checkpoint", str(tmp_path / "doesnotmatter.pt"),
+            "--event-history-window", "0",
+            "--episodes", "1",
+            "--start-seed", "1",
+            "--endpoint", "http://127.0.0.1:1/act",
+            # deliberately omit --bridge-kind go --match-mode chongci and
+            # --allow-non-production
+        ],
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        serving_parity_module.main()
+    assert excinfo.value.code == 1
+
+
+def test_cli_endpoint_mode_with_allow_non_production_reaches_connection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With --allow-non-production, the CLI proceeds PAST the gate check —
+    the very next thing it does is try to load the (nonexistent) checkpoint,
+    which is a plain FileNotFoundError, not the gate's ServingParityError.
+    This proves the escape hatch actually bypasses the gate rather than some
+    unrelated early exit."""
+    from fh_mahjong_ai.scripts import serving_parity as serving_parity_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "fh-mj-serving-parity",
+            "--checkpoint", str(tmp_path / "doesnotmatter.pt"),
+            "--event-history-window", "0",
+            "--episodes", "1",
+            "--start-seed", "1",
+            "--endpoint", "http://127.0.0.1:1/act",
+            "--allow-non-production",
+        ],
+    )
+    with pytest.raises(FileNotFoundError):
+        serving_parity_module.main()
+
+
+# Same skipif convention as ai/tests/test_searchpool.py: gate on the
+# FH_MAHJONG_BRIDGE_LIB env var (not just the file existing on disk), so this
+# only runs in environments explicitly configured to exercise the real Go
+# bridge.
+requires_go_lib = pytest.mark.skipif(
+    not os.environ.get("FH_MAHJONG_BRIDGE_LIB"), reason="needs the Go bridge library"
+)
+
+
+@requires_go_lib
+def test_go_bridge_chongci_episode_crosses_a_round_boundary(tmp_path: Path) -> None:
+    """When the .so is available, confirm --bridge-kind go --match-mode
+    chongci actually produces a real match with round transitions (not a
+    single truncated round) within a modest decision budget — the concrete
+    behavior Finding 1's --endpoint gate now requires."""
+    from fh_mahjong_ai.bridge import build_bridge
+
+    env_config = EnvConfig(bridge_kind="go", match_mode="chongci", max_steps_per_episode=2000)
+    bridge = build_bridge(env_config)
+    try:
+        observation = bridge.reset(seed=970000)
+        crossed_round_boundary = False
+        for _ in range(2000):
+            legal = observation.legal_actions
+            assert legal, "expected at least one legal action"
+            result = bridge.step(legal[0])
+            if result.info.get("round_outcome") is not None:
+                crossed_round_boundary = True
+            if result.terminated or result.truncated:
+                break
+            observation = result.observation
+        assert crossed_round_boundary, (
+            "expected the chongci episode to cross at least one round boundary within "
+            "the decision budget"
+        )
+    finally:
+        bridge.close()

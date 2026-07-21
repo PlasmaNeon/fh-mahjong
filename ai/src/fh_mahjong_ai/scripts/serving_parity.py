@@ -42,8 +42,19 @@ from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.events import EVENT_CONTRACT_V1
 from fh_mahjong_ai.policies import TorchGreedyPolicy
 from fh_mahjong_ai.scripts import serve_policy as serve_policy_module
+# Reuses evaluate.py's chongci step-budget resolution (adversarial round 10,
+# Finding 1c): a full chongci match needs far more decisions than a fixed
+# small default to have any chance of crossing round boundaries, and this is
+# the SAME budget the champion's own online-eval CLI already relies on to
+# reach PHASE_MATCH_END instead of truncating mid-match.
+from fh_mahjong_ai.scripts.evaluate import resolve_max_steps_per_episode
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.types import Observation
+
+# Pre-Finding-1 default for --max-decisions in classic/mock mode; preserved
+# so existing --in-process/mock callers (CI, this module's own tests) are
+# unaffected by the chongci-aware resolution below.
+_LEGACY_DEFAULT_MAX_DECISIONS = 64
 
 # In-process logit tolerance (spec B2c section 3, item 2): "exact logits on
 # the same hardware, tight tolerance (1e-4)".
@@ -284,14 +295,57 @@ def run_serving_parity(
     endpoint: Optional[str] = None,
     bridge_kind: str = "mock",
     bridge_library_path: Optional[Path] = None,
-    max_decisions: int = 64,
+    max_decisions: Optional[int] = None,
     http_timeout: float = 5.0,
     logit_tolerance: float = LOGIT_TOLERANCE,
+    match_mode: str = "classic",
+    allow_non_production: bool = False,
 ) -> ParityReport:
     """Drive `episodes` seeded bridge episodes (seeds `start_seed ..
     start_seed + episodes - 1`), checking eval-vs-serving action parity on
     every decision. Raises `ServingParityError` on the first violation.
     """
+    # Adversarial round 10, Finding 1: --endpoint is the release HARD GATE
+    # (spec's promotion runbook step 2). The runbook's own command supplied
+    # no --bridge-kind/--match-mode overrides, so it silently ran against
+    # this CLI's default mock/classic bridge — a random single-round episode
+    # generator that never exercises production-shaped Chongci event
+    # streams (round transitions/resets, interrupts, tail truncation). A
+    # gate that never drives real event streams can pass while the actual
+    # deployed contract (Go's real event encoding, real round boundaries)
+    # is broken.
+    #
+    # This check is deliberately about EPISODE SHAPE, not wire-payload
+    # byte-equality: the JSON payload construction in `build_act_payload`
+    # (below) is Python-side and stays Python-side either way — Go's own
+    # byte-for-byte wire encoding is independently pinned by
+    # internal/rl/serving_parity_test.go (layer 1) and internal/bot/remote's
+    # wire tests. What THIS gate is responsible for is making sure the
+    # bridge driving each decision is the real Go engine playing a real
+    # chongci match, not a random mock stepping through a single truncated
+    # round.
+    if endpoint is not None and not allow_non_production:
+        if bridge_kind != "go" or match_mode != "chongci":
+            raise ServingParityError(
+                "serving parity FAILED: --endpoint is the release HARD GATE and requires "
+                f"--bridge-kind go --match-mode chongci (production-shaped Chongci event "
+                f"streams with real round transitions), got bridge_kind={bridge_kind!r} "
+                f"match_mode={match_mode!r}. Pass --allow-non-production to run --endpoint "
+                "against a non-production bridge/match-mode for local experimentation only "
+                "— never for the actual promotion gate."
+            )
+
+    # Finding 1c: a full chongci match needs far more decisions than a small
+    # fixed default to have any realistic chance of crossing a round
+    # boundary. An explicit `max_decisions` always wins; when unset, mirror
+    # evaluate.py's online-eval default (classic keeps this module's
+    # pre-existing 64-decision default, chongci gets the same budget
+    # evaluate.py already relies on to reach PHASE_MATCH_END).
+    resolved_max_decisions = resolve_max_steps_per_episode(match_mode, max_decisions)
+    if resolved_max_decisions is None:
+        resolved_max_decisions = _LEGACY_DEFAULT_MAX_DECISIONS
+    max_decisions = resolved_max_decisions
+
     # One model load, shared by both the reference (TorchGreedyPolicy) and,
     # in --in-process mode, the serving (CheckpointPolicy) path: this isolates
     # feature-construction/wire-round-trip drift from weight drift, which is
@@ -340,6 +394,7 @@ def run_serving_parity(
         learning_seats=(0, 1, 2, 3),
         auto_play_heuristics=False,
         max_steps_per_episode=max_decisions,
+        match_mode=match_mode,
         # Validated equal to model_event_window above; use the checkpoint's
         # own window (the only value that can reach this line).
         event_history_window=model_event_window,
@@ -518,7 +573,25 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cpu", choices=("cpu", "cuda"))
     parser.add_argument("--bridge-kind", choices=("mock", "go"), default="mock", help="Bridge implementation to seed decision states from")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library (--bridge-kind go)")
-    parser.add_argument("--max-decisions", type=int, default=64, help="Bridge decision cap per episode")
+    parser.add_argument(
+        "--match-mode", choices=("classic", "chongci"), default="classic",
+        help="Simulator match mode driving each seeded episode; --endpoint (the hard gate) "
+        "requires 'chongci' (production-shaped event streams with real round transitions) "
+        "unless --allow-non-production is also given",
+    )
+    parser.add_argument(
+        "--allow-non-production", action="store_true",
+        help="Escape hatch for LOCAL EXPERIMENTATION ONLY: permits --endpoint mode against a "
+        "non-'go'/non-'chongci' bridge (e.g. the default mock/classic). Never pass this for the "
+        "actual release/promotion gate — it exists to skip the production-shape requirement "
+        "while iterating locally, not to relax the real gate.",
+    )
+    parser.add_argument(
+        "--max-decisions", type=int, default=None,
+        help="Bridge decision cap per episode. Default: 64 (classic/mock, unchanged) or "
+        "evaluate.py's chongci online-eval budget (chongci) — a full chongci match needs far "
+        "more decisions than 64 to have any chance of crossing a round boundary",
+    )
     parser.add_argument("--http-timeout", type=float, default=5.0, help="Per-request timeout in seconds (--endpoint mode)")
     parser.add_argument(
         "--logit-tolerance", type=_finite_nonnegative_float, default=LOGIT_TOLERANCE,
@@ -542,6 +615,8 @@ def main() -> None:
             max_decisions=args.max_decisions,
             http_timeout=args.http_timeout,
             logit_tolerance=args.logit_tolerance,
+            match_mode=args.match_mode,
+            allow_non_production=args.allow_non_production,
         )
     except ServingParityError as exc:
         print(str(exc), file=sys.stderr)

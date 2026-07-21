@@ -127,7 +127,13 @@ class CheckpointPolicy:
         )
 
     @torch.inference_mode()
-    def choose(self, observation: Observation, return_logits: bool = False) -> ServedAction:
+    def choose(
+        self,
+        observation: Observation,
+        return_logits: bool = False,
+        *,
+        allow_empty_event_history: bool = False,
+    ) -> ServedAction:
         legal_actions = observation.legal_actions
         if not legal_actions:
             raise ValueError("observation has no legal actions")
@@ -147,7 +153,7 @@ class CheckpointPolicy:
             history = np.asarray(
                 getattr(observation, "event_history", np.zeros(0, np.uint32)), dtype=np.uint32
             )
-            if history.size == 0:
+            if history.size == 0 and not allow_empty_event_history:
                 # Defense-in-depth: serve_policy's own validation is the first
                 # line of defense against this, but an event model (window>0)
                 # must never silently zero-fill a missing history — that
@@ -157,11 +163,29 @@ class CheckpointPolicy:
                 # before any decision reaches serving (see test_events.py's
                 # test_mock_bridge_emits_wellformed_history), so an empty
                 # history here indicates an upstream bug, not a legitimate
-                # round start.
+                # round start — UNLESS the caller explicitly vouches for it
+                # (`allow_empty_event_history=True`) because it already ran
+                # `observation_from_json`'s validation, which only lets an
+                # empty history through when the wire payload's own
+                # `event_count` field explicitly said 0 (a documented
+                # legitimate early-round case; contrast with a missing/absent
+                # count, which `observation_from_json` rejects outright, so
+                # it can never reach here). Direct callers that build an
+                # `Observation` themselves (smoke tests, the parity harness,
+                # any other direct `choose()` use) never pass this flag and
+                # keep the original defense-in-depth raise.
                 raise ValueError(
                     f"event model (event_window={window}) received an observation with an "
                     "EMPTY event_history; refusing to silently zero-fill it"
                 )
+            # `allow_empty_event_history=True` with an empty history falls
+            # through to the same zero-length-row construction below that a
+            # non-empty history uses (`n = min(history.size, window)` is 0
+            # here): this is exactly `EventEncoder.forward`'s zero-length
+            # path (masked gather zeroes the GRU output when `lengths == 0`),
+            # the identical path `evaluate_batch`/`/evaluate` already use for
+            # a validated zero-count row — NOT a separate "events=None"
+            # zero-fill fallback.
             row = np.zeros((1, window), dtype=np.int64)
             n = min(history.size, window)
             row[0, :n] = history[-n:].astype(np.int64)

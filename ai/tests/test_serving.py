@@ -191,6 +191,49 @@ def test_serving_smoke_uses_bridge_validation(tmp_path: Path) -> None:
     assert report["decisions"] > 0
 
 
+def test_choose_empty_event_history_default_still_raises(tmp_path: Path) -> None:
+    """Adversarial round 10, Finding 2: the default (`allow_empty_event_history=False`)
+    must keep the original defense-in-depth raise for any DIRECT caller of
+    choose() (smoke tests, the parity harness, any other direct use) that
+    hands it an Observation with an empty event_history — only serve_policy's
+    /act handler (after observation_from_json's own validation) is allowed to
+    pass allow_empty_event_history=True."""
+    policy = CheckpointPolicy.from_checkpoint(_event_checkpoint(tmp_path))
+    mask = np.zeros(204, dtype=np.int8)
+    mask[0:3] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(58, dtype=np.float32),
+        action_mask=mask,
+        event_history=np.zeros(0, dtype=np.uint32),
+    )
+
+    with pytest.raises(ValueError, match="EMPTY event_history"):
+        policy.choose(observation)
+
+
+def test_choose_empty_event_history_with_explicit_flag_succeeds(tmp_path: Path) -> None:
+    """The escape hatch itself: with allow_empty_event_history=True, an empty
+    history produces a legal action instead of raising (mirrors the
+    zero-length row evaluate_batch already handles for a validated
+    zero-count observation)."""
+    policy = CheckpointPolicy.from_checkpoint(_event_checkpoint(tmp_path))
+    mask = np.zeros(204, dtype=np.int8)
+    mask[0:3] = 1
+    observation = Observation(
+        seat=0,
+        planes=np.zeros((39, 42, 1), dtype=np.float32),
+        scalars=np.zeros(58, dtype=np.float32),
+        action_mask=mask,
+        event_history=np.zeros(0, dtype=np.uint32),
+    )
+
+    action = policy.choose(observation, allow_empty_event_history=True)
+
+    assert action.action_id in (0, 1, 2)
+
+
 def _event_checkpoint(tmp_path: Path, event_window: int = 8) -> Path:
     # Mirrors ai/tests/test_b2c_loading.py's small event-model helpers: a tiny
     # PolicyValueNet with event_window > 0 (a B2b-style event checkpoint),

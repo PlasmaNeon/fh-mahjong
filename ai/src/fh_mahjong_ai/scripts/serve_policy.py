@@ -227,7 +227,17 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             policy = self.holder.policy
             observation = observation_from_json(payload, policy.model.model_config.event_window)
             return_logits = bool(payload.get("return_logits", False))
-            action = policy.choose(observation, return_logits=return_logits)
+            # `observation_from_json` is the ONLY thing that produced `observation`
+            # above, and for an event model (event_window > 0) it never returns
+            # successfully with an empty `event_history` unless the wire payload's
+            # own `event_count` field explicitly said 0 (a documented legitimate
+            # early-round case) — a missing/inconsistent count raises there first.
+            # So by the time control reaches this line, any empty history is
+            # already explicitly validated, not silently missing; it is safe (and
+            # required, per Finding 2) to tell `choose()` to trust it rather than
+            # apply its defense-in-depth raise, which exists for callers that
+            # build an `Observation` directly without going through this decode.
+            action = policy.choose(observation, return_logits=return_logits, allow_empty_event_history=True)
         except Exception as exc:
             self._write_json({"error": str(exc)}, status=400)
             return
