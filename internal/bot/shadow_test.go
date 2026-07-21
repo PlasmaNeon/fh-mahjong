@@ -291,3 +291,54 @@ func TestShadowPolicyLegacyChooseActionSkipsMirroring(t *testing.T) {
 		t.Fatalf("legacy ChooseAction must not mirror to the shadow policy, got %d decisions", metrics.Decisions)
 	}
 }
+
+// TestShadowPolicyConcurrentChooseActionDuringClose is a regression test for
+// the goroutine-leak/panic fix: a room tearing down calls Close while other
+// goroutines may still be mid-decision (e.g. a straggling dispatch racing
+// shutdown). Concurrent ChooseActionCtx callers must never panic (send on a
+// closed channel) and must keep getting the primary's action even after
+// Close has fully finished. Run with -race to catch the send/close data
+// race this guards against.
+func TestShadowPolicyConcurrentChooseActionDuringClose(t *testing.T) {
+	primaryAction := testDiscardAction(1)
+	primary := &fixedPolicy{action: primaryAction}
+	shadow := &blockingShadow{action: testDiscardAction(1)}
+
+	sp := NewShadowPolicy(primary, shadow, 4)
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 20; j++ {
+				got := sp.ChooseActionCtx(&DecisionContext{
+					State:         newTestState(1),
+					Seat:          0,
+					DecisionIndex: uint64(i*20 + j),
+				})
+				if got != primaryAction {
+					t.Errorf("expected primary action from concurrent ChooseActionCtx, got %v", got)
+				}
+			}
+		}()
+	}
+
+	close(start)
+	// Close concurrently with the callers above — this is the race the fix
+	// targets: enqueueShadow's send racing Close's channel close.
+	sp.Close()
+	wg.Wait()
+
+	// Calling after Close has fully returned must still work and must not
+	// attempt to mirror (the queue is closed; enqueueShadow must see closed
+	// and skip rather than panic).
+	got := sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 9999})
+	if got != primaryAction {
+		t.Fatalf("expected primary action after Close, got %v", got)
+	}
+}

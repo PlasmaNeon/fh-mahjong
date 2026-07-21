@@ -276,10 +276,58 @@ func (r *Room) finishShutdown() {
 	if r.Hub != nil {
 		r.Hub.UnbindRoom <- r
 	}
+	r.closeSeatPolicies()
 	if r.OnShutdown != nil {
 		r.OnShutdown()
 	}
 	close(r.Done)
+}
+
+// closeableBotPolicy is implemented by bot.Policy instances that own
+// background resources (currently just bot.ShadowPolicy's worker goroutine
+// + queue) and need an explicit teardown call once the room is done with
+// them.
+type closeableBotPolicy interface {
+	Close()
+}
+
+// closeSeatPolicies calls Close on every distinct closeable policy this room
+// owns (each seat's SeatPolicies entry plus the room-wide BotPolicy), once
+// each, before finishShutdown hands control back to the matchmaker.
+//
+// Ownership: SeatPolicies is populated per-room by
+// Matchmaker.StartPrivateTable, which calls resolveSeatPolicy once per RL
+// seat — each call to cmd/server/main.go's SeatPolicyResolver constructs a
+// brand-new bot.NewShadowPolicy, so every closeable instance here is unique
+// to this room and this room alone is responsible for closing it (never
+// shared across seats or rooms). The one thing a ShadowPolicy wraps that IS
+// shared across rooms — the candidate shadow.ContextPolicy passed to every
+// resolver call — is deliberately NOT touched: bot.ShadowPolicy.Close only
+// closes its own queue/worker, never the wrapped shadow or primary policy,
+// so this stays safe even though that policy is long-lived and shared.
+// BotPolicy (from BotPolicyFactory, when set) is likewise constructed fresh
+// per room in StartPrivateTable/registerActiveRoom, so it is safe to close
+// here too. Non-closeable policies (heuristic bot.NewPolicy, plain
+// remote.HTTPPolicy) simply don't implement closeableBotPolicy and are
+// skipped. Pointer-deduped via a set so a policy installed as both a seat
+// override and the room default is only closed once.
+func (r *Room) closeSeatPolicies() {
+	seen := make(map[closeableBotPolicy]struct{})
+	closeOnce := func(policy bot.Policy) {
+		closeable, ok := policy.(closeableBotPolicy)
+		if !ok || closeable == nil {
+			return
+		}
+		if _, already := seen[closeable]; already {
+			return
+		}
+		seen[closeable] = struct{}{}
+		closeable.Close()
+	}
+	for _, policy := range r.SeatPolicies {
+		closeOnce(policy)
+	}
+	closeOnce(r.BotPolicy)
 }
 
 // appendReplay accumulates broadcast payloads into the room's replay buffer.

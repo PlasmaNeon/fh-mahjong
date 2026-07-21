@@ -60,6 +60,17 @@ type ShadowPolicy struct {
 	workerDone chan struct{}
 	closeOnce  sync.Once
 
+	// closeMu protects the send-vs-close race on queue: enqueueShadow takes
+	// RLock (so concurrent enqueues never block each other) and re-checks
+	// closed under the lock immediately before sending; Close takes the
+	// write Lock, so it cannot run concurrently with any in-flight send —
+	// once Close observes the lock is free, no goroutine can still be
+	// between the closed-check and the send. That closes the theoretical
+	// window a bare atomic-check-then-send would leave open (check passes,
+	// then Close races in and closes the channel before the send executes).
+	closeMu sync.RWMutex
+	closed  atomic.Bool
+
 	decisions    atomic.Uint64
 	shadowErrors atomic.Uint64
 	dropped      atomic.Uint64
@@ -132,8 +143,18 @@ func (s *ShadowPolicy) ChooseActionCtx(ctx *DecisionContext) *pb.PlayerAction {
 // guards against the room mutating the live *pb.GameState — or acting on the
 // returned *pb.PlayerAction — before the worker gets around to reading it;
 // Events is a plain-value-struct slice, so a copy is already a full clone.
+//
+// Once Close has been called, mirroring simply stops: enqueueShadow drops
+// the job (silently — Close is a deliberate teardown, not an error
+// condition, so this does not increment Dropped, which is reserved for a
+// live full queue) rather than attempting to send on what may already be a
+// closed channel. See closeMu's doc comment for why RLock here is what
+// makes this race-free against a concurrent Close.
 func (s *ShadowPolicy) enqueueShadow(ctx *DecisionContext, primaryAction *pb.PlayerAction) {
 	if s == nil || s.shadow == nil || ctx.State == nil {
+		return
+	}
+	if s.closed.Load() {
 		return
 	}
 
@@ -162,6 +183,13 @@ func (s *ShadowPolicy) enqueueShadow(ctx *DecisionContext, primaryAction *pb.Pla
 		PrimaryAction: clonedAction,
 	}
 
+	s.closeMu.RLock()
+	defer s.closeMu.RUnlock()
+	if s.closed.Load() {
+		// Close won the race between our two checks; drop without touching
+		// the (possibly already-closed) channel.
+		return
+	}
 	select {
 	case s.queue <- job:
 	default:
@@ -271,16 +299,26 @@ func (s *ShadowPolicy) Metrics() ShadowMetrics {
 	}
 }
 
-// Close closes the intake queue and waits for the worker to drain it and
-// exit. Idempotent — safe to call more than once (or concurrently) via
-// sync.Once guarding the channel close; every caller still blocks until the
-// worker has actually finished.
+// Close stops mirroring, closes the intake queue, and waits for the worker
+// to drain it and exit. Idempotent — safe to call more than once (or
+// concurrently) via sync.Once guarding the channel close; every caller still
+// blocks until the worker has actually finished.
+//
+// closed is set, and the queue closed, while holding closeMu's write lock:
+// enqueueShadow only ever sends while holding the read lock and only after
+// re-checking closed, so no send can still be in flight (or start) once
+// Close acquires the write lock, and closed is visibly true before the
+// channel close happens. That is what makes send-after-close impossible
+// rather than merely unlikely.
 func (s *ShadowPolicy) Close() {
 	if s == nil {
 		return
 	}
 	s.closeOnce.Do(func() {
+		s.closeMu.Lock()
+		s.closed.Store(true)
 		close(s.queue)
+		s.closeMu.Unlock()
 	})
 	<-s.workerDone
 }

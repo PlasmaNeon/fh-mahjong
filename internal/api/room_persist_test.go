@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -337,6 +338,62 @@ func TestRoomShutdown_PersistsBeforeOnShutdown(t *testing.T) {
 
 	if got := <-statusAtUnregister; got == "in_progress" {
 		t.Fatal("room was unregistered while the match was still unpersisted (in_progress)")
+	}
+}
+
+// closeTrackingPolicy is a bot.Policy stub that also implements Close(), so
+// tests can assert the room's teardown path actually calls it — the
+// goroutine-leak regression this guards against (bot.ShadowPolicy's worker +
+// queue never getting torn down when a private-room match ends).
+type closeTrackingPolicy struct {
+	stubPolicy
+	mu     sync.Mutex
+	closed int
+}
+
+func (p *closeTrackingPolicy) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed++
+}
+
+func (p *closeTrackingPolicy) closeCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closed
+}
+
+// A closeable seat policy (bot.ShadowPolicy in production) must be closed
+// exactly once when the room shuts down — otherwise its worker goroutine
+// and queue leak for the lifetime of the process. The room-wide BotPolicy
+// default must be closed too, and a policy installed as both a seat
+// override and the BotPolicy default must still be closed exactly once
+// (pointer-deduped), never twice.
+func TestRoomShutdown_ClosesSeatPolicies(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "close-match")
+
+	seatPolicy := &closeTrackingPolicy{}
+	sharedPolicy := &closeTrackingPolicy{}
+
+	room := NewRoom("close-match", nil, db)
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+	room.SeatPolicies[1] = seatPolicy
+	// Installed as both a seat override and the room-wide default: must
+	// still only be closed once.
+	room.SeatPolicies[2] = sharedPolicy
+	room.BotPolicy = sharedPolicy
+
+	go room.Start()
+	room.Shutdown <- true
+	<-room.Done
+
+	if got := seatPolicy.closeCount(); got != 1 {
+		t.Fatalf("expected seat policy Close() called exactly once, got %d", got)
+	}
+	if got := sharedPolicy.closeCount(); got != 1 {
+		t.Fatalf("expected shared seat/BotPolicy Close() called exactly once (deduped), got %d", got)
 	}
 }
 
