@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,7 +121,7 @@ func TestGetReviewHealthzDownFailsClosed(t *testing.T) {
 
 	server := newReviewTestServer(t, true)
 	server.StorePaipu("healthz-down-fixture", reviewFixtureJSON(t))
-	if err := server.cacheMatchReview("healthz-down-fixture", "some-checkpoint", []byte(`{"schemaVersion":1}`)); err != nil {
+	if err := server.cacheMatchReview(context.Background(), "healthz-down-fixture", "some-checkpoint", []byte(`{"schemaVersion":1}`)); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 
@@ -136,7 +137,7 @@ func TestGetReviewHealthzDownFailsClosed(t *testing.T) {
 // contradict a cached row, so the newest one is served as-is.
 func TestGetReviewNoPolicyServerConfiguredFallsBackToNewestRow(t *testing.T) {
 	server := newReviewTestServer(t, true)
-	if err := server.cacheMatchReview("no-policy-fixture", "some-checkpoint", []byte(`{"schemaVersion":1}`)); err != nil {
+	if err := server.cacheMatchReview(context.Background(), "no-policy-fixture", "some-checkpoint", []byte(`{"schemaVersion":1}`)); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 
@@ -165,7 +166,7 @@ func TestBuildReviewOutcomeRejectsMissingSha(t *testing.T) {
 	server.StorePaipu("missing-sha-fixture", reviewFixtureJSON(t))
 
 	policyClient := review.NewHTTPPolicyClient(stub.URL, 0)
-	outcome := server.buildReviewOutcome("missing-sha-fixture", policyClient, 0, "sha-expected", false)
+	outcome := server.buildReviewOutcome(context.Background(), "missing-sha-fixture", policyClient, 0, "sha-expected", false)
 	if outcome.status != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 when /evaluate omits checkpoint_sha256 but a sha was expected, got %d: %s", outcome.status, string(outcome.body))
 	}
@@ -193,7 +194,7 @@ func TestBuildReviewOutcomeAcceptsMissingShaWhenLegacy(t *testing.T) {
 	server.StorePaipu("legacy-missing-sha-fixture", reviewFixtureJSON(t))
 
 	policyClient := review.NewHTTPPolicyClient(stub.URL, 0)
-	outcome := server.buildReviewOutcome("legacy-missing-sha-fixture", policyClient, 0, "", true)
+	outcome := server.buildReviewOutcome(context.Background(), "legacy-missing-sha-fixture", policyClient, 0, "", true)
 	if outcome.status != http.StatusOK {
 		t.Fatalf("expected 200 for a legacy build with no expected sha, got %d: %s", outcome.status, string(outcome.body))
 	}

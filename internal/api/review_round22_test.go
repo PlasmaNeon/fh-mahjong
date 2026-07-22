@@ -383,7 +383,7 @@ func TestBuildReviewOutcomeRejectsShaMismatch(t *testing.T) {
 	server.StorePaipu("mismatch-fixture", reviewFixtureJSON(t))
 
 	policyClient := review.NewHTTPPolicyClient(stub.URL, 0)
-	outcome := server.buildReviewOutcome("mismatch-fixture", policyClient, 0, "sha-expected", false)
+	outcome := server.buildReviewOutcome(context.Background(), "mismatch-fixture", policyClient, 0, "sha-expected", false)
 	if outcome.status != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 on sha mismatch, got %d: %s", outcome.status, string(outcome.body))
 	}

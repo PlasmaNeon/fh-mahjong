@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -111,7 +112,7 @@ func TestGetReviewConcurrentRefreshesCoalesceToOneHealthzCall(t *testing.T) {
 	ctrl.setRelease(release)
 
 	server := newReviewTestServer(t, true)
-	if err := server.cacheMatchReview("coalesce-fixture", "sha-coalesce", []byte(`{"schemaVersion":1,"checkpointSha256":"sha-coalesce"}`)); err != nil {
+	if err := server.cacheMatchReview(context.Background(), "coalesce-fixture", "sha-coalesce", []byte(`{"schemaVersion":1,"checkpointSha256":"sha-coalesce"}`)); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 
@@ -159,7 +160,7 @@ func TestGetReviewHealthzOutageNegativeCachesAcrossRepeatedGETs(t *testing.T) {
 	t.Setenv("POLICY_SERVER_URL", stub.URL)
 
 	server := newReviewTestServer(t, true)
-	if err := server.cacheMatchReview("outage-fixture", "sha-outage", []byte(`{"schemaVersion":1}`)); err != nil {
+	if err := server.cacheMatchReview(context.Background(), "outage-fixture", "sha-outage", []byte(`{"schemaVersion":1}`)); err != nil {
 		t.Fatalf("seed cache: %v", err)
 	}
 

@@ -20,6 +20,7 @@ import (
 	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // parseReviewEventWindowEnv reads envVar as an event-history window using the
@@ -370,28 +371,46 @@ func (s *Server) cachedReviewSha(policyURL string) (reviewShaCacheEntry, bool) {
 // the build and validate the result below. Without a DB (dev mode), every
 // call builds fresh and nothing is cached.
 //
-// Concurrency and admission (round 21 Findings 1b/1c; round 22 Finding 1):
-// building is not done under c directly. Every build (forced, or a cache
-// miss) is routed through reviewBuildGroup, an x/sync/singleflight.Group
-// keyed on matchID + the resolved checkpoint identity + force-ness (round
-// 22, Finding 2 — see buildReviewKey), so concurrent requests that actually
-// expect the SAME checkpoint share one in-flight build, while a request that
-// resolves a DIFFERENT sha (server promoted/rolled back mid-flight) always
-// gets its own build rather than silently coalescing into a stranger's
-// result. The build itself runs via DoChan in an independent goroutine with
-// its own DETACHED context (buildReviewOutcome's ctx, not c.Request's) —
-// this caller (and every other caller sharing the same key) merely SELECTS
+// Concurrency and admission (round 21 Findings 1b/1c; round 22 Finding 1;
+// round 25 Findings 1/2): building is not done under c directly. Every build
+// (forced, or a cache miss) is routed through reviewBuildGroup, an
+// x/sync/singleflight.Group keyed on matchID + the resolved checkpoint
+// identity (buildReviewKey) — NOT force-ness (round 25, Finding 2: see
+// buildReviewKey's doc for why folding force into the key was actively
+// harmful) — so concurrent requests that actually expect the SAME checkpoint
+// share one in-flight build, while a request that resolves a DIFFERENT sha
+// (server promoted/rolled back mid-flight) always gets its own build rather
+// than silently coalescing into a stranger's result.
+//
+// The build itself runs via DoChan in an independent goroutine against ONE
+// bounded, detached context created BEFORE queue admission (round 25,
+// Finding 1: reviewBuildTotalTimeout, context.Background() bounded by the
+// WHOLE build lifecycle — semaphore wait, paipu load, evaluation, and
+// persistence — not just the /evaluate call). This closes a wedge: previously
+// the semaphore acquisition blocked with no deadline at all, and the
+// timeout only wrapped the /evaluate call itself (established well AFTER
+// admission and after the contextless paipu-load DB queries) — a stall
+// anywhere before that point (a hung DB call, in particular) held a build
+// slot forever, and once both reviewBuildConcurrencyLimit slots were wedged
+// that way every subsequent request piled into the wait queue and then
+// started 429ing permanently. Now acquireReviewBuildSlot itself selects on
+// this same ctx while waiting for a slot (timeout → 503, slot cleanly
+// released, no wedge), and loadPaipuJSON's DB calls run under
+// DB.WithContext(ctx) so a stalled query is bounded too.
+//
+// This caller (and every other caller sharing the same key) merely SELECTS
 // between that goroutine finishing and its own c.Request.Context() being
 // cancelled (client disconnected/request timed out): a caller giving up
 // early stops waiting (504) without cancelling the shared build for anyone
-// else still waiting on it, and the build still completes and caches
-// normally. Inside that goroutine, acquireReviewBuildSlot bounds how many
-// DIFFERENT checkpoint-builds may run/queue at once server-wide (capacity
-// reviewBuildConcurrencyLimit + wait queue reviewBuildWaitQueueLimit); beyond
-// that, the build fails immediately with 429 rather than queuing
-// unboundedly. A per-user token bucket (reviewRateLimiter) gates entry even
-// earlier, before any of this — a spammy caller is turned away before ever
-// touching the shared admission queue.
+// else still waiting on it, and the build still completes (up to its own
+// bounded ctx) and caches normally. Inside that goroutine,
+// acquireReviewBuildSlot bounds how many DIFFERENT checkpoint-builds may
+// run/queue at once server-wide (capacity reviewBuildConcurrencyLimit + wait
+// queue reviewBuildWaitQueueLimit); beyond that, the build fails immediately
+// with 429 rather than queuing unboundedly. A per-user token bucket
+// (reviewRateLimiter) gates entry even earlier, before any of this — a
+// spammy caller is turned away before ever touching the shared admission
+// queue.
 func (s *Server) handlePostReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -462,9 +481,15 @@ func (s *Server) handlePostReview(c *gin.Context) {
 		}
 	}
 
-	key := buildReviewKey(matchID, currentSha, legacy, force)
+	key := buildReviewKey(matchID, currentSha, legacy)
 	resultCh := s.reviewBuildGroup.DoChan(key, func() (interface{}, error) {
-		return s.buildReviewOutcome(matchID, policyClient, eventWindow, currentSha, legacy), nil
+		// Round 25, Finding 1: ONE detached-but-bounded context for the whole
+		// build lifecycle — created here, before admission is ever attempted
+		// — shared by every caller coalesced onto this singleflight key. See
+		// handlePostReview's concurrency doc above and reviewBuildTotalTimeout.
+		buildCtx, cancel := context.WithTimeout(context.Background(), reviewBuildTotalTimeout)
+		defer cancel()
+		return s.buildReviewOutcome(buildCtx, matchID, policyClient, eventWindow, currentSha, legacy), nil
 	})
 
 	select {
@@ -489,15 +514,29 @@ func (s *Server) handlePostReview(c *gin.Context) {
 // into another request's in-flight build for a DIFFERENT checkpoint (e.g. a
 // promotion/rollback landing between two requests for the same match).
 // Folding in the resolved checkpoint identity means two requests only share
-// a build when they actually expect the same served bytes; force-ness gets
-// its own slot too, so a plain cache-serving request can never coalesce with
-// a concurrent forced rebuild (or vice versa) — each stays on its own key.
-func buildReviewKey(matchID, currentSha string, legacy, force bool) string {
+// a build when they actually expect the same served bytes.
+//
+// Round 25, Finding 2 REMOVED force-ness from this key. Folding it in used
+// to give a forced rebuild and a concurrent non-forced cache-miss request
+// for the SAME (matchID, sha) their own separate keys — meaning they ran two
+// independent builds that both raced to persist the exact same
+// (match_id, checkpoint_id) row via cacheMatchReview's old
+// First-then-Create: the loser hit the row's unique index and got a bare 500
+// despite the winner's build being a perfectly valid, cacheable report for
+// that same identity. Dropping force from the key is semantically fine
+// because a NON-forced request only ever reaches this build path on a cache
+// miss (handlePostReview's cache lookup above already short-circuited any
+// non-forced cache HIT) — by the time either request gets here, both already
+// want "the freshest build for this exact checkpoint", force or not, so
+// coalescing them onto one build is correct, not just convenient. (Combined
+// with cacheMatchReview's upsert below, even if two builds somehow still ran
+// for the same identity, persistence itself is now race-safe too.)
+func buildReviewKey(matchID, currentSha string, legacy bool) string {
 	shaPart := currentSha
 	if legacy {
 		shaPart = "<legacy>"
 	}
-	return fmt.Sprintf("%s|sha=%s|force=%t", matchID, shaPart, force)
+	return fmt.Sprintf("%s|sha=%s", matchID, shaPart)
 }
 
 // reviewBuildOutcome is the fully-resolved HTTP result of one review build
@@ -520,11 +559,19 @@ func reviewErrorOutcome(status int, msg string) reviewBuildOutcome {
 	return reviewBuildOutcome{status: status, body: body}
 }
 
-// reviewBuildTimeout bounds a shared review build's detached context (round
-// 22, Finding 1c): matches HTTPPolicyClient's own /evaluate client timeout,
-// so this is not a NEW ceiling, just where that ceiling is now applied from
-// (the build's own goroutine, not any one caller's request).
-const reviewBuildTimeout = 120 * time.Second
+// reviewBuildTotalTimeout bounds ONE shared review build's ENTIRE lifecycle
+// (round 25, Finding 1): semaphore wait + paipu load + policy evaluation +
+// persistence, all under a single context created before admission is even
+// attempted (see handlePostReview). This replaces the round-22 version,
+// which only wrapped the /evaluate call — established well after admission
+// and after loadPaipuJSON's then-contextless DB queries — leaving the
+// semaphore acquire and the paipu load completely unbounded. Sized as
+// HTTPPolicyClient's own /evaluate timeout (120s) plus margin for the paipu
+// load and persistence steps that now share the same bound.
+//
+// A var, not a const, so tests can shrink it to exercise the timeout path
+// without an actual multi-second wait.
+var reviewBuildTotalTimeout = 150 * time.Second
 
 // errReviewBuildQueueFull is returned by acquireReviewBuildSlot when both the
 // concurrency cap and the wait queue are exhausted (round 22, Finding 1a).
@@ -537,7 +584,14 @@ var errReviewBuildQueueFull = errors.New("review build queue is full")
 // with no way out: once reviewBuildWaitQueueLimit waiters are already
 // queued, a new attempt fails immediately with errReviewBuildQueueFull
 // rather than growing the queue further.
-func (s *Server) acquireReviewBuildSlot() error {
+//
+// Round 25, Finding 1: the queued wait itself is now also bounded — it
+// selects on ctx.Done() (the build's whole-lifecycle bounded context)
+// alongside the semaphore send, so a waiter that's about to blow the total
+// build budget gives up its queue position and returns ctx.Err() instead of
+// blocking indefinitely (or until process exit) for a slot that a wedged
+// build ahead of it may never release.
+func (s *Server) acquireReviewBuildSlot(ctx context.Context) error {
 	select {
 	case s.reviewBuildSem <- struct{}{}:
 		return nil
@@ -550,8 +604,12 @@ func (s *Server) acquireReviewBuildSlot() error {
 	}
 	defer atomic.AddInt32(&s.reviewBuildWaiters, -1)
 
-	s.reviewBuildSem <- struct{}{}
-	return nil
+	select {
+	case s.reviewBuildSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // releaseReviewBuildSlot releases a slot acquired by acquireReviewBuildSlot.
@@ -564,9 +622,15 @@ func (s *Server) releaseReviewBuildSlot() {
 // Invoked from inside s.reviewBuildGroup.DoChan's own goroutine (round 22,
 // Finding 1): that goroutine is independent of any single caller's HTTP
 // request, so it runs to completion (and caches its result) even if every
-// caller waiting on it gives up. Its own context is DELIBERATELY detached
-// from any caller's request context — see handlePostReview's doc — bounded
-// only by reviewBuildTimeout, matching HTTPPolicyClient's /evaluate timeout.
+// caller waiting on it gives up.
+//
+// ctx is the ONE detached-but-bounded context created by the caller
+// (handlePostReview) BEFORE queue admission was ever attempted (round 25,
+// Finding 1) — it bounds admission (acquireReviewBuildSlot), the paipu load,
+// the policy evaluation, and persistence uniformly, so a stall in any one of
+// those steps can never hold a build slot (and therefore both of them,
+// server-wide) open forever. It is DELIBERATELY detached from any caller's
+// own HTTP request context — see handlePostReview's doc.
 //
 // expectedSha/legacy are the checkpoint identity resolved by the caller
 // BEFORE this build started (used for the singleflight key — see
@@ -576,15 +640,23 @@ func (s *Server) releaseReviewBuildSlot() {
 // mismatch means the policy server's identity moved again mid-build, so the
 // result is discarded (503) rather than cached/served as if it reflected
 // the checkpoint this build was keyed for.
-func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPolicyClient, eventWindow uint32, expectedSha string, legacy bool) reviewBuildOutcome {
-	if err := s.acquireReviewBuildSlot(); err != nil {
-		outcome := reviewErrorOutcome(http.StatusTooManyRequests, "review build queue is full, retry shortly")
-		outcome.retryAfterSeconds = 5
-		return outcome
+func (s *Server) buildReviewOutcome(ctx context.Context, matchID string, policyClient *review.HTTPPolicyClient, eventWindow uint32, expectedSha string, legacy bool) reviewBuildOutcome {
+	if err := s.acquireReviewBuildSlot(ctx); err != nil {
+		if errors.Is(err, errReviewBuildQueueFull) {
+			outcome := reviewErrorOutcome(http.StatusTooManyRequests, "review build queue is full, retry shortly")
+			outcome.retryAfterSeconds = 5
+			return outcome
+		}
+		// ctx expired (or was cancelled) while queued for a slot (round 25,
+		// Finding 1): the wait itself blew the whole-lifecycle build budget,
+		// so this attempt gives up rather than blocking indefinitely behind
+		// a build that may be wedged. The slot was never acquired, so
+		// nothing to release here.
+		return reviewErrorOutcome(http.StatusServiceUnavailable, "review build timed out waiting for a slot, retry shortly")
 	}
 	defer s.releaseReviewBuildSlot()
 
-	paipuJSON, ok := s.loadPaipuJSON(matchID)
+	paipuJSON, ok := s.loadPaipuJSON(ctx, matchID)
 	if !ok {
 		return reviewErrorOutcome(http.StatusNotFound, "Match not found")
 	}
@@ -593,9 +665,6 @@ func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPol
 	if err := json.Unmarshal([]byte(paipuJSON), &paipu); err != nil {
 		return reviewErrorOutcome(http.StatusUnprocessableEntity, "unreviewable paipu: "+err.Error())
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), reviewBuildTimeout)
-	defer cancel()
 
 	report, err := review.BuildReport(ctx, &paipu, policyClient, eventWindow)
 	if err != nil {
@@ -633,7 +702,7 @@ func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPol
 	}
 
 	if s.DB != nil {
-		if err := s.cacheMatchReview(matchID, reviewCacheCheckpointID(report), reportJSON); err != nil {
+		if err := s.cacheMatchReview(ctx, matchID, reviewCacheCheckpointID(report), reportJSON); err != nil {
 			return reviewErrorOutcome(http.StatusInternalServerError, "failed to cache review")
 		}
 	}
@@ -672,20 +741,28 @@ func reviewCacheCheckpointID(report *review.Report) string {
 // inserted. This keeps prior champions' reports around under their own
 // CheckpointID while a re-review with the same champion replaces its own
 // cache entry rather than accumulating duplicates.
-func (s *Server) cacheMatchReview(matchID, checkpointID string, reportJSON []byte) error {
-	var existing storage.MatchReview
-	err := s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, checkpointID).First(&existing).Error
-	if err == nil {
-		existing.ReportJSON = string(reportJSON)
-		return s.DB.Save(&existing).Error
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
+//
+// Round 25, Finding 2: this used to be a First-then-Create — read the row,
+// and if absent, insert one. That has a race window: two builds for the
+// SAME (matchID, checkpointID) (previously possible because force-ness was
+// folded into the singleflight key — see buildReviewKey's doc) could both
+// observe "not found" and both attempt Create, and the loser hit the
+// unique index (idx_match_reviews_match_ckpt) and returned a bare error —
+// a 500 despite the winner having produced a perfectly valid, cacheable
+// report for that exact identity. Now this is a single atomic upsert via
+// clause.OnConflict: whichever build's Create reaches the DB first inserts
+// the row, and any other build for the same identity (concurrent, or a
+// later legitimate re-review) updates it in place instead of erroring —
+// there is no read-then-write gap for a second writer to race into.
+func (s *Server) cacheMatchReview(ctx context.Context, matchID, checkpointID string, reportJSON []byte) error {
 	row := storage.MatchReview{
 		MatchID:      matchID,
 		CheckpointID: checkpointID,
 		ReportJSON:   string(reportJSON),
+		CreatedAt:    time.Now(),
 	}
-	return s.DB.Create(&row).Error
+	return s.DB.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "match_id"}, {Name: "checkpoint_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"report_json", "created_at"}),
+	}).Create(&row).Error
 }
