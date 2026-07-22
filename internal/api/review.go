@@ -143,6 +143,16 @@ func sameReviewService(baseURL, rlURL string) bool {
 //     miss is a 404 so the frontend falls through to its existing
 //     "Request review" (POST) flow, which builds fresh (or serves its own
 //     cheap cache hit) for the checkpoint actually serving right now.
+//
+// Round 24, Finding 1: before ANY of the above (in particular, before ever
+// resolving the live checkpoint sha via healthz), this now checks whether a
+// MatchReview row exists for matchID AT ALL. A match nobody has ever
+// reviewed can never turn into a 200 regardless of what the live sha turns
+// out to be, so there is nothing to gain — and policy-server/healthz load to
+// lose — by resolving it first. This closes the amplification an
+// unauthenticated caller could otherwise drive: hammering GET for arbitrary
+// (including nonexistent) match ids used to fire a healthz round trip per
+// request once any cached entry expired.
 func (s *Server) handleGetReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -151,6 +161,16 @@ func (s *Server) handleGetReview(c *gin.Context) {
 	}
 
 	if s.DB == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no cached review for this match"})
+		return
+	}
+
+	hasCached, err := s.matchHasAnyCachedReview(matchID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check cached review"})
+		return
+	}
+	if !hasCached {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no cached review for this match"})
 		return
 	}
@@ -185,6 +205,21 @@ func (s *Server) handleGetReview(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", []byte(row.ReportJSON))
 }
 
+// matchHasAnyCachedReview reports whether ANY MatchReview row exists for
+// matchID, regardless of checkpoint identity (round 24, Finding 1). This is
+// deliberately checked before handleGetReview ever contacts the policy
+// server's /healthz: a match with zero cached rows can never resolve to a
+// 200 no matter what the live checkpoint turns out to be, so there is no
+// reason to spend a healthz round trip finding that out.
+func (s *Server) matchHasAnyCachedReview(matchID string) (bool, error) {
+	var count int64
+	err := s.DB.Model(&storage.MatchReview{}).Where("match_id = ?", matchID).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // serveNewestReview is the pre-round-23 "newest cached row for this match"
 // lookup, still used by handleGetReview whenever there is no live checkpoint
 // identity to check a row against (no reviewer configured, or a true legacy
@@ -209,29 +244,86 @@ func (s *Server) serveNewestReview(c *gin.Context, matchID string) {
 // short-TTL cache (reviewShaCacheTTL) so this public, unauthenticated route
 // doesn't fire a fresh /healthz round trip on every single page load.
 //
-// Only a SUCCESSFUL resolution is cached: an error is never cached, so a
-// transient healthz outage self-heals on the very next request rather than
-// pinning every GET to 503 for the rest of the TTL window.
+// Round 24, Finding 1 hardened this in two ways, on top of round 23's cache:
+//
+//   - Coalescing: once a cached entry is stale (or was never populated), the
+//     actual refresh is routed through reviewShaGroup, keyed on policyURL.
+//     Concurrent callers observing the same stale/missing entry share ONE
+//     healthz call and one result rather than each firing their own — this
+//     is what actually bounds healthz load under concurrent GET traffic,
+//     the cache mutex alone only ever protected the cached COPY, not the
+//     refresh itself.
+//   - Negative caching: a FAILED resolution is now cached too (as
+//     reviewShaCacheEntry.err), for the much shorter reviewShaNegativeCacheTTL.
+//     Without this, a healthz outage meant every single GET (not just
+//     concurrent ones — sequential ones too) re-attempted healthz, each
+//     paying its own timeout. The negative TTL is short enough that a real
+//     recovery is still picked up promptly, but long enough that a burst or
+//     a steady trickle of GETs during an outage collapses onto one attempt
+//     per window instead of one attempt per request.
 func (s *Server) reviewLiveSha(ctx context.Context, policyURL string) (sha string, legacy bool, err error) {
+	if entry, ok := s.cachedReviewSha(policyURL); ok {
+		return entry.sha, entry.legacy, entry.err
+	}
+
+	// singleflight.Group.Do blocks every concurrent caller sharing this key
+	// until the first caller's function returns, then hands all of them the
+	// SAME (value, error) — this is what turns "N concurrent callers each
+	// see a stale cache" into "N concurrent callers, one healthz call".
+	//
+	// The healthz call itself runs on a context detached from any single
+	// caller's request (context.Background(), bounded only by
+	// CurrentCheckpointSha256's own internal reviewHealthzTimeout): ctx here
+	// is only the FIRST caller's request context, and that caller giving up
+	// (client disconnect / its own request timeout) must never cut the
+	// shared call short for every other caller waiting on the same result.
+	result, resultErr, _ := s.reviewShaGroup.Do(policyURL, func() (interface{}, error) {
+		policyClient := review.NewHTTPPolicyClientWithToken(policyURL, 0, os.Getenv("POLICY_SERVER_TOKEN"))
+		sha, err := policyClient.CurrentCheckpointSha256(context.Background())
+
+		entry := reviewShaCacheEntry{policyURL: policyURL, fetchedAt: time.Now()}
+		if err != nil {
+			entry.err = err
+		} else {
+			entry.sha = sha
+			entry.legacy = sha == ""
+		}
+
+		s.reviewShaCacheMu.Lock()
+		s.reviewShaCache = entry
+		s.reviewShaCacheMu.Unlock()
+
+		if err != nil {
+			return nil, err
+		}
+		return entry, nil
+	})
+	_ = ctx // retained in the signature; the shared call itself never uses a per-caller context (see above).
+	if resultErr != nil {
+		return "", false, resultErr
+	}
+	entry := result.(reviewShaCacheEntry)
+	return entry.sha, entry.legacy, nil
+}
+
+// cachedReviewSha returns the currently cached entry for policyURL, if it is
+// still fresh enough to trust: a successful entry within reviewShaCacheTTL,
+// or a failed entry within the shorter reviewShaNegativeCacheTTL (round 24,
+// Finding 1). ok is false whenever the entry is for a different policyURL,
+// missing, or expired — the caller must then refresh (via reviewShaGroup).
+func (s *Server) cachedReviewSha(policyURL string) (reviewShaCacheEntry, bool) {
 	s.reviewShaCacheMu.Lock()
 	cached := s.reviewShaCache
 	s.reviewShaCacheMu.Unlock()
-	if cached.policyURL == policyURL && time.Since(cached.fetchedAt) < reviewShaCacheTTL {
-		return cached.sha, cached.legacy, nil
+
+	if cached.policyURL != policyURL {
+		return reviewShaCacheEntry{}, false
 	}
-
-	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, 0, os.Getenv("POLICY_SERVER_TOKEN"))
-	sha, err = policyClient.CurrentCheckpointSha256(ctx)
-	if err != nil {
-		return "", false, err
+	age := time.Since(cached.fetchedAt)
+	if cached.err != nil {
+		return cached, age < reviewShaNegativeCacheTTL
 	}
-	legacy = sha == ""
-
-	s.reviewShaCacheMu.Lock()
-	s.reviewShaCache = reviewShaCacheEntry{policyURL: policyURL, sha: sha, legacy: legacy, fetchedAt: time.Now()}
-	s.reviewShaCacheMu.Unlock()
-
-	return sha, legacy, nil
+	return cached, age < reviewShaCacheTTL
 }
 
 // handlePostReview builds (or serves the cached) review report for a match.

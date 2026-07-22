@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
@@ -47,6 +48,22 @@ func testShadowState() *pb.GameState {
 	}
 }
 
+// waitForShadowDecision polls sp.Metrics().Decisions until the worker has
+// processed at least one, or fails the test after a short bound (see round
+// 24's Close doc for why this can no longer be assumed synchronously after
+// enqueueing).
+func waitForShadowDecision(t *testing.T, sp *bot.ShadowPolicy) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sp.Metrics().Decisions >= 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for the shadow worker to process a decision, got %d", sp.Metrics().Decisions)
+}
+
 func shadowMetricsAfterOneDecision(t *testing.T, shadowHTTPPolicy *remote.HTTPPolicy) bot.ShadowMetrics {
 	t.Helper()
 	primaryAction := &pb.PlayerAction{Type: pb.ActionType_ACTION_DISCARD}
@@ -59,7 +76,14 @@ func shadowMetricsAfterOneDecision(t *testing.T, shadowHTTPPolicy *remote.HTTPPo
 	if got != primaryAction {
 		t.Fatalf("expected the primary's action returned unchanged, got %v", got)
 	}
-	sp.Close() // idempotent; ensures the worker has drained before reading metrics
+	// Round 24: Close no longer guarantees a queued-but-not-yet-started job
+	// gets evaluated before the worker exits (mirroring is best-effort
+	// telemetry, not something teardown owes the queue — see
+	// bot.ShadowPolicy's Close/discardRemaining). Confirm the worker
+	// actually reached this decision before tearing down, so the metrics
+	// below are deterministic instead of racing worker scheduling.
+	waitForShadowDecision(t, sp)
+	sp.Close() // idempotent; the decision above is already accounted for
 	return sp.Metrics()
 }
 

@@ -95,6 +95,27 @@ func testDiscardAction(tileID uint32) *pb.PlayerAction {
 	}
 }
 
+// waitForDecisions polls sp.Metrics().Decisions until it reaches at least n,
+// failing the test if it doesn't within a short bound. Round 24's Close (see
+// shadow.go's discardRemaining) no longer guarantees a queued-but-not-yet-
+// started job gets evaluated before the worker exits — mirroring is
+// best-effort telemetry, not something teardown owes the queue. Tests that
+// need a specific decision to have actually been mirrored (so its effect on
+// Metrics/log lines is deterministic) before calling Close or asserting on
+// it must confirm the worker actually reached it first, rather than relying
+// on Close's old unconditional-full-drain behavior.
+func waitForDecisions(t *testing.T, sp *ShadowPolicy, n uint64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if sp.Metrics().Decisions >= n {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d shadow decision(s), got %d", n, sp.Metrics().Decisions)
+}
+
 func TestShadowPolicyReturnsPrimaryActionEvenWhenShadowBlocks(t *testing.T) {
 	primaryAction := testDiscardAction(1)
 	primary := &fixedPolicy{action: primaryAction}
@@ -137,6 +158,10 @@ func TestShadowPolicyReturnsPrimaryActionEvenWhenShadowErrors(t *testing.T) {
 		t.Fatalf("expected primary action returned, got %v", got)
 	}
 
+	// Round 24: confirm the worker actually reached this decision before
+	// tearing down, since Close no longer guarantees a queued job gets
+	// evaluated (see waitForDecisions's doc).
+	waitForDecisions(t, sp, 1)
 	sp.Close()
 	metrics := sp.Metrics()
 	if metrics.ShadowErrors != 1 {
@@ -165,6 +190,10 @@ func TestShadowPolicyDeepClonesStateAndEvents(t *testing.T) {
 	events[0].Type = engine.EventKanUpgrade
 
 	close(shadow.release)
+	// Round 24: wait for the worker to actually run this decision through
+	// the (now-unblocked) shadow policy before tearing down — Close no
+	// longer guarantees a queued job gets evaluated (see waitForDecisions).
+	waitForDecisions(t, sp, 1)
 	sp.Close()
 
 	seen, calls := shadow.snapshot()
@@ -257,6 +286,7 @@ func TestShadowPolicyAgreementCounting(t *testing.T) {
 		shadow := &blockingShadow{action: testDiscardAction(1)} // same tile id -> proto.Equal true
 		sp := NewShadowPolicy(primary, shadow, 4)
 		sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 1})
+		waitForDecisions(t, sp, 1)
 		sp.Close()
 
 		metrics := sp.Metrics()
@@ -272,6 +302,7 @@ func TestShadowPolicyAgreementCounting(t *testing.T) {
 		shadow := &blockingShadow{action: testDiscardAction(2)} // different tile id
 		sp := NewShadowPolicy(primary, shadow, 4)
 		sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 1})
+		waitForDecisions(t, sp, 1)
 		sp.Close()
 
 		metrics := sp.Metrics()
@@ -373,6 +404,7 @@ func TestShadowPolicyPerDecisionLogIncludesLabelAndBothActionIDs(t *testing.T) {
 
 	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=abc123 seat=2")
 	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 2, DecisionIndex: 7})
+	waitForDecisions(t, sp, 1)
 	sp.Close()
 
 	out := buf.String()
@@ -406,6 +438,7 @@ func TestShadowPolicyPerDecisionLogOnNilShadowActionNamesConcreteReason(t *testi
 
 	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=xyz seat=0")
 	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 3})
+	waitForDecisions(t, sp, 1)
 	sp.Close()
 
 	out := buf.String()
@@ -429,6 +462,7 @@ func TestShadowPolicyCloseEmitsSummaryLineOnce(t *testing.T) {
 
 	sp := NewShadowPolicyWithLabel(primary, shadow, 4, "room=summary-test seat=1")
 	sp.ChooseActionCtx(&DecisionContext{State: newTestState(1), Seat: 1, DecisionIndex: 1})
+	waitForDecisions(t, sp, 1)
 	sp.Close()
 	sp.Close() // idempotent: must not emit a second summary line
 

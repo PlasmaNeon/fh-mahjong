@@ -64,19 +64,34 @@ type Server struct {
 	// /healthz once per casual page load.
 	reviewShaCacheMu sync.Mutex
 	reviewShaCache   reviewShaCacheEntry
+	// reviewShaGroup coalesces concurrent /healthz refreshes into a single
+	// in-flight call per policyURL (round 24, Finding 1): reviewShaCacheMu
+	// above only protects the cache COPY itself — every one of N concurrent
+	// GETs that observe an expired (or, pre-round-24, a failed-and-not-cached)
+	// entry used to fire its OWN healthz round trip. With the resolution
+	// itself keyed through this group, only the first caller to observe a
+	// stale entry actually calls out; every concurrent caller for the same
+	// policyURL waits on and shares that one result.
+	reviewShaGroup singleflight.Group
 }
 
 // reviewShaCacheEntry is the short-TTL cache of the policy server's
 // currently-served checkpoint identity, shared by every GET review request
 // (round 23, Finding 1). Keyed on policyURL so a POLICY_SERVER_URL change
 // (redeploy pointing at a different service) never serves a stale entry from
-// the old one. Only successful healthz resolutions are cached — an error is
-// never cached, so a transient healthz outage is retried on the very next
-// request rather than being pinned to "unavailable" for the rest of the TTL.
+// the old one.
+//
+// Round 24, Finding 1: a failed resolution is now ALSO cached (err,
+// non-nil) for reviewShaNegativeCacheTTL, so a healthz outage doesn't turn
+// every single GET during the outage into its own healthz attempt — it is
+// retried at most once per negative-TTL window, not once per request. A
+// successful entry (err == nil) is still governed by the longer
+// reviewShaCacheTTL as before.
 type reviewShaCacheEntry struct {
 	policyURL string
 	sha       string
 	legacy    bool
+	err       error
 	fetchedAt time.Time
 }
 
@@ -91,6 +106,18 @@ type reviewShaCacheEntry struct {
 // review_round23_test.go) and observe a promotion/rollback reflected on the
 // very next GET rather than asserting against real wall-clock time.
 var reviewShaCacheTTL = 10 * time.Second
+
+// reviewShaNegativeCacheTTL bounds how long handleGetReview trusts a
+// previously FAILED healthz resolution before retrying it (round 24,
+// Finding 1). Deliberately much shorter than reviewShaCacheTTL — a real
+// outage should still surface a fresh attempt reasonably promptly — but long
+// enough that a burst of concurrent GETs arriving during an outage collapse
+// onto one shared failed attempt (via reviewShaGroup) instead of each
+// retrying the unreachable/erroring policy server on its own.
+//
+// A var, not a const, solely so tests can shrink or inspect it the same way
+// reviewShaCacheTTL already is.
+var reviewShaNegativeCacheTTL = 3 * time.Second
 
 // reviewBuildConcurrencyLimit caps simultaneous in-flight review builds
 // server-wide (round 21, Finding 1c). Kept small and fixed rather than

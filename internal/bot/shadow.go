@@ -70,6 +70,16 @@ type ShadowPolicy struct {
 	closeOnce   sync.Once
 	summaryOnce sync.Once
 
+	// stop signals the worker to stop taking NEW work off the queue once
+	// Close is called (adversarial round 24, Finding 2). Mirroring is
+	// telemetry, not work owed to the caller: on teardown the worker finishes
+	// whatever shadow call is CURRENTLY in flight (bounded by the shadow
+	// policy's own HTTP timeout, ~750ms in production), then discards the
+	// rest of the queued backlog rather than executing it — see run and
+	// discardRemaining. Closed exactly once, alongside queue, under closeMu
+	// in Close.
+	stop chan struct{}
+
 	// closeMu protects the send-vs-close race on queue: enqueueShadow takes
 	// RLock (so concurrent enqueues never block each other) and re-checks
 	// closed under the lock immediately before sending; Close takes the
@@ -168,6 +178,7 @@ func NewShadowPolicyWithLabel(primary Policy, shadow ContextPolicy, queueSize in
 		label:      label,
 		queue:      make(chan shadowJob, queueSize),
 		workerDone: make(chan struct{}),
+		stop:       make(chan struct{}),
 	}
 	go policy.run()
 	return policy
@@ -268,13 +279,56 @@ func (s *ShadowPolicy) enqueueShadow(ctx *DecisionContext, primaryAction *pb.Pla
 	}
 }
 
-// run is the single worker goroutine: it drains the queue, calling the
-// shadow policy on each cloned job, and exits once the queue is closed and
-// drained (see Close).
+// run is the single worker goroutine: it takes jobs off the queue, calling
+// the shadow policy on each cloned job, until either the queue is closed and
+// drained, or Close signals stop (round 24, Finding 2) — at which point any
+// job already being evaluated is allowed to finish (bounded by the shadow
+// policy's own timeout), but nothing further is executed: the remaining
+// backlog is discarded via discardRemaining rather than run through the
+// shadow policy one by one. The stop check is repeated at the top of every
+// iteration (not just inside the select) so a job sitting ready in the queue
+// can never be picked up in preference to an already-signaled stop.
 func (s *ShadowPolicy) run() {
 	defer close(s.workerDone)
-	for job := range s.queue {
-		s.evaluate(job)
+	for {
+		select {
+		case <-s.stop:
+			s.discardRemaining()
+			return
+		default:
+		}
+
+		select {
+		case job, ok := <-s.queue:
+			if !ok {
+				return
+			}
+			s.evaluate(job)
+		case <-s.stop:
+			s.discardRemaining()
+			return
+		}
+	}
+}
+
+// discardRemaining drains whatever is left in the queue WITHOUT running any
+// of it through the shadow policy, counting every discarded job into dropped
+// (round 24, Finding 2) — mirroring is best-effort telemetry, so a queued
+// backlog at teardown is abandoned rather than executed, bounding Close to
+// (at most) the currently in-flight call's own duration instead of the full
+// queue's worth of shadow-policy round trips.
+func (s *ShadowPolicy) discardRemaining() {
+	for {
+		select {
+		case job, ok := <-s.queue:
+			if !ok {
+				return
+			}
+			_ = job
+			s.dropped.Add(1)
+		default:
+			return
+		}
 	}
 }
 
@@ -395,10 +449,22 @@ func (s *ShadowPolicy) Metrics() ShadowMetrics {
 	}
 }
 
-// Close stops mirroring, closes the intake queue, and waits for the worker
-// to drain it and exit. Idempotent — safe to call more than once (or
-// concurrently) via sync.Once guarding the channel close; every caller still
-// blocks until the worker has actually finished.
+// Close stops mirroring, closes the intake queue, signals the worker to stop
+// taking new jobs, and waits for the worker to actually exit. Idempotent —
+// safe to call more than once (or concurrently) via sync.Once guarding the
+// channel closes; every caller still blocks until the worker has finished.
+//
+// Round 24, Finding 2: Close used to wait for the worker to fully DRAIN the
+// queue — i.e. run every still-queued job through the (possibly slow or
+// blocking) shadow policy — which could take up to queueSize times the
+// shadow policy's own call timeout (e.g. 64 entries x up to ~750ms each,
+// tens of seconds) and blow well past a room's ~10s shutdown drain budget.
+// Mirroring is telemetry, not work the caller owes anyone: Close now only
+// waits for whatever ONE call is already in flight to finish naturally
+// (bounded by the shadow policy's own timeout), then the worker discards the
+// rest of the backlog (see run/discardRemaining) instead of executing it —
+// counting the discarded remainder into Dropped so it still shows up in the
+// final summary line below.
 //
 // closed is set, and the queue closed, while holding closeMu's write lock:
 // enqueueShadow only ever sends while holding the read lock and only after
@@ -414,12 +480,14 @@ func (s *ShadowPolicy) Close() {
 		s.closeMu.Lock()
 		s.closed.Store(true)
 		close(s.queue)
+		close(s.stop)
 		s.closeMu.Unlock()
 	})
 	<-s.workerDone
-	// Emitted once per wrapper instance, after the worker has fully drained
-	// (so the counts below are final), regardless of how many times Close is
-	// called concurrently or repeatedly.
+	// Emitted once per wrapper instance, after the worker has fully stopped
+	// (so the counts below are final, including anything discarded rather
+	// than evaluated per round 24's teardown fix), regardless of how many
+	// times Close is called concurrently or repeatedly.
 	s.summaryOnce.Do(func() {
 		metrics := s.Metrics()
 		log.Printf(

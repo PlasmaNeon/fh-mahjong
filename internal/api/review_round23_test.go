@@ -100,6 +100,13 @@ func TestGetReviewLegacyServerFallsBackToNewestRow(t *testing.T) {
 // TestGetReviewHealthzDownFailsClosed pins round 23, Finding 1: GET must fail
 // closed (503) when the policy server's identity can't be established,
 // rather than silently serving whatever the newest cached row happens to be.
+//
+// Round 24, Finding 1 added a cheaper pre-check: a match with NO cached
+// review row at all is now rejected (404) before ever touching healthz (see
+// TestGetReviewNoCachedRowReturnsNotFoundWithoutHealthzCall). To keep
+// exercising THIS test's actual point — a healthz outage fails closed rather
+// than silently serving a stale row — a row must exist first, same as it
+// would once a match has actually been reviewed at least once.
 func TestGetReviewHealthzDownFailsClosed(t *testing.T) {
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
@@ -113,6 +120,9 @@ func TestGetReviewHealthzDownFailsClosed(t *testing.T) {
 
 	server := newReviewTestServer(t, true)
 	server.StorePaipu("healthz-down-fixture", reviewFixtureJSON(t))
+	if err := server.cacheMatchReview("healthz-down-fixture", "some-checkpoint", []byte(`{"schemaVersion":1}`)); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
 
 	rec := doReviewRequest(t, server, http.MethodGet, "/api/v1/matches/healthz-down-fixture/review")
 	if rec.Code != http.StatusServiceUnavailable {
