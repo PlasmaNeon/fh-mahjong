@@ -148,9 +148,10 @@ func (s *Server) handleGetReview(c *gin.Context) {
 //
 // Cache policy: with a DB present, the newest cached MatchReview for the
 // match is returned as-is unless ?force=1 is passed, in which case a fresh
-// report is built and upserted keyed on (MatchID, CheckpointID=report's
-// serving checkpoint). Without a DB (dev mode), every call builds fresh and
-// nothing is cached.
+// report is built and upserted keyed on (MatchID, CheckpointID=
+// reviewCacheCheckpointID(report) — the report's CheckpointSha256 when
+// known, else its CheckpointPath; round 18). Without a DB (dev mode), every
+// call builds fresh and nothing is cached.
 func (s *Server) handlePostReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -214,13 +215,38 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	}
 
 	if s.DB != nil {
-		if err := s.cacheMatchReview(matchID, report.CheckpointPath, reportJSON); err != nil {
+		if err := s.cacheMatchReview(matchID, reviewCacheCheckpointID(report), reportJSON); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to cache review"})
 			return
 		}
 	}
 
 	c.Data(http.StatusOK, "application/json", reportJSON)
+}
+
+// reviewCacheCheckpointID picks the cache identity for report: its
+// CheckpointSha256 when the serving policy reported one, else its
+// CheckpointPath (round 18 fix).
+//
+// CheckpointPath alone survives a same-path hot reload — a checkpoint file
+// overwritten in place still has the same path but different bytes/decisions
+// — so keying the cache on path collapses two distinct served checkpoints
+// into one row: a non-forced request would then serve stale bytes' report as
+// if it were current, and a forced refresh would destroy the old bytes'
+// report by overwriting that same row. CheckpointSha256 is the content hash
+// of the checkpoint that actually produced the report (see Report's doc), so
+// it survives the reload and gives each distinct set of served bytes its own
+// row.
+//
+// CheckpointSha256 is only populated by serve_policy.py builds that support
+// it (round 17); a legacy sha-less server reports "" here, in which case
+// this falls back to CheckpointPath, preserving today's behavior exactly —
+// no regression for deployments that haven't upgraded the policy server.
+func reviewCacheCheckpointID(report *review.Report) string {
+	if report.CheckpointSha256 != "" {
+		return report.CheckpointSha256
+	}
+	return report.CheckpointPath
 }
 
 // cacheMatchReview upserts the MatchReview row keyed on (matchID,
