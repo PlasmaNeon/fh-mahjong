@@ -371,6 +371,36 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     return fields
 
 
+def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, Tensor]) -> None:
+    """Cross-check every metadata-claimed field that is ALSO derivable from
+    `state_dict`'s tensor shapes, cheaply (no allocation) and BEFORE any
+    `PolicyValueNet` is constructed (adversarial round 20, Finding 1b).
+
+    `ModelConfig.__post_init__` bounds every dimension, but a bounded value
+    can still be a lie: metadata claiming `channels=128` when the checkpoint
+    was actually saved with `channels=96` is within bounds yet would build
+    the wrong (still non-trivially large) net for nothing, and — more
+    importantly — a value near the cap that happens to match no real
+    checkpoint is still real memory. `_shape_inferred_fields` already knows
+    how to read every one of these fields straight off tensor shapes (no
+    model construction involved); reusing it here means a mismatch is
+    caught before `infer_model_config` ever calls `PolicyValueNet(...)` for
+    its later, more expensive, `_cross_check_shapes` comparison.
+    """
+    shape_fields = _shape_inferred_fields(state_dict)
+    mismatched = {
+        field: (getattr(config, field), shape_value)
+        for field, shape_value in shape_fields.items()
+        if getattr(config, field) != shape_value
+    }
+    if mismatched:
+        raise RuntimeError(
+            "infer_model_config shape cross-check failed before construction: metadata "
+            "claims ModelConfig fields that do not match the checkpoint's tensor shapes "
+            f"(field: (claimed, shape_derived))={mismatched}"
+        )
+
+
 def _reconstruct_env_config(state_dict: dict[str, Tensor], model_config: ModelConfig) -> EnvConfig:
     """Rebuild just enough EnvConfig to instantiate a shape-matching throwaway
     PolicyValueNet for the cross-check below. Only tensor-shape-relevant
@@ -473,6 +503,16 @@ def infer_model_config(state_dict: dict[str, Tensor], metadata: dict | None = No
         )
     else:
         config = ModelConfig(**_shape_inferred_fields(state_dict))
+
+    if isinstance(model_config_meta, dict) or isinstance(b2b_meta, dict):
+        # Round 20, Finding 1b: metadata (either the whole-config or the
+        # b2b-flag-overlay form) can claim fields that ARE derivable from
+        # `state_dict`'s tensor shapes — `channels`, `residual_blocks`, etc.
+        # Check those cheaply, without allocating anything, BEFORE the
+        # throwaway `PolicyValueNet` below is ever constructed. The
+        # shape-inferred-only branch above needs no such check: every field
+        # it used already came from these same shapes.
+        _verify_metadata_matches_shapes(config, state_dict)
 
     env_config = _reconstruct_env_config(state_dict, config)
     reference_state = PolicyValueNet(env_config, config).state_dict()

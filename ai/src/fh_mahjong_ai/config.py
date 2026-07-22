@@ -60,7 +60,42 @@ class ModelConfig:
     privileged_critic: bool = False
     aux_heads: bool = False
 
+    # Round 20, Finding 1a: `infer_model_config` (model.py) takes
+    # `metadata["model_config"]` from a checkpoint as authoritative and
+    # passes it straight into this constructor, then instantiates a real
+    # PolicyValueNet from it for the shape cross-check. Round 16 bounded
+    # only `event_window` (a value no weight tensor encodes, so the shape
+    # cross-check can't catch it); every OTHER dimension here was still
+    # unbounded, so malformed/hostile metadata claiming e.g.
+    # channels=10**6 or residual_blocks=10**6 would allocate a
+    # correspondingly huge network and OOM or stall the process — fatal
+    # during hot reload, since the old serving policy dies with it. These
+    # caps are DoS bounds, not design limits: the largest real trained
+    # config to date is 8 residual blocks at 320 channels, comfortably
+    # inside every ceiling below (roughly 3-4x headroom for legitimate
+    # future growth).
+    MAX_CHANNELS = 1024
+    MAX_RESIDUAL_BLOCKS = 64
+    MAX_HIDDEN_DIM = 8192
+    MAX_ATTENTION_RATIO = 1024
+
     def __post_init__(self) -> None:
+        # Round 16, Finding 2 / Round 20, Finding 1a: every architecture
+        # dimension that isn't itself boolean is bounded here so a
+        # metadata-supplied ModelConfig can never request an unboundedly
+        # large network before any tensor is allocated.
+        self._validate_bounded_int("channels", minimum=1, maximum=self.MAX_CHANNELS)
+        self._validate_bounded_int("residual_blocks", minimum=0, maximum=self.MAX_RESIDUAL_BLOCKS)
+        self._validate_bounded_int("plane_feature_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("scalar_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("trunk_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("value_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("q_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int(
+            "channel_attention_ratio", minimum=1, maximum=self.MAX_ATTENTION_RATIO
+        )
+        self._validate_bounded_int("event_embed_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("event_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
         # Round 16, Finding 2: metadata-authoritative checkpoint loading
         # (model.py's infer_model_config) passes a checkpoint-supplied
         # event_window straight into this constructor. GRU weights are
@@ -79,6 +114,13 @@ class ModelConfig:
                 f"event_window {self.event_window} out of bounds "
                 f"[0, {EnvConfig.MAX_EVENT_HISTORY_WINDOW}]"
             )
+
+    def _validate_bounded_int(self, field: str, *, minimum: int, maximum: int) -> None:
+        value = getattr(self, field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{field} must be an int, got {type(value).__name__}")
+        if not (minimum <= value <= maximum):
+            raise ValueError(f"{field} {value} out of bounds [{minimum}, {maximum}]")
 
 
 @dataclass

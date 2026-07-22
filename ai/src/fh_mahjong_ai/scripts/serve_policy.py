@@ -105,20 +105,70 @@ def _extract_bearer_token(handler: "PolicyRequestHandler") -> Optional[str]:
 
 
 def _read_and_verify_checkpoint(path: Path, expected_sha256: Optional[str]) -> tuple[bytes, str]:
-    """Read `path`'s bytes exactly once, compute their sha256, and — when the
-    caller supplied `expected_sha256` — verify it BEFORE the caller does any
-    deserialization at all (adversarial round 15, Finding 2).
+    """Open `path` exactly once, validate it, read its bytes off that SAME
+    file descriptor, compute their sha256, and — when the caller supplied
+    `expected_sha256` — verify it BEFORE the caller does any deserialization
+    at all (adversarial round 15, Finding 2; fd-unification round 20,
+    Finding 2).
 
-    Shared by both `PolicyHolder.reload` branches (an explicit `checkpoint`
-    path and a manifest-resolved `checkpoint_id`): a mismatch must be caught
-    before a single tensor is unpickled from these bytes via
+    This is now the ONLY way either `PolicyHolder.reload` branch (an
+    explicit `checkpoint` path or a manifest-resolved `checkpoint_id`) reads
+    a checkpoint off disk. Previously the `checkpoint` branch alone ran a
+    separate `os.stat`-based regular-file + size-cap check
+    (`_validate_checkpoint_path_for_reload`) before falling through to this
+    function's plain `path.read_bytes()`, while the `checkpoint_id` branch
+    called straight into this function with no such check at all — so a
+    manifest entry pointing at a FIFO or device could hang the worker, and
+    one pointing at an oversized file could OOM it.
+
+    Folding the check in here, driven off a single open file descriptor,
+    fixes both gaps at once and also closes the TOCTOU race the old
+    stat-then-read split left open: `os.stat(path)` and a later
+    `path.read_bytes()` are two independent syscalls against the *path*, so
+    the underlying file (or a FIFO/device swapped in at that path) could
+    change between them. `os.fstat` on an already-open descriptor describes
+    exactly the bytes the following `os.read` calls will return, no matter
+    what happens to the path afterward.
+
+    Returns `(data, sha256)`; raises ValueError when the path is not a
+    regular file, exceeds `MAX_RELOAD_CHECKPOINT_BYTES`, or (when the caller
+    supplied `expected_sha256`) the computed hash doesn't match — in every
+    case before a single tensor is unpickled from these bytes via
     `CheckpointPolicy.from_checkpoint_bytes` (which calls `torch.load`, a
-    pickle-based deserializer), regardless of which branch resolved the
-    path. Returns `(data, sha256)`; raises ValueError on a mismatch, in
-    which case `data` was still read from disk but never deserialized by
-    the caller.
+    pickle-based deserializer).
     """
-    data = path.read_bytes()
+    try:
+        # O_NONBLOCK matters only for a FIFO: opening one O_RDONLY without it
+        # blocks the calling thread until some other process opens it
+        # O_WRONLY, which is exactly the hang this function must avoid. It
+        # has no effect on a regular file's open or subsequent os.read calls,
+        # so the happy path is unchanged.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ValueError(f"reload checkpoint path {path} is not accessible: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"reload checkpoint path {path} is not a regular file (refusing to read a "
+                "FIFO, device, directory, or other special file)"
+            )
+        if st.st_size > MAX_RELOAD_CHECKPOINT_BYTES:
+            raise ValueError(
+                f"reload checkpoint path {path} is {st.st_size} bytes, exceeding the "
+                f"{MAX_RELOAD_CHECKPOINT_BYTES}-byte reload cap"
+            )
+        chunks = []
+        remaining = st.st_size
+        while remaining > 0:
+            chunk = os.read(fd, min(remaining, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+    finally:
+        os.close(fd)
     sha256 = hashlib.sha256(data).hexdigest()
     if expected_sha256 is not None:
         if not isinstance(expected_sha256, str) or not hmac.compare_digest(sha256, expected_sha256):
@@ -127,35 +177,6 @@ def _read_and_verify_checkpoint(path: Path, expected_sha256: Optional[str]) -> t
                 f"expected_sha256 {expected_sha256!r}; refusing to swap"
             )
     return data, sha256
-
-
-def _validate_checkpoint_path_for_reload(path: Path) -> None:
-    """Reject anything that isn't a plain, size-bounded regular file BEFORE a
-    single byte is read from it (adversarial round 14, Finding 1b).
-
-    `os.stat` alone is enough to answer both questions this needs — "is this
-    a regular file" (`stat.S_ISREG`) and "how big is it" — without opening or
-    reading the file. A FIFO, character/block device (e.g. /dev/zero), or
-    directory either has no meaningful size or would block/loop when read;
-    checking `S_ISREG` first rejects all of those outright. A regular file
-    that merely happens to be huge is rejected by the size cap. Both checks
-    run before `load_checkpoint_policy_with_hash` (or the inline single-read
-    path below) ever calls `read_bytes()`.
-    """
-    try:
-        st = os.stat(path)
-    except OSError as exc:
-        raise ValueError(f"reload checkpoint path {path} is not accessible: {exc}") from exc
-    if not stat.S_ISREG(st.st_mode):
-        raise ValueError(
-            f"reload checkpoint path {path} is not a regular file (refusing to read a FIFO, "
-            "device, directory, or other special file)"
-        )
-    if st.st_size > MAX_RELOAD_CHECKPOINT_BYTES:
-        raise ValueError(
-            f"reload checkpoint path {path} is {st.st_size} bytes, exceeding the "
-            f"{MAX_RELOAD_CHECKPOINT_BYTES}-byte reload cap"
-        )
 
 
 @dataclass(frozen=True)
@@ -321,12 +342,13 @@ class PolicyHolder:
             # deserialized. `load_checkpoint_policy_with_hash` /
             # `load_policy_from_manifest_with_hash` read the path exactly once.
             if checkpoint:
-                # Adversarial round 14, Finding 1b: a caller-supplied path is
-                # untrusted input, so it is stat'd (regular file, size cap)
-                # BEFORE any bytes are read from it — see
-                # `_validate_checkpoint_path_for_reload`'s docstring.
+                # Adversarial round 14, Finding 1b / round 20, Finding 2: a
+                # caller-supplied path is untrusted input; it is fstat'd
+                # (regular file, size cap) BEFORE any bytes are read from
+                # it, inside `_read_and_verify_checkpoint` below — see that
+                # function's docstring. The `checkpoint_id` branch resolves
+                # to the same kind of path and shares the identical check.
                 checkpoint_path = Path(checkpoint)
-                _validate_checkpoint_path_for_reload(checkpoint_path)
             else:
                 # Resolve the manifest-tracked path the same way
                 # `load_policy_from_manifest_with_hash` does, but WITHOUT

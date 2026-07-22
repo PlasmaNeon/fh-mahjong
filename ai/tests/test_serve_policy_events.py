@@ -1376,6 +1376,92 @@ def test_policy_holder_reload_checkpoint_id_accepts_matching_expected_sha256(
     assert holder.policy.checkpoint_step == 2
 
 
+# --- adversarial round 20, Finding 1: reload rejects unbounded/mismatched metadata -------
+
+
+def test_policy_holder_reload_rejects_oversized_metadata_channels_keeps_old_policy(
+    tmp_path: Path,
+) -> None:
+    """Round 20, Finding 1: a checkpoint whose metadata claims an oversized
+    `channels` must be rejected during reload, and the previously serving
+    policy must remain active -- not just fail to swap after the process
+    already stalled/OOM'd trying to build the huge net."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    bad = tmp_path / "bad.pt"
+    bad_model = PolicyValueNet(_ENV, _event_model_config(window=8))
+    bad_metadata = {
+        "model_config": {**model_config_metadata(_event_model_config(window=8)), "channels": 10**6},
+    }
+    save_checkpoint(bad, bad_model, step=2, metadata=bad_metadata)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+
+    with pytest.raises(ValueError, match="channels"):
+        holder.reload(checkpoint=str(bad))
+
+    assert holder.policy.checkpoint_step == 1
+
+
+# --- adversarial round 20, Finding 2: checkpoint_id reload shares file safety checks -----
+
+
+def test_http_reload_checkpoint_id_rejects_fifo_manifest_target(tmp_path: Path) -> None:
+    """A manifest entry pointing at a FIFO must be rejected the same way the
+    `checkpoint` (explicit path) branch already rejects one -- previously
+    only that branch ran the regular-file + size-cap checks before reading;
+    the checkpoint_id/manifest-resolved branch called path.read_bytes()
+    directly, so a manifest entry pointing at a FIFO would hang the worker."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    fifo_path = tmp_path / "a.fifo"
+    os.mkfifo(fifo_path)
+    manifest_path = _manifest_with_checkpoint(tmp_path, fifo_path)
+    server = _Server(old, manifest_path, admin_token="op-token")
+    try:
+        status, data = server.request(
+            "POST", "/reload", {"checkpoint_id": "current"}, headers=_bearer("op-token"),
+        )
+    finally:
+        server.close()
+
+    assert status == 400
+    assert "regular file" in data["error"]
+
+
+def test_policy_holder_reload_checkpoint_id_rejects_oversize_manifest_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A manifest entry pointing at an oversized regular file must be
+    rejected before any bytes are read from it, exactly like the explicit
+    `checkpoint` path branch."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    huge = tmp_path / "huge.pt"
+    huge.write_bytes(b"\x00" * 16)
+    manifest_path = _manifest_with_checkpoint(tmp_path, huge)
+
+    import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
+
+    monkeypatch.setattr(serve_policy_module, "MAX_RELOAD_CHECKPOINT_BYTES", 8)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=manifest_path)
+
+    with pytest.raises(ValueError, match="exceeding"):
+        holder.reload(checkpoint_id="current")
+
+    assert holder.policy.checkpoint_step == 1
+
+
+def test_policy_holder_reload_checkpoint_id_happy_path_still_works(tmp_path: Path) -> None:
+    """The checkpoint_id reload path must keep working for a normal,
+    well-formed manifest-resolved checkpoint after the fd-based fstat+read
+    unification."""
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    new = _save_checkpoint(tmp_path, _event_model_config(window=8), step=2, name="new.pt")
+    manifest_path = _manifest_with_checkpoint(tmp_path, new)
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=manifest_path)
+
+    holder.reload(checkpoint_id="current")
+
+    assert holder.policy.checkpoint_step == 2
+
+
 # --- adversarial round 15, Finding 4: privileged-critic values are never published -------
 
 

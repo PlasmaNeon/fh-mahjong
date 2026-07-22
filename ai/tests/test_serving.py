@@ -325,6 +325,148 @@ def test_observation_from_json_validates_shapes() -> None:
     assert observation.action_mask.shape == (204,)
 
 
+# --- adversarial round 20, Finding 1: metadata-claimed architecture dims are bounded ------
+
+
+def test_model_config_rejects_oversized_architecture_dimensions() -> None:
+    """Round 20, Finding 1a: every architecture dimension in ModelConfig must
+    be bounded (round 16 only bounded event_window) -- otherwise malformed or
+    hostile checkpoint metadata can request an unboundedly large network."""
+    with pytest.raises(ValueError, match="channels"):
+        ModelConfig(channels=10**6)
+    with pytest.raises(ValueError, match="residual_blocks"):
+        ModelConfig(residual_blocks=10**6)
+    with pytest.raises(ValueError, match="q_hidden_dim"):
+        ModelConfig(q_hidden_dim=10**6)
+    with pytest.raises(ValueError, match="trunk_hidden_dim"):
+        ModelConfig(trunk_hidden_dim=10**6)
+    with pytest.raises(ValueError, match="channels"):
+        ModelConfig(channels=0)
+    with pytest.raises(ValueError, match="channels"):
+        ModelConfig(channels=True)  # bool is not an acceptable int
+
+
+def test_infer_model_config_rejects_oversized_metadata_channels_without_constructing_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 20, Finding 1: infer_model_config must reject a metadata-claimed
+    channels=10**6 before ANY PolicyValueNet is constructed for the shape
+    cross-check -- pinned with a tripwire that counts PolicyValueNet.__init__
+    calls."""
+    from dataclasses import asdict
+
+    from fh_mahjong_ai.model import infer_model_config
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    state_dict = model.state_dict()
+    bad_metadata = {"model_config": {**asdict(ModelConfig()), "channels": 10**6}}
+
+    calls = {"n": 0}
+    real_init = PolicyValueNet.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["n"] += 1
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(PolicyValueNet, "__init__", _counting_init)
+
+    with pytest.raises(ValueError, match="channels"):
+        infer_model_config(state_dict, bad_metadata)
+
+    assert calls["n"] == 0
+
+
+def test_infer_model_config_rejects_oversized_metadata_residual_blocks_without_constructing_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import asdict
+
+    from fh_mahjong_ai.model import infer_model_config
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    state_dict = model.state_dict()
+    bad_metadata = {"model_config": {**asdict(ModelConfig()), "residual_blocks": 10**6}}
+
+    calls = {"n": 0}
+    real_init = PolicyValueNet.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["n"] += 1
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(PolicyValueNet, "__init__", _counting_init)
+
+    with pytest.raises(ValueError, match="residual_blocks"):
+        infer_model_config(state_dict, bad_metadata)
+
+    assert calls["n"] == 0
+
+
+def test_infer_model_config_rejects_metadata_mismatched_with_shapes_without_constructing_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A metadata-claimed `channels` that is well within bounds but does not
+    match the checkpoint's actual conv-weight shape must still be rejected
+    BEFORE any PolicyValueNet is constructed -- cheap, allocation-free
+    shape-derived comparison catches this without ever building the
+    (bounded-but-still-wrong) net."""
+    from dataclasses import asdict
+
+    from fh_mahjong_ai.model import infer_model_config
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())  # channels=96
+    state_dict = model.state_dict()
+    bad_metadata = {"model_config": {**asdict(ModelConfig()), "channels": 128}}
+
+    calls = {"n": 0}
+    real_init = PolicyValueNet.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["n"] += 1
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(PolicyValueNet, "__init__", _counting_init)
+
+    with pytest.raises(RuntimeError, match="shape"):
+        infer_model_config(state_dict, bad_metadata)
+
+    assert calls["n"] == 0
+
+
+def test_infer_model_config_rejects_b2b_metadata_residual_blocks_mismatch_without_constructing_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The b2b-flag overlay path also lets metadata claim `residual_blocks`
+    directly (not shape-derived) -- a bounded-but-wrong value must be caught
+    the same way as the model_config path."""
+    from fh_mahjong_ai.model import infer_model_config
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig(residual_blocks=2))
+    state_dict = model.state_dict()
+    bad_metadata = {
+        "b2b": {
+            "event_window": 0,
+            "privileged_critic": False,
+            "aux_heads": False,
+            "residual_blocks": 60,
+        }
+    }
+
+    calls = {"n": 0}
+    real_init = PolicyValueNet.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["n"] += 1
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(PolicyValueNet, "__init__", _counting_init)
+
+    with pytest.raises(RuntimeError, match="shape"):
+        infer_model_config(state_dict, bad_metadata)
+
+    assert calls["n"] == 0
+
+
 def test_infer_model_config_recovers_architecture_variants() -> None:
     from fh_mahjong_ai.model import infer_model_config
 
