@@ -146,12 +146,40 @@ func (s *Server) handleGetReview(c *gin.Context) {
 // (errors.Is(err, review.ErrUnreviewable)); 502 when the policy server call
 // itself fails; 200 with the report JSON otherwise.
 //
-// Cache policy: with a DB present, the newest cached MatchReview for the
-// match is returned as-is unless ?force=1 is passed, in which case a fresh
-// report is built and upserted keyed on (MatchID, CheckpointID=
-// reviewCacheCheckpointID(report) — the report's CheckpointSha256 when
-// known, else its CheckpointPath; round 18). Without a DB (dev mode), every
-// call builds fresh and nothing is cached.
+// Cache policy: with a DB present, the request first resolves which
+// checkpoint the policy server is CURRENTLY serving via
+// HTTPPolicyClient.CurrentCheckpointSha256 (round 21, Finding 2). When that
+// sha is known, the lookup is an EXACT (matchID, sha) row: a hit serves that
+// row as-is (even after other checkpoints have since been reviewed for this
+// match); a miss builds fresh, which records the new row under that same sha
+// (reviewCacheCheckpointID, round 18). This makes a rollback to a
+// previously-reviewed checkpoint re-serve its own old report without
+// rebuilding, and a promotion/reload to a new checkpoint always build fresh
+// rather than serving a stale champion's cached report.
+//
+// When the current sha can't be resolved (healthz unreachable, or a legacy
+// server that predates checkpoint_sha256 — CurrentCheckpointSha256 returns
+// ("", nil) for that case, indistinguishable here from an error), this falls
+// back to today's pre-round-21 behavior: the newest cached MatchReview row
+// for the match, by CreatedAt, is returned as-is. Documented choice: for a
+// read-mostly endpoint, serving a possibly-stale cached row is better than
+// erroring outright over a healthz hiccup — a build that's actually needed
+// will still hit the same unreachable server and surface its own 502 below.
+//
+// ?force=1 always builds fresh regardless of any of the above (and, when a
+// sha is known, records the new row under that sha rather than disturbing
+// any other champion's row). Without a DB (dev mode), every call builds
+// fresh and nothing is cached.
+//
+// Concurrency: building is not done under c directly. Every build (forced,
+// or a cache miss) is routed through reviewBuildGroup, an
+// x/sync/singleflight.Group keyed on matchID, so concurrent requests for the
+// SAME match id share one in-flight build instead of each firing their own
+// batch of policy-server calls (round 21, Finding 1b). The actual build work
+// additionally acquires reviewBuildSem, a server-wide semaphore capped at
+// reviewBuildConcurrencyLimit, so even distinct match ids can't stack up
+// unbounded concurrent builds against the policy server (round 21, Finding
+// 1c).
 func (s *Server) handlePostReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -166,73 +194,116 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	}
 
 	force := c.Query("force") == "1"
+	eventWindow := reviewEventWindow(policyURL)
+	// POLICY_SERVER_TOKEN authenticates POST /evaluate (and now GET
+	// /healthz's bearer header, harmlessly ignored by servers that don't
+	// require auth on /healthz) on policyURL (adversarial round 19): see
+	// buildReviewOutcome for the /evaluate failure-mode documentation.
+	policyToken := os.Getenv("POLICY_SERVER_TOKEN")
+	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, eventWindow, policyToken)
+
 	if s.DB != nil && !force {
-		var cached storage.MatchReview
-		err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&cached).Error
-		if err == nil {
-			c.Data(http.StatusOK, "application/json", []byte(cached.ReportJSON))
-			return
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check cached review"})
-			return
+		currentSha, shaErr := policyClient.CurrentCheckpointSha256()
+		if shaErr == nil && currentSha != "" {
+			var cached storage.MatchReview
+			err := s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, currentSha).First(&cached).Error
+			if err == nil {
+				c.Data(http.StatusOK, "application/json", []byte(cached.ReportJSON))
+				return
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check cached review"})
+				return
+			}
+			// Cache miss for the currently-served sha: fall through to a
+			// fresh build below, which will record it under currentSha.
+		} else {
+			// Sha unknown (unreachable healthz or a legacy server that
+			// omits checkpoint_sha256): today's newest-row fallback.
+			var cached storage.MatchReview
+			err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&cached).Error
+			if err == nil {
+				c.Data(http.StatusOK, "application/json", []byte(cached.ReportJSON))
+				return
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check cached review"})
+				return
+			}
 		}
 	}
 
+	v, _, _ := s.reviewBuildGroup.Do(matchID, func() (interface{}, error) {
+		return s.buildReviewOutcome(matchID, policyClient, eventWindow), nil
+	})
+	outcome := v.(reviewBuildOutcome)
+	c.Data(outcome.status, "application/json", outcome.body)
+}
+
+// reviewBuildOutcome is the fully-resolved HTTP result of one review build
+// (status code + JSON body), computed once per singleflight.Do call and
+// handed identically to every caller that was waiting on it.
+type reviewBuildOutcome struct {
+	status int
+	body   []byte
+}
+
+func reviewErrorOutcome(status int, msg string) reviewBuildOutcome {
+	body, err := json.Marshal(gin.H{"error": msg})
+	if err != nil {
+		// gin.H{"error": string} always marshals; this is unreachable in
+		// practice, but never send a malformed body.
+		body = []byte(`{"error":"internal error"}`)
+	}
+	return reviewBuildOutcome{status: status, body: body}
+}
+
+// buildReviewOutcome does the actual work of building (and, with a DB
+// present, caching) a review report for matchID against policyClient. It is
+// only ever invoked from inside s.reviewBuildGroup.Do, so at most one
+// goroutine per matchID runs this at a time; reviewBuildSem additionally
+// bounds how many DIFFERENT match ids' builds may run at once server-wide
+// (round 21, Finding 1).
+func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPolicyClient, eventWindow uint32) reviewBuildOutcome {
+	s.reviewBuildSem <- struct{}{}
+	defer func() { <-s.reviewBuildSem }()
+
 	paipuJSON, ok := s.loadPaipuJSON(matchID)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Match not found"})
-		return
+		return reviewErrorOutcome(http.StatusNotFound, "Match not found")
 	}
 
 	var paipu engine.Paipu
 	if err := json.Unmarshal([]byte(paipuJSON), &paipu); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unreviewable paipu: " + err.Error()})
-		return
+		return reviewErrorOutcome(http.StatusUnprocessableEntity, "unreviewable paipu: "+err.Error())
 	}
 
-	eventWindow := reviewEventWindow(policyURL)
-	// POLICY_SERVER_TOKEN authenticates POST /evaluate on policyURL
-	// (adversarial round 19): serve_policy.py now refuses every /evaluate
-	// call with HTTP 403 unless launched with --evaluate-token/
-	// FH_MJ_EVALUATE_TOKEN AND the caller presents a matching bearer token.
-	// Unset here (empty string) attaches no Authorization header at all —
-	// only viable against a policy server that likewise has no evaluate
-	// token configured; against a properly hardened production server this
-	// surfaces as a 502 below (the same failure path any other policy
-	// server error takes), not a silent empty-report success.
-	policyToken := os.Getenv("POLICY_SERVER_TOKEN")
-	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, eventWindow, policyToken)
 	report, err := review.BuildReport(&paipu, policyClient, eventWindow)
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {
 			// Divergence/extraction detail is the whole point of a 422 and
 			// contains no internal URLs — keep it in the body.
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unreviewable paipu: " + err.Error()})
-			return
+			return reviewErrorOutcome(http.StatusUnprocessableEntity, "unreviewable paipu: "+err.Error())
 		}
 		// Policy-server failures embed the internal POLICY_SERVER_URL in the
 		// error chain (http.Client errors include the request URL) — log the
 		// detail server-side, return a generic body to the caller.
 		log.Printf("review: policy server evaluation failed for match %s: %v", matchID, err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "policy server evaluation failed"})
-		return
+		return reviewErrorOutcome(http.StatusBadGateway, "policy server evaluation failed")
 	}
 
 	reportJSON, err := json.Marshal(report)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode report"})
-		return
+		return reviewErrorOutcome(http.StatusInternalServerError, "failed to encode report")
 	}
 
 	if s.DB != nil {
 		if err := s.cacheMatchReview(matchID, reviewCacheCheckpointID(report), reportJSON); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to cache review"})
-			return
+			return reviewErrorOutcome(http.StatusInternalServerError, "failed to cache review")
 		}
 	}
 
-	c.Data(http.StatusOK, "application/json", reportJSON)
+	return reviewBuildOutcome{status: http.StatusOK, body: reportJSON}
 }
 
 // reviewCacheCheckpointID picks the cache identity for report: its

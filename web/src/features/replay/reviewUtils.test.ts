@@ -125,14 +125,21 @@ describe('fetchReview / generateReview', () => {
   })
 
   it('generateReview throws {status, message} from the error body on 503', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({ error: 'reviewer unavailable' }), { status: 503 })))
-    await expect(generateReview('m1')).rejects.toEqual({ status: 503, message: 'reviewer unavailable' })
+    const apiFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'reviewer unavailable' }), { status: 503 }))
+    await expect(generateReview('m1', apiFetch)).rejects.toEqual({ status: 503, message: 'reviewer unavailable' })
   })
 
   it('generateReview throws a sensible message on a non-JSON error body', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>bad gateway</html>', { status: 502 })))
-    await expect(generateReview('m1')).rejects.toEqual({ status: 502, message: 'HTTP 502' })
+    const apiFetch = vi.fn(async () => new Response('<html>bad gateway</html>', { status: 502 }))
+    await expect(generateReview('m1', apiFetch)).rejects.toEqual({ status: 502, message: 'HTTP 502' })
+  })
+
+  it('generateReview POSTs through the authenticated apiFetch (round 21, Finding 1)', async () => {
+    const report2: ReviewReport = { ...report }
+    const apiFetch = vi.fn(async () => new Response(JSON.stringify(report2), { status: 200 }))
+    await expect(generateReview('m1', apiFetch)).resolves.toEqual(report2)
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/matches/m1/review', { method: 'POST' })
   })
 })
 

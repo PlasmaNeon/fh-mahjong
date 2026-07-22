@@ -84,6 +84,17 @@ evaluation failure aborts with an error and a nil `*Report`.
     change for callers/tests against an unauthenticated policy stub.
     `internal/api/review.go`'s `handlePostReview` sources this token from
     the `POLICY_SERVER_TOKEN` env var.
+  - **`CurrentCheckpointSha256()` (round 21, Finding 2)**: GETs
+    `{baseURL}/healthz` (same bearer-token convention as `/evaluate`; a
+    short 5s timeout independent of the 120s `/evaluate` client timeout)
+    and returns the `checkpoint_sha256` the policy server is CURRENTLY
+    serving. `("", err)` when healthz is unreachable, non-2xx, or its body
+    isn't a genuine `"ok": true` envelope — callers treat this identically
+    to `("", nil)` (healthz reachable but the server predates the field, a
+    legacy `serve_policy.py`): both mean "sha unknown". `handlePostReview`
+    uses this to key its cache lookup on the checkpoint actually serving
+    right now instead of trusting the newest cached row regardless of
+    promotion/reload/rollback since the last review.
 - **report.go** — `Report`/`ReportDecision`/`ActionProb`/`SeatSummary`/
   `GapRef` (the frontend JSON contract — field names/types must stay
   verbatim, Tasks 6/7 depend on them) and `BuildReport(paipu, client,

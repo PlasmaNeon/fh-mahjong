@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"github.com/plasma/fh-mahjong/web"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +28,29 @@ type Server struct {
 	// In-memory paipu store for when DB is nil (local dev without Postgres)
 	paipu   map[string]string // matchID -> paipu JSON
 	paipuMu sync.RWMutex
+
+	// reviewBuildGroup collapses concurrent review-build requests for the
+	// SAME matchId into one in-flight build (round 21, Finding 1): without
+	// this, a force-refresh storm (or plain unlucky concurrent load) against
+	// one match id fires one authenticated /evaluate batch PER request
+	// instead of sharing the single build actually in progress.
+	reviewBuildGroup singleflight.Group
+	// reviewBuildSem bounds how many review builds may run concurrently
+	// SERVER-WIDE, independent of which match ids they're for (round 21,
+	// Finding 1c): singleflight alone only dedupes identical match ids, so a
+	// caller spamming ?force=1 across many distinct match ids could still
+	// stack up unbounded concurrent authenticated /evaluate batches against
+	// the policy server and starve live /act traffic. Acquired by sending to
+	// the channel, released by receiving — see buildReviewOutcome.
+	reviewBuildSem chan struct{}
 }
+
+// reviewBuildConcurrencyLimit caps simultaneous in-flight review builds
+// server-wide (round 21, Finding 1c). Kept small and fixed rather than
+// configurable: review builds are a debugging/analysis path, not the hot
+// gameplay path, and the whole point is to keep them from ever competing
+// meaningfully with live /act traffic against the same policy server.
+const reviewBuildConcurrencyLimit = 2
 
 // NewServer initializes a new Server with all defined routes
 func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
@@ -38,11 +61,12 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	}
 
 	server := &Server{
-		Router:     router,
-		DB:         db,
-		Hub:        hub,
-		Matchmaker: matchmaker,
-		paipu:      make(map[string]string),
+		Router:         router,
+		DB:             db,
+		Hub:            hub,
+		Matchmaker:     matchmaker,
+		paipu:          make(map[string]string),
+		reviewBuildSem: make(chan struct{}, reviewBuildConcurrencyLimit),
 	}
 
 	if matchmaker != nil {
@@ -68,8 +92,14 @@ func (s *Server) setupRoutes() {
 		v1.POST("/tools/shanten", s.handleShanten)
 		v1.GET("/replays/:matchId", s.handleGetPaipu)
 		v1.POST("/replays/:matchId", s.handleUploadPaipu)
+		// GET is a pure cache lookup (never builds a report, never calls the
+		// policy server) so it stays public. POST triggers an authenticated
+		// batch of /evaluate calls against the policy server and is moved
+		// into the protected group below (round 21, Finding 1): an
+		// unauthenticated caller spamming ?force=1 against any known match
+		// id could otherwise drive unlimited policy-server load and push
+		// live RL agents into heuristic fallback.
 		v1.GET("/matches/:matchId/review", s.handleGetReview)
-		v1.POST("/matches/:matchId/review", s.handlePostReview)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, s.DB, c) })
 
 		// Protected routes
@@ -88,6 +118,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/rooms/:roomId/seat", s.handlePrivateTableSeat)
 			protected.POST("/rooms/:roomId/start", s.handlePrivateTableStart)
 			protected.POST("/rooms/:roomId/mode", s.handlePrivateTableMode)
+
+			protected.POST("/matches/:matchId/review", s.handlePostReview)
 		}
 	}
 

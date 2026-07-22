@@ -278,6 +278,91 @@ func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyRes
 	return out, info, nil
 }
 
+// reviewHealthzTimeout bounds CurrentCheckpointSha256's GET /healthz call.
+// Deliberately short (independent of c.client's 120s /evaluate timeout):
+// this is a cheap liveness probe, not a batch evaluation, and the caller
+// (handlePostReview) treats a slow/unreachable healthz as "sha unknown" and
+// falls back to serving the newest cached row rather than blocking the
+// request on it.
+const reviewHealthzTimeout = 5 * time.Second
+
+// healthzEnvelope mirrors just the fields CurrentCheckpointSha256 needs from
+// serve_policy.py's GET /healthz response (see ai/src/fh_mahjong_ai/scripts/
+// serve_policy.py's do_GET and internal/bot/remote/health.go's
+// healthzPayload for the fuller contract). Extra fields are ignored.
+type healthzEnvelope struct {
+	Ok               *bool  `json:"ok"`
+	CheckpointSha256 string `json:"checkpoint_sha256"`
+}
+
+// CurrentCheckpointSha256 resolves the checkpoint content hash the policy
+// server is CURRENTLY serving, via its GET /healthz route (round 21, Finding
+// 2). This is what lets handlePostReview's cache lookup key on the
+// checkpoint actually serving right now, instead of trusting the newest
+// cached MatchReview row regardless of whether the server has since been
+// promoted, hot-reloaded, or rolled back to a different checkpoint.
+//
+// Returns ("", err) when healthz is unreachable, returns a non-2xx status,
+// or its body doesn't decode into a genuine "ok": true envelope — the
+// caller's documented choice (round 21, Finding 2) is to treat this
+// identically to "sha unknown" and fall back to serving the newest cached
+// row for a read-mostly endpoint, rather than erroring the request over a
+// healthz hiccup: a build that's actually needed will still hit the same
+// unreachable server and surface its own 502 below.
+//
+// Returns ("", nil) — NOT an error — when healthz is reachable and reports
+// "ok": true but simply omits checkpoint_sha256: a legacy serve_policy.py
+// that predates the field. The caller folds this into the same "sha
+// unknown" fallback as the error case, mirroring reviewCacheCheckpointID's
+// own path-based fallback for legacy /evaluate responses.
+func (c *HTTPPolicyClient) CurrentCheckpointSha256() (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("nil HTTPPolicyClient")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), reviewHealthzTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return "", fmt.Errorf("build healthz request: %w", err)
+	}
+	// Same bearer-token convention as evaluateChunk: an empty c.token
+	// attaches no header at all.
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	client := c.client
+	if client == nil {
+		client = &http.Client{Timeout: reviewHealthzTimeout}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("healthz request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("healthz status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return "", fmt.Errorf("read healthz response: %w", err)
+	}
+
+	var envelope healthzEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", fmt.Errorf("decode healthz response: %w", err)
+	}
+	if envelope.Ok == nil || !*envelope.Ok {
+		return "", fmt.Errorf("healthz did not report ok:true")
+	}
+	return envelope.CheckpointSha256, nil
+}
+
 func actionMaskToInts(mask []byte) []int {
 	out := make([]int, len(mask))
 	for i, v := range mask {

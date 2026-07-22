@@ -72,9 +72,20 @@ export async function fetchReview(matchId: string): Promise<ReviewReport | null>
   return (await res.json()) as ReviewReport
 }
 
-/** POST to generate (or regenerate) the review report for a match. */
-export async function generateReview(matchId: string): Promise<ReviewReport> {
-  const res = await fetch(getApiUrl(`/api/v1/matches/${matchId}/review`), { method: 'POST' })
+/**
+ * POST to generate (or regenerate) the review report for a match.
+ *
+ * apiFetch must be the caller's authenticated fetch (useAuth().apiFetch) —
+ * this route requires a session cookie + CSRF token as of round 21, Finding
+ * 1 (an unauthenticated caller could otherwise spam ?force=1 against any
+ * known match id and drive unbounded load against the policy server, which
+ * is authenticated infrastructure shared with live RL agent traffic).
+ */
+export async function generateReview(
+  matchId: string,
+  apiFetch: (path: string, init?: RequestInit) => Promise<Response>,
+): Promise<ReviewReport> {
+  const res = await apiFetch(`/api/v1/matches/${matchId}/review`, { method: 'POST' })
   if (!res.ok) {
     const message = await extractErrorMessage(res)
     throw { status: res.status, message }
