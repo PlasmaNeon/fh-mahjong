@@ -53,14 +53,24 @@ func reviewFixtureJSON(t *testing.T) string {
 
 // newStubPolicyServer mirrors internal/review/report_test.go's stub: uniform
 // probabilities over the legal action mask.
+//
+// Serves a genuine "ok":true /healthz with NO checkpoint_sha256 field (round
+// 22, Finding 3): a TRUE legacy policy server, so CurrentCheckpointSha256
+// resolves cleanly to ("", nil) and callers fall back to newest-row caching.
+// Before round 22 this stub had no /healthz route at all (a 404, i.e. a
+// healthz ERROR) and relied on that being folded into the same fallback —
+// round 22 tightened handlePostReview to fail closed (503) on an actual
+// healthz error, so this stub now answers /healthz explicitly to keep
+// exercising the "true legacy" path it's meant to.
 func newStubPolicyServer(t *testing.T, requestCount *int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
 		if r.URL.Path != "/evaluate" {
-			// No /healthz route here (round 21): this stub deliberately
-			// stays a "legacy" policy server, so CurrentCheckpointSha256
-			// gets a 404 and callers fall back to newest-row caching,
-			// preserving this stub's pre-round-21 behavior exactly.
 			// requestCount only counts /evaluate calls — the thing that
 			// actually costs the policy server RL-serving capacity.
 			http.NotFound(w, r)
@@ -102,12 +112,17 @@ func newStubPolicyServer(t *testing.T, requestCount *int) *httptest.Server {
 // newStubPolicyServerWithSha behaves like newStubPolicyServer but reports a
 // checkpoint_sha256, so cache-identity tests can simulate a same-path hot
 // reload (new bytes, same checkpoint_path) by varying sha across servers.
+// /healthz reports the SAME sha (round 22, Finding 3): a real serve_policy.py
+// exposes its currently-loaded checkpoint's sha256 on both routes.
 func newStubPolicyServerWithSha(t *testing.T, requestCount *int, sha string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "checkpoint_sha256": sha})
+			return
+		}
 		if r.URL.Path != "/evaluate" {
-			// No /healthz route (round 21): same "legacy server" shape as
-			// newStubPolicyServer — see its comment.
 			http.NotFound(w, r)
 			return
 		}
@@ -224,6 +239,12 @@ func TestPostReviewBuildsAndCaches(t *testing.T) {
 	}
 }
 
+// TestPostReviewPolicyServerDown: an entirely unreachable POLICY_SERVER_URL
+// fails /healthz too, so this now surfaces round 22's fail-closed 503
+// (Finding 3) rather than reaching a build attempt at all — the previous
+// 502 came from /evaluate failing AFTER a (round-21) healthz fallback let
+// the request through. See TestPostReviewEvaluateDownAfterHealthzUp below
+// for the still-covered "healthz fine, /evaluate fails" 502 path.
 func TestPostReviewPolicyServerDown(t *testing.T) {
 	const policyURL = "http://127.0.0.1:1"
 	t.Setenv("POLICY_SERVER_URL", policyURL)
@@ -231,13 +252,41 @@ func TestPostReviewPolicyServerDown(t *testing.T) {
 	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
 
 	rec := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// The 502 body must not leak the internal policy server address: Go
+	// The body must not leak the internal policy server address: Go
 	// http.Client errors embed the full request URL, and even an
 	// authenticated caller should never see it.
 	if body := rec.Body.String(); strings.Contains(body, policyURL) || strings.Contains(body, "127.0.0.1") {
+		t.Fatalf("503 body leaks internal policy server URL: %s", body)
+	}
+}
+
+// TestPostReviewEvaluateDownAfterHealthzUp covers the 502 path that
+// TestPostReviewPolicyServerDown used to (before round 22's healthz
+// fail-closed change intercepted it earlier): /healthz succeeds (server
+// identity is known), but /evaluate itself fails.
+func TestPostReviewEvaluateDownAfterHealthzUp(t *testing.T) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"checkpoint_sha256":"sha-eval-down"}`))
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
+
+	rec := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, stub.URL) {
 		t.Fatalf("502 body leaks internal policy server URL: %s", body)
 	}
 }

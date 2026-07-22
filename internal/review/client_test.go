@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,7 @@ func TestHTTPClientTolerateNullValues(t *testing.T) {
 	}
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(obs)
+	results, info, err := client.Evaluate(context.Background(), obs)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestHTTPClientCalibratedValuesUnaffected(t *testing.T) {
 	}
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(obs)
+	results, info, err := client.Evaluate(context.Background(), obs)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestHTTPClientEvaluateShaMismatchAcrossChunksErrors(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	_, _, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
 	if err == nil {
 		t.Fatal("expected error: chunks reported different checkpoint_sha256 for the same path")
 	}
@@ -162,7 +163,7 @@ func TestHTTPClientEvaluateShaAllEqualCarriesSha(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestHTTPClientEvaluateAbsentShaLegacyStillWorks(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestHTTPClientEvaluateMixedAbsentPresentShaErrors(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	_, _, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
 	if err == nil {
 		t.Fatal("expected error: one chunk had no checkpoint_sha256, another chunk did")
 	}
@@ -280,7 +281,7 @@ func TestBuildReportPrivilegedCriticOmitsValuesButKeepsRanking(t *testing.T) {
 	}))
 	defer stub.Close()
 
-	report, err := BuildReport(paipu, NewHTTPPolicyClient(stub.URL, 0), 0)
+	report, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0)
 	if err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestHTTPClientAttachesBearerTokenWhenConfigured(t *testing.T) {
 
 	obs := []*pb.SeatObservation{{Seat: 0, Planes: []float32{0}, Scalars: []float32{0}, ActionMask: []byte{1, 0}}}
 	client := NewHTTPPolicyClientWithToken(stub.URL, 0, "s3cr3t-token")
-	if _, _, err := client.Evaluate(obs); err != nil {
+	if _, _, err := client.Evaluate(context.Background(), obs); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if want := "Bearer s3cr3t-token"; gotAuth != want {
@@ -341,7 +342,7 @@ func TestHTTPClientOmitsAuthorizationHeaderWhenNoTokenConfigured(t *testing.T) {
 
 	obs := []*pb.SeatObservation{{Seat: 0, Planes: []float32{0}, Scalars: []float32{0}, ActionMask: []byte{1, 0}}}
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	if _, _, err := client.Evaluate(obs); err != nil {
+	if _, _, err := client.Evaluate(context.Background(), obs); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if sawAuthHeader {

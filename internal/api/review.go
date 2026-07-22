@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
@@ -141,45 +145,69 @@ func (s *Server) handleGetReview(c *gin.Context) {
 // handlePostReview builds (or serves the cached) review report for a match.
 //
 // Status contract: 503 when POLICY_SERVER_URL is unset (no reviewer
-// configured); 404 when no paipu exists for matchId; 422 when the paipu
+// configured) OR when the policy server's identity can't be established via
+// /healthz (round 22, Finding 3 — see below); 429 when the caller's per-user
+// rate limit or the server-wide build admission queue is exhausted (round
+// 22, Finding 1); 404 when no paipu exists for matchId; 422 when the paipu
 // can't be reconstructed into reviewable decisions
 // (errors.Is(err, review.ErrUnreviewable)); 502 when the policy server call
-// itself fails; 200 with the report JSON otherwise.
+// itself fails; 504 if the caller's own request is cancelled/times out while
+// waiting on a build that keeps running for other waiters; 200 with the
+// report JSON otherwise.
 //
-// Cache policy: with a DB present, the request first resolves which
-// checkpoint the policy server is CURRENTLY serving via
-// HTTPPolicyClient.CurrentCheckpointSha256 (round 21, Finding 2). When that
-// sha is known, the lookup is an EXACT (matchID, sha) row: a hit serves that
-// row as-is (even after other checkpoints have since been reviewed for this
-// match); a miss builds fresh, which records the new row under that same sha
-// (reviewCacheCheckpointID, round 18). This makes a rollback to a
-// previously-reviewed checkpoint re-serve its own old report without
-// rebuilding, and a promotion/reload to a new checkpoint always build fresh
-// rather than serving a stale champion's cached report.
+// Checkpoint identity (round 21, Finding 2 + round 22, Finding 2/3): every
+// call first resolves which checkpoint the policy server is CURRENTLY
+// serving via HTTPPolicyClient.CurrentCheckpointSha256.
 //
-// When the current sha can't be resolved (healthz unreachable, or a legacy
-// server that predates checkpoint_sha256 — CurrentCheckpointSha256 returns
-// ("", nil) for that case, indistinguishable here from an error), this falls
-// back to today's pre-round-21 behavior: the newest cached MatchReview row
-// for the match, by CreatedAt, is returned as-is. Documented choice: for a
-// read-mostly endpoint, serving a possibly-stale cached row is better than
-// erroring outright over a healthz hiccup — a build that's actually needed
-// will still hit the same unreachable server and surface its own 502 below.
+//   - healthz unreachable, erroring, or timing out: FAILS CLOSED — 503,
+//     "policy server identity unavailable". Round 21 folded this into the
+//     newest-row fallback below; round 22 tightened that, because silently
+//     serving a possibly-stale cached row when the server's identity is
+//     literally unknown is the whole bug this finding is about. A build
+//     that's actually needed will hit the same unreachable server and
+//     surface its own error on its own next attempt.
+//   - healthz OK but the body has no checkpoint_sha256 field at all (a true
+//     legacy serve_policy.py that predates the field): unchanged
+//     pre-round-21 behavior — the newest cached MatchReview row for the
+//     match, by CreatedAt, is served as-is when one exists.
+//   - healthz OK with a sha: the lookup is an EXACT (matchID, sha) row — a
+//     hit serves that row as-is (even after other checkpoints have since
+//     been reviewed for this match); a miss builds fresh, which records the
+//     new row under that same sha (reviewCacheCheckpointID, round 18). This
+//     makes a rollback to a previously-reviewed checkpoint re-serve its own
+//     old report without rebuilding, and a promotion/reload to a new
+//     checkpoint always build fresh rather than serving a stale champion's
+//     cached report.
 //
-// ?force=1 always builds fresh regardless of any of the above (and, when a
-// sha is known, records the new row under that sha rather than disturbing
-// any other champion's row). Without a DB (dev mode), every call builds
-// fresh and nothing is cached.
+// ?force=1 skips the cache lookups above and always builds fresh (and, when
+// a sha is known, records the new row under that sha rather than disturbing
+// any other champion's row) — but still resolves currentSha first (fails
+// closed the same way on a healthz error), since Finding 2 needs it to key
+// the build and validate the result below. Without a DB (dev mode), every
+// call builds fresh and nothing is cached.
 //
-// Concurrency: building is not done under c directly. Every build (forced,
-// or a cache miss) is routed through reviewBuildGroup, an
-// x/sync/singleflight.Group keyed on matchID, so concurrent requests for the
-// SAME match id share one in-flight build instead of each firing their own
-// batch of policy-server calls (round 21, Finding 1b). The actual build work
-// additionally acquires reviewBuildSem, a server-wide semaphore capped at
-// reviewBuildConcurrencyLimit, so even distinct match ids can't stack up
-// unbounded concurrent builds against the policy server (round 21, Finding
-// 1c).
+// Concurrency and admission (round 21 Findings 1b/1c; round 22 Finding 1):
+// building is not done under c directly. Every build (forced, or a cache
+// miss) is routed through reviewBuildGroup, an x/sync/singleflight.Group
+// keyed on matchID + the resolved checkpoint identity + force-ness (round
+// 22, Finding 2 — see buildReviewKey), so concurrent requests that actually
+// expect the SAME checkpoint share one in-flight build, while a request that
+// resolves a DIFFERENT sha (server promoted/rolled back mid-flight) always
+// gets its own build rather than silently coalescing into a stranger's
+// result. The build itself runs via DoChan in an independent goroutine with
+// its own DETACHED context (buildReviewOutcome's ctx, not c.Request's) —
+// this caller (and every other caller sharing the same key) merely SELECTS
+// between that goroutine finishing and its own c.Request.Context() being
+// cancelled (client disconnected/request timed out): a caller giving up
+// early stops waiting (504) without cancelling the shared build for anyone
+// else still waiting on it, and the build still completes and caches
+// normally. Inside that goroutine, acquireReviewBuildSlot bounds how many
+// DIFFERENT checkpoint-builds may run/queue at once server-wide (capacity
+// reviewBuildConcurrencyLimit + wait queue reviewBuildWaitQueueLimit); beyond
+// that, the build fails immediately with 429 rather than queuing
+// unboundedly. A per-user token bucket (reviewRateLimiter) gates entry even
+// earlier, before any of this — a spammy caller is turned away before ever
+// touching the shared admission queue.
 func (s *Server) handlePostReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -193,6 +221,14 @@ func (s *Server) handlePostReview(c *gin.Context) {
 		return
 	}
 
+	if userIDVal, ok := c.Get("userID"); ok {
+		if userID, ok := userIDVal.(uint); ok && !s.reviewRateLimiter.Allow(userID) {
+			c.Header("Retry-After", "10")
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many review requests, slow down and retry shortly"})
+			return
+		}
+	}
+
 	force := c.Query("force") == "1"
 	eventWindow := reviewEventWindow(policyURL)
 	// POLICY_SERVER_TOKEN authenticates POST /evaluate (and now GET
@@ -202,9 +238,18 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	policyToken := os.Getenv("POLICY_SERVER_TOKEN")
 	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, eventWindow, policyToken)
 
+	reqCtx := c.Request.Context()
+	currentSha, shaErr := policyClient.CurrentCheckpointSha256(reqCtx)
+	if shaErr != nil {
+		// Fail closed (round 22, Finding 3): never silently serve a
+		// possibly-stale cached row when the server's identity is unknown.
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy server identity unavailable"})
+		return
+	}
+	legacy := currentSha == ""
+
 	if s.DB != nil && !force {
-		currentSha, shaErr := policyClient.CurrentCheckpointSha256()
-		if shaErr == nil && currentSha != "" {
+		if !legacy {
 			var cached storage.MatchReview
 			err := s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, currentSha).First(&cached).Error
 			if err == nil {
@@ -218,8 +263,8 @@ func (s *Server) handlePostReview(c *gin.Context) {
 			// Cache miss for the currently-served sha: fall through to a
 			// fresh build below, which will record it under currentSha.
 		} else {
-			// Sha unknown (unreachable healthz or a legacy server that
-			// omits checkpoint_sha256): today's newest-row fallback.
+			// True legacy server (healthz ok, no sha field): today's
+			// newest-row fallback.
 			var cached storage.MatchReview
 			err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&cached).Error
 			if err == nil {
@@ -233,19 +278,52 @@ func (s *Server) handlePostReview(c *gin.Context) {
 		}
 	}
 
-	v, _, _ := s.reviewBuildGroup.Do(matchID, func() (interface{}, error) {
-		return s.buildReviewOutcome(matchID, policyClient, eventWindow), nil
+	key := buildReviewKey(matchID, currentSha, legacy, force)
+	resultCh := s.reviewBuildGroup.DoChan(key, func() (interface{}, error) {
+		return s.buildReviewOutcome(matchID, policyClient, eventWindow, currentSha, legacy), nil
 	})
-	outcome := v.(reviewBuildOutcome)
-	c.Data(outcome.status, "application/json", outcome.body)
+
+	select {
+	case res := <-resultCh:
+		outcome := res.Val.(reviewBuildOutcome)
+		if outcome.retryAfterSeconds > 0 {
+			c.Header("Retry-After", strconv.Itoa(outcome.retryAfterSeconds))
+		}
+		c.Data(outcome.status, "application/json", outcome.body)
+	case <-reqCtx.Done():
+		// This caller gave up (client disconnected or request context
+		// expired). The build above keeps running in its own goroutine on a
+		// detached context — it still completes and caches for whoever else
+		// is waiting on the same key (or the next cache hit) — we simply
+		// stop waiting on it here.
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "request cancelled while waiting for review build"})
+	}
+}
+
+// buildReviewKey is the singleflight key for one review build (round 22,
+// Finding 2): matchID alone let a request expecting one checkpoint coalesce
+// into another request's in-flight build for a DIFFERENT checkpoint (e.g. a
+// promotion/rollback landing between two requests for the same match).
+// Folding in the resolved checkpoint identity means two requests only share
+// a build when they actually expect the same served bytes; force-ness gets
+// its own slot too, so a plain cache-serving request can never coalesce with
+// a concurrent forced rebuild (or vice versa) — each stays on its own key.
+func buildReviewKey(matchID, currentSha string, legacy, force bool) string {
+	shaPart := currentSha
+	if legacy {
+		shaPart = "<legacy>"
+	}
+	return fmt.Sprintf("%s|sha=%s|force=%t", matchID, shaPart, force)
 }
 
 // reviewBuildOutcome is the fully-resolved HTTP result of one review build
-// (status code + JSON body), computed once per singleflight.Do call and
-// handed identically to every caller that was waiting on it.
+// (status code + JSON body), computed once per singleflight key and handed
+// identically to every caller that was waiting on it. retryAfterSeconds is
+// non-zero only for a 429 admission rejection (round 22, Finding 1a).
 type reviewBuildOutcome struct {
-	status int
-	body   []byte
+	status            int
+	body              []byte
+	retryAfterSeconds int
 }
 
 func reviewErrorOutcome(status int, msg string) reviewBuildOutcome {
@@ -258,15 +336,69 @@ func reviewErrorOutcome(status int, msg string) reviewBuildOutcome {
 	return reviewBuildOutcome{status: status, body: body}
 }
 
-// buildReviewOutcome does the actual work of building (and, with a DB
-// present, caching) a review report for matchID against policyClient. It is
-// only ever invoked from inside s.reviewBuildGroup.Do, so at most one
-// goroutine per matchID runs this at a time; reviewBuildSem additionally
-// bounds how many DIFFERENT match ids' builds may run at once server-wide
-// (round 21, Finding 1).
-func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPolicyClient, eventWindow uint32) reviewBuildOutcome {
+// reviewBuildTimeout bounds a shared review build's detached context (round
+// 22, Finding 1c): matches HTTPPolicyClient's own /evaluate client timeout,
+// so this is not a NEW ceiling, just where that ceiling is now applied from
+// (the build's own goroutine, not any one caller's request).
+const reviewBuildTimeout = 120 * time.Second
+
+// errReviewBuildQueueFull is returned by acquireReviewBuildSlot when both the
+// concurrency cap and the wait queue are exhausted (round 22, Finding 1a).
+var errReviewBuildQueueFull = errors.New("review build queue is full")
+
+// acquireReviewBuildSlot reserves one of reviewBuildConcurrencyLimit
+// server-wide build slots, queuing (bounded to reviewBuildWaitQueueLimit
+// waiters) if all slots are currently taken. Unlike the round-21 version
+// (an unconditional, unbounded blocking send), this never blocks forever
+// with no way out: once reviewBuildWaitQueueLimit waiters are already
+// queued, a new attempt fails immediately with errReviewBuildQueueFull
+// rather than growing the queue further.
+func (s *Server) acquireReviewBuildSlot() error {
+	select {
+	case s.reviewBuildSem <- struct{}{}:
+		return nil
+	default:
+	}
+
+	if atomic.AddInt32(&s.reviewBuildWaiters, 1) > reviewBuildWaitQueueLimit {
+		atomic.AddInt32(&s.reviewBuildWaiters, -1)
+		return errReviewBuildQueueFull
+	}
+	defer atomic.AddInt32(&s.reviewBuildWaiters, -1)
+
 	s.reviewBuildSem <- struct{}{}
-	defer func() { <-s.reviewBuildSem }()
+	return nil
+}
+
+// releaseReviewBuildSlot releases a slot acquired by acquireReviewBuildSlot.
+func (s *Server) releaseReviewBuildSlot() {
+	<-s.reviewBuildSem
+}
+
+// buildReviewOutcome does the actual work of building (and, with a DB
+// present, caching) a review report for matchID against policyClient.
+// Invoked from inside s.reviewBuildGroup.DoChan's own goroutine (round 22,
+// Finding 1): that goroutine is independent of any single caller's HTTP
+// request, so it runs to completion (and caches its result) even if every
+// caller waiting on it gives up. Its own context is DELIBERATELY detached
+// from any caller's request context — see handlePostReview's doc — bounded
+// only by reviewBuildTimeout, matching HTTPPolicyClient's /evaluate timeout.
+//
+// expectedSha/legacy are the checkpoint identity resolved by the caller
+// BEFORE this build started (used for the singleflight key — see
+// buildReviewKey). After a successful build, if expectedSha was known
+// (!legacy) and the report itself reports a sha, the two are cross-checked
+// (round 22, Finding 2's defense-in-depth on top of the key split above): a
+// mismatch means the policy server's identity moved again mid-build, so the
+// result is discarded (503) rather than cached/served as if it reflected
+// the checkpoint this build was keyed for.
+func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPolicyClient, eventWindow uint32, expectedSha string, legacy bool) reviewBuildOutcome {
+	if err := s.acquireReviewBuildSlot(); err != nil {
+		outcome := reviewErrorOutcome(http.StatusTooManyRequests, "review build queue is full, retry shortly")
+		outcome.retryAfterSeconds = 5
+		return outcome
+	}
+	defer s.releaseReviewBuildSlot()
 
 	paipuJSON, ok := s.loadPaipuJSON(matchID)
 	if !ok {
@@ -278,7 +410,10 @@ func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPol
 		return reviewErrorOutcome(http.StatusUnprocessableEntity, "unreviewable paipu: "+err.Error())
 	}
 
-	report, err := review.BuildReport(&paipu, policyClient, eventWindow)
+	ctx, cancel := context.WithTimeout(context.Background(), reviewBuildTimeout)
+	defer cancel()
+
+	report, err := review.BuildReport(ctx, &paipu, policyClient, eventWindow)
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {
 			// Divergence/extraction detail is the whole point of a 422 and
@@ -290,6 +425,11 @@ func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPol
 		// detail server-side, return a generic body to the caller.
 		log.Printf("review: policy server evaluation failed for match %s: %v", matchID, err)
 		return reviewErrorOutcome(http.StatusBadGateway, "policy server evaluation failed")
+	}
+
+	if !legacy && expectedSha != "" && report.CheckpointSha256 != "" && report.CheckpointSha256 != expectedSha {
+		log.Printf("review: match %s expected checkpoint %s but build reported %s; policy server identity moved mid-build, discarding result", matchID, expectedSha, report.CheckpointSha256)
+		return reviewErrorOutcome(http.StatusServiceUnavailable, "policy server checkpoint changed during review build; retry")
 	}
 
 	reportJSON, err := json.Marshal(report)

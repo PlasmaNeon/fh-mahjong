@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func TestBuildReportAgainstStubServer(t *testing.T) {
 	}))
 	defer stub.Close()
 
-	report, err := BuildReport(paipu, NewHTTPPolicyClient(stub.URL, 0), 0)
+	report, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0)
 	if err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestBuildReportServerErrorReturnsNoPartialReport(t *testing.T) {
 		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
 	}))
 	defer stub.Close()
-	if _, err := BuildReport(paipu, NewHTTPPolicyClient(stub.URL, 0), 0); err == nil {
+	if _, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -145,7 +146,7 @@ func TestBuildReportEventWindowZeroPayloadUnchanged(t *testing.T) {
 	}))
 	defer stub.Close()
 
-	if _, err := BuildReport(paipu, NewHTTPPolicyClient(stub.URL, 0), 0); err != nil {
+	if _, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0); err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}
 	if len(gotBatches) == 0 {
@@ -202,7 +203,7 @@ func TestBuildReportEventWindowEightEnrichesPayload(t *testing.T) {
 	}))
 	defer stub.Close()
 
-	if _, err := BuildReport(paipu, NewHTTPPolicyClient(stub.URL, window), window); err != nil {
+	if _, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, window), window); err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}
 	if len(gotBatches) == 0 {
@@ -300,7 +301,7 @@ func TestHTTPClientChunksBatches(t *testing.T) {
 	}
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(obs)
+	results, info, err := client.Evaluate(context.Background(), obs)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}

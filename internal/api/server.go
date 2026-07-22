@@ -40,9 +40,22 @@ type Server struct {
 	// Finding 1c): singleflight alone only dedupes identical match ids, so a
 	// caller spamming ?force=1 across many distinct match ids could still
 	// stack up unbounded concurrent authenticated /evaluate batches against
-	// the policy server and starve live /act traffic. Acquired by sending to
-	// the channel, released by receiving — see buildReviewOutcome.
+	// the policy server and starve live /act traffic. Acquired/released via
+	// acquireReviewBuildSlot/releaseReviewBuildSlot — see review.go.
 	reviewBuildSem chan struct{}
+	// reviewBuildWaiters counts goroutines currently blocked trying to
+	// acquire a review-build slot (round 22, Finding 1a): with
+	// reviewBuildConcurrencyLimit slots already full, a request is queued
+	// only while this stays at or below reviewBuildWaitQueueLimit; beyond
+	// that it is rejected immediately (429) rather than queued unboundedly.
+	// Accessed only via sync/atomic.
+	reviewBuildWaiters int32
+	// reviewRateLimiter enforces a small per-user token-bucket limit on
+	// review-build POSTs (round 22, Finding 1d), independent of the
+	// admission queue above: it caps how often ONE authenticated user can
+	// even attempt to trigger a build, before that attempt ever touches the
+	// shared semaphore/wait-queue.
+	reviewRateLimiter *reviewRateLimiter
 }
 
 // reviewBuildConcurrencyLimit caps simultaneous in-flight review builds
@@ -51,6 +64,14 @@ type Server struct {
 // gameplay path, and the whole point is to keep them from ever competing
 // meaningfully with live /act traffic against the same policy server.
 const reviewBuildConcurrencyLimit = 2
+
+// reviewBuildWaitQueueLimit caps how many callers may wait for a review-build
+// slot once reviewBuildConcurrencyLimit is exhausted (round 22, Finding 1a).
+// Beyond capacity+queue (2+4 = 6 concurrently "admitted or waiting" builds),
+// a new distinct-match build request is rejected immediately with 429 rather
+// than queuing unboundedly — the original round-21 semaphore blocked forever
+// with no bound and no way for a disconnected caller's goroutine to leave.
+const reviewBuildWaitQueueLimit = 4
 
 // NewServer initializes a new Server with all defined routes
 func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
@@ -61,12 +82,13 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	}
 
 	server := &Server{
-		Router:         router,
-		DB:             db,
-		Hub:            hub,
-		Matchmaker:     matchmaker,
-		paipu:          make(map[string]string),
-		reviewBuildSem: make(chan struct{}, reviewBuildConcurrencyLimit),
+		Router:            router,
+		DB:                db,
+		Hub:               hub,
+		Matchmaker:        matchmaker,
+		paipu:             make(map[string]string),
+		reviewBuildSem:    make(chan struct{}, reviewBuildConcurrencyLimit),
+		reviewRateLimiter: newReviewRateLimiter(),
 	}
 
 	if matchmaker != nil {

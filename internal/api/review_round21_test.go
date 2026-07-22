@@ -385,12 +385,14 @@ func TestPostReviewRebuildsWhenServerReportsDifferentSha(t *testing.T) {
 	}
 }
 
-// TestPostReviewLegacyNoShaHealthzKeepsNewestRowBehavior pins that a policy
-// server with no /healthz route at all (legacy, predates round 21) falls
-// back to today's newest-cached-row behavior unchanged.
+// TestPostReviewLegacyNoShaHealthzKeepsNewestRowBehavior pins that a TRUE
+// legacy policy server — /healthz answers "ok":true but omits
+// checkpoint_sha256 entirely, predating round 21 — falls back to today's
+// newest-cached-row behavior unchanged (round 22, Finding 3's one
+// grandfathered stale-serve path).
 func TestPostReviewLegacyNoShaHealthzKeepsNewestRowBehavior(t *testing.T) {
 	var requestCount int
-	stub := newStubPolicyServer(t, &requestCount) // no /healthz route
+	stub := newStubPolicyServer(t, &requestCount) // healthz ok, no sha field
 	defer stub.Close()
 	t.Setenv("POLICY_SERVER_URL", stub.URL)
 

@@ -55,8 +55,13 @@ type CheckpointInfo struct {
 }
 
 // PolicyClient evaluates a batch of observations against a served policy.
+//
+// ctx bounds/cancels the underlying HTTP call(s) (adversarial round 22,
+// Finding 1): a caller that no longer needs the result (e.g. an HTTP handler
+// whose client disconnected) can cancel ctx to stop waiting on the network
+// round trip. Implementations MUST NOT ignore ctx.
 type PolicyClient interface {
-	Evaluate(obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error)
+	Evaluate(ctx context.Context, obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error)
 }
 
 // HTTPPolicyClient is a PolicyClient backed by an HTTP /evaluate endpoint.
@@ -159,7 +164,15 @@ type evaluateResponse struct {
 // the same checkpoint (a hot-swap mid-review is an error, never a
 // mixed-champion report), and any non-200 response, "error" field, or
 // result-count mismatch aborts the whole call — never a partial result.
-func (c *HTTPPolicyClient) Evaluate(obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error) {
+//
+// ctx bounds every chunk's HTTP request (adversarial round 22, Finding 1):
+// callers building a review for a still-connected client typically pass a
+// context detached from any single request (see internal/api's
+// buildReviewOutcome) so one caller giving up doesn't abort a build shared
+// with others via singleflight; ctx.Done() firing here aborts the CURRENT
+// in-flight chunk request immediately rather than waiting out the full
+// client timeout.
+func (c *HTTPPolicyClient) Evaluate(ctx context.Context, obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error) {
 	if c == nil {
 		return nil, CheckpointInfo{}, fmt.Errorf("nil HTTPPolicyClient")
 	}
@@ -173,7 +186,7 @@ func (c *HTTPPolicyClient) Evaluate(obs []*pb.SeatObservation) ([]PolicyResult, 
 			end = len(obs)
 		}
 		chunk := obs[start:end]
-		chunkResults, chunkInfo, err := c.evaluateChunk(chunk)
+		chunkResults, chunkInfo, err := c.evaluateChunk(ctx, chunk)
 		if err != nil {
 			return nil, CheckpointInfo{}, fmt.Errorf("evaluate chunk [%d:%d): %w", start, end, err)
 		}
@@ -191,7 +204,7 @@ func (c *HTTPPolicyClient) Evaluate(obs []*pb.SeatObservation) ([]PolicyResult, 
 	return results, info, nil
 }
 
-func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error) {
+func (c *HTTPPolicyClient) evaluateChunk(ctx context.Context, obs []*pb.SeatObservation) ([]PolicyResult, CheckpointInfo, error) {
 	payload := evaluateRequest{Observations: make([]evaluateObservation, len(obs))}
 	for i, o := range obs {
 		row := evaluateObservation{
@@ -224,7 +237,9 @@ func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyRes
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Combines the caller's ctx (cancelled if the caller gives up early) with
+	// a hard per-chunk timeout backstop — whichever fires first wins.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/evaluate", bytes.NewReader(body))
@@ -303,24 +318,26 @@ type healthzEnvelope struct {
 // promoted, hot-reloaded, or rolled back to a different checkpoint.
 //
 // Returns ("", err) when healthz is unreachable, returns a non-2xx status,
-// or its body doesn't decode into a genuine "ok": true envelope — the
-// caller's documented choice (round 21, Finding 2) is to treat this
-// identically to "sha unknown" and fall back to serving the newest cached
-// row for a read-mostly endpoint, rather than erroring the request over a
-// healthz hiccup: a build that's actually needed will still hit the same
-// unreachable server and surface its own 502 below.
+// times out, or its body doesn't decode into a genuine "ok": true envelope.
+// Round 21 treated this identically to "sha unknown" and served the newest
+// cached row regardless; round 22 (Finding 3) tightened that: the caller now
+// fails the request closed (503) instead, since a healthz hiccup is
+// indistinguishable from "the policy server was just promoted/rolled back
+// and we don't know to what" — silently serving a possibly-stale cached row
+// in that state is exactly the bug being fixed. ctx cancellation surfaces
+// through this same error path.
 //
 // Returns ("", nil) — NOT an error — when healthz is reachable and reports
 // "ok": true but simply omits checkpoint_sha256: a legacy serve_policy.py
-// that predates the field. The caller folds this into the same "sha
-// unknown" fallback as the error case, mirroring reviewCacheCheckpointID's
-// own path-based fallback for legacy /evaluate responses.
-func (c *HTTPPolicyClient) CurrentCheckpointSha256() (string, error) {
+// that predates the field. This IS the one case the caller still folds into
+// the newest-row fallback, mirroring reviewCacheCheckpointID's own
+// path-based fallback for legacy /evaluate responses.
+func (c *HTTPPolicyClient) CurrentCheckpointSha256(ctx context.Context) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("nil HTTPPolicyClient")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), reviewHealthzTimeout)
+	ctx, cancel := context.WithTimeout(ctx, reviewHealthzTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)

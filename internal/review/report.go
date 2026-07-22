@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -98,7 +99,13 @@ type GapRef struct {
 //
 // eventWindow is forwarded to ExtractDecisions (see its doc); pass 0 unless
 // the served policy has event_window > 0.
-func BuildReport(paipu *engine.Paipu, client PolicyClient, eventWindow uint32) (*Report, error) {
+//
+// ctx is forwarded to client.Evaluate (adversarial round 22, Finding 1): the
+// caller decides whose lifetime governs the evaluation call — a shared
+// build running via singleflight should be given a context detached from
+// any single HTTP request, so one caller giving up doesn't cut off a build
+// others are also waiting on.
+func BuildReport(ctx context.Context, paipu *engine.Paipu, client PolicyClient, eventWindow uint32) (*Report, error) {
 	decisions, err := ExtractDecisions(paipu, eventWindow)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreviewable, err)
@@ -108,7 +115,7 @@ func BuildReport(paipu *engine.Paipu, client PolicyClient, eventWindow uint32) (
 	for i, d := range decisions {
 		observations[i] = d.Observation
 	}
-	results, info, err := client.Evaluate(observations)
+	results, info, err := client.Evaluate(ctx, observations)
 	if err != nil {
 		return nil, fmt.Errorf("evaluate decisions: %w", err)
 	}
