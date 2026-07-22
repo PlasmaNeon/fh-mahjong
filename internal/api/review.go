@@ -113,9 +113,36 @@ func sameReviewService(baseURL, rlURL string) bool {
 	return remote.SameServiceEndpoint(baseURL, rlURL)
 }
 
-// handleGetReview serves the newest cached MatchReview for a match. It is a
-// pure cache lookup — it never builds a report. DB nil or no cached row →
-// 404.
+// handleGetReview serves the review report for a match. It is a pure cache
+// lookup — it never builds a report (that remains handlePostReview's job) —
+// so it stays public/unauthenticated. DB nil → 404.
+//
+// Round 23, Finding 1: this used to serve the newest cached MatchReview row
+// unconditionally, with no check against what the policy server is actually
+// serving right now. That let a promotion/rollback go unnoticed by GET
+// callers indefinitely: the cached report from a retired checkpoint kept
+// being served as if it were current, and — because Replay.tsx treats ANY
+// 200 here as "review ready" — the checkpoint-aware POST path (which DOES
+// resolve the live sha) never even ran to correct it.
+//
+// Fixed the same way handlePostReview already establishes checkpoint
+// identity: resolve the live sha via /healthz (through reviewLiveSha's
+// short-TTL cache — see reviewShaCacheTTL — so this public route doesn't
+// hammer /healthz once per casual page load) and require an EXACT
+// (matchID, sha) row:
+//
+//   - POLICY_SERVER_URL unset (no reviewer configured at all): there is no
+//     live checkpoint identity to contradict a cached row, so this keeps the
+//     pre-round-23 newest-row fallback unchanged.
+//   - healthz unreachable/erroring: FAILS CLOSED — 503, mirroring
+//     handlePostReview's round-22 Finding 3 semantics — never silently serve
+//     a possibly-stale row when the server's identity is unknown.
+//   - healthz OK, no checkpoint_sha256 field (true legacy serve_policy.py):
+//     newest-row fallback, same as always.
+//   - healthz OK with a sha: ONLY the exact (matchID, sha) row is served; a
+//     miss is a 404 so the frontend falls through to its existing
+//     "Request review" (POST) flow, which builds fresh (or serves its own
+//     cheap cache hit) for the checkpoint actually serving right now.
 func (s *Server) handleGetReview(c *gin.Context) {
 	matchID := c.Param("matchId")
 	if matchID == "" {
@@ -128,6 +155,41 @@ func (s *Server) handleGetReview(c *gin.Context) {
 		return
 	}
 
+	policyURL := os.Getenv("POLICY_SERVER_URL")
+	if policyURL == "" {
+		s.serveNewestReview(c, matchID)
+		return
+	}
+
+	sha, legacy, err := s.reviewLiveSha(c.Request.Context(), policyURL)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "policy server identity unavailable"})
+		return
+	}
+	if legacy {
+		s.serveNewestReview(c, matchID)
+		return
+	}
+
+	var row storage.MatchReview
+	err = s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, sha).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no cached review for the current checkpoint"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cached review"})
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", []byte(row.ReportJSON))
+}
+
+// serveNewestReview is the pre-round-23 "newest cached row for this match"
+// lookup, still used by handleGetReview whenever there is no live checkpoint
+// identity to check a row against (no reviewer configured, or a true legacy
+// policy server).
+func (s *Server) serveNewestReview(c *gin.Context, matchID string) {
 	var row storage.MatchReview
 	err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -140,6 +202,36 @@ func (s *Server) handleGetReview(c *gin.Context) {
 	}
 
 	c.Data(http.StatusOK, "application/json", []byte(row.ReportJSON))
+}
+
+// reviewLiveSha resolves the policy server's currently-served checkpoint
+// identity for GET /matches/:matchId/review (round 23, Finding 1), through a
+// short-TTL cache (reviewShaCacheTTL) so this public, unauthenticated route
+// doesn't fire a fresh /healthz round trip on every single page load.
+//
+// Only a SUCCESSFUL resolution is cached: an error is never cached, so a
+// transient healthz outage self-heals on the very next request rather than
+// pinning every GET to 503 for the rest of the TTL window.
+func (s *Server) reviewLiveSha(ctx context.Context, policyURL string) (sha string, legacy bool, err error) {
+	s.reviewShaCacheMu.Lock()
+	cached := s.reviewShaCache
+	s.reviewShaCacheMu.Unlock()
+	if cached.policyURL == policyURL && time.Since(cached.fetchedAt) < reviewShaCacheTTL {
+		return cached.sha, cached.legacy, nil
+	}
+
+	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, 0, os.Getenv("POLICY_SERVER_TOKEN"))
+	sha, err = policyClient.CurrentCheckpointSha256(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	legacy = sha == ""
+
+	s.reviewShaCacheMu.Lock()
+	s.reviewShaCache = reviewShaCacheEntry{policyURL: policyURL, sha: sha, legacy: legacy, fetchedAt: time.Now()}
+	s.reviewShaCacheMu.Unlock()
+
+	return sha, legacy, nil
 }
 
 // handlePostReview builds (or serves the cached) review report for a match.
@@ -427,8 +519,19 @@ func (s *Server) buildReviewOutcome(matchID string, policyClient *review.HTTPPol
 		return reviewErrorOutcome(http.StatusBadGateway, "policy server evaluation failed")
 	}
 
-	if !legacy && expectedSha != "" && report.CheckpointSha256 != "" && report.CheckpointSha256 != expectedSha {
-		log.Printf("review: match %s expected checkpoint %s but build reported %s; policy server identity moved mid-build, discarding result", matchID, expectedSha, report.CheckpointSha256)
+	// Round 23, Finding 2: when a live sha WAS expected (!legacy,
+	// expectedSha != ""), the build's report must carry that SAME sha — not
+	// just "a different non-empty one". The pre-round-23 guard only ever
+	// compared two non-empty shas, so a build whose /evaluate response
+	// simply OMITTED checkpoint_sha256 (a rolling deploy or proxy briefly
+	// routing to a stale/mismatched instance) sailed through this check
+	// (report.CheckpointSha256 == "" short-circuited it) and got cached and
+	// served under expectedSha as if it genuinely reflected that checkpoint.
+	// Requiring an exact, non-empty match whenever a sha was expected closes
+	// that gap: "missing" is treated exactly like "different", not like
+	// "legacy/unknown".
+	if !legacy && expectedSha != "" && report.CheckpointSha256 != expectedSha {
+		log.Printf("review: match %s expected checkpoint %s but build reported %q; policy server identity moved (or omitted its sha) mid-build, discarding result", matchID, expectedSha, report.CheckpointSha256)
 		return reviewErrorOutcome(http.StatusServiceUnavailable, "policy server checkpoint changed during review build; retry")
 	}
 

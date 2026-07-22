@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -56,7 +57,40 @@ type Server struct {
 	// even attempt to trigger a build, before that attempt ever touches the
 	// shared semaphore/wait-queue.
 	reviewRateLimiter *reviewRateLimiter
+	// reviewShaCacheMu guards reviewShaCache below (round 23, Finding 1): the
+	// public, unauthenticated GET /matches/:matchId/review route resolves
+	// the policy server's live checkpoint sha via /healthz on every request
+	// (see handleGetReview) — this short-TTL cache keeps that from hammering
+	// /healthz once per casual page load.
+	reviewShaCacheMu sync.Mutex
+	reviewShaCache   reviewShaCacheEntry
 }
+
+// reviewShaCacheEntry is the short-TTL cache of the policy server's
+// currently-served checkpoint identity, shared by every GET review request
+// (round 23, Finding 1). Keyed on policyURL so a POLICY_SERVER_URL change
+// (redeploy pointing at a different service) never serves a stale entry from
+// the old one. Only successful healthz resolutions are cached — an error is
+// never cached, so a transient healthz outage is retried on the very next
+// request rather than being pinned to "unavailable" for the rest of the TTL.
+type reviewShaCacheEntry struct {
+	policyURL string
+	sha       string
+	legacy    bool
+	fetchedAt time.Time
+}
+
+// reviewShaCacheTTL bounds how long handleGetReview trusts a previously
+// resolved live checkpoint sha before re-checking /healthz (round 23,
+// Finding 1). Short enough that a promotion/rollback is picked up within one
+// page-load's worth of staleness; long enough that a burst of replay-page
+// opens (or a slow-clicking user) doesn't turn into a healthz call per
+// request.
+//
+// A var, not a const, solely so tests can shrink it to 0 (see
+// review_round23_test.go) and observe a promotion/rollback reflected on the
+// very next GET rather than asserting against real wall-clock time.
+var reviewShaCacheTTL = 10 * time.Second
 
 // reviewBuildConcurrencyLimit caps simultaneous in-flight review builds
 // server-wide (round 21, Finding 1c). Kept small and fixed rather than
