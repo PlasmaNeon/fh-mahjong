@@ -7,6 +7,7 @@ import {
   buildDecisionIndex,
   decisionKey,
   decisionSeverity,
+  resolveValuesCalibrated,
   selectBarRows,
   severityCounts,
   type SeverityThresholds,
@@ -224,7 +225,7 @@ function ReviewContent({ report, decisionIndex, viewSeat, position, onJump, lang
         position={position}
         onJump={onJump}
         label={t.timeline}
-        valuesCalibrated={report.valuesCalibrated}
+        valuesCalibrated={resolveValuesCalibrated(report)}
         uncalibratedLabel={t.valuesUncalibrated}
       />
 

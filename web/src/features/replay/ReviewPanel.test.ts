@@ -132,4 +132,32 @@ describe('ReviewPanel', () => {
     expect(html).toContain('Value estimates are unavailable for this policy')
     expect(html).not.toContain('review-sparkline')
   })
+
+  // Regression (round 16, Finding 3): a cached schema-v1 report (generated
+  // before valuesCalibrated existed) omits the field entirely, but always
+  // carried real numeric decision values. It must render the value timeline,
+  // not the uncalibrated warning.
+  it('renders the value timeline (no uncalibrated warning) for a schema-v1 report missing valuesCalibrated', () => {
+    const { valuesCalibrated: _drop, ...legacyReport } = fixtureReport()
+    void _drop
+    const report = legacyReport as ReviewReport
+
+    const html = renderToStaticMarkup(
+      React.createElement(ReviewPanel, {
+        report,
+        status: 'ready',
+        onRequestReview: () => {},
+        viewSeat: 0,
+        position: { round: 0, actionIndex: 3 },
+        onJump: () => {},
+        lang: 'en',
+        onLangToggle: () => {},
+        thresholds: SEVERITY_THRESHOLDS,
+        onThresholdsChange: () => {},
+      }),
+    )
+
+    expect(html).toContain('review-sparkline')
+    expect(html).not.toContain('Value estimates are unavailable for this policy')
+  })
 })

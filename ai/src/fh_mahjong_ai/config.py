@@ -60,6 +60,26 @@ class ModelConfig:
     privileged_critic: bool = False
     aux_heads: bool = False
 
+    def __post_init__(self) -> None:
+        # Round 16, Finding 2: metadata-authoritative checkpoint loading
+        # (model.py's infer_model_config) passes a checkpoint-supplied
+        # event_window straight into this constructor. GRU weights are
+        # window-independent, so the shape cross-check that guards every
+        # other reconstructed field can't catch a malformed/hostile value
+        # here — and /act and /evaluate both allocate arrays sized by it, so
+        # an unbounded value is a remote memory-exhaustion vector. Bound it
+        # to the same MAX_EVENT_HISTORY_WINDOW ceiling EnvConfig enforces on
+        # event_history_window (they describe the same wire quantity).
+        if not isinstance(self.event_window, int) or isinstance(self.event_window, bool):
+            raise ValueError(
+                f"event_window must be an int, got {type(self.event_window).__name__}"
+            )
+        if not (0 <= self.event_window <= EnvConfig.MAX_EVENT_HISTORY_WINDOW):
+            raise ValueError(
+                f"event_window {self.event_window} out of bounds "
+                f"[0, {EnvConfig.MAX_EVENT_HISTORY_WINDOW}]"
+            )
+
 
 @dataclass
 class TrainConfig:

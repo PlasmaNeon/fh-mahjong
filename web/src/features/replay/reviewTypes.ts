@@ -44,7 +44,13 @@ export interface ReviewReport {
   // False when the served checkpoint is a privileged-critic model: every
   // ReportDecision.value in this report is null rather than a number.
   // Action-ranking fields (actions/chosenProb/topGaps) are unaffected.
-  valuesCalibrated: boolean
+  //
+  // undefined/absent for every cached report generated before this field
+  // existed (schema v1, pre-B2c): those reports always carried real numeric
+  // decision values, so absence must NOT be treated the same as explicit
+  // `false` — see resolveValuesCalibrated in reviewUtils.ts, which is what
+  // callers should use instead of reading this field directly.
+  valuesCalibrated?: boolean
 }
 
 /** GET the review report for a match. Returns null if none exists yet (404). */

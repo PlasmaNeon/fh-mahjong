@@ -5,6 +5,7 @@ import {
   decisionGap,
   decisionKey,
   decisionSeverity,
+  resolveValuesCalibrated,
   selectBarRows,
   selectPanelDecisions,
   severityCounts,
@@ -132,6 +133,50 @@ describe('fetchReview / generateReview', () => {
   it('generateReview throws a sensible message on a non-JSON error body', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>bad gateway</html>', { status: 502 })))
     await expect(generateReview('m1')).rejects.toEqual({ status: 502, message: 'HTTP 502' })
+  })
+})
+
+describe('resolveValuesCalibrated', () => {
+  const base: ReviewReport = {
+    schemaVersion: 1,
+    matchId: 'm1',
+    ruleset: 'fenghua',
+    checkpointPath: '/ckpt',
+    checkpointStep: 10,
+    generatedAt: '2026-01-01T00:00:00Z',
+    seats: [],
+    decisions: [],
+    valuesCalibrated: true,
+  }
+
+  it('is true when valuesCalibrated is explicitly true', () => {
+    expect(resolveValuesCalibrated({ ...base, valuesCalibrated: true })).toBe(true)
+  })
+
+  it('is false when valuesCalibrated is explicitly false, even with numeric values present', () => {
+    const report = { ...base, valuesCalibrated: false, decisions: [dec([[5, 0.9]], 5)] }
+    expect(resolveValuesCalibrated(report)).toBe(false)
+  })
+
+  // Regression: a schema-v1-shaped cached report (generated before
+  // valuesCalibrated existed) omits the field entirely but always carried
+  // real numeric decision values — it must be treated as calibrated, not
+  // fall through to the uncalibrated warning.
+  it('is true when valuesCalibrated is absent (schema v1) and numeric values are present', () => {
+    const { valuesCalibrated: _drop, ...legacyReport } = base
+    void _drop
+    const report: ReviewReport = { ...legacyReport, decisions: [dec([[5, 0.9]], 5)] }
+    expect(resolveValuesCalibrated(report)).toBe(true)
+  })
+
+  it('is false when valuesCalibrated is absent and no decision carries a numeric value', () => {
+    const { valuesCalibrated: _drop, ...legacyReport } = base
+    void _drop
+    const report: ReviewReport = {
+      ...legacyReport,
+      decisions: [{ ...dec([[5, 0.9]], 5), value: null }],
+    }
+    expect(resolveValuesCalibrated(report)).toBe(false)
   })
 })
 

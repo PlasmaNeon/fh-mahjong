@@ -155,14 +155,17 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 
 	var payload healthzPayload
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil {
-		// A non-JSON/undecodable body means the event contract (if this
-		// checker expects one) cannot be verified — fail closed rather than
-		// assume a match. Window-0 checkers keep the legacy reachability-only
-		// behavior: still healthy, just anonymous.
-		if h.expectedEventWindow > 0 {
-			return false, ""
-		}
-		return true, ""
+		// A non-JSON/undecodable body (round 16, Finding 1) is unhealthy for
+		// EVERY window, including window-0: a misrouted URL, a reverse-proxy
+		// error page, or an SPA fallback all return 2xx with a body that
+		// isn't the healthz contract, and every real policy server
+		// (including the pre-B2c legacy one) always returns JSON on
+		// /healthz. Tolerating a 2xx/non-JSON body as "legacy reachability"
+		// let a misrouted endpoint advertise itself as a healthy RL agent
+		// while every subsequent /act silently fell back to the heuristic.
+		// Legacy compatibility is still honored below: JSON that merely
+		// OMITS the event-contract fields.
+		return false, ""
 	}
 
 	// A server that PUBLISHES the event contract (event_window present in

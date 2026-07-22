@@ -36,6 +36,21 @@ export function decisionSeverity(
   return 'ok'
 }
 
+/**
+ * Normalizes `ReviewReport.valuesCalibrated` for rendering. Cached reports
+ * from before the field existed (schema v1, pre-B2c) omit it entirely — but
+ * those reports always carried real numeric decision values, so absence must
+ * be treated as CALIBRATED (not as the uncalibrated warning) whenever numeric
+ * values are actually present. An explicit `false` (a privileged-critic
+ * checkpoint, whose ReportDecision.value is null everywhere) always stays
+ * uncalibrated regardless of what the decisions look like.
+ */
+export function resolveValuesCalibrated(report: ReviewReport): boolean {
+  if (report.valuesCalibrated === false) return false
+  if (report.valuesCalibrated === true) return true
+  return report.decisions.some(d => typeof d.value === 'number')
+}
+
 /** `${round}:${actionIndex}` — a stable key identifying one decision within a match. */
 export function decisionKey(round: number, actionIndex: number): string {
   return `${round}:${actionIndex}`

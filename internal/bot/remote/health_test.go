@@ -27,7 +27,9 @@ func TestDeriveHealthURL(t *testing.T) {
 func TestHealthChecker_Healthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -52,7 +54,9 @@ func TestHealthChecker_CachesResult(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
 	}))
 
 	h := NewHealthChecker(srv.URL + "/act")
@@ -200,20 +204,23 @@ func TestHealthChecker_WindowZeroAcceptsExplicitlyPublishedMatch(t *testing.T) {
 	}
 }
 
-// A non-JSON/undecodable healthz body is aligned with HTTPPolicy.ValidateServer
-// (http_policy.go): a window-0 checker treats it as acceptable legacy
-// reachability (healthy — nothing to verify), while a window>0 (event-enabled)
-// checker still fails closed, since it cannot confirm the contract match it
-// requires.
-func TestHealthChecker_NonJSONBodyWindowZeroIsHealthy(t *testing.T) {
+// FINDING 1 (round 16): a non-JSON/undecodable 2xx healthz body must be
+// UNHEALTHY for every window, including window-0. This reverses the previous
+// alignment decision (window-0 used to tolerate non-JSON as "legacy
+// reachability") because every real policy server, including the pre-B2c
+// legacy one, always returns JSON on /healthz — a 2xx/non-JSON body only ever
+// means a misrouted URL, a reverse-proxy error page, or an SPA fallback, and
+// tolerating it let a misconfigured endpoint advertise itself as a healthy RL
+// agent while every /act silently fell back to the heuristic.
+func TestHealthChecker_NonJSONBodyWindowZeroIsUnhealthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 
 	h := NewHealthChecker(srv.URL + "/act")
-	if !h.Healthy() {
-		t.Fatal("expected healthy: window-0 checker vs non-JSON healthz body (legacy reachability only)")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs non-JSON healthz body (no longer tolerated as legacy reachability)")
 	}
 }
 
@@ -226,5 +233,23 @@ func TestHealthChecker_NonJSONBodyWindowNonZeroIsUnhealthy(t *testing.T) {
 	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
 	if h.Healthy() {
 		t.Fatal("expected unhealthy: window>0 checker vs non-JSON healthz body (contract unverifiable)")
+	}
+}
+
+// A misrouted URL / reverse-proxy error page / SPA fallback typically returns
+// a 2xx HTML document, not a plain string — pin that this is also unhealthy
+// for a window-0 checker, since that's the realistic shape of the failure
+// this fix guards against.
+func TestHealthChecker_MisroutedHTMLBodyWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<!doctype html><html><body>404 - not found</body></html>"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs a misrouted 2xx HTML/SPA-fallback body")
 	}
 }

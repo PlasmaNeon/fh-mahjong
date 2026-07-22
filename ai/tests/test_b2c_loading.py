@@ -223,6 +223,66 @@ def test_choose_window_zero_model_unaffected_by_empty_history(tmp_path):
     assert served.action_id in observation.legal_actions
 
 
+# --- (f) round 16, Finding 2: unbounded/malformed metadata event_window ---
+# GRU weights are window-independent, so the shape cross-check can't catch a
+# doctored event_window; /act and /evaluate allocate arrays sized by it, so an
+# out-of-range value is a remote memory-exhaustion vector. ModelConfig itself
+# must reject it (bound = EnvConfig.MAX_EVENT_HISTORY_WINDOW), which makes
+# infer_model_config (and thus a checkpoint reload) fail cleanly rather than
+# constructing a model with a malformed window.
+
+def test_infer_model_config_rejects_oversized_event_window_in_complete_metadata(tmp_path):
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["event_window"] = 100_000
+    metadata = {"model_config": doctored}
+    with pytest.raises(ValueError, match="event_window"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_rejects_negative_event_window_in_complete_metadata(tmp_path):
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["event_window"] = -1
+    metadata = {"model_config": doctored}
+    with pytest.raises(ValueError, match="event_window"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_rejects_non_int_event_window_in_complete_metadata(tmp_path):
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["event_window"] = "128"
+    metadata = {"model_config": doctored}
+    with pytest.raises(ValueError, match="event_window"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_rejects_oversized_event_window_in_b2b_four_flag_metadata():
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"b2b": {
+        "event_window": 100_000,
+        "privileged_critic": True,
+        "aux_heads": True,
+        "residual_blocks": 1,
+    }}
+    with pytest.raises(ValueError, match="event_window"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_model_config_accepts_boundary_event_window_512():
+    ModelConfig(**_SMALL, event_window=512)  # must not raise
+
+
+def test_model_config_rejects_event_window_513():
+    with pytest.raises(ValueError, match="event_window"):
+        ModelConfig(**_SMALL, event_window=513)
+
+
 def test_evaluate_batch_threads_events_for_event_model(tmp_path):
     model_config = _b2b_config()
     path = _save_b2b_checkpoint(tmp_path, model_config, complete_metadata=True)
