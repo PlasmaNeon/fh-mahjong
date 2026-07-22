@@ -371,6 +371,15 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     return fields
 
 
+def _effective_attention_hidden(channels: int, ratio: int) -> int:
+    """The attention bottleneck width `ChannelAttention2d.__init__` actually
+    constructs for a given (channels, ratio) pair. Must match that formula
+    exactly (see `ChannelAttention2d.__init__` above): multiple ratios can
+    floor to the same hidden width, so the raw ratio is not what a shape
+    cross-check can recover or compare."""
+    return max(1, channels // max(1, ratio))
+
+
 def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, Tensor]) -> None:
     """Cross-check every metadata-claimed field that is ALSO derivable from
     `state_dict`'s tensor shapes, cheaply (no allocation) and BEFORE any
@@ -386,13 +395,36 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
     model construction involved); reusing it here means a mismatch is
     caught before `infer_model_config` ever calls `PolicyValueNet(...)` for
     its later, more expensive, `_cross_check_shapes` comparison.
+
+    Not every metadata field this compares against is unique, though (round
+    26): `channel_attention_ratio` is never read by `ChannelAttention2d` when
+    `channel_attention` is False, and distinct ratios can floor to the same
+    effective hidden width (`_effective_attention_hidden`) when it is True;
+    `q_hidden_dim` is never read when `dueling_q` is False. Comparing those
+    raw fields unconditionally rejects a model's own honestly-saved metadata.
+    Skip `channel_attention_ratio`/`q_hidden_dim` themselves and instead
+    compare the effective attention width whenever attention is on — the
+    quantity that actually determines the constructed architecture.
     """
     shape_fields = _shape_inferred_fields(state_dict)
+    shape_fields.pop("channel_attention_ratio", None)
+    if not config.dueling_q:
+        shape_fields.pop("q_hidden_dim", None)
+
     mismatched = {
         field: (getattr(config, field), shape_value)
         for field, shape_value in shape_fields.items()
         if getattr(config, field) != shape_value
     }
+
+    if config.channel_attention:
+        claimed_hidden = _effective_attention_hidden(config.channels, config.channel_attention_ratio)
+        attention_key = "plane_blocks.0.channel_attention.shared_mlp.0.weight"
+        if attention_key in state_dict:
+            actual_hidden = int(state_dict[attention_key].shape[0])
+            if claimed_hidden != actual_hidden:
+                mismatched["channel_attention_effective_hidden"] = (claimed_hidden, actual_hidden)
+
     if mismatched:
         raise RuntimeError(
             "infer_model_config shape cross-check failed before construction: metadata "

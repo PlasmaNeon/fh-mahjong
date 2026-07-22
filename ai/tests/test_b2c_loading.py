@@ -167,6 +167,67 @@ def test_infer_model_config_doctored_b2b_flags_raise_shape_cross_check():
         infer_model_config(model.state_dict(), metadata)
 
 
+# --- (d.1) round 26: inert/non-unique metadata fields must not be rejected ---
+# A model's OWN saved metadata must always round-trip through infer_model_config,
+# even when a metadata field is inert (has no effect on the constructed
+# architecture) or non-unique (multiple values produce the same architecture).
+
+def test_infer_model_config_accepts_own_metadata_with_inert_attention_ratio(tmp_path):
+    # channel_attention=False: channel_attention_ratio is never read by
+    # ChannelAttention2d (it isn't even constructed), so any ratio value is fine.
+    model_config = _b2b_config(channel_attention=False, channel_attention_ratio=8)
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": model_config_metadata(model_config)}
+    reconstructed = infer_model_config(model.state_dict(), metadata)
+    assert reconstructed == model_config
+
+
+def test_infer_model_config_accepts_own_metadata_with_inert_q_hidden_dim(tmp_path):
+    # dueling_q=False: q_hidden_dim is never read (plain nn.Linear q_head), so
+    # any value is fine.
+    model_config = _b2b_config(dueling_q=False, q_hidden_dim=512)
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": model_config_metadata(model_config)}
+    reconstructed = infer_model_config(model.state_dict(), metadata)
+    assert reconstructed == model_config
+
+
+def test_infer_model_config_accepts_own_metadata_with_ratio_that_floors_ambiguously(tmp_path):
+    # channels=96, ratio=17 -> hidden = max(1, 96 // 17) = 5. Multiple ratios
+    # floor to hidden=5 (e.g. 16..19), so the raw ratio is not recoverable from
+    # shapes alone -- only the effective hidden width is, and it must match.
+    model_config = _b2b_config(channels=96, channel_attention=True, channel_attention_ratio=17)
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": model_config_metadata(model_config)}
+    reconstructed = infer_model_config(model.state_dict(), metadata)
+    assert reconstructed == model_config
+
+
+def test_infer_model_config_still_rejects_wrong_channels_claim():
+    # Negative control: a genuinely wrong (non-inert, non-ambiguous) field must
+    # still be rejected pre-construction.
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["residual_blocks"] = doctored["residual_blocks"] + 1
+    metadata = {"model_config": doctored}
+    with pytest.raises(RuntimeError, match="shape cross-check"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_rejects_attention_ratio_with_different_effective_width():
+    # Negative control: channel_attention=True with a ratio that yields a
+    # DIFFERENT effective hidden width than the checkpoint's actual weight
+    # shape must still be rejected pre-construction.
+    model_config = _b2b_config(channels=96, channel_attention=True, channel_attention_ratio=16)
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["channel_attention_ratio"] = 4  # hidden = 96 // 4 = 24, vs actual 96 // 16 = 6
+    metadata = {"model_config": doctored}
+    with pytest.raises(RuntimeError, match="shape cross-check"):
+        infer_model_config(model.state_dict(), metadata)
+
+
 # --- (e) CheckpointPolicy.choose: event history parity + empty-history guard ---
 
 def test_from_checkpoint_loads_b2b_checkpoint_via_four_flag_metadata(tmp_path):
