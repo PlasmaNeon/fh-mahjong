@@ -29,7 +29,7 @@ func TestHealthChecker_Healthy(t *testing.T) {
 		if r.URL.Path == "/healthz" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -56,7 +56,7 @@ func TestHealthChecker_CachesResult(t *testing.T) {
 		hits++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 
 	h := NewHealthChecker(srv.URL + "/act")
@@ -142,7 +142,7 @@ func TestHealthChecker_ExpectedEventWindowMismatchIsUnhealthy(t *testing.T) {
 func TestHealthChecker_ExpectedEventWindowMatchIsHealthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
 	}))
 	defer srv.Close()
 
@@ -160,7 +160,7 @@ func TestHealthChecker_ExpectedEventWindowMatchIsHealthy(t *testing.T) {
 func TestHealthChecker_WindowZeroLegacyNoFieldsIsHealthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
 	}))
 	defer srv.Close()
 
@@ -194,7 +194,7 @@ func TestHealthChecker_WindowZeroRejectsExplicitlyPublishedMismatch(t *testing.T
 func TestHealthChecker_WindowZeroAcceptsExplicitlyPublishedMatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":0,"contract_version":1}`))
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":0,"contract_version":1}`))
 	}))
 	defer srv.Close()
 
@@ -251,5 +251,76 @@ func TestHealthChecker_MisroutedHTMLBodyWindowZeroIsUnhealthy(t *testing.T) {
 	h := NewHealthChecker(srv.URL + "/act")
 	if h.Healthy() {
 		t.Fatal("expected unhealthy: window-0 checker vs a misrouted 2xx HTML/SPA-fallback body")
+	}
+}
+
+// FINDING 1 (round 17): a decodable-but-vacuous or explicitly-unhealthy body
+// must never be treated as "legacy reachability". serve_policy.py's /healthz
+// ALWAYS emits "ok": true on success (see do_GET); {} and null decode
+// without error and left every field at its zero value, so the old code fell
+// through to "Checkpoint=="" -> healthy, anonymous" — treating an empty
+// object or a JSON null the same as a genuinely legacy server. An explicit
+// "ok": false must also be rejected outright.
+func TestHealthChecker_EmptyObjectWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: empty JSON object is never a valid healthz body")
+	}
+}
+
+func TestHealthChecker_JSONNullWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`null`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: JSON null is never a valid healthz body")
+	}
+}
+
+func TestHealthChecker_ExplicitOkFalseWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":false,"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: healthz explicitly reports ok=false")
+	}
+}
+
+// The reconstructed true legacy /healthz payload (mirrors main's
+// serve_policy.py do_GET, which always emits "ok": true alongside
+// checkpoint/checkpoint_step/sample_*) must still be healthy for a window-0
+// checker and unhealthy for an event checker expecting window 128 (legacy
+// servers never publish event_window at all).
+func TestHealthChecker_TrueLegacyPayload(t *testing.T) {
+	legacyBody := `{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1234,"sample_temperature":null,"sample_top_k":null,"sample_action_family":null,"sample_seed":42}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(legacyBody))
+	}))
+	defer srv.Close()
+
+	zeroChecker := NewHealthChecker(srv.URL + "/act")
+	if !zeroChecker.Healthy() {
+		t.Fatal("expected healthy: true legacy payload against a window-0 checker")
+	}
+
+	eventChecker := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if eventChecker.Healthy() {
+		t.Fatal("expected unhealthy: true legacy payload never publishes event_window, so an event checker must fail closed")
 	}
 }

@@ -45,6 +45,7 @@ func TestBuildReportAgainstStubServer(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
+			"checkpoint_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 		})
 	}))
 	defer stub.Close()
@@ -55,6 +56,11 @@ func TestBuildReportAgainstStubServer(t *testing.T) {
 	}
 	if report.SchemaVersion != 1 || report.CheckpointPath != "stub.pt" || report.CheckpointStep != 42 {
 		t.Fatalf("bad header: %+v", report)
+	}
+	// Round 17, Finding 2: the report must carry the checkpoint sha256 the
+	// server evaluated it with.
+	if want := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"; report.CheckpointSha256 != want {
+		t.Fatalf("report.CheckpointSha256 = %q, want %q", report.CheckpointSha256, want)
 	}
 	if len(report.Seats) != 4 {
 		t.Fatalf("expected 4 seat summaries, got %d", len(report.Seats))

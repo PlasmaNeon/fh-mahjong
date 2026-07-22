@@ -123,6 +123,12 @@ def test_http_evaluate_endpoint_returns_masked_probs_and_value(tmp_path: Path) -
     assert response.status == 200
     assert payload["checkpoint_path"].endswith("tiny.pt")
     assert payload["checkpoint_step"] == 3
+    # Round 17, Finding 2: /evaluate must publish the checkpoint's sha256
+    # from the SAME snapshot used for the batch — internal/review's
+    # cross-chunk consistency check needs it to detect a same-path hot
+    # reload mixing bytes from two different checkpoints within one review.
+    assert isinstance(payload.get("checkpoint_sha256"), str)
+    assert len(payload["checkpoint_sha256"]) == 64
     results = payload["results"]
     assert len(results) == 2
     for result, legal in zip(results, ([0, 5, 12], [1, 2, 3])):
@@ -134,6 +140,27 @@ def test_http_evaluate_endpoint_returns_masked_probs_and_value(tmp_path: Path) -
         )
         assert illegal_mass == 0.0
         assert isinstance(result["value"], float)
+
+
+def test_http_evaluate_endpoint_sha256_matches_healthz(tmp_path: Path) -> None:
+    # Round 17, Finding 2: /evaluate's checkpoint_sha256 must agree with
+    # /healthz's — both are derived from the SAME PolicyHolder snapshot, so a
+    # caller stitching together chunks from one review can trust the sha as
+    # the checkpoint's true identity, not just its (possibly reused) path.
+    server = _EvaluateServer(tmp_path)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.request("GET", "/healthz")
+        healthz = json.loads(conn.getresponse().read().decode("utf-8"))
+
+        body = json.dumps({"observations": [_observation_payload([0, 5, 12])]})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        evaluate = json.loads(conn.getresponse().read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert healthz["checkpoint_sha256"] == evaluate["checkpoint_sha256"]
 
 
 def test_http_evaluate_endpoint_rejects_malformed_payload(tmp_path: Path) -> None:

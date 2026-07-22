@@ -4,11 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
+
+// shaObservations builds n trivial single-legal-action observations, enough
+// to force Evaluate to split into multiple /evaluate chunks (see
+// evaluateChunkSize) so cross-chunk checkpoint-identity checks can be
+// exercised.
+func shaObservations(n int) []*pb.SeatObservation {
+	obs := make([]*pb.SeatObservation, n)
+	for i := range obs {
+		obs[i] = &pb.SeatObservation{Seat: 0, Planes: []float32{0}, Scalars: []float32{0}, ActionMask: []byte{1, 0}}
+	}
+	return obs
+}
 
 // TestHTTPClientTolerateNullValues pins adversarial round 15, Finding 4's Go
 // side: a privileged-critic checkpoint's served /evaluate response carries
@@ -90,6 +103,138 @@ func TestHTTPClientCalibratedValuesUnaffected(t *testing.T) {
 	}
 	if !info.ValuesCalibrated {
 		t.Fatal("expected ValuesCalibrated=true")
+	}
+}
+
+// TestHTTPClientEvaluateShaMismatchAcrossChunksErrors pins round 17, Finding
+// 2: a same-path hot reload mid-review must not silently mix two different
+// checkpoints' bytes into one report. Each chunk here reports the SAME path
+// but a DIFFERENT checkpoint_sha256 (as a same-path hot reload would produce
+// on the server side between two /evaluate calls) — Evaluate must error
+// rather than merge them.
+func TestHTTPClientEvaluateShaMismatchAcrossChunksErrors(t *testing.T) {
+	var requestCount int64
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Observations []map[string]any `json:"observations"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		sha := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		if atomic.AddInt64(&requestCount, 1) > 1 {
+			sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		}
+		results := make([]map[string]any, len(req.Observations))
+		for i := range results {
+			results[i] = map[string]any{"probs": []float64{1, 0}, "value": 0.1}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": results, "checkpoint_path": "hotswap.pt", "checkpoint_step": 1,
+			"checkpoint_sha256": sha, "values_calibrated": true,
+		})
+	}))
+	defer stub.Close()
+
+	client := NewHTTPPolicyClient(stub.URL, 0)
+	_, _, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	if err == nil {
+		t.Fatal("expected error: chunks reported different checkpoint_sha256 for the same path")
+	}
+}
+
+// The all-equal-sha counterpart: every chunk reports the same
+// checkpoint_sha256, so Evaluate succeeds and CheckpointInfo carries it.
+func TestHTTPClientEvaluateShaAllEqualCarriesSha(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Observations []map[string]any `json:"observations"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, len(req.Observations))
+		for i := range results {
+			results[i] = map[string]any{"probs": []float64{1, 0}, "value": 0.1}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": results, "checkpoint_path": "steady.pt", "checkpoint_step": 1,
+			"checkpoint_sha256": sha, "values_calibrated": true,
+		})
+	}))
+	defer stub.Close()
+
+	client := NewHTTPPolicyClient(stub.URL, 0)
+	results, info, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(results) != evaluateChunkSize+1 {
+		t.Fatalf("expected %d results, got %d", evaluateChunkSize+1, len(results))
+	}
+	if info.Sha256 != sha {
+		t.Fatalf("info.Sha256 = %q, want %q", info.Sha256, sha)
+	}
+}
+
+// A legacy server that never emits checkpoint_sha256 at all must keep
+// working exactly as before: absent sha on every chunk is "unknown", not an
+// error.
+func TestHTTPClientEvaluateAbsentShaLegacyStillWorks(t *testing.T) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Observations []map[string]any `json:"observations"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, len(req.Observations))
+		for i := range results {
+			results[i] = map[string]any{"probs": []float64{1, 0}, "value": 0.1}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": results, "checkpoint_path": "legacy.pt", "checkpoint_step": 1,
+			"values_calibrated": true,
+		})
+	}))
+	defer stub.Close()
+
+	client := NewHTTPPolicyClient(stub.URL, 0)
+	results, info, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(results) != evaluateChunkSize+1 {
+		t.Fatalf("expected %d results, got %d", evaluateChunkSize+1, len(results))
+	}
+	if info.Sha256 != "" {
+		t.Fatalf("info.Sha256 = %q, want empty (unknown) for a legacy server", info.Sha256)
+	}
+}
+
+// Mixing an absent-sha chunk with a present-sha chunk must error rather than
+// silently treat the absent one as "matches anything".
+func TestHTTPClientEvaluateMixedAbsentPresentShaErrors(t *testing.T) {
+	var requestCount int64
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Observations []map[string]any `json:"observations"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		results := make([]map[string]any, len(req.Observations))
+		for i := range results {
+			results[i] = map[string]any{"probs": []float64{1, 0}, "value": 0.1}
+		}
+		resp := map[string]any{
+			"results": results, "checkpoint_path": "mixed.pt", "checkpoint_step": 1,
+			"values_calibrated": true,
+		}
+		if atomic.AddInt64(&requestCount, 1) > 1 {
+			resp["checkpoint_sha256"] = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer stub.Close()
+
+	client := NewHTTPPolicyClient(stub.URL, 0)
+	_, _, err := client.Evaluate(shaObservations(evaluateChunkSize + 1))
+	if err == nil {
+		t.Fatal("expected error: one chunk had no checkpoint_sha256, another chunk did")
 	}
 }
 

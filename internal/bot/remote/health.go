@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -127,10 +128,41 @@ func (h *HealthChecker) refreshLocked() {
 // is making a claim that must still match what this checker expects, unlike
 // a legacy server that says nothing at all.
 type healthzPayload struct {
+	Ok              *bool   `json:"ok"`
 	Checkpoint      string  `json:"checkpoint"`
 	CheckpointStep  int64   `json:"checkpoint_step"`
 	EventWindow     *uint32 `json:"event_window"`
 	ContractVersion *uint32 `json:"contract_version"`
+}
+
+// validHealthzBody reports whether raw is a genuine, non-vacuous healthz
+// response (round 17, Finding 1). serve_policy.py's GET /healthz ALWAYS
+// emits "ok": true on success (see ai/src/fh_mahjong_ai/scripts/serve_policy.py
+// do_GET, and the pre-B2c legacy server it descends from) — so {}, a bare
+// JSON `null`, or an explicit "ok": false are never legitimate. Those all
+// decode without error into healthzPayload's zero value, which is why the
+// old code fell through to "Checkpoint=="" -> healthy, anonymous" and
+// silently treated an empty/negative body as legacy reachability. raw must
+// also be a JSON *object* (not an array/string/number/bool masquerading as
+// one).
+func validHealthzBody(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return false
+	}
+	var asObject map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &asObject); err != nil {
+		// Valid JSON that isn't an object (e.g. `42`, `"ok"`, `[]`) is never
+		// a legitimate healthz body.
+		return false
+	}
+	var envelope struct {
+		Ok *bool `json:"ok"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return false
+	}
+	return envelope.Ok != nil && *envelope.Ok
 }
 
 func (h *HealthChecker) probe() (healthy bool, identity string) {
@@ -153,8 +185,12 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 		return false, ""
 	}
 
-	var payload healthzPayload
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&payload); err != nil {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return false, ""
+	}
+
+	if !validHealthzBody(raw) {
 		// A non-JSON/undecodable body (round 16, Finding 1) is unhealthy for
 		// EVERY window, including window-0: a misrouted URL, a reverse-proxy
 		// error page, or an SPA fallback all return 2xx with a body that
@@ -163,8 +199,18 @@ func (h *HealthChecker) probe() (healthy bool, identity string) {
 		// /healthz. Tolerating a 2xx/non-JSON body as "legacy reachability"
 		// let a misrouted endpoint advertise itself as a healthy RL agent
 		// while every subsequent /act silently fell back to the heuristic.
-		// Legacy compatibility is still honored below: JSON that merely
+		//
+		// Round 17, Finding 1: the same is true of a decodable-but-vacuous
+		// body ({}, JSON null) or an explicit "ok": false — serve_policy.py
+		// ALWAYS emits "ok": true on success, so anything else is never
+		// legitimate legacy reachability either. Legacy compatibility is
+		// still honored below: JSON that carries "ok": true but merely
 		// OMITS the event-contract fields.
+		return false, ""
+	}
+
+	var payload healthzPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		return false, ""
 	}
 

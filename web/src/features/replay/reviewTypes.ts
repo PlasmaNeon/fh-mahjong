@@ -38,6 +38,12 @@ export interface ReviewReport {
   ruleset: string
   checkpointPath: string
   checkpointStep: number
+  // Content hash of the checkpoint that actually produced this report's
+  // decisions (round 17, Finding 2) — survives a same-path hot reload,
+  // unlike checkpointPath/checkpointStep. Omitted (empty/absent) when the
+  // serving policy predates this field, meaning "unknown", not "no
+  // checkpoint".
+  checkpointSha256?: string
   generatedAt: string
   decisions: ReportDecision[]
   seats: SeatSummary[]

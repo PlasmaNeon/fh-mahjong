@@ -38,10 +38,20 @@ type PolicyResult struct {
 // CheckpointInfo identifies which policy checkpoint produced a batch of
 // PolicyResults, plus whether the values in that batch mean anything
 // (ValuesCalibrated — see PolicyResult's doc).
+//
+// Sha256 is the served checkpoint's content hash (round 17, Finding 2):
+// unlike Path/Step, a same-path hot reload changes it, so it is what lets
+// Evaluate's cross-chunk consistency check (below) catch two chunks of one
+// review that were actually served by two different checkpoint BYTES at the
+// same path — Path/Step alone couldn't tell them apart. Empty when the
+// server predates this field (a legacy serve_policy.py /evaluate response),
+// meaning "unknown" rather than "no checkpoint" — see the mixed
+// absent/present handling in Evaluate.
 type CheckpointInfo struct {
 	Path             string
 	Step             int
 	ValuesCalibrated bool
+	Sha256           string
 }
 
 // PolicyClient evaluates a batch of observations against a served policy.
@@ -113,6 +123,12 @@ type evaluateResponse struct {
 	// zero value (false) — the conservative default of "don't assume
 	// calibrated" rather than silently trusting an unknown response.
 	ValuesCalibrated bool `json:"values_calibrated"`
+	// CheckpointSha256 is the served checkpoint's content hash, from the
+	// SAME PolicyHolder snapshot serve_policy.py used for this batch (round
+	// 17, Finding 2). Absent on a legacy server that predates this field
+	// decodes to "" — treated as "unknown" (see CheckpointInfo.Sha256), not
+	// coerced into a fake shared identity with any other response.
+	CheckpointSha256 string `json:"checkpoint_sha256"`
 }
 
 // Evaluate sends obs to the /evaluate endpoint in chunks of at most
@@ -224,6 +240,7 @@ func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyRes
 		Path:             decoded.CheckpointPath,
 		Step:             decoded.CheckpointStep,
 		ValuesCalibrated: decoded.ValuesCalibrated,
+		Sha256:           decoded.CheckpointSha256,
 	}
 	return out, info, nil
 }

@@ -526,6 +526,7 @@ func TestHTTPPolicyValidateServer(t *testing.T) {
 	// (a claim that matches) still passes.
 	zeroServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":               true,
 			"event_window":     0,
 			"contract_version": rl.EventContractV1,
 		})
@@ -571,5 +572,64 @@ func TestHTTPPolicyValidateServer(t *testing.T) {
 	htmlForZeroPolicy := NewHTTPPolicy(htmlServer.URL+"/act", WithLogger(nil))
 	if err := htmlForZeroPolicy.ValidateServer(context.Background()); err == nil {
 		t.Fatal("expected misrouted 2xx HTML/SPA-fallback body to fail validation for a window-0 policy")
+	}
+
+	// FINDING 1 (round 17): {}, null, and {"ok":false} must all fail
+	// validation for a window-0 policy — serve_policy.py's /healthz ALWAYS
+	// emits "ok": true on success, so anything else (including a vacuous but
+	// decodable body) is never legitimate legacy reachability.
+	emptyObjectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}))
+	defer emptyObjectServer.Close()
+	emptyObjectPolicy := NewHTTPPolicy(emptyObjectServer.URL+"/act", WithLogger(nil))
+	if err := emptyObjectPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected empty JSON object healthz body to fail validation for a window-0 policy")
+	}
+
+	nullBodyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`null`))
+	}))
+	defer nullBodyServer.Close()
+	nullBodyPolicy := NewHTTPPolicy(nullBodyServer.URL+"/act", WithLogger(nil))
+	if err := nullBodyPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected JSON null healthz body to fail validation for a window-0 policy")
+	}
+
+	okFalseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "checkpoint": "/models/champ.pt"})
+	}))
+	defer okFalseServer.Close()
+	okFalsePolicy := NewHTTPPolicy(okFalseServer.URL+"/act", WithLogger(nil))
+	if err := okFalsePolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected explicit ok=false healthz body to fail validation for a window-0 policy")
+	}
+
+	// The reconstructed true legacy /healthz payload (mirrors main's
+	// serve_policy.py do_GET: always "ok": true plus checkpoint/step/sample_*
+	// fields, never event_window) must pass for a window-0 policy and fail
+	// for an event-enabled one.
+	trueLegacyBody := map[string]any{
+		"ok":                   true,
+		"checkpoint":           "/models/champ.pt",
+		"checkpoint_step":      1234,
+		"sample_temperature":   nil,
+		"sample_top_k":         nil,
+		"sample_action_family": nil,
+		"sample_seed":          42,
+	}
+	trueLegacyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(trueLegacyBody)
+	}))
+	defer trueLegacyServer.Close()
+
+	trueLegacyZeroPolicy := NewHTTPPolicy(trueLegacyServer.URL+"/act", WithLogger(nil))
+	if err := trueLegacyZeroPolicy.ValidateServer(context.Background()); err != nil {
+		t.Fatalf("expected true legacy healthz payload to pass for a window-0 policy, got %v", err)
+	}
+
+	trueLegacyEventPolicy := NewHTTPPolicy(trueLegacyServer.URL+"/act", WithLogger(nil), WithEventWindow(window))
+	if err := trueLegacyEventPolicy.ValidateServer(context.Background()); err == nil {
+		t.Fatal("expected true legacy healthz payload (no event_window) to fail validation for an event-enabled policy")
 	}
 }

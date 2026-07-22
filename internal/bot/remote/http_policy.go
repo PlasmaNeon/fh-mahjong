@@ -412,17 +412,23 @@ func (p *HTTPPolicy) ValidateServer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !validHealthzBody(payload) {
+		// A non-JSON/undecodable body (round 16, Finding 1), or a
+		// decodable-but-vacuous/negative one — {}, JSON null, "ok": false
+		// (round 17, Finding 1) — fails validation for EVERY window,
+		// including window-0: mirrors HealthChecker.probe in health.go. A
+		// misrouted URL, reverse-proxy error page, or SPA fallback can all
+		// return 2xx with a body that isn't the healthz contract, and every
+		// real policy server (including the pre-B2c legacy one) always
+		// emits "ok": true on /healthz, so anything else is never
+		// legitimate legacy reachability. Legacy compatibility is still
+		// honored below: JSON with "ok": true that merely OMITS the
+		// event-contract fields.
+		return fmt.Errorf("healthz body is not a valid healthz response")
+	}
+
 	var body eventContractHealthz
 	if err := json.Unmarshal(payload, &body); err != nil {
-		// A non-JSON/undecodable body (round 16, Finding 1) fails validation
-		// for EVERY window, including window-0: mirrors HealthChecker.probe
-		// in health.go. A misrouted URL, reverse-proxy error page, or SPA
-		// fallback can all return 2xx with a body that isn't the healthz
-		// contract, and every real policy server (including the pre-B2c
-		// legacy one) always returns JSON on /healthz, so an undecodable
-		// body is never legitimate legacy reachability. Legacy compatibility
-		// is still honored below: JSON that merely OMITS the event-contract
-		// fields.
 		return fmt.Errorf("healthz body is not valid JSON: %w", err)
 	}
 

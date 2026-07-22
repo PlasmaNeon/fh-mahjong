@@ -505,7 +505,18 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 raise ValueError(
                     f"batch of {len(observations)} observations exceeds max of {MAX_EVALUATE_BATCH}"
                 )
-            policy = self.holder.policy
+            # Capture ONE snapshot (policy, checkpoint_sha256) for the whole
+            # request (round 17, Finding 2): the response below must publish
+            # a checkpoint_sha256 that actually attests the SAME bytes that
+            # produced this batch's probs/values, not whatever happens to be
+            # `self.holder.policy` by the time the response is built — a
+            # concurrent /reload between two separate `self.holder.*` reads
+            # would otherwise let a same-path hot reload mix one checkpoint's
+            # outputs with a different checkpoint's sha256 (or vice versa),
+            # exactly the mixed-attribution failure internal/review's
+            # cross-chunk consistency check now guards against.
+            snapshot = self.holder.snapshot
+            policy = snapshot.policy
             model_event_window = policy.model.model_config.event_window
             parsed = [observation_from_json(item, model_event_window) for item in observations]
             planes = np.stack([obs.planes for obs in parsed]) if parsed else np.zeros(
@@ -563,6 +574,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 ],
                 "checkpoint_path": str(policy.checkpoint_path),
                 "checkpoint_step": policy.checkpoint_step,
+                "checkpoint_sha256": snapshot.checkpoint_sha256,
                 "values_calibrated": values_calibrated,
             }
         )
