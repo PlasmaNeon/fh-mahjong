@@ -49,7 +49,10 @@ evaluation failure aborts with an error and a nil `*Report`.
   context normalization described below.
 - **client.go** — `PolicyClient` interface, `PolicyResult`,
   `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient(baseURL,
-  eventWindow)`). Mirrors `internal/bot/remote.HTTPPolicy`'s `/act` request
+  eventWindow)` — no auth token, equivalent to
+  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, "")` — or
+  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, token)` for an
+  authenticated policy server). Mirrors `internal/bot/remote.HTTPPolicy`'s `/act` request
   encoding (`seat`, `planes`, `scalars`, `action_mask` as ints) but batches
   many observations per `/evaluate` request instead of one, chunking at
   `evaluateChunkSize` (256) and preserving order across chunks. Every chunk
@@ -70,6 +73,17 @@ evaluation failure aborts with an error and a nil `*Report`.
   count legitimately is 0. `event_history` itself uses the same
   `omitempty`-on-empty-slice trick so it is present only when
   `event_count > 0`.
+  - **Bearer-token auth (adversarial round 19)**: when the client was built
+    with a non-empty `token` (via `NewHTTPPolicyClientWithToken`),
+    `evaluateChunk` sets an `Authorization: Bearer <token>` header on every
+    `/evaluate` POST — required as of `serve_policy.py`'s `/evaluate`
+    auth gate, which 403s any request without a matching header once
+    `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN` is configured server-side. An
+    empty token attaches no header at all (never a header with an empty
+    bearer value), keeping the wire format byte-identical to before this
+    change for callers/tests against an unauthenticated policy stub.
+    `internal/api/review.go`'s `handlePostReview` sources this token from
+    the `POLICY_SERVER_TOKEN` env var.
 - **report.go** — `Report`/`ReportDecision`/`ActionProb`/`SeatSummary`/
   `GapRef` (the frontend JSON contract — field names/types must stay
   verbatim, Tasks 6/7 depend on them) and `BuildReport(paipu, client,

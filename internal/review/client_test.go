@@ -299,3 +299,52 @@ func TestBuildReportPrivilegedCriticOmitsValuesButKeepsRanking(t *testing.T) {
 		}
 	}
 }
+
+// TestHTTPClientAttachesBearerTokenWhenConfigured pins adversarial round
+// 19's Go side: NewHTTPPolicyClientWithToken must send the configured token
+// as an `Authorization: Bearer <token>` header on every /evaluate request —
+// serve_policy.py now refuses unauthenticated /evaluate calls with HTTP 403.
+func TestHTTPClientAttachesBearerTokenWhenConfigured(t *testing.T) {
+	var gotAuth string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results": [{"probs": [1, 0], "value": 0.5}], "checkpoint_path": "p", "checkpoint_step": 1, "values_calibrated": true}`))
+	}))
+	defer stub.Close()
+
+	obs := []*pb.SeatObservation{{Seat: 0, Planes: []float32{0}, Scalars: []float32{0}, ActionMask: []byte{1, 0}}}
+	client := NewHTTPPolicyClientWithToken(stub.URL, 0, "s3cr3t-token")
+	if _, _, err := client.Evaluate(obs); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if want := "Bearer s3cr3t-token"; gotAuth != want {
+		t.Fatalf("Authorization header = %q, want %q", gotAuth, want)
+	}
+}
+
+// TestHTTPClientOmitsAuthorizationHeaderWhenNoTokenConfigured pins the other
+// half of adversarial round 19's Go side: NewHTTPPolicyClient (no token)
+// must NOT send an Authorization header at all — never a header carrying an
+// empty bearer value — keeping requests to an unauthenticated (legacy/local)
+// policy stub byte-identical to before this change.
+func TestHTTPClientOmitsAuthorizationHeaderWhenNoTokenConfigured(t *testing.T) {
+	sawAuthHeader := false
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Header["Authorization"]; ok {
+			sawAuthHeader = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results": [{"probs": [1, 0], "value": 0.5}], "checkpoint_path": "p", "checkpoint_step": 1, "values_calibrated": true}`))
+	}))
+	defer stub.Close()
+
+	obs := []*pb.SeatObservation{{Seat: 0, Planes: []float32{0}, Scalars: []float32{0}, ActionMask: []byte{1, 0}}}
+	client := NewHTTPPolicyClient(stub.URL, 0)
+	if _, _, err := client.Evaluate(obs); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if sawAuthHeader {
+		t.Fatal("expected no Authorization header when no token is configured")
+	}
+}

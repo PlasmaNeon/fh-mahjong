@@ -74,10 +74,12 @@ class _Server:
         manifest_path: Path,
         logit_export_token: str | None = None,
         admin_token: str | None = None,
+        evaluate_token: str | None = None,
     ) -> None:
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
         self.holder = PolicyHolder(
             policy, manifest_path=manifest_path, logit_export_token=logit_export_token, admin_token=admin_token,
+            evaluate_token=evaluate_token,
         )
         handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": self.holder})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -413,7 +415,7 @@ def test_http_evaluate_threads_event_history_into_evaluate_batch(tmp_path: Path)
     events=None (must NOT match — guards against the fields being dropped)."""
     model_config = _event_model_config(window=8)
     checkpoint = _save_checkpoint(tmp_path, model_config)
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         obs_a = _observation_payload(
             [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
@@ -423,7 +425,9 @@ def test_http_evaluate_threads_event_history_into_evaluate_batch(tmp_path: Path)
             [0, 1, 2], event_history=[4, 5, 6, 7], event_count=4, event_window=8,
             contract_version=EVENT_CONTRACT_V1,
         )
-        status, data = server.request("POST", "/evaluate", {"observations": [obs_a, obs_b]})
+        status, data = server.request(
+            "POST", "/evaluate", {"observations": [obs_a, obs_b]}, headers=_bearer("eval-token"),
+        )
     finally:
         server.close()
 
@@ -461,11 +465,12 @@ def test_http_evaluate_window_zero_model_rejects_garbage_event_fields(tmp_path: 
     model no longer silently ignores partially-present garbage event
     fields."""
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
             "POST", "/evaluate",
             {"observations": [_observation_payload([0, 1, 2], event_history="garbage", event_count=-999)]},
+            headers=_bearer("eval-token"),
         )
     finally:
         server.close()
@@ -476,11 +481,12 @@ def test_http_evaluate_window_zero_model_rejects_garbage_event_fields(tmp_path: 
 
 def test_http_evaluate_window_zero_model_accepts_no_event_fields(tmp_path: Path) -> None:
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
             "POST", "/evaluate",
             {"observations": [_observation_payload([0, 1, 2])]},
+            headers=_bearer("eval-token"),
         )
     finally:
         server.close()
@@ -491,7 +497,7 @@ def test_http_evaluate_window_zero_model_accepts_no_event_fields(tmp_path: Path)
 
 def test_http_evaluate_accepts_zero_count_event_row(tmp_path: Path) -> None:
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
             "POST", "/evaluate",
@@ -502,12 +508,86 @@ def test_http_evaluate_accepts_zero_count_event_row(tmp_path: Path) -> None:
                     )
                 ]
             },
+            headers=_bearer("eval-token"),
         )
     finally:
         server.close()
 
     assert status == 200, data
     assert len(data["results"]) == 1
+
+
+# --- adversarial round 19: /evaluate authenticates before running inference -------------
+
+
+def test_http_evaluate_disabled_without_token_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No --evaluate-token configured at all: /evaluate must refuse
+    immediately (403) WITHOUT ever invoking evaluate_batch — a tripwire on
+    evaluate_batch itself, not just an assertion on the status code, so a
+    regression that authenticates but still runs inference is caught."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # evaluate_token defaults None
+
+    def _tripwire(*args: object, **kwargs: object) -> None:
+        raise AssertionError("evaluate_batch must not be invoked when /evaluate is disabled")
+
+    monkeypatch.setattr(CheckpointPolicy, "evaluate_batch", _tripwire)
+
+    try:
+        status, data = server.request(
+            "POST", "/evaluate", {"observations": [_observation_payload([0, 1, 2])]},
+        )
+    finally:
+        server.close()
+
+    assert status == 403
+    assert "error" in data
+
+
+def test_http_evaluate_wrong_bearer_token_rejected_no_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
+
+    def _tripwire(*args: object, **kwargs: object) -> None:
+        raise AssertionError("evaluate_batch must not be invoked with a wrong bearer token")
+
+    monkeypatch.setattr(CheckpointPolicy, "evaluate_batch", _tripwire)
+
+    try:
+        status, data = server.request(
+            "POST", "/evaluate",
+            {"observations": [_observation_payload([0, 1, 2])]},
+            headers=_bearer("wrong-token"),
+        )
+    finally:
+        server.close()
+
+    assert status == 403
+    assert "error" in data
+
+
+def test_http_evaluate_missing_bearer_header_rejected_no_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
+
+    def _tripwire(*args: object, **kwargs: object) -> None:
+        raise AssertionError("evaluate_batch must not be invoked without a bearer token")
+
+    monkeypatch.setattr(CheckpointPolicy, "evaluate_batch", _tripwire)
+
+    try:
+        status, data = server.request(
+            "POST", "/evaluate", {"observations": [_observation_payload([0, 1, 2])]},
+        )
+    finally:
+        server.close()
+
+    assert status == 403
+    assert "error" in data
 
 
 # --- /healthz --------------------------------------------------------------------------
@@ -1199,14 +1279,17 @@ def test_http_act_rejects_oversized_content_length(tmp_path: Path) -> None:
 
 
 def test_http_evaluate_rejects_oversized_content_length(tmp_path: Path) -> None:
+    """A correct bearer token does not exempt the request from the
+    Content-Length cap — mirrors /reload's oversized-Content-Length test."""
     checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         import fh_mahjong_ai.scripts.serve_policy as serve_policy_module
 
         conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
         conn.putrequest("POST", "/evaluate")
         conn.putheader("Content-Length", str(serve_policy_module.MAX_EVALUATE_REQUEST_BYTES + 1))
+        conn.putheader("Authorization", "Bearer eval-token")
         conn.endheaders()
         response = conn.getresponse()
         data = json.loads(response.read().decode("utf-8"))
@@ -1349,7 +1432,7 @@ def test_http_evaluate_privileged_critic_checkpoint_nulls_values_and_flags_respo
     tmp_path: Path,
 ) -> None:
     checkpoint = _save_checkpoint(tmp_path, _privileged_event_model_config(window=8))
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
             "POST", "/evaluate",
@@ -1361,6 +1444,7 @@ def test_http_evaluate_privileged_critic_checkpoint_nulls_values_and_flags_respo
                     )
                 ]
             },
+            headers=_bearer("eval-token"),
         )
     finally:
         server.close()
@@ -1376,11 +1460,12 @@ def test_http_evaluate_privileged_critic_checkpoint_nulls_values_and_flags_respo
 def test_http_evaluate_non_privileged_checkpoint_keeps_values(tmp_path: Path) -> None:
     """Window-0 old-champion-style checkpoint: values unchanged, flag true."""
     checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0, privileged_critic=False
-    server = _Server(checkpoint, tmp_path / "manifest.json")
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
             "POST", "/evaluate",
             {"observations": [_observation_payload([0, 1, 2])]},
+            headers=_bearer("eval-token"),
         )
     finally:
         server.close()

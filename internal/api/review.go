@@ -192,7 +192,18 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	}
 
 	eventWindow := reviewEventWindow(policyURL)
-	report, err := review.BuildReport(&paipu, review.NewHTTPPolicyClient(policyURL, eventWindow), eventWindow)
+	// POLICY_SERVER_TOKEN authenticates POST /evaluate on policyURL
+	// (adversarial round 19): serve_policy.py now refuses every /evaluate
+	// call with HTTP 403 unless launched with --evaluate-token/
+	// FH_MJ_EVALUATE_TOKEN AND the caller presents a matching bearer token.
+	// Unset here (empty string) attaches no Authorization header at all —
+	// only viable against a policy server that likewise has no evaluate
+	// token configured; against a properly hardened production server this
+	// surfaces as a 502 below (the same failure path any other policy
+	// server error takes), not a silent empty-report success.
+	policyToken := os.Getenv("POLICY_SERVER_TOKEN")
+	policyClient := review.NewHTTPPolicyClientWithToken(policyURL, eventWindow, policyToken)
+	report, err := review.BuildReport(&paipu, policyClient, eventWindow)
 	if err != nil {
 		if errors.Is(err, review.ErrUnreviewable) {
 			// Divergence/extraction detail is the whole point of a 422 and

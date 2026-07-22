@@ -44,22 +44,51 @@ deserialized). **Production instances should normally run WITHOUT
 configure it deliberately, for the duration of a maintenance window, on
 the specific instance being reloaded.**
 
-**Generate both secrets once, before starting (adversarial round 14,
-Finding 2):** never hard-code a literal token in a command, a script, or
-anything committed to the repo. Generate both once per deployment window
-and reference the env vars for every command below that needs them:
+**Evaluate authentication (adversarial round 19):** `serve_policy.py`'s POST
+`/evaluate` — the endpoint the Go post-game review pipeline
+(`internal/review`) batch-scores decisions through — is disabled ENTIRELY
+unless the server is launched with `--evaluate-token TOKEN` (or
+`FH_MJ_EVALUATE_TOKEN`); every `/evaluate` request must then carry the SAME
+token in an `Authorization: Bearer <token>` HEADER (`hmac.compare_digest`,
+checked before the request body is read, same ordering discipline as
+`/reload`) or it gets HTTP 403 with an actionable message, `evaluate_batch`
+never invoked. This closes a gap where an unauthenticated `/evaluate`
+returned dense per-action probability vectors for caller-controlled
+observations — a model-extraction surface (logit differences are
+recoverable from `log(p_i/p_j)`) and a compute-DoS path — that made the
+`/act` logit-export gate above moot on any public deployment. **Unlike
+`--logit-export-token`/`--admin-token`, this token is REQUIRED in
+production, not just on candidate/maintenance instances** — the review
+feature needs it configured on whichever policy server production's
+`POLICY_SERVER_URL` names. The matching Go-side env var is
+`POLICY_SERVER_TOKEN`, read in `internal/api/review.go` where the review
+HTTP client is constructed; it must be set to the SAME value as the policy
+server's `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN` wherever `POLICY_SERVER_URL`
+is set (candidate steps, shadow/canary, and step 6 promotion, below) or
+review requests will get a 502 (the policy server's 403 surfaces through
+`internal/review`'s existing "policy server evaluation failed" error path).
+
+**Generate all three secrets once, before starting (adversarial round 14,
+Finding 2; round 19):** never hard-code a literal token in a command, a
+script, or anything committed to the repo. Generate all three once per
+deployment window and reference the env vars for every command below that
+needs them:
 
 ```
 export FH_MJ_LOGIT_EXPORT_TOKEN="$(openssl rand -hex 32)"
 export FH_MJ_ADMIN_TOKEN="$(openssl rand -hex 32)"
+export FH_MJ_EVALUATE_TOKEN="$(openssl rand -hex 32)"
 ```
 
-Treat both as secrets for the lifetime of the deployment window (do not
+Treat all three as secrets for the lifetime of the deployment window (do not
 log them, do not commit them, rotate by re-running the commands above for
-the next window). Where practical, keep the candidate/parity serving
-instances non-public (bind to `127.0.0.1`, a local tunnel, or an
-internal-only Zeabur service) — token auth is not a substitute for
-reducing public exposure of these endpoints.
+the next window — `FH_MJ_EVALUATE_TOKEN`/`POLICY_SERVER_TOKEN` are the
+exception: since they stay live in production past step 6, rotating them
+requires a coordinated restart of both the policy server and the backend
+with the new value, not just a fresh deployment-window `export`). Where
+practical, keep the candidate/parity serving instances non-public (bind to
+`127.0.0.1`, a local tunnel, or an internal-only Zeabur service) — token
+auth is not a substitute for reducing public exposure of these endpoints.
 
 ## 1. Verify the NEW policy server image at window 0 (old champion, unchanged serving)
 
@@ -168,8 +197,15 @@ uv run --project ai fh-mj-serve-policy \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --port 8766 \
   --logit-export-token "$FH_MJ_LOGIT_EXPORT_TOKEN" \
-  --admin-token "$FH_MJ_ADMIN_TOKEN"
+  --admin-token "$FH_MJ_ADMIN_TOKEN" \
+  --evaluate-token "$FH_MJ_EVALUATE_TOKEN"
 ```
+
+`--evaluate-token` enables POST `/evaluate` on this candidate instance
+(adversarial round 19) so that post-game review can be exercised against
+iter_075 candidate traffic ahead of step 6's promotion — set the backend's
+`POLICY_SERVER_TOKEN` to the same value on any backend whose
+`POLICY_SERVER_URL` is pointed at this candidate.
 
 `--admin-token` is what makes the in-place `/reload` swap below possible at
 all (adversarial round 14, Finding 1a) — without it this instance's
@@ -364,7 +400,12 @@ exposure:** restart it WITHOUT `--logit-export-token` AND WITHOUT
 `--admin-token`/`FH_MJ_ADMIN_TOKEN` (same checkpoint, same port/URL — just
 drop both flags, since it is about to receive real user traffic and must
 not expose logit export or an authenticated remote-reload primitive to end
-users the way the candidate/parity steps needed them for).
+users the way the candidate/parity steps needed them for). **`--evaluate-token`/
+`FH_MJ_EVALUATE_TOKEN` is the one exception — KEEP it set on the restart**
+(adversarial round 19): unlike logit export and reload, POST `/evaluate` is
+required in production for the post-game review pipeline, so it stays
+token-gated rather than being dropped like the other two. Do not drop it
+"for consistency" with the hardening below.
 
 **Dropping the CLI flags is not enough** (adversarial round 15, Finding 3):
 if the shell that launches the service still has `FH_MJ_LOGIT_EXPORT_TOKEN`
@@ -373,14 +414,16 @@ lines), `serve_policy.py`'s argparse defaults fall back to those env vars
 and BOTH features stay enabled even with the flags gone — an environment
 that merely "doesn't pass the flag" is not the same as an environment where
 the feature is off. The restart command must explicitly unset both, not
-just omit the flags:
+just omit the flags — but must NOT unset `FH_MJ_EVALUATE_TOKEN`, which stays
+exported so `/evaluate` remains enabled:
 
 ```bash
 env -u FH_MJ_LOGIT_EXPORT_TOKEN -u FH_MJ_ADMIN_TOKEN \
   uv run --project ai fh-mj-serve-policy \
   --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
-  --port 8766
+  --port 8766 \
+  --evaluate-token "$FH_MJ_EVALUATE_TOKEN"
 ```
 
 (`env -u NAME` unsets `NAME` for the child process only, regardless of
@@ -413,9 +456,13 @@ curl -s http://127.0.0.1:8766/healthz | python3 -m json.tool
 #    enabled-but-unauthenticated response):
 #      "Logit export (return_logits): disabled"
 #      "Reload (/reload): disabled"
-#    grep the restarted process's stdout/log for both exact lines. If
-#    either instead reads "ENABLED (...)", the flags/env leaked back in —
-#    stop and re-check the launching shell's environment (env | grep FH_MJ_)
+#      "Evaluate (/evaluate): enabled(token)"
+#    grep the restarted process's stdout/log for all three exact lines. If
+#    either of the first two instead reads "ENABLED (...)", the flags/env
+#    leaked back in — stop and re-check the launching shell's environment
+#    (env | grep FH_MJ_) before proceeding. If the THIRD line instead reads
+#    "disabled", `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN` was dropped by
+#    mistake — post-game review will 502 in production; restart with it set
 #    before proceeding.
 
 # 3. Secondary check — return_logits request, checking the RESPONSE BODY
@@ -467,6 +514,12 @@ the restart) — stop and re-check the launching shell's environment
   resolved RL agent endpoint (adversarial round 7, Finding 2). If review
   should stay on a DIFFERENT server/checkpoint, leave `POLICY_SERVER_URL`
   alone and set `REVIEW_EVENT_WINDOW` explicitly instead.
+- `POLICY_SERVER_TOKEN` → the SAME value as the candidate service's
+  `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN` (adversarial round 19) — required
+  whenever `POLICY_SERVER_URL` is set or changed, since the candidate's
+  `/evaluate` (kept token-gated through the hardening step above) refuses
+  any request without a matching bearer token. Read where the review HTTP
+  client is constructed in `internal/api/review.go`.
 
 Deploy this single revision and restart the backend.
 
@@ -518,10 +571,14 @@ the "blue" target throughout steps 2-6), rollback is also a pure backend
 env-var flip, not a policy-service redeploy:
 
 1. Deploy ONE backend revision reverting `RL_AGENT_POLICY_URL`,
-   `RL_AGENT_EVENT_WINDOW`, `POLICY_SERVER_URL`, and (if it was set)
-   `REVIEW_EVENT_WINDOW` back to their pre-switch values (pointing at the
-   still-running iter275 "blue" service) and restart the backend. No policy
-   image redeploy is needed — iter275 was never stopped.
+   `RL_AGENT_EVENT_WINDOW`, `POLICY_SERVER_URL`, `POLICY_SERVER_TOKEN`, and
+   (if it was set) `REVIEW_EVENT_WINDOW` back to their pre-switch values
+   (pointing at the still-running iter275 "blue" service) and restart the
+   backend. No policy image redeploy is needed — iter275 was never stopped.
+   If iter275's "blue" `policy` service never had `--evaluate-token`
+   configured (it predates this gate), leave `POLICY_SERVER_TOKEN` unset
+   post-rollback too — review will 502 against it either way until that
+   service is likewise given an `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN`.
 2. As with the promotion switch, this restart ends any in-flight rooms
    (inherent to in-process room state, not specific to rollback) — schedule
    accordingly if the rollback itself isn't already an emergency.

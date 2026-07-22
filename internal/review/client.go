@@ -66,6 +66,7 @@ type HTTPPolicyClient struct {
 	baseURL     string
 	client      *http.Client
 	eventWindow uint32
+	token       string
 }
 
 // NewHTTPPolicyClient returns an HTTPPolicyClient that POSTs to
@@ -75,11 +76,33 @@ type HTTPPolicyClient struct {
 // with eventWindow>0, every observation in the request gains the compact
 // event fields the Python /evaluate endpoint requires for an event-aware
 // model (see evaluateChunk).
+//
+// No token is attached to requests (see evaluateChunk) — equivalent to
+// NewHTTPPolicyClientWithToken(baseURL, eventWindow, ""). Production
+// deployments MUST use NewHTTPPolicyClientWithToken instead (adversarial
+// round 19): as of serve_policy.py's /evaluate auth gate, an unauthenticated
+// request gets HTTP 403 from a properly configured server, so this
+// constructor is retained mainly for tests exercising an unauthenticated
+// (legacy/local) policy stub.
 func NewHTTPPolicyClient(baseURL string, eventWindow uint32) *HTTPPolicyClient {
+	return NewHTTPPolicyClientWithToken(baseURL, eventWindow, "")
+}
+
+// NewHTTPPolicyClientWithToken is NewHTTPPolicyClient plus a shared-secret
+// token attached to every /evaluate request as an `Authorization: Bearer
+// <token>` header (adversarial round 19): serve_policy.py's /evaluate now
+// refuses every request with HTTP 403 unless one is configured server-side
+// AND the caller presents a matching bearer token — mirroring the
+// admin-token gate already required for POST /reload. An empty token
+// attaches no header at all (see evaluateChunk), which only works against a
+// serve_policy instance that likewise has no --evaluate-token/
+// FH_MJ_EVALUATE_TOKEN configured.
+func NewHTTPPolicyClientWithToken(baseURL string, eventWindow uint32, token string) *HTTPPolicyClient {
 	return &HTTPPolicyClient{
 		baseURL:     baseURL,
 		client:      &http.Client{Timeout: 120 * time.Second},
 		eventWindow: eventWindow,
+		token:       token,
 	}
 }
 
@@ -209,6 +232,16 @@ func (c *HTTPPolicyClient) evaluateChunk(obs []*pb.SeatObservation) ([]PolicyRes
 		return nil, CheckpointInfo{}, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Adversarial round 19: attach the shared-secret token as a bearer
+	// header, mirroring /reload's admin-token auth. An empty c.token (the
+	// zero value, e.g. via NewHTTPPolicyClient's no-token convenience
+	// constructor) attaches no header at all, rather than sending
+	// "Authorization: Bearer " with an empty token — a server with no token
+	// configured rejects both identically, but omitting the header keeps
+	// requests to such a server byte-identical to before this change.
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

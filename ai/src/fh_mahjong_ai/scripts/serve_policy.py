@@ -43,17 +43,18 @@ MAX_EVALUATE_BATCH = 1024
 MAX_RELOAD_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
 
 # Caps the HTTP REQUEST body (not the on-disk checkpoint file) each endpoint
-# is willing to read (adversarial round 15, Finding 1). /reload requests are
-# tiny hand-built JSON (a path/id, an optional sha256, an optional window) —
-# 64 KiB is generous headroom while making an oversized-Content-Length DoS
+# is willing to read (adversarial round 15, Finding 1). /reload and /evaluate
+# requests are authenticated (token-gated) before a single body byte is
+# read; /act stays unauthenticated by design. /reload requests are tiny
+# hand-built JSON (a path/id, an optional sha256, an optional window) — 64
+# KiB is generous headroom while making an oversized-Content-Length DoS
 # attempt trivially rejectable BEFORE a single body byte is read. /act and
-# /evaluate are unauthenticated by design and legitimately carry full
-# observations (plane tensors, event histories) or batches of them, so they
-# get a much larger — but still finite — cap. /evaluate's cap in particular
-# must clear the real worst case: MAX_EVALUATE_BATCH (1024) observations,
-# each with a full plane tensor, scalars, and a 128-wide event history, JSON-
-# encodes to ~39 MiB — 64 MiB leaves comfortable headroom above that without
-# being unbounded.
+# /evaluate legitimately carry full observations (plane tensors, event
+# histories) or batches of them, so they get a much larger — but still
+# finite — cap. /evaluate's cap in particular must clear the real worst
+# case: MAX_EVALUATE_BATCH (1024) observations, each with a full plane
+# tensor, scalars, and a 128-wide event history, JSON-encodes to ~39 MiB —
+# 64 MiB leaves comfortable headroom above that without being unbounded.
 MAX_RELOAD_REQUEST_BYTES = 64 * 1024
 MAX_ACT_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_EVALUATE_REQUEST_BYTES = 64 * 1024 * 1024
@@ -188,6 +189,7 @@ class PolicyHolder:
         checkpoint_sha256: Optional[str] = None,
         logit_export_token: Optional[str] = None,
         admin_token: Optional[str] = None,
+        evaluate_token: Optional[str] = None,
     ) -> None:
         """`checkpoint_sha256`, when given, MUST be the hash of the exact
         bytes `policy` was deserialized from (see
@@ -227,12 +229,34 @@ class PolicyHolder:
         or it is rejected without touching the currently-serving policy.
         Production instances should normally run WITHOUT an admin token
         configured (reload disabled) unless an operator deliberately
-        enables it for a maintenance window."""
+        enables it for a maintenance window.
+
+        `evaluate_token` gates POST /evaluate the same way (adversarial round
+        19): dense per-action probability vectors for up to
+        `MAX_EVALUATE_BATCH` caller-controlled observations are themselves a
+        model-extraction surface (logit differences are recoverable from
+        log(p_i/p_j)) as well as a compute-DoS path, so an unauthenticated
+        /evaluate defeats the whole point of gating /act's `return_logits`
+        behind `logit_export_token` — a caller could just ask /evaluate
+        instead. Unlike /act, /evaluate has no legitimate unauthenticated
+        caller (it exists solely for the Go post-game review pipeline,
+        internal/review), so — mirroring /reload's posture, NOT /act's — when
+        `evaluate_token` is None (the default) /evaluate is disabled
+        ENTIRELY, every request getting a 403 refusal rather than a silent
+        no-op that still runs inference. When set, a request must carry a
+        matching token in an `Authorization: Bearer <token>` HEADER
+        (`hmac.compare_digest`, checked BEFORE the request body is read,
+        matching /reload's ordering discipline) or it is rejected without
+        `evaluate_batch` ever being invoked. This is a deliberate breaking
+        change for existing deployments: the review feature now requires
+        `FH_MJ_EVALUATE_TOKEN`/`--evaluate-token` configured on both this
+        server and the Go backend's `POLICY_SERVER_TOKEN` post-deploy."""
         self._manifest_path = manifest_path
         self._device = device
         self._lock = threading.Lock()
         self.logit_export_token = logit_export_token
         self.admin_token = admin_token
+        self.evaluate_token = evaluate_token
         resolved_sha256 = (
             checkpoint_sha256 if checkpoint_sha256 is not None else self._sha256_of(policy.checkpoint_path)
         )
@@ -495,11 +519,40 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
         self._write_json(response)
 
     def _handle_evaluate(self) -> None:
+        status = 400
         try:
-            # Adversarial round 15, Finding 1: /evaluate is unauthenticated by
-            # design, but still gets a generous, finite Content-Length cap —
-            # validated before a single body byte is read.
-            payload = json.loads(_read_capped_body(self, MAX_EVALUATE_REQUEST_BYTES).decode("utf-8"))
+            # Adversarial round 19: /evaluate returns dense per-action
+            # probability vectors for caller-controlled observations — a
+            # model-extraction and compute-DoS surface that would otherwise
+            # make /act's logit-export gate (round 12/13) moot on any public
+            # deployment. Authenticate BEFORE reading the request body, in
+            # the same order as /reload (adversarial round 15, Finding 1):
+            #   1. no evaluate token configured on this server at all ->
+            #      refuse immediately, /evaluate disabled entirely;
+            #   2. Content-Length missing/invalid/over the evaluate cap ->
+            #      refuse without reading;
+            #   3. the caller's bearer token doesn't match -> refuse without
+            #      reading.
+            # Only after all three checks pass does `rfile.read` run.
+            configured_evaluate_token = self.holder.evaluate_token
+            if not configured_evaluate_token:
+                status = 403
+                raise PermissionError(
+                    "evaluate disabled: configure FH_MJ_EVALUATE_TOKEN (or --evaluate-token) "
+                    "on this serve_policy instance AND set POLICY_SERVER_TOKEN to the same "
+                    "value on the Go backend to enable POST /evaluate for the post-game "
+                    "review pipeline (adversarial round 19)"
+                )
+            length = _parse_content_length(self.headers, MAX_EVALUATE_REQUEST_BYTES)
+            request_token = _extract_bearer_token(self)
+            if request_token is None or not hmac.compare_digest(configured_evaluate_token, request_token):
+                status = 403
+                raise PermissionError(
+                    "missing or invalid 'Authorization: Bearer <token>' header; refusing evaluate"
+                )
+            status = 400
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw.decode("utf-8"))
             observations = payload["observations"]
             if len(observations) > MAX_EVALUATE_BATCH:
                 raise ValueError(
@@ -552,7 +605,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 planes, scalars, action_masks, events=events, event_lengths=event_lengths
             )
         except Exception as exc:
-            self._write_json({"error": str(exc)}, status=400)
+            self._write_json({"error": str(exc)}, status=status)
             return
         # Adversarial round 15, Finding 4: see the identical note in
         # _handle_act — a privileged-critic checkpoint's value head is
@@ -799,6 +852,23 @@ def main() -> None:
         "instances should normally run WITHOUT this set unless an operator deliberately enables "
         "reload for a maintenance window.",
     )
+    parser.add_argument(
+        "--evaluate-token", type=str, default=os.environ.get("FH_MJ_EVALUATE_TOKEN"),
+        help="Shared-secret token required for POST /evaluate (adversarial round 19): an "
+        "unauthenticated /evaluate returns dense per-action probability vectors for "
+        "caller-controlled observations (up to 1024/request), which is both a model-extraction "
+        "surface (logit differences recoverable from log(p_i/p_j)) and a compute-DoS path — it "
+        "makes /act's --logit-export-token gate (round 12/13) moot on any public deployment. "
+        "Unset (default): /evaluate is DISABLED ENTIRELY — every request gets HTTP 403 with an "
+        "actionable message, never a silent no-op that still runs inference. Set: a request "
+        "must carry a matching token in an 'Authorization: Bearer <token>' header (constant-time "
+        "compare, checked before the request body is read) or it gets HTTP 403. Can also be set "
+        "via FH_MJ_EVALUATE_TOKEN; the CLI flag takes precedence when both are given. Required "
+        "for the Go post-game review pipeline (internal/review) — set the SAME value as "
+        "POLICY_SERVER_TOKEN on the backend. Unlike --logit-export-token/--admin-token, this is "
+        "needed in production (review runs against the production serving instance), not just "
+        "candidate/maintenance instances.",
+    )
     args = parser.parse_args()
 
     # Fail loudly on misconfigured sampling: a typo here would otherwise start
@@ -838,6 +908,7 @@ def main() -> None:
         checkpoint_sha256=checkpoint_sha256,
         logit_export_token=args.logit_export_token,
         admin_token=args.admin_token,
+        evaluate_token=args.evaluate_token,
     )
     handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
     server = ThreadingHTTPServer((args.host, args.port), handler)
@@ -855,6 +926,10 @@ def main() -> None:
     print(
         "Reload (/reload): "
         f"{'ENABLED (admin token required)' if args.admin_token else 'disabled'}"
+    )
+    print(
+        "Evaluate (/evaluate): "
+        f"{'enabled(token)' if args.evaluate_token else 'disabled'}"
     )
     server.serve_forever()
 
