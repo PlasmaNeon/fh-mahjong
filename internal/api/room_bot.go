@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
+	"github.com/plasma/fh-mahjong/internal/engine"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
@@ -38,7 +39,13 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 				return payloads
 			}
 
-			action := r.policyForSeat(seat).ChooseAction(r.Engine.State, seat)
+			policy := r.policyForSeat(seat)
+			var action *pb.PlayerAction
+			if ctxPolicy, ok := policy.(bot.ContextPolicy); ok {
+				action = ctxPolicy.ChooseActionCtx(r.buildDecisionContext(seat))
+			} else {
+				action = policy.ChooseAction(r.Engine.State, seat)
+			}
 			if action == nil {
 				log.Printf("bot policy produced no action for active seat %d in room %s", seat, r.ID)
 				return payloads
@@ -63,7 +70,13 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 					continue
 				}
 
-				action := r.policyForSeat(seat).ChooseAction(r.Engine.State, seat)
+				policy := r.policyForSeat(seat)
+				var action *pb.PlayerAction
+				if ctxPolicy, ok := policy.(bot.ContextPolicy); ok {
+					action = ctxPolicy.ChooseActionCtx(r.buildDecisionContext(seat))
+				} else {
+					action = policy.ChooseAction(r.Engine.State, seat)
+				}
 				if action == nil {
 					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
 				}
@@ -210,4 +223,20 @@ func (r *Room) policyForSeat(seat uint32) bot.Policy {
 		return r.BotPolicy
 	}
 	return fallbackHeuristicPolicy
+}
+
+// buildDecisionContext snapshots the decision atomically. Called with the
+// room lock held (the callers already are). The events slice is COPIED —
+// policies may consume it after the lock is released.
+func (r *Room) buildDecisionContext(seat uint32) *bot.DecisionContext {
+	events := r.Engine.PublicEvents()
+	snapshot := make([]engine.PublicEvent, len(events))
+	copy(snapshot, events)
+	r.policyDecisionIndex++
+	return &bot.DecisionContext{
+		State:         r.Engine.State,
+		Seat:          seat,
+		DecisionIndex: r.policyDecisionIndex,
+		Events:        snapshot,
+	}
 }

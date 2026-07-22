@@ -29,6 +29,13 @@ NUM_EVENT_TYPES = 8
 
 FACE_UNKNOWN = 63
 
+# Mirrors rl.EventContractV1 in internal/rl/eventcodec.go — bump BOTH sides
+# together on any breaking change. Fixes: window bounded to
+# [0, MaxEventHistoryWindow=512]; tail-only truncation (newest `window`
+# events, oldest-first order preserved); zero-padded rows with an explicit
+# out-of-band count; observer-relative seats; event log resets per round.
+EVENT_CONTRACT_V1 = 1
+
 _SEAT_SHIFT = 4
 _FACE_SHIFT = 6
 _FROM_SHIFT = 12

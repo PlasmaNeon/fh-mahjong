@@ -5,6 +5,15 @@ from torch import Tensor, nn
 
 from .config import EnvConfig, ModelConfig
 
+# Optional-head prefixes load_checkpoint already treats as backward/forward
+# compatible (strict=False); the cross-check below must not flag them.
+_COMPATIBLE_OPTIONAL_PREFIXES = (
+    "q_head.", "large_loss_head.", "action_risk_probability_head.", "action_risk_severity_head.",
+)
+_B2B_MODULE_PREFIXES = (
+    "event_encoder.", "privileged_encoder.", "belief_head.", "dealin_head.", "rank_head.",
+)
+
 
 class PolicyValueNet(nn.Module):
     """Masked-action policy/value network for Mahjong observations."""
@@ -315,22 +324,16 @@ class EventEncoder(nn.Module):
         return gathered * (lengths > 0).float().unsqueeze(-1)
 
 
-def infer_model_config(state_dict: dict[str, Tensor]) -> ModelConfig:
-    """Recover the ModelConfig of a saved PolicyValueNet from its state dict.
+def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
+    """Fields recoverable purely from tensor shapes.
 
-    Checkpoints produced by different runs vary in depth/width/heads, and the
-    architecture is fully determined by tensor shapes — loaders must not
-    assume ModelConfig defaults.
+    This covers legacy (pre-B2b) checkpoints in full, and B2b checkpoints
+    partially: `event_embed_dim`/`event_hidden_dim`/`privileged_critic`/
+    `aux_heads` are shape-derived, but `event_window` is NOT — no weight
+    tensor encodes the max event-history length (the GRU is length-agnostic),
+    so callers reconstructing a B2b checkpoint must overlay `event_window`
+    (and, for robustness, the other three B2b flags) from metadata.
     """
-    if any(key.startswith(("event_encoder.", "privileged_encoder.", "belief_head.",
-                           "dealin_head.", "rank_head.")) for key in state_dict):
-        raise RuntimeError(
-            "this checkpoint carries Spec B2b modules (event encoder / privileged critic / "
-            "aux heads), which infer_model_config cannot reconstruct — checkpoint-backed "
-            "serving and self-play for B2b models land in Spec B2c. Evaluate B2b checkpoints "
-            "with fh-mj-evaluate and explicit --model-event-window/--model-privileged-critic/"
-            "--model-aux-heads flags instead."
-        )
     defaults = ModelConfig()
     channels = int(state_dict["plane_stem.0.weight"].shape[0])
     block_indices = {
@@ -344,7 +347,7 @@ def infer_model_config(state_dict: dict[str, Tensor]) -> ModelConfig:
     else:
         channel_attention_ratio = defaults.channel_attention_ratio
     dueling_q = "q_head.value_head.0.weight" in state_dict
-    return ModelConfig(
+    fields = dict(
         channels=channels,
         residual_blocks=max(block_indices) + 1 if block_indices else 0,
         plane_feature_dim=int(state_dict["plane_head.0.weight"].shape[0]),
@@ -358,4 +361,192 @@ def infer_model_config(state_dict: dict[str, Tensor]) -> ModelConfig:
         channel_attention=channel_attention,
         channel_attention_ratio=channel_attention_ratio,
         dueling_q=dueling_q,
+        privileged_critic="privileged_encoder.0.weight" in state_dict,
+        aux_heads="belief_head.weight" in state_dict,
     )
+    if "event_encoder.embedding.weight" in state_dict:
+        fields["event_embed_dim"] = int(state_dict["event_encoder.embedding.weight"].shape[1])
+    if "event_encoder.gru.weight_ih_l0" in state_dict:
+        fields["event_hidden_dim"] = int(state_dict["event_encoder.gru.weight_ih_l0"].shape[0]) // 3
+    return fields
+
+
+def _effective_attention_hidden(channels: int, ratio: int) -> int:
+    """The attention bottleneck width `ChannelAttention2d.__init__` actually
+    constructs for a given (channels, ratio) pair. Must match that formula
+    exactly (see `ChannelAttention2d.__init__` above): multiple ratios can
+    floor to the same hidden width, so the raw ratio is not what a shape
+    cross-check can recover or compare."""
+    return max(1, channels // max(1, ratio))
+
+
+def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, Tensor]) -> None:
+    """Cross-check every metadata-claimed field that is ALSO derivable from
+    `state_dict`'s tensor shapes, cheaply (no allocation) and BEFORE any
+    `PolicyValueNet` is constructed (adversarial round 20, Finding 1b).
+
+    `ModelConfig.__post_init__` bounds every dimension, but a bounded value
+    can still be a lie: metadata claiming `channels=128` when the checkpoint
+    was actually saved with `channels=96` is within bounds yet would build
+    the wrong (still non-trivially large) net for nothing, and — more
+    importantly — a value near the cap that happens to match no real
+    checkpoint is still real memory. `_shape_inferred_fields` already knows
+    how to read every one of these fields straight off tensor shapes (no
+    model construction involved); reusing it here means a mismatch is
+    caught before `infer_model_config` ever calls `PolicyValueNet(...)` for
+    its later, more expensive, `_cross_check_shapes` comparison.
+
+    Not every metadata field this compares against is unique, though (round
+    26): `channel_attention_ratio` is never read by `ChannelAttention2d` when
+    `channel_attention` is False, and distinct ratios can floor to the same
+    effective hidden width (`_effective_attention_hidden`) when it is True;
+    `q_hidden_dim` is never read when `dueling_q` is False. Comparing those
+    raw fields unconditionally rejects a model's own honestly-saved metadata.
+    Skip `channel_attention_ratio`/`q_hidden_dim` themselves and instead
+    compare the effective attention width whenever attention is on — the
+    quantity that actually determines the constructed architecture.
+    """
+    shape_fields = _shape_inferred_fields(state_dict)
+    shape_fields.pop("channel_attention_ratio", None)
+    if not config.dueling_q:
+        shape_fields.pop("q_hidden_dim", None)
+
+    mismatched = {
+        field: (getattr(config, field), shape_value)
+        for field, shape_value in shape_fields.items()
+        if getattr(config, field) != shape_value
+    }
+
+    if config.channel_attention:
+        claimed_hidden = _effective_attention_hidden(config.channels, config.channel_attention_ratio)
+        attention_key = "plane_blocks.0.channel_attention.shared_mlp.0.weight"
+        if attention_key in state_dict:
+            actual_hidden = int(state_dict[attention_key].shape[0])
+            if claimed_hidden != actual_hidden:
+                mismatched["channel_attention_effective_hidden"] = (claimed_hidden, actual_hidden)
+
+    if mismatched:
+        raise RuntimeError(
+            "infer_model_config shape cross-check failed before construction: metadata "
+            "claims ModelConfig fields that do not match the checkpoint's tensor shapes "
+            f"(field: (claimed, shape_derived))={mismatched}"
+        )
+
+
+def _reconstruct_env_config(state_dict: dict[str, Tensor], model_config: ModelConfig) -> EnvConfig:
+    """Rebuild just enough EnvConfig to instantiate a shape-matching throwaway
+    PolicyValueNet for the cross-check below. Only tensor-shape-relevant
+    fields matter here (input channel count, scalar count, action space,
+    and the plane height*width area when it actually appears in a weight
+    shape) — this is not the env the checkpoint was trained under."""
+    input_channels = int(state_dict["plane_stem.0.weight"].shape[1])
+    scalar_features = int(state_dict["scalar_encoder.0.weight"].shape[1])
+    action_space_size = int(state_dict["policy_head.weight"].shape[0])
+    if not model_config.pool_planes:
+        area = int(state_dict["plane_head.0.weight"].shape[1]) // max(1, model_config.channels)
+    elif model_config.privileged_critic and "privileged_encoder.3.weight" in state_dict:
+        area = int(state_dict["privileged_encoder.3.weight"].shape[1]) // 32
+    else:
+        area = 42
+    return EnvConfig(
+        plane_shape=(input_channels, max(1, area), 1),
+        scalar_features=scalar_features,
+        action_space_size=action_space_size,
+    )
+
+
+def _cross_check_shapes(state_dict: dict[str, Tensor], reference_state: dict[str, Tensor]) -> None:
+    given_keys = set(state_dict)
+    ref_keys = set(reference_state)
+
+    # A prefix is only exempt when the *entire* optional head is absent on one
+    # side (the legitimate "older checkpoint predates this head" case). If both
+    # sides carry keys under the prefix but the key sets differ (e.g. a
+    # doctored `dueling_q` flag reconstructs DuelingQHead vs plain nn.Linear
+    # under the same "q_head." prefix), that is a real architecture mismatch
+    # and must not be exempted.
+    exempt_prefixes = tuple(
+        prefix
+        for prefix in _COMPATIBLE_OPTIONAL_PREFIXES
+        if not any(k.startswith(prefix) for k in given_keys)
+        or not any(k.startswith(prefix) for k in ref_keys)
+    )
+
+    missing = sorted(k for k in ref_keys - given_keys if not k.startswith(exempt_prefixes))
+    unexpected = sorted(k for k in given_keys - ref_keys if not k.startswith(exempt_prefixes))
+    mismatched = sorted(
+        key for key in given_keys & ref_keys
+        if tuple(state_dict[key].shape) != tuple(reference_state[key].shape)
+    )
+    if missing or unexpected or mismatched:
+        raise RuntimeError(
+            "infer_model_config shape cross-check failed: the reconstructed ModelConfig does "
+            "not reproduce the checkpoint's tensor shapes "
+            f"(missing={missing}, unexpected={unexpected}, mismatched={mismatched})"
+        )
+
+
+def infer_model_config(state_dict: dict[str, Tensor], metadata: dict | None = None) -> ModelConfig:
+    """Recover the ModelConfig of a saved PolicyValueNet from its state dict.
+
+    Checkpoints produced by different runs vary in depth/width/heads, and the
+    architecture is not always fully determined by tensor shapes — B2b's
+    `event_window` in particular is invisible to every weight tensor. `metadata`
+    (the checkpoint's saved `metadata` dict, if any) is consulted first:
+
+    1. `metadata["model_config"]` (a complete ModelConfig, saved by newer
+       B2b/B2c training paths) is authoritative if present.
+    2. Otherwise `metadata["b2b"]` (the four-flag block older B2b checkpoints
+       carry) overlays `event_window`/`privileged_critic`/`aux_heads`/
+       `residual_blocks`; every other field is still shape-inferred.
+    3. Otherwise, if the state dict carries no B2b modules at all, everything
+       is shape-inferred (the pre-B2b legacy path).
+    4. Otherwise (B2b modules present, no usable metadata) this raises — the
+       checkpoint's event_window cannot be recovered from shapes alone.
+
+    In every case the reconstructed config is cross-checked by instantiating
+    a throwaway PolicyValueNet and comparing its state dict's keys/shapes
+    against `state_dict`; any mismatch raises.
+    """
+    metadata = metadata or {}
+    has_b2b_modules = any(key.startswith(_B2B_MODULE_PREFIXES) for key in state_dict)
+
+    model_config_meta = metadata.get("model_config")
+    b2b_meta = metadata.get("b2b")
+    if isinstance(model_config_meta, dict):
+        config = ModelConfig(**model_config_meta)
+    elif isinstance(b2b_meta, dict):
+        fields = _shape_inferred_fields(state_dict)
+        fields.update(
+            event_window=int(b2b_meta["event_window"]),
+            privileged_critic=bool(b2b_meta["privileged_critic"]),
+            aux_heads=bool(b2b_meta["aux_heads"]),
+            residual_blocks=int(b2b_meta["residual_blocks"]),
+        )
+        config = ModelConfig(**fields)
+    elif has_b2b_modules:
+        raise RuntimeError(
+            "this checkpoint carries Spec B2b modules (event encoder / privileged critic / "
+            "aux heads) but no usable metadata (\"model_config\" or \"b2b\"), so "
+            "infer_model_config cannot reconstruct its ModelConfig from shapes alone. "
+            "Re-save the checkpoint with metadata (save_checkpoint(..., metadata={\"model_config\": "
+            "model_config_metadata(config)})), or evaluate it with fh-mj-evaluate and explicit "
+            "--model-event-window/--model-privileged-critic/--model-aux-heads flags instead."
+        )
+    else:
+        config = ModelConfig(**_shape_inferred_fields(state_dict))
+
+    if isinstance(model_config_meta, dict) or isinstance(b2b_meta, dict):
+        # Round 20, Finding 1b: metadata (either the whole-config or the
+        # b2b-flag-overlay form) can claim fields that ARE derivable from
+        # `state_dict`'s tensor shapes — `channels`, `residual_blocks`, etc.
+        # Check those cheaply, without allocating anything, BEFORE the
+        # throwaway `PolicyValueNet` below is ever constructed. The
+        # shape-inferred-only branch above needs no such check: every field
+        # it used already came from these same shapes.
+        _verify_metadata_matches_shapes(config, state_dict)
+
+    env_config = _reconstruct_env_config(state_dict, config)
+    reference_state = PolicyValueNet(env_config, config).state_dict()
+    _cross_check_shapes(state_dict, reference_state)
+    return config

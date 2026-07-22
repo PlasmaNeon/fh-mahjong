@@ -113,6 +113,12 @@ type Room struct {
 	// reconciled into the paipu/MatchPlayer rows at persist time.
 	automatedDecisions map[uint32]uint64
 
+	// policyDecisionIndex is a room-owned, per-game monotonically increasing
+	// counter incremented once per ContextPolicy dispatch (buildDecisionContext).
+	// It lets a remote policy server correlate decisions/events across calls.
+	// Room-goroutine only (same mutex context as automatedDecisions).
+	policyDecisionIndex uint64
+
 	// matchEndScheduled tracks whether the grace-shutdown timer has been
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
@@ -270,10 +276,75 @@ func (r *Room) finishShutdown() {
 	if r.Hub != nil {
 		r.Hub.UnbindRoom <- r
 	}
+	r.closeSeatPolicies()
 	if r.OnShutdown != nil {
 		r.OnShutdown()
 	}
 	close(r.Done)
+}
+
+// closeableBotPolicy is implemented by bot.Policy instances that own
+// background resources (currently just bot.ShadowPolicy's worker goroutine
+// + queue) and need an explicit teardown call once the room is done with
+// them.
+type closeableBotPolicy interface {
+	Close()
+}
+
+// closeSeatPolicies calls Close on every distinct closeable policy this room
+// owns (each seat's SeatPolicies entry plus the room-wide BotPolicy), once
+// each, before finishShutdown hands control back to the matchmaker.
+//
+// Ownership: SeatPolicies is populated per-room by
+// Matchmaker.StartPrivateTable, which calls resolveSeatPolicy once per RL
+// seat — each call to cmd/server/main.go's SeatPolicyResolver constructs a
+// brand-new bot.NewShadowPolicy, so every closeable instance here is unique
+// to this room and this room alone is responsible for closing it (never
+// shared across seats or rooms). The one thing a ShadowPolicy wraps that IS
+// shared across rooms — the candidate shadow.ContextPolicy passed to every
+// resolver call — is deliberately NOT touched: bot.ShadowPolicy.Close only
+// closes its own queue/worker, never the wrapped shadow or primary policy,
+// so this stays safe even though that policy is long-lived and shared.
+// BotPolicy (from BotPolicyFactory, when set) is, by contrast, a single
+// *remote.HTTPPolicy shared across every room/bot cmd/server/main.go's
+// AI_BOT_POLICY_URL factory ever hands out — unlike the RL primary above,
+// matchmaking-bot seats aren't paipu-attributed per instance, so sharing
+// it is safe. Either way it's a plain remote.HTTPPolicy, which doesn't
+// implement closeableBotPolicy, so closeOnce is a no-op for it regardless.
+// Non-closeable policies (heuristic bot.NewPolicy, plain remote.HTTPPolicy)
+// simply don't implement closeableBotPolicy and are skipped. Pointer-deduped
+// via a set so a policy installed as both a seat override and the room
+// default is only closed once.
+func (r *Room) closeSeatPolicies() {
+	policies := make([]bot.Policy, 0, len(r.SeatPolicies)+1)
+	for _, policy := range r.SeatPolicies {
+		policies = append(policies, policy)
+	}
+	closeBotPolicies(append(policies, r.BotPolicy)...)
+}
+
+// closeBotPolicies calls Close on every distinct closeableBotPolicy among the
+// given policies, once each (pointer-deduped, same as closeSeatPolicies'
+// former inline logic). Shared by Room.closeSeatPolicies (tearing down a
+// finished match's seat policies) and Matchmaker.StartPrivateTable
+// (internal/api/matchmaker.go) — the latter calls this on every pre-handoff
+// failure path (a later seat's resolution erroring, match persistence
+// failing, or registerActiveRoom refusing the room because the server is
+// draining) so policies already constructed for earlier seats are never
+// leaked just because no Room was ever created to own them.
+func closeBotPolicies(policies ...bot.Policy) {
+	seen := make(map[closeableBotPolicy]struct{})
+	for _, policy := range policies {
+		closeable, ok := policy.(closeableBotPolicy)
+		if !ok || closeable == nil {
+			continue
+		}
+		if _, already := seen[closeable]; already {
+			continue
+		}
+		seen[closeable] = struct{}{}
+		closeable.Close()
+	}
 }
 
 // appendReplay accumulates broadcast payloads into the room's replay buffer.

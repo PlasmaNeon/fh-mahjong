@@ -11,7 +11,7 @@ import (
 // rlTestResolver maps DIFFICULTY_RL to a stand-in policy and defers everything
 // else to bot.NewPolicy, mirroring how cmd/server installs the real remote
 // resolver when AI_BOT_POLICY_URL is set.
-func rlTestResolver(d pb.Difficulty) (bot.Policy, error) {
+func rlTestResolver(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
 	if d == pb.Difficulty_DIFFICULTY_RL {
 		return bot.NewHeuristicPolicy(), nil
 	}
@@ -21,10 +21,10 @@ func rlTestResolver(d pb.Difficulty) (bot.Policy, error) {
 func TestResolveSeatPolicy_DefaultRejectsRL(t *testing.T) {
 	m := NewMatchmaker(NewInMemoryQueue(), nil, NewHub())
 
-	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_HEURISTIC, "room-1", 0); err != nil {
 		t.Fatalf("heuristic should resolve without a custom resolver: %v", err)
 	}
-	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL); err == nil {
+	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "room-1", 0); err == nil {
 		t.Fatal("expected error resolving DIFFICULTY_RL with no resolver installed")
 	}
 }
@@ -33,7 +33,7 @@ func TestResolveSeatPolicy_WithResolver(t *testing.T) {
 	m := NewMatchmaker(NewInMemoryQueue(), nil, NewHub())
 	m.SeatPolicyResolver = rlTestResolver
 
-	policy, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL)
+	policy, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "room-1", 0)
 	if err != nil {
 		t.Fatalf("expected RL to resolve with resolver installed: %v", err)
 	}

@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/plasma/fh-mahjong/internal/bot/remote"
 )
 
 // defaultPolicyServeCmd launches serve_policy.py through uv from the repo root.
@@ -19,14 +21,14 @@ const defaultPolicyServeCmd = "uv run --project ai fh-mj-serve-policy"
 // local default (the only case eligible for child-process autostart). An
 // explicit RL override (RL_AGENT_POLICY_URL) wins, then AI_BOT_POLICY_URL, then
 // the local default.
+//
+// Thin wrapper around remote.EffectiveRLEndpointURL (adversarial round 11):
+// internal/api's reviewEventWindow needs this exact same resolution to decide
+// whether POLICY_SERVER_URL names the same service as the private-room RL
+// agent, but internal/api cannot import cmd/server (package main), so the
+// resolution itself lives in internal/bot/remote and both packages call it.
 func rlEndpointURL(rlOverride, botPolicyURL string) (endpoint string, isLocalDefault bool) {
-	if rlOverride != "" {
-		return rlOverride, false
-	}
-	if botPolicyURL != "" {
-		return botPolicyURL, false
-	}
-	return defaultRLPolicyURL, true
+	return remote.EffectiveRLEndpointURL(rlOverride, botPolicyURL)
 }
 
 // maybeStartPolicyServer launches the Python policy server as a managed child

@@ -159,7 +159,8 @@ def test_hindsight_rank_labels_use_reward_scale():
 def test_infer_model_config_rejects_b2b_checkpoints(tmp_path):
     # CheckpointPolicy.from_checkpoint relies on infer_model_config, which
     # cannot reconstruct B2b modules — it must fail with a CLEAR message
-    # (B2c scope), not a cryptic load_state_dict error.
+    # telling the caller to re-save with metadata or pass explicit flags, not
+    # a cryptic load_state_dict error.
     import pytest as _pytest
 
     from fh_mahjong_ai.model import infer_model_config
@@ -167,7 +168,7 @@ def test_infer_model_config_rejects_b2b_checkpoints(tmp_path):
     env39 = EnvConfig(bridge_kind="mock")
     model = PolicyValueNet(env39, ModelConfig(**_SMALL, event_window=8,
                                               privileged_critic=True, aux_heads=True))
-    with _pytest.raises(RuntimeError, match="Spec B2c"):
+    with _pytest.raises(RuntimeError, match="no usable metadata"):
         infer_model_config(model.state_dict())
 
     # Legacy checkpoints still infer fine.

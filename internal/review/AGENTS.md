@@ -6,15 +6,21 @@
 
 ## Overview
 
-Given a completed `engine.Paipu`, `ExtractDecisions` re-drives every round
-through a fresh `engine.Game`, feeding back exactly the actions the paipu
-recorded, and returns the catalog-indexed action (`internal/rl`'s 204-action
-space) chosen at every point a seat had more than one legal option. Every
-`Decision` also carries the 39ch visible `pb.SeatObservation` the champion
-policy would have seen at that decision (`rl.EncodeObservation`, never the
-oracle variant), encoded against a Chongci-context-dressed clone of the live
-replay state — see `context.go` and Design Notes below. This is the input a
-later champion-policy critique pass scores against.
+Given a completed `engine.Paipu`, `ExtractDecisions(paipu, eventWindow)`
+re-drives every round through a fresh `engine.Game`, feeding back exactly the
+actions the paipu recorded, and returns the catalog-indexed action
+(`internal/rl`'s 204-action space) chosen at every point a seat had more than
+one legal option. Every `Decision` also carries the 39ch visible
+`pb.SeatObservation` the champion policy would have seen at that decision
+(`rl.EncodeObservationWithEvents`, never the oracle variant), encoded against
+a Chongci-context-dressed clone of the live replay state — see `context.go`
+and Design Notes below. `eventWindow` (0 for a champion with no event
+history) is forwarded verbatim to `EncodeObservationWithEvents` alongside the
+live `r.game.PublicEvents()` log at that decision; with `eventWindow == 0`
+this is byte-identical to the old `rl.EncodeObservation` call (see
+`internal/rl/serving_parity_test.go`), so callers that don't serve an
+event-aware champion just pass 0 and see no behavior change. This is the
+input a later champion-policy critique pass scores against.
 
 Any divergence between the paipu and what the engine reproduces — a bad wall
 seed, a corrupted tile id, a rules-engine change that alters legality — aborts
@@ -42,18 +48,59 @@ evaluation failure aborts with an error and a nil `*Report`.
 - **context.go** — `isChongciPaipu` and `reviewState`, the encode-time
   context normalization described below.
 - **client.go** — `PolicyClient` interface, `PolicyResult`,
-  `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient`). Mirrors
-  `internal/bot/remote.HTTPPolicy`'s `/act` request encoding (`seat`,
-  `planes`, `scalars`, `action_mask` as ints) but batches many observations
-  per `/evaluate` request instead of one, chunking at `evaluateChunkSize`
-  (256) and preserving order across chunks. Every chunk must report the same
-  `checkpoint_path`/`checkpoint_step` — a mismatch (a checkpoint hot-swapped
-  mid-review) is a hard error, never a mixed-champion report. Any non-200
-  response, `"error"` field, or per-chunk result-count mismatch aborts the
-  whole `Evaluate` call.
+  `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient(baseURL,
+  eventWindow)` — no auth token, equivalent to
+  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, "")` — or
+  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, token)` for an
+  authenticated policy server). Mirrors `internal/bot/remote.HTTPPolicy`'s `/act` request
+  encoding (`seat`, `planes`, `scalars`, `action_mask` as ints) but batches
+  many observations per `/evaluate` request instead of one, chunking at
+  `evaluateChunkSize` (256) and preserving order across chunks. Every chunk
+  must report the same `checkpoint_path`/`checkpoint_step` — a mismatch (a
+  checkpoint hot-swapped mid-review) is a hard error, never a
+  mixed-champion report. Any non-200 response, `"error"` field, or
+  per-chunk result-count mismatch aborts the whole `Evaluate` call.
+  With `eventWindow > 0`, every observation in the request also gains
+  `event_history`/`event_count`/`event_window`/`contract_version`
+  (`rl.EventContractV1`) — the compact fields the Python `/evaluate`
+  endpoint requires per-observation once the served model's
+  `event_window > 0` (see `ai/src/fh_mahjong_ai/scripts/serve_policy.py`'s
+  `observation_from_json`). These fields use pointer types
+  (`*int`/`*uint32`) with `json:",omitempty"` so a nil pointer (the
+  `eventWindow == 0` case) drops the key entirely, keeping the wire format
+  byte-identical to before Task 6 — as opposed to plain zero-valued ints,
+  which `omitempty` would also drop even when `eventWindow > 0` and the
+  count legitimately is 0. `event_history` itself uses the same
+  `omitempty`-on-empty-slice trick so it is present only when
+  `event_count > 0`.
+  - **Bearer-token auth (adversarial round 19)**: when the client was built
+    with a non-empty `token` (via `NewHTTPPolicyClientWithToken`),
+    `evaluateChunk` sets an `Authorization: Bearer <token>` header on every
+    `/evaluate` POST — required as of `serve_policy.py`'s `/evaluate`
+    auth gate, which 403s any request without a matching header once
+    `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN` is configured server-side. An
+    empty token attaches no header at all (never a header with an empty
+    bearer value), keeping the wire format byte-identical to before this
+    change for callers/tests against an unauthenticated policy stub.
+    `internal/api/review.go`'s `handlePostReview` sources this token from
+    the `POLICY_SERVER_TOKEN` env var.
+  - **`CurrentCheckpointSha256()` (round 21, Finding 2)**: GETs
+    `{baseURL}/healthz` (same bearer-token convention as `/evaluate`; a
+    short 5s timeout independent of the 120s `/evaluate` client timeout)
+    and returns the `checkpoint_sha256` the policy server is CURRENTLY
+    serving. `("", err)` when healthz is unreachable, non-2xx, or its body
+    isn't a genuine `"ok": true` envelope — callers treat this identically
+    to `("", nil)` (healthz reachable but the server predates the field, a
+    legacy `serve_policy.py`): both mean "sha unknown". `handlePostReview`
+    uses this to key its cache lookup on the checkpoint actually serving
+    right now instead of trusting the newest cached row regardless of
+    promotion/reload/rollback since the last review.
 - **report.go** — `Report`/`ReportDecision`/`ActionProb`/`SeatSummary`/
   `GapRef` (the frontend JSON contract — field names/types must stay
-  verbatim, Tasks 6/7 depend on them) and `BuildReport`. `ErrUnreviewable`
+  verbatim, Tasks 6/7 depend on them) and `BuildReport(paipu, client,
+  eventWindow)` (`eventWindow` is forwarded to `ExtractDecisions`; the
+  caller is responsible for constructing `client` with the same window —
+  see `internal/api/review.go`). `ErrUnreviewable`
   wraps `ExtractDecisions` failures so the review HTTP API (a later task) can
   map them to 422 instead of a generic 500. Per decision, `Probs` is filtered
   down to the observation's legal (`ActionMask == 1`) indices, sorted
@@ -70,12 +117,28 @@ evaluation failure aborts with an error and a nil `*Report`.
   chongci ready-ack flow mirrors `internal/rl/env.go`'s
   `readyAllPlayersForNextRound` (derives a fresh wall seed per hand before
   the final per-round ready ack).
+  `TestExtractDecisionsEventWindowZeroMatchesLegacy` /
+  `TestExtractDecisionsEventWindowPlumbed` cover Task 6's replay-side
+  contract: `eventWindow == 0` produces empty `EventHistory`/zero
+  `EventHistoryWindow` on every decision (regression bar); `eventWindow ==
+  8` threads through to every decision's observation (bounded history,
+  correct window field, and at least one non-empty history — proving
+  `game.PublicEvents()` is really reaching the encoder, not silently
+  dropped).
 - **report_test.go** — `TestBuildReportAgainstStubServer` runs a full
   heuristic-bot paipu through `BuildReport` against an `httptest.Server`
   stub that returns a uniform distribution over legal actions, verifying the
   report's shape (4 seats, sorted+renormalized legal actions, chosen-prob
   matches the known uniform value). `TestBuildReportServerErrorReturnsNoPartialReport`
   checks a server error aborts with no partial report.
+  `TestBuildReportEventWindowZeroPayloadUnchanged` /
+  `TestBuildReportEventWindowEightEnrichesPayload` cover Task 6's
+  client-side contract: with `eventWindow == 0`, no observation in the
+  batched `/evaluate` request carries any of the four compact
+  event-history JSON keys (regression bar); with `eventWindow == 8`, every
+  observation carries `contract_version == 1`, `event_window == 8`, and
+  `event_count <= 8`, with `event_history` present (and length-matching)
+  iff `event_count > 0`.
   `TestHTTPClientChunksBatches` calls `HTTPPolicyClient.Evaluate` directly
   with 600 synthetic observations against a stub that echoes a
   request-order-derived value, asserting exactly `ceil(600/256)=3` requests

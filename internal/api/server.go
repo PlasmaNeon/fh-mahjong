@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"github.com/plasma/fh-mahjong/web"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +29,110 @@ type Server struct {
 	// In-memory paipu store for when DB is nil (local dev without Postgres)
 	paipu   map[string]string // matchID -> paipu JSON
 	paipuMu sync.RWMutex
+
+	// reviewBuildGroup collapses concurrent review-build requests for the
+	// SAME matchId into one in-flight build (round 21, Finding 1): without
+	// this, a force-refresh storm (or plain unlucky concurrent load) against
+	// one match id fires one authenticated /evaluate batch PER request
+	// instead of sharing the single build actually in progress.
+	reviewBuildGroup singleflight.Group
+	// reviewBuildSem bounds how many review builds may run concurrently
+	// SERVER-WIDE, independent of which match ids they're for (round 21,
+	// Finding 1c): singleflight alone only dedupes identical match ids, so a
+	// caller spamming ?force=1 across many distinct match ids could still
+	// stack up unbounded concurrent authenticated /evaluate batches against
+	// the policy server and starve live /act traffic. Acquired/released via
+	// acquireReviewBuildSlot/releaseReviewBuildSlot — see review.go.
+	reviewBuildSem chan struct{}
+	// reviewBuildWaiters counts goroutines currently blocked trying to
+	// acquire a review-build slot (round 22, Finding 1a): with
+	// reviewBuildConcurrencyLimit slots already full, a request is queued
+	// only while this stays at or below reviewBuildWaitQueueLimit; beyond
+	// that it is rejected immediately (429) rather than queued unboundedly.
+	// Accessed only via sync/atomic.
+	reviewBuildWaiters int32
+	// reviewRateLimiter enforces a small per-user token-bucket limit on
+	// review-build POSTs (round 22, Finding 1d), independent of the
+	// admission queue above: it caps how often ONE authenticated user can
+	// even attempt to trigger a build, before that attempt ever touches the
+	// shared semaphore/wait-queue.
+	reviewRateLimiter *reviewRateLimiter
+	// reviewShaCacheMu guards reviewShaCache below (round 23, Finding 1): the
+	// public, unauthenticated GET /matches/:matchId/review route resolves
+	// the policy server's live checkpoint sha via /healthz on every request
+	// (see handleGetReview) — this short-TTL cache keeps that from hammering
+	// /healthz once per casual page load.
+	reviewShaCacheMu sync.Mutex
+	reviewShaCache   reviewShaCacheEntry
+	// reviewShaGroup coalesces concurrent /healthz refreshes into a single
+	// in-flight call per policyURL (round 24, Finding 1): reviewShaCacheMu
+	// above only protects the cache COPY itself — every one of N concurrent
+	// GETs that observe an expired (or, pre-round-24, a failed-and-not-cached)
+	// entry used to fire its OWN healthz round trip. With the resolution
+	// itself keyed through this group, only the first caller to observe a
+	// stale entry actually calls out; every concurrent caller for the same
+	// policyURL waits on and shares that one result.
+	reviewShaGroup singleflight.Group
 }
+
+// reviewShaCacheEntry is the short-TTL cache of the policy server's
+// currently-served checkpoint identity, shared by every GET review request
+// (round 23, Finding 1). Keyed on policyURL so a POLICY_SERVER_URL change
+// (redeploy pointing at a different service) never serves a stale entry from
+// the old one.
+//
+// Round 24, Finding 1: a failed resolution is now ALSO cached (err,
+// non-nil) for reviewShaNegativeCacheTTL, so a healthz outage doesn't turn
+// every single GET during the outage into its own healthz attempt — it is
+// retried at most once per negative-TTL window, not once per request. A
+// successful entry (err == nil) is still governed by the longer
+// reviewShaCacheTTL as before.
+type reviewShaCacheEntry struct {
+	policyURL string
+	sha       string
+	legacy    bool
+	err       error
+	fetchedAt time.Time
+}
+
+// reviewShaCacheTTL bounds how long handleGetReview trusts a previously
+// resolved live checkpoint sha before re-checking /healthz (round 23,
+// Finding 1). Short enough that a promotion/rollback is picked up within one
+// page-load's worth of staleness; long enough that a burst of replay-page
+// opens (or a slow-clicking user) doesn't turn into a healthz call per
+// request.
+//
+// A var, not a const, solely so tests can shrink it to 0 (see
+// review_round23_test.go) and observe a promotion/rollback reflected on the
+// very next GET rather than asserting against real wall-clock time.
+var reviewShaCacheTTL = 10 * time.Second
+
+// reviewShaNegativeCacheTTL bounds how long handleGetReview trusts a
+// previously FAILED healthz resolution before retrying it (round 24,
+// Finding 1). Deliberately much shorter than reviewShaCacheTTL — a real
+// outage should still surface a fresh attempt reasonably promptly — but long
+// enough that a burst of concurrent GETs arriving during an outage collapse
+// onto one shared failed attempt (via reviewShaGroup) instead of each
+// retrying the unreachable/erroring policy server on its own.
+//
+// A var, not a const, solely so tests can shrink or inspect it the same way
+// reviewShaCacheTTL already is.
+var reviewShaNegativeCacheTTL = 3 * time.Second
+
+// reviewBuildConcurrencyLimit caps simultaneous in-flight review builds
+// server-wide (round 21, Finding 1c). Kept small and fixed rather than
+// configurable: review builds are a debugging/analysis path, not the hot
+// gameplay path, and the whole point is to keep them from ever competing
+// meaningfully with live /act traffic against the same policy server.
+const reviewBuildConcurrencyLimit = 2
+
+// reviewBuildWaitQueueLimit caps how many callers may wait for a review-build
+// slot once reviewBuildConcurrencyLimit is exhausted (round 22, Finding 1a).
+// Beyond capacity+queue (2+4 = 6 concurrently "admitted or waiting" builds),
+// a new distinct-match build request is rejected immediately with 429 rather
+// than queuing unboundedly — the original round-21 semaphore blocked forever
+// with no bound and no way for a disconnected caller's goroutine to leave.
+const reviewBuildWaitQueueLimit = 4
 
 // NewServer initializes a new Server with all defined routes
 func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
@@ -38,11 +143,13 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	}
 
 	server := &Server{
-		Router:     router,
-		DB:         db,
-		Hub:        hub,
-		Matchmaker: matchmaker,
-		paipu:      make(map[string]string),
+		Router:            router,
+		DB:                db,
+		Hub:               hub,
+		Matchmaker:        matchmaker,
+		paipu:             make(map[string]string),
+		reviewBuildSem:    make(chan struct{}, reviewBuildConcurrencyLimit),
+		reviewRateLimiter: newReviewRateLimiter(),
 	}
 
 	if matchmaker != nil {
@@ -68,8 +175,14 @@ func (s *Server) setupRoutes() {
 		v1.POST("/tools/shanten", s.handleShanten)
 		v1.GET("/replays/:matchId", s.handleGetPaipu)
 		v1.POST("/replays/:matchId", s.handleUploadPaipu)
+		// GET is a pure cache lookup (never builds a report, never calls the
+		// policy server) so it stays public. POST triggers an authenticated
+		// batch of /evaluate calls against the policy server and is moved
+		// into the protected group below (round 21, Finding 1): an
+		// unauthenticated caller spamming ?force=1 against any known match
+		// id could otherwise drive unlimited policy-server load and push
+		// live RL agents into heuristic fallback.
 		v1.GET("/matches/:matchId/review", s.handleGetReview)
-		v1.POST("/matches/:matchId/review", s.handlePostReview)
 		v1.GET("/ws", func(c *gin.Context) { ServeWs(s.Hub, s.DB, c) })
 
 		// Protected routes
@@ -88,6 +201,8 @@ func (s *Server) setupRoutes() {
 			protected.POST("/rooms/:roomId/seat", s.handlePrivateTableSeat)
 			protected.POST("/rooms/:roomId/start", s.handlePrivateTableStart)
 			protected.POST("/rooms/:roomId/mode", s.handlePrivateTableMode)
+
+			protected.POST("/matches/:matchId/review", s.handlePostReview)
 		}
 	}
 

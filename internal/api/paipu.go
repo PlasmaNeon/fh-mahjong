@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,7 +21,7 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 		return
 	}
 
-	data, ok, errMsg := s.loadPaipuJSONWithErr(matchID)
+	data, ok, errMsg := s.loadPaipuJSONWithErr(c.Request.Context(), matchID)
 	if errMsg != "" {
 		respondError(c, http.StatusInternalServerError, errMsg)
 		return
@@ -37,8 +38,14 @@ func (s *Server) handleGetPaipu(c *gin.Context) {
 // checked-in local-dev fixtures. Internal DB errors are swallowed and treated
 // as "not found" — callers that need to distinguish a DB failure from a
 // genuine miss should use loadPaipuJSONWithErr instead.
-func (s *Server) loadPaipuJSON(matchID string) (string, bool) {
-	data, ok, _ := s.loadPaipuJSONWithErr(matchID)
+//
+// ctx bounds the underlying DB calls (DB.WithContext) — callers on the review
+// build path pass the build's whole-lifecycle bounded context (adversarial
+// round 25, Finding 1) so a stalled DB round trip can never hold a review
+// build slot open indefinitely; handleGetPaipu passes its own request
+// context.
+func (s *Server) loadPaipuJSON(ctx context.Context, matchID string) (string, bool) {
+	data, ok, _ := s.loadPaipuJSONWithErr(ctx, matchID)
 	return data, ok
 }
 
@@ -46,7 +53,7 @@ func (s *Server) loadPaipuJSON(matchID string) (string, bool) {
 // surfaces a non-empty errMsg when a DB lookup itself failed (as opposed to
 // simply finding no record), so handleGetPaipu can keep returning 500 for
 // that case exactly as it did before this helper was extracted.
-func (s *Server) loadPaipuJSONWithErr(matchID string) (data string, ok bool, errMsg string) {
+func (s *Server) loadPaipuJSONWithErr(ctx context.Context, matchID string) (data string, ok bool, errMsg string) {
 	// Try in-memory store first (works with or without DB)
 	if data, ok := s.GetPaipu(matchID); ok {
 		return data, true, ""
@@ -61,9 +68,11 @@ func (s *Server) loadPaipuJSONWithErr(matchID string) (data string, ok bool, err
 		return "", false, ""
 	}
 
+	db := s.DB.WithContext(ctx)
+
 	// Check paipu_records table (per-round paipus)
 	var record storage.PaipuRecord
-	if err := s.DB.Where("id = ?", matchID).First(&record).Error; err == nil {
+	if err := db.Where("id = ?", matchID).First(&record).Error; err == nil {
 		return record.Data, true, ""
 	} else if err != gorm.ErrRecordNotFound {
 		return "", false, "Failed to load paipu"
@@ -72,7 +81,7 @@ func (s *Server) loadPaipuJSONWithErr(matchID string) (data string, ok bool, err
 	// Fall back to legacy Match.PaipuJSON, but only for canonical match UUIDs.
 	if _, err := uuid.Parse(matchID); err == nil {
 		var match storage.Match
-		if err := s.DB.Where("id = ?", matchID).First(&match).Error; err == nil {
+		if err := db.Where("id = ?", matchID).First(&match).Error; err == nil {
 			if match.PaipuJSON != "" {
 				return match.PaipuJSON, true, ""
 			}

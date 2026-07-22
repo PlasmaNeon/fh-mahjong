@@ -243,7 +243,7 @@ func assertCallRecordsHaveDecisions(t *testing.T, paipu *engine.Paipu, decisions
 
 func TestExtractDecisionsClassicRoundTrip(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
-	decisions, err := ExtractDecisions(paipu)
+	decisions, err := ExtractDecisions(paipu, 0)
 	if err != nil {
 		t.Fatalf("ExtractDecisions: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestExtractDecisionsChongciMultiRound(t *testing.T) {
 	if len(paipu.Rounds) < 2 {
 		t.Fatalf("want a multi-round paipu for this test, got %d rounds", len(paipu.Rounds))
 	}
-	decisions, err := ExtractDecisions(paipu)
+	decisions, err := ExtractDecisions(paipu, 0)
 	if err != nil {
 		t.Fatalf("ExtractDecisions: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestExtractDecisionsChongciMultiRound(t *testing.T) {
 
 func TestObservationsChongciContextClassic(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
-	decisions, err := ExtractDecisions(paipu)
+	decisions, err := ExtractDecisions(paipu, 0)
 	if err != nil {
 		t.Fatalf("ExtractDecisions: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestObservationsChongciRealScores(t *testing.T) {
 			MaxHands:      4,
 		},
 	})
-	decisions, err := ExtractDecisions(paipu)
+	decisions, err := ExtractDecisions(paipu, 0)
 	if err != nil {
 		t.Fatalf("ExtractDecisions: %v", err)
 	}
@@ -395,7 +395,67 @@ func TestExtractDecisionsDivergenceAborts(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
 	// Corrupt one dealt tile: replay must abort, never emit a wrong review.
 	paipu.Rounds[0].Deals[0][0] = (paipu.Rounds[0].Deals[0][0] + 4) % 144
-	if _, err := ExtractDecisions(paipu); err == nil {
+	if _, err := ExtractDecisions(paipu, 0); err == nil {
 		t.Fatal("expected divergence error, got nil")
+	}
+}
+
+// TestExtractDecisionsEventWindowZeroMatchesLegacy is the regression bar for
+// Task 6: passing eventWindow==0 (through the EncodeObservationWithEvents
+// wrapper now used unconditionally by recordDecision) must produce
+// byte-identical observations to what rl.EncodeObservation itself would have
+// produced pre-Task-6 — no EventHistory, EventHistoryWindow zero.
+func TestExtractDecisionsEventWindowZeroMatchesLegacy(t *testing.T) {
+	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
+	decisions, err := ExtractDecisions(paipu, 0)
+	if err != nil {
+		t.Fatalf("ExtractDecisions: %v", err)
+	}
+	if len(decisions) == 0 {
+		t.Fatal("expected at least one decision")
+	}
+	for i, d := range decisions {
+		obs := d.Observation
+		if obs.EventHistoryWindow != 0 {
+			t.Fatalf("decision %d: EventHistoryWindow = %d, want 0", i, obs.EventHistoryWindow)
+		}
+		if len(obs.EventHistory) != 0 {
+			t.Fatalf("decision %d: EventHistory has %d entries, want 0", i, len(obs.EventHistory))
+		}
+	}
+}
+
+// TestExtractDecisionsEventWindowPlumbed checks that a positive eventWindow
+// reaches rl.EncodeObservationWithEvents on every decision: the window is
+// carried on the observation, the tail-windowed history never exceeds it,
+// and — since a full heuristic game has plenty of prior turns by the later
+// decisions — at least one decision actually has non-empty history (i.e.
+// game.PublicEvents() is really being threaded through, not silently
+// dropped).
+func TestExtractDecisionsEventWindowPlumbed(t *testing.T) {
+	const window = 8
+	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
+	decisions, err := ExtractDecisions(paipu, window)
+	if err != nil {
+		t.Fatalf("ExtractDecisions: %v", err)
+	}
+	if len(decisions) == 0 {
+		t.Fatal("expected at least one decision")
+	}
+	sawHistory := false
+	for i, d := range decisions {
+		obs := d.Observation
+		if obs.EventHistoryWindow != window {
+			t.Fatalf("decision %d: EventHistoryWindow = %d, want %d", i, obs.EventHistoryWindow, window)
+		}
+		if len(obs.EventHistory) > window {
+			t.Fatalf("decision %d: EventHistory has %d entries, exceeds window %d", i, len(obs.EventHistory), window)
+		}
+		if len(obs.EventHistory) > 0 {
+			sawHistory = true
+		}
+	}
+	if !sawHistory {
+		t.Fatal("expected at least one decision with non-empty event history")
 	}
 }

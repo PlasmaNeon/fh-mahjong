@@ -15,6 +15,7 @@ import { fetchReview, generateReview } from './reviewTypes'
 import { SEVERITY_THRESHOLDS, decisionSeverity, type SeverityThresholds } from './reviewUtils'
 import './replay.css'
 import { useI18n } from '../../i18n/I18nContext'
+import { useAuth } from '../../contexts/AuthContext'
 
 /**
  * Compute calledDirection from seat layout:
@@ -29,6 +30,7 @@ function getCalledDirection(meldHolderSeat: number, fromSeat: number): number {
 
 export default function Replay() {
   const { shortLanguage, toggleLanguage, t } = useI18n()
+  const { apiFetch } = useAuth()
   const { matchId } = useParams()
   const [paipu, setPaipu] = useState<Paipu | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -70,7 +72,7 @@ export default function Replay() {
     if (!matchId) return
     setReviewStatus('generating')
     setReviewError(null)
-    generateReview(matchId)
+    generateReview(matchId, apiFetch)
       .then(r => {
         setReview(r)
         setReviewStatus('ready')

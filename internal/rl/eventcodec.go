@@ -30,6 +30,23 @@ const (
 	// response), so an unbounded uint32 from config could OOM the process.
 	// A Fenghua round tops out around ~200 events; B2 trains at 128.
 	MaxEventHistoryWindow = 512
+
+	// EventContractV1 identifies the wire/semantic contract that
+	// packPublicEvent, renderEventHistory, and EncodeObservationWithEvents
+	// jointly implement. Mirrored verbatim as EVENT_CONTRACT_V1 in
+	// ai/src/fh_mahjong_ai/events.py — bump BOTH sides together on any
+	// breaking change. The contract fixes:
+	//   - window: bounded to [0, MaxEventHistoryWindow=512]
+	//   - truncation: tail-only — the newest `window` events are kept,
+	//     oldest-first order preserved
+	//   - padding: rows shorter than window are zero-padded, with the true
+	//     length carried out-of-band as an explicit count (never inferred
+	//     from a sentinel value)
+	//   - seats: encoded observer-relative (0=self,1=right,2=across,3=left),
+	//     never absolute
+	//   - lifetime: the event log resets to empty at each round boundary —
+	//     it never carries events across rounds
+	EventContractV1 = 1
 )
 
 func relativeSeatTo(observer, seat uint32) uint32 {

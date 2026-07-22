@@ -7,12 +7,19 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.serve_policy import PolicyHolder, PolicyRequestHandler
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.storage import save_checkpoint
+
+
+def _bearer(token: str) -> dict:
+    """The `Authorization: Bearer <token>` header POST /evaluate requires
+    (adversarial round 19) — mirrors POST /reload's header-based auth."""
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _tiny_policy() -> CheckpointPolicy:
@@ -69,12 +76,12 @@ class _EvaluateServer:
     """A ThreadingHTTPServer bound to port 0, serving a tiny policy, for
     exercising the /evaluate HTTP contract end to end."""
 
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, evaluate_token: str = "eval-token") -> None:
         checkpoint_path = tmp_path / "tiny.pt"
         model = PolicyValueNet(EnvConfig(), ModelConfig(residual_blocks=1))
         save_checkpoint(checkpoint_path, model, step=3)
         policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
-        holder = PolicyHolder(policy, manifest_path=tmp_path / "manifest.json")
+        holder = PolicyHolder(policy, manifest_path=tmp_path / "manifest.json", evaluate_token=evaluate_token)
         handler = type("BoundPolicyRequestHandler", (PolicyRequestHandler,), {"holder": holder})
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -113,7 +120,7 @@ def test_http_evaluate_endpoint_returns_masked_probs_and_value(tmp_path: Path) -
                 _observation_payload([1, 2, 3]),
             ]
         })
-        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json", **_bearer("eval-token")})
         response = conn.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         conn.close()
@@ -123,6 +130,12 @@ def test_http_evaluate_endpoint_returns_masked_probs_and_value(tmp_path: Path) -
     assert response.status == 200
     assert payload["checkpoint_path"].endswith("tiny.pt")
     assert payload["checkpoint_step"] == 3
+    # Round 17, Finding 2: /evaluate must publish the checkpoint's sha256
+    # from the SAME snapshot used for the batch — internal/review's
+    # cross-chunk consistency check needs it to detect a same-path hot
+    # reload mixing bytes from two different checkpoints within one review.
+    assert isinstance(payload.get("checkpoint_sha256"), str)
+    assert len(payload["checkpoint_sha256"]) == 64
     results = payload["results"]
     assert len(results) == 2
     for result, legal in zip(results, ([0, 5, 12], [1, 2, 3])):
@@ -136,12 +149,33 @@ def test_http_evaluate_endpoint_returns_masked_probs_and_value(tmp_path: Path) -
         assert isinstance(result["value"], float)
 
 
+def test_http_evaluate_endpoint_sha256_matches_healthz(tmp_path: Path) -> None:
+    # Round 17, Finding 2: /evaluate's checkpoint_sha256 must agree with
+    # /healthz's — both are derived from the SAME PolicyHolder snapshot, so a
+    # caller stitching together chunks from one review can trust the sha as
+    # the checkpoint's true identity, not just its (possibly reused) path.
+    server = _EvaluateServer(tmp_path)
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.request("GET", "/healthz")
+        healthz = json.loads(conn.getresponse().read().decode("utf-8"))
+
+        body = json.dumps({"observations": [_observation_payload([0, 5, 12])]})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json", **_bearer("eval-token")})
+        evaluate = json.loads(conn.getresponse().read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert healthz["checkpoint_sha256"] == evaluate["checkpoint_sha256"]
+
+
 def test_http_evaluate_endpoint_rejects_malformed_payload(tmp_path: Path) -> None:
     server = _EvaluateServer(tmp_path)
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
         body = json.dumps({"observations": [{"seat": 0, "planes": [], "scalars": [], "action_mask": []}]})
-        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json", **_bearer("eval-token")})
         response = conn.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         conn.close()
@@ -162,7 +196,7 @@ def test_http_evaluate_endpoint_rejects_all_zero_mask(tmp_path: Path) -> None:
                 _observation_payload([]),
             ]
         })
-        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json", **_bearer("eval-token")})
         response = conn.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         conn.close()
@@ -178,7 +212,7 @@ def test_http_evaluate_endpoint_rejects_oversized_batch(tmp_path: Path) -> None:
     try:
         conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
         body = json.dumps({"observations": [_observation_payload([0]) for _ in range(1025)]})
-        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json", **_bearer("eval-token")})
         response = conn.getresponse()
         payload = json.loads(response.read().decode("utf-8"))
         conn.close()
@@ -186,4 +220,68 @@ def test_http_evaluate_endpoint_rejects_oversized_batch(tmp_path: Path) -> None:
         server.close()
 
     assert response.status == 400
+    assert "error" in payload
+
+
+# --- adversarial round 19: /evaluate is disabled without a configured token -------------
+
+
+def test_http_evaluate_endpoint_disabled_without_configured_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No evaluate_token configured at all: /evaluate must refuse with 403
+    WITHOUT ever invoking evaluate_batch, even with a well-formed request."""
+    server = _EvaluateServer(tmp_path, evaluate_token=None)
+
+    def _tripwire(*args: object, **kwargs: object) -> None:
+        raise AssertionError("evaluate_batch must not be invoked when /evaluate is disabled")
+
+    monkeypatch.setattr(CheckpointPolicy, "evaluate_batch", _tripwire)
+
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        body = json.dumps({"observations": [_observation_payload([0, 5, 12])]})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        response = conn.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert response.status == 403
+    assert "error" in payload
+
+
+def test_http_evaluate_endpoint_missing_bearer_token_rejected(tmp_path: Path) -> None:
+    server = _EvaluateServer(tmp_path, evaluate_token="eval-token")
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        body = json.dumps({"observations": [_observation_payload([0, 5, 12])]})
+        conn.request("POST", "/evaluate", body=body, headers={"content-type": "application/json"})
+        response = conn.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert response.status == 403
+    assert "error" in payload
+
+
+def test_http_evaluate_endpoint_wrong_bearer_token_rejected(tmp_path: Path) -> None:
+    server = _EvaluateServer(tmp_path, evaluate_token="eval-token")
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        body = json.dumps({"observations": [_observation_payload([0, 5, 12])]})
+        conn.request(
+            "POST", "/evaluate", body=body,
+            headers={"content-type": "application/json", **_bearer("wrong-token")},
+        )
+        response = conn.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+        conn.close()
+    finally:
+        server.close()
+
+    assert response.status == 403
     assert "error" in payload

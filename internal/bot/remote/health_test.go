@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/plasma/fh-mahjong/internal/rl"
 )
 
 func TestDeriveHealthURL(t *testing.T) {
@@ -25,7 +27,9 @@ func TestDeriveHealthURL(t *testing.T) {
 func TestHealthChecker_Healthy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -50,7 +54,9 @@ func TestHealthChecker_CachesResult(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 
 	h := NewHealthChecker(srv.URL + "/act")
@@ -112,5 +118,209 @@ func TestHealthChecker_IdentityUnreachableAndNil(t *testing.T) {
 	var nilChecker *HealthChecker
 	if got := nilChecker.Identity(); got != "" {
 		t.Fatalf("nil Identity() = %q, want empty", got)
+	}
+}
+
+// FINDING 3: a reachable server whose healthz reports a different
+// event_window than this checker expects must be reported unhealthy — a
+// contract mismatch means every /act on this endpoint would be rejected (or
+// worse, silently mis-decoded), so RLAgentAvailable must not offer the seat.
+func TestHealthChecker_ExpectedEventWindowMismatchIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":64,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: reachable server reports event_window=64, checker expects 128")
+	}
+}
+
+// A matching event_window/contract_version must still report healthy.
+func TestHealthChecker_ExpectedEventWindowMatchIsHealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if !h.Healthy() {
+		t.Fatal("expected healthy: event_window/contract_version match the checker's expectation")
+	}
+	_ = rl.EventContractV1 // pin: the server's contract_version field must match this constant
+}
+
+// A window-0 checker (no WithExpectedEventWindow, the default / legacy
+// primary-policy case) talking to a server that never mentions the event
+// contract at all (a genuinely legacy /healthz body) keeps reachability-only
+// behavior: absent fields never make it unhealthy.
+func TestHealthChecker_WindowZeroLegacyNoFieldsIsHealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if !h.Healthy() {
+		t.Fatal("expected healthy: window-0 checker vs legacy server with no event-contract fields at all")
+	}
+}
+
+// FINDING 1 (adversarial round 2): a window-0 checker (default
+// RL_AGENT_EVENT_WINDOW=0) must NOT accept a server that explicitly PUBLISHES
+// an incompatible event_window (e.g. the policy service is serving iter_075
+// at window 128 while the backend is still configured for window 0) — every
+// /act call would 400 and silently fall back to the heuristic. Publishing the
+// contract is a claim that must match, even for a window-0 client.
+func TestHealthChecker_WindowZeroRejectsExplicitlyPublishedMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"checkpoint":"/models/iter_075.pt","checkpoint_step":1,"event_window":128,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs server explicitly publishing event_window=128")
+	}
+}
+
+// A window-0 checker vs a server that explicitly publishes event_window=0
+// (a claim that matches) stays healthy.
+func TestHealthChecker_WindowZeroAcceptsExplicitlyPublishedMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1,"event_window":0,"contract_version":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if !h.Healthy() {
+		t.Fatal("expected healthy: window-0 checker vs server explicitly publishing event_window=0")
+	}
+}
+
+// FINDING 1 (round 16): a non-JSON/undecodable 2xx healthz body must be
+// UNHEALTHY for every window, including window-0. This reverses the previous
+// alignment decision (window-0 used to tolerate non-JSON as "legacy
+// reachability") because every real policy server, including the pre-B2c
+// legacy one, always returns JSON on /healthz — a 2xx/non-JSON body only ever
+// means a misrouted URL, a reverse-proxy error page, or an SPA fallback, and
+// tolerating it let a misconfigured endpoint advertise itself as a healthy RL
+// agent while every /act silently fell back to the heuristic.
+func TestHealthChecker_NonJSONBodyWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs non-JSON healthz body (no longer tolerated as legacy reachability)")
+	}
+}
+
+func TestHealthChecker_NonJSONBodyWindowNonZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window>0 checker vs non-JSON healthz body (contract unverifiable)")
+	}
+}
+
+// A misrouted URL / reverse-proxy error page / SPA fallback typically returns
+// a 2xx HTML document, not a plain string — pin that this is also unhealthy
+// for a window-0 checker, since that's the realistic shape of the failure
+// this fix guards against.
+func TestHealthChecker_MisroutedHTMLBodyWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<!doctype html><html><body>404 - not found</body></html>"))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: window-0 checker vs a misrouted 2xx HTML/SPA-fallback body")
+	}
+}
+
+// FINDING 1 (round 17): a decodable-but-vacuous or explicitly-unhealthy body
+// must never be treated as "legacy reachability". serve_policy.py's /healthz
+// ALWAYS emits "ok": true on success (see do_GET); {} and null decode
+// without error and left every field at its zero value, so the old code fell
+// through to "Checkpoint=="" -> healthy, anonymous" — treating an empty
+// object or a JSON null the same as a genuinely legacy server. An explicit
+// "ok": false must also be rejected outright.
+func TestHealthChecker_EmptyObjectWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: empty JSON object is never a valid healthz body")
+	}
+}
+
+func TestHealthChecker_JSONNullWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`null`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: JSON null is never a valid healthz body")
+	}
+}
+
+func TestHealthChecker_ExplicitOkFalseWindowZeroIsUnhealthy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":false,"checkpoint":"/models/champ.pt","checkpoint_step":1}`))
+	}))
+	defer srv.Close()
+
+	h := NewHealthChecker(srv.URL + "/act")
+	if h.Healthy() {
+		t.Fatal("expected unhealthy: healthz explicitly reports ok=false")
+	}
+}
+
+// The reconstructed true legacy /healthz payload (mirrors main's
+// serve_policy.py do_GET, which always emits "ok": true alongside
+// checkpoint/checkpoint_step/sample_*) must still be healthy for a window-0
+// checker and unhealthy for an event checker expecting window 128 (legacy
+// servers never publish event_window at all).
+func TestHealthChecker_TrueLegacyPayload(t *testing.T) {
+	legacyBody := `{"ok":true,"checkpoint":"/models/champ.pt","checkpoint_step":1234,"sample_temperature":null,"sample_top_k":null,"sample_action_family":null,"sample_seed":42}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(legacyBody))
+	}))
+	defer srv.Close()
+
+	zeroChecker := NewHealthChecker(srv.URL + "/act")
+	if !zeroChecker.Healthy() {
+		t.Fatal("expected healthy: true legacy payload against a window-0 checker")
+	}
+
+	eventChecker := NewHealthChecker(srv.URL+"/act", WithExpectedEventWindow(128))
+	if eventChecker.Healthy() {
+		t.Fatal("expected unhealthy: true legacy payload never publishes event_window, so an event checker must fail closed")
 	}
 }

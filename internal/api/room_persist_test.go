@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -340,6 +341,62 @@ func TestRoomShutdown_PersistsBeforeOnShutdown(t *testing.T) {
 	}
 }
 
+// closeTrackingPolicy is a bot.Policy stub that also implements Close(), so
+// tests can assert the room's teardown path actually calls it — the
+// goroutine-leak regression this guards against (bot.ShadowPolicy's worker +
+// queue never getting torn down when a private-room match ends).
+type closeTrackingPolicy struct {
+	stubPolicy
+	mu     sync.Mutex
+	closed int
+}
+
+func (p *closeTrackingPolicy) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed++
+}
+
+func (p *closeTrackingPolicy) closeCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closed
+}
+
+// A closeable seat policy (bot.ShadowPolicy in production) must be closed
+// exactly once when the room shuts down — otherwise its worker goroutine
+// and queue leak for the lifetime of the process. The room-wide BotPolicy
+// default must be closed too, and a policy installed as both a seat
+// override and the BotPolicy default must still be closed exactly once
+// (pointer-deduped), never twice.
+func TestRoomShutdown_ClosesSeatPolicies(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "close-match")
+
+	seatPolicy := &closeTrackingPolicy{}
+	sharedPolicy := &closeTrackingPolicy{}
+
+	room := NewRoom("close-match", nil, db)
+	room.Seats[0] = &Client{UserID: 7, Username: "human", Send: make(chan []byte, 64)}
+	room.SeatOwners[0] = 7
+	room.SeatPolicies[1] = seatPolicy
+	// Installed as both a seat override and the room-wide default: must
+	// still only be closed once.
+	room.SeatPolicies[2] = sharedPolicy
+	room.BotPolicy = sharedPolicy
+
+	go room.Start()
+	room.Shutdown <- true
+	<-room.Done
+
+	if got := seatPolicy.closeCount(); got != 1 {
+		t.Fatalf("expected seat policy Close() called exactly once, got %d", got)
+	}
+	if got := sharedPolicy.closeCount(); got != 1 {
+		t.Fatalf("expected shared seat/BotPolicy Close() called exactly once (deduped), got %d", got)
+	}
+}
+
 // observedIDsPolicy stubs an RL policy that reports which checkpoints
 // actually served its actions.
 type observedIDsPolicy struct {
@@ -541,6 +598,77 @@ func TestPersistMatch_RecordsDecisionProvenance(t *testing.T) {
 	}
 	if mp.RemoteDecisions != 40 || mp.FallbackDecisions != 3 {
 		t.Fatalf("row provenance = (%d, %d), want (40, 3)", mp.RemoteDecisions, mp.FallbackDecisions)
+	}
+}
+
+// statsAndIdentityPolicy stubs an RL primary that reports both decision
+// provenance counts and observed checkpoint identities — the shape
+// remote.HTTPPolicy implements in production.
+type statsAndIdentityPolicy struct {
+	stubPolicy
+	remote, fallback uint64
+	ids              []string
+}
+
+func (p statsAndIdentityPolicy) DecisionCounts() (uint64, uint64) { return p.remote, p.fallback }
+func (p statsAndIdentityPolicy) ObservedPolicyIDs() []string      { return p.ids }
+
+// noopShadowCandidate is a harmless bot.ContextPolicy stub used only to
+// satisfy bot.NewShadowPolicy's candidate argument; the seat-attribution
+// path under test never exercises it directly.
+type noopShadowCandidate struct{}
+
+func (noopShadowCandidate) ChooseActionCtx(_ *bot.DecisionContext) *pb.PlayerAction { return nil }
+
+// FINDING 1: a shadow-mode RL seat (bot.ShadowPolicy wrapping the primary)
+// must not lose its primary's decision-provenance counts / observed
+// checkpoint identities behind the wrapper — reconcileRLPolicyIDs type-
+// asserts the seat's policy against policyDecisionCounter/
+// policyIdentityReporter, and ShadowPolicy must forward both to the wrapped
+// primary rather than discarding them, or shadow-mode paipu keep stale
+// match-start labels/counts.
+func TestPersistMatch_ShadowPolicyForwardsPrimaryAttribution(t *testing.T) {
+	db := newPersistTestDB(t)
+	insertInProgressMatch(t, db, "shadow-attrib-match")
+
+	room := NewRoom("shadow-attrib-match", nil, db)
+	room.SeatInfos = map[uint32]SeatInfo{
+		2: {Kind: "bot", Difficulty: pb.Difficulty_DIFFICULTY_RL, PolicyID: "a.pt@step100"},
+	}
+	primary := statsAndIdentityPolicy{
+		remote:   40,
+		fallback: 3,
+		ids:      []string{"a.pt@step100", "b.pt@step200"},
+	}
+	shadowPolicy := bot.NewShadowPolicy(primary, noopShadowCandidate{}, 4)
+	defer shadowPolicy.Close()
+	room.SeatPolicies = map[uint32]bot.Policy{
+		2: shadowPolicy,
+	}
+	room.registerPaipuPlayers()
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("engine start: %v", err)
+	}
+	room.Engine.State.Phase = pb.GamePhase_PHASE_MATCH_END
+
+	if err := room.persistMatch(); err != nil {
+		t.Fatalf("persistMatch: %v", err)
+	}
+
+	var row storage.Match
+	if err := db.First(&row, "id = ?", "shadow-attrib-match").Error; err != nil {
+		t.Fatalf("load match: %v", err)
+	}
+	var paipu engine.Paipu
+	if err := json.Unmarshal([]byte(row.PaipuJSON), &paipu); err != nil {
+		t.Fatalf("parse paipu: %v", err)
+	}
+	p := paipu.Players[2]
+	if p.PolicyID != "a.pt@step100,b.pt@step200" {
+		t.Fatalf("seat 2 policyId through ShadowPolicy = %q, want observed checkpoints joined", p.PolicyID)
+	}
+	if p.RemoteDecisions != 40 || p.FallbackDecisions != 3 {
+		t.Fatalf("seat 2 provenance through ShadowPolicy = (%d, %d), want (40, 3)", p.RemoteDecisions, p.FallbackDecisions)
 	}
 }
 
