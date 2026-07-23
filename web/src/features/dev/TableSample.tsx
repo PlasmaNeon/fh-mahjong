@@ -84,11 +84,23 @@ const players: PlayerTableView[] = [
   },
 ]
 
+const calledPlayers: PlayerTableView[] = players.map((player) => player.seat === 0
+  ? {
+      ...player,
+      closedHand: [...selfConcealed.slice(0, 10), selfDrawn],
+      handBackCount: 11,
+      openMelds: [pon(1, 9, 1)],
+    }
+  : player)
+
 const wildTiles: TileLike[] = [t(4, 6)]
 
 export default function TableSample() {
   const stageLayout = useGameStageLayout()
   const [fixture, setFixture] = useState<Fixture>('idle')
+  const [liftedTileId, setLiftedTileId] = useState<number | null>(null)
+  const handInteractive = fixture === 'active' || fixture === 'called-hand'
+  const tablePlayers = fixture === 'called-hand' ? calledPlayers : players
 
   const stageShellStyle = {
     '--game-stage-scaled-width': `${stageLayout.scaledWidth}px`,
@@ -142,21 +154,32 @@ export default function TableSample() {
 
   return (
     <div className="stage-rotator">
-      <FixtureToolbar value={fixture} onChange={setFixture} />
+      <FixtureToolbar
+        value={fixture}
+        onChange={(nextFixture) => {
+          setFixture(nextFixture)
+          setLiftedTileId(null)
+        }}
+      />
       <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
         <div className="game-stage-frame">
           <div
             className="game-stage"
+            data-discard-mode={handInteractive ? 'double' : undefined}
             data-compact={stageLayout.compact ? 'true' : undefined}
             style={stageStyle}
           >
             <TableBoard
               viewSeat={0}
-              players={players}
+              players={tablePlayers}
               activeSeat={0}
               wildTiles={wildTiles}
               hudChips={[{ label: 'East 2' }, { label: '58 tiles' }]}
               actionBar={actionBar}
+              liftedTileId={liftedTileId}
+              onHandTileClick={handInteractive
+                ? (tile) => setLiftedTileId((current) => current === tile.id ? null : tile.id)
+                : undefined}
               callableDiscard={fixture === 'callable' ? { seat: 1, tileId: callableTile.id } : null}
               cornerInfo={<div className="wild-tile-corner-info-tag">Fenghua</div>}
             />
@@ -170,11 +193,12 @@ export default function TableSample() {
   )
 }
 
-type Fixture = 'idle' | 'active' | 'interrupt' | 'callable' | 'round-result' | 'match-end' | 'exit'
+type Fixture = 'idle' | 'active' | 'called-hand' | 'interrupt' | 'callable' | 'round-result' | 'match-end' | 'exit'
 
 const FIXTURES: Array<{ value: Fixture; label: string }> = [
   { value: 'idle', label: 'Idle' },
   { value: 'active', label: 'Active turn' },
+  { value: 'called-hand', label: 'Called hand' },
   { value: 'interrupt', label: 'Interrupt' },
   { value: 'callable', label: 'Callable' },
   { value: 'round-result', label: 'Round result' },

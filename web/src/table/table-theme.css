@@ -269,6 +269,8 @@
 /* A lifted (selected) tile stays raised. No coloured glow — a brass glow would be
    indistinguishable from the wild-tile indicator (below); the raise + z-index mark it. */
 .game-stage[data-discard-mode] .mahjong-tile.lifted { transform: translateY(-14px); z-index: 20; }
+.game-stage[data-compact="true"][data-discard-mode="single"] .mahjong-tile.interactive:not(.lifted):hover { transform: translateY(-16px) rotate(-1deg); }
+.game-stage[data-compact="true"][data-discard-mode] .mahjong-tile.lifted { transform: translateY(-22px); }
 .mahjong-tile.wild-tile:not(.mahjong-tile--no-glow) { filter: drop-shadow(0 0 7px rgba(230,161,92,0.95)) drop-shadow(0 5px 3px rgba(0,0,0,0.32)); }
 
 .discard-pool-tile-callable::after,
