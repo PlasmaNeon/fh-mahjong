@@ -21,7 +21,7 @@ Authentication pages. Routes: `/login`, `/account`.
 - **AuthDialog.tsx** — Focus-trapped bone-paper account popup. Optional background-location opens support close/Escape/backdrop dismissal and restore focus; protected/invitation continuations omit dismissal
 - **authModal.ts** — Shared route-state and optional-versus-required login presentation rules
 - **Login.tsx** — Invitation-aware login overlay; validates `returnTo` and resumes protected routes automatically after authentication
-- **Account.tsx** — Edits the unique username/email and exposes explicit current-device logout
+- **Account.tsx** — Edits the unique username and the **optional** email (blank clears it; either way the current password is required), and exposes explicit current-device logout. `AuthUser.email` is `string | null` — always null-guard it. Password reset exists on the backend but is deliberately unlinked here
 
 ### `lobby/`
 
