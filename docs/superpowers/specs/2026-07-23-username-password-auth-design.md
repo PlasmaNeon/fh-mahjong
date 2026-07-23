@@ -242,8 +242,9 @@ email argument. `TestNormalizeEmail` stays as is.
 
 Web:
 
-- A vitest asserting the register request body contains no `email` key and that
-  the register form renders no email input.
+- A vitest asserting the register request body contains no `email` key.
+  Rendering `AuthTicket` itself needs the auth context, so the absence of the
+  input is confirmed by manual check rather than by a unit test.
 
 ## Docs
 
