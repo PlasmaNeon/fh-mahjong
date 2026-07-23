@@ -60,7 +60,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'account.save': '保存账户',
   'account.signOut': '退出登录',
   'account.noChanges': '没有需要保存的更改。',
-  'account.emailHelp': '选填。仅用于找回账户，可以留空。',
+  'account.emailHelp': '选填。仅用于日后找回账户，可以留空。',
   'account.passwordRequired': '请输入当前密码以添加、修改或移除邮箱。',
   'account.saved': '账户已保存。',
   'account.saveFailed': '保存账户失败',

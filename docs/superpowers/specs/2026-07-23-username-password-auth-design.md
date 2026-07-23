@@ -73,12 +73,20 @@ range, by which time the 15-minute TTL has expired the code.
 Inside `AutoMigrate`, following the explicit-step style already in that
 function:
 
-1. `UPDATE users SET email = NULL WHERE email = ''` — runs on both dialects, so
-   any row that reached an empty string becomes a proper NULL.
-2. Postgres only, guarded on `db.Dialector.Name() == "postgres"` and on the
+1. Postgres only, guarded on `db.Dialector.Name() == "postgres"` and on the
    column existing: `ALTER TABLE users ALTER COLUMN email DROP NOT NULL`. The
    statement is idempotent. SQLite test databases are created fresh from the new
    model, so they never carry the old NOT NULL.
+2. `UPDATE users SET email = NULL WHERE email = ''` — runs on both dialects, so
+   any row that reached an empty string becomes a proper NULL.
+
+The `DROP NOT NULL` must run *before* the `UPDATE ... SET email = NULL`, not
+after: on Postgres, writing NULL into a column that is still declared `NOT
+NULL` fails outright, so nulling any row has to wait until the constraint is
+already gone. (An earlier draft of this section had the two steps in the
+opposite order; the shipped implementation in `internal/storage/db.go` runs
+`DROP NOT NULL` first for exactly this reason — do not "fix" the code to match
+that ordering.)
 
 The existing fail-closed check for a legacy `users` table with no `email` column
 is unchanged.
@@ -89,9 +97,15 @@ is unchanged.
 
 ### POST /api/v1/auth/register
 
-`RegisterRequest` loses its `Email` field entirely. `Username` becomes
-`binding:"required"`; the `displayName` legacy alias and its `resolveAlias`
-disagreement check stay. Password stays `min=8`. Username validation
+`RegisterRequest` loses its `Email` field entirely. `Username` carries no
+`binding` tag at all — a `required` tag would reject every request that
+supplies only the legacy `displayName` alias, since gin's validator checks
+each field independently before `resolveAlias` ever runs, and the two fields
+are meant to be interchangeable. Instead, `resolveAlias(req.Username,
+req.DisplayName, "username")` reconciles the two (rejecting a request that
+sets both to different values), and `validateUsername` on the result is what
+produces the 400 for an empty/missing name, exactly as it already did for
+requests with no email. Password stays `min=8`. Username validation
 (`validateUsername`: 2–30 runes, letters/numbers/space/`_`/`-`, no `@`) is
 unchanged.
 

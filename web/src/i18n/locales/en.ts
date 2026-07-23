@@ -58,7 +58,7 @@ export const en = {
   'account.save': 'Save Account',
   'account.signOut': 'Sign Out',
   'account.noChanges': 'No changes to save.',
-  'account.emailHelp': 'Optional. Kept only so your account can be recovered — leave it blank if you prefer.',
+  'account.emailHelp': 'Optional. Kept for future account recovery — leave it blank if you prefer.',
   'account.passwordRequired': 'Enter your current password to add, change, or remove your email.',
   'account.saved': 'Account saved.',
   'account.saveFailed': 'Failed to save account',

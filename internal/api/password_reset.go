@@ -134,6 +134,10 @@ func (h *AuthHandler) issuePasswordResetCode(ctx context.Context, clientIP, iden
 		return
 	}
 
+	// Keep the table bounded without another background worker, mirroring
+	// createSession: indexed, and only on the rare issue path.
+	h.DB.Where("expires_at < ?", time.Now().Add(-24*time.Hour)).Delete(&storage.PasswordResetCode{})
+
 	if err := h.Mail.SendPasswordResetCode(ctx, *user.Email, code); err != nil {
 		log.Printf("password reset: sending code: %v", err)
 	}

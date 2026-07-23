@@ -24,6 +24,7 @@ Defines the database schema for user accounts and match history using GORM (Go O
 
 - Used by `internal/api/auth.go` for user CRUD and `internal/api/room.go` / `internal/api/paipu.go` for match replay persistence and retrieval.
 - `AutoMigrate` owns the username cutover: sanitize friendly names, preserve the oldest collision, append `-2`/`-3`, backfill `username_key`, then create its unique index.
+- The nullable-email migration (`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`, Postgres only) is **one-way**. The pre-change model declared `email` as `not null`; running an older binary against a database that already has an account with no email would have its `AutoMigrate` try to `SET NOT NULL` instead, which fails as soon as any such row exists, and `cmd/server/main.go` treats an `AutoMigrate` error as fatal at startup. Roll forward only — never deploy a pre-nullable-email binary over a database that has accepted email-less registrations.
 - `AutoMigrate` also owns the completed-match history cutover. It parses only the minimum paipu player/final-score fields, preserves competition ranking for ties, and logs recovered/skipped counts.
 - PostgreSQL connection is established in `cmd/server/main.go` and passed through.
 - Rating system and match history are Phase 3 features (not yet fully implemented).

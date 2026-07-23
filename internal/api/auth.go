@@ -363,6 +363,10 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		case normalized == "":
 			emailChange = user.Email != nil
 		case user.Email == nil || *user.Email != normalized:
+			if len(normalized) > 255 {
+				respondError(c, http.StatusBadRequest, "Invalid email address")
+				return
+			}
 			parsed, err := netmail.ParseAddress(normalized)
 			if err != nil || parsed.Name != "" || parsed.Address != normalized || strings.Count(normalized, "@") != 1 {
 				respondError(c, http.StatusBadRequest, "Invalid email address")
