@@ -25,9 +25,9 @@ export default function Account() {
             return
         }
         if (user) {
-            setEmail(user.email)
+            setEmail(user.email ?? '')
             setUsername(user.username)
-            setInitialEmail(user.email)
+            setInitialEmail(user.email ?? '')
             setInitialUsername(user.username)
         }
     }, [authStatus, navigate, user])
@@ -46,9 +46,9 @@ export default function Account() {
             const data = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(data.error || t('account.saveFailed'))
             completeAuth(data as AuthPayload)
-            setInitialEmail(data.user.email)
+            setInitialEmail(data.user.email ?? '')
             setInitialUsername(data.user.username)
-            setEmail(data.user.email)
+            setEmail(data.user.email ?? '')
             setUsername(data.user.username)
             setCurrentPassword('')
             if (usernameChanged) { disconnect(); connect() }
