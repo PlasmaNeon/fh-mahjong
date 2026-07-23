@@ -748,20 +748,17 @@ func TestLogSenderRecordsRecipientAndCode(t *testing.T) {
 }
 
 // LogSender must satisfy Sender, since that is the seam a real provider slots
-// into later.
-func TestLogSenderImplementsSender(t *testing.T) {
-	var sender Sender = LogSender{}
-	if sender == nil {
-		t.Fatal("LogSender must satisfy Sender")
-	}
-}
+// into later. This is a compile-time assertion — a runtime nil check would
+// assert nothing, because a non-pointer value assigned to an interface is
+// never nil.
+var _ Sender = LogSender{}
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/mail/ -v`
 
-Expected: FAIL — `internal/mail/mail.go` does not exist, so `Sender` and `LogSender` are undefined.
+Expected: FAIL — `internal/mail/mail.go` does not exist, so `Sender` and `LogSender` are undefined (the failure is a compile error, which includes the `var _ Sender` assertion).
 
 - [ ] **Step 3: Write the package**
 
