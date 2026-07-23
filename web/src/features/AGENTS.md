@@ -17,7 +17,7 @@ User-facing feature copy uses the shared `useI18n()` context. English and Simpli
 Authentication pages. Routes: `/login`, `/account`.
 
 - **authClient.ts** — Credentialed fetch/CSRF helpers, safe internal return-path validation, and one-time cleanup of legacy JWT storage
-- **AuthTicket.tsx** — Shared sign-in/register ticket. Login accepts one username-or-email field; registration collects the unique friendly username, email, and password
+- **AuthTicket.tsx** — Shared sign-in/register ticket. Login accepts one username-or-email field (an account can add an address later and sign in with it); registration collects only the unique friendly username and password — no email at signup. `authClient.ts`'s `authRequestBody(mode, fields)` builds the per-mode request body
 - **AuthDialog.tsx** — Focus-trapped bone-paper account popup. Optional background-location opens support close/Escape/backdrop dismissal and restore focus; protected/invitation continuations omit dismissal
 - **authModal.ts** — Shared route-state and optional-versus-required login presentation rules
 - **Login.tsx** — Invitation-aware login overlay; validates `returnTo` and resumes protected routes automatically after authentication
