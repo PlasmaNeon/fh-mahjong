@@ -2,7 +2,9 @@ import { getApiUrl } from '../../config'
 
 export type AuthUser = {
   id: number
-  email: string
+  // null when the account has no address on file. Email is optional and set
+  // in the profile, never at registration.
+  email: string | null
   username: string
   rating: number
 }
@@ -10,6 +12,22 @@ export type AuthUser = {
 export type AuthPayload = {
   user: AuthUser
   csrfToken: string
+}
+
+export type AuthMode = 'login' | 'register'
+
+export type AuthFields = {
+  identifier: string
+  username: string
+  password: string
+}
+
+// Registration deliberately sends no email key at all: accounts are created
+// from a username and password, and an address is added later in the profile.
+export function authRequestBody(mode: AuthMode, fields: AuthFields) {
+  return mode === 'register'
+    ? { username: fields.username, password: fields.password }
+    : { identifier: fields.identifier, password: fields.password }
 }
 
 type StorageWriter = Pick<Storage, 'removeItem'>

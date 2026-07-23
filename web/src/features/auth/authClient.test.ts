@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { authRequestInit, clearLegacyCredentials, safeReturnTo, stripLegacyTokenParameter } from './authClient'
+import { authRequestBody, authRequestInit, clearLegacyCredentials, safeReturnTo, stripLegacyTokenParameter } from './authClient'
 
 describe('safeReturnTo', () => {
   it('keeps internal application paths', () => {
@@ -37,5 +37,19 @@ describe('stripLegacyTokenParameter', () => {
   it('removes old room credentials while preserving other navigation state', () => {
     expect(stripLegacyTokenParameter('https://club.example/room/rain1234?token=secret&seat=east#invite'))
       .toBe('/room/rain1234?seat=east#invite')
+  })
+})
+
+describe('authRequestBody', () => {
+  const fields = { identifier: 'river wind', username: 'River Wind', password: 'hunter2pw' }
+
+  it('registers with a username and password only', () => {
+    const body = authRequestBody('register', fields)
+    expect(body).toEqual({ username: 'River Wind', password: 'hunter2pw' })
+    expect('email' in body).toBe(false)
+  })
+
+  it('signs in with the shared username-or-email identifier', () => {
+    expect(authRequestBody('login', fields)).toEqual({ identifier: 'river wind', password: 'hunter2pw' })
   })
 })
