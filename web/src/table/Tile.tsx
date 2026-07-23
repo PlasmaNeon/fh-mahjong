@@ -6,6 +6,7 @@ type TileComponentProps = {
   tile: TileLike
   isInteractive?: boolean
   isLifted?: boolean
+  choiceState?: 'eligible' | 'selected' | 'disabled'
   size?: 'normal' | 'small'
   noGlow?: boolean
   isWild?: boolean
@@ -16,6 +17,7 @@ export const TileComponent = memo(function TileComponent({
   tile,
   isInteractive = false,
   isLifted = false,
+  choiceState,
   size = 'normal',
   noGlow = false,
   isWild = false,
@@ -25,7 +27,7 @@ export const TileComponent = memo(function TileComponent({
 
   return (
     <div
-      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${noGlow ? 'mahjong-tile--no-glow' : ''} ${isInteractive ? 'interactive' : ''} ${isLifted ? 'lifted' : ''} ${size === 'small' ? 'small' : ''}`}
+      className={`mahjong-tile ${isWild ? 'wild-tile' : ''} ${noGlow ? 'mahjong-tile--no-glow' : ''} ${isInteractive ? 'interactive' : ''} ${isLifted ? 'lifted' : ''} ${choiceState ? `mahjong-tile--choice-${choiceState}` : ''} ${size === 'small' ? 'small' : ''}`}
       onClick={() => isInteractive && onTileClick?.(tile)}
       style={{
         padding: 0,

@@ -15,6 +15,7 @@ import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
+import { collapseChiiActions, eligibleChiiTileIds, resolveChiiTileClick } from './chiiChoice';
 import { loadDiscardMode, saveDiscardMode } from './discardMode';
 import { resolveHandTileClick } from './handTileClick';
 import { shouldClearLift } from './clearLift';
@@ -86,6 +87,9 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
     const [discardMode, setDiscardMode] = useState(loadDiscardMode);
     const [liftedTileId, setLiftedTileId] = useState<number | null>(null);
+    // undefined = normal interrupt actions; null = choosing the first chii tile;
+    // number = the first tile is selected and the matching second tiles remain.
+    const [chiiChoiceSelectedTileId, setChiiChoiceSelectedTileId] = useState<number | null | undefined>(undefined);
     const stageLayout = useGameStageLayout();
 
     // Reset ready state when a new round starts
@@ -106,6 +110,18 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const validActions = rawValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_FLOWER_REVEAL);
     const orderedValidActions = orderTableActions(validActions);
     const orderedInterruptActions = orderedValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_PASS);
+    const chiiActions = orderedInterruptActions.filter((action: any) => action.type === game.ActionType.ACTION_CHII);
+    const displayInterruptActions = collapseChiiActions(orderedInterruptActions);
+    const isChoosingChii = chiiChoiceSelectedTileId !== undefined;
+    const chiiChoiceKey = chiiActions
+        .map((action: any) => (action.meldTiles || []).map((tile: any) => tile.id).join(','))
+        .join('|');
+
+    useEffect(() => {
+        if (gameState.phase !== 3 || chiiActions.length < 2) {
+            setChiiChoiceSelectedTileId(undefined);
+        }
+    }, [gameState.phase, chiiActions.length, chiiChoiceKey]);
 
     // Debug: log discard conditions each state update
     console.log('[Discard Debug]', {
@@ -221,6 +237,34 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         }
     }, [socket]);
 
+    const chiiHandTiles = myPlayer?.closedHand || [];
+    const chiiEligibleTileIds = isChoosingChii
+        ? eligibleChiiTileIds(chiiActions, chiiHandTiles, chiiChoiceSelectedTileId)
+        : new Set<number>();
+    const chiiSelectedTileIds = chiiChoiceSelectedTileId == null
+        ? new Set<number>()
+        : new Set<number>([chiiChoiceSelectedTileId]);
+    const handTileChoice = isChoosingChii
+        ? { eligibleTileIds: chiiEligibleTileIds, selectedTileIds: chiiSelectedTileIds }
+        : null;
+
+    const onChiiHandTileClick = (tile: game.ITile) => {
+        if (!isChoosingChii) return;
+        const result = resolveChiiTileClick({
+            actions: chiiActions,
+            hand: chiiHandTiles,
+            selectedTileId: chiiChoiceSelectedTileId,
+            clickedTile: tile,
+        });
+        if (result.kind === 'submit') {
+            setHasSubmittedInterrupt(true);
+            setChiiChoiceSelectedTileId(undefined);
+            handleAction(game.ActionType.ACTION_CHII, undefined, result.action.meldTiles || []);
+        } else if (result.kind === 'select') {
+            setChiiChoiceSelectedTileId(result.tileId);
+        }
+    };
+
     // Drop the lift when it can no longer refer to the tile the player raised:
     // a new round (tile ids are recycled each round, so a surviving id would be
     // a different physical tile) or the lifted tile leaving the self hand
@@ -310,14 +354,41 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const actionBar = (showInterruptActions || showTurnActions) ? (
         <div className="table-action-bar">
             {showInterruptActions && (
+                isChoosingChii ? (
+                    <div className="chii-choice-prompt" role="status" aria-live="polite">
+                        <span className="chii-choice-prompt__call">{t('game.chii')}</span>
+                        <span className="chii-choice-prompt__instruction">
+                            {t(chiiChoiceSelectedTileId == null ? 'game.chooseChiiFirst' : 'game.chooseChiiSecond')}
+                        </span>
+                        <button
+                            type="button"
+                            className="chii-choice-prompt__cancel"
+                            onClick={() => setChiiChoiceSelectedTileId(undefined)}
+                        >
+                            {t('game.cancelChoice')}
+                        </button>
+                    </div>
+                ) : (
                 <>
-                    {orderedInterruptActions.map((action: any, i: number) => {
+                    {displayInterruptActions.map((action: any, i: number) => {
                         const meta = getActionMeta(action);
 
                         return (
-                            <button key={i} onClick={() => { setHasSubmittedInterrupt(true); handleAction(action.type, undefined, action.meldTiles || []); }} className={`table-action-btn ${meta.accent}`}>
+                            <button
+                                key={i}
+                                onClick={() => {
+                                    if (action.type === game.ActionType.ACTION_CHII && chiiActions.length > 1) {
+                                        setLiftedTileId(null);
+                                        setChiiChoiceSelectedTileId(null);
+                                        return;
+                                    }
+                                    setHasSubmittedInterrupt(true);
+                                    handleAction(action.type, undefined, action.meldTiles || []);
+                                }}
+                                className={`table-action-btn ${meta.accent}`}
+                            >
                                 <span className="table-action-btn-label">{meta.label}</span>
-                                {action.meldTiles && action.meldTiles.length > 0 && (
+                                {action.type !== game.ActionType.ACTION_CHII && action.meldTiles && action.meldTiles.length > 0 && (
                                     <div className="table-action-preview">
                                         {action.meldTiles.map((meldTile: any, meldTileIndex: number) => (
                                             <TileComponent key={meldTileIndex} tile={meldTile} size="small" isWild={isWildTile(meldTile)} />
@@ -331,6 +402,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                         {t('game.pass')}
                     </button>
                 </>
+                )
             )}
 
             {showTurnActions && (
@@ -481,7 +553,13 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                 />
             )}
             <div className="game-stage-frame" style={stageFrameStyle}>
-                <div className="game-stage" data-discard-mode={discardMode} data-compact={stageLayout.compact ? 'true' : undefined} style={stageStyle}>
+                <div
+                    className="game-stage"
+                    data-discard-mode={discardMode}
+                    data-chii-choice={isChoosingChii ? 'true' : undefined}
+                    data-compact={stageLayout.compact ? 'true' : undefined}
+                    style={stageStyle}
+                >
                     <TableBoard
                         viewSeat={mySeatId}
                         players={playerViews}
@@ -507,7 +585,8 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                             </>
                         ) : null}
                         liftedTileId={liftedTileId}
-                        onHandTileClick={onHandTileClick}
+                        onHandTileClick={isChoosingChii ? onChiiHandTileClick : onHandTileClick}
+                        handTileChoice={handTileChoice}
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}

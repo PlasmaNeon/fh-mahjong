@@ -3,7 +3,7 @@ import { ClosedHand } from './ClosedHand'
 import { FlowerZone } from './FlowerZone'
 import { OpenMeldZone } from './OpenMeldZone'
 import { concealedHandReserveTiles } from './handReserve'
-import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
+import type { HandTileChoice, PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type SeatBundleProps = {
   isSelf: boolean
@@ -12,6 +12,7 @@ type SeatBundleProps = {
   interactive?: boolean
   liftedTileId?: number | null
   onHandTileClick?: (tile: TileLike) => void
+  handTileChoice?: HandTileChoice | null
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -28,6 +29,7 @@ export function SeatBundle({
   interactive = false,
   liftedTileId = null,
   onHandTileClick,
+  handTileChoice = null,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -53,6 +55,7 @@ export function SeatBundle({
         interactive={interactive}
         liftedTileId={liftedTileId}
         onHandTileClick={onHandTileClick}
+        handTileChoice={handTileChoice}
         isWildTile={isWildTile}
         hiddenTileIds={hiddenTileIds}
         hiddenSlots={hiddenSlots}

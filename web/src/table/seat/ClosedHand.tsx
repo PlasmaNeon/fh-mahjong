@@ -4,7 +4,7 @@ import { TileComponent } from '../Tile'
 import { computeStableDisplayOrder } from '../handOrdering'
 import { tileIdsEqual } from '../meldOrdering'
 import { isAnonymousTile } from '../types'
-import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
+import type { HandTileChoice, PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type ClosedHandProps = {
   isSelf: boolean
@@ -13,6 +13,7 @@ type ClosedHandProps = {
   interactive?: boolean
   liftedTileId?: number | null
   onHandTileClick?: (tile: TileLike) => void
+  handTileChoice?: HandTileChoice | null
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -29,6 +30,7 @@ export function ClosedHand({
   interactive = false,
   liftedTileId = null,
   onHandTileClick,
+  handTileChoice = null,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -77,6 +79,11 @@ export function ClosedHand({
     // drawn and is now merging into the row from the separate drawn slot.
     const isMergingDrawnTile = isSelf && lastDrawnTileId.current === tile.id && !hasDrawnTile
     const isHiddenByOverlay = (hiddenTileIds?.has(tile.id) ?? false) || hiddenSlot
+    const isChoiceSelected = handTileChoice?.selectedTileIds.has(tile.id) ?? false
+    const isChoiceEligible = handTileChoice?.eligibleTileIds.has(tile.id) ?? false
+    const choiceState = handTileChoice
+      ? (isChoiceSelected ? 'selected' : isChoiceEligible ? 'eligible' : 'disabled')
+      : undefined
 
     return (
       <motion.div
@@ -105,8 +112,9 @@ export function ClosedHand({
       >
         <TileComponent
           tile={tile}
-          isInteractive={interactive}
+          isInteractive={interactive && (!handTileChoice || isChoiceEligible)}
           isLifted={liftedTileId != null && tileIdsEqual(tile.id, liftedTileId)}
+          choiceState={choiceState}
           isWild={isWildTile(tile)}
           onTileClick={onHandTileClick}
           size={isSelf ? 'normal' : 'small'}
