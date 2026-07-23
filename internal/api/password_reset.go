@@ -138,7 +138,85 @@ func (h *AuthHandler) issuePasswordResetCode(ctx context.Context, clientIP, iden
 	}
 }
 
-// ConfirmPasswordReset is implemented in the next task.
+// passwordResetGenericError is the single message every confirm failure gets:
+// unknown identifier, no outstanding code, expired, already consumed, attempts
+// spent, and simply wrong all read identically.
+const passwordResetGenericError = "Invalid or expired reset code"
+
+type passwordResetConfirmBody struct {
+	Identifier  string `json:"identifier"`
+	Code        string `json:"code"`
+	NewPassword string `json:"newPassword" binding:"required,min=8"`
+}
+
+// ConfirmPasswordReset redeems a code and sets a new password.
+//
+// A rejected new password (too short) reports the binding error, since
+// password-policy feedback says nothing about the account. Every other failure
+// returns passwordResetGenericError. Success logs the account out everywhere:
+// whoever triggered the reset may not be who was signed in.
 func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
-	respondError(c, http.StatusNotImplemented, "Not implemented")
+	var req passwordResetConfirmBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if h.DB == nil {
+		respondError(c, http.StatusServiceUnavailable, "Database is temporarily disabled.")
+		return
+	}
+
+	user, found := lookupUserByIdentifier(h.DB, req.Identifier)
+	if !found {
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
+
+	var record storage.PasswordResetCode
+	if err := h.DB.Where("user_id = ? AND consumed_at IS NULL", user.ID).
+		Order("id DESC").First(&record).Error; err != nil {
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
+	if time.Now().After(record.ExpiresAt) || record.Attempts >= passwordResetMaxAttempts {
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(record.CodeHash), []byte(req.Code)) != nil {
+		// Spend one attempt. A failure to record it must not hand the caller
+		// an unlimited guessing budget, so it is logged and still rejected.
+		if err := h.DB.Model(&storage.PasswordResetCode{}).
+			Where("id = ?", record.ID).
+			Update("attempts", record.Attempts+1).Error; err != nil {
+			log.Printf("password reset: recording attempt: %v", err)
+		}
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "Failed to hash password")
+		return
+	}
+	now := time.Now()
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&storage.User{}).Where("id = ?", user.ID).
+			Update("password_hash", string(hashed)).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&storage.PasswordResetCode{}).Where("id = ?", record.ID).
+			Update("consumed_at", now).Error; err != nil {
+			return err
+		}
+		// Sign out every device: a reset is exactly the moment an existing
+		// session may belong to whoever the owner is locking out.
+		return tx.Where("user_id = ?", user.ID).Delete(&storage.UserSession{}).Error
+	}); err != nil {
+		respondError(c, http.StatusInternalServerError, "Failed to reset password")
+		return
+	}
+
+	c.Header("Cache-Control", "no-store")
+	c.Status(http.StatusNoContent)
 }

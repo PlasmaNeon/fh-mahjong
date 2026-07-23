@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/plasma/fh-mahjong/internal/storage"
 )
@@ -171,5 +174,125 @@ func TestPasswordResetRequestThrottlesWithoutChangingTheResponse(t *testing.T) {
 	}
 	if got > int(passwordResetRateBurst) {
 		t.Fatalf("sent %d codes for 20 requests, want at most the burst of %d", got, int(passwordResetRateBurst))
+	}
+}
+
+func confirmReset(t *testing.T, fx *resetFixture, identifier, code, newPassword string) *httptest.ResponseRecorder {
+	t.Helper()
+	return authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"identifier":"`+identifier+`","code":"`+code+`","newPassword":"`+newPassword+`"}`, nil, "")
+}
+
+func TestPasswordResetConfirmChangesPasswordAndKillsEverySession(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	cookie, _ := registerWithEmail(t, fx, "Reset Wind", "reset@example.com")
+	requestReset(t, fx, "Reset Wind")
+	code := fx.mail.messages()[0].Code
+
+	rec := confirmReset(t, fx, "Reset Wind", code, "brand-new-pw")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("confirm = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+
+	// Every device is logged out.
+	if got := authRequest(t, fx.router, http.MethodGet, "/api/v1/auth/session", "", cookie, ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("old session after reset = %d, want 401", got.Code)
+	}
+	var sessions int64
+	if err := fx.db.Model(&storage.UserSession{}).Count(&sessions).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessions != 0 {
+		t.Fatalf("sessions after reset = %d, want 0", sessions)
+	}
+
+	// The old password is dead and the new one works.
+	old := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/login",
+		`{"identifier":"Reset Wind","password":"hunter2pw"}`, nil, "")
+	if old.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login = %d, want 401", old.Code)
+	}
+	fresh := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/login",
+		`{"identifier":"Reset Wind","password":"brand-new-pw"}`, nil, "")
+	if fresh.Code != http.StatusOK {
+		t.Fatalf("new password login = %d: %s", fresh.Code, fresh.Body.String())
+	}
+}
+
+// A code works exactly once.
+func TestPasswordResetConfirmRefusesAConsumedCode(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Once Wind", "once@example.com")
+	requestReset(t, fx, "Once Wind")
+	code := fx.mail.messages()[0].Code
+
+	if rec := confirmReset(t, fx, "Once Wind", code, "brand-new-pw"); rec.Code != http.StatusNoContent {
+		t.Fatalf("first confirm = %d: %s", rec.Code, rec.Body.String())
+	}
+	replay := confirmReset(t, fx, "Once Wind", code, "another-new-pw")
+	if replay.Code != http.StatusBadRequest {
+		t.Fatalf("replayed confirm = %d, want 400: %s", replay.Code, replay.Body.String())
+	}
+}
+
+func TestPasswordResetConfirmExhaustsAttempts(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Guess Wind", "guess@example.com")
+	requestReset(t, fx, "Guess Wind")
+	code := fx.mail.messages()[0].Code
+
+	wrong := "000000"
+	if wrong == code {
+		wrong = "111111"
+	}
+	for i := 0; i < passwordResetMaxAttempts; i++ {
+		if rec := confirmReset(t, fx, "Guess Wind", wrong, "brand-new-pw"); rec.Code != http.StatusBadRequest {
+			t.Fatalf("wrong attempt %d = %d, want 400", i+1, rec.Code)
+		}
+	}
+	// The real code is dead now that the attempt budget is spent.
+	if rec := confirmReset(t, fx, "Guess Wind", code, "brand-new-pw"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("confirm after exhausted attempts = %d, want 400", rec.Code)
+	}
+}
+
+func TestPasswordResetConfirmRefusesAnExpiredCode(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Late Wind", "late@example.com")
+	requestReset(t, fx, "Late Wind")
+	code := fx.mail.messages()[0].Code
+
+	if err := fx.db.Model(&storage.PasswordResetCode{}).
+		Where("consumed_at IS NULL").
+		Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatalf("backdate code: %v", err)
+	}
+	if rec := confirmReset(t, fx, "Late Wind", code, "brand-new-pw"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("expired confirm = %d, want 400", rec.Code)
+	}
+}
+
+// Every rejection reads the same, so the endpoint discloses nothing about
+// which accounts exist or have a code outstanding.
+func TestPasswordResetConfirmFailuresShareOneMessage(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Same Wind", "same@example.com")
+	requestReset(t, fx, "Same Wind")
+
+	var messages []string
+	for _, args := range [][2]string{
+		{"nobody-at-all", "123456"},
+		{"Same Wind", "999999"},
+	} {
+		rec := confirmReset(t, fx, args[0], args[1], "brand-new-pw")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("confirm %v = %d, want 400", args, rec.Code)
+		}
+		var payload map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &payload)
+		messages = append(messages, payload["error"])
+	}
+	if messages[0] != "Invalid or expired reset code" || messages[1] != messages[0] {
+		t.Fatalf("messages = %#v", messages)
 	}
 }

@@ -9,7 +9,8 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 ## Key Files
 
 - **server.go** — Gin HTTP server setup and route registration:
-  - Public: `/api/v1/auth/register`, `/api/v1/auth/login`
+  - Public: `/api/v1/auth/register` (username + password only — no email is collected at signup), `/api/v1/auth/login`
+  - Public password recovery, **not linked from the frontend**: `POST /api/v1/auth/password-reset/request` (always 204, never discloses whether an account or address exists) and `POST /api/v1/auth/password-reset/confirm` (one generic 400 for every failure; success clears every session for that user). The configured `mail.Sender` is `LogSender`, which writes codes to the server log rather than sending them — swap in a real provider before exposing any UI
   - Session: `GET /api/v1/auth/session`, `DELETE /api/v1/auth/session`
   - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `GET /api/v1/matches/:matchId/review` (pure cache lookup — never builds a report, never calls the policy server), `/api/v1/ws`
   - Protected routes (30-day session cookie required; mutations also require `X-CSRF-Token`):
@@ -27,7 +28,9 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
   - CORS configuration
 
-- **auth.go** — Username/email + password auth backed by opaque revocable sessions. Login/register/session return `{user, csrfToken}` and set an HttpOnly cookie; no credential is serialized in JSON or stored by frontend JavaScript
+- **auth.go** — Username + password auth backed by opaque revocable sessions. Registration takes a username and password only; email is an optional profile field (`PATCH /users/me` accepts a string to set it or `""` to clear it, and either way requires the current password). Login/register/session return `{user, csrfToken}` and set an HttpOnly cookie; no credential is serialized in JSON or stored by frontend JavaScript
+- **password_reset.go** — Code-based recovery: `lookupUserByIdentifier` (shared with login), 6-digit codes bcrypt-hashed at rest with a 15-minute TTL and a 5-attempt cap, superseding any outstanding code. Bcrypt rather than a fast digest because a 6-digit code holds only ~20 bits of entropy
+- **ratelimit.go** — `keyedRateLimiter`, a string-keyed token bucket used by password reset for per-IP and per-user limits. `review_ratelimit.go` predates it and stays keyed by user id
 - **cors.go** — Exact `FRONTEND_ORIGINS` allowlist, credentialed CORS, and the shared HTTP/WebSocket origin policy
 
 - **ws.go** — Cookie-authenticated, origin-checked WebSocket upgrade and client management:
