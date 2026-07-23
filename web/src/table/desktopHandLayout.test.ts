@@ -1,0 +1,46 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { computeStageLayout } from '../hooks/computeStageLayout'
+
+function desktopTableRule() {
+  const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
+  return css.match(/\.game-stage \.mahjong-table\s*\{([^}]*)\}/)?.[1] ?? ''
+}
+
+function pixelVariable(rule: string, name: string) {
+  const value = rule.match(new RegExp(`${name}:\\s*([\\d.]+)px`))?.[1]
+  return Number(value)
+}
+
+describe('desktop self-hand geometry', () => {
+  it('scales Majsoul-sized tiles with the fixed table canvas across desktop windows', () => {
+    const rule = desktopTableRule()
+    const tileWidth = pixelVariable(rule, '--tile-width')
+    const tileHeight = pixelVariable(rule, '--tile-height')
+    const tileGap = pixelVariable(rule, '--tile-gap')
+    const drawnGap = pixelVariable(rule, '--drawn-gap')
+    const bundleSpan = pixelVariable(rule, '--bundle-span-self')
+    const viewports = [
+      [1024, 768],
+      [1280, 720],
+      [1920, 1080],
+    ] as const
+
+    for (const [width, height] of viewports) {
+      const layout = computeStageLayout(width, height)
+      const renderedTileHeight = tileHeight * layout.scale
+      const fullHandWidth = ((tileWidth * 14) + (tileGap * 13) + drawnGap) * layout.scale
+
+      expect(layout.compact).toBe(false)
+      expect(renderedTileHeight / layout.scaledHeight).toBeGreaterThanOrEqual(0.1)
+      expect(renderedTileHeight / layout.scaledHeight).toBeLessThanOrEqual(0.11)
+      expect(fullHandWidth).toBeLessThanOrEqual(layout.scaledWidth)
+      expect(bundleSpan * layout.scale).toBeLessThanOrEqual(layout.scaledWidth)
+    }
+
+    const standardDesktop = computeStageLayout(1280, 720)
+    expect(tileWidth * standardDesktop.scale).toBeGreaterThanOrEqual(50)
+    expect(tileHeight * standardDesktop.scale).toBeGreaterThanOrEqual(72)
+  })
+})

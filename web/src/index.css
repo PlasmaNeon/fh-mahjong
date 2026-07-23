@@ -1012,12 +1012,16 @@ body {
 }
 
 .game-stage .mahjong-table {
-  --tile-width: 44px;
-  --tile-height: 62px;
+  /* The stage is a fixed 1600x900 design canvas, so these desktop tile tokens
+     are canvas-relative: 94px is ~10.4% of the table height at every zoom.
+     At 1280x720 that becomes ~53x75 CSS px, matching the local-hand prominence
+     of modern Mahjong clients without tying geometry to one monitor size. */
+  --tile-width: 66px;
+  --tile-height: 94px;
   --tile-small-width: 30px;
   --tile-small-height: 42px;
-  --tile-gap: 4px;
-  --drawn-gap: 14px;
+  --tile-gap: 2px;
+  --drawn-gap: 16px;
   --discard-gap: 3px;
   --discard-padding: 6px;
   --discard-lane-size: calc((var(--tile-small-width) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
@@ -1038,7 +1042,7 @@ body {
   --discard-side-edge: 264px;
   --discard-bottom-bottom: 250px;
   --action-left: calc(50% + 306px);
-  --action-bottom: 124px;
+  --action-bottom: 166px;
   --seat-bottom-height: 96px;
   --seat-top-height: 84px;
   --seat-side-width: 160px;
@@ -1046,7 +1050,7 @@ body {
   --seat-exposed-gap: 10px;
   --meld-group-gap: 12px;
   --bundle-min-gap: 24px;
-  --bundle-span-self: 720px;
+  --bundle-span-self: 1080px;
   --bundle-span-opp: 630px;
   --bundle-side-shift: 24px;
   --bundle-flower-meld-gap: 8px;
@@ -1082,6 +1086,7 @@ body {
   --tile-small-width: 24px;
   --tile-small-height: 34px;
   --discard-hud-gap: 6px;
+  --action-bottom: 124px;
   --bundle-edge-offset: 16px;
   --bundle-span-self: 1190px;
   --bundle-span-opp: 430px;

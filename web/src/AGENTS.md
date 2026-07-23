@@ -32,6 +32,7 @@ Contains all React components, context providers, custom hooks, and utility func
   - Includes the glass action-bar styling used for bottom-player `CHII / PON / KAN / RON / TSUMO / SKIP` controls in the elevated lower-right table gap beside the bottom discard tray, kept above the bottom hand line; multiple chii candidates collapse to one call button and are resolved by selecting two highlighted hand tiles
   - Imports `table/roundResult.css`, the focused Fenghua settlement-sheet module shared by live and replay; the result body scrolls independently while its action footer stays reachable on phone viewports
   - The live table now has a fixed-stage override layer: a 1600x900 board scaled as one unit inside a safe-area-aware shell so resizing the viewport no longer reflows each hand/discard region independently
+  - Desktop self-hand tiles use 66x94 design pixels (about 53x75 CSS pixels at 1280x720), keeping their ~10.4% table-height ratio as the fixed canvas zooms; action controls sit above that enlarged rail
   - Compact short-stage geometry gives the local hand a 76x107 design-pixel tile rail (about 42x59 CSS pixels at 667x375), keeps the drawn tile separated, and raises/shortens both opponent side bundles so they cannot cover the local interaction band
   - The shell should measure the actual available pane size and keep the logical 1600x900 board on a stable coordinate system; the current stage uses `zoom` instead of a transformed parent so Framer Motion tile transitions stay in a less surprising coordinate space
 
