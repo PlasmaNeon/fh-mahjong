@@ -129,8 +129,15 @@ func createSession(db *gorm.DB, userID uint) (string, storage.UserSession, error
 	return rawToken, session, nil
 }
 
-func isProductionCookie() bool {
+// isProduction reports whether this process is running as a production
+// deployment. It gates both Secure-cookie behaviour and anything else that
+// must not behave like a development convenience in production.
+func isProduction() bool {
 	return strings.EqualFold(os.Getenv("APP_ENV"), "production") || strings.EqualFold(os.Getenv("GIN_MODE"), "release")
+}
+
+func isProductionCookie() bool {
+	return isProduction()
 }
 
 func setSessionCookie(c *gin.Context, rawToken string) {
@@ -404,7 +411,20 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		updates["username"] = newUsername
 		updates["username_key"] = newUsernameKey
 	}
-	if err := h.DB.Model(&user).Updates(updates).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Updates(updates).Error; err != nil {
+			return err
+		}
+		if !emailChange {
+			return nil
+		}
+		// Any code already in flight went to the OLD address. Changing or
+		// clearing the address must retire it, or whoever still controls that
+		// inbox can complete the reset the owner just acted to prevent.
+		return tx.Model(&storage.PasswordResetCode{}).
+			Where("user_id = ? AND consumed_at IS NULL", user.ID).
+			Update("consumed_at", time.Now()).Error
+	}); err != nil {
 		if isUniqueConstraintError(err) {
 			respondError(c, http.StatusConflict, "Email or username is already registered")
 			return

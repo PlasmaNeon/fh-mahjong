@@ -32,3 +32,7 @@ func TestLogSenderRecordsRecipientAndCode(t *testing.T) {
 // assert nothing, because a non-pointer value assigned to an interface is
 // never nil.
 var _ Sender = LogSender{}
+
+// SuppressedSender must satisfy Sender for the same reason: it is the seam
+// production wires when no real provider is configured.
+var _ Sender = SuppressedSender{}

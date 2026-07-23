@@ -162,9 +162,17 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 }
 
 func (s *Server) setupRoutes() {
+	// The reset flow has no mail provider yet. In development the code goes to
+	// the server log so the flow is exercisable end to end; in production it is
+	// dropped, because a live credential in an application log is a worse
+	// exposure than a dormant endpoint.
+	var resetMailer mail.Sender = mail.LogSender{}
+	if isProduction() {
+		resetMailer = mail.SuppressedSender{}
+	}
 	authHandler := &AuthHandler{
 		DB:           s.DB,
-		Mail:         mail.LogSender{},
+		Mail:         resetMailer,
 		ResetLimiter: newKeyedRateLimiter(passwordResetRatePerMinute, passwordResetRateBurst),
 	}
 

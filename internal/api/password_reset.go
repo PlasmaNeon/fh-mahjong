@@ -186,18 +186,26 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, passwordResetGenericError)
 		return
 	}
+
+	// Spend the attempt BEFORE comparing, so the database — not a stale read —
+	// is what enforces the cap. bcrypt sits inside the check-then-act window
+	// for ~100ms; without this reservation, concurrent requests all pass a
+	// check made against attempts=0 and turn a 5-guess budget into a
+	// CPU-bound one against a 6-digit (~20-bit) code.
+	reserved := h.DB.Model(&storage.PasswordResetCode{}).
+		Where("id = ? AND attempts < ? AND consumed_at IS NULL AND expires_at > ?",
+			record.ID, passwordResetMaxAttempts, time.Now()).
+		Update("attempts", gorm.Expr("attempts + 1"))
+	if reserved.Error != nil {
+		log.Printf("password reset: reserving attempt: %v", reserved.Error)
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
+	if reserved.RowsAffected == 0 {
+		respondError(c, http.StatusBadRequest, passwordResetGenericError)
+		return
+	}
 	if bcrypt.CompareHashAndPassword([]byte(record.CodeHash), []byte(req.Code)) != nil {
-		// Spend one attempt, atomically at the database: two concurrent wrong
-		// guesses must not both read the same Attempts and both write the
-		// same N+1, which would let a caller burn through more than the
-		// intended budget against this ~20-bit code. A failure to record it
-		// must not hand the caller an unlimited guessing budget either, so
-		// that failure is logged and the request is still rejected.
-		if err := h.DB.Model(&storage.PasswordResetCode{}).
-			Where("id = ?", record.ID).
-			Update("attempts", gorm.Expr("attempts + 1")).Error; err != nil {
-			log.Printf("password reset: recording attempt: %v", err)
-		}
 		respondError(c, http.StatusBadRequest, passwordResetGenericError)
 		return
 	}
@@ -213,7 +221,8 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 			Update("password_hash", string(hashed)).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&storage.PasswordResetCode{}).Where("id = ?", record.ID).
+		if err := tx.Model(&storage.PasswordResetCode{}).
+			Where("user_id = ? AND consumed_at IS NULL", user.ID).
 			Update("consumed_at", now).Error; err != nil {
 			return err
 		}

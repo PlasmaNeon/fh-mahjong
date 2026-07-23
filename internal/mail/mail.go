@@ -29,3 +29,17 @@ func (LogSender) SendPasswordResetCode(_ context.Context, to, code string) error
 	log.Printf("mail: password reset code for %s: %s", to, code)
 	return nil
 }
+
+// SuppressedSender accepts a code and deliberately drops it, recording only
+// that an attempt happened. Production wires this while no real provider is
+// configured: LogSender's plaintext code in an application log would be a
+// standing account-takeover path for anyone who can read logs, and with no
+// provider the code could never reach the recipient regardless.
+type SuppressedSender struct{}
+
+// SendPasswordResetCode discards the code and records only that one was
+// requested. The recipient is omitted too — it is the account identity.
+func (SuppressedSender) SendPasswordResetCode(_ context.Context, _, _ string) error {
+	log.Printf("mail: password reset code requested but no provider is configured; code suppressed")
+	return nil
+}
