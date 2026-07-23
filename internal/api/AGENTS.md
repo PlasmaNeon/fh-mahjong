@@ -10,7 +10,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **server.go** — Gin HTTP server setup and route registration:
   - Public: `/api/v1/auth/register` (username + password only — no email is collected at signup), `/api/v1/auth/login`
-  - Public password recovery, **not linked from the frontend**: `POST /api/v1/auth/password-reset/request` (always 204, never discloses whether an account or address exists) and `POST /api/v1/auth/password-reset/confirm` (one generic 400 for every failure; success clears every session for that user). The configured `mail.Sender` is `LogSender`, which writes codes to the server log rather than sending them — swap in a real provider before exposing any UI
+  - Public password recovery, **not linked from the frontend**: `POST /api/v1/auth/password-reset/request` (always 204, never discloses whether an account or address exists) and `POST /api/v1/auth/password-reset/confirm` (one generic 400 for every failure — the sole exception: a new password failing `min=8` returns the binding error, which discloses nothing about the account; success clears every session for that user). The configured `mail.Sender` is `LogSender`, which writes codes to the server log rather than sending them — swap in a real provider before exposing any UI
   - Session: `GET /api/v1/auth/session`, `DELETE /api/v1/auth/session`
   - Public tool routes: `/api/v1/tools/calc`, `/api/v1/tools/shanten`, `/api/v1/replays/:matchId`, `GET /api/v1/matches/:matchId/review` (pure cache lookup — never builds a report, never calls the policy server), `/api/v1/ws`
   - Protected routes (30-day session cookie required; mutations also require `X-CSRF-Token`):

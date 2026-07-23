@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -175,6 +176,9 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	var record storage.PasswordResetCode
 	if err := h.DB.Where("user_id = ? AND consumed_at IS NULL", user.ID).
 		Order("id DESC").First(&record).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("password reset: loading code: %v", err)
+		}
 		respondError(c, http.StatusBadRequest, passwordResetGenericError)
 		return
 	}
@@ -183,11 +187,15 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(record.CodeHash), []byte(req.Code)) != nil {
-		// Spend one attempt. A failure to record it must not hand the caller
-		// an unlimited guessing budget, so it is logged and still rejected.
+		// Spend one attempt, atomically at the database: two concurrent wrong
+		// guesses must not both read the same Attempts and both write the
+		// same N+1, which would let a caller burn through more than the
+		// intended budget against this ~20-bit code. A failure to record it
+		// must not hand the caller an unlimited guessing budget either, so
+		// that failure is logged and the request is still rejected.
 		if err := h.DB.Model(&storage.PasswordResetCode{}).
 			Where("id = ?", record.ID).
-			Update("attempts", record.Attempts+1).Error; err != nil {
+			Update("attempts", gorm.Expr("attempts + 1")).Error; err != nil {
 			log.Printf("password reset: recording attempt: %v", err)
 		}
 		respondError(c, http.StatusBadRequest, passwordResetGenericError)

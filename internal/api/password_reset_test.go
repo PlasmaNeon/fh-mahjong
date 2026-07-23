@@ -272,6 +272,36 @@ func TestPasswordResetConfirmRefusesAnExpiredCode(t *testing.T) {
 	}
 }
 
+// The one deliberate exception to the identical-failure rule: a new password
+// that fails the length policy reports the binding error, because password
+// policy feedback discloses nothing about the account.
+func TestPasswordResetConfirmReportsShortPasswordDistinctly(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Short Wind", "short@example.com")
+	requestReset(t, fx, "Short Wind")
+	code := fx.mail.messages()[0].Code
+
+	rec := confirmReset(t, fx, "Short Wind", code, "short")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("short password = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &payload)
+	if payload["error"] == passwordResetGenericError {
+		t.Fatalf("a short password must not be reported as an invalid code: %q", payload["error"])
+	}
+	if payload["error"] == "" {
+		t.Fatalf("expected a binding error message, got %s", rec.Body.String())
+	}
+
+	// The rejection is a binding failure before any DB access, so the code
+	// must still be live: a later confirm with a valid password succeeds.
+	retry := confirmReset(t, fx, "Short Wind", code, "brand-new-pw")
+	if retry.Code != http.StatusNoContent {
+		t.Fatalf("confirm after short-password rejection = %d, want 204: %s", retry.Code, retry.Body.String())
+	}
+}
+
 // Every rejection reads the same, so the endpoint discloses nothing about
 // which accounts exist or have a code outstanding.
 func TestPasswordResetConfirmFailuresShareOneMessage(t *testing.T) {
