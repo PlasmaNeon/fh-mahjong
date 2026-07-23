@@ -302,8 +302,13 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // pointer itself is nil; a non-nil pointer to "" — exactly the clear
 // request — still hits the `email` format check and gets rejected (verified
 // against this repo's pinned validator v10.30.1). UpdateMe instead validates
-// format by hand with net/mail.ParseAddress, and only when the normalized
-// value is non-empty, so clearing is never subject to format validation.
+// format by hand, and only when the normalized value is non-empty, so
+// clearing is never subject to format validation. The hand-rolled check is
+// deliberately stricter than a bare net/mail.ParseAddress call: ParseAddress
+// alone accepts RFC 5322 display-name forms ("Rain <rain@example.com>") and
+// quoted local parts, so it also requires the parsed address to have no
+// display name, to equal the normalized input exactly, and the input to
+// contain exactly one "@" — accepting only a bare addr-spec.
 type UpdateProfileRequest struct {
 	Email           *string `json:"email"`
 	Username        *string `json:"username"`
@@ -353,7 +358,8 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		case normalized == "":
 			emailChange = user.Email != nil
 		case user.Email == nil || *user.Email != normalized:
-			if _, err := mail.ParseAddress(normalized); err != nil {
+			parsed, err := mail.ParseAddress(normalized)
+			if err != nil || parsed.Name != "" || parsed.Address != normalized || strings.Count(normalized, "@") != 1 {
 				respondError(c, http.StatusBadRequest, "Invalid email address")
 				return
 			}

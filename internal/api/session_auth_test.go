@@ -294,11 +294,11 @@ func TestProfileEmailAddChangeAndClearRequireCurrentPassword(t *testing.T) {
 }
 
 // TestProfileEmailChangeRejectsMalformedAddress exercises the hand-rolled
-// net/mail.ParseAddress check in UpdateMe. It replaces the format
-// validation that a `binding:"omitempty,email"` struct tag would normally
-// provide, since that tag rejects a non-nil pointer to "" (the clear case)
-// along with genuinely malformed addresses; see the UpdateProfileRequest
-// doc comment in auth.go for why the tag was dropped.
+// format check in UpdateMe. It replaces the format validation that a
+// `binding:"omitempty,email"` struct tag would normally provide, since that
+// tag rejects a non-nil pointer to "" (the clear case) along with genuinely
+// malformed addresses; see the UpdateProfileRequest doc comment in auth.go
+// for why the tag was dropped.
 func TestProfileEmailChangeRejectsMalformedAddress(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
@@ -312,6 +312,43 @@ func TestProfileEmailChangeRejectsMalformedAddress(t *testing.T) {
 		`{"email":"not-an-email","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed email = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestProfileEmailChangeRejectsDisplayNameForm exercises the tightened
+// format check added on top of net/mail.ParseAddress: ParseAddress alone
+// accepts RFC 5322 display-name and quoted-local-part forms, which would
+// otherwise let a literal "Name <addr>" string get stored as the account's
+// email and break lookup-by-email in Login (which compares against the
+// normalized bare address).
+func TestProfileEmailChangeRejectsDisplayNameForm(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Display Wind","password":"hunter2pw"}`, nil, "")
+	cookie := sessionCookieFrom(t, registered)
+	var session AuthResponse
+	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+
+	for _, email := range []string{
+		"Rain <rain@example.com>",
+		`"weird name"@example.com`,
+		"a@b.com, c@d.com",
+		"<a@b.com>",
+		"a@@b.com",
+	} {
+		rec := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+			`{"email":"`+strings.ReplaceAll(email, `"`, `\"`)+`","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("email %q = %d, want 400: %s", email, rec.Code, rec.Body.String())
+		}
+	}
+
+	accepted := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"rain@example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if accepted.Code != http.StatusOK || !strings.Contains(accepted.Body.String(), `"email":"rain@example.com"`) {
+		t.Fatalf("bare address = %d, want 200: %s", accepted.Code, accepted.Body.String())
 	}
 }
 
