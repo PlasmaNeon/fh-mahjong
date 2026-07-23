@@ -5,11 +5,17 @@ import (
 	"time"
 )
 
-// maxTrackedRateKeys bounds the bucket map. Keys include client IPs, so a
-// long-running process can otherwise accumulate one entry per caller
-// indefinitely. When the map crosses this size, buckets that have refilled to
-// full (i.e. their owner has gone quiet) are dropped — dropping a full bucket
-// is free, because recreating it yields the same full bucket.
+// maxTrackedRateKeys is the size at which the bucket map starts reclaiming.
+// Keys include client IPs, so a long-running process would otherwise
+// accumulate one entry per caller indefinitely. Crossing this size drops
+// buckets that have refilled to full — their owner has gone quiet, and a full
+// bucket carries nothing a freshly created one would not.
+//
+// This is a steady-state bound, NOT a hard cap. A bucket with tokens still
+// spent is live rate-limit state: dropping it would hand that caller a fresh
+// burst. So a genuine flood of distinct keys arriving faster than they refill
+// will exceed this number, and that is the correct trade — the limiter must
+// not forget who it is limiting in order to respect a memory bound.
 const maxTrackedRateKeys = 4096
 
 type rateBucket struct {
