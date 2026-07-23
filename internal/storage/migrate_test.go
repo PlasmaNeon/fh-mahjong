@@ -18,6 +18,10 @@ func newMemDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+// emailPtr is a literal helper: User.Email is a nullable *string, so tests
+// that want a concrete address need an addressable value.
+func emailPtr(value string) *string { return &value }
+
 const legacyUsersDDL = `CREATE TABLE users (
 	id integer PRIMARY KEY,
 	username text NOT NULL,
@@ -34,10 +38,10 @@ func TestAutoMigrateFreshEnforcesUniqueUsernames(t *testing.T) {
 	if err := AutoMigrate(db); err != nil {
 		t.Fatalf("AutoMigrate fresh: %v", err)
 	}
-	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
+	if err := db.Create(&User{Email: emailPtr("a@x.com"), Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
 		t.Fatalf("create first user: %v", err)
 	}
-	if err := db.Create(&User{Email: "b@x.com", Username: "SAM", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
+	if err := db.Create(&User{Email: emailPtr("b@x.com"), Username: "SAM", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
 		t.Fatal("expected duplicate normalized username to be rejected")
 	}
 }
@@ -135,10 +139,10 @@ func TestAutoMigrateEmptyLegacyTableMigratesInPlace(t *testing.T) {
 	if !db.Migrator().HasColumn(&User{}, "username_key") {
 		t.Fatal("expected username_key column to be added")
 	}
-	if err := db.Create(&User{Email: "a@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
+	if err := db.Create(&User{Email: emailPtr("a@x.com"), Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err != nil {
 		t.Fatalf("create first user: %v", err)
 	}
-	if err := db.Create(&User{Email: "b@x.com", Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
+	if err := db.Create(&User{Email: emailPtr("b@x.com"), Username: "Sam", UsernameKey: "sam", PasswordHash: "h"}).Error; err == nil {
 		t.Fatal("expected duplicate normalized username after migration to be rejected")
 	}
 }
@@ -195,5 +199,68 @@ func TestAutoMigrateDropsMatchPlayerUserFK(t *testing.T) {
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("bot/guest MatchPlayer rows must insert without a users row: %v", err)
+	}
+}
+
+// Email is optional, so any number of accounts may carry no address at all.
+// Postgres and SQLite both treat NULLs as distinct under a unique index; a
+// regression here would surface as the second insert colliding.
+func TestAutoMigrateAllowsManyAccountsWithoutEmail(t *testing.T) {
+	db := newMemDB(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate fresh: %v", err)
+	}
+	for _, name := range []string{"North Wind", "South Wind"} {
+		display, key := NormalizeUsername(name)
+		if err := db.Create(&User{Username: display, UsernameKey: key, PasswordHash: "h"}).Error; err != nil {
+			t.Fatalf("create %q without email: %v", name, err)
+		}
+	}
+	var count int64
+	if err := db.Model(&User{}).Where("email IS NULL").Count(&count).Error; err != nil {
+		t.Fatalf("count email-less users: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("email IS NULL count = %d, want 2", count)
+	}
+}
+
+// An account whose email was stored as an empty string is normalized to a real
+// NULL, so it cannot collide with other email-less accounts.
+func TestAutoMigrateConvertsEmptyEmailsToNull(t *testing.T) {
+	db := newMemDB(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate fresh: %v", err)
+	}
+	if err := db.Create(&User{Email: emailPtr(""), Username: "Blank Wind", UsernameKey: "blank wind", PasswordHash: "h"}).Error; err != nil {
+		t.Fatalf("create empty-email user: %v", err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate again: %v", err)
+	}
+	var reloaded User
+	if err := db.Where("username_key = ?", "blank wind").First(&reloaded).Error; err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloaded.Email != nil {
+		t.Fatalf("email = %q, want NULL", *reloaded.Email)
+	}
+}
+
+// The reset-code table is created by AutoMigrate and accepts a row.
+func TestAutoMigrateCreatesPasswordResetCodes(t *testing.T) {
+	db := newMemDB(t)
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate fresh: %v", err)
+	}
+	if err := db.Create(&PasswordResetCode{UserID: 10001, CodeHash: "hash", ExpiresAt: time.Now().Add(time.Minute)}).Error; err != nil {
+		t.Fatalf("create reset code: %v", err)
+	}
+	var stored PasswordResetCode
+	if err := db.First(&stored).Error; err != nil {
+		t.Fatalf("load reset code: %v", err)
+	}
+	if stored.Attempts != 0 || stored.ConsumedAt != nil {
+		t.Fatalf("new code = attempts %d consumed %v, want 0 and nil", stored.Attempts, stored.ConsumedAt)
 	}
 }

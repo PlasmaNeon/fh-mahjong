@@ -195,8 +195,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "Failed to hash password")
 		return
 	}
+	// Task 2 removes email from registration entirely; for now this preserves
+	// today's behaviour against a pointer field.
+	registeredEmail := normalizeEmail(req.Email)
 	user := storage.User{
-		Email:        normalizeEmail(req.Email),
+		Email:        &registeredEmail,
 		Username:     username,
 		UsernameKey:  usernameKey,
 		PasswordHash: string(hashedPassword),
@@ -333,7 +336,7 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	emailChange := false
 	if req.Email != nil {
 		newEmail = normalizeEmail(*req.Email)
-		emailChange = newEmail != user.Email
+		emailChange = user.Email == nil || *user.Email != newEmail
 	}
 	newUsername, newUsernameKey := user.Username, user.UsernameKey
 	usernameChange := false

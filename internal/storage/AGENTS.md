@@ -9,7 +9,8 @@ Defines the database schema for user accounts and match history using GORM (Go O
 ## Key Files
 
 - **db.go** — Database models and migration:
-  - `User` — Player account: normalized email and case-insensitive `UsernameKey` are unique login identities; `Username` preserves the visible friendly form. Existing duplicates are deterministically suffixed during migration. IDs remain random sparse values in [10000, 99999]
+  - `User` — Player account: the case-insensitive `UsernameKey` is the required unique login identity; `Username` preserves the visible friendly form. `Email` is **optional and nullable** (`*string`) — NULL means no address on file, and when set it is unique, usable as a second login identifier, and the password-reset destination. `EmailVerifiedAt` is reserved for a future ownership check and is always nil today. Existing duplicate usernames are deterministically suffixed during migration. IDs remain random sparse values in [10000, 99999]
+  - `PasswordResetCode` — One issued reset code: bcrypt `CodeHash` (never the plaintext), `ExpiresAt`, `Attempts`, and `ConsumedAt`. Bcrypt rather than SHA-256 because a 6-digit code is only ~20 bits of entropy
   - `UserSession` — Revocable 30-day browser session. Stores only the SHA-256 hash of the opaque cookie plus its CSRF token and expiry; raw session credentials never enter the database
   - `Match` — Single game record: match ID, status, ruleset name, binary replay URL/blob, and structured paipu JSON
   - `MatchPlayer` — Join table linking users to matches: seat position, final score, placement, rating delta, and seat-composition labels. There is deliberately no users foreign key because bot rows use user ID 0 and historical guest matches can reference accounts that no longer exist

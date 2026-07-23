@@ -13,17 +13,24 @@ import (
 	"gorm.io/gorm"
 )
 
-// User represents a player account. Email and Username are both login
-// identities; UsernameKey is the case-insensitive normalized lookup key.
+// User represents a player account. Username (through the case-insensitive
+// UsernameKey) is the required login identity. Email is OPTIONAL: NULL means
+// no address is on file. When set it is unique, doubles as a second login
+// identity, and is where a password-reset code is delivered.
+//
+// EmailVerifiedAt is reserved for a future ownership-confirmation flow and is
+// always nil today; the column exists now so adding verification later needs
+// no migration.
 type User struct {
-	ID           uint      `gorm:"primaryKey;autoIncrement:false" json:"id"` // random sparse id, app-generated
-	Email        string    `gorm:"uniqueIndex;not null;size:255" json:"email"`
-	Username     string    `gorm:"not null;size:255" json:"username"`
-	UsernameKey  string    `gorm:"size:255" json:"-"`
-	PasswordHash string    `gorm:"not null" json:"-"`
-	Rating       int       `gorm:"default:1500" json:"rating"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID              uint       `gorm:"primaryKey;autoIncrement:false" json:"id"` // random sparse id, app-generated
+	Email           *string    `gorm:"uniqueIndex;size:255" json:"email"`
+	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
+	Username        string     `gorm:"not null;size:255" json:"username"`
+	UsernameKey     string     `gorm:"size:255" json:"-"`
+	PasswordHash    string     `gorm:"not null" json:"-"`
+	Rating          int        `gorm:"default:1500" json:"rating"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 // UserSession is a revocable browser login. TokenHash contains only the
@@ -36,6 +43,24 @@ type UserSession struct {
 	CSRFToken string    `gorm:"not null;size:64" json:"-"`
 	ExpiresAt time.Time `gorm:"index;not null" json:"-"`
 	CreatedAt time.Time `json:"-"`
+}
+
+// PasswordResetCode is one issued password-reset verification code. CodeHash
+// is a BCRYPT hash, not SHA-256: a 6-digit code carries only ~20 bits of
+// entropy, so a fast digest would be reversible from a database dump in
+// milliseconds. Bcrypt puts a full sweep of the space in the hours range, by
+// which point the short TTL has already expired the code.
+//
+// A code is dead once ConsumedAt is set, once ExpiresAt passes, or once
+// Attempts reaches the API's cap.
+type PasswordResetCode struct {
+	ID         uint       `gorm:"primaryKey" json:"-"`
+	UserID     uint       `gorm:"index;not null" json:"-"`
+	CodeHash   string     `gorm:"not null" json:"-"`
+	ExpiresAt  time.Time  `gorm:"index;not null" json:"-"`
+	Attempts   uint8      `gorm:"not null;default:0" json:"-"`
+	ConsumedAt *time.Time `json:"-"`
+	CreatedAt  time.Time  `json:"-"`
 }
 
 // NormalizeUsername turns a friendly visible name into its canonical display
@@ -220,12 +245,30 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&User{},
 		&UserSession{},
+		&PasswordResetCode{},
 		&Match{},
 		&MatchPlayer{},
 		&PaipuRecord{},
 		&MatchReview{},
 	); err != nil {
 		return err
+	}
+
+	// users.email was NOT NULL while registration demanded an address. It is
+	// now optional, so the constraint has to come off before any row can be
+	// nulled. Postgres accepts DROP NOT NULL on an already-nullable column, so
+	// this is idempotent. SQLite is skipped deliberately: GORM builds test
+	// databases fresh from the model above (already nullable), and the sqlite
+	// driver would need a full table rebuild to change nullability.
+	if db.Dialector.Name() == "postgres" && m.HasColumn(&User{}, "email") {
+		if err := db.Exec("ALTER TABLE users ALTER COLUMN email DROP NOT NULL").Error; err != nil {
+			return fmt.Errorf("making users.email nullable: %w", err)
+		}
+	}
+	// An empty string is not NULL, and two empty strings collide under the
+	// unique index. Normalize any that exist to a real NULL.
+	if err := db.Exec("UPDATE users SET email = NULL WHERE email = ''").Error; err != nil {
+		return fmt.Errorf("clearing empty user emails: %w", err)
 	}
 
 	if err := db.Transaction(func(tx *gorm.DB) error {
