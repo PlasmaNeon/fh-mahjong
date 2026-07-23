@@ -38,6 +38,14 @@ func newAuthSessionFixture(t *testing.T) authSessionFixture {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	// A single shared connection: an in-memory sqlite db is scoped to its
+	// connection, so multiple pooled connections would each see their own
+	// empty database. This matters once callers exercise concurrent
+	// requests against the same fixture (e.g. the password-reset
+	// concurrent-guess cap test), mirroring newReviewTestServer's same fix.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := storage.AutoMigrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -177,12 +185,13 @@ func TestLoginAcceptsUsernameOrEmail(t *testing.T) {
 	if attach.Code != http.StatusOK {
 		t.Fatalf("attach email = %d: %s", attach.Code, attach.Body.String())
 	}
-	for _, identifier := range []string{"river wind", "RIVER@EXAMPLE.COM"} {
+	for _, identifier := range []string{"RIVER WIND", "RIVER@EXAMPLE.COM"} {
 		rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/login",
 			`{"identifier":"`+identifier+`","password":"hunter2pw"}`, nil, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("login as %q = %d: %s", identifier, rec.Code, rec.Body.String())
 		}
+		sessionCookieFrom(t, rec)
 	}
 }
 
@@ -373,6 +382,27 @@ func TestProfileEmailChangeRejectsWrongCurrentPassword(t *testing.T) {
 		`{"email":"nope@example.com","currentPassword":"not-my-password"}`, cookie, session.CSRFToken)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong password = %d, want 401: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProfileEmailClearRejectsWrongCurrentPassword(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Clear Wind","password":"hunter2pw"}`, nil, "")
+	cookie := sessionCookieFrom(t, registered)
+	var session AuthResponse
+	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	added := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"clear@example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if added.Code != http.StatusOK {
+		t.Fatalf("add email = %d: %s", added.Code, added.Body.String())
+	}
+	rec := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"","currentPassword":"not-my-password"}`, cookie, session.CSRFToken)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("clear with wrong password = %d, want 401: %s", rec.Code, rec.Body.String())
 	}
 }
 

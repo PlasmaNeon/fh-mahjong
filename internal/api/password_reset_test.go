@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/storage"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // captureSender records what would have been mailed, so a test can read the
@@ -135,6 +137,9 @@ func TestPasswordResetRequestIssuesOneSixDigitCode(t *testing.T) {
 	var stored storage.PasswordResetCode
 	if err := fx.db.First(&stored).Error; err != nil {
 		t.Fatalf("load stored code: %v", err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(stored.CodeHash), []byte(sent[0].Code)); err != nil {
+		t.Fatalf("stored hash does not verify against the sent code: %v", err)
 	}
 	if stored.CodeHash == sent[0].Code {
 		t.Fatal("the plaintext code must never be stored")
@@ -294,6 +299,14 @@ func TestPasswordResetConfirmReportsShortPasswordDistinctly(t *testing.T) {
 		t.Fatalf("expected a binding error message, got %s", rec.Body.String())
 	}
 
+	var record storage.PasswordResetCode
+	if err := fx.db.Order("id DESC").First(&record).Error; err != nil {
+		t.Fatalf("load code: %v", err)
+	}
+	if record.Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0 — a malformed request must not spend a guess", record.Attempts)
+	}
+
 	// The rejection is a binding failure before any DB access, so the code
 	// must still be live: a later confirm with a valid password succeeds.
 	retry := confirmReset(t, fx, "Short Wind", code, "brand-new-pw")
@@ -324,5 +337,52 @@ func TestPasswordResetConfirmFailuresShareOneMessage(t *testing.T) {
 	}
 	if messages[0] != "Invalid or expired reset code" || messages[1] != messages[0] {
 		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+// The 5-attempt cap must hold when guesses arrive together, not just in
+// sequence: bcrypt sits inside the check-then-act window, so a stale read
+// would let every concurrent request through a budget of five.
+func TestPasswordResetConfirmCapHoldsUnderConcurrentGuesses(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	registerWithEmail(t, fx, "Swarm Wind", "swarm@example.com")
+	requestReset(t, fx, "Swarm Wind")
+
+	const guesses = 12
+	var wg sync.WaitGroup
+	for i := 0; i < guesses; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			confirmReset(t, fx, "Swarm Wind", fmt.Sprintf("%06d", 900000+n), "brand-new-pw")
+		}(i)
+	}
+	wg.Wait()
+
+	var record storage.PasswordResetCode
+	if err := fx.db.Order("id DESC").First(&record).Error; err != nil {
+		t.Fatalf("load code: %v", err)
+	}
+	if record.Attempts > passwordResetMaxAttempts {
+		t.Fatalf("attempts = %d, want at most %d — the cap did not hold under concurrency",
+			record.Attempts, passwordResetMaxAttempts)
+	}
+}
+
+// Changing the address must retire a code already sent to the old one.
+func TestChangingEmailRetiresOutstandingResetCodes(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	cookie, csrf := registerWithEmail(t, fx, "Moved Wind", "old@example.com")
+	requestReset(t, fx, "Moved Wind")
+	code := fx.mail.messages()[0].Code
+
+	changed := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"new@example.com","currentPassword":"hunter2pw"}`, cookie, csrf)
+	if changed.Code != http.StatusOK {
+		t.Fatalf("change email = %d: %s", changed.Code, changed.Body.String())
+	}
+
+	if rec := confirmReset(t, fx, "Moved Wind", code, "brand-new-pw"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("code issued to the old address = %d, want 400", rec.Code)
 	}
 }
