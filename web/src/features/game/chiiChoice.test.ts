@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { game } from '../../proto/game'
 import {
@@ -63,5 +65,19 @@ describe('multi-choice chii interaction', () => {
       selectedTileId: 30,
       clickedTile: hand[1],
     })).toEqual({ kind: 'select', tileId: null })
+  })
+
+  it('keeps the hand-choice affordances active in desktop and compact layouts', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/table/table-theme.css'), 'utf8')
+
+    expect(css).toContain(
+      '.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-eligible',
+    )
+    expect(css).toContain(
+      '.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-selected',
+    )
+    expect(css).not.toContain(
+      '[data-compact="true"][data-chii-choice="true"] .mahjong-tile--choice-eligible',
+    )
   })
 })
