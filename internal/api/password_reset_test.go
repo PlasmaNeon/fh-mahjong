@@ -363,8 +363,8 @@ func TestPasswordResetConfirmCapHoldsUnderConcurrentGuesses(t *testing.T) {
 	if err := fx.db.Order("id DESC").First(&record).Error; err != nil {
 		t.Fatalf("load code: %v", err)
 	}
-	if record.Attempts > passwordResetMaxAttempts {
-		t.Fatalf("attempts = %d, want at most %d — the cap did not hold under concurrency",
+	if record.Attempts != passwordResetMaxAttempts {
+		t.Fatalf("attempts = %d, want exactly %d — the cap must be spent, and never exceeded",
 			record.Attempts, passwordResetMaxAttempts)
 	}
 }
@@ -384,5 +384,25 @@ func TestChangingEmailRetiresOutstandingResetCodes(t *testing.T) {
 
 	if rec := confirmReset(t, fx, "Moved Wind", code, "brand-new-pw"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("code issued to the old address = %d, want 400", rec.Code)
+	}
+}
+
+// Clearing the address is the case this retirement exists for: someone wipes
+// an address precisely because they lost control of that inbox, and a code
+// already sent there must stop working immediately.
+func TestClearingEmailRetiresOutstandingResetCodes(t *testing.T) {
+	fx := newPasswordResetFixture(t)
+	cookie, csrf := registerWithEmail(t, fx, "Wiped Wind", "wiped@example.com")
+	requestReset(t, fx, "Wiped Wind")
+	code := fx.mail.messages()[0].Code
+
+	cleared := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"","currentPassword":"hunter2pw"}`, cookie, csrf)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear email = %d: %s", cleared.Code, cleared.Body.String())
+	}
+
+	if rec := confirmReset(t, fx, "Wiped Wind", code, "brand-new-pw"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("code issued before the address was cleared = %d, want 400", rec.Code)
 	}
 }
