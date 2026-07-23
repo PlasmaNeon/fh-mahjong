@@ -58,9 +58,9 @@ func TestReplayHistoryRequiresAuthentication(t *testing.T) {
 
 func TestReplayHistoryReturnsOnlyOwnedCompletedValidMatches(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	cookie, _ := registerSession(t, server, "history@example.com", "History Wind")
+	cookie, _ := registerSession(t, server, "History Wind")
 	var owner storage.User
-	if err := server.DB.Where("email = ?", "history@example.com").First(&owner).Error; err != nil {
+	if err := server.DB.Where("username_key = ?", "history wind").First(&owner).Error; err != nil {
 		t.Fatalf("load owner: %v", err)
 	}
 	ended := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
@@ -96,9 +96,9 @@ func TestReplayHistoryReturnsOnlyOwnedCompletedValidMatches(t *testing.T) {
 
 func TestReplayHistoryUsesStableCursorPagination(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	cookie, _ := registerSession(t, server, "pages@example.com", "Page Wind")
+	cookie, _ := registerSession(t, server, "Page Wind")
 	var owner storage.User
-	if err := server.DB.Where("email = ?", "pages@example.com").First(&owner).Error; err != nil {
+	if err := server.DB.Where("username_key = ?", "page wind").First(&owner).Error; err != nil {
 		t.Fatalf("load owner: %v", err)
 	}
 	ended := time.Date(2026, 7, 15, 3, 0, 0, 0, time.UTC)
@@ -144,14 +144,14 @@ func TestReplayHistoryUsesStableCursorPagination(t *testing.T) {
 
 func TestReplayHistoryRejectsInvalidCursorAndClampsLimit(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	cookie, _ := registerSession(t, server, "limits@example.com", "Limit Wind")
+	cookie, _ := registerSession(t, server, "Limit Wind")
 	invalid := authRequest(t, server.Router, http.MethodGet, "/api/v1/users/me/replays?cursor=not-a-cursor", "", cookie, "")
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid cursor = %d: %s", invalid.Code, invalid.Body.String())
 	}
 
 	var owner storage.User
-	if err := server.DB.Where("email = ?", "limits@example.com").First(&owner).Error; err != nil {
+	if err := server.DB.Where("username_key = ?", "limit wind").First(&owner).Error; err != nil {
 		t.Fatalf("load owner: %v", err)
 	}
 	ended := time.Now().UTC()

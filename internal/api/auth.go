@@ -28,8 +28,11 @@ type AuthHandler struct {
 	DB *gorm.DB
 }
 
+// RegisterRequest creates an account from a username and password only.
+// Email is deliberately absent: it is an optional profile field set later
+// through PATCH /users/me, never collected at signup. `displayName` remains
+// as the legacy alias for `username`.
 type RegisterRequest struct {
-	Email       string `json:"email" binding:"required,email"`
 	Username    string `json:"username"`
 	DisplayName string `json:"displayName"`
 	Password    string `json:"password" binding:"required,min=8"`
@@ -195,11 +198,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, "Failed to hash password")
 		return
 	}
-	// Task 2 removes email from registration entirely; for now this preserves
-	// today's behaviour against a pointer field.
-	registeredEmail := normalizeEmail(req.Email)
 	user := storage.User{
-		Email:        &registeredEmail,
 		Username:     username,
 		UsernameKey:  usernameKey,
 		PasswordHash: string(hashedPassword),
@@ -217,7 +216,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	})
 	if err != nil {
 		if isUniqueConstraintError(err) {
-			respondError(c, http.StatusConflict, "Email or username is already registered")
+			respondError(c, http.StatusConflict, "Username is already registered")
 			return
 		}
 		respondError(c, http.StatusInternalServerError, "Failed to create account")

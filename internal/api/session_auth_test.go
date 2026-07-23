@@ -78,7 +78,7 @@ func sessionCookieFrom(t *testing.T, rec *httptest.ResponseRecorder) *http.Cooki
 func TestRegisterCreatesPersistentHttpOnlySessionWithoutReturningToken(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"Rain@example.com","username":"Rain Player","password":"hunter2pw"}`, nil, "")
+		`{"username":"Rain Player","password":"hunter2pw"}`, nil, "")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -110,7 +110,7 @@ func TestProductionSessionUsesSecureHostCookie(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	fx := newAuthSessionFixture(t)
 	rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"secure@example.com","username":"Secure Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"Secure Wind","password":"hunter2pw"}`, nil, "")
 	cookie := sessionCookieFrom(t, rec)
 	if cookie.Name != prodSessionCookieName || !cookie.Secure || !cookie.HttpOnly {
 		t.Fatalf("production cookie = %#v", cookie)
@@ -120,7 +120,7 @@ func TestProductionSessionUsesSecureHostCookie(t *testing.T) {
 func TestProductionDoesNotAuthenticateDevelopmentCookieName(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"cookie-name@example.com","username":"Cookie Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"Cookie Wind","password":"hunter2pw"}`, nil, "")
 	developmentCookie := sessionCookieFrom(t, registered)
 	if developmentCookie.Name != devSessionCookieName {
 		t.Fatalf("development cookie name = %q", developmentCookie.Name)
@@ -136,7 +136,7 @@ func TestProductionDoesNotAuthenticateDevelopmentCookieName(t *testing.T) {
 func TestExpiredSessionIsDeleted(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"expired@example.com","username":"Old Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"Old Wind","password":"hunter2pw"}`, nil, "")
 	cookie := sessionCookieFrom(t, registered)
 	if err := fx.db.Model(&storage.UserSession{}).Where("token_hash = ?", hashSessionToken(cookie.Value)).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
 		t.Fatalf("expire session: %v", err)
@@ -155,29 +155,38 @@ func TestExpiredSessionIsDeleted(t *testing.T) {
 func TestLoginAcceptsUsernameOrEmail(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	register := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"river@example.com","username":"River Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"River Wind","password":"hunter2pw"}`, nil, "")
 	if register.Code != http.StatusCreated {
 		t.Fatalf("register = %d: %s", register.Code, register.Body.String())
 	}
-	for _, identifier := range []string{"RIVER WIND", "RIVER@EXAMPLE.COM"} {
+	cookie := sessionCookieFrom(t, register)
+	var session AuthResponse
+	if err := decodeJSONBody(register.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	attach := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"river@example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if attach.Code != http.StatusOK {
+		t.Fatalf("attach email = %d: %s", attach.Code, attach.Body.String())
+	}
+	for _, identifier := range []string{"river wind", "RIVER@EXAMPLE.COM"} {
 		rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/login",
 			`{"identifier":"`+identifier+`","password":"hunter2pw"}`, nil, "")
 		if rec.Code != http.StatusOK {
-			t.Fatalf("login with %q = %d: %s", identifier, rec.Code, rec.Body.String())
+			t.Fatalf("login as %q = %d: %s", identifier, rec.Code, rec.Body.String())
 		}
-		sessionCookieFrom(t, rec)
 	}
 }
 
 func TestRegisterRejectsDuplicateUsernameCaseInsensitively(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	first := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"one@example.com","username":"River Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"River Wind","password":"hunter2pw"}`, nil, "")
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first registration = %d: %s", first.Code, first.Body.String())
 	}
 	second := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"two@example.com","username":"RIVER WIND","password":"hunter2pw"}`, nil, "")
+		`{"username":"RIVER WIND","password":"hunter2pw"}`, nil, "")
 	if second.Code != http.StatusConflict {
 		t.Fatalf("duplicate username = %d: %s", second.Code, second.Body.String())
 	}
@@ -186,17 +195,17 @@ func TestRegisterRejectsDuplicateUsernameCaseInsensitively(t *testing.T) {
 func TestRegisterAcceptsLegacyDisplayNameAndRejectsAtSign(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	legacy := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"legacy@example.com","displayName":"Legacy Name","password":"hunter2pw"}`, nil, "")
+		`{"displayName":"Legacy Name","password":"hunter2pw"}`, nil, "")
 	if legacy.Code != http.StatusCreated {
 		t.Fatalf("legacy registration = %d: %s", legacy.Code, legacy.Body.String())
 	}
 	bad := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"bad@example.com","username":"bad@name","password":"hunter2pw"}`, nil, "")
+		`{"username":"bad@name","password":"hunter2pw"}`, nil, "")
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("username containing @ = %d: %s", bad.Code, bad.Body.String())
 	}
 	disagree := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"aliases@example.com","username":"Canonical","displayName":"Legacy","password":"hunter2pw"}`, nil, "")
+		`{"username":"Canonical","displayName":"Legacy","password":"hunter2pw"}`, nil, "")
 	if disagree.Code != http.StatusBadRequest {
 		t.Fatalf("disagreeing registration aliases = %d: %s", disagree.Code, disagree.Body.String())
 	}
@@ -214,12 +223,12 @@ func TestLoginRejectsDisagreeingCanonicalAndLegacyIdentifiers(t *testing.T) {
 func TestProfileMapsUsernameConflictAndAcceptsLegacyAlias(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	first := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"first-profile@example.com","username":"First Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"First Wind","password":"hunter2pw"}`, nil, "")
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first registration = %d: %s", first.Code, first.Body.String())
 	}
 	second := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"second-profile@example.com","username":"Second Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"Second Wind","password":"hunter2pw"}`, nil, "")
 	secondCookie := sessionCookieFrom(t, second)
 	var session AuthResponse
 	if err := decodeJSONBody(second.Body.Bytes(), &session); err != nil {
@@ -246,7 +255,7 @@ func TestProfileMapsUsernameConflictAndAcceptsLegacyAlias(t *testing.T) {
 func TestProfileEmailChangeRequiresCurrentPassword(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"old-email@example.com","username":"Email Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"Email Wind","password":"hunter2pw"}`, nil, "")
 	cookie := sessionCookieFrom(t, registered)
 	var session AuthResponse
 	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
@@ -267,7 +276,7 @@ func TestProfileEmailChangeRequiresCurrentPassword(t *testing.T) {
 func TestUnknownAndWrongPasswordShareGenericError(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"known@example.com","username":"Known","password":"hunter2pw"}`, nil, "")
+		`{"username":"Known","password":"hunter2pw"}`, nil, "")
 	var messages []string
 	for _, body := range []string{
 		`{"identifier":"missing","password":"hunter2pw"}`,
@@ -289,7 +298,7 @@ func TestUnknownAndWrongPasswordShareGenericError(t *testing.T) {
 func TestSessionBootstrapAndMutationsRequireCSRF(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	register := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"jade@example.com","username":"Jade","password":"hunter2pw"}`, nil, "")
+		`{"username":"Jade","password":"hunter2pw"}`, nil, "")
 	cookie := sessionCookieFrom(t, register)
 
 	bootstrap := authRequest(t, fx.router, http.MethodGet, "/api/v1/auth/session", "", cookie, "")
@@ -317,7 +326,7 @@ func TestSessionBootstrapAndMutationsRequireCSRF(t *testing.T) {
 func TestLogoutRevokesCurrentSession(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	register := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"east@example.com","username":"East Wind","password":"hunter2pw"}`, nil, "")
+		`{"username":"East Wind","password":"hunter2pw"}`, nil, "")
 	cookie := sessionCookieFrom(t, register)
 	var payload AuthResponse
 	if err := decodeJSONBody(register.Body.Bytes(), &payload); err != nil {
@@ -340,7 +349,7 @@ func TestLogoutRevokesCurrentSession(t *testing.T) {
 func TestLogoutKeepsOtherDeviceSessionActive(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	first := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"devices@example.com","username":"Many Devices","password":"hunter2pw"}`, nil, "")
+		`{"username":"Many Devices","password":"hunter2pw"}`, nil, "")
 	firstCookie := sessionCookieFrom(t, first)
 	var firstSession AuthResponse
 	if err := decodeJSONBody(first.Body.Bytes(), &firstSession); err != nil {
@@ -364,4 +373,48 @@ func TestLogoutKeepsOtherDeviceSessionActive(t *testing.T) {
 
 func decodeJSONBody(data []byte, target any) error {
 	return json.Unmarshal(data, target)
+}
+
+func TestRegisterNeedsOnlyUsernameAndPassword(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Wind Only","password":"hunter2pw"}`, nil, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"email":null`) {
+		t.Fatalf("a new account must carry no email: %s", rec.Body.String())
+	}
+}
+
+// Two accounts created without an email must both persist: NULL emails are
+// distinct under the unique index.
+func TestRegisterAllowsSeveralAccountsWithoutEmail(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	for _, username := range []string{"North Wind", "South Wind"} {
+		rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+			`{"username":"`+username+`","password":"hunter2pw"}`, nil, "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("register %s = %d: %s", username, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestRegisterRejectsDuplicateUsername(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	first := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Only Wind","password":"hunter2pw"}`, nil, "")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first register = %d: %s", first.Code, first.Body.String())
+	}
+	second := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"ONLY WIND","password":"hunter2pw"}`, nil, "")
+	if second.Code != http.StatusConflict {
+		t.Fatalf("duplicate register = %d, want 409: %s", second.Code, second.Body.String())
+	}
+	var payload map[string]string
+	_ = json.Unmarshal(second.Body.Bytes(), &payload)
+	if payload["error"] != "Username is already registered" {
+		t.Fatalf("conflict message = %q", payload["error"])
+	}
 }
