@@ -1070,9 +1070,10 @@ body {
    Give the local player's hand most of the bottom edge: the 76x107 DESIGN-px
    tiles render at roughly 42x59 CSS px on a 667x375 rotated phone, while a tighter
    1px rail gap keeps all 14 tiles and the separate drawn slot on screen. Opponent
-   and discard tiles stay small so the table centre remains readable. TUNE these
-   values together with --bundle-span-self and STAGE_COMPACT_BASE_HEIGHT; the
-   compactHandLayout contract protects the minimum touch size and total fit. */
+   and discard tiles stay small, and the shorter raised side bundles reserve a
+   protected interaction band above the self hand. TUNE these values together
+   with the bundle spans and STAGE_COMPACT_BASE_HEIGHT; compactHandLayout protects
+   both the minimum touch size and the side-to-self clearance. */
 .game-stage[data-compact="true"] .mahjong-table {
   --tile-width: 76px;
   --tile-height: 107px;
@@ -1083,6 +1084,8 @@ body {
   --discard-hud-gap: 6px;
   --bundle-edge-offset: 16px;
   --bundle-span-self: 1190px;
+  --bundle-span-opp: 430px;
+  --bundle-side-shift: 34px;
 }
 
 .game-stage .wild-tile-corner {
@@ -1411,6 +1414,13 @@ body {
   right: var(--bundle-edge-offset-side);
   top: calc(50% - var(--bundle-side-shift));
   transform: rotate(-90deg);
+}
+
+/* A short phone stage cannot point-reflect the side bundles without letting the
+   lower left rail enter the enlarged self hand. Raise both sides to the same
+   compact baseline so even a selected self tile has a clear interaction band. */
+.game-stage[data-compact="true"] .seat-bundle-pivot--left {
+  top: calc(50% - var(--bundle-side-shift));
 }
 
 /* The bundle: a fixed-width box centred on the pivot. justify-content
