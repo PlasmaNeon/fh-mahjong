@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/internal/mail"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"github.com/plasma/fh-mahjong/web"
 	"golang.org/x/sync/singleflight"
@@ -161,13 +162,22 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 }
 
 func (s *Server) setupRoutes() {
-	authHandler := &AuthHandler{DB: s.DB}
+	authHandler := &AuthHandler{
+		DB:           s.DB,
+		Mail:         mail.LogSender{},
+		ResetLimiter: newKeyedRateLimiter(passwordResetRatePerMinute, passwordResetRateBurst),
+	}
 
 	v1 := s.Router.Group("/api/v1")
 	{
 		// Public routes
 		v1.POST("/auth/register", authHandler.Register)
 		v1.POST("/auth/login", authHandler.Login)
+		// Password recovery. Public by design (a locked-out user has no
+		// session) and deliberately NOT linked from the frontend yet: the
+		// configured mail sender only writes codes to the server log.
+		v1.POST("/auth/password-reset/request", authHandler.RequestPasswordReset)
+		v1.POST("/auth/password-reset/confirm", authHandler.ConfirmPasswordReset)
 		v1.GET("/auth/session", AuthMiddleware(s.DB), authHandler.Session)
 		v1.DELETE("/auth/session", AuthMiddleware(s.DB), authHandler.Logout)
 		v1.GET("/config", s.handleConfig)

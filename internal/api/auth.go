@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/mail"
+	netmail "net/mail"
 	"os"
 	"strings"
 	"time"
@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/internal/mail"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -25,8 +26,12 @@ const (
 	prodSessionCookieName = "__Host-fh_session"
 )
 
+// AuthHandler owns account creation, login, and password recovery. Mail and
+// ResetLimiter are only used by the password-reset endpoints.
 type AuthHandler struct {
-	DB *gorm.DB
+	DB           *gorm.DB
+	Mail         mail.Sender
+	ResetLimiter *keyedRateLimiter
 }
 
 // RegisterRequest creates an account from a username and password only.
@@ -244,15 +249,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	var user storage.User
-	var lookupErr error
-	if strings.Contains(identifier, "@") {
-		lookupErr = h.DB.Where("email = ?", normalizeEmail(identifier)).First(&user).Error
-	} else {
-		_, key := storage.NormalizeUsername(identifier)
-		lookupErr = h.DB.Where("username_key = ?", key).First(&user).Error
-	}
-	if lookupErr != nil {
+	user, found := lookupUserByIdentifier(h.DB, identifier)
+	if !found {
 		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
 		respondError(c, http.StatusUnauthorized, "Invalid username/email or password")
 		return
@@ -358,7 +356,7 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 		case normalized == "":
 			emailChange = user.Email != nil
 		case user.Email == nil || *user.Email != normalized:
-			parsed, err := mail.ParseAddress(normalized)
+			parsed, err := netmail.ParseAddress(normalized)
 			if err != nil || parsed.Name != "" || parsed.Address != normalized || strings.Count(normalized, "@") != 1 {
 				respondError(c, http.StatusBadRequest, "Invalid email address")
 				return

@@ -12,14 +12,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/plasma/fh-mahjong/internal/mail"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type authSessionFixture struct {
-	router *gin.Engine
-	db     *gorm.DB
+	router  *gin.Engine
+	db      *gorm.DB
+	handler *AuthHandler
 }
 
 func TestLoginDummyHashEqualizesTiming(t *testing.T) {
@@ -39,14 +41,20 @@ func newAuthSessionFixture(t *testing.T) authSessionFixture {
 	if err := storage.AutoMigrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	h := &AuthHandler{DB: db}
+	h := &AuthHandler{
+		DB:           db,
+		Mail:         mail.LogSender{},
+		ResetLimiter: newKeyedRateLimiter(passwordResetRatePerMinute, passwordResetRateBurst),
+	}
 	r := gin.New()
 	r.POST("/api/v1/auth/register", h.Register)
 	r.POST("/api/v1/auth/login", h.Login)
 	r.GET("/api/v1/auth/session", AuthMiddleware(db), h.Session)
 	r.DELETE("/api/v1/auth/session", AuthMiddleware(db), h.Logout)
 	r.PATCH("/api/v1/users/me", AuthMiddleware(db), h.UpdateMe)
-	return authSessionFixture{router: r, db: db}
+	r.POST("/api/v1/auth/password-reset/request", h.RequestPasswordReset)
+	r.POST("/api/v1/auth/password-reset/confirm", h.ConfirmPasswordReset)
+	return authSessionFixture{router: r, db: db, handler: h}
 }
 
 func authRequest(t *testing.T, r http.Handler, method, path, body string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
