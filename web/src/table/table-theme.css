@@ -185,6 +185,47 @@
 .table-action-btn-skip { color: var(--on-dark-2); background: linear-gradient(150deg, #25373b, #18272b); border-color: rgba(255,255,255,0.1); }
 .table-action-preview { background: rgba(7,16,20,0.34); border-radius: 6px; }
 
+.chii-choice-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 48px;
+  padding: 0.45rem 0.5rem 0.45rem 0.65rem;
+  color: var(--on-dark);
+  background: linear-gradient(150deg, rgba(32,93,84,0.96), rgba(11,32,34,0.95));
+  border: 1px solid rgba(145,205,191,0.42);
+  border-radius: 12px 12px 3px 12px;
+  box-shadow: 0 4px 0 #071014, 0 14px 28px rgba(0,0,0,0.36);
+  font-family: var(--mono);
+}
+.chii-choice-prompt__call {
+  padding-right: 0.65rem;
+  color: #eafff7;
+  border-right: 1px solid rgba(145,205,191,0.3);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+.chii-choice-prompt__instruction {
+  color: rgba(234,255,247,0.82);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+.chii-choice-prompt__cancel {
+  min-height: 34px;
+  padding: 0.4rem 0.6rem;
+  color: var(--on-dark-2);
+  background: rgba(7,16,20,0.54);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 7px 7px 2px 7px;
+  font: inherit;
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+.chii-choice-prompt__cancel:hover {
+  color: #fff7e6;
+  border-color: rgba(230,161,92,0.45);
+}
+
 .table-exit-control {
   position: absolute;
   right: 1rem;
@@ -269,6 +310,32 @@
 /* A lifted (selected) tile stays raised. No coloured glow — a brass glow would be
    indistinguishable from the wild-tile indicator (below); the raise + z-index mark it. */
 .game-stage[data-discard-mode] .mahjong-tile.lifted { transform: translateY(-14px); z-index: 20; }
+.game-stage[data-compact="true"][data-discard-mode="single"] .mahjong-tile.interactive:not(.lifted):hover { transform: translateY(-16px) rotate(-1deg); }
+.game-stage[data-compact="true"][data-discard-mode] .mahjong-tile.lifted { transform: translateY(-22px); }
+
+/* Majsoul/Tenhou-style multi-chii choice: the call stays a single action, then
+   the hand itself becomes the picker. These selectors intentionally follow and
+   outrank the normal discard hover rules because production always keeps a
+   data-discard-mode attribute on the stage during an interrupt. */
+.game-stage[data-chii-choice="true"] .mahjong-tile--choice-disabled {
+  opacity: 0.38;
+  filter: saturate(0.25) brightness(0.72);
+  pointer-events: none;
+}
+.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-eligible {
+  transform: translateY(-10px);
+  filter: drop-shadow(0 0 7px rgba(111,213,180,0.62)) drop-shadow(0 5px 3px rgba(0,0,0,0.3));
+}
+.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-eligible:hover {
+  transform: translateY(-16px);
+}
+.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-selected,
+.game-stage[data-chii-choice="true"][data-discard-mode] .mahjong-tile--choice-selected:hover {
+  transform: translateY(-22px);
+  box-shadow: 0 0 0 3px var(--brass-light), 0 10px 22px rgba(0,0,0,0.34);
+  filter: drop-shadow(0 0 10px rgba(230,161,92,0.72));
+  z-index: 24;
+}
 .mahjong-tile.wild-tile:not(.mahjong-tile--no-glow) { filter: drop-shadow(0 0 7px rgba(230,161,92,0.95)) drop-shadow(0 5px 3px rgba(0,0,0,0.32)); }
 
 .discard-pool-tile-callable::after,
@@ -342,12 +409,17 @@
 .round-result-payout-positive { background: var(--accent-soft); }
 .round-result-payout-negative { background: var(--danger-soft); }
 .round-result-payout-seat,
-.round-result-payout-ready { color: var(--ink-3); }
+.round-result-payout-status-waiting { color: var(--ink-3); }
+.round-result-payout-status-ready { color: var(--accent-strong); }
 .round-result-payout-positive .round-result-payout-amount { color: var(--accent-strong); }
 .round-result-payout-negative .round-result-payout-amount { color: #9f4032; }
 .round-result-action-btn { min-height: 42px; border-radius: 9px 9px 3px 9px; font-family: var(--mono); letter-spacing: 0.06em; }
 .round-result-action-btn-ready { color: #fff8e9; background: var(--accent-strong); border-color: var(--accent-strong); }
 .round-result-action-btn-exit { color: var(--ink-2); background: transparent; border-color: var(--rule); }
+
+@container round-result (max-height: 500px) and (min-width: 600px) {
+  .round-result-modal::before { display: none; }
+}
 
 @keyframes score-slip-in { from { opacity: 0; transform: translateY(22px) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
 @keyframes seal-land { from { opacity: 0; transform: scale(1.6) rotate(18deg); } to { opacity: 1; transform: scale(1) rotate(8deg); } }

@@ -51,6 +51,11 @@ export type HudChip = {
   tone?: 'default' | 'danger'
 }
 
+export type HandTileChoice = {
+  eligibleTileIds: ReadonlySet<number>
+  selectedTileIds: ReadonlySet<number>
+}
+
 export type RoundResultBreakdownEntry = {
   name: string
   points: number

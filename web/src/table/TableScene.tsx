@@ -13,6 +13,7 @@ import type {
   MeldLike,
   PlayerTableView,
   HudChip,
+  HandTileChoice,
   RoundResultBreakdownEntry,
   RoundResultPayout,
   RoundResultView,
@@ -41,6 +42,7 @@ type TableBoardProps = {
   cornerInfo?: ReactNode
   liftedTileId?: number | null
   onHandTileClick?: (tile: TileLike) => void
+  handTileChoice?: HandTileChoice | null
   isWildTile?: (tile: TileLike) => boolean
   animateDiscardTileIds?: Set<number>
   callableDiscard?: { seat: number; tileId: number } | null
@@ -63,6 +65,7 @@ export function TableBoard({
   cornerInfo = null,
   liftedTileId = null,
   onHandTileClick,
+  handTileChoice = null,
   isWildTile = () => false,
   animateDiscardTileIds,
   callableDiscard = null,
@@ -117,6 +120,7 @@ export function TableBoard({
           player={player}
           liftedTileId={liftedTileId}
           onHandTileClick={onHandTileClick}
+          handTileChoice={direction === 'bottom' ? handTileChoice : null}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
           hiddenSlots={hiddenHandSlots.get(direction)}
@@ -227,7 +231,7 @@ export function TableRoundResultOverlay({
               </section>
 
               {breakdown.length > 0 && (
-                <section className="round-result-section" aria-label={t('result.breakdown')}>
+                <section className="round-result-section round-result-breakdown-section" aria-label={t('result.breakdown')}>
                   <div className="round-result-section-label">{t('result.ledger')}</div>
                   <div className="round-result-breakdown-grid">
                     {breakdown.map((entry, index) => (

@@ -1012,12 +1012,16 @@ body {
 }
 
 .game-stage .mahjong-table {
-  --tile-width: 44px;
-  --tile-height: 62px;
+  /* The stage is a fixed 1600x900 design canvas, so these desktop tile tokens
+     are canvas-relative: 94px is ~10.4% of the table height at every zoom.
+     At 1280x720 that becomes ~53x75 CSS px, matching the local-hand prominence
+     of modern Mahjong clients without tying geometry to one monitor size. */
+  --tile-width: 66px;
+  --tile-height: 94px;
   --tile-small-width: 30px;
   --tile-small-height: 42px;
-  --tile-gap: 4px;
-  --drawn-gap: 14px;
+  --tile-gap: 2px;
+  --drawn-gap: 16px;
   --discard-gap: 3px;
   --discard-padding: 6px;
   --discard-lane-size: calc((var(--tile-small-width) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
@@ -1038,7 +1042,7 @@ body {
   --discard-side-edge: 264px;
   --discard-bottom-bottom: 250px;
   --action-left: calc(50% + 306px);
-  --action-bottom: 124px;
+  --action-bottom: 166px;
   --seat-bottom-height: 96px;
   --seat-top-height: 84px;
   --seat-side-width: 160px;
@@ -1046,7 +1050,7 @@ body {
   --seat-exposed-gap: 10px;
   --meld-group-gap: 12px;
   --bundle-min-gap: 24px;
-  --bundle-span-self: 720px;
+  --bundle-span-self: 1080px;
   --bundle-span-opp: 630px;
   --bundle-side-shift: 24px;
   --bundle-flower-meld-gap: 8px;
@@ -1067,19 +1071,26 @@ body {
 
 /* Compact layout for short stages (phones) — paired with STAGE_COMPACT_BASE_HEIGHT
    in computeStageLayout.ts, applied when the hook sets data-compact on .game-stage.
-   The shorter compact design scales the whole board up, so the self hand
-   (--tile-width/height, left untouched) gets bigger. To make the shorter design
-   fit without clipping, tighten the center + opponent/discard tiles in DESIGN px:
-   shrinking --tile-small-* also shrinks --discard-lane-size / --center-hud-size
-   (calc refs), and those tiles end up ~the same on-screen size after the scale-up.
-   TUNE these together with STAGE_COMPACT_BASE_HEIGHT: clips -> raise base height
-   or shrink these more; too cramped -> the opposite; self tiles still too small
-   -> lower STAGE_COMPACT_BASE_HEIGHT and shrink these further. */
+   Give the local player's hand most of the bottom edge: the 76x107 DESIGN-px
+   tiles render at roughly 42x59 CSS px on a 667x375 rotated phone, while a tighter
+   1px rail gap keeps all 14 tiles and the separate drawn slot on screen. Opponent
+   and discard tiles stay small, and the shorter raised side bundles reserve a
+   protected interaction band above the self hand. TUNE these values together
+   with the bundle spans and STAGE_COMPACT_BASE_HEIGHT; compactHandLayout protects
+   both the minimum touch size and the side-to-self clearance. */
 .game-stage[data-compact="true"] .mahjong-table {
+  --tile-width: 76px;
+  --tile-height: 107px;
+  --tile-gap: 1px;
+  --drawn-gap: 12px;
   --tile-small-width: 24px;
   --tile-small-height: 34px;
   --discard-hud-gap: 6px;
+  --action-bottom: 124px;
   --bundle-edge-offset: 16px;
+  --bundle-span-self: 1190px;
+  --bundle-span-opp: 430px;
+  --bundle-side-shift: 34px;
 }
 
 .game-stage .wild-tile-corner {
@@ -1408,6 +1419,13 @@ body {
   right: var(--bundle-edge-offset-side);
   top: calc(50% - var(--bundle-side-shift));
   transform: rotate(-90deg);
+}
+
+/* A short phone stage cannot point-reflect the side bundles without letting the
+   lower left rail enter the enlarged self hand. Raise both sides to the same
+   compact baseline so even a selected self tile has a clear interaction band. */
+.game-stage[data-compact="true"] .seat-bundle-pivot--left {
+  top: calc(50% - var(--bundle-side-shift));
 }
 
 /* The bundle: a fixed-width box centred on the pivot. justify-content

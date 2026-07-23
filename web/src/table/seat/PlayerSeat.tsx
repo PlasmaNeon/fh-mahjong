@@ -1,12 +1,13 @@
 import { DiscardZone } from './DiscardZone'
 import { SeatBundle } from './SeatBundle'
-import type { PlayerTableView, SeatLaneDirection, TileLike } from '../types'
+import type { HandTileChoice, PlayerTableView, SeatLaneDirection, TileLike } from '../types'
 
 type PlayerSeatProps = {
   direction: SeatLaneDirection
   player: PlayerTableView
   liftedTileId?: number | null
   onHandTileClick?: (tile: TileLike) => void
+  handTileChoice?: HandTileChoice | null
   isWildTile?: (tile: TileLike) => boolean
   hiddenTileIds?: Set<number>
   hiddenSlots?: Set<number>
@@ -19,6 +20,7 @@ export function PlayerSeat({
   player,
   liftedTileId = null,
   onHandTileClick,
+  handTileChoice = null,
   isWildTile = () => false,
   hiddenTileIds,
   hiddenSlots,
@@ -48,6 +50,7 @@ export function PlayerSeat({
           interactive={isSelf && !!onHandTileClick}
           liftedTileId={liftedTileId}
           onHandTileClick={onHandTileClick}
+          handTileChoice={handTileChoice}
           isWildTile={isWildTile}
           hiddenTileIds={hiddenTileIds}
           hiddenSlots={hiddenSlots}

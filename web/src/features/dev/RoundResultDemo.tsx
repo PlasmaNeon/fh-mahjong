@@ -8,13 +8,14 @@ import {
   type ScenarioKey,
 } from './roundResultScenarios'
 
-// Dev-only preview for PR #152's round-result overlay. Route: /tools/round-result.
+// Dev-only preview for the shared round-result overlay. Route: /tools/round-result.
 // Default = control panel + resizable iframe. The iframe loads this same route
 // with ?embed=1 so its own viewport drives the responsive media queries.
 
 export const ROUND_RESULT_VIEWPORTS = [
   { key: 'compact-phone', label: 'Compact iPhone', width: 375, height: 667 },
   { key: 'phone', label: 'Portrait phone', width: 393, height: 852 },
+  { key: 'rotated-phone', label: 'Rotated phone', width: 667, height: 375 },
   { key: 'landscape', label: 'Landscape', width: 852, height: 393 },
   { key: 'desktop', label: 'Desktop', width: 1280, height: 800 },
 ] as const
@@ -79,7 +80,7 @@ function segButton(active: boolean): string {
 
 function Playground() {
   const [scenario, setScenario] = useState<ScenarioKey>('tsumo')
-  const [viewport, setViewport] = useState<ViewportKey>('compact-phone')
+  const [viewport, setViewport] = useState<ViewportKey>('rotated-phone')
   const [ready, setReady] = useState(false)
 
   const vp = ROUND_RESULT_VIEWPORTS.find((v) => v.key === viewport) ?? ROUND_RESULT_VIEWPORTS[0]

@@ -49,6 +49,12 @@ describe('TableRoundResultOverlay', () => {
     expect(markup).toContain('>Waiting<')
   })
 
+  it('marks the scoring ledger for the compact settlement layout', () => {
+    const markup = renderOverlay(result)
+
+    expect(markup).toContain('round-result-breakdown-section')
+  })
+
   it('omits payout status when replay data has no readiness state', () => {
     const replayResult = {
       ...result,
@@ -74,13 +80,12 @@ function ruleBody(css: string, selector: string) {
 }
 
 describe('round-result CSS reachability contract', () => {
-  it('sizes from the viewport and reserves a persistent action row', () => {
+  it('reserves a persistent action row without fixed-stage sizing', () => {
     const css = readRoundResultCss()
 
     expect(ruleBody(css, '.round-result-modal')).toContain('grid-template-rows: minmax(0, 1fr) auto')
     expect(ruleBody(css, '.round-result-scroll')).toContain('overflow-y: auto')
     expect(ruleBody(css, '.round-result-actions')).toContain('flex-shrink: 0')
-    expect(css).toContain('100dvh')
     expect(css).not.toContain('--game-stage-scaled-height')
     expect(css).not.toContain('--game-stage-scaled-width')
   })
@@ -90,5 +95,20 @@ describe('round-result CSS reachability contract', () => {
 
     expect(ruleBody(css, '.round-result-payout-grid')).toContain('grid-template-columns: repeat(4, minmax(0, 1fr))')
     expect(css).not.toContain('.round-result-payout-grid { grid-template-columns: repeat(2')
+  })
+
+  it('fits the modal to its actual rotated shell and removes compact-shell scrolling', () => {
+    const css = readRoundResultCss()
+
+    expect(ruleBody(css, '.round-result-overlay')).toContain('container: round-result / size')
+    expect(ruleBody(css, '.round-result-modal')).toContain('max-height: min(780px, calc(100% - 1.5rem))')
+    expect(readFileSync(resolve(process.cwd(), 'src/table/roundResult.css'), 'utf8')).not.toContain('100dvh')
+    expect(css).toContain('@container round-result (max-height: 500px) and (min-width: 600px)')
+    expect(css).toMatch(/@container round-result[^]*?\.round-result-scroll\s*\{[^}]*overflow:\s*hidden/)
+    expect(css).toMatch(/@container round-result[^]*?\.round-result-scroll\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/)
+    expect(css).toMatch(/@container round-result[^]*?\.round-result-breakdown-grid\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/)
+    expect(css).toMatch(/@container round-result[^]*?\.round-result-payout-cell\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/)
+    expect(css).toMatch(/@container round-result[^]*?\.round-result-payout-status\s*\{[^}]*margin-top:\s*0/)
+    expect(css).not.toContain('grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr)')
   })
 })

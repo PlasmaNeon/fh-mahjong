@@ -78,12 +78,14 @@ Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/mat
 
 Dev-only preview pages that render real components with mock data (no live match). Not linked from the app UI; reached by URL.
 
-- **TableSample.tsx** — Renders the real `TableBoard` with mock game data so the table layout can be iterated without a live match. Route: `/tools/table-sample`.
-- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so the shared live/replay settlement UI can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · readiness toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own viewport drives the responsive `max-width: 720px` / landscape media queries. Presets include a 375x667 compact iPhone regression target. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
+- **TableSample.tsx** — Renders the real `TableBoard` with mock game data so the table layout can be iterated without a live match. Route: `/tools/table-sample`. Its active-turn fixture makes the self hand clickable and retains the selected tile; the Multi CHII fixture exercises the one-button, hand-tile candidate picker without a backend.
+- **RoundResultDemo.tsx** — Preview of the round-end payout sheet (`TableRoundResultOverlay`) so the shared live/replay settlement UI can be reviewed without playing a round. Route: `/tools/round-result`. Renders a control panel (scenario · viewport preset · readiness toggle) plus a resizable `<iframe>`; the iframe loads the same route with `?embed=1` and renders only the overlay full-bleed, so its own container drives the responsive layout. Presets include 375x667 compact-iPhone and 667x375 rotated-phone regression targets; the rotated shell is the default. Mock `RoundResultView` data comes from `roundResultScenarios.ts` (unit-tested in `roundResultScenarios.test.ts`).
 
 ## Architecture Notes
 
-- `dev/TableSample.tsx` exposes deterministic idle, active-turn, interrupt, callable-discard, round-result, match-end, and exit-dialog fixtures for visual QA without a backend.
+- `dev/TableSample.tsx` exposes deterministic idle, active-turn, called-hand, interrupt, multi-chii, callable-discard, round-result, match-end, and exit-dialog fixtures for visual QA without a backend.
+
+- `game/chiiChoice.ts` owns the multi-choice chii state machine. Server candidates collapse to one `CHII` trigger; after it is pressed, eligible hand faces are selected in two taps and the matching original action (with its canonical tile IDs) is submitted. Duplicate physical copies remain equivalent by suit/value.
 
 - Optional login entry points preserve the current route in `backgroundLocation`; required account, room-create, invitation, and expired-session continuations use direct non-dismissible `/login?returnTo=...` navigation.
 
