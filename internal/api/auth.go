@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
@@ -291,8 +292,20 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// UpdateProfileRequest carries an optional username and/or email change. For
+// Email the three JSON states are distinct: key absent (or null) means "no
+// change", a non-empty string sets or replaces the address, and "" clears it
+// back to NULL.
+//
+// Email deliberately carries no `binding:"...email"` tag. go-playground's
+// validator only treats a *string as empty (for `omitempty`) when the
+// pointer itself is nil; a non-nil pointer to "" — exactly the clear
+// request — still hits the `email` format check and gets rejected (verified
+// against this repo's pinned validator v10.30.1). UpdateMe instead validates
+// format by hand with net/mail.ParseAddress, and only when the normalized
+// value is non-empty, so clearing is never subject to format validation.
 type UpdateProfileRequest struct {
-	Email           *string `json:"email" binding:"omitempty,email"`
+	Email           *string `json:"email"`
 	Username        *string `json:"username"`
 	DisplayName     *string `json:"displayName"`
 	CurrentPassword *string `json:"currentPassword"`
@@ -331,11 +344,22 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 			return
 		}
 	}
-	newEmail := ""
+	// newEmail nil while emailChange is true means "clear it".
+	var newEmail *string
 	emailChange := false
 	if req.Email != nil {
-		newEmail = normalizeEmail(*req.Email)
-		emailChange = user.Email == nil || *user.Email != newEmail
+		normalized := normalizeEmail(*req.Email)
+		switch {
+		case normalized == "":
+			emailChange = user.Email != nil
+		case user.Email == nil || *user.Email != normalized:
+			if _, err := mail.ParseAddress(normalized); err != nil {
+				respondError(c, http.StatusBadRequest, "Invalid email address")
+				return
+			}
+			emailChange = true
+			newEmail = &normalized
+		}
 	}
 	newUsername, newUsernameKey := user.Username, user.UsernameKey
 	usernameChange := false
@@ -364,7 +388,13 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	}
 	updates := map[string]any{}
 	if emailChange {
-		updates["email"] = newEmail
+		if newEmail == nil {
+			updates["email"] = nil
+		} else {
+			updates["email"] = *newEmail
+		}
+		// A newly set or cleared address is never a verified one.
+		updates["email_verified_at"] = nil
 	}
 	if usernameChange {
 		updates["username"] = newUsername

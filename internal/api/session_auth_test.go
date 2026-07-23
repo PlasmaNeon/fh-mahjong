@@ -252,7 +252,7 @@ func TestProfileMapsUsernameConflictAndAcceptsLegacyAlias(t *testing.T) {
 	}
 }
 
-func TestProfileEmailChangeRequiresCurrentPassword(t *testing.T) {
+func TestProfileEmailAddChangeAndClearRequireCurrentPassword(t *testing.T) {
 	fx := newAuthSessionFixture(t)
 	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
 		`{"username":"Email Wind","password":"hunter2pw"}`, nil, "")
@@ -261,15 +261,96 @@ func TestProfileEmailChangeRequiresCurrentPassword(t *testing.T) {
 	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
 		t.Fatalf("decode registration: %v", err)
 	}
+
 	missing := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
-		`{"email":"new-email@example.com"}`, cookie, session.CSRFToken)
+		`{"email":"first@example.com"}`, cookie, session.CSRFToken)
 	if missing.Code != http.StatusBadRequest {
-		t.Fatalf("email change without password = %d: %s", missing.Code, missing.Body.String())
+		t.Fatalf("adding an email without a password = %d: %s", missing.Code, missing.Body.String())
 	}
+
+	added := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"first@example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if added.Code != http.StatusOK || !strings.Contains(added.Body.String(), `"email":"first@example.com"`) {
+		t.Fatalf("adding an email = %d: %s", added.Code, added.Body.String())
+	}
+
 	changed := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
-		`{"email":"new-email@example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
-	if changed.Code != http.StatusOK || !strings.Contains(changed.Body.String(), `"email":"new-email@example.com"`) {
-		t.Fatalf("email change = %d: %s", changed.Code, changed.Body.String())
+		`{"email":"Second@Example.com","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if changed.Code != http.StatusOK || !strings.Contains(changed.Body.String(), `"email":"second@example.com"`) {
+		t.Fatalf("changing an email = %d: %s", changed.Code, changed.Body.String())
+	}
+
+	clearedWithoutPassword := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":""}`, cookie, session.CSRFToken)
+	if clearedWithoutPassword.Code != http.StatusBadRequest {
+		t.Fatalf("clearing without a password = %d: %s", clearedWithoutPassword.Code, clearedWithoutPassword.Body.String())
+	}
+
+	cleared := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if cleared.Code != http.StatusOK || !strings.Contains(cleared.Body.String(), `"email":null`) {
+		t.Fatalf("clearing an email = %d: %s", cleared.Code, cleared.Body.String())
+	}
+}
+
+// TestProfileEmailChangeRejectsMalformedAddress exercises the hand-rolled
+// net/mail.ParseAddress check in UpdateMe. It replaces the format
+// validation that a `binding:"omitempty,email"` struct tag would normally
+// provide, since that tag rejects a non-nil pointer to "" (the clear case)
+// along with genuinely malformed addresses; see the UpdateProfileRequest
+// doc comment in auth.go for why the tag was dropped.
+func TestProfileEmailChangeRejectsMalformedAddress(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Malformed Wind","password":"hunter2pw"}`, nil, "")
+	cookie := sessionCookieFrom(t, registered)
+	var session AuthResponse
+	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	rec := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"not-an-email","currentPassword":"hunter2pw"}`, cookie, session.CSRFToken)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed email = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProfileEmailChangeRejectsWrongCurrentPassword(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	registered := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+		`{"username":"Wrong Wind","password":"hunter2pw"}`, nil, "")
+	cookie := sessionCookieFrom(t, registered)
+	var session AuthResponse
+	if err := decodeJSONBody(registered.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	rec := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+		`{"email":"nope@example.com","currentPassword":"not-my-password"}`, cookie, session.CSRFToken)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password = %d, want 401: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProfileRejectsAnEmailAlreadyOnAnotherAccount(t *testing.T) {
+	fx := newAuthSessionFixture(t)
+	for _, username := range []string{"Taken Wind", "Other Wind"} {
+		rec := authRequest(t, fx.router, http.MethodPost, "/api/v1/auth/register",
+			`{"username":"`+username+`","password":"hunter2pw"}`, nil, "")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("register %s = %d: %s", username, rec.Code, rec.Body.String())
+		}
+		var session AuthResponse
+		if err := decodeJSONBody(rec.Body.Bytes(), &session); err != nil {
+			t.Fatalf("decode registration: %v", err)
+		}
+		attach := authRequest(t, fx.router, http.MethodPatch, "/api/v1/users/me",
+			`{"email":"shared@example.com","currentPassword":"hunter2pw"}`, sessionCookieFrom(t, rec), session.CSRFToken)
+		if username == "Taken Wind" && attach.Code != http.StatusOK {
+			t.Fatalf("first claim = %d: %s", attach.Code, attach.Body.String())
+		}
+		if username == "Other Wind" && attach.Code != http.StatusConflict {
+			t.Fatalf("second claim = %d, want 409: %s", attach.Code, attach.Body.String())
+		}
 	}
 }
 
