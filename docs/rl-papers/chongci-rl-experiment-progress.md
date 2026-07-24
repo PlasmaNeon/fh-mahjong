@@ -16131,3 +16131,30 @@ Oracle training:
 
 Training with privileged hidden-state auxiliary targets while keeping deployed
 inference inputs visible-only.
+
+## 2026-07-24 — anchor075-restart: second consecutive confirmed win (restart ladder lap 1)
+
+Codex-ratified iter_075 weight restart (exact champion recipe, --base-seed 100000,
+symmetric self-play, preflight-proved exact load via --champion). 150/150 iters,
+healthy telemetry throughout (dealin_positive_rate ~0.12, rank coverage 1.0, zero truncation).
+
+Screenings vs regenerated iter_075 comparator (910000+, 120 seeds, strict):
+25: -0.0486±0.0641 | 50: -0.0264±0.0630 (kill rule passed) | 75: +0.0264±0.0717 |
+100: -0.0250±0.0741 | 125: -0.0042±0.0742 | 150: -0.0597±0.0778. Extension rule
+failed cleanly (150 worst); pre-registered selection = restart iter_075 (only positive).
+
+Confirmation (990000+, 1500 seeds/side, back-to-back, main 05f63a6, strict, frozen
+candidate sha ce9d867f803bb41a...): paired placement +0.0254 ± 0.0188 — SIGNIFICANT;
+large_loss 0.0493 vs anchor 0.0523 (tail criterion passes, candidate better). GATE PASSED.
+
+Lesson repeated: both confirmed champions were isolated screening peaks in unstable
+trajectories — screening CIs (±0.07) cannot resolve +0.03-level effects; the
+no-optional-stopping confirmation discipline is what finds them. (Codex insisted on
+running this gate against my pessimistic prior; it was right.)
+
+Registered as gate_qualified_research_champion (chongci_b2b_anchor075_restart_iter075,
+serving_status blocked_on_b2c_runbook); anchor iter_075 entry marked superseded.
+990000+ window now spent. Next lap (r2) authorized and launched: --champion restart
+iter_075, base-seed 200000, dir b2b-anchor075r2-restart, confirmation window 1030000+;
+if r2 confirms, next step is a NEW decision (no automatic r3). Deployment rule: B2c
+runbook target frozen at start; no mid-runbook candidate swap.
