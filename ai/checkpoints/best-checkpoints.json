@@ -4288,25 +4288,23 @@
   },
   "updated_at": "2026-07-04T22:30:08.752610+00:00",
   "gate_qualified_research_champion": {
-    "checkpoint_path": "/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt",
-    "checkpoint_sha256": "00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e",
-    "id": "chongci_b2b_eventgru_privcritic_iter075",
+    "checkpoint_path": "/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt",
+    "checkpoint_sha256": "ce9d867f803bb41acad30f1f4c137e82d7946ed2c4db769e265d0c9cd08f75d4",
+    "id": "chongci_b2b_anchor075_restart_iter075",
     "match_mode": "chongci",
-    "method": "b2b_event_gru_privileged_critic_aux_heads_warmstart_iter275",
-    "serving_status": "blocked_on_b2c",
+    "method": "b2b_recipe_weight_restart_from_iter075_base_seed_100000",
+    "serving_status": "blocked_on_b2c_runbook",
     "model_config": {
       "channels": 96,
       "residual_blocks": 4,
       "event_window": 128,
       "privileged_critic": true,
       "aux_heads": true,
-      "note": "B2b architecture pinned in checkpoint metadata; infer_model_config REFUSES this checkpoint by design (B2c makes serving metadata-aware). Evaluate with fh-mj-evaluate --model-residual-blocks 4 --model-event-window 128 --model-privileged-critic --model-aux-heads --event-history-window 128."
+      "note": "B2b architecture pinned in checkpoint metadata; loadable since B2c (metadata-authoritative infer_model_config). Evaluate with fh-mj-evaluate --model-residual-blocks 4 --model-event-window 128 --model-privileged-critic --model-aux-heads --event-history-window 128."
     },
     "notes": [
-      "GATE-QUALIFIED RESEARCH CHAMPION (2026-07-20) — first confirmed champion-beating candidate of the campaign. NOT the operational serving champion: the serving pointer (current_chongci_reward_trained_best) stays on iter275 until Spec B2c parity/smoke/canary pass (Codex-ratified two-status protocol, canonical consult session).",
-      "Warm-started from iter275 (step-0 logit-equivalent), trained 150 iters on the exact champion recipe (dense score deltas, gamma 0.99, 320 matches/iter); frozen at iter_075 = best of 6 screenings per the ratified gate protocol; determinism precheck bit-exact.",
-      "Confirmation (950000+, 1500 seeds, back-to-back, same bridge 3e656fc4…, provenance in /root/fh-mahjong-runs/b2b/gate-provenance.txt): paired placement +0.0408 ± 0.0203 (CI95, clears zero) over iter275; paired tail delta -0.0062 ± 0.0077 (large_loss 0.0552 vs 0.0613 — significantly better).",
-      "Once operational (post-B2c), iter_075 becomes the promotion anchor for all future candidates; iter275 is retained as rollback fallback and historical comparator only."
+      "Second consecutive confirmed champion-line win: old champion -> iter_075 (+0.041), iter_075 -> this (+0.025).",
+      "Deployment: B2c runbook target; freeze this path+sha at runbook start (Codex rule: no mid-runbook candidate swap)."
     ],
     "evaluation": [
       {
@@ -4322,6 +4320,61 @@
         "verdict": "PASSES the ratified gate: placement CI clears zero (lower bound +0.0205) AND tail point rule -0.0062 <= +0.015 (tail significantly better).",
         "reports": "/root/fh-mahjong-runs/b2b/confirm-{candidate,champion,compare}.json"
       }
-    ]
-  }
+    ],
+    "confirmation": {
+      "window": "990000+",
+      "episodes_per_side": 1500,
+      "protocol": "back-to-back same bridge, strict config, frozen pre-registered candidate",
+      "comparator": "chongci_b2b_eventgru_privcritic_iter075 (anchor iter_075)",
+      "paired_placement_delta": 0.0254,
+      "ci95_halfwidth": 0.0188,
+      "significant": true,
+      "large_loss_candidate": 0.0493,
+      "large_loss_comparator": 0.0523,
+      "tail_criterion": "pass (candidate better; bound was comparator+0.015)",
+      "main_commit": "05f63a63a69c75bba656d0c24d4d544758c6bc45",
+      "date": "2026-07-24",
+      "screening_note": "910000+ screenings were unstable (only iter75 positive at +0.026); confirmation ran per no-optional-stopping rule and passed — mirrors the anchor iter_075 pattern."
+    }
+  },
+  "superseded_research_champions": [
+    {
+      "checkpoint_path": "/root/fh-mahjong-runs/b2b/ckpt/iter_075.pt",
+      "checkpoint_sha256": "00f469b010d35056c0ec0555c43f5c30f56c8f2177a865296e8cef672649008e",
+      "id": "chongci_b2b_eventgru_privcritic_iter075",
+      "match_mode": "chongci",
+      "method": "b2b_event_gru_privileged_critic_aux_heads_warmstart_iter275",
+      "serving_status": "superseded",
+      "model_config": {
+        "channels": 96,
+        "residual_blocks": 4,
+        "event_window": 128,
+        "privileged_critic": true,
+        "aux_heads": true,
+        "note": "B2b architecture pinned in checkpoint metadata; loadable since B2c (metadata-authoritative infer_model_config). Evaluate with fh-mj-evaluate --model-residual-blocks 4 --model-event-window 128 --model-privileged-critic --model-aux-heads --event-history-window 128."
+      },
+      "notes": [
+        "GATE-QUALIFIED RESEARCH CHAMPION (2026-07-20) — first confirmed champion-beating candidate of the campaign. NOT the operational serving champion: the serving pointer (current_chongci_reward_trained_best) stays on iter275 until Spec B2c parity/smoke/canary pass (Codex-ratified two-status protocol, canonical consult session).",
+        "Warm-started from iter275 (step-0 logit-equivalent), trained 150 iters on the exact champion recipe (dense score deltas, gamma 0.99, 320 matches/iter); frozen at iter_075 = best of 6 screenings per the ratified gate protocol; determinism precheck bit-exact.",
+        "Confirmation (950000+, 1500 seeds, back-to-back, same bridge 3e656fc4…, provenance in /root/fh-mahjong-runs/b2b/gate-provenance.txt): paired placement +0.0408 ± 0.0203 (CI95, clears zero) over iter275; paired tail delta -0.0062 ± 0.0077 (large_loss 0.0552 vs 0.0613 — significantly better).",
+        "Once operational (post-B2c), iter_075 becomes the promotion anchor for all future candidates; iter275 is retained as rollback fallback and historical comparator only."
+      ],
+      "evaluation": [
+        {
+          "label": "confirmation_paired_dup_seat_1500seeds_start950000_vs_iter275_champion",
+          "mean_placement": 0.4229,
+          "champion_mean_placement": 0.3821,
+          "paired_placement_diff": 0.0408,
+          "paired_placement_ci95_clustered": 0.0203,
+          "large_loss_rate": 0.0552,
+          "champion_large_loss_rate": 0.0613,
+          "paired_tail_delta": -0.0062,
+          "paired_tail_ci95": 0.0077,
+          "verdict": "PASSES the ratified gate: placement CI clears zero (lower bound +0.0205) AND tail point rule -0.0062 <= +0.015 (tail significantly better).",
+          "reports": "/root/fh-mahjong-runs/b2b/confirm-{candidate,champion,compare}.json"
+        }
+      ],
+      "superseded_by": "chongci_b2b_anchor075_restart_iter075"
+    }
+  ]
 }
