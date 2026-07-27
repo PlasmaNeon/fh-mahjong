@@ -1,3 +1,5 @@
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -278,3 +280,99 @@ def test_train_b2b_cli_help_shows_growth_blocks_flag() -> None:
         capture_output=True, text=True, check=True,
     )
     assert "--model-growth-blocks" in result.stdout
+
+
+# --- Task 4: resumable training state ---
+
+def _champion39(tmp_path: Path) -> tuple[EnvConfig, Path]:
+    env39 = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    path = tmp_path / "champion.pt"
+    save_checkpoint(path, model)
+    return env39, path
+
+
+def _b2b_run_configs(tmp_path: Path, *, iterations: int, lr: float = 2e-5):
+    _, champion_path = _champion39(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model_config = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=lr,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    return env, model_config, champion_path, config
+
+
+def test_train_state_written_every_n_iterations_and_atomic(tmp_path) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=4)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                        base_seed=5, train_state_every=2)
+
+    assert len(history) == 4
+    state_path = checkpoint_dir / "train_state.pt"
+    assert state_path.exists()
+    assert not (checkpoint_dir / "train_state.pt.tmp").exists()
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    # Last write happens at completion (iteration 4, a multiple of 2 anyway);
+    # next_iteration must point one past the last completed iteration.
+    assert state["next_iteration"] == 5
+    assert state["config_echo"]["ppo_config"]["lr"] == config.lr
+    assert state["config_echo"]["model_config"]["event_window"] == model_config.event_window
+    assert state["base_seed"] == 5
+    for key in ("model", "optimizer", "torch_rng", "numpy_rng", "python_rng"):
+        assert key in state
+
+
+def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state_before["next_iteration"] == 3
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=2,
+                        resume_from_state=state_path)
+
+    assert len(history) == 4
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    history_on_disk = json.loads((checkpoint_dir / "history.json").read_text())
+    assert [row["iteration"] for row in history_on_disk] == [1, 2, 3, 4]
+    for i in (3, 4):
+        saved = torch.load(checkpoint_dir / f"iter_{i:03d}.pt", map_location="cpu")
+        assert saved["metadata"]["model_config"]["event_window"] == model_config.event_window
+    # Resuming must not have re-run the champion warm-start: iter_001/002
+    # checkpoints from the first run are untouched (same file, not rewritten).
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    assert (checkpoint_dir / "iter_002.pt").exists()
+
+
+def test_resume_from_state_raises_on_different_lr(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_different_lr = replace(config_first, iterations=4, lr=config_first.lr * 2)
+    with pytest.raises(ValueError, match="lr"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_different_lr,
+                 base_seed=5, resume_from_state=state_path)
+
+
+def test_train_state_written_at_completion_even_when_not_multiple_of_every(tmp_path) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=3)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+             base_seed=5, train_state_every=5)
+
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["next_iteration"] == 4

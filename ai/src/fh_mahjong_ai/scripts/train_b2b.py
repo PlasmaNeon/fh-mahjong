@@ -44,6 +44,16 @@ def main() -> None:
                         "blocks onto --champion (which must then be a complete post-B2b "
                         "anchor checkpoint, not the raw 39ch champion the default (0) "
                         "surgery path expects); 0 = disabled (default)")
+    p.add_argument("--train-state-every", type=int, default=5,
+                   help="write <checkpoint-dir>/train_state.pt (model + optimizer + RNG + "
+                        "next-iteration) every N iterations, and always at completion, so "
+                        "a multi-day lap survives a box restart; 0 disables it")
+    p.add_argument("--resume-from-state", type=Path, default=None,
+                   help="resume a previous run from a train_state.pt written by "
+                        "--train-state-every: skips the --champion/--model-growth-blocks "
+                        "warm-start (the model comes from the state file), validates that "
+                        "every config flag matches what the state was saved under, and "
+                        "continues iteration numbering + history.json from where it left off")
     add_model_config_args(p)
     args = p.parse_args()
     num_workers = args.num_workers
@@ -63,7 +73,8 @@ def main() -> None:
                           privileged_critic=args.privileged_critic, aux_heads=args.aux_heads)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
-             growth_blocks=args.model_growth_blocks)
+             growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
+             resume_from_state=args.resume_from_state)
 
 
 if __name__ == "__main__":

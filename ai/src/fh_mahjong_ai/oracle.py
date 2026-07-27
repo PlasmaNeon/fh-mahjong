@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing as mp
+import os
 import queue as _queue
+import random
 import traceback
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -1053,9 +1056,86 @@ class ParallelB2bCollector:
         self._procs = []
 
 
+_RESUME_MISSING = object()
+
+
+def _train_b2b_config_echo(config: PPOConfig, model_config: ModelConfig, env_config: EnvConfig) -> dict:
+    """Snapshot of the three config dataclasses that fully determine a
+    `train_b2b` recipe, in plain-dict form so it round-trips through
+    `torch.save`/`torch.load` and compares by value. Stored in
+    `train_state.pt["config_echo"]` and re-derived from the CALLER-supplied
+    configs on `--resume-from-state` for the mismatch check below."""
+    return {
+        "ppo_config": asdict(config),
+        "model_config": model_config_metadata(model_config),
+        "env_config": asdict(env_config),
+    }
+
+
+_RESUME_IGNORED_FIELDS = {
+    # "iterations" is deliberately exempt: --resume-from-state's whole point is
+    # to keep training PAST what the state file was saved under (e.g. resume a
+    # 2-iteration state with --iterations 260), so a higher target here is the
+    # expected, common case rather than a recipe drift.
+    ("ppo_config", "iterations"),
+}
+
+
+def _validate_resume_config_echo(current: dict, saved: dict) -> None:
+    """Raise with a clear, specific message on the FIRST field that differs
+    between the currently-supplied configs and the ones a `train_state.pt`
+    was saved under. Resuming under a different recipe (a changed lr, event
+    window, ...) silently corrupts the run (e.g. an optimizer whose momentum
+    was tuned for a different lr), so any drift is an error, not a warning —
+    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`)."""
+    for section in ("ppo_config", "model_config", "env_config"):
+        current_section = current[section]
+        saved_section = saved[section]
+        keys = sorted(set(current_section) | set(saved_section))
+        for key in keys:
+            if (section, key) in _RESUME_IGNORED_FIELDS:
+                continue
+            current_value = current_section.get(key, _RESUME_MISSING)
+            saved_value = saved_section.get(key, _RESUME_MISSING)
+            if current_value != saved_value:
+                raise ValueError(
+                    f"--resume-from-state config mismatch in {section}.{key}: "
+                    f"state file has {saved_value!r}, currently-supplied config has "
+                    f"{current_value!r} — resuming under a different recipe is not "
+                    "supported (pass the same configs the original run used)"
+                )
+
+
+def _atomic_torch_save(payload: dict, path: Path) -> None:
+    """`torch.save` via a tmp-file + `os.replace` so a crash mid-write never
+    leaves a half-written `train_state.pt` for the next resume to load."""
+    path = Path(path)
+    tmp_path = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                      next_iteration: int, config: PPOConfig, model_config: ModelConfig,
+                      env_config: EnvConfig, base_seed: int) -> None:
+    payload = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "torch_rng": torch.get_rng_state(),
+        "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        "numpy_rng": np.random.get_state(),
+        "python_rng": random.getstate(),
+        "next_iteration": next_iteration,
+        "config_echo": _train_b2b_config_echo(config, model_config, env_config),
+        "base_seed": base_seed,
+    }
+    _atomic_torch_save(payload, path)
+
+
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Path,
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
-             growth_blocks: int = 0) -> list[dict]:
+             growth_blocks: int = 0, train_state_every: int = 5,
+             resume_from_state: Optional[Path] = None) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -1069,24 +1149,64 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     growth_blocks=0 surgery path expects), and `model_config` is superseded
     by the grown model's own config (the anchor's saved architecture plus
     `growth_blocks` ReZero blocks) so every downstream checkpoint save below
-    records the true architecture, including `growth_blocks`."""
+    records the true architecture, including `growth_blocks`.
+
+    Resumable state (deep16-rezero capacity lap survives box restarts):
+    every `train_state_every` iterations, and always at completion, writes
+    `<checkpoint_dir>/train_state.pt` (model + optimizer + torch/cuda/numpy/
+    python RNG state + `next_iteration` + a `config_echo` of the three config
+    dataclasses, atomically). `resume_from_state`, when given, SKIPS the
+    champion/growth warm-start entirely — the model is built directly from
+    the CALLER-supplied `model_config` (which must therefore already be the
+    EFFECTIVE architecture the run trained under, i.e. for a growth_blocks>0
+    lap, the anchor's own config with `growth_blocks` folded in — exactly
+    what `config_echo["model_config"]` records) and its weights come from the
+    state file, not from `champion_checkpoint`/`growth_blocks`. The
+    caller-supplied `config`/`model_config`/`env_config` are validated
+    against the state file's `config_echo` (any drift raises `ValueError`
+    naming the field) before anything is restored, then training continues
+    from `next_iteration` through `config.iterations`, appending to the
+    existing `history.json` rather than truncating it."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    if growth_blocks > 0:
+    state_payload = None
+    if resume_from_state is not None:
+        # weights_only=False: the state includes numpy/python RNG state (plain
+        # tuples/arrays, not just tensors), which torch's default safe
+        # unpickler rejects. train_state.pt is our own trusted output.
+        state_payload = torch.load(Path(resume_from_state), map_location="cpu", weights_only=False)
+        current_echo = _train_b2b_config_echo(config, model_config, env_config)
+        _validate_resume_config_echo(current_echo, state_payload["config_echo"])
+        model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
+        model.load_state_dict(state_payload["model"])
+        start_iteration = int(state_payload["next_iteration"])
+        history_path = checkpoint_dir / "history.json"
+        history: list[dict] = json.loads(history_path.read_text()) if history_path.exists() else []
+    elif growth_blocks > 0:
         model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
         model_config = model.model_config
+        start_iteration = 1
+        history = []
     else:
         model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
+        start_iteration = 1
+        history = []
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-    history: list[dict] = []
+    if state_payload is not None:
+        optimizer.load_state_dict(state_payload["optimizer"])
+        torch.set_rng_state(state_payload["torch_rng"])
+        if torch.cuda.is_available() and state_payload.get("cuda_rng") is not None:
+            torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
+        np.random.set_state(state_payload["numpy_rng"])
+        random.setstate(state_payload["python_rng"])
     collector = None
     if config.num_workers > 1:
         collector = ParallelB2bCollector(env_config, model_config, config, config.num_workers)
         collector.start()
     try:
-        for iteration in range(1, config.iterations + 1):
+        for iteration in range(start_iteration, config.iterations + 1):
             iter_seed = base_seed + iteration * config.matches_per_iter
             if collector is not None:
                 state = cpu_state_snapshot(model)
@@ -1144,6 +1264,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
                   f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
                   f"mean_reward={metrics['mean_reward']:.4f}")
+            is_last_iteration = iteration == config.iterations
+            if train_state_every > 0 and (iteration % train_state_every == 0 or is_last_iteration):
+                _save_train_state(
+                    checkpoint_dir / "train_state.pt", model, optimizer,
+                    next_iteration=iteration + 1, config=config, model_config=model_config,
+                    env_config=env_config, base_seed=base_seed,
+                )
     finally:
         if collector is not None:
             collector.close()
