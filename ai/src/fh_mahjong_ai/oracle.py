@@ -1162,7 +1162,52 @@ def read_b2b_history_rows(path: Path) -> list[dict]:
     return data["rows"]
 
 
-def _load_resume_history(path: Path, state_run_id: Optional[str]) -> list[dict]:
+def _artifact_run_id(path: Path) -> Optional[str]:
+    """`metadata["run_id"]` of an `iter_*.pt` checkpoint, or `None` if the
+    checkpoint has no metadata / no `run_id` key (pre-round-4 checkpoint)."""
+    payload = torch.load(path, map_location="cpu")
+    metadata = payload.get("metadata") or {}
+    return metadata.get("run_id")
+
+
+def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optional[str]) -> None:
+    """Guard the "reset history" recovery path against silently mixing run
+    lineages (adversarial round 4, high finding): a missing/corrupt
+    `history.json` alone cannot distinguish "this run's own history.json was
+    torn/lost" from "someone pointed --resume-from-state at the wrong
+    checkpoint_dir, whose iter_*.pt files belong to a different run".
+
+    Scans `checkpoint_dir` for existing `iter_*.pt` artifacts. For each one,
+    its saved `metadata["run_id"]` must equal `state_run_id` -- including the
+    legacy case where both are `None` (pre-run_id artifact resuming from a
+    pre-run_id state; nothing to compare, so it passes, preserving
+    pre-round-4 behavior). Any artifact whose run_id differs (or is `None`
+    while `state_run_id` is set -- lineage can't be proven) raises. An empty
+    or brand-new checkpoint_dir (no iter_*.pt at all) has nothing on disk to
+    contradict the resume, so it passes through untouched -- relocating a
+    state file into a fresh directory is fine.
+
+    `--force-history-reset` (the `force_history_reset` flag on `train_b2b`)
+    skips ONLY this check, never the base_seed/config_echo checks in
+    `train_b2b`'s resume path."""
+    for artifact_path in sorted(checkpoint_dir.glob("iter_*.pt")):
+        artifact_run_id = _artifact_run_id(artifact_path)
+        if artifact_run_id != state_run_id:
+            raise ValueError(
+                "--resume-from-state history.json is missing/corrupt AND "
+                f"{artifact_path.name} in checkpoint_dir carries "
+                f"run_id={artifact_run_id!r}, which does not match the "
+                f"resuming state file's run_id={state_run_id!r} -- resuming "
+                "here would silently mix unrelated runs' checkpoints/history "
+                "(point --resume-from-state at the checkpoint_dir that "
+                "actually belongs to it, or pass --force-history-reset if "
+                "you are certain this is a genuine torn-file recovery and "
+                "not a lineage mixup)"
+            )
+
+
+def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir: Path,
+                         force_history_reset: bool = False) -> list[dict]:
     """Load `history.json` for a `--resume-from-state` continuation, enforcing
     that its `run_id` matches the resuming state file's `run_id`.
 
@@ -1178,11 +1223,18 @@ def _load_resume_history(path: Path, state_run_id: Optional[str]) -> list[dict]:
 
     A missing or corrupt file resets history rows to `[]` with a warning, as
     before Finding 1 -- lineage is still preserved because the caller writes
-    `state_run_id` into the fresh history going forward."""
+    `state_run_id` into the fresh history going forward. Adversarial round 4,
+    high finding: that reset used to run BEFORE any lineage check could catch
+    a resume into the wrong checkpoint_dir, so unless `force_history_reset`
+    is set, `_check_artifact_lineage_or_raise` first validates any existing
+    `iter_*.pt` artifacts in `checkpoint_dir` against `state_run_id` and
+    raises on a mismatch instead of silently proceeding."""
     try:
         raw = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         reason = "missing" if isinstance(exc, FileNotFoundError) else "corrupt"
+        if not force_history_reset:
+            _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id)
         logger.warning(
             "history.json is %s; history was reset from a corrupt or missing "
             "file. Per-iteration checkpoints are unaffected; only the JSON "
@@ -1248,7 +1300,8 @@ def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
              growth_blocks: int = 0, train_state_every: int = 5,
-             resume_from_state: Optional[Path] = None) -> list[dict]:
+             resume_from_state: Optional[Path] = None,
+             force_history_reset: bool = False) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -1297,7 +1350,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     `history.json` files (written before `run_id` existed) are accepted only
     when the state file also predates `run_id` (both `None`); use
     `read_b2b_history_rows(path)` to read rows back regardless of format
-    (adversarial round 3, Finding 1)."""
+    (adversarial round 3, Finding 1).
+
+    Every `iter_*.pt` checkpoint also carries `metadata["run_id"]`
+    (adversarial round 4, high finding). When history.json is missing or
+    corrupt on a resume, `_check_artifact_lineage_or_raise` validates any
+    existing `iter_*.pt` artifacts' `run_id`s against the resuming state's
+    `run_id` before accepting the "reset history" recovery -- a mismatch (or
+    a legacy artifact with no `run_id` while the state has one) raises
+    instead of silently mixing lineages; an empty checkpoint_dir passes
+    through. `force_history_reset=True` (the CLI's `--force-history-reset`,
+    documented there as dangerous) skips ONLY that artifact-lineage check,
+    never the base_seed/config_echo checks above."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1332,7 +1396,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             )
         run_id = state_payload.get("run_id")
         history_path = checkpoint_dir / "history.json"
-        history = _load_resume_history(history_path, run_id)
+        history = _load_resume_history(history_path, run_id, checkpoint_dir,
+                                       force_history_reset=force_history_reset)
         # Reconcile against a STALE state file: train_state.pt is only written
         # every `train_state_every` iterations (plus at completion), but
         # history.json is appended every iteration. Resuming from a state
@@ -1425,7 +1490,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 # block stays for older readers; "model_config" is the
                 # complete ModelConfig so Spec B2c loaders (infer_model_config)
                 # can reconstruct the architecture exactly instead of
-                # re-deriving it from tensor shapes.
+                # re-deriving it from tensor shapes. "run_id" (adversarial
+                # round 4, high finding) lets a `--resume-from-state` whose
+                # history.json is missing/corrupt verify this checkpoint's
+                # lineage against the resuming state file instead of
+                # silently mixing unrelated runs' checkpoints together --
+                # infer_model_config ignores unknown metadata keys, so this
+                # is additive and doesn't affect loading.
                 metadata={
                     "b2b": {
                         "event_window": int(model_config.event_window),
@@ -1434,6 +1505,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         "residual_blocks": int(model_config.residual_blocks),
                     },
                     "model_config": model_config_metadata(model_config),
+                    "run_id": run_id,
                 })
             history.append(metrics)
             # Adversarial round 3, Finding 1: wrap history rows with the run's

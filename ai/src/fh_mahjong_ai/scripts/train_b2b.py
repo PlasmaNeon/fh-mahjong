@@ -57,6 +57,15 @@ def main() -> None:
                         "warm-start (the model comes from the state file), validates that "
                         "every config flag matches what the state was saved under, and "
                         "continues iteration numbering + history.json from where it left off")
+    p.add_argument("--force-history-reset", action="store_true", default=False,
+                   help="DANGEROUS: when --resume-from-state's history.json is missing or "
+                        "corrupt, skip the check that the checkpoint-dir's existing iter_*.pt "
+                        "artifacts belong to the same run_id as the resuming state file "
+                        "before resetting history.json. Only the artifact-lineage check is "
+                        "skipped -- config/base_seed mismatches still raise. Use ONLY when "
+                        "you have manually confirmed checkpoint_dir holds this run's own "
+                        "checkpoints (e.g. a genuine torn/lost history.json), never to force "
+                        "a resume into a directory that might belong to a different run")
     add_model_config_args(p)
     args = p.parse_args()
     if args.champion is None and args.resume_from_state is None:
@@ -80,7 +89,7 @@ def main() -> None:
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
              growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
-             resume_from_state=args.resume_from_state)
+             resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset)
 
 
 if __name__ == "__main__":

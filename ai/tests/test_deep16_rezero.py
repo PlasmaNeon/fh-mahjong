@@ -756,3 +756,192 @@ def test_resume_exhausted_target_raises_with_clear_message(tmp_path) -> None:
     with pytest.raises(ValueError, match="already satisfied"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config_lower_target,
                  base_seed=5, resume_from_state=state_path)
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 4
+# ---------------------------------------------------------------------------
+#
+# Finding (high): the round-1 "tolerate corrupt/missing history" recovery
+# returned an empty history BEFORE the round-3 run_id comparison could ever
+# run, so resuming run A's state.pt into run B's checkpoint_dir whose
+# history.json was lost kept B's iter_*.pt files on disk while writing A's
+# new checkpoints alongside them -- undetectable later since iteration
+# checkpoints didn't carry run_id. Fix: iteration checkpoints now save
+# run_id in metadata; a missing/corrupt history.json triggers a scan of
+# checkpoint_dir's existing iter_*.pt artifacts (if any) whose metadata
+# run_id must all match the resuming state's run_id, or the resume raises
+# (mixed-lineage, fail closed) unless --force-history-reset is passed.
+
+def _strip_run_id_from_checkpoint_metadata(path: Path) -> None:
+    payload = torch.load(path, map_location="cpu")
+    payload.get("metadata", {}).pop("run_id", None)
+    torch.save(payload, path)
+
+
+def test_resume_state_a_into_dir_with_bs_checkpoints_and_no_history_raises(tmp_path) -> None:
+    # The exact round-4 scenario: run B's history.json is lost/corrupted, and
+    # someone points --resume-from-state at run A's train_state.pt while
+    # still inside run B's checkpoint_dir. Pre-fix this silently proceeded
+    # (empty history) and clobbered/mixed B's checkpoints with A's lineage.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    (dir_b / "history.json").unlink()  # simulate B's history.json being lost
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_from_a)
+
+
+def test_resume_matching_run_id_artifacts_with_missing_history_proceeds_with_warning(
+        tmp_path, caplog) -> None:
+    # Genuine round-1 torn-file recovery: history.json is gone, but the
+    # checkpoint_dir's existing iter_*.pt files all carry the SAME run_id as
+    # the resuming state -- this is one run's own history being lost, not a
+    # lineage mixup, so it must still proceed (with the existing warning).
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    (checkpoint_dir / "history.json").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [2]
+    assert "history.json" in caplog.text
+
+
+def test_resume_into_relocated_empty_dir_with_missing_history_proceeds(tmp_path) -> None:
+    # Relocating a state file into a brand-new, empty checkpoint_dir (no
+    # iter_*.pt at all) has nothing on disk to contradict the resume, so it
+    # must proceed even though history.json is also missing there.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    source_dir = tmp_path / "source"
+
+    train_b2b(env, model_config, champion_path, source_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = source_dir / "train_state.pt"
+
+    empty_dir = tmp_path / "relocated_empty"
+    empty_dir.mkdir()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, empty_dir, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [2]
+
+
+def test_force_history_reset_overrides_mixed_lineage_check(tmp_path) -> None:
+    # The explicit, documented-as-dangerous escape hatch: --force-history-
+    # reset skips ONLY the artifact-lineage check, letting an operator who is
+    # certain this is a genuine recovery (not a mixup) proceed anyway.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    (dir_b / "history.json").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_from_a,
+                        force_history_reset=True)
+
+    assert [row["iteration"] for row in history] == [2]
+
+
+def test_force_history_reset_does_not_skip_base_seed_check(tmp_path) -> None:
+    # --force-history-reset is documented to skip ONLY the artifact-lineage
+    # check -- never the config/base_seed checks, which guard against a
+    # different failure mode entirely (a genuinely different recipe/schedule).
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="base_seed"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=6, resume_from_state=state_path, force_history_reset=True)
+
+
+def test_resume_legacy_artifacts_and_legacy_state_missing_history_is_compat(tmp_path) -> None:
+    # Pre-run_id artifacts + a pre-run_id state file resuming with a missing
+    # history.json must keep today's behavior (proceed with a warning) --
+    # both sides predate run_id, so there is nothing to compare.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    _strip_run_id_from_checkpoint_metadata(checkpoint_dir / "iter_001.pt")
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    del state["run_id"]
+    torch.save(state, state_path)
+    (checkpoint_dir / "history.json").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [2]
+
+
+def test_resume_run_id_state_with_legacy_artifact_and_missing_history_raises(tmp_path) -> None:
+    # A state file WITH a run_id, resuming where the on-disk iter_*.pt
+    # artifact predates run_id (no run_id in its metadata) and history.json
+    # is also gone, cannot prove lineage -- must raise, not silently accept.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    _strip_run_id_from_checkpoint_metadata(checkpoint_dir / "iter_001.pt")
+    (checkpoint_dir / "history.json").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+
+def test_new_checkpoint_metadata_carries_run_id_and_infer_model_config_loads_it(tmp_path) -> None:
+    from fh_mahjong_ai.model import infer_model_config
+
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config, base_seed=5)
+
+    saved = torch.load(checkpoint_dir / "iter_001.pt", map_location="cpu")
+    assert "run_id" in saved["metadata"]
+    assert saved["metadata"]["run_id"]
+
+    recovered = infer_model_config(saved["model"], saved["metadata"])
+    assert recovered.event_window == model_config.event_window
