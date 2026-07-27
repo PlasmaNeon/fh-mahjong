@@ -16222,3 +16222,18 @@ Out of scope for this lap (per spec, unchanged): GoEnvPool port, matches-per-ite
 changes, transformer encoders, aux-weight changes, deployment of any winner (a
 B2c-style runbook governs that later, with growth-aware metadata already handled
 by Task 3).
+
+## 2026-07-27 — r2 restart lap: confirmation NULL (ladder exhausted at one confirmed lap)
+
+r2 (anchor restart-iter075, base-seed 200000): screenings all negative (best iter_150
+-0.0056±0.0682). Confirmation on 1030000+ (1500 seeds/side, candidate sha 518cc376...,
+run survived a box reboot via operator relaunch): paired delta +0.0043 ± 0.0196 — NOT
+significant; large_loss 0.052 vs 0.0557 (tail fine). GATE FAILED per pre-registered
+criteria. r2 iter_150 not promoted; 1030000+ retired. Restart ladder: 1 confirmed win
+(lap 1) then null (lap 2) — consistent with the anchor sitting at this recipe's basin.
+
+Next (pre-registered, no new consult needed): deep4+12-rezero capacity lap (PR #182
+merged) with anchor = restart-iter075 (sha ce9d867f...). Box preflight PASSED
+(step-zero parity OK on the real anchor); worker benchmark (5/10/20 @ 320 matches,
+exact-digest gate) running; launch follows per runbook (260 iters, screening 25..260,
+kill only at 100, confirmation window 1070000+).
