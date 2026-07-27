@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 
 import numpy as np
@@ -853,6 +854,57 @@ def test_b2b_checkpoint_metadata_pins_eval_flags(tmp_path, capsys, monkeypatch):
     assert "must equal --model-event-window" in capsys.readouterr().err
 
 
+def test_b2b_checkpoint_metadata_pins_growth_blocks(tmp_path, capsys, monkeypatch):
+    # M2 (final review): growth_blocks isn't recorded in the "b2b" metadata
+    # sub-dict (it predates deep16-rezero), but every checkpoint also carries
+    # the full ModelConfig under "model_config" (model_config_metadata),
+    # which does -- a forgotten --model-growth-blocks must hit the same
+    # friendly pin message as event_window above, not a raw state-dict key
+    # mismatch dump from PolicyValueNet's constructor.
+    import torch as _torch
+
+    from fh_mahjong_ai.config import EnvConfig as _EnvConfig
+    from fh_mahjong_ai.config import ModelConfig as _ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet as _PVN
+    from fh_mahjong_ai.scripts import evaluate as evaluate_cli
+    from fh_mahjong_ai.storage import model_config_metadata as _model_config_metadata
+    from fh_mahjong_ai.storage import save_checkpoint as _save
+
+    small = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
+                 trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
+    grown_config = _ModelConfig(**small, event_window=128, privileged_critic=True, aux_heads=True,
+                                growth_blocks=2)
+    model = _PVN(_EnvConfig(bridge_kind="mock"), grown_config)
+    ckpt = tmp_path / "b2b_grown.pt"
+    _save(ckpt, model, metadata={"b2b": {"event_window": 128, "privileged_critic": True,
+                                          "aux_heads": True, "residual_blocks": 1},
+                                 "model_config": _model_config_metadata(grown_config)})
+
+    base = ["fh-mj-evaluate", "--checkpoint", str(ckpt), "--duplicate-seats",
+            "--online-episodes", "1", "--model-residual-blocks", "1",
+            "--model-privileged-critic", "--model-aux-heads",
+            "--model-event-window", "128", "--event-history-window", "128"]
+
+    # Wrong growth_blocks (0, the default) vs pinned 2 -> refused before simulation.
+    with pytest.raises(SystemExit):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("sys.argv", base)
+            evaluate_cli.main()
+    assert "pins growth_blocks=2" in capsys.readouterr().err
+
+    # Correct --model-growth-blocks -> the pin guard passes and evaluation
+    # runs to completion (no SystemExit at all).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("sys.argv", base + [
+            "--model-growth-blocks", "2", "--model-channels", "16",
+            "--model-plane-feature-dim", "32", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "32", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16",
+        ])
+        evaluate_cli.main()
+    assert "pins growth_blocks" not in capsys.readouterr().err
+
+
 def test_offline_agreement_rejects_event_models(tmp_path, capsys):
     # Offline datasets carry no event histories — an event-enabled model
     # would silently measure a zero-history policy.
@@ -879,3 +931,63 @@ def test_offline_agreement_rejects_event_models(tmp_path, capsys):
                                     "--model-event-window", "8"])
             evaluate_cli.main()
     assert "offline datasets carry no event histories" in capsys.readouterr().err
+
+
+def test_evaluate_cli_model_growth_blocks_flag_threads_into_explicit_config(tmp_path, monkeypatch):
+    # deep16-rezero Task 3: --model-growth-blocks must reach the explicit-flag
+    # ModelConfig path (mirrors --model-event-window's plumbing), so a grown
+    # checkpoint with no usable metadata still loads under matching flags.
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+                       q_hidden_dim=16, growth_blocks=3)
+    ckpt = tmp_path / "grown.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(bridge_kind="mock"), mcfg))  # no metadata
+
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16", "--model-growth-blocks", "3",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                        lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+    ev.main()  # must not raise: matching --model-growth-blocks loads the grown checkpoint cleanly
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["model_config"]["model_residual_blocks"] == 1
+    # Provenance: the grown architecture must be traceable in the report, not
+    # silently dropped by model_config_params().
+    assert report["model_config"]["model_growth_blocks"] == 3
+
+
+def test_evaluate_cli_model_growth_blocks_mismatch_fails_checkpoint_load(tmp_path, monkeypatch, capsys):
+    # Negative control: omitting --model-growth-blocks (default 0) when the
+    # checkpoint was actually saved with growth blocks must fail to load
+    # (shape mismatch), not silently drop the growth tensors.
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+                       q_hidden_dim=16, growth_blocks=3)
+    ckpt = tmp_path / "grown.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(bridge_kind="mock"), mcfg))  # no metadata
+
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(RuntimeError):
+        ev.main()

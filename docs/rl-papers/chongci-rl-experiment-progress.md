@@ -16158,3 +16158,67 @@ serving_status blocked_on_b2c_runbook); anchor iter_075 entry marked superseded.
 iter_075, base-seed 200000, dir b2b-anchor075r2-restart, confirmation window 1030000+;
 if r2 confirms, next step is a NEW decision (no automatic r3). Deployment rule: B2c
 runbook target frozen at start; no mid-runbook candidate swap.
+
+## 2026-07-24 — deep16-rezero: pre-registration (capacity growth via ReZero blocks)
+
+Design ratified via Codex consult (canonical session): `docs/superpowers/specs/
+2026-07-24-deep16-rezero-design.md`, branch `claude/deep16-rezero`. Runbook:
+`docs/superpowers/plans/2026-07-24-deep16-rezero-runbook.md`. Registering the gate
+BEFORE launch per standing pre-registration discipline; launch itself is gated on
+r2's own confirmation (sequencing ratified — see the entry above) and has not
+started as of this write-up.
+
+**Hypothesis under test:** does capacity (trunk depth) pay ON TOP OF the B2b event
+representation, given a defensible function-preserving warm start? This is ONE
+architectural intervention — 12 stacked `ReZeroResidualBlock`s (`x + alpha *
+F(x)`, `alpha` a learned scalar initialized to 0, so the grown net is EXACTLY the
+anchor at step 0 — no trailing GELU, unlike the legacy `ResidualBlock`, is what
+makes zero-init identity possible here). GRU, aux heads, and every other recipe
+knob stay fixed. Prior context: both confirmed champion-line wins so far came from
+temporal representation (B2b) at 96ch/4 blocks; a pre-B2b deep8 capacity test
+(trunk-only, no events) nulled at 2x cost — this is a second capacity attempt, now
+stacked on top of the representation win instead of before it.
+
+**Anchor:** r2's winner if r2's `1030000+` confirmation passes ("r2 iter_150" — sha
+`518cc376...`, confirm and freeze the full digest at launch time); otherwise
+restart-iter075 (`/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt`,
+sha `ce9d867f803bb41acad30f1f4c137e82d7946ed2c4db769e265d0c9cd08f75d4` — already a
+confirmed gate-qualified champion, registered above). Frozen path+sha recorded at
+launch time in the runbook.
+
+**Gate parameters (ratified, binding):**
+- Budget: 260 iterations x 320 matches/iter (1.73x param ratio vs the anchor),
+  recipe otherwise byte-identical to the ratified champion recipe (dense per-hand
+  score-delta reward, gamma=0.99, lr=2e-5, entropy 0, 2 PPO epochs).
+- Preflight: state-dict sha check + a step-zero parity script (`grow_b2b_model`
+  output torch.equal to the anchor on policy logits/value/Q/aux/greedy-action)
+  MUST pass on the box before any training compute is spent.
+- Worker benchmark: `fh-mj-collect-bench` gates `--num-workers` (adopt the
+  fastest worker count with an EXACT digest match; if the projected lap at that
+  count exceeds 7 days, STOP — a pool port is a separate, out-of-scope decision).
+- Screening: iters 25/50/75/100/125/150/175/200/225/250/260 vs a REGENERATED
+  anchor comparator, same current bridge, `910000+` window, 120 seeds, strict.
+- Kill rule: ONLY at iter 100, if BOTH the iter-75 AND iter-100 champion-relative
+  deltas are `< -0.06`. No other iteration triggers a kill.
+- Hard stop at 260 — no extension (unlike the B2b runbook's conditional
+  extension). Freeze the best HEALTHY pre-registered screening checkpoint; no
+  substitution after seeing later results.
+- Confirmation: fresh `1070000+` window, 1500 seeds/side, back-to-back, same
+  bridge. Promotion requires BOTH the paired placement clustered 95% CI clearing
+  0 AND `large_loss_rate(candidate) <= large_loss_rate(anchor) + 0.015` absolute.
+- Retention: keep screening checkpoints + final; prune the rest after completion.
+  `train_state.pt` written every 5 iterations so the lap survives box restarts.
+- Alpha telemetry: `history.json` logs mean `|alpha|` across the 12 growth blocks
+  per iteration. Alphas hugging 0 at the end is itself a RESULT (protocol null —
+  growth stalled under the shared learning rate), not a bug.
+
+**Kill/null semantics (binding, stated up front):** a null result here means THIS
+PROTOCOL failed, NOT evidence of a capacity ceiling. On null, record the outcome
+plainly (including the alpha-telemetry trace) and the next menu item is GRU
+widening per the scale roadmap memory — not another depth attempt with a
+different warm-start, and not an automatic r3-style repeat of this same lap.
+
+Out of scope for this lap (per spec, unchanged): GoEnvPool port, matches-per-iter
+changes, transformer encoders, aux-weight changes, deployment of any winner (a
+B2c-style runbook governs that later, with growth-aware metadata already handled
+by Task 3).

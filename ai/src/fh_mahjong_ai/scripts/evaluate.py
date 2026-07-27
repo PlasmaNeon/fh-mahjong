@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +135,24 @@ def main() -> None:
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
     add_model_config_args(parser)
+    # Not part of `add_model_config_args`: `train_b2b.py` already owns
+    # `--model-growth-blocks` on its own parser with different semantics (a
+    # standalone `train_b2b(..., growth_blocks=...)` argument, not a
+    # `ModelConfig` field baked in by `model_config_from_args`), and adding
+    # the same flag to the shared helper would collide with that script's
+    # own `add_argument` call on the same parser. Defined locally here
+    # instead and overlaid onto `model_config_from_args`'s result below --
+    # mirrors how `--model-event-window` reaches the explicit-flag
+    # `ModelConfig` path, just via this script's own flag rather than the
+    # shared one.
+    parser.add_argument(
+        "--model-growth-blocks",
+        type=int,
+        default=ModelConfig().growth_blocks,
+        help="deep16-rezero: number of ReZero growth residual blocks the checkpoint's "
+             "architecture was built with (only used on the explicit-flag ModelConfig "
+             "path, i.e. when the checkpoint carries no usable metadata); 0 = none (default)",
+    )
     args = parser.parse_args()
 
     # Computed early (used by validation below) rather than in its original spot
@@ -181,11 +200,16 @@ def main() -> None:
             _meta = {}
         _b2b_meta = _meta.get("b2b", {}) if isinstance(_meta, dict) else {}
         if _b2b_meta:
+            # growth_blocks isn't in the "b2b" sub-dict (it predates deep16-rezero)
+            # but every checkpoint saved alongside it also carries the full
+            # ModelConfig under "model_config" (model_config_metadata), which does.
+            _full_model_meta = _meta.get("model_config", {}) if isinstance(_meta, dict) else {}
             _pinned = (
                 ("event_window", int(_b2b_meta.get("event_window", 0)), int(args.model_event_window)),
                 ("privileged_critic", bool(_b2b_meta.get("privileged_critic", False)), bool(args.model_privileged_critic)),
                 ("aux_heads", bool(_b2b_meta.get("aux_heads", False)), bool(args.model_aux_heads)),
                 ("residual_blocks", int(_b2b_meta.get("residual_blocks", 0)), int(args.model_residual_blocks)),
+                ("growth_blocks", int(_full_model_meta.get("growth_blocks", 0)), int(args.model_growth_blocks)),
             )
             for _name, _saved, _flag in _pinned:
                 if _saved != _flag:
@@ -227,7 +251,7 @@ def main() -> None:
 
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
-    model_config = model_config_from_args(args)
+    model_config = replace(model_config_from_args(args), growth_blocks=args.model_growth_blocks)
     if args.from_oracle:
         from fh_mahjong_ai.oracle import extract_deployable_student
         oracle_net = PolicyValueNet(EnvConfig(oracle_observation=True), model_config)

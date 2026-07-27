@@ -16,7 +16,7 @@ from .env import MahjongEnv
 from .evaluate import evaluate_duplicate_seats
 from .global_ev import GlobalEVNet
 from .model import PolicyValueNet
-from .storage import load_checkpoint, save_checkpoint
+from .storage import fsync_dir, load_checkpoint, save_checkpoint
 from .types import Observation
 
 LEARNING_SEAT = 0
@@ -25,14 +25,29 @@ HISTORY_FILENAME = "history.json"
 
 AUX_LOSS_WEIGHT = 0.1
 
+# Adversarial round 10, high finding: this helper moved to storage.py (so
+# `save_checkpoint` there can share it too, instead of duplicating the
+# platform guard); kept as a local alias so oracle.py's existing
+# `from .ppo import _fsync_dir` keeps working unchanged.
+_fsync_dir = fsync_dir
+
 
 def _write_history_atomic(path: Path, history: List[dict]) -> None:
-    """Persist `history` durably: write to a sibling temp file then atomically
-    replace, so a crash mid-write can never truncate or corrupt the existing
-    history.json."""
+    """Persist `history` durably: write to a sibling temp file (flushed and
+    fsynced before it is ever linked into place), atomically replace, then
+    fsync the parent directory, so a crash or power loss -- whether
+    mid-write or in the gap between the rename landing and its directory
+    entry actually reaching disk -- can never truncate or corrupt the
+    existing history.json (adversarial round 9, high finding: the previous
+    version fsynced neither the tmp file nor the directory)."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(history, indent=2))
+    payload = json.dumps(history, indent=2)
+    with open(tmp, "w") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
+    _fsync_dir(path.parent)
 
 
 def cpu_state_snapshot(model: "torch.nn.Module") -> dict:

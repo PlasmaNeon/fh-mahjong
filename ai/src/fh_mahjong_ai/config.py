@@ -59,6 +59,8 @@ class ModelConfig:
     event_hidden_dim: int = 128
     privileged_critic: bool = False
     aux_heads: bool = False
+    # --- deep16-rezero capacity growth (default 0 => state_dict identical to today) ---
+    growth_blocks: int = 0
 
     # Round 20, Finding 1a: `infer_model_config` (model.py) takes
     # `metadata["model_config"]` from a checkpoint as authoritative and
@@ -96,6 +98,23 @@ class ModelConfig:
         )
         self._validate_bounded_int("event_embed_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("event_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("growth_blocks", minimum=0, maximum=self.MAX_RESIDUAL_BLOCKS)
+        # Round 17: residual_blocks<=64 and growth_blocks<=64 are each
+        # individually bounded above, but nothing stopped them composing --
+        # residual_blocks=64 + growth_blocks=64 = 128 total blocks (~9GiB
+        # fp32), individually legal under both caps, would still be accepted
+        # here and constructed by infer_model_config's shape cross-check,
+        # defeating the checkpoint-loading memory guard. MAX_RESIDUAL_BLOCKS
+        # (64) is a DoS bound, not a design limit -- the largest real config
+        # to date is 4 residual + 12 growth = 16 total, comfortably inside
+        # this combined ceiling -- so treat it as the TOTAL depth budget.
+        total_blocks = self.residual_blocks + self.growth_blocks
+        if total_blocks > self.MAX_RESIDUAL_BLOCKS:
+            raise ValueError(
+                f"residual_blocks ({self.residual_blocks}) + growth_blocks "
+                f"({self.growth_blocks}) = {total_blocks} exceeds combined "
+                f"maximum {self.MAX_RESIDUAL_BLOCKS}"
+            )
         # Round 16, Finding 2: metadata-authoritative checkpoint loading
         # (model.py's infer_model_config) passes a checkpoint-supplied
         # event_window straight into this constructor. GRU weights are
