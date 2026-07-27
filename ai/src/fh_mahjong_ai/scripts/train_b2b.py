@@ -75,7 +75,8 @@ def main() -> None:
                        num_workers=num_workers)
     base_model_config = model_config_from_args(args)
     model_config = replace(base_model_config, event_window=args.event_window,
-                          privileged_critic=args.privileged_critic, aux_heads=args.aux_heads)
+                          privileged_critic=args.privileged_critic, aux_heads=args.aux_heads,
+                          growth_blocks=args.model_growth_blocks)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
              growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,

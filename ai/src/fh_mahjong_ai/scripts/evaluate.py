@@ -200,11 +200,16 @@ def main() -> None:
             _meta = {}
         _b2b_meta = _meta.get("b2b", {}) if isinstance(_meta, dict) else {}
         if _b2b_meta:
+            # growth_blocks isn't in the "b2b" sub-dict (it predates deep16-rezero)
+            # but every checkpoint saved alongside it also carries the full
+            # ModelConfig under "model_config" (model_config_metadata), which does.
+            _full_model_meta = _meta.get("model_config", {}) if isinstance(_meta, dict) else {}
             _pinned = (
                 ("event_window", int(_b2b_meta.get("event_window", 0)), int(args.model_event_window)),
                 ("privileged_critic", bool(_b2b_meta.get("privileged_critic", False)), bool(args.model_privileged_critic)),
                 ("aux_heads", bool(_b2b_meta.get("aux_heads", False)), bool(args.model_aux_heads)),
                 ("residual_blocks", int(_b2b_meta.get("residual_blocks", 0)), int(args.model_residual_blocks)),
+                ("growth_blocks", int(_full_model_meta.get("growth_blocks", 0)), int(args.model_growth_blocks)),
             )
             for _name, _saved, _flag in _pinned:
                 if _saved != _flag:

@@ -282,6 +282,56 @@ def test_train_b2b_cli_help_shows_growth_blocks_flag() -> None:
     assert "--model-growth-blocks" in result.stdout
 
 
+def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
+    # C1 (final review): the library-level resume tests above (e.g.
+    # test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correct_config)
+    # call train_b2b() directly with a hand-built ModelConfig that already
+    # carries growth_blocks explicitly -- they can never catch a bug in the
+    # CLI's OWN argument wiring. This test instead drives train_b2b.py's real
+    # argparse/main() via subprocess, mirroring the runbook's launch-then-
+    # resume pattern (identical flags + --resume-from-state, --champion
+    # dropped on resume): a regression where model_config_from_args silently
+    # drops --model-growth-blocks (so --resume-from-state always sees
+    # growth_blocks=0 and _validate_resume_config_echo always raises for a
+    # growth lap) is caught here even though it passes at the library level.
+    import subprocess
+    import sys
+
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    common_flags = [
+        "--model-channels", "16", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16", "--model-growth-blocks", "2",
+        "--event-window", "8",
+        "--checkpoint-dir", str(checkpoint_dir),
+        "--matches-per-iter", "2", "--num-workers", "1",
+        "--match-mode", "classic", "--max-steps-per-episode", "16",
+        "--bridge-kind", "mock", "--device", "cpu",
+        "--train-state-every", "1",
+    ]
+
+    launch = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b",
+         "--champion", str(anchor_path), "--iterations", "1", *common_flags],
+        capture_output=True, text=True,
+    )
+    assert launch.returncode == 0, launch.stderr
+    assert (checkpoint_dir / "train_state.pt").exists()
+
+    resume = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b",
+         "--iterations", "2", "--resume-from-state", str(checkpoint_dir / "train_state.pt"),
+         *common_flags],
+        capture_output=True, text=True,
+    )
+    assert resume.returncode == 0, resume.stderr
+    assert (checkpoint_dir / "iter_002.pt").exists()
+
+
 # --- Task 4: resumable training state ---
 
 def _champion39(tmp_path: Path) -> tuple[EnvConfig, Path]:

@@ -223,10 +223,14 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     # of `--device` — a fresh CPU copy of the warm-started weights, loaded via
     # a snapshot rather than reusing `warm_started` directly, keeps the
     # collection model off any CUDA device the champion may have been
-    # warm-started on. This ALSO matters for fork safety below: forking
-    # after a CUDA context has been initialized in the parent is broken, so
-    # the parent must never run a forward pass (or otherwise touch CUDA)
-    # before the worker fork.
+    # warm-started on. NOTE this does NOT make `--device cuda` fork-safe:
+    # `_build_model` above already ran the warm-start (and, for growth_blocks
+    # > 0, `grow_b2b_model`'s forward pass) on `--device` in THIS (parent)
+    # process, before `run_collection`'s fork below — so `--device cuda`
+    # initializes a CUDA context in the parent pre-fork regardless of this
+    # post-hoc CPU snapshot. Forking after that is broken. Pass `--device cpu`
+    # here (the default); which device the champion was warm-started on is
+    # irrelevant to this bench since the weights snapshot to CPU either way.
     #
     # IMPORTANT SCOPE NOTE: this bench therefore matches ONLY the MULTI-
     # WORKER production path (`ParallelB2bCollector` / `_b2b_worker_loop`,

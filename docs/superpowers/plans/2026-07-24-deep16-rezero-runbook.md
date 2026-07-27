@@ -123,8 +123,15 @@ this anchor and the lap must not launch.
 uv run --project ai fh-mj-collect-bench \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
   --model-growth-blocks 12 --workers 5,10,20 --matches 320 \
-  --base-seed 300000 --device cuda
+  --base-seed 300000 --device cpu
 ```
+
+`--device cpu`, not `cuda`: rollout collection is always CPU-bound regardless
+of `--device` (weights snapshot to CPU before collection either way — see
+the comment in `collect_bench.py`'s `run_bench`), and `--device cuda` would
+initialize a CUDA context in the parent process before this bench forks its
+workers, which is broken. Which device the champion was warm-started on is
+irrelevant to what this bench measures.
 
 Adoption rule (this is a runbook decision, not code): pick the FASTEST
 worker count among `--workers` whose digest is EXACTLY equal to the 5-worker
@@ -143,7 +150,8 @@ scope").
 ```
 uv run --project ai fh-mj-train-b2b \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
-  --model-growth-blocks 12 \
+  --model-residual-blocks 4 --model-growth-blocks 12 \
+  --event-window 128 --privileged-critic --aux-heads \
   --checkpoint-dir /root/fh-mahjong-runs/deep16-rezero/ckpt \
   --base-seed 300000 --iterations 260 --matches-per-iter 320 \
   --num-workers <adopted> \
@@ -168,7 +176,8 @@ pointed at the checkpoint dir's state file:
 
 ```
 uv run --project ai fh-mj-train-b2b \
-  --model-growth-blocks 12 \
+  --model-residual-blocks 4 --model-growth-blocks 12 \
+  --event-window 128 --privileged-critic --aux-heads \
   --checkpoint-dir /root/fh-mahjong-runs/deep16-rezero/ckpt \
   --base-seed 300000 --iterations 260 --matches-per-iter 320 \
   --num-workers <adopted> \
@@ -177,6 +186,17 @@ uv run --project ai fh-mj-train-b2b \
   --train-state-every 5 \
   --resume-from-state /root/fh-mahjong-runs/deep16-rezero/ckpt/train_state.pt
 ```
+
+The resume command above must carry the SAME architecture flags as §3's
+launch (`--model-residual-blocks 4 --model-growth-blocks 12 --event-window
+128 --privileged-critic --aux-heads`) — unlike the initial launch, where
+`growth_blocks > 0` routes model construction through `grow_b2b_model` and
+the anchor's own saved config supersedes these CLI flags, the
+`--resume-from-state` path builds the model DIRECTLY from the CLI-supplied
+`ModelConfig` (no anchor to derive it from) and validates it against the
+state file's `config_echo` — a flag here that doesn't match what actually
+trained (e.g. defaulting `--model-residual-blocks` to 2 instead of the
+anchor's 4) raises `ValueError` before touching anything.
 
 Every flag above (`--iterations`, `--matches-per-iter`, `--lr`, etc.) must
 match the original launch exactly — `train_b2b` validates the caller's
