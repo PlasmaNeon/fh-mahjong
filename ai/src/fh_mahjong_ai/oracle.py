@@ -15,7 +15,7 @@ import traceback
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -27,6 +27,7 @@ from .env import MahjongEnv
 from .model import PolicyValueNet, _reconstruct_env_config
 from .parallel_rollouts import _split_counts
 from .ppo import (
+    _fsync_dir,
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
     masked_policy_distribution, _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
     cpu_state_snapshot, _write_history_atomic,
@@ -980,54 +981,42 @@ def _b2b_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
             model.load_state_dict(state_dict)
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_b2b_rollouts(env_config, model, cfg, base_seed=base_seed)
-            _apply_test_b2b_worker_perturbation(batch, matches)
             result_q.put((worker_id, batch, None))
             batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
 
 
-def _apply_test_b2b_worker_perturbation(batch: RolloutBatch, matches: int) -> None:
-    """Spawn-safe can-fail hook used only by collector regression tests.
-
-    Parent-process monkeypatches disappear when spawn re-imports this module.
-    A test-only environment variable survives that boundary, so perturbation
-    tests exercise the real multi-worker queue/model/lifecycle path. Only
-    two-match chunks are mutated: the four-match one-worker baseline remains
-    unchanged while the two-worker fan-out changes.
-    """
-    field = os.environ.get("FH_MAHJONG_TEST_B2B_PERTURB_FIELD")
-    if field is None or matches != 2:
-        return
-    if field == "events":
-        if batch.events is None:
-            raise RuntimeError("events perturbation requires B2b event rows")
-        batch.events[0, 0] ^= 1
-    elif field in {"rewards", "old_logprobs"}:
-        values = getattr(batch, field)
-        values[0] += 1.0
-    elif field == "dones":
-        batch.dones[0] = 1.0 - batch.dones[0]
-    else:
-        raise RuntimeError(
-            "unknown FH_MAHJONG_TEST_B2B_PERTURB_FIELD value "
-            f"{field!r}")
-
-
 class ParallelB2bCollector:
     """Spawn-context worker pool for Spec B2b self-play rollouts, concatenated
     into one RolloutBatch. Mirrors `ParallelSelfplayCollector` (seeding,
     seed-block splitting, result-queue conventions) minus `drop_prob` — B2b has
-    no feature-dropout schedule."""
+    no feature-dropout schedule.
+
+    `worker_target` (adversarial round 9, medium finding) overrides the
+    per-worker process entry point; defaults to `_b2b_worker_loop`, the
+    production path. This exists ONLY so tests (e.g. `test_collect_bench.py`'s
+    spawn-path perturbation regressions) can inject a test-only worker
+    function -- picklable by `multiprocessing`'s spawn context because it is
+    a plain module-level callable, not a closure -- instead of the previous
+    `FH_MAHJONG_TEST_B2B_PERTURB_FIELD` environment variable the production
+    worker used to read. That env var was a production-code hook: any
+    process (a CI runner, a shell profile, an inherited env from a parent
+    launcher) that happened to set it would silently corrupt real training
+    data, since spawned child processes inherit the parent's environment.
+    Production callers (`train_b2b`) never pass `worker_target`, so they are
+    unaffected."""
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
-                 ppo_config: PPOConfig, num_workers: int) -> None:
+                 ppo_config: PPOConfig, num_workers: int,
+                 worker_target: Optional[Callable] = None) -> None:
         if num_workers < 1:
             raise ValueError("num_workers must be >= 1")
         self.env_config = env_config
         self.model_config = model_config
         self.ppo_config = ppo_config
         self.num_workers = int(num_workers)
+        self._worker_target = worker_target if worker_target is not None else _b2b_worker_loop
         self._ctx = mp.get_context("spawn")
         self._task_q = None
         self._result_q = None
@@ -1039,7 +1028,7 @@ class ParallelB2bCollector:
         self._procs = []
         for _ in range(self.num_workers):
             p = self._ctx.Process(
-                target=_b2b_worker_loop,
+                target=self._worker_target,
                 args=(self.env_config, self.model_config, self.ppo_config,
                       self._task_q, self._result_q),
                 daemon=True,
@@ -1140,13 +1129,95 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
                 )
 
 
+def _train_state_prev_path(path: Path) -> Path:
+    """The one-generation-back sibling of a `train_state.pt`-style path,
+    e.g. `train_state.pt` -> `train_state.prev.pt`."""
+    path = Path(path)
+    return path.with_name(path.stem + ".prev" + path.suffix)
+
+
+def _train_state_is_loadable(path: Path) -> bool:
+    """Whether `path` currently `torch.load`s cleanly. Used only to decide if
+    an existing `train_state.pt` is worth preserving as `.prev` before being
+    replaced -- a file that's already torn/corrupt from some earlier crash
+    is not worth keeping around under a name that shadows a genuinely good
+    `.prev` generation from further back."""
+    try:
+        torch.load(path, map_location="cpu", weights_only=False)
+        return True
+    except Exception:
+        return False
+
+
 def _atomic_torch_save(payload: dict, path: Path) -> None:
-    """`torch.save` via a tmp-file + `os.replace` so a crash mid-write never
-    leaves a half-written `train_state.pt` for the next resume to load."""
+    """`torch.save` via a tmp-file + `os.replace`, so a crash mid-write never
+    leaves a half-written `train_state.pt` for the next resume to load.
+
+    Durability (adversarial round 9, high finding): the tmp file is flushed
+    and `fsync`ed before the replace, and the parent directory is `fsync`ed
+    afterward (platform-guarded -- see `_fsync_dir`) so the rename itself
+    survives a power loss, not just the file's bytes.
+
+    Generation retention (same finding): a host reset landing exactly
+    between one `_atomic_torch_save` completing and the NEXT one finishing
+    used to leave nothing to fall back to, because the previous (still-good)
+    generation had already been clobbered in place. Now, if `path` already
+    holds a file that loads cleanly, it is renamed to `_train_state_prev_path
+    (path)` (`train_state.prev.pt`) BEFORE the new tmp file is put in its
+    place -- so the old generation is only ever destroyed once the new one
+    is fully written, fsynced, and a single atomic rename away from
+    replacing it. `train_state.pt` and `train_state.prev.pt` are both
+    managed artifacts of the fresh-dir guard / `--fresh-run-overwrite`
+    deletion (see `_find_fresh_run_managed_artifacts`) but are never
+    lineage-scanned as `iter_*.pt` files. A resume should use
+    `_load_train_state_with_fallback`, which tries `path` first and falls
+    back to `.prev` when the newest generation is unreadable."""
     path = Path(path)
     tmp_path = path.with_name(path.name + ".tmp")
-    torch.save(payload, tmp_path)
+    with open(tmp_path, "wb") as f:
+        torch.save(payload, f)
+        f.flush()
+        os.fsync(f.fileno())
+    if path.exists() and _train_state_is_loadable(path):
+        os.replace(path, _train_state_prev_path(path))
     os.replace(tmp_path, path)
+    _fsync_dir(path.parent)
+
+
+def _load_train_state_with_fallback(path: Path) -> dict:
+    """Load a `--resume-from-state` payload from `path`, falling back to its
+    `.prev` sibling generation (`_train_state_prev_path`) when `path` itself
+    is unreadable (adversarial round 9, high finding) -- e.g. a host reset
+    landed between `_atomic_torch_save` promoting the previous generation to
+    `.prev` and completing the final rename, or corrupted the newest file
+    outright. Logs which generation was actually loaded. Raises (chaining
+    both underlying errors) only when BOTH generations are unreadable, or
+    `path` is missing/unreadable with no `.prev` fallback on disk at all."""
+    path = Path(path)
+    prev_path = _train_state_prev_path(path)
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        if not prev_path.exists():
+            raise
+        logger.warning(
+            "--resume-from-state: %s is unreadable (%s: %s); falling back to "
+            "the previous generation %s",
+            path, type(exc).__name__, exc, prev_path,
+        )
+        try:
+            payload = torch.load(prev_path, map_location="cpu", weights_only=False)
+        except Exception as prev_exc:
+            raise RuntimeError(
+                f"--resume-from-state: both {path} and its fallback generation "
+                f"{prev_path} are unreadable ({type(exc).__name__}: {exc}; "
+                f"fallback {type(prev_exc).__name__}: {prev_exc}) -- cannot "
+                "resume from either generation"
+            ) from prev_exc
+        logger.warning("--resume-from-state: resumed from fallback generation %s", prev_path)
+        return payload
+    logger.info("--resume-from-state: loaded %s", path)
+    return payload
 
 
 def read_b2b_history_rows(path: Path) -> list[dict]:
@@ -1374,8 +1445,13 @@ def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     directory returns `[]`. Anything else in the directory (e.g. stray
     notes, unrelated files) is intentionally not included -- the guard, and
     `--fresh-run-overwrite`'s deletion, only ever touch these managed
-    names."""
-    found = [checkpoint_dir / name for name in ("history.json", "train_state.pt")
+    names. `train_state.prev.pt` (adversarial round 9, high finding: the
+    one-generation-back durability fallback `_atomic_torch_save` keeps
+    alongside `train_state.pt`) is included here too -- it belongs to this
+    run exactly as much as `train_state.pt` itself, and is never
+    lineage-scanned as an `iter_*.pt` file."""
+    found = [checkpoint_dir / name
+             for name in ("history.json", "train_state.pt", "train_state.prev.pt")
              if (checkpoint_dir / name).exists()]
     found.extend(sorted(checkpoint_dir.glob("iter_*.pt")))
     return found
@@ -1540,7 +1616,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # weights_only=False: the state includes numpy/python RNG state (plain
             # tuples/arrays, not just tensors), which torch's default safe
             # unpickler rejects. train_state.pt is our own trusted output.
-            state_payload = torch.load(Path(resume_from_state), map_location="cpu", weights_only=False)
+            # `_load_train_state_with_fallback` also covers the newest
+            # generation being unreadable by falling back to `.prev` (see its
+            # docstring; adversarial round 9, high finding).
+            state_payload = _load_train_state_with_fallback(Path(resume_from_state))
             saved_base_seed = state_payload.get("base_seed", _RESUME_MISSING)
             if saved_base_seed != base_seed:
                 raise ValueError(

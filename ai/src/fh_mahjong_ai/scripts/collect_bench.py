@@ -121,10 +121,19 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
 def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list[int],
              matches: int, base_seed: int, match_mode: str, bridge_kind: str,
              bridge_lib: Optional[str], device: str,
-             max_steps_per_episode: Optional[int], event_window: int) -> dict:
+             max_steps_per_episode: Optional[int], event_window: int,
+             worker_target=None) -> dict:
     """Run the full worker-count benchmark. Returns
     `{worker_count: {"startup_seconds": float, "steady_seconds": float,
-    "digest": str}, "all_digests_equal": bool}`."""
+    "digest": str}, "all_digests_equal": bool}`.
+
+    `worker_target`, when given, is forwarded to every `ParallelB2bCollector`
+    this bench constructs (adversarial round 9, medium finding). It exists
+    only for test callers that need to inject a test-only worker function to
+    exercise the real spawn-path can-fail property (e.g. proving a genuine
+    perturbation in one worker's output still flips the digest) -- the CLI
+    never sets it, and production benchmarking always uses the real
+    `_b2b_worker_loop`."""
     env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
                            match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            oracle_observation=True, event_history_window=event_window)
@@ -139,7 +148,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     for w in workers:
         startup_start = time.perf_counter()
         collector = ParallelB2bCollector(
-            env_config, effective_model_config, ppo_config, w)
+            env_config, effective_model_config, ppo_config, w,
+            worker_target=worker_target)
         try:
             collector.start()
             collector.collect(state_dict, base_seed, matches)

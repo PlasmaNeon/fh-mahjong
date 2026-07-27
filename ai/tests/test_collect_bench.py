@@ -1,5 +1,7 @@
+import functools
 import subprocess
 import sys
+import traceback
 from dataclasses import replace
 
 import numpy as np
@@ -11,6 +13,47 @@ from fh_mahjong_ai.oracle import _b2b_model_env_config, collect_b2b_rollouts
 from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
 from fh_mahjong_ai.scripts import collect_bench
 from fh_mahjong_ai.storage import save_checkpoint
+
+
+def _perturbing_b2b_worker_loop(env_config, model_config, ppo_config, task_q, result_q,
+                                *, field):
+    """Test-only worker target (adversarial round 9, medium finding): mirrors
+    `oracle._b2b_worker_loop` exactly, except two-match chunks have `field`
+    perturbed before being returned to the parent. Passed to
+    `ParallelB2bCollector`/`collect_bench.run_bench` as `worker_target` so
+    these tests exercise the REAL spawn/queue/model lifecycle path -- proving
+    the multi-worker can-fail property is genuine -- without any production
+    env-var hook. Defined at module level (not a closure) so multiprocessing's
+    spawn context can pickle it; the `field` selection travels via
+    `functools.partial`, which pickles fine because its underlying function is
+    a plain, importable module-level function."""
+    import torch as _torch
+
+    from fh_mahjong_ai.model import PolicyValueNet as _PVN
+
+    _torch.set_num_threads(1)
+    model = _PVN(_b2b_model_env_config(env_config), model_config)
+    while True:
+        task = task_q.get()
+        if task is None:
+            return
+        worker_id, state_dict, base_seed, matches = task
+        try:
+            model.load_state_dict(state_dict)
+            cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
+            batch = collect_b2b_rollouts(env_config, model, cfg, base_seed=base_seed)
+            if matches == 2:
+                if field == "events":
+                    batch.events[0, 0] ^= 1
+                elif field in {"rewards", "old_logprobs"}:
+                    getattr(batch, field)[0] += 1.0
+                elif field == "dones":
+                    batch.dones[0] = 1.0 - batch.dones[0]
+                else:
+                    raise RuntimeError(f"unknown test perturb field {field!r}")
+            result_q.put((worker_id, batch, None))
+        except Exception:  # noqa: BLE001 - report any worker failure to the parent
+            result_q.put((worker_id, None, traceback.format_exc()))
 
 _SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
               trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
@@ -61,7 +104,7 @@ def test_bench_uses_persistent_parallel_collector_for_warmup_and_steady_round(
     calls = []
 
     class RecordingCollector:
-        def __init__(self, env_config, model_config, ppo_config, num_workers):
+        def __init__(self, env_config, model_config, ppo_config, num_workers, worker_target=None):
             calls.append(("init", num_workers))
             self.env_config = env_config
             self.ppo_config = ppo_config
@@ -94,33 +137,32 @@ def test_bench_uses_persistent_parallel_collector_for_warmup_and_steady_round(
     assert report["results"][2]["steady_seconds"] >= 0.0
 
 
-def test_injected_perturbation_makes_digests_differ_and_names_it(tmp_path, monkeypatch):
-    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "rewards")
+def test_injected_perturbation_makes_digests_differ_and_names_it(tmp_path):
     kwargs = _bench_kwargs(tmp_path, [1, 2])
-    report = collect_bench.run_bench(**kwargs)
+    worker_target = functools.partial(_perturbing_b2b_worker_loop, field="rewards")
+    report = collect_bench.run_bench(**kwargs, worker_target=worker_target)
     assert report["all_digests_equal"] is False
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
 
 
-def test_injected_event_perturbation_makes_digests_differ(tmp_path, monkeypatch):
+def test_injected_event_perturbation_makes_digests_differ(tmp_path):
     """A fan-out bug isolated to event-history handling (e.g. a worker
     reusing another worker's event-window buffer) must not slip past the
     digest silently: only perturbing `batch.events` (leaving planes, scalars,
     action_mask, actions, and rewards untouched) must still flip the digest.
     This is what catches finding 1 (events/event_lengths/action_mask omitted
     from the digest) if it regresses."""
-    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "events")
     kwargs = _bench_kwargs(tmp_path, [1, 2])
-    report = collect_bench.run_bench(**kwargs)
+    worker_target = functools.partial(_perturbing_b2b_worker_loop, field="events")
+    report = collect_bench.run_bench(**kwargs, worker_target=worker_target)
     assert report["all_digests_equal"] is False
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
 
 
 @pytest.mark.parametrize("field", ["dones", "old_logprobs"])
-def test_injected_ppo_field_perturbation_makes_digests_differ(
-        tmp_path, monkeypatch, field):
-    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", field)
-    report = collect_bench.run_bench(**_bench_kwargs(tmp_path, [1, 2]))
+def test_injected_ppo_field_perturbation_makes_digests_differ(tmp_path, field):
+    worker_target = functools.partial(_perturbing_b2b_worker_loop, field=field)
+    report = collect_bench.run_bench(**_bench_kwargs(tmp_path, [1, 2]), worker_target=worker_target)
     assert report["all_digests_equal"] is False
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
 
@@ -194,13 +236,54 @@ def test_cli_passing_run_exits_zero(tmp_path):
 
 
 def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
-        tmp_path, monkeypatch):
-    """The spawn-safe worker perturbation must make the CLI exit 1 and name
-    the differing worker counts, not just report failure."""
-    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "rewards")
-    result = _run_cli(tmp_path, [])
-    combined = result.stdout + result.stderr
-    assert result.returncode == 1, combined
+        tmp_path, monkeypatch, capsys):
+    """The CLI's failure-reporting path (exit 1, naming the differing worker
+    counts) is exercised in-process against a manufactured differing-digest
+    report, not via any production perturbation hook (adversarial round 9,
+    medium finding: a previous version had the production worker consult
+    `FH_MAHJONG_TEST_B2B_PERTURB_FIELD` from the environment, which a spawned
+    child process inherits -- any process that happened to have that variable
+    set, in production, would silently corrupt real training data). The
+    spawn-path can-fail property itself -- that a genuine perturbation in one
+    worker's output really does flip the digest -- is covered by
+    `test_injected_perturbation_makes_digests_differ_and_names_it` and its
+    siblings above, which inject a test-only `worker_target` instead."""
+    champion = _champion(tmp_path)
+    fake_report = {
+        "results": {
+            1: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "aaa"},
+            2: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "bbb"},
+        },
+        "all_digests_equal": False,
+        "model_config": ModelConfig(**_SMALL, event_window=8),
+    }
+    monkeypatch.setattr(collect_bench, "run_bench", lambda **kwargs: fake_report)
+    argv = [
+        "fh-mj-collect-bench",
+        "--champion", str(champion),
+        "--workers", "1,2",
+        "--matches", "4",
+        "--base-seed", "100",
+        "--match-mode", "classic",
+        "--bridge-kind", "mock",
+        "--device", "cpu",
+        "--max-steps-per-episode", "16",
+        "--event-window", "8",
+        "--model-channels", "16",
+        "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32",
+        "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32",
+        "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+
+    assert excinfo.value.code == 1
+    combined = capsys.readouterr().out
     assert "all_digests_equal: False" in combined
     assert "workers=[1]" in combined
     assert "workers=[2]" in combined

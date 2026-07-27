@@ -1325,3 +1325,125 @@ def test_resume_quarantines_torn_checkpoint_at_or_past_resume_point(tmp_path, ca
     # with valid, loadable content -- resume genuinely proceeded.
     regenerated_payload = torch.load(torn_path, map_location="cpu")
     assert regenerated_payload["metadata"]["run_id"] == state["run_id"]
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 9, finding 1 (high): train_state.pt power-loss
+# durability
+# ---------------------------------------------------------------------------
+#
+# `_atomic_torch_save` wrote the tmp file and `os.replace`d it into place
+# with no `fsync` at all: a host power-loss between the write completing and
+# the data actually reaching disk (or between the rename landing and the
+# directory entry itself reaching disk) could leave a renamed
+# `train_state.pt` unreadable -- and by then the PREVIOUS, still-good
+# generation had already been overwritten, so there was nothing to fall
+# back to. The fix fsyncs the tmp file and the parent directory around the
+# replace, AND keeps one extra generation (`train_state.prev.pt`) so a
+# resume always has two independent chances to find a loadable state.
+
+def test_train_state_prev_generation_created_on_second_save(tmp_path) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    state_path = checkpoint_dir / "train_state.pt"
+    prev_path = checkpoint_dir / "train_state.prev.pt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+             base_seed=5, train_state_every=1)
+    assert state_path.exists()
+    assert not prev_path.exists(), "no prior generation existed yet, so nothing to keep as prev"
+    first_state = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert first_state["next_iteration"] == 2
+
+    config_resumed = replace(config, iterations=2)
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+             base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert prev_path.exists(), "the second save must demote the prior valid generation to .prev"
+    prev_state = torch.load(prev_path, map_location="cpu", weights_only=False)
+    assert prev_state["next_iteration"] == 2
+    current_state = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert current_state["next_iteration"] == 3
+
+
+def test_resume_falls_back_to_prev_generation_when_current_is_corrupt(tmp_path, caplog) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    state_path = checkpoint_dir / "train_state.pt"
+    prev_path = checkpoint_dir / "train_state.prev.pt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+             base_seed=5, train_state_every=1)
+    good_bytes = state_path.read_bytes()
+    # Simulate a host reset landing between promoting the old generation to
+    # .prev and finishing the write of the new one: .prev holds a genuinely
+    # valid, loadable state, but the "current" file is torn/corrupt.
+    prev_path.write_bytes(good_bytes)
+    state_path.write_bytes(b"torn mid-write, not a valid torch file")
+
+    config_resumed = replace(config, iterations=2)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert "train_state.prev.pt" in caplog.text
+    assert re.search(r"unreadable|falling back", caplog.text, re.IGNORECASE)
+
+
+def test_resume_raises_clear_error_when_both_generations_are_corrupt(tmp_path) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    state_path = checkpoint_dir / "train_state.pt"
+    prev_path = checkpoint_dir / "train_state.prev.pt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+             base_seed=5, train_state_every=1)
+    state_path.write_bytes(b"torn current generation")
+    prev_path.write_bytes(b"torn prev generation")
+
+    config_resumed = replace(config, iterations=2)
+    with pytest.raises(Exception, match=r"(?i)unreadable"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+
+def test_fresh_run_overwrite_removes_both_train_state_generations(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    prev_path = checkpoint_dir / "train_state.prev.pt"
+    assert state_path.exists()
+    assert prev_path.exists()
+    decoy = checkpoint_dir / "foo.txt"
+    decoy.write_text("do not touch")
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=9, fresh_run_overwrite=True)
+
+    assert not prev_path.exists()
+    assert decoy.exists()
+    assert decoy.read_text() == "do not touch"
+
+
+def test_history_json_write_fsyncs_tmp_and_directory(tmp_path, monkeypatch) -> None:
+    """Cheap, same-failure-mode fix as train_state.pt: `_write_history_atomic`
+    must fsync the tmp file's contents and the parent directory's entry
+    table, not just `os.replace` blind."""
+    from fh_mahjong_ai import ppo as ppo_module
+
+    fsynced_fds: list[int] = []
+    real_fsync = os.fsync
+
+    def _tracking_fsync(fd):
+        fsynced_fds.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(ppo_module.os, "fsync", _tracking_fsync)
+    path = tmp_path / "history.json"
+    ppo_module._write_history_atomic(path, [{"iteration": 1}])
+
+    assert json.loads(path.read_text()) == [{"iteration": 1}]
+    assert len(fsynced_fds) >= 2, "expected at least one fsync for the tmp file and one for the dir"

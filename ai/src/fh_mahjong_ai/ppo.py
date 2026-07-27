@@ -26,13 +26,42 @@ HISTORY_FILENAME = "history.json"
 AUX_LOSS_WEIGHT = 0.1
 
 
+def _fsync_dir(path: Path) -> None:
+    """Best-effort `fsync` of a directory's entry table, called after an
+    `os.replace` into it so the rename itself survives a power loss, not
+    just the file contents (adversarial round 9, high finding). Some
+    platforms/filesystems don't support `fsync`-ing a directory file
+    descriptor at all; guarded with try/except OSError so callers always get
+    the file-level durability even where the extra directory-level guarantee
+    isn't available."""
+    try:
+        dir_fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
 def _write_history_atomic(path: Path, history: List[dict]) -> None:
-    """Persist `history` durably: write to a sibling temp file then atomically
-    replace, so a crash mid-write can never truncate or corrupt the existing
-    history.json."""
+    """Persist `history` durably: write to a sibling temp file (flushed and
+    fsynced before it is ever linked into place), atomically replace, then
+    fsync the parent directory, so a crash or power loss -- whether
+    mid-write or in the gap between the rename landing and its directory
+    entry actually reaching disk -- can never truncate or corrupt the
+    existing history.json (adversarial round 9, high finding: the previous
+    version fsynced neither the tmp file nor the directory)."""
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(history, indent=2))
+    payload = json.dumps(history, indent=2)
+    with open(tmp, "w") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
+    _fsync_dir(path.parent)
 
 
 def cpu_state_snapshot(model: "torch.nn.Module") -> dict:
