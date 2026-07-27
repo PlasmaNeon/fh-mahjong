@@ -487,6 +487,29 @@ def test_infer_model_config_legacy_b2b_metadata_without_growth_field_defaults_ze
     assert reconstructed.growth_blocks == 0
 
 
+def test_infer_model_config_growth_keys_with_only_b2b_four_flag_metadata_fails_closed():
+    # A checkpoint that carries BOTH B2b modules and deep16-rezero growth.*
+    # keys, but whose metadata is only the legacy four-flag "b2b" block (no
+    # "model_config", and the four-flag block never carries growth_blocks --
+    # see `infer_model_config`'s docstring, case 2). The b2b branch shape-
+    # infers growth_blocks as the ModelConfig default (0) since
+    # `_shape_inferred_fields` deliberately excludes it, while the state dict
+    # actually carries `growth.*` tensors. `_verify_metadata_matches_shapes`
+    # must catch that mismatch (claimed 0 vs. derived 3) and raise, rather
+    # than silently building a truncated (non-grown) model. Verified manually
+    # via `_verify_metadata_matches_shapes` during review; this test locks it in.
+    model_config = _b2b_config(growth_blocks=3)
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"b2b": {
+        "event_window": 8, "privileged_critic": True, "aux_heads": True, "residual_blocks": 1,
+    }}
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(RuntimeError, match="growth_blocks"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
+
+
 def test_infer_model_config_rejects_non_contiguous_growth_indices():
     model_config = _grown_config(growth_blocks=3)
     model = PolicyValueNet(_ENV39, model_config)

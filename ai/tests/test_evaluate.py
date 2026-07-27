@@ -910,6 +910,9 @@ def test_evaluate_cli_model_growth_blocks_flag_threads_into_explicit_config(tmp_
     ev.main()  # must not raise: matching --model-growth-blocks loads the grown checkpoint cleanly
     report = json.loads((tmp_path / "rep.json").read_text())
     assert report["model_config"]["model_residual_blocks"] == 1
+    # Provenance: the grown architecture must be traceable in the report, not
+    # silently dropped by model_config_params().
+    assert report["model_config"]["model_growth_blocks"] == 3
 
 
 def test_evaluate_cli_model_growth_blocks_mismatch_fails_checkpoint_load(tmp_path, monkeypatch, capsys):

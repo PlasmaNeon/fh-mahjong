@@ -58,4 +58,5 @@ def model_config_params(model_config: ModelConfig) -> dict[str, object]:
         "model_event_window": model_config.event_window,
         "model_privileged_critic": model_config.privileged_critic,
         "model_aux_heads": model_config.aux_heads,
+        "model_growth_blocks": model_config.growth_blocks,
     }
