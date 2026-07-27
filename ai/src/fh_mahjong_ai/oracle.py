@@ -613,7 +613,8 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
     return model
 
 
-def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "cpu") -> PolicyValueNet:
+def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "cpu",
+                   env_config: Optional[EnvConfig] = None) -> PolicyValueNet:
     """Warm-start a wider B2b net by stacking `growth_blocks` ReZero residual
     blocks (deep16-rezero) after a post-B2b anchor's existing plane trunk.
     Unlike `build_b2b_model` (39ch -> B2b surgery), this performs NO surgery:
@@ -629,7 +630,19 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
     shapes alone, so an anchor without this key cannot be grown safely).
     Growing an already-grown anchor (`growth_blocks > 0` in its own config)
     is out of scope and rejected: this warm start does not attempt to
-    reconcile two different ReZero stacks."""
+    reconcile two different ReZero stacks.
+
+    `env_config`, when given, must be the LIVE env config that collection
+    will actually run under (i.e. what the caller passes to `train_b2b`).
+    The model is otherwise constructed purely from the anchor's own tensor
+    shapes (`_reconstruct_env_config`), which says nothing about whether
+    those shapes still match the live env — a stale anchor (older
+    action-space size, different scalar-feature count, or a different
+    event-history window) would silently train a model shaped to the wrong
+    wire format, with `encode()`'s zero-pad/truncate masking the drift
+    instead of failing. Passing `env_config` catches that up front. Callers
+    that omit it (e.g. tests exercising `grow_b2b_model` in isolation, with
+    no "live env" to check against) skip this cross-check."""
     anchor_checkpoint = Path(anchor_checkpoint)
     payload = torch.load(anchor_checkpoint, map_location="cpu")
     metadata = payload.get("metadata") or {}
@@ -647,8 +660,43 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
             "growing an already-grown net is out of scope"
         )
     grown_config = replace(anchor_config, growth_blocks=growth_blocks)
-    env_config = _reconstruct_env_config(payload["model"], anchor_config)
-    model = PolicyValueNet(env_config, grown_config).to(device)
+    anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
+    if env_config is not None:
+        live_env_config = _b2b_model_env_config(env_config)
+        mismatches = []
+        if anchor_env_config.action_space_size != live_env_config.action_space_size:
+            mismatches.append(
+                "action_space_size (anchor was trained under "
+                f"{anchor_env_config.action_space_size}, live env provides "
+                f"{live_env_config.action_space_size})"
+            )
+        if anchor_env_config.scalar_features != live_env_config.scalar_features:
+            mismatches.append(
+                "scalar_features (anchor was trained under "
+                f"{anchor_env_config.scalar_features}, live env provides "
+                f"{live_env_config.scalar_features})"
+            )
+        anchor_channels, anchor_area, _ = anchor_env_config.plane_shape
+        live_channels, live_area, _ = live_env_config.plane_shape
+        if (anchor_channels, anchor_area) != (live_channels, live_area):
+            mismatches.append(
+                "plane_shape (anchor was trained under "
+                f"{anchor_env_config.plane_shape}, live env provides "
+                f"{live_env_config.plane_shape})"
+            )
+        if anchor_config.event_window != env_config.event_history_window:
+            mismatches.append(
+                "event_window (anchor was trained under "
+                f"{anchor_config.event_window}, live env provides "
+                f"{env_config.event_history_window})"
+            )
+        if mismatches:
+            raise RuntimeError(
+                "grow_b2b_model: anchor checkpoint's construction shapes do not match "
+                "the live env_config collection will run under — " + "; ".join(mismatches)
+                + ". Refusing to silently train a model shaped to a stale anchor."
+            )
+    model = PolicyValueNet(anchor_env_config, grown_config).to(device)
     _, report = load_compatible_checkpoint(anchor_checkpoint, model)
     # FAIL CLOSED: every anchor tensor must load same-shape except the brand
     # new `growth.*` keys (missing from the anchor by construction, since it
@@ -1026,7 +1074,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     if growth_blocks > 0:
-        model = grow_b2b_model(champion_checkpoint, growth_blocks, device)
+        model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
         model_config = model.model_config
     else:
         model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)

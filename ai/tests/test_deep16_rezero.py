@@ -175,6 +175,81 @@ def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
         grow_b2b_model(anchor_path, growth_blocks=3)
 
 
+def test_grow_b2b_model_ignores_env_config_mismatch_when_not_passed(tmp_path) -> None:
+    # Backward-compat: callers that don't pass env_config (e.g. exercising
+    # grow_b2b_model in isolation with no "live env" to check against) get
+    # the old unchecked behavior.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    grown = grow_b2b_model(anchor_path, growth_blocks=3)
+    assert grown.model_config.growth_blocks == 3
+
+
+def test_grow_b2b_model_raises_on_scalar_feature_drift_against_live_env(tmp_path) -> None:
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    live_env = EnvConfig(bridge_kind="mock", scalar_features=_ENV39.scalar_features + 1)
+    with pytest.raises(RuntimeError, match="scalar_features"):
+        grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
+
+
+def test_grow_b2b_model_raises_on_action_space_drift_against_live_env(tmp_path) -> None:
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    live_env = EnvConfig(bridge_kind="mock", action_space_size=_ENV39.action_space_size + 10)
+    with pytest.raises(RuntimeError, match="action_space_size"):
+        grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
+
+
+def test_grow_b2b_model_matched_env_config_unchanged(tmp_path) -> None:
+    # Live env_config matches what the anchor was actually built under (39ch
+    # mock, default scalar/action-space sizes, matching event_window) — the
+    # cross-check must be a no-op.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    live_env = EnvConfig(bridge_kind="mock", event_history_window=anchor_config.event_window)
+    grown = grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
+    assert grown.model_config.growth_blocks == 3
+
+
+def test_train_b2b_growth_raises_on_stale_anchor_env_config_drift(tmp_path) -> None:
+    # The finding this guards: train_b2b's growth_blocks>0 routing must
+    # cross-check the anchor's construction shapes against the LIVE
+    # env_config collection will run under, not silently build a model
+    # shaped to a stale anchor while collection runs on a different env.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+
+    live_env = EnvConfig(bridge_kind="mock", event_history_window=anchor_config.event_window,
+                         oracle_observation=True, max_steps_per_episode=16,
+                         scalar_features=_ENV39.scalar_features + 1)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    with pytest.raises(RuntimeError, match="scalar_features"):
+        train_b2b(live_env, anchor_config, anchor_path, tmp_path / "ckpt", config,
+                 base_seed=5, growth_blocks=2)
+
+
+def test_grow_b2b_model_raises_on_missing_non_growth_tensor(tmp_path) -> None:
+    # Minor coverage gap: an anchor checkpoint that genuinely LACKS a
+    # non-growth tensor (e.g. a stripped belief_head) must raise via the
+    # bad_missing path, not silently build a model with a randomly
+    # initialized head the anchor never trained.
+    anchor_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, anchor_config)
+    state_dict = model.state_dict()
+    missing_keys = [k for k in state_dict if k.startswith("belief_head.")]
+    assert missing_keys, "expected aux_heads=True anchor to have belief_head tensors"
+    for key in missing_keys:
+        del state_dict[key]
+    path = tmp_path / "anchor_missing_tensor.pt"
+    torch.save({"model": state_dict, "step": 0,
+               "metadata": {"model_config": model_config_metadata(anchor_config)}}, path)
+    with pytest.raises(RuntimeError, match="belief_head"):
+        grow_b2b_model(path, growth_blocks=3)
+
+
 def test_train_b2b_growth_blocks_smoke_saves_metadata(tmp_path) -> None:
     # growth_blocks>0 warm-starts from a post-B2b anchor (grow_b2b_model's
     # contract), not the raw 39ch champion the surgery path (growth_blocks=0)
