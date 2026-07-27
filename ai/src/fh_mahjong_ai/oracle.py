@@ -1129,6 +1129,38 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
                 )
 
 
+def _validate_resume_iterations_not_truncating(current_iterations: int, saved_iterations: int,
+                                               start_iteration: int) -> None:
+    """Raise if resuming would silently truncate the run's original target.
+
+    `iterations` is exempt from `_validate_resume_config_echo`'s strict
+    equality check (see `_RESUME_IGNORED_FIELDS`) because extending
+    training past the original target is the whole point of
+    `--resume-from-state`. But that exemption cuts both ways: nothing else
+    validated a LOWER target either, so a state saved from a long run
+    (e.g. `--iterations 260`) resumed with a mistyped smaller value that
+    still exceeds the saved `next_iteration` (e.g. `--iterations 26`) used
+    to run to completion and silently rewrite `train_state.pt` as a
+    "finished" 26-iteration run, discarding the original 260-iteration
+    target with no error at all (adversarial round 12, high finding).
+
+    Only fires when the requested target would actually let training
+    proceed (`start_iteration <= current_iterations`) but stop strictly
+    short of the saved target -- a target at or below `start_iteration`
+    can't train anything regardless of the original target, and is caught
+    with a more specific message by the "already satisfied" exhausted-
+    target check that runs after this one."""
+    if start_iteration <= current_iterations < saved_iterations:
+        raise ValueError(
+            "--resume-from-state would truncate the run: state was saved "
+            f"from a --iterations {saved_iterations} run (currently at "
+            f"iteration {start_iteration - 1}), but --iterations "
+            f"{current_iterations} was requested -- resuming with a lower "
+            f"target than the run was saved under is not supported (pass "
+            f"{saved_iterations} (or higher), or start a new run)"
+        )
+
+
 def _train_state_prev_path(path: Path) -> Path:
     """The one-generation-back sibling of a `train_state.pt`-style path,
     e.g. `train_state.pt` -> `train_state.prev.pt`."""
@@ -1706,6 +1738,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
             model.load_state_dict(state_payload["model"])
             start_iteration = int(state_payload["next_iteration"])
+            # Adversarial round 12, high finding: a target lower than the one
+            # the state was saved under (but still above start_iteration, so
+            # the exhausted-target check below wouldn't catch it) must raise
+            # rather than silently truncating the run -- see
+            # _validate_resume_iterations_not_truncating's docstring.
+            saved_iterations = state_payload["config_echo"]["ppo_config"]["iterations"]
+            _validate_resume_iterations_not_truncating(
+                config.iterations, saved_iterations, start_iteration)
             # Adversarial round 3, Finding 2: an exhausted target is a silent
             # no-op, not success -- the runbook's resume command always intends
             # MORE training, so a state already past config.iterations must raise

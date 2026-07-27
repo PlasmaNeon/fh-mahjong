@@ -776,6 +776,103 @@ def test_resume_exhausted_target_raises_with_clear_message(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Adversarial review round 12
+# ---------------------------------------------------------------------------
+#
+# Finding (high): "iterations" is exempted from the config-echo mismatch
+# check UNCONDITIONALLY (see _RESUME_IGNORED_FIELDS), so nothing stops a
+# LOWER target than the one the state was saved under, as long as it still
+# clears the exhausted-target check below (start_iteration > iterations). A
+# state saved from a long run (--iterations 260) resumed with a mistyped
+# --iterations 26 (which is > next_iteration) runs to completion and
+# silently rewrites train_state.pt as a "finished" 26-iteration run,
+# discarding the original 260-iteration target with no error at all.
+
+def _set_saved_iterations_target(state_path: Path, iterations: int) -> None:
+    """Rewrite a train_state.pt's config_echo to claim it was saved under a
+    different --iterations target, simulating a state that was saved
+    mid-run from a longer original run (e.g. the 260-iteration run in the
+    finding) without needing an actual 260-iteration test fixture."""
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    state["config_echo"]["ppo_config"]["iterations"] = iterations
+    torch.save(state, state_path)
+
+
+def test_resume_below_saved_target_but_above_next_iteration_raises(tmp_path) -> None:
+    # The finding's exact shape: saved target 8, state at next_iteration 3
+    # (2 iterations done), resumed with --iterations 5 -- above
+    # next_iteration (so the exhausted-target check does not fire) but
+    # below the saved target of 8 (so it WOULD silently truncate the run).
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    assert torch.load(state_path, map_location="cpu",
+                       weights_only=False)["next_iteration"] == 3
+    _set_saved_iterations_target(state_path, 8)
+
+    config_truncating = replace(config_first, iterations=5)
+    with pytest.raises(ValueError, match=r"truncat.*8.*5|8.*5.*truncat"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_truncating,
+                 base_seed=5, resume_from_state=state_path)
+
+
+def test_resume_at_saved_target_is_a_normal_resume(tmp_path) -> None:
+    # Equal target == normal resume: must NOT raise the truncation error.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    _set_saved_iterations_target(state_path, 8)
+
+    config_same_target = replace(config_first, iterations=8)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_same_target,
+                        base_seed=5, resume_from_state=state_path)
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4, 5, 6, 7, 8]
+
+
+def test_resume_above_saved_target_is_an_explicit_extension(tmp_path) -> None:
+    # Higher target == the documented, intended use of --resume-from-state:
+    # explicitly training past the original target. Must NOT raise.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    _set_saved_iterations_target(state_path, 8)
+
+    config_extended = replace(config_first, iterations=10)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_extended,
+                        base_seed=5, resume_from_state=state_path)
+    assert [row["iteration"] for row in history] == list(range(1, 11))
+
+
+def test_resume_below_next_iteration_still_raises_exhausted_not_truncation(tmp_path) -> None:
+    # A target below next_iteration is ALSO below the (higher, faked) saved
+    # target here, so it satisfies both checks' trigger conditions -- but no
+    # training can happen at all regardless of the original target, so the
+    # existing "already satisfied" exhausted-target check (round 3) must be
+    # the one that fires, not the new truncation message.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    _set_saved_iterations_target(state_path, 8)
+
+    config_exhausted = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="already satisfied"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_exhausted,
+                 base_seed=5, resume_from_state=state_path)
+
+
+# ---------------------------------------------------------------------------
 # Adversarial review round 4
 # ---------------------------------------------------------------------------
 #
