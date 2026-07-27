@@ -2,6 +2,7 @@
 warm-started from the 39-channel anchor."""
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import math
@@ -1333,6 +1334,69 @@ def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     return found
 
 
+_RUN_LOCK_NAME = ".run.lock"
+
+
+def _acquire_checkpoint_dir_lock(checkpoint_dir: Path):
+    """Claim exclusive ownership of `checkpoint_dir` for the lifetime of this
+    process, via `fcntl.flock(LOCK_EX | LOCK_NB)` on `<checkpoint_dir>/.run.lock`
+    (adversarial round 7, high finding: the fresh-dir/lineage guards above are
+    TOCTOU -- two concurrent `train_b2b` launches pointed at the same
+    checkpoint_dir can both pass the artifact-inspection checks, mint
+    different `run_id`s, and interleave writes to the same
+    iter_*.pt/history.json/train_state.pt).
+
+    Called at the very start of `train_b2b`, before ANY artifact inspection
+    or deletion -- covers the fresh, `--fresh-run-overwrite`, and
+    `--resume-from-state` paths alike. The lock is released when the
+    returned file object is closed (train_b2b does this in a `finally` once
+    the run ends) OR when the process dies for any other reason -- flock is
+    tied to the open file description, so the OS releases it automatically
+    on process exit/crash. That means there is no stale-lock file to clean
+    up: a leftover `.run.lock` from a crashed run is inert and the next
+    launch acquires it immediately.
+
+    `LOCK_NB` (non-blocking) means a second launch against an
+    already-locked directory fails immediately with a loud, named error
+    instead of hanging indefinitely waiting for the first run to finish.
+
+    `.run.lock` is deliberately excluded from
+    `_find_fresh_run_managed_artifacts`'s names: it must survive both the
+    fresh-dir guard's inspection and `--fresh-run-overwrite`'s deletion --
+    if overwrite deleted it, a concurrent launch could slip in during the
+    brief window between that deletion and this function reacquiring it for
+    the new run."""
+    lock_path = checkpoint_dir / _RUN_LOCK_NAME
+    lock_file = open(lock_path, "a+")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        lock_file.close()
+        raise RuntimeError(
+            f"could not acquire exclusive lock on {lock_path} -- another "
+            f"training process likely already owns checkpoint_dir "
+            f"{checkpoint_dir} (running two train_b2b launches against the "
+            "same directory would otherwise interleave writes to its "
+            "iter_*.pt/history.json/train_state.pt); wait for that run to "
+            "finish or point --checkpoint-dir at a different directory"
+        ) from exc
+    # Diagnostics only -- ownership is enforced by the flock above, not by
+    # this content. Overwrite any stale pid/run_id from a prior holder.
+    _write_lock_owner(lock_file, run_id=None)
+    return lock_file
+
+
+def _write_lock_owner(lock_file, *, run_id: Optional[str]) -> None:
+    """Diagnostics-only: record the owning pid (and, once known, run_id) in
+    an already-`flock`-held lock file. Never part of the locking mechanism
+    itself -- callers must not rely on this content for correctness, only
+    the flock held on `lock_file`'s fd does that."""
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(f"pid={os.getpid()} run_id={run_id}\n")
+    lock_file.flush()
+
+
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
              growth_blocks: int = 0, train_state_every: int = 5,
@@ -1422,190 +1486,195 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    state_payload = None
-    if resume_from_state is not None:
-        # weights_only=False: the state includes numpy/python RNG state (plain
-        # tuples/arrays, not just tensors), which torch's default safe
-        # unpickler rejects. train_state.pt is our own trusted output.
-        state_payload = torch.load(Path(resume_from_state), map_location="cpu", weights_only=False)
-        saved_base_seed = state_payload.get("base_seed", _RESUME_MISSING)
-        if saved_base_seed != base_seed:
-            raise ValueError(
-                "--resume-from-state base_seed mismatch: "
-                f"state file has {saved_base_seed!r}, requested base_seed is "
-                f"{base_seed!r} — resuming with a different seed schedule is "
-                "not supported (pass the base_seed the original run used)"
-            )
-        current_echo = _train_b2b_config_echo(config, model_config, env_config)
-        _validate_resume_config_echo(current_echo, state_payload["config_echo"])
-        model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
-        model.load_state_dict(state_payload["model"])
-        start_iteration = int(state_payload["next_iteration"])
-        # Adversarial round 3, Finding 2: an exhausted target is a silent
-        # no-op, not success -- the runbook's resume command always intends
-        # MORE training, so a state already past config.iterations must raise
-        # loudly instead of returning an empty history.
-        if start_iteration > config.iterations:
-            raise ValueError(
-                f"state is at iteration {start_iteration - 1}; --iterations "
-                f"{config.iterations} already satisfied — nothing to resume; "
-                "raise --iterations or stop"
-            )
-        run_id = state_payload.get("run_id")
-        history_path = checkpoint_dir / "history.json"
-        history = _load_resume_history(history_path, run_id, checkpoint_dir,
-                                       force_history_reset=force_history_reset)
-        # Reconcile against a STALE state file: train_state.pt is only written
-        # every `train_state_every` iterations (plus at completion), but
-        # history.json is appended every iteration. Resuming from a state
-        # older than the last history rows (e.g. state saved at iter 5, then
-        # iters 6-7 ran and appended to history before the process died
-        # without reaching the next state-save at iter 10) must not keep
-        # those orphaned rows — the loop below re-runs and re-appends
-        # iterations >= start_iteration from scratch, so keep only rows
-        # strictly before start_iteration or they'd be duplicated.
-        # Re-running iteration N after restoring the exact model/optimizer/
-        # RNG state from before it is a deterministic replay of that
-        # iteration (same seed derivation from base_seed+iteration, same
-        # torch/numpy/python RNG state), so the per-iteration checkpoint
-        # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
-        # safe to clobber by name, not a second distinct result.
-        history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
-    else:
-        existing_artifacts = _find_fresh_run_managed_artifacts(checkpoint_dir)
-        if existing_artifacts:
-            names = ", ".join(p.name for p in existing_artifacts)
-            if not fresh_run_overwrite:
-                raise ValueError(
-                    f"checkpoint_dir {checkpoint_dir} already contains managed "
-                    f"training artifact(s) ({names}) but this is a fresh run "
-                    "(no --resume-from-state was given) -- launching here would "
-                    "silently reuse/overwrite a prior run's checkpoints, mixing "
-                    "lineages and risking lost progress. Either pass "
-                    "--resume-from-state pointed at this directory's "
-                    "train_state.pt to continue that run, use a new/empty "
-                    "checkpoint_dir for a truly fresh run, or pass "
-                    "--fresh-run-overwrite to delete exactly these managed "
-                    "artifacts and start fresh here"
-                )
-            for artifact_path in existing_artifacts:
-                artifact_path.unlink()
-            logger.warning(
-                "--fresh-run-overwrite: removed %d prior managed artifact(s) from "
-                "%s before starting fresh: %s",
-                len(existing_artifacts), checkpoint_dir, names,
-            )
-        if growth_blocks > 0:
-            model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
-            model_config = model.model_config
-        else:
-            model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
-        start_iteration = 1
-        history = []
-        run_id = uuid.uuid4().hex
-    model.train()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-    if state_payload is not None:
-        optimizer.load_state_dict(state_payload["optimizer"])
-        torch.set_rng_state(state_payload["torch_rng"])
-        if torch.cuda.is_available() and state_payload.get("cuda_rng") is not None:
-            torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
-        np.random.set_state(state_payload["numpy_rng"])
-        random.setstate(state_payload["python_rng"])
-    collector = None
-    if config.num_workers > 1:
-        collector = ParallelB2bCollector(env_config, model_config, config, config.num_workers)
-        collector.start()
+    lock_file = _acquire_checkpoint_dir_lock(checkpoint_dir)
     try:
-        for iteration in range(start_iteration, config.iterations + 1):
-            iter_seed = base_seed + iteration * config.matches_per_iter
-            if collector is not None:
-                state = cpu_state_snapshot(model)
-                batch = collector.collect(state, iter_seed, config.matches_per_iter)
+        state_payload = None
+        if resume_from_state is not None:
+            # weights_only=False: the state includes numpy/python RNG state (plain
+            # tuples/arrays, not just tensors), which torch's default safe
+            # unpickler rejects. train_state.pt is our own trusted output.
+            state_payload = torch.load(Path(resume_from_state), map_location="cpu", weights_only=False)
+            saved_base_seed = state_payload.get("base_seed", _RESUME_MISSING)
+            if saved_base_seed != base_seed:
+                raise ValueError(
+                    "--resume-from-state base_seed mismatch: "
+                    f"state file has {saved_base_seed!r}, requested base_seed is "
+                    f"{base_seed!r} — resuming with a different seed schedule is "
+                    "not supported (pass the base_seed the original run used)"
+                )
+            current_echo = _train_b2b_config_echo(config, model_config, env_config)
+            _validate_resume_config_echo(current_echo, state_payload["config_echo"])
+            model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
+            model.load_state_dict(state_payload["model"])
+            start_iteration = int(state_payload["next_iteration"])
+            # Adversarial round 3, Finding 2: an exhausted target is a silent
+            # no-op, not success -- the runbook's resume command always intends
+            # MORE training, so a state already past config.iterations must raise
+            # loudly instead of returning an empty history.
+            if start_iteration > config.iterations:
+                raise ValueError(
+                    f"state is at iteration {start_iteration - 1}; --iterations "
+                    f"{config.iterations} already satisfied — nothing to resume; "
+                    "raise --iterations or stop"
+                )
+            run_id = state_payload.get("run_id")
+            history_path = checkpoint_dir / "history.json"
+            history = _load_resume_history(history_path, run_id, checkpoint_dir,
+                                           force_history_reset=force_history_reset)
+            # Reconcile against a STALE state file: train_state.pt is only written
+            # every `train_state_every` iterations (plus at completion), but
+            # history.json is appended every iteration. Resuming from a state
+            # older than the last history rows (e.g. state saved at iter 5, then
+            # iters 6-7 ran and appended to history before the process died
+            # without reaching the next state-save at iter 10) must not keep
+            # those orphaned rows — the loop below re-runs and re-appends
+            # iterations >= start_iteration from scratch, so keep only rows
+            # strictly before start_iteration or they'd be duplicated.
+            # Re-running iteration N after restoring the exact model/optimizer/
+            # RNG state from before it is a deterministic replay of that
+            # iteration (same seed derivation from base_seed+iteration, same
+            # torch/numpy/python RNG state), so the per-iteration checkpoint
+            # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
+            # safe to clobber by name, not a second distinct result.
+            history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
+        else:
+            existing_artifacts = _find_fresh_run_managed_artifacts(checkpoint_dir)
+            if existing_artifacts:
+                names = ", ".join(p.name for p in existing_artifacts)
+                if not fresh_run_overwrite:
+                    raise ValueError(
+                        f"checkpoint_dir {checkpoint_dir} already contains managed "
+                        f"training artifact(s) ({names}) but this is a fresh run "
+                        "(no --resume-from-state was given) -- launching here would "
+                        "silently reuse/overwrite a prior run's checkpoints, mixing "
+                        "lineages and risking lost progress. Either pass "
+                        "--resume-from-state pointed at this directory's "
+                        "train_state.pt to continue that run, use a new/empty "
+                        "checkpoint_dir for a truly fresh run, or pass "
+                        "--fresh-run-overwrite to delete exactly these managed "
+                        "artifacts and start fresh here"
+                    )
+                for artifact_path in existing_artifacts:
+                    artifact_path.unlink()
+                logger.warning(
+                    "--fresh-run-overwrite: removed %d prior managed artifact(s) from "
+                    "%s before starting fresh: %s",
+                    len(existing_artifacts), checkpoint_dir, names,
+                )
+            if growth_blocks > 0:
+                model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
+                model_config = model.model_config
             else:
-                batch = collect_b2b_rollouts(env_config, model, config, base_seed=iter_seed)
-            advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
-                                              config.gamma, config.gae_lambda)
-            metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
-            metrics["iteration"] = iteration
-            metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
-            metrics["steps"] = len(batch)
-            # Aux-supervision telemetry: an all-zero deal-in rate across many
-            # iters is the corrupted-labels signature — watch it in history.json.
-            if batch.dealin_labels is not None:
-                metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
-            if batch.rank_labels is not None:
-                metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
-            # Adversarial round 2, Finding 1: record growth-block ReZero alpha
-            # magnitudes so the runbook's null-interpretation rule ("alphas
-            # hugging 0 = protocol null signal") has telemetry to check
-            # against. Omitted (not 0.0) for growth-free runs -- see
-            # `_growth_alpha_mean_abs`'s docstring.
-            growth_alpha_mean_abs = _growth_alpha_mean_abs(model)
-            if growth_alpha_mean_abs is not None:
-                metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
-            metrics["truncated_matches"] = int(batch.truncated_matches)
-            matches_total = max(1, int(config.matches_per_iter))
-            truncation_rate = batch.truncated_matches / matches_total
-            metrics["truncation_rate"] = float(truncation_rate)
-            if truncation_rate > 0.02:
-                # Truncated matches keep censored partial returns with done=1
-                # (the champion recipe's semantics; truncations were ~0 at
-                # max-steps 4000). A policy could exploit that by stalling
-                # into the cap — a rising rate is that exploit's signature,
-                # so the run halts loudly instead of optimizing it.
-                raise RuntimeError(
-                    f"iter {iteration}: truncation rate {truncation_rate:.1%} exceeds 2% — "
-                    "a stalling policy can exploit censored truncation returns; "
-                    "investigate before continuing (raise max_steps_per_episode or "
-                    "inspect the policy)"
-                )
-            save_checkpoint(
-                checkpoint_dir / f"iter_{iteration:03d}.pt", model,
-                # Pins the trained horizon/architecture so fh-mj-evaluate can
-                # refuse to run this checkpoint under a different effective
-                # window (silent mis-evaluation guard). The "b2b" four-flag
-                # block stays for older readers; "model_config" is the
-                # complete ModelConfig so Spec B2c loaders (infer_model_config)
-                # can reconstruct the architecture exactly instead of
-                # re-deriving it from tensor shapes. "run_id" (adversarial
-                # round 4, high finding) lets a `--resume-from-state` whose
-                # history.json is missing/corrupt verify this checkpoint's
-                # lineage against the resuming state file instead of
-                # silently mixing unrelated runs' checkpoints together --
-                # infer_model_config ignores unknown metadata keys, so this
-                # is additive and doesn't affect loading.
-                metadata={
-                    "b2b": {
-                        "event_window": int(model_config.event_window),
-                        "privileged_critic": bool(model_config.privileged_critic),
-                        "aux_heads": bool(model_config.aux_heads),
-                        "residual_blocks": int(model_config.residual_blocks),
-                    },
-                    "model_config": model_config_metadata(model_config),
-                    "run_id": run_id,
-                })
-            history.append(metrics)
-            # Adversarial round 3, Finding 1: wrap history rows with the run's
-            # run_id so a `--resume-from-state` can bind history.json's
-            # lineage to the resuming train_state.pt (see _load_resume_history)
-            # instead of silently mixing unrelated runs. Use
-            # `read_b2b_history_rows` to read this file back.
-            _write_history_atomic(checkpoint_dir / "history.json", {"run_id": run_id, "rows": history})
-            print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
-                  f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
-                  f"mean_reward={metrics['mean_reward']:.4f}")
-            is_last_iteration = iteration == config.iterations
-            if train_state_every > 0 and (iteration % train_state_every == 0 or is_last_iteration):
-                _save_train_state(
-                    checkpoint_dir / "train_state.pt", model, optimizer,
-                    next_iteration=iteration + 1, config=config, model_config=model_config,
-                    env_config=env_config, base_seed=base_seed, run_id=run_id,
-                )
+                model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
+            start_iteration = 1
+            history = []
+            run_id = uuid.uuid4().hex
+        _write_lock_owner(lock_file, run_id=run_id)
+        model.train()
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        if state_payload is not None:
+            optimizer.load_state_dict(state_payload["optimizer"])
+            torch.set_rng_state(state_payload["torch_rng"])
+            if torch.cuda.is_available() and state_payload.get("cuda_rng") is not None:
+                torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
+            np.random.set_state(state_payload["numpy_rng"])
+            random.setstate(state_payload["python_rng"])
+        collector = None
+        if config.num_workers > 1:
+            collector = ParallelB2bCollector(env_config, model_config, config, config.num_workers)
+            collector.start()
+        try:
+            for iteration in range(start_iteration, config.iterations + 1):
+                iter_seed = base_seed + iteration * config.matches_per_iter
+                if collector is not None:
+                    state = cpu_state_snapshot(model)
+                    batch = collector.collect(state, iter_seed, config.matches_per_iter)
+                else:
+                    batch = collect_b2b_rollouts(env_config, model, config, base_seed=iter_seed)
+                advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
+                                                  config.gamma, config.gae_lambda)
+                metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+                metrics["iteration"] = iteration
+                metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+                metrics["steps"] = len(batch)
+                # Aux-supervision telemetry: an all-zero deal-in rate across many
+                # iters is the corrupted-labels signature — watch it in history.json.
+                if batch.dealin_labels is not None:
+                    metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
+                if batch.rank_labels is not None:
+                    metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+                # Adversarial round 2, Finding 1: record growth-block ReZero alpha
+                # magnitudes so the runbook's null-interpretation rule ("alphas
+                # hugging 0 = protocol null signal") has telemetry to check
+                # against. Omitted (not 0.0) for growth-free runs -- see
+                # `_growth_alpha_mean_abs`'s docstring.
+                growth_alpha_mean_abs = _growth_alpha_mean_abs(model)
+                if growth_alpha_mean_abs is not None:
+                    metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
+                metrics["truncated_matches"] = int(batch.truncated_matches)
+                matches_total = max(1, int(config.matches_per_iter))
+                truncation_rate = batch.truncated_matches / matches_total
+                metrics["truncation_rate"] = float(truncation_rate)
+                if truncation_rate > 0.02:
+                    # Truncated matches keep censored partial returns with done=1
+                    # (the champion recipe's semantics; truncations were ~0 at
+                    # max-steps 4000). A policy could exploit that by stalling
+                    # into the cap — a rising rate is that exploit's signature,
+                    # so the run halts loudly instead of optimizing it.
+                    raise RuntimeError(
+                        f"iter {iteration}: truncation rate {truncation_rate:.1%} exceeds 2% — "
+                        "a stalling policy can exploit censored truncation returns; "
+                        "investigate before continuing (raise max_steps_per_episode or "
+                        "inspect the policy)"
+                    )
+                save_checkpoint(
+                    checkpoint_dir / f"iter_{iteration:03d}.pt", model,
+                    # Pins the trained horizon/architecture so fh-mj-evaluate can
+                    # refuse to run this checkpoint under a different effective
+                    # window (silent mis-evaluation guard). The "b2b" four-flag
+                    # block stays for older readers; "model_config" is the
+                    # complete ModelConfig so Spec B2c loaders (infer_model_config)
+                    # can reconstruct the architecture exactly instead of
+                    # re-deriving it from tensor shapes. "run_id" (adversarial
+                    # round 4, high finding) lets a `--resume-from-state` whose
+                    # history.json is missing/corrupt verify this checkpoint's
+                    # lineage against the resuming state file instead of
+                    # silently mixing unrelated runs' checkpoints together --
+                    # infer_model_config ignores unknown metadata keys, so this
+                    # is additive and doesn't affect loading.
+                    metadata={
+                        "b2b": {
+                            "event_window": int(model_config.event_window),
+                            "privileged_critic": bool(model_config.privileged_critic),
+                            "aux_heads": bool(model_config.aux_heads),
+                            "residual_blocks": int(model_config.residual_blocks),
+                        },
+                        "model_config": model_config_metadata(model_config),
+                        "run_id": run_id,
+                    })
+                history.append(metrics)
+                # Adversarial round 3, Finding 1: wrap history rows with the run's
+                # run_id so a `--resume-from-state` can bind history.json's
+                # lineage to the resuming train_state.pt (see _load_resume_history)
+                # instead of silently mixing unrelated runs. Use
+                # `read_b2b_history_rows` to read this file back.
+                _write_history_atomic(checkpoint_dir / "history.json", {"run_id": run_id, "rows": history})
+                print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+                      f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                      f"mean_reward={metrics['mean_reward']:.4f}")
+                is_last_iteration = iteration == config.iterations
+                if train_state_every > 0 and (iteration % train_state_every == 0 or is_last_iteration):
+                    _save_train_state(
+                        checkpoint_dir / "train_state.pt", model, optimizer,
+                        next_iteration=iteration + 1, config=config, model_config=model_config,
+                        env_config=env_config, base_seed=base_seed, run_id=run_id,
+                    )
+        finally:
+            if collector is not None:
+                collector.close()
+        return history
     finally:
-        if collector is not None:
-            collector.close()
-    return history
+        lock_file.close()
 
 
 def train_oracle(env_config: EnvConfig, model_config: ModelConfig, anchor_checkpoint: Path,

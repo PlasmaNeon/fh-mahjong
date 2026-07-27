@@ -1,5 +1,8 @@
 import json
 import logging
+import multiprocessing as mp
+import os
+import re
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -10,7 +13,13 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet, ReZeroResidualBlock
-from fh_mahjong_ai.oracle import grow_b2b_model, read_b2b_history_rows, train_b2b
+from fh_mahjong_ai.oracle import (
+    _acquire_checkpoint_dir_lock,
+    _find_fresh_run_managed_artifacts,
+    grow_b2b_model,
+    read_b2b_history_rows,
+    train_b2b,
+)
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 
@@ -1133,3 +1142,103 @@ def test_resume_path_unaffected_by_fresh_run_guard(tmp_path) -> None:
 
     assert len(history) == 4
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+# --- Adversarial round 7, high finding: checkpoint_dir ownership lock ------
+#
+# The fresh-dir/lineage guards above are TOCTOU -- two concurrent train_b2b
+# launches pointed at the same checkpoint_dir can both pass the artifact
+# checks, mint different run_ids, and interleave writes to the same
+# iter_*.pt/history.json/train_state.pt. `_acquire_checkpoint_dir_lock`
+# closes that gap with an flock on `<checkpoint_dir>/.run.lock`. flock is
+# per-process (per open file description, specifically), so exercising the
+# "second launch is rejected" and "release on process exit" behavior
+# honestly requires real separate processes, not threads or in-process
+# monkeypatching -- hence multiprocessing.get_context("spawn") below.
+
+def _hold_checkpoint_dir_lock_until_released(checkpoint_dir_str: str, ready, release) -> None:
+    lock_file = _acquire_checkpoint_dir_lock(Path(checkpoint_dir_str))
+    ready.set()
+    release.wait(timeout=10)
+    lock_file.close()
+
+
+def _acquire_checkpoint_dir_lock_then_crash(checkpoint_dir_str: str) -> None:
+    _acquire_checkpoint_dir_lock(Path(checkpoint_dir_str))
+    # Deliberately exit without closing the lock file -- simulates a killed/
+    # crashed training process. flock must be released by the OS when the
+    # process dies, not by our own cleanup code, or a crashed run would
+    # leave checkpoint_dir permanently unlaunchable.
+    os._exit(0)
+
+
+def test_concurrent_checkpoint_dir_lock_second_launch_raises(tmp_path) -> None:
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    ctx = mp.get_context("spawn")
+    ready = ctx.Event()
+    release = ctx.Event()
+    holder = ctx.Process(target=_hold_checkpoint_dir_lock_until_released,
+                         args=(str(checkpoint_dir), ready, release))
+    holder.start()
+    try:
+        assert ready.wait(timeout=10), "holder process never acquired the lock"
+        lock_path = checkpoint_dir / ".run.lock"
+        with pytest.raises(RuntimeError, match=re.escape(str(lock_path))):
+            _acquire_checkpoint_dir_lock(checkpoint_dir)
+    finally:
+        release.set()
+        holder.join(timeout=10)
+    assert holder.exitcode == 0
+
+
+def test_checkpoint_dir_lock_released_when_owning_process_dies(tmp_path) -> None:
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    ctx = mp.get_context("spawn")
+    proc = ctx.Process(target=_acquire_checkpoint_dir_lock_then_crash, args=(str(checkpoint_dir),))
+    proc.start()
+    proc.join(timeout=10)
+    assert proc.exitcode == 0
+
+    # The crashed process never closed its lock_file, but the OS releases
+    # flock on process exit regardless -- this must succeed, not raise.
+    lock_file = _acquire_checkpoint_dir_lock(checkpoint_dir)
+    try:
+        assert lock_file is not None
+    finally:
+        lock_file.close()
+
+
+def test_fresh_run_overwrite_does_not_delete_run_lock(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    lock_path = checkpoint_dir / ".run.lock"
+    assert lock_path.exists()
+    # The fresh-dir guard's own artifact list must never include the lock
+    # file -- if it did, --fresh-run-overwrite's deletion loop would remove
+    # the very file protecting the run about to start.
+    assert lock_path not in _find_fresh_run_managed_artifacts(checkpoint_dir)
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=9, fresh_run_overwrite=True)
+
+    assert lock_path.exists()
+
+
+def test_resume_path_acquires_checkpoint_dir_lock(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_resumed = replace(config_first, iterations=2)
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+             base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    lock_path = checkpoint_dir / ".run.lock"
+    assert lock_path.exists()
+    assert f"pid={os.getpid()}" in lock_path.read_text()
