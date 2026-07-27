@@ -11,68 +11,32 @@ state, or a chunking change that reorders matches) would silently corrupt
 every future worker-count choice's data without ever showing up in a normal
 training run's loss curves.
 
-This benchmark reuses the ACTUAL collection function `train_b2b` calls
-(`collect_b2b_rollouts`, see `oracle.py`) and the ACTUAL match-chunking
-algorithm `ParallelB2bCollector` uses (`_split_counts`, see
-`parallel_rollouts.py`) — it does not reimplement rollout collection. For
-each requested worker count it runs COLLECTION ONLY (fixed weights, no PPO
-update): matches are split into contiguous, disjoint seed blocks (one block
-per worker, exactly as `ParallelB2bCollector.collect` does), each block is
-collected via `collect_b2b_rollouts`, and the per-block results are
-concatenated in ascending worker-id order — which, because blocks are
-contiguous and increasing, IS a concatenation in ascending match-index order
-regardless of how many workers were used. That per-worker-count concatenated
-batch is hashed into one digest; if every worker count in `--workers`
-produces the same digest, the harness proves fan-out doesn't change results.
-
-Worker fan-out here uses `multiprocessing`'s **fork** start method, not the
-spawn context `ParallelB2bCollector` uses for real training. The reason is
-purely about state inheritance, not RNG safety (each forked/spawned worker
-already gets its own independent process and thus its own independent torch
-RNG either way): `spawn` starts a fresh interpreter that re-imports every
-module from scratch, which drops any test monkeypatch state applied in the
-parent — a test that patches `collect_b2b_rollouts` to inject a failure
-would silently have no effect on spawned children. `fork` instead inherits
-the parent's already-imported (possibly monkeypatched) module state via
-copy-on-write memory, so this bench's own tests can patch collection
-behavior and see it take effect in the worker. It is also simply simpler:
-no state_dict re-serialization is needed to hand the warm-started model to
-each worker. Fork-after-threads is generally unsafe with PyTorch's internal
-thread pool, so the parent stays single-threaded (`torch.set_num_threads(1)`)
-and never runs a forward pass before forking (model warm-start here only
-copies tensors, no `model(...)` call) — the same reason each worker also
-pins its own thread count to 1.
+This benchmark runs through the ACTUAL persistent, spawn-context
+`ParallelB2bCollector` that multi-worker `train_b2b` uses. For each requested
+worker count it constructs and starts a fresh collector, runs one warmup
+collection round (startup timing), then reuses the same live workers for one
+steady-state collection round (steady timing and digest). This exercises
+spawn-time model construction, state-dict transfer, queues, seed-block
+splitting, result ordering, worker reuse, and lifecycle cleanup while keeping
+the model weights and match seeds fixed.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import multiprocessing as mp
-import queue
 import sys
 import time
-import traceback
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import torch
 
 from ..config import EnvConfig
-from ..model import PolicyValueNet
-from ..oracle import _b2b_model_env_config, build_b2b_model, collect_b2b_rollouts, grow_b2b_model
-from ..parallel_rollouts import _split_counts
-from ..ppo import PPOConfig, concat_rollout_batches, cpu_state_snapshot
+from ..oracle import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
+from ..ppo import PPOConfig, RolloutBatch, cpu_state_snapshot
 from .model_config_args import add_model_config_args, model_config_from_args
-
-# Per-worker timeout (seconds) for collecting a forked worker's result.
-# This is generous relative to a real collection chunk's runtime; it exists
-# only to fail loudly on the documented fork failure mode (e.g. a forked
-# child deadlocking or dying without reaching the except-block that reports
-# errors on `result_q`) instead of hanging the bench forever.
-_WORKER_RESULT_TIMEOUT_SECONDS = 600
 
 
 def _build_model(env_config: EnvConfig, model_config, champion: Path, growth_blocks: int, device: str):
@@ -87,123 +51,69 @@ def _build_model(env_config: EnvConfig, model_config, champion: Path, growth_blo
     return model, model_config
 
 
-def _collect_chunk(env_config: EnvConfig, model, ppo_config: PPOConfig, seed: int, count: int):
-    """One contiguous seed-block's worth of collection, via the real
-    collector function. `matches_per_iter`/`device` are pinned to this
-    chunk's `count`/CPU — mirrors `_b2b_worker_loop`'s per-task config."""
-    torch.set_num_threads(1)
-    cfg = replace(ppo_config, matches_per_iter=count, device="cpu")
-    return collect_b2b_rollouts(env_config, model, cfg, base_seed=seed)
+_ROLLOUT_DIGEST_ARRAY_FIELDS = (
+    "planes",
+    "scalars",
+    "action_mask",
+    "actions",
+    "old_logprobs",
+    "values",
+    "rewards",
+    "dones",
+    "events",
+    "event_lengths",
+    "dealin_labels",
+    "rank_labels",
+)
 
 
-def _fork_collect_chunk(result_q, worker_id: int, env_config: EnvConfig, model,
-                        ppo_config: PPOConfig, seed: int, count: int) -> None:
-    """`multiprocessing.Process` target for one seed block. Runs in its own
-    forked process (its own independent torch RNG), reusing the same
-    already-loaded `model` object via fork's copy-on-write memory — no
-    state_dict re-serialization needed."""
-    try:
-        batch = _collect_chunk(env_config, model, ppo_config, seed, count)
-        result_q.put((worker_id, batch, None))
-    except Exception:  # noqa: BLE001 - report any worker failure to the parent
-        result_q.put((worker_id, None, traceback.format_exc()))
+def _update_length_prefixed(h, payload: bytes) -> None:
+    h.update(len(payload).to_bytes(8, "big", signed=False))
+    h.update(payload)
 
 
-def run_collection(env_config: EnvConfig, model, ppo_config: PPOConfig,
-                   base_seed: int, matches: int, num_workers: int):
-    """Collect `matches` matches (seeds `base_seed`..`base_seed+matches-1`)
-    fanned across `num_workers` contiguous seed blocks (`_split_counts` — the
-    SAME chunking `ParallelB2bCollector` uses), concatenated back in
-    ascending worker-id order — which, because the blocks are contiguous and
-    increasing, is a concatenation in ascending match-index order regardless
-    of `num_workers`. Returns `(RolloutBatch, elapsed_seconds)`."""
-    counts = _split_counts(matches, max(1, int(num_workers)))
-    blocks = []
-    offset = 0
-    for count in counts:
-        if count > 0:
-            blocks.append((int(base_seed) + offset, count))
-        offset += count
-    if not blocks:
-        raise ValueError("run_collection: no matches to collect")
-    start = time.perf_counter()
-    if len(blocks) == 1:
-        seed, count = blocks[0]
-        batches = [_collect_chunk(env_config, model, ppo_config, seed, count)]
-    else:
-        ctx = mp.get_context("fork")
-        result_q = ctx.Queue()
-        procs = []
-        for worker_id, (seed, count) in enumerate(blocks):
-            proc = ctx.Process(target=_fork_collect_chunk,
-                               args=(result_q, worker_id, env_config, model, ppo_config, seed, count),
-                               daemon=True)
-            proc.start()
-            procs.append(proc)
-        results: dict[int, object] = {}
-        pending = {worker_id for worker_id in range(len(blocks))}
-        for _ in procs:
-            try:
-                worker_id, batch, err = result_q.get(timeout=_WORKER_RESULT_TIMEOUT_SECONDS)
-            except queue.Empty:
-                for p in procs:
-                    p.terminate()
-                raise RuntimeError(
-                    f"collect-bench: timed out after {_WORKER_RESULT_TIMEOUT_SECONDS}s waiting "
-                    f"for worker result(s); worker(s) still pending: {sorted(pending)} "
-                    f"(this is the documented fork failure mode — a forked child hung or died "
-                    f"without reporting to result_q)"
-                )
-            if err is not None:
-                for p in procs:
-                    p.terminate()
-                raise RuntimeError(f"collect-bench worker {worker_id} failed:\n{err}")
-            results[worker_id] = batch
-            pending.discard(worker_id)
-        for p in procs:
-            p.join(timeout=30)
-        batches = [results[i] for i in range(len(blocks))]
-    elapsed = time.perf_counter() - start
-    batch = concat_rollout_batches(batches, consume=True)
-    return batch, elapsed
+def _update_array_digest(h, name: str, value) -> None:
+    if value is None:
+        metadata = {"dtype": None, "field": name, "present": False, "shape": None}
+        _update_length_prefixed(
+            h, json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode())
+        return
+    array = np.asarray(value)
+    metadata = {
+        "dtype": array.dtype.str,
+        "field": name,
+        "present": True,
+        "shape": list(array.shape),
+    }
+    _update_length_prefixed(
+        h, json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode())
+    _update_length_prefixed(h, np.ascontiguousarray(array).tobytes())
 
 
 def _digest_batch(base_seed: int, matches: int, batch) -> str:
-    """sha256 over the canonical concatenation of (match seed context,
-    obs-row bytes for ALL FOUR per-row observation arrays — planes, scalars,
-    action_mask, events/event_lengths — action ids, rewards, dealin labels,
-    rank labels, round-outcome telemetry). Row order in `batch` is already
-    canonical by match index (see `run_collection`'s docstring), so no
-    further per-match sorting is needed — hashing the whole concatenation in
-    place respects match-index order for any worker count.
+    """Hash every `RolloutBatch` field plus each array's shape and dtype.
 
-    action_mask, events, and event_lengths are included alongside planes/
-    scalars: a fan-out bug isolated to mask or event handling (e.g. a worker
-    reusing another worker's event-window buffer, or a stale mask left over
-    from a previous match) would leave planes/scalars/actions/rewards
-    untouched and pass silently if those two arrays were the only ones
-    hashed.
+    All twelve array fields are consumed by PPO/GAE/auxiliary training.
+    `truncated_matches` is also included because `train_b2b` uses it for its
+    fail-closed truncation-rate gate. No `RolloutBatch` field is excluded.
     """
+    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches"}
+    actual_fields = {field.name for field in fields(RolloutBatch)}
+    if actual_fields != expected_fields:
+        raise RuntimeError(
+            "collect-bench digest field list is stale: "
+            f"expected {sorted(actual_fields)}, covers {sorted(expected_fields)}")
     h = hashlib.sha256()
-    h.update(int(base_seed).to_bytes(8, "big", signed=True))
-    h.update(int(matches).to_bytes(8, "big", signed=True))
-    h.update(np.ascontiguousarray(batch.planes, dtype=np.float32).tobytes())
-    h.update(np.ascontiguousarray(batch.scalars, dtype=np.float32).tobytes())
-    h.update(np.ascontiguousarray(batch.action_mask, dtype=np.bool_).tobytes())
-    h.update(np.ascontiguousarray(batch.actions, dtype=np.int64).tobytes())
-    h.update(np.ascontiguousarray(batch.rewards, dtype=np.float32).tobytes())
-    events = batch.events if batch.events is not None else np.zeros(0, dtype=np.uint32)
-    event_lengths = batch.event_lengths if batch.event_lengths is not None else np.zeros(0, dtype=np.int32)
-    h.update(np.ascontiguousarray(events, dtype=np.uint32).tobytes())
-    h.update(np.ascontiguousarray(event_lengths, dtype=np.int32).tobytes())
-    dealin = batch.dealin_labels if batch.dealin_labels is not None else np.zeros(0, dtype=np.float32)
-    rank = batch.rank_labels if batch.rank_labels is not None else np.zeros(0, dtype=np.int64)
-    h.update(np.ascontiguousarray(dealin, dtype=np.float32).tobytes())
-    h.update(np.ascontiguousarray(rank, dtype=np.int64).tobytes())
-    # Round-outcome telemetry: how many of this worker-count's matches hit
-    # the step limit instead of reaching a terminal state (a fan-out bug
-    # that changed which matches truncate would otherwise be invisible to
-    # the arrays above, since a truncated match still emits rows).
+    _update_length_prefixed(
+        h, json.dumps(
+            {"base_seed": int(base_seed), "matches": int(matches)},
+            sort_keys=True, separators=(",", ":")).encode())
+    for name in _ROLLOUT_DIGEST_ARRAY_FIELDS:
+        _update_array_digest(h, name, getattr(batch, name))
+    _update_length_prefixed(
+        h, json.dumps(
+            {"dtype": "int", "field": "truncated_matches", "shape": []},
+            sort_keys=True, separators=(",", ":")).encode())
     h.update(int(batch.truncated_matches).to_bytes(8, "big", signed=True))
     return h.hexdigest()
 
@@ -213,56 +123,50 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
              bridge_lib: Optional[str], device: str,
              max_steps_per_episode: Optional[int], event_window: int) -> dict:
     """Run the full worker-count benchmark. Returns
-    `{worker_count: {"seconds": float, "digest": str}, "all_digests_equal": bool}`."""
+    `{worker_count: {"startup_seconds": float, "steady_seconds": float,
+    "digest": str}, "all_digests_equal": bool}`."""
     env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
                            match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            oracle_observation=True, event_history_window=event_window)
     warm_started, effective_model_config = _build_model(env_config, model_config, champion, growth_blocks, device)
-    # Rollout collection here is always CPU-bound (mirrors `_b2b_worker_loop`,
-    # which hardcodes `device="cpu"` for every chunk it collects) regardless
-    # of `--device` — a fresh CPU copy of the warm-started weights, loaded via
-    # a snapshot rather than reusing `warm_started` directly, keeps the
-    # collection model off any CUDA device the champion may have been
-    # warm-started on. NOTE this does NOT make `--device cuda` fork-safe:
-    # `_build_model` above already ran the warm-start (and, for growth_blocks
-    # > 0, `grow_b2b_model`'s forward pass) on `--device` in THIS (parent)
-    # process, before `run_collection`'s fork below — so `--device cuda`
-    # initializes a CUDA context in the parent pre-fork regardless of this
-    # post-hoc CPU snapshot. Forking after that is broken. Pass `--device cpu`
-    # here (the default); which device the champion was warm-started on is
-    # irrelevant to this bench since the weights snapshot to CPU either way.
-    #
-    # IMPORTANT SCOPE NOTE: this bench therefore matches ONLY the MULTI-
-    # WORKER production path (`ParallelB2bCollector` / `_b2b_worker_loop`,
-    # which hardcodes CPU for every worker). `train_b2b`'s num_workers<=1
-    # path calls `collect_b2b_rollouts` directly with the *unmodified*
-    # `PPOConfig` and therefore collects at `config.device` — e.g. on GPU,
-    # if the run was launched with `--device cuda`. This bench does not
-    # cover that single-worker GPU path at all; it only answers "does
-    # fan-out across N CPU workers change results", which is the actual
-    # decision this bench exists to gate (choosing --num-workers for a
-    # multi-worker lap). A single-worker cuda run is out of scope here and
-    # that is acceptable.
-    model = PolicyValueNet(_b2b_model_env_config(env_config), effective_model_config)
-    model.load_state_dict(cpu_state_snapshot(warm_started))
-    model.eval()
-    torch.set_num_threads(1)
+    # The persistent production collector constructs each worker model under
+    # spawn and loads this detached CPU state snapshot for every collection
+    # task, exactly as multi-worker `train_b2b` does.
+    state_dict = cpu_state_snapshot(warm_started)
     ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            device="cpu")
     results: dict[int, dict] = {}
     for w in workers:
-        batch, elapsed = run_collection(env_config, model, ppo_config, base_seed, matches, w)
-        results[w] = {"seconds": elapsed, "digest": _digest_batch(base_seed, matches, batch)}
+        startup_start = time.perf_counter()
+        collector = ParallelB2bCollector(
+            env_config, effective_model_config, ppo_config, w)
+        try:
+            collector.start()
+            collector.collect(state_dict, base_seed, matches)
+            startup_seconds = time.perf_counter() - startup_start
+
+            steady_start = time.perf_counter()
+            batch = collector.collect(state_dict, base_seed, matches)
+            steady_seconds = time.perf_counter() - steady_start
+        finally:
+            collector.close()
+        results[w] = {
+            "startup_seconds": startup_seconds,
+            "steady_seconds": steady_seconds,
+            "digest": _digest_batch(base_seed, matches, batch),
+        }
     digests = {r["digest"] for r in results.values()}
     return {"results": results, "all_digests_equal": len(digests) <= 1,
            "model_config": effective_model_config}
 
 
 def _print_table(results: dict[int, dict]) -> None:
-    print(f"{'workers':>8}  {'seconds':>10}  digest")
+    print(f"{'workers':>8}  {'startup_s':>10}  {'steady_s':>10}  digest")
     for w in sorted(results):
         r = results[w]
-        print(f"{w:>8}  {r['seconds']:>10.3f}  {r['digest']}")
+        print(
+            f"{w:>8}  {r['startup_seconds']:>10.3f}  "
+            f"{r['steady_seconds']:>10.3f}  {r['digest']}")
 
 
 def main() -> None:
@@ -323,8 +227,14 @@ def main() -> None:
             print(f"  {digest}: workers={sorted(ws)}")
 
     if args.json is not None:
-        payload = {str(w): {"seconds": r["seconds"], "digest": r["digest"]}
-                  for w, r in results.items()}
+        payload = {
+            str(w): {
+                "startup_seconds": r["startup_seconds"],
+                "steady_seconds": r["steady_seconds"],
+                "digest": r["digest"],
+            }
+            for w, r in results.items()
+        }
         payload["all_digests_equal"] = report["all_digests_equal"]
         args.json.write_text(json.dumps(payload, indent=2))
 

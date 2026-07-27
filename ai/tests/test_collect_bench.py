@@ -1,11 +1,14 @@
 import subprocess
 import sys
+from dataclasses import replace
 
+import numpy as np
 import pytest
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.oracle import _b2b_model_env_config
+from fh_mahjong_ai.oracle import _b2b_model_env_config, collect_b2b_rollouts
+from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
 from fh_mahjong_ai.scripts import collect_bench
 from fh_mahjong_ai.storage import save_checkpoint
 
@@ -53,20 +56,46 @@ def test_workers_one_vs_two_give_identical_digest(tmp_path):
     assert report["results"][1]["digest"] == report["results"][2]["digest"]
 
 
+def test_bench_uses_persistent_parallel_collector_for_warmup_and_steady_round(
+        tmp_path, monkeypatch):
+    calls = []
+
+    class RecordingCollector:
+        def __init__(self, env_config, model_config, ppo_config, num_workers):
+            calls.append(("init", num_workers))
+            self.env_config = env_config
+            self.ppo_config = ppo_config
+            self.model = PolicyValueNet(_b2b_model_env_config(env_config), model_config)
+
+        def start(self):
+            calls.append(("start",))
+
+        def collect(self, state_dict, base_seed, matches_per_iter):
+            calls.append(("collect", base_seed, matches_per_iter))
+            self.model.load_state_dict(state_dict)
+            cfg = replace(self.ppo_config, matches_per_iter=matches_per_iter, device="cpu")
+            return collect_b2b_rollouts(
+                self.env_config, self.model, cfg, base_seed=base_seed)
+
+        def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(collect_bench, "ParallelB2bCollector", RecordingCollector)
+    kwargs = _bench_kwargs(tmp_path, [2])
+    report = collect_bench.run_bench(**kwargs)
+    assert calls == [
+        ("init", 2),
+        ("start",),
+        ("collect", 100, 4),
+        ("collect", 100, 4),
+        ("close",),
+    ]
+    assert report["results"][2]["startup_seconds"] >= 0.0
+    assert report["results"][2]["steady_seconds"] >= 0.0
+
+
 def test_injected_perturbation_makes_digests_differ_and_names_it(tmp_path, monkeypatch):
-    real_collect = collect_bench.collect_b2b_rollouts
-
-    def perturbing_collect(env_config, model, config, base_seed):
-        batch = real_collect(env_config, model, config, base_seed=base_seed)
-        # Only the worker_count=2 fan-out ever asks for a 2-match chunk
-        # (matches=4 split across 2 workers); worker_count=1 asks for a
-        # single 4-match chunk. Perturbing only the 2-match chunk's reward
-        # simulates a worker-fan-out bug without touching the baseline.
-        if config.matches_per_iter == 2:
-            batch.rewards[0] += 1.0
-        return batch
-
-    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts", perturbing_collect)
+    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "rewards")
     kwargs = _bench_kwargs(tmp_path, [1, 2])
     report = collect_bench.run_bench(**kwargs)
     assert report["all_digests_equal"] is False
@@ -80,20 +109,49 @@ def test_injected_event_perturbation_makes_digests_differ(tmp_path, monkeypatch)
     action_mask, actions, and rewards untouched) must still flip the digest.
     This is what catches finding 1 (events/event_lengths/action_mask omitted
     from the digest) if it regresses."""
-    real_collect = collect_bench.collect_b2b_rollouts
-
-    def perturbing_collect(env_config, model, config, base_seed):
-        batch = real_collect(env_config, model, config, base_seed=base_seed)
-        if config.matches_per_iter == 2:
-            assert batch.events is not None, "test requires event_history_window > 0"
-            batch.events[0, 0] ^= 1
-        return batch
-
-    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts", perturbing_collect)
+    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "events")
     kwargs = _bench_kwargs(tmp_path, [1, 2])
     report = collect_bench.run_bench(**kwargs)
     assert report["all_digests_equal"] is False
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
+
+
+@pytest.mark.parametrize("field", ["dones", "old_logprobs"])
+def test_injected_ppo_field_perturbation_makes_digests_differ(
+        tmp_path, monkeypatch, field):
+    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", field)
+    report = collect_bench.run_bench(**_bench_kwargs(tmp_path, [1, 2]))
+    assert report["all_digests_equal"] is False
+    assert report["results"][1]["digest"] != report["results"][2]["digest"]
+
+
+def _minimal_batch() -> RolloutBatch:
+    return RolloutBatch(
+        planes=np.zeros((1, 1), dtype=np.float32),
+        scalars=np.zeros((1, 1), dtype=np.float32),
+        action_mask=np.ones((1, 1), dtype=np.int8),
+        actions=np.zeros(1, dtype=np.int64),
+        old_logprobs=np.zeros(1, dtype=np.float32),
+        values=np.zeros(1, dtype=np.float32),
+        rewards=np.zeros(1, dtype=np.float32),
+        dones=np.ones(1, dtype=np.float32),
+        events=np.zeros((1, 1), dtype=np.uint32),
+        event_lengths=np.ones(1, dtype=np.int32),
+        dealin_labels=np.zeros(1, dtype=np.float32),
+        rank_labels=np.zeros(1, dtype=np.int64),
+    )
+
+
+def test_digest_includes_per_field_shapes_and_dtypes():
+    batch = _minimal_batch()
+    baseline = collect_bench._digest_batch(100, 1, batch)
+
+    batch.planes = batch.planes.reshape(1, 1, 1)
+    assert collect_bench._digest_batch(100, 1, batch) != baseline
+
+    batch = _minimal_batch()
+    batch.actions = batch.actions.astype(np.int32)
+    assert collect_bench._digest_batch(100, 1, batch) != baseline
 
 
 def test_help_exits_zero():
@@ -135,58 +193,12 @@ def test_cli_passing_run_exits_zero(tmp_path):
     assert "all_digests_equal: True" in result.stdout
 
 
-_PERTURB_DRIVER = """
-import runpy
-import sys
-
-from fh_mahjong_ai.scripts import collect_bench
-
-_real = collect_bench.collect_b2b_rollouts
-
-
-def _perturbing(env_config, model, config, base_seed):
-    batch = _real(env_config, model, config, base_seed=base_seed)
-    # Only the worker_count=2 fan-out ever asks for a 2-match chunk
-    # (matches=4 split across 2 workers); perturbing only that chunk's
-    # reward simulates a worker-fan-out bug without touching the baseline.
-    if config.matches_per_iter == 2:
-        batch.rewards[0] += 1.0
-    return batch
-
-
-collect_bench.collect_b2b_rollouts = _perturbing
-sys.argv = ["collect_bench"] + sys.argv[1:]
-collect_bench.main()
-"""
-
-
-def test_cli_injected_perturbation_exits_one_and_names_worker_counts(tmp_path):
-    """End-to-end CLI invocation (finding 5): running main() with a
-    perturbation injected into `collect_b2b_rollouts` must exit 1, and its
-    output must name the differing worker counts, not just report failure."""
-    driver = tmp_path / "_perturb_driver.py"
-    driver.write_text(_PERTURB_DRIVER)
-    champion = _champion(tmp_path)
-    args = [
-        sys.executable, str(driver),
-        "--champion", str(champion),
-        "--workers", "1,2",
-        "--matches", "4",
-        "--base-seed", "100",
-        "--match-mode", "classic",
-        "--bridge-kind", "mock",
-        "--device", "cpu",
-        "--max-steps-per-episode", "16",
-        "--event-window", "8",
-        "--model-channels", "16",
-        "--model-residual-blocks", "1",
-        "--model-plane-feature-dim", "32",
-        "--model-scalar-hidden-dim", "16",
-        "--model-trunk-hidden-dim", "32",
-        "--model-value-hidden-dim", "16",
-        "--model-q-hidden-dim", "16",
-    ]
-    result = subprocess.run(args, capture_output=True, text=True)
+def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
+        tmp_path, monkeypatch):
+    """The spawn-safe worker perturbation must make the CLI exit 1 and name
+    the differing worker counts, not just report failure."""
+    monkeypatch.setenv("FH_MAHJONG_TEST_B2B_PERTURB_FIELD", "rewards")
+    result = _run_cli(tmp_path, [])
     combined = result.stdout + result.stderr
     assert result.returncode == 1, combined
     assert "all_digests_equal: False" in combined

@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -415,6 +416,70 @@ def test_resume_from_state_raises_on_different_lr(tmp_path) -> None:
     with pytest.raises(ValueError, match="lr"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config_different_lr,
                  base_seed=5, resume_from_state=state_path)
+
+
+def test_resume_from_state_raises_on_different_base_seed(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(
+        tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(
+            ValueError, match=r"base_seed.*state file has 5.*requested.*6"):
+        train_b2b(
+            env, model_config, champion_path, checkpoint_dir, config_resumed,
+            base_seed=6, resume_from_state=state_path)
+
+
+def test_resume_with_corrupt_history_succeeds_and_warns(tmp_path, caplog) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(
+        tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    (checkpoint_dir / "history.json").write_text('[{"iteration": 1')
+
+    config_resumed = replace(config_first, iterations=2)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(
+            env, model_config, champion_path, checkpoint_dir, config_resumed,
+            base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [2]
+    assert "history.json" in caplog.text
+    assert "reset" in caplog.text
+    assert "corrupt" in caplog.text
+    assert "per-iteration checkpoints are unaffected" in caplog.text.lower()
+
+
+def test_history_write_uses_atomic_replace_and_leaves_no_temp_file(
+        tmp_path, monkeypatch) -> None:
+    import fh_mahjong_ai.oracle as oracle
+
+    env, model_config, champion_path, config = _b2b_run_configs(
+        tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    replace_calls = []
+    real_replace = oracle.os.replace
+
+    def recording_replace(src, dst):
+        replace_calls.append((Path(src), Path(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(oracle.os, "replace", recording_replace)
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+              base_seed=5, train_state_every=1)
+
+    history_path = checkpoint_dir / "history.json"
+    assert (checkpoint_dir / "history.json.tmp", history_path) in replace_calls
+    assert history_path.exists()
+    assert not (checkpoint_dir / "history.json.tmp").exists()
 
 
 def test_train_state_written_at_completion_even_when_not_multiple_of_every(tmp_path) -> None:

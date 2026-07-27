@@ -3,6 +3,7 @@ warm-started from the 39-channel anchor."""
 from __future__ import annotations
 
 import json
+import logging
 import math
 import multiprocessing as mp
 import os
@@ -25,9 +26,11 @@ from .parallel_rollouts import _split_counts
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
     masked_policy_distribution, _obs_to_tensors, _seat_step_reward, LEARNING_SEAT,
-    cpu_state_snapshot,
+    cpu_state_snapshot, _write_history_atomic,
 )
 from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
+
+logger = logging.getLogger(__name__)
 
 
 def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
@@ -974,10 +977,38 @@ def _b2b_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
             model.load_state_dict(state_dict)
             cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
             batch = collect_b2b_rollouts(env_config, model, cfg, base_seed=base_seed)
+            _apply_test_b2b_worker_perturbation(batch, matches)
             result_q.put((worker_id, batch, None))
             batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
+
+
+def _apply_test_b2b_worker_perturbation(batch: RolloutBatch, matches: int) -> None:
+    """Spawn-safe can-fail hook used only by collector regression tests.
+
+    Parent-process monkeypatches disappear when spawn re-imports this module.
+    A test-only environment variable survives that boundary, so perturbation
+    tests exercise the real multi-worker queue/model/lifecycle path. Only
+    two-match chunks are mutated: the four-match one-worker baseline remains
+    unchanged while the two-worker fan-out changes.
+    """
+    field = os.environ.get("FH_MAHJONG_TEST_B2B_PERTURB_FIELD")
+    if field is None or matches != 2:
+        return
+    if field == "events":
+        if batch.events is None:
+            raise RuntimeError("events perturbation requires B2b event rows")
+        batch.events[0, 0] ^= 1
+    elif field in {"rewards", "old_logprobs"}:
+        values = getattr(batch, field)
+        values[0] += 1.0
+    elif field == "dones":
+        batch.dones[0] = 1.0 - batch.dones[0]
+    else:
+        raise RuntimeError(
+            "unknown FH_MAHJONG_TEST_B2B_PERTURB_FIELD value "
+            f"{field!r}")
 
 
 class ParallelB2bCollector:
@@ -1115,6 +1146,20 @@ def _atomic_torch_save(payload: dict, path: Path) -> None:
     os.replace(tmp_path, path)
 
 
+def _load_resume_history(path: Path) -> list[dict]:
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        reason = "missing" if isinstance(exc, FileNotFoundError) else "corrupt"
+        logger.warning(
+            "history.json is %s; history was reset from a corrupt or missing "
+            "file. Per-iteration checkpoints are unaffected; only the JSON "
+            "log rows are lost.",
+            reason,
+        )
+        return []
+
+
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
                       env_config: EnvConfig, base_seed: int) -> None:
@@ -1162,11 +1207,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     lap, the anchor's own config with `growth_blocks` folded in — exactly
     what `config_echo["model_config"]` records) and its weights come from the
     state file, not from `champion_checkpoint`/`growth_blocks`. The
-    caller-supplied `config`/`model_config`/`env_config` are validated
-    against the state file's `config_echo` (any drift raises `ValueError`
-    naming the field) before anything is restored, then training continues
-    from `next_iteration` through `config.iterations`, appending to the
-    existing `history.json` rather than truncating it."""
+    caller-supplied `config`/`model_config`/`env_config` and `base_seed` are
+    validated against the state file (any drift raises `ValueError` naming
+    both values) before anything is restored, then training continues from
+    `next_iteration` through `config.iterations`, appending to the existing
+    `history.json` when it is valid. A missing or malformed history file is
+    reset with a warning; checkpoint recovery still proceeds."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1176,13 +1222,21 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         # tuples/arrays, not just tensors), which torch's default safe
         # unpickler rejects. train_state.pt is our own trusted output.
         state_payload = torch.load(Path(resume_from_state), map_location="cpu", weights_only=False)
+        saved_base_seed = state_payload.get("base_seed", _RESUME_MISSING)
+        if saved_base_seed != base_seed:
+            raise ValueError(
+                "--resume-from-state base_seed mismatch: "
+                f"state file has {saved_base_seed!r}, requested base_seed is "
+                f"{base_seed!r} — resuming with a different seed schedule is "
+                "not supported (pass the base_seed the original run used)"
+            )
         current_echo = _train_b2b_config_echo(config, model_config, env_config)
         _validate_resume_config_echo(current_echo, state_payload["config_echo"])
         model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
         model.load_state_dict(state_payload["model"])
         start_iteration = int(state_payload["next_iteration"])
         history_path = checkpoint_dir / "history.json"
-        history = json.loads(history_path.read_text()) if history_path.exists() else []
+        history = _load_resume_history(history_path)
         # Reconcile against a STALE state file: train_state.pt is only written
         # every `train_state_every` iterations (plus at completion), but
         # history.json is appended every iteration. Resuming from a state
@@ -1276,7 +1330,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "model_config": model_config_metadata(model_config),
                 })
             history.append(metrics)
-            (checkpoint_dir / "history.json").write_text(json.dumps(history))
+            _write_history_atomic(checkpoint_dir / "history.json", history)
             print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
                   f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
                   f"mean_reward={metrics['mean_reward']:.4f}")
