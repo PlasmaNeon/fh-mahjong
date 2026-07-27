@@ -1318,19 +1318,27 @@ def _resolve_bridge_snapshot_for_resume(env_config: EnvConfig, checkpoint_dir: P
     `--resume-from-state` run, returning `(snapshot_path, effective_sha256)`
     to thread into the resumed run's bridge `EnvConfig`.
 
-    The common case: the snapshot the ORIGINAL run created for
-    `pinned_bridge_sha256` is still sitting in `checkpoint_dir` (it is a
-    managed artifact -- see `_find_fresh_run_managed_artifacts` -- so
-    nothing legitimate removes it) and is reused as-is, without touching
-    the source path at all.
+    Snapshot-first (adversarial round 21, high finding): the common case is
+    that the snapshot the ORIGINAL run created for `pinned_bridge_sha256` is
+    still sitting in `checkpoint_dir` (it is a managed artifact -- see
+    `_find_fresh_run_managed_artifacts` -- so nothing legitimate removes it).
+    When present, its OWN bytes are re-hashed and compared against
+    `pinned_bridge_sha256` -- a mismatch means the snapshot itself was
+    tampered with or corrupted on disk and raises unconditionally (there is
+    no override for this; the pinned bytes are gone either way). On a match,
+    the snapshot is reused as-is and the caller's mutable SOURCE path is
+    NEVER read, hashed, or even resolved -- a deleted or rebuilt source
+    cannot brick this resume (that used to happen because the caller
+    fingerprinted the source before ever reaching this function; see this
+    resume path's docstring for the round-21 fix on that side).
 
-    Only when it is MISSING does this function fall back to the source:
-    if the source's CURRENT content still hashes to `pinned_bridge_sha256`,
-    the snapshot is recreated from it (the source was never a problem, only
-    the snapshot was lost -- e.g. `checkpoint_dir` was partially cleaned).
-    If the source has since changed (rebuilt at the same path), recreating
-    the snapshot under the OLD digest name is impossible -- those exact
-    bytes are gone -- so this raises unless the caller passed
+    Only when the snapshot is MISSING does this function fall back to the
+    source: if the source's CURRENT content still hashes to
+    `pinned_bridge_sha256`, the snapshot is recreated from it (the source was
+    never a problem, only the snapshot was lost -- e.g. `checkpoint_dir` was
+    partially cleaned). If the source has since changed (rebuilt at the same
+    path), recreating the snapshot under the OLD digest name is impossible --
+    those exact bytes are gone -- so this raises unless the caller passed
     `--allow-bridge-mismatch`, in which case the CURRENT source is accepted
     as this lineage's new baseline: it is snapshotted under its own (new)
     digest, and that new digest is returned as the effective pin going
@@ -1338,6 +1346,19 @@ def _resolve_bridge_snapshot_for_resume(env_config: EnvConfig, checkpoint_dir: P
     attribution-breaking semantics elsewhere in this module)."""
     snapshot_path = _bridge_snapshot_path(checkpoint_dir, pinned_bridge_sha256)
     if snapshot_path.exists():
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot_actual_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+        if snapshot_actual_sha256 != pinned_bridge_sha256:
+            raise ValueError(
+                f"bridge snapshot {str(snapshot_path)!r} is corrupted: its "
+                f"content-addressed name pins bridge_sha256={pinned_bridge_sha256!r} "
+                f"but its CURRENT bytes hash to {snapshot_actual_sha256!r} -- the "
+                "snapshot was tampered with or corrupted on disk after being "
+                "written. This is never safe to resume from and has no "
+                "override (the originally pinned bytes cannot be recovered "
+                "from a corrupted snapshot); restore it from backup or start "
+                "a fresh run."
+            )
         return str(snapshot_path), pinned_bridge_sha256
     source_path = resolve_bridge_library_path(env_config.bridge_library_path)
     try:
@@ -2136,6 +2157,24 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     (`bridge_kind != "go"`) have no library to pin: both digests are
     `None`, which compares equal and always passes.
 
+    Snapshot-first ordering (adversarial round 21, high finding): the
+    source-fingerprint-and-compare step described in the previous paragraph
+    is skipped ENTIRELY whenever this lineage's content-addressed bridge
+    snapshot (named by the SAVED digest) already exists in `checkpoint_dir`
+    -- the mutable source is not read, hashed, or even resolved in that
+    case. Rounds 13-20 always fingerprinted the source here first, so a
+    deleted or rebuilt source bricked resume (an unrecoverable raise, since
+    the source read/compare happened before the snapshot was ever
+    consulted) even though the pinned snapshot bytes sat completely intact
+    on disk -- `--allow-bridge-mismatch` could not help, because the
+    exception fired before that flag was ever checked. `_resolve_bridge_
+    snapshot_for_resume` (below) re-hashes the snapshot's OWN bytes against
+    the saved digest and raises if they were tampered with or corrupted --
+    the only failure mode an intact-looking snapshot can still have -- with
+    no override, since corrupted bytes cannot be un-corrupted. Only when the
+    snapshot is ABSENT does this fall back to the source-based recovery
+    described above (round 20's missing-snapshot rules, unchanged).
+
     A Go-backed state saved with no digest at all (`bridge_sha256 is None`,
     i.e. a legacy `train_state.pt` from before this pinning existed) fails
     closed (adversarial round 19, high finding: round 16 accepted this
@@ -2282,6 +2321,34 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 # round 16, this lineage is no longer permanently unpinned.
                 saved_bridge_sha256 = current_bridge_sha256
                 state_payload["bridge_library_path"] = current_bridge_path
+            elif env_config.bridge_kind == "go" and _bridge_snapshot_path(checkpoint_dir, saved_bridge_sha256).exists():
+                # Adversarial round 21, high finding: rounds 13-20 always
+                # fingerprinted the MUTABLE source here to compare it against
+                # `saved_bridge_sha256` -- even though `_resolve_bridge_snapshot_
+                # for_resume` below is perfectly capable of binding this run to
+                # the pinned content-addressed snapshot WITHOUT ever touching
+                # the source, when that snapshot is present. A deleted or
+                # rebuilt source (e.g. the .so was cleaned up, or rebuilt at the
+                # same path for unrelated reasons) made `_resolve_current_bridge_
+                # fingerprint` above raise or report a mismatch immediately --
+                # bricking resume (or requiring `--allow-bridge-mismatch`) even
+                # though the pinned bytes were sitting completely intact in
+                # `checkpoint_dir` and nothing about THIS lineage's provenance
+                # was actually in question.
+                #
+                # Fix: snapshot-first. When the snapshot named by the SAVED
+                # digest already exists, skip this whole source-fingerprint-
+                # and-compare step entirely -- the source is not read, and a
+                # deleted/rebuilt source cannot brick or even be observed by
+                # this resume. `_resolve_bridge_snapshot_for_resume` below
+                # re-hashes the snapshot's OWN bytes (never the source) and
+                # raises if those bytes were tampered with/corrupted, which is
+                # the only case that should still abort a resume with an
+                # intact-looking snapshot on disk. Only when the snapshot is
+                # ABSENT does control fall through to the elif-less path below
+                # (round 20's existing missing-snapshot recovery, which in turn
+                # falls back to the source -- see that function's docstring).
+                pass
             else:
                 current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
                 if current_bridge_sha256 != saved_bridge_sha256:

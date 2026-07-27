@@ -2905,3 +2905,101 @@ def test_bridge_snapshot_is_a_managed_artifact(tmp_path) -> None:
 
     found = _find_fresh_run_managed_artifacts(checkpoint_dir)
     assert snapshot_path in found
+
+
+# Adversarial round 21, high finding: a resume used to fingerprint the
+# MUTABLE source before ever consulting the pinned, content-addressed
+# snapshot -- so a deleted or rebuilt source bricked resume (raise on read)
+# even when the pinned snapshot bytes sat intact in checkpoint_dir, and
+# --allow-bridge-mismatch could not help because the source read failed
+# first. The fix is snapshot-first ordering: locate the snapshot named by
+# the SAVED digest, verify it, and bind to it WITHOUT ever touching the
+# source when it is present and intact; the source is only consulted when
+# the snapshot is absent (round 20's existing fallback rules).
+
+def test_resume_proceeds_bound_to_snapshot_when_source_deleted(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.exists()
+    lib_path.unlink()  # the source is gone entirely -- reading it would raise OSError
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert all(c.bridge_library_path == str(snapshot_path) for c in calls)
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] == source_digest
+
+
+def test_resume_proceeds_bound_to_snapshot_when_source_rebuilt(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.exists()
+    # Source rebuilt to DIFFERENT bytes -- with the snapshot intact this must
+    # be silently ignored: no raise, no --allow-bridge-mismatch needed, and
+    # the snapshot's own bytes/digest must not change.
+    lib_path.write_bytes(b"go-bridge-binary-v2-REBUILT")
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert all(c.bridge_library_path == str(snapshot_path) for c in calls)
+    assert snapshot_path.read_bytes() == b"go-bridge-binary-v1"
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] == source_digest
+
+
+def test_resume_raises_when_snapshot_is_corrupted(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.exists()
+    # Corrupt the snapshot in place -- its content-addressed name still
+    # claims `source_digest`, but the bytes no longer hash to it. This must
+    # raise (tampering/corruption), never silently fall back to the source
+    # (which is still intact and would otherwise mask the corruption).
+    snapshot_path.write_bytes(b"TAMPERED-SNAPSHOT-BYTES")
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="corrupt"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
