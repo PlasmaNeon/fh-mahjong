@@ -98,6 +98,28 @@ def test_growth_blocks_out_of_bounds_or_non_int_raises(value) -> None:
         ModelConfig(growth_blocks=value)
 
 
+# Adversarial round 17: residual_blocks<=64 and growth_blocks<=64 are each
+# individually bounded, but nothing stopped them composing -- e.g.
+# residual_blocks=64 + growth_blocks=64 = 128 total blocks (~9GiB fp32),
+# accepted by ModelConfig and constructed by infer_model_config's shape
+# cross-check, defeating the checkpoint-loading memory guard. The 64 ceiling
+# must be a TOTAL depth budget: residual_blocks + growth_blocks <= 64.
+def test_residual_plus_growth_blocks_at_individual_caps_raises() -> None:
+    with pytest.raises(ValueError, match="residual_blocks.*growth_blocks|growth_blocks.*residual_blocks"):
+        ModelConfig(residual_blocks=64, growth_blocks=64)
+
+
+def test_residual_plus_growth_blocks_within_combined_cap_ok() -> None:
+    config = ModelConfig(residual_blocks=60, growth_blocks=4)
+    assert config.residual_blocks == 60
+    assert config.growth_blocks == 4
+
+
+def test_residual_plus_growth_blocks_over_combined_cap_raises() -> None:
+    with pytest.raises(ValueError, match="residual_blocks.*growth_blocks|growth_blocks.*residual_blocks"):
+        ModelConfig(residual_blocks=4, growth_blocks=61)
+
+
 def test_full_net_forward_identical_with_zero_alpha_growth_blocks() -> None:
     torch.manual_seed(42)
     env_config = EnvConfig()

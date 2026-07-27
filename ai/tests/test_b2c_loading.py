@@ -437,6 +437,27 @@ def test_infer_model_config_growth_blocks_overclaim_raises_before_construction(t
         mocked_init.assert_not_called()
 
 
+def test_infer_model_config_rejects_combined_over_limit_claim_before_construction():
+    # Adversarial round 17: residual_blocks and growth_blocks are each
+    # individually bounded to 64, but nothing stopped them composing --
+    # doctored metadata can claim residual_blocks=64 (individually legal)
+    # stacked on top of the checkpoint's real growth_blocks=3, for a total
+    # of 67 blocks, exceeding the combined depth budget. Must raise BEFORE
+    # any PolicyValueNet is constructed (tripwire below), same as the
+    # existing growth_blocks-overclaim guard above.
+    model_config = _grown_config(growth_blocks=3)
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["residual_blocks"] = 64
+    metadata = {"model_config": doctored}
+
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(ValueError, match="residual_blocks.*growth_blocks|growth_blocks.*residual_blocks"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
+
+
 def test_infer_model_config_growth_keys_without_metadata_raises_explicit_message():
     model_config = _grown_config()
     model = PolicyValueNet(_ENV39, model_config)
