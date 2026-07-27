@@ -9,7 +9,7 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet, ReZeroResidualBlock
-from fh_mahjong_ai.oracle import grow_b2b_model, train_b2b
+from fh_mahjong_ai.oracle import grow_b2b_model, read_b2b_history_rows, train_b2b
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 
@@ -421,8 +421,11 @@ def test_train_state_written_every_n_iterations_and_atomic(tmp_path) -> None:
     assert state["config_echo"]["ppo_config"]["lr"] == config.lr
     assert state["config_echo"]["model_config"]["event_window"] == model_config.event_window
     assert state["base_seed"] == 5
-    for key in ("model", "optimizer", "torch_rng", "numpy_rng", "python_rng"):
+    for key in ("model", "optimizer", "torch_rng", "numpy_rng", "python_rng", "run_id"):
         assert key in state
+    assert state["run_id"]  # non-empty uuid4 hex for a fresh run
+    raw_history = json.loads((checkpoint_dir / "history.json").read_text())
+    assert raw_history["run_id"] == state["run_id"]
 
 
 def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> None:
@@ -442,7 +445,7 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
 
     assert len(history) == 4
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
-    history_on_disk = json.loads((checkpoint_dir / "history.json").read_text())
+    history_on_disk = read_b2b_history_rows(checkpoint_dir / "history.json")
     assert [row["iteration"] for row in history_on_disk] == [1, 2, 3, 4]
     for i in (3, 4):
         saved = torch.load(checkpoint_dir / f"iter_{i:03d}.pt", map_location="cpu")
@@ -568,7 +571,7 @@ def test_resume_from_stale_state_reconciles_history_no_duplicates(tmp_path) -> N
     config7 = replace(config5, iterations=7)
     train_b2b(env, model_config, champion_path, checkpoint_dir, config7,
              base_seed=5, train_state_every=5, resume_from_state=state_path)
-    history_after_7 = json.loads((checkpoint_dir / "history.json").read_text())
+    history_after_7 = read_b2b_history_rows(checkpoint_dir / "history.json")
     assert [row["iteration"] for row in history_after_7] == [1, 2, 3, 4, 5, 6, 7]
 
     # Simulate the crash: the completion save at iteration 7 never made it to
@@ -580,7 +583,7 @@ def test_resume_from_stale_state_reconciles_history_no_duplicates(tmp_path) -> N
                         base_seed=5, train_state_every=5, resume_from_state=state_path)
 
     assert [row["iteration"] for row in history] == [1, 2, 3, 4, 5, 6, 7, 8]
-    history_on_disk = json.loads((checkpoint_dir / "history.json").read_text())
+    history_on_disk = read_b2b_history_rows(checkpoint_dir / "history.json")
     iterations_seen = [row["iteration"] for row in history_on_disk]
     assert iterations_seen == [1, 2, 3, 4, 5, 6, 7, 8]
     assert len(iterations_seen) == len(set(iterations_seen)), "no duplicate iteration rows"
@@ -626,3 +629,130 @@ def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correc
     history = train_b2b(env, grown_config, anchor_path, checkpoint_dir, config_resumed,
                         base_seed=5, train_state_every=2, resume_from_state=state_path)
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 3
+# ---------------------------------------------------------------------------
+#
+# Finding 1 (high): resume could merge state with unrelated history --
+# train_state.pt came from any path, but history.json was always loaded from
+# checkpoint_dir with no lineage binding, so resuming run A's state into run
+# B's directory silently mixed histories/checkpoints. Fix: a `run_id`
+# (uuid4 hex) is generated at fresh-run start and persisted in both
+# train_state.pt and history.json (wrapped as {"run_id": ..., "rows": [...]});
+# resume requires state.run_id == history.run_id.
+#
+# Finding 2 (medium): an exhausted target (`next_iteration > config.iterations`)
+# resumed as a silent no-op -- fixed to raise instead.
+
+def test_resume_cross_directory_mismatched_run_id_raises(tmp_path) -> None:
+    # The exact scenario from Finding 1: two independent runs, each with its
+    # own train_state.pt + history.json. Pointing --resume-from-state at run
+    # A's state file while resuming inside run B's checkpoint_dir (e.g. a
+    # copy/paste mistake) must not silently splice A's lineage into B.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_from_a)
+
+
+def test_resume_matching_run_id_succeeds_and_persists(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    run_id_before = state_before["run_id"]
+    assert run_id_before
+    raw_history_before = json.loads((checkpoint_dir / "history.json").read_text())
+    assert raw_history_before["run_id"] == run_id_before
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    state_after = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state_after["run_id"] == run_id_before
+    raw_history_after = json.loads((checkpoint_dir / "history.json").read_text())
+    assert raw_history_after["run_id"] == run_id_before
+    assert [row["iteration"] for row in raw_history_after["rows"]] == [1, 2, 3, 4]
+
+
+def test_resume_legacy_bare_list_history_and_no_run_id_state_is_compat(tmp_path) -> None:
+    # MIGRATION: a state file and history.json written before this fix have
+    # no run_id at all (bare-list history.json). That pairing must still be
+    # accepted -- both are "pre-run_id" and there is nothing to compare.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    # Downgrade both files to the legacy pre-run_id shape.
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    del state["run_id"]
+    torch.save(state, state_path)
+    legacy_rows = read_b2b_history_rows(checkpoint_dir / "history.json")
+    (checkpoint_dir / "history.json").write_text(json.dumps(legacy_rows))
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+def test_resume_run_id_state_with_bare_list_history_raises(tmp_path) -> None:
+    # A state file WITH a run_id resuming against a legacy bare-list
+    # history.json cannot be confirmed to belong together -- reject rather
+    # than silently accepting unverified lineage.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    legacy_rows = read_b2b_history_rows(checkpoint_dir / "history.json")
+    (checkpoint_dir / "history.json").write_text(json.dumps(legacy_rows))
+
+    config_resumed = replace(config_first, iterations=4)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+
+def test_resume_exhausted_target_raises_with_clear_message(tmp_path) -> None:
+    # Finding 2: resuming an iter-N state with --iterations already <= N must
+    # raise instead of silently exiting success with nothing trained.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_same_target = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="already satisfied"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_same_target,
+                 base_seed=5, resume_from_state=state_path)
+
+    config_lower_target = replace(config_first, iterations=1)
+    with pytest.raises(ValueError, match="already satisfied"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_lower_target,
+                 base_seed=5, resume_from_state=state_path)

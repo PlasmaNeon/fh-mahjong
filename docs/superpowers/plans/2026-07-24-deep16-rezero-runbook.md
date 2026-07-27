@@ -209,6 +209,21 @@ one — does not produce duplicate rows). Resumed runs are bit-compatible in
 intent, not proven bit-identical (CUDA nondeterminism); this is documented,
 not a gap to fix.
 
+`history.json` is now written as `{"run_id": ..., "rows": [...]}`, not a
+bare list — a `run_id` (uuid4 hex) is generated at fresh-run start and
+persisted in both `train_state.pt` and `history.json`, and `--resume-from-
+state` refuses to continue if the two `run_id`s don't match (adversarial
+round 3, Finding 1: this is what stops a `train_state.pt` from one run
+being pointed at an unrelated run's `history.json`/checkpoints in the same
+directory — e.g. a copy/paste mistake between two boxes or laps). Any
+box-side `jq`/`python -c` one-liner that reads `history.json` as a bare
+list must be updated to read the `.rows` field (or `jq '.rows'`); in-repo
+Python code should call `oracle.read_b2b_history_rows(path)` instead of
+parsing the file directly, since it accepts both the current wrapped format
+and old bare-list files. Resuming a state file that is already at or past
+`--iterations` now raises instead of silently exiting with nothing trained
+(Finding 2) — bump `--iterations` if you actually meant to keep training.
+
 ## 5. Screening
 
 At iterations 25/50/75/100/125/150/175/200/225/250/260, evaluate against a

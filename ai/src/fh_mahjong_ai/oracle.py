@@ -10,6 +10,7 @@ import os
 import queue as _queue
 import random
 import traceback
+import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Optional
@@ -1146,9 +1147,40 @@ def _atomic_torch_save(payload: dict, path: Path) -> None:
     os.replace(tmp_path, path)
 
 
-def _load_resume_history(path: Path) -> list[dict]:
+def read_b2b_history_rows(path: Path) -> list[dict]:
+    """Public accessor for `train_b2b`'s `history.json` rows, tolerant of both
+    the current `{"run_id": ..., "rows": [...]}` wrapper (adversarial round 3,
+    Finding 1: `run_id` binds a `history.json` to the `train_state.pt` it
+    belongs to, so a resume can't silently splice unrelated run histories
+    together) and the legacy bare-list format written before `run_id` existed.
+    In-repo/box-side consumers of `history.json` (screening scripts,
+    telemetry checks) should use this instead of `json.loads(...)` directly
+    so they keep working across the format change."""
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return data
+    return data["rows"]
+
+
+def _load_resume_history(path: Path, state_run_id: Optional[str]) -> list[dict]:
+    """Load `history.json` for a `--resume-from-state` continuation, enforcing
+    that its `run_id` matches the resuming state file's `run_id`.
+
+    Format compatibility (adversarial round 3, Finding 1): a legacy bare-list
+    `history.json` (written before `run_id` existed) has an implicit
+    `run_id` of `None`. It is accepted as matching ONLY when `state_run_id`
+    is also `None` (both pre-run_id) -- a state file that DOES carry a
+    `run_id` resuming against a legacy bare-list history is rejected, since
+    there is no way to confirm the two ever belonged together. Any other
+    `run_id` mismatch (including two different UUIDs) raises, naming both,
+    to stop a resume from silently merging unrelated run lineages/checkpoints
+    into one checkpoint_dir.
+
+    A missing or corrupt file resets history rows to `[]` with a warning, as
+    before Finding 1 -- lineage is still preserved because the caller writes
+    `state_run_id` into the fresh history going forward."""
     try:
-        return json.loads(path.read_text())
+        raw = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         reason = "missing" if isinstance(exc, FileNotFoundError) else "corrupt"
         logger.warning(
@@ -1158,11 +1190,27 @@ def _load_resume_history(path: Path) -> list[dict]:
             reason,
         )
         return []
+    if isinstance(raw, list):
+        history_run_id = None
+        rows = raw
+    else:
+        history_run_id = raw.get("run_id")
+        rows = raw.get("rows", [])
+    if history_run_id != state_run_id:
+        raise ValueError(
+            "--resume-from-state run_id mismatch: train_state.pt has "
+            f"run_id={state_run_id!r}, but history.json in the same "
+            f"checkpoint_dir has run_id={history_run_id!r} -- resuming would "
+            "silently mix unrelated run histories/checkpoints (point "
+            "--resume-from-state at the checkpoint_dir whose history.json "
+            "matches this train_state.pt, or start a fresh checkpoint_dir)"
+        )
+    return rows
 
 
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
-                      env_config: EnvConfig, base_seed: int) -> None:
+                      env_config: EnvConfig, base_seed: int, run_id: Optional[str]) -> None:
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -1173,6 +1221,7 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
         "next_iteration": next_iteration,
         "config_echo": _train_b2b_config_echo(config, model_config, env_config),
         "base_seed": base_seed,
+        "run_id": run_id,
     }
     _atomic_torch_save(payload, path)
 
@@ -1231,7 +1280,24 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     both values) before anything is restored, then training continues from
     `next_iteration` through `config.iterations`, appending to the existing
     `history.json` when it is valid. A missing or malformed history file is
-    reset with a warning; checkpoint recovery still proceeds."""
+    reset with a warning; checkpoint recovery still proceeds.
+
+    A `next_iteration` already `> config.iterations` raises `ValueError`
+    instead of returning an empty history — resuming always intends more
+    training, so an exhausted target is an error, not a silent no-op
+    (adversarial round 3, Finding 2).
+
+    Every run (fresh or `--resume-from-state`) is tagged with a `run_id`
+    (a fresh `uuid4().hex` for new runs; the state file's own `run_id` when
+    resuming), persisted in both `train_state.pt["run_id"]` and
+    `history.json`'s `{"run_id": ..., "rows": [...]}` wrapper. A resume
+    requires `state.run_id == history.run_id` (mismatch raises, naming both)
+    so a `train_state.pt` from one run can never be pointed at an unrelated
+    run's `history.json`/checkpoints in the same directory. Legacy bare-list
+    `history.json` files (written before `run_id` existed) are accepted only
+    when the state file also predates `run_id` (both `None`); use
+    `read_b2b_history_rows(path)` to read rows back regardless of format
+    (adversarial round 3, Finding 1)."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1254,8 +1320,19 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
         model.load_state_dict(state_payload["model"])
         start_iteration = int(state_payload["next_iteration"])
+        # Adversarial round 3, Finding 2: an exhausted target is a silent
+        # no-op, not success -- the runbook's resume command always intends
+        # MORE training, so a state already past config.iterations must raise
+        # loudly instead of returning an empty history.
+        if start_iteration > config.iterations:
+            raise ValueError(
+                f"state is at iteration {start_iteration - 1}; --iterations "
+                f"{config.iterations} already satisfied — nothing to resume; "
+                "raise --iterations or stop"
+            )
+        run_id = state_payload.get("run_id")
         history_path = checkpoint_dir / "history.json"
-        history = _load_resume_history(history_path)
+        history = _load_resume_history(history_path, run_id)
         # Reconcile against a STALE state file: train_state.pt is only written
         # every `train_state_every` iterations (plus at completion), but
         # history.json is appended every iteration. Resuming from a state
@@ -1277,10 +1354,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         model_config = model.model_config
         start_iteration = 1
         history = []
+        run_id = uuid.uuid4().hex
     else:
         model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
         start_iteration = 1
         history = []
+        run_id = uuid.uuid4().hex
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     if state_payload is not None:
@@ -1357,7 +1436,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "model_config": model_config_metadata(model_config),
                 })
             history.append(metrics)
-            _write_history_atomic(checkpoint_dir / "history.json", history)
+            # Adversarial round 3, Finding 1: wrap history rows with the run's
+            # run_id so a `--resume-from-state` can bind history.json's
+            # lineage to the resuming train_state.pt (see _load_resume_history)
+            # instead of silently mixing unrelated runs. Use
+            # `read_b2b_history_rows` to read this file back.
+            _write_history_atomic(checkpoint_dir / "history.json", {"run_id": run_id, "rows": history})
             print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
                   f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
                   f"mean_reward={metrics['mean_reward']:.4f}")
@@ -1366,7 +1450,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 _save_train_state(
                     checkpoint_dir / "train_state.pt", model, optimizer,
                     next_iteration=iteration + 1, config=config, model_config=model_config,
-                    env_config=env_config, base_seed=base_seed,
+                    env_config=env_config, base_seed=base_seed, run_id=run_id,
                 )
     finally:
         if collector is not None:
