@@ -1317,11 +1317,28 @@ def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
     return float(sum(alphas) / len(alphas))
 
 
+def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
+    """Files in `checkpoint_dir` that a previous `train_b2b` run would have
+    written -- `history.json`, `train_state.pt`, and any `iter_*.pt`
+    checkpoint -- used to guard a fresh (non-`--resume-from-state`) launch
+    against silently reusing a directory that already belongs to another
+    run (adversarial round 6, high finding). An empty or brand-new
+    directory returns `[]`. Anything else in the directory (e.g. stray
+    notes, unrelated files) is intentionally not included -- the guard, and
+    `--fresh-run-overwrite`'s deletion, only ever touch these managed
+    names."""
+    found = [checkpoint_dir / name for name in ("history.json", "train_state.pt")
+             if (checkpoint_dir / name).exists()]
+    found.extend(sorted(checkpoint_dir.glob("iter_*.pt")))
+    return found
+
+
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
              growth_blocks: int = 0, train_state_every: int = 5,
              resume_from_state: Optional[Path] = None,
-             force_history_reset: bool = False) -> list[dict]:
+             force_history_reset: bool = False,
+             fresh_run_overwrite: bool = False) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -1386,7 +1403,22 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     is kept to avoid a runbook-breaking rename -- see its `--help` text)
     skips ONLY that artifact-lineage check, on both the recovery path and
     this unconditional every-resume scan, never the base_seed/config_echo
-    checks above."""
+    checks above.
+
+    A fresh (non-`resume_from_state`) call fails closed if `checkpoint_dir`
+    already contains ANY managed artifact -- `history.json`,
+    `train_state.pt`, or an `iter_*.pt` checkpoint (adversarial round 6,
+    high finding: without this, a mistaken fresh launch into a prior run's
+    directory silently overwrote its early checkpoints while leaving later
+    ones in place -- mixed lineage, and potentially days of lost progress).
+    The `ValueError` names what was found and points at the two legitimate
+    fixes: `resume_from_state` to continue that run, or a new/empty
+    `checkpoint_dir` for a truly fresh one. `fresh_run_overwrite=True` (the
+    CLI's `--fresh-run-overwrite`) is the explicit destructive override: it
+    deletes exactly those managed artifacts -- nothing else in the
+    directory -- logs what was removed, and then proceeds as a normal fresh
+    run. A brand-new or genuinely empty `checkpoint_dir` always proceeds
+    without asking (mkdir-if-absent, as before)."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1439,14 +1471,35 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
         # safe to clobber by name, not a second distinct result.
         history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
-    elif growth_blocks > 0:
-        model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
-        model_config = model.model_config
-        start_iteration = 1
-        history = []
-        run_id = uuid.uuid4().hex
     else:
-        model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
+        existing_artifacts = _find_fresh_run_managed_artifacts(checkpoint_dir)
+        if existing_artifacts:
+            names = ", ".join(p.name for p in existing_artifacts)
+            if not fresh_run_overwrite:
+                raise ValueError(
+                    f"checkpoint_dir {checkpoint_dir} already contains managed "
+                    f"training artifact(s) ({names}) but this is a fresh run "
+                    "(no --resume-from-state was given) -- launching here would "
+                    "silently reuse/overwrite a prior run's checkpoints, mixing "
+                    "lineages and risking lost progress. Either pass "
+                    "--resume-from-state pointed at this directory's "
+                    "train_state.pt to continue that run, use a new/empty "
+                    "checkpoint_dir for a truly fresh run, or pass "
+                    "--fresh-run-overwrite to delete exactly these managed "
+                    "artifacts and start fresh here"
+                )
+            for artifact_path in existing_artifacts:
+                artifact_path.unlink()
+            logger.warning(
+                "--fresh-run-overwrite: removed %d prior managed artifact(s) from "
+                "%s before starting fresh: %s",
+                len(existing_artifacts), checkpoint_dir, names,
+            )
+        if growth_blocks > 0:
+            model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
+            model_config = model.model_config
+        else:
+            model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
         start_iteration = 1
         history = []
         run_id = uuid.uuid4().hex

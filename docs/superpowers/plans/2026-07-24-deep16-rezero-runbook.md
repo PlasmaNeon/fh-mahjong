@@ -168,6 +168,14 @@ Recipe is otherwise byte-identical to the ratified champion recipe (dense
 per-hand score-delta reward, `gamma=0.99`, 320 matches/iter, `lr=2e-5`,
 entropy 0, 2 PPO epochs) — only the trunk depth changes.
 
+A fresh launch (no `--resume-from-state`) into a `--checkpoint-dir` that
+already holds a prior run's `history.json`, `train_state.pt`, or any
+`iter_*.pt` now raises instead of silently overwriting/mixing that run's
+checkpoints (adversarial round 6) — point `--resume-from-state` at it to
+continue that run, use a fresh empty directory, or pass
+`--fresh-run-overwrite` to explicitly delete just those managed artifacts
+and start over in place.
+
 ## 4. Resume after a crash / box restart
 
 Same launch command, with `--champion` OPTIONAL (dropped or kept — it is

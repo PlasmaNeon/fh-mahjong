@@ -1059,4 +1059,77 @@ def test_force_history_reset_overrides_mixed_lineage_check_with_valid_history(tm
                         base_seed=5, train_state_every=1, resume_from_state=state_path_b,
                         force_history_reset=True)
 
-    assert [row["iteration"] for row in history] == [1, 2]
+
+def test_fresh_launch_into_dir_with_iter_checkpoint_raises_naming_it(tmp_path) -> None:
+    # Adversarial round 6, high finding: a fresh (non-resume) launch into a
+    # checkpoint_dir that already holds a prior run's iter_*.pt must fail
+    # closed instead of silently overwriting early checkpoints while leaving
+    # later ones in place (mixed lineage).
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first, base_seed=5)
+    assert (checkpoint_dir / "iter_001.pt").exists()
+
+    with pytest.raises(ValueError, match="iter_001.pt"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_first, base_seed=7)
+
+
+def test_fresh_launch_into_dir_with_only_history_json_raises(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "history.json").write_text(json.dumps({"run_id": "abc", "rows": []}))
+
+    with pytest.raises(ValueError, match="history.json"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_first, base_seed=7)
+
+
+def test_fresh_launch_into_empty_or_new_dir_proceeds(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"  # does not exist yet
+
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_first, base_seed=5)
+
+    assert len(history) == 1
+    assert (checkpoint_dir / "iter_001.pt").exists()
+
+
+def test_fresh_run_overwrite_removes_only_managed_artifacts_and_proceeds(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    assert (checkpoint_dir / "train_state.pt").exists()
+    assert (checkpoint_dir / "history.json").exists()
+    decoy = checkpoint_dir / "foo.txt"
+    decoy.write_text("do not touch")
+
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+                        base_seed=9, fresh_run_overwrite=True)
+
+    assert len(history) == 1
+    assert decoy.exists()
+    assert decoy.read_text() == "do not touch"
+    # The prior run's history was cleared, not merged with this run's.
+    raw_history = json.loads((checkpoint_dir / "history.json").read_text())
+    assert len(raw_history["rows"]) == 1
+
+
+def test_resume_path_unaffected_by_fresh_run_guard(tmp_path) -> None:
+    # The guard must only apply to fresh (non-resume) launches; a legitimate
+    # --resume-from-state into a populated checkpoint_dir (its own prior
+    # iterations) must still work exactly as before.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+    assert len(history) == 4
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]

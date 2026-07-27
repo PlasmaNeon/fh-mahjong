@@ -72,6 +72,17 @@ def main() -> None:
                         "you have manually confirmed checkpoint_dir holds this run's own "
                         "checkpoints, never to force a resume into a directory that might "
                         "belong to a different run")
+    p.add_argument("--fresh-run-overwrite", action="store_true", default=False,
+                   help="DANGEROUS: a fresh launch (no --resume-from-state) into a "
+                        "checkpoint_dir that already holds a prior run's managed "
+                        "artifacts (history.json, train_state.pt, iter_*.pt) normally "
+                        "raises instead of silently overwriting/mixing that run's "
+                        "checkpoints. This flag is the explicit override: it deletes "
+                        "exactly those managed artifacts (nothing else in the "
+                        "directory) and then proceeds as a normal fresh run. Use ONLY "
+                        "when you have manually confirmed you want to discard what is "
+                        "in checkpoint_dir -- if you meant to continue that run, use "
+                        "--resume-from-state instead")
     add_model_config_args(p)
     args = p.parse_args()
     if args.champion is None and args.resume_from_state is None:
@@ -95,7 +106,8 @@ def main() -> None:
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
              growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
-             resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset)
+             resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset,
+             fresh_run_overwrite=args.fresh_run_overwrite)
 
 
 if __name__ == "__main__":
