@@ -1414,6 +1414,65 @@ def _artifact_run_id(path: Path) -> Optional[str]:
 
 _ITER_CHECKPOINT_NAME_RE = re.compile(r"^iter_(\d+)\.pt$")
 
+_STALE_CHECKPOINT_SUFFIX = ".stale"
+
+
+def _quarantine_stale_future_checkpoints(checkpoint_dir: Path, start_iteration: int) -> list[Path]:
+    """Rename every `iter_N.pt` in `checkpoint_dir` with `N >= start_iteration`
+    to `iter_N.pt.stale`, atomically (`os.replace` -- same filesystem, so this
+    is a rename, never a copy+delete window). Returns the list of quarantined
+    `.stale` paths.
+
+    Adversarial round 19, high finding: `--resume-from-state` truncates
+    `history.json`/its in-memory history back to `start_iteration` (see the
+    caller, just below this function's call site), but pre-round-19 left any
+    `iter_N.pt` for `N >= start_iteration` sitting on disk, live, until the
+    replayed loop happened to reach and overwrite it by name. CUDA replay is
+    not bit-identical (nondeterministic reductions, cuDNN algorithm
+    selection), so a resumed iteration N can legitimately diverge from
+    whatever produced the OLD `iter_N.pt` -- that old file still carries the
+    resuming state's `run_id` (it is not a lineage mismatch by
+    `_check_artifact_lineage_or_raise`'s test) but no longer descends from the
+    trajectory this resume actually replays. Anything that reads `iter_N.pt`
+    by name during the window between resume-start and that iteration's
+    replay finishing -- concurrent screening/eval tooling, or a second crash
+    mid-replay before the fresh file lands -- could silently select an
+    obsolete-trajectory checkpoint with a same-`run_id` label that looks
+    perfectly legitimate.
+
+    The `.stale` suffix, not a `iter_*.pt` name, is deliberate: it drops the
+    file out of every glob that matters without any glob needing to change
+    for it --  `_check_artifact_lineage_or_raise`'s `iter_*.pt` scan,
+    screening/eval tooling's own `iter_*.pt` globs, and (for the CLI's
+    resume-then-later-fresh-launch path) `_find_fresh_run_managed_artifacts`'s
+    `iter_*.pt` glob all already require a `.pt`-terminated name, which
+    `iter_NNN.pt.stale` is not. `_find_fresh_run_managed_artifacts` also globs
+    `iter_*.pt.stale` explicitly (see its docstring) so a leftover quarantine
+    file from an interrupted resume is still covered by the fresh-dir guard
+    and `--fresh-run-overwrite`.
+
+    Called by `train_b2b`'s resume branch once, after every resume validation
+    (base_seed, config_echo, iterations-not-truncating, artifact-lineage,
+    bridge-digest) has already passed, and before `history.json` is persisted
+    or the training loop starts -- so a crash between quarantine and the
+    first replayed iteration leaves on-disk state self-consistent: a
+    truncated `history.json`, no live checkpoint past `start_iteration - 1`,
+    and every future iteration's prior attempt safely parked under `.stale`.
+    The caller deletes each `.stale` file the moment its replacement
+    `iter_N.pt` is durably written (see `train_b2b`'s loop body), and sweeps
+    any still-quarantined leftovers at successful run completion (e.g. a
+    resume whose `--iterations` target is lower than the number of files
+    quarantined here, so some are never replaced this run)."""
+    quarantined: list[Path] = []
+    for artifact_path in sorted(checkpoint_dir.glob("iter_*.pt")):
+        match = _ITER_CHECKPOINT_NAME_RE.match(artifact_path.name)
+        if match is None or int(match.group(1)) < start_iteration:
+            continue
+        stale_path = artifact_path.with_name(artifact_path.name + _STALE_CHECKPOINT_SUFFIX)
+        os.replace(artifact_path, stale_path)
+        quarantined.append(stale_path)
+    return quarantined
+
 
 def _train_state_run_id(path: Path) -> Optional[str]:
     """`run_id` of a `train_state.pt`-style payload at `path` (`None` if the
@@ -1724,11 +1783,18 @@ def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     interrupted) overwrite is never matched by any of the globs/names above
     -- it holds a PRIOR run's backed-up files, not this directory's own live
     artifacts, and must survive both this guard's inspection and any future
-    overwrite's move logic untouched."""
+    overwrite's move logic untouched. `iter_*.pt.stale` (adversarial round 19,
+    high finding: `_quarantine_stale_future_checkpoints`'s quarantined
+    obsolete-trajectory checkpoints from an in-progress or interrupted
+    `--resume-from-state`) is included too -- it is exactly as much this run's
+    own managed artifact as a live `iter_*.pt`, just temporarily parked
+    pending its replacement or an end-of-run sweep; a fresh launch must cover
+    it the same way, not leave it behind as an untouched stray file."""
     found = [checkpoint_dir / name
              for name in ("history.json", "train_state.pt", "train_state.prev.pt")
              if (checkpoint_dir / name).exists()]
     found.extend(sorted(checkpoint_dir.glob("iter_*.pt")))
+    found.extend(sorted(checkpoint_dir.glob("iter_*.pt" + _STALE_CHECKPOINT_SUFFIX)))
     return found
 
 
@@ -1801,7 +1867,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
              resume_from_state: Optional[Path] = None,
              force_history_reset: bool = False,
              fresh_run_overwrite: bool = False,
-             allow_bridge_mismatch: bool = False) -> list[dict]:
+             allow_bridge_mismatch: bool = False,
+             accept_legacy_unpinned_state: bool = False) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -1886,6 +1953,24 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     (`bridge_kind != "go"`) have no library to pin: both digests are
     `None`, which compares equal and always passes.
 
+    A Go-backed state saved with no digest at all (`bridge_sha256 is None`,
+    i.e. a legacy `train_state.pt` from before this pinning existed) fails
+    closed (adversarial round 19, high finding: round 16 accepted this
+    unconditionally and left the pin at `None` FOREVER, permanently
+    disabling drift detection for the rest of the run's life). Resuming it
+    now raises `ValueError` naming the remedy, `accept_legacy_unpinned_state
+    =True` (the CLI's `--accept-legacy-unpinned-state`), unless that flag is
+    given. WITH the flag, the resume proceeds and establishes a NEW
+    provenance boundary starting at this resume: the digest the library
+    CURRENTLY resolves to is pinned as this lineage's baseline from here
+    forward (recorded in every subsequent `train_state.pt`/`iter_*.pt`), a
+    warning is logged naming the new digest, and drift detection resumes
+    normally for the rest of the run. Iterations up to and including this
+    resume point have unverifiable simulator provenance (nothing was ever
+    pinned for them); only iterations from here forward are drift-protected
+    again. Mock-bridge states are never affected -- they never enter this
+    branch at all (`bridge_kind == "go"` is required).
+
     A fresh (non-`resume_from_state`) call fails closed if `checkpoint_dir`
     already contains ANY managed artifact -- `history.json`,
     `train_state.pt`, or an `iter_*.pt` checkpoint (adversarial round 6,
@@ -1920,13 +2005,6 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         overwrite_backup_dir: Optional[Path] = None
         backup_cleared = True
         durability_trigger = "state" if train_state_every > 0 else "checkpoint"
-        # Adversarial round 16, high finding: whether the pin about to be
-        # computed below is ALLOWED to be null for a bridge_kind="go" run --
-        # true only for the legacy-resume carve-out (a train_state.pt saved
-        # before fingerprint pinning existed). Everywhere else a Go run
-        # pinning `None` is an internal bug, not a legitimate outcome; see
-        # the invariant check right after this if/else.
-        bridge_pin_is_legacy_unpinned = False
         if resume_from_state is not None:
             # weights_only=False: the state includes numpy/python RNG state (plain
             # tuples/arrays, not just tensors), which torch's default safe
@@ -1971,21 +2049,56 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # writing `bridge_sha256=None` rather than quietly re-pinning to
             # whatever the library happens to hash to now.
             legacy_unpinned_go_resume = env_config.bridge_kind == "go" and saved_bridge_sha256 is None
-            bridge_pin_is_legacy_unpinned = legacy_unpinned_go_resume
             if legacy_unpinned_go_resume:
+                # Adversarial round 19, high finding: round 16's fix accepted
+                # this case unconditionally and kept the pin at `None` FOREVER
+                # (every subsequent `_save_train_state` for this lineage wrote
+                # `bridge_sha256=None` again), which permanently disabled
+                # drift detection for the rest of the run's life instead of
+                # merely tolerating the one pre-existing gap. Fail closed
+                # instead: a Go-backed resume whose state lacks a digest now
+                # raises unless the caller explicitly opts in via
+                # `--accept-legacy-unpinned-state`
+                # (`accept_legacy_unpinned_state=True`). Opting in does NOT
+                # keep the pin null -- it establishes a NEW provenance
+                # boundary starting at this resume: the digest the library
+                # CURRENTLY resolves to is pinned as of now (recorded in
+                # every subsequent `train_state.pt`/`iter_*.pt` going
+                # forward), so drift protection resumes for the rest of the
+                # run's life. Iterations up to and including this resume
+                # point have unverifiable simulator provenance (nothing was
+                # ever pinned for them); iterations from here forward are
+                # fully covered again.
+                if not accept_legacy_unpinned_state:
+                    raise ValueError(
+                        "--resume-from-state: this bridge_kind='go' train_state.pt "
+                        "has bridge_sha256=None -- a LEGACY state saved before "
+                        "bridge identity pinning existed. Resuming it silently "
+                        "would leave drift detection permanently disabled for the "
+                        "rest of this run's life. Pass "
+                        "--accept-legacy-unpinned-state to acknowledge this "
+                        "state's pre-boundary iterations have unverifiable "
+                        "simulator provenance and pin the CURRENT bridge digest "
+                        "as a new provenance boundary starting from this resume"
+                    )
                 current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
                 logger.warning(
-                    "resuming a bridge_kind='go' train_state.pt with "
-                    "bridge_sha256=None -- this is a LEGACY state saved before "
-                    "bridge identity pinning existed (adversarial round 16). "
-                    "Treating this run as unpinned-legacy for bridge-drift "
-                    "purposes rather than bricking it: no drift comparison is "
-                    "possible against a state that never recorded a digest. "
-                    "The library currently resolves to %r (bridge_sha256=%r); "
-                    "periodic saves for this run will keep writing "
-                    "bridge_sha256=None until a fresh run re-pins it.",
+                    "--accept-legacy-unpinned-state: resuming a bridge_kind='go' "
+                    "train_state.pt with bridge_sha256=None -- this is a LEGACY "
+                    "state saved before bridge identity pinning existed "
+                    "(adversarial round 16). Establishing a NEW provenance "
+                    "boundary starting now: the library currently resolves to "
+                    "%r (bridge_sha256=%r), which is pinned as this lineage's "
+                    "baseline from this resume forward. Iterations up to and "
+                    "including this resume point have unverifiable simulator "
+                    "provenance; only iterations from here forward are "
+                    "drift-protected.",
                     current_bridge_path, current_bridge_sha256,
                 )
+                # Pin the CURRENT digest (not the missing saved one) -- unlike
+                # round 16, this lineage is no longer permanently unpinned.
+                saved_bridge_sha256 = current_bridge_sha256
+                state_payload["bridge_library_path"] = current_bridge_path
             else:
                 current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
                 if current_bridge_sha256 != saved_bridge_sha256:
@@ -2017,10 +2130,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # behavior) let a mid-run .so replacement quietly become the new
             # baseline; pinning to the saved value keeps the ORIGINAL
             # simulator identity as the one true baseline for this lineage.
-            # A legacy-unpinned resume (round 16) keeps that pinned value at
-            # `None`/`None` too -- unpinned stays unpinned for this lineage.
+            # A legacy-unpinned resume (round 19; see above) already rewrote
+            # `saved_bridge_sha256`/`state_payload["bridge_library_path"]` to
+            # the CURRENT resolution above -- this is that new provenance
+            # boundary's baseline, not the (missing) original one.
             pinned_bridge_sha256 = saved_bridge_sha256
-            pinned_bridge_path = None if legacy_unpinned_go_resume else state_payload.get("bridge_library_path")
+            pinned_bridge_path = state_payload.get("bridge_library_path")
             current_echo = _train_b2b_config_echo(config, model_config, env_config)
             _validate_resume_config_echo(current_echo, state_payload["config_echo"])
             model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
@@ -2066,6 +2181,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
             # safe to clobber by name, not a second distinct result.
             history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
+            # Adversarial round 19, high finding: quarantine every live
+            # `iter_N.pt` with `N >= start_iteration` to `iter_N.pt.stale`
+            # BEFORE the loop below collects or publishes anything -- see
+            # `_quarantine_stale_future_checkpoints`'s docstring for why an
+            # old same-run_id checkpoint at/past the resume point is not
+            # trustworthy evidence of the trajectory this resume is about to
+            # replay. Immediately followed by durably persisting the
+            # already-truncated `history` (computed just above) so a crash
+            # in the gap before the loop's first iteration leaves on-disk
+            # state self-consistent: no live checkpoint or history row past
+            # `start_iteration - 1`.
+            pending_stale_checkpoints = _quarantine_stale_future_checkpoints(
+                checkpoint_dir, start_iteration)
+            _write_history_atomic(history_path, {"run_id": run_id, "rows": history})
         else:
             existing_artifacts = _find_fresh_run_managed_artifacts(checkpoint_dir)
             if existing_artifacts and not fresh_run_overwrite:
@@ -2133,6 +2262,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
+            # A fresh run never has anything to quarantine -- either the
+            # directory was empty/new, or `--fresh-run-overwrite` just moved
+            # every prior managed artifact (including any leftover `.stale`
+            # files -- see `_find_fresh_run_managed_artifacts`) into the
+            # backup subdirectory above.
+            pending_stale_checkpoints: list[Path] = []
         # Adversarial round 16, high finding, belt-and-braces: a
         # bridge_kind="go" run must never enter the training loop with a
         # null pinned digest -- that is precisely the condition that let
@@ -2141,11 +2276,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         # fingerprint` itself no longer returns `(None, None)` for
         # `bridge_kind == "go"` (it raises instead), so this should be
         # unreachable in practice; it exists as a hard stop against a future
-        # regression re-introducing that silent path. The one legitimate
-        # exception is a resume of a pre-fix state file, which explicitly
-        # opts into staying unpinned (see `bridge_pin_is_legacy_unpinned`
-        # above) rather than being bricked.
-        if env_config.bridge_kind == "go" and pinned_bridge_sha256 is None and not bridge_pin_is_legacy_unpinned:
+        # regression re-introducing that silent path. Round 19, high finding:
+        # the legacy-unpinned-resume carve-out that used to exempt this check
+        # is gone -- that path now either raises (no
+        # `--accept-legacy-unpinned-state`) or re-pins to the CURRENT digest
+        # (with the flag), so it can never reach here with a null pin either;
+        # there is no longer any legitimate exception to this invariant.
+        if env_config.bridge_kind == "go" and pinned_bridge_sha256 is None:
             raise RuntimeError(
                 "internal invariant violated: bridge_kind='go' but this run's "
                 "pinned bridge digest is None -- refusing to start/continue "
@@ -2256,6 +2393,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
                     })
+                # Adversarial round 19, high finding: this iteration's FRESH
+                # `iter_N.pt` just replaced whatever was quarantined at
+                # `_quarantine_stale_future_checkpoints` time -- drop that
+                # obsolete-trajectory `.stale` sibling now rather than
+                # leaving it to the end-of-run sweep below, so a concurrent
+                # directory listing never sees both the fresh checkpoint and
+                # its quarantined predecessor at once for longer than
+                # necessary.
+                stale_sibling = checkpoint_dir / f"iter_{iteration:03d}.pt{_STALE_CHECKPOINT_SUFFIX}"
+                if stale_sibling in pending_stale_checkpoints:
+                    stale_sibling.unlink(missing_ok=True)
+                    pending_stale_checkpoints.remove(stale_sibling)
                 # Adversarial round 18, high finding: this iteration's
                 # `iter_*.pt` checkpoint just landed durably on disk. When
                 # train_state_every == 0 (train_state.pt is never written for
@@ -2296,6 +2445,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         finally:
             if collector is not None:
                 collector.close()
+        # Adversarial round 19, high finding: sweep any `.stale` files still
+        # left over at successful run completion -- e.g. this resume's
+        # `--iterations` target stopped short of some iteration numbers that
+        # were quarantined at resume-start (`config.iterations` lower than
+        # the highest quarantined iteration), so the per-iteration deletion
+        # above never reached them. They are obsolete-trajectory checkpoints
+        # by definition (see `_quarantine_stale_future_checkpoints`) and this
+        # run is ending without ever regenerating them, so there is nothing
+        # left to wait for.
+        for stale_path in pending_stale_checkpoints:
+            stale_path.unlink(missing_ok=True)
         return history
     finally:
         lock_file.close()

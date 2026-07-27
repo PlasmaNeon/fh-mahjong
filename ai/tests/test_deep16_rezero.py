@@ -416,6 +416,17 @@ def test_train_b2b_cli_help_shows_allow_bridge_mismatch_flag() -> None:
     assert "--allow-bridge-mismatch" in result.stdout
 
 
+def test_train_b2b_cli_help_shows_accept_legacy_unpinned_state_flag() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b", "--help"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "--accept-legacy-unpinned-state" in result.stdout
+
+
 def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
     # C1 (final review): the library-level resume tests above (e.g.
     # test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correct_config)
@@ -2397,23 +2408,18 @@ def test_fresh_go_run_invariant_blocks_null_pinned_digest(tmp_path, monkeypatch)
     assert not (checkpoint_dir / "train_state.pt").exists()
 
 
-def test_resume_legacy_go_state_with_null_digest_warns_and_is_not_bricked(tmp_path, monkeypatch,
-                                                                           caplog) -> None:
-    # A train_state.pt saved by a run from BEFORE this fix existed may have
-    # bridge_sha256=None even though bridge_kind="go" -- the fix must not
-    # brick that legacy state (raise "mismatch" just because None != a real
-    # current digest). Instead: warn loudly and resume, treating this run as
-    # unpinned-legacy for bridge-drift purposes.
+def _legacy_go_state_setup(tmp_path: Path, monkeypatch):
+    """Shared setup for the round-19 legacy-unpinned-state tests: a
+    bridge_kind='go' run whose `train_state.pt` has been mutated to simulate
+    a legacy save from before bridge identity pinning existed
+    (bridge_sha256=None), with rollout collection transparently redirected to
+    the mock bridge (there is no real dlopen-able .so in a unit test)."""
     env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
     lib_path = tmp_path / "libfh_mahjong_bridge.so"
     lib_path.write_bytes(b"go-bridge-binary-v1")
     env = replace(env, bridge_kind="go", bridge_library_path=str(lib_path))
     checkpoint_dir = tmp_path / "ckpt"
 
-    # bridge_kind="go" is needed so train_b2b's pinning/resume logic takes
-    # the Go branch, but there is no real dlopen-able .so in a unit test --
-    # actual rollout collection is redirected to the mock bridge underneath,
-    # exactly as if a real Go bridge had produced the same decisions.
     from fh_mahjong_ai import oracle as oracle_module
     real_collect = oracle_module.collect_b2b_rollouts
 
@@ -2432,15 +2438,226 @@ def test_resume_legacy_go_state_with_null_digest_warns_and_is_not_bricked(tmp_pa
     state["bridge_library_path"] = None
     torch.save(state, state_path)
 
+    current_digest = hashlib.sha256(lib_path.read_bytes()).hexdigest()
+    return env, model_config, champion_path, config_first, checkpoint_dir, state_path, current_digest
+
+
+def test_resume_legacy_go_state_with_null_digest_raises_without_flag(tmp_path, monkeypatch) -> None:
+    # Adversarial round 19, high finding: round 16 accepted a legacy
+    # (bridge_sha256=None) state unconditionally and pinned None FOREVER --
+    # permanently disabling drift detection for the rest of the run's life
+    # instead of merely tolerating the one pre-existing gap. Fail closed by
+    # default: resuming must raise, naming the explicit opt-in remedy.
+    (env, model_config, champion_path, config_first, checkpoint_dir, state_path,
+     _current_digest) = _legacy_go_state_setup(tmp_path, monkeypatch)
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match=r"--accept-legacy-unpinned-state"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    # Nothing published for the rejected resume attempt.
+    assert not (checkpoint_dir / "iter_002.pt").exists()
+
+
+def test_resume_legacy_go_state_with_flag_establishes_new_provenance_boundary(
+        tmp_path, monkeypatch, caplog) -> None:
+    # WITH the explicit flag, the resume proceeds -- but instead of staying
+    # unpinned forever (round 16's behavior), it establishes a NEW
+    # provenance boundary: the digest the library CURRENTLY resolves to is
+    # pinned as this lineage's baseline from this resume forward, so drift
+    # detection resumes for iterations from here on.
+    (env, model_config, champion_path, config_first, checkpoint_dir, state_path,
+     current_digest) = _legacy_go_state_setup(tmp_path, monkeypatch)
+
     config_resumed = replace(config_first, iterations=2)
     with caplog.at_level(logging.WARNING):
         history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
-                            base_seed=5, train_state_every=1, resume_from_state=state_path)
+                            base_seed=5, train_state_every=1, resume_from_state=state_path,
+                            accept_legacy_unpinned_state=True)
 
     assert [row["iteration"] for row in history] == [1, 2]
-    assert any("legacy" in record.message.lower() for record in caplog.records)
+    assert any("legacy" in record.message.lower() and "boundary" in record.message.lower()
+              for record in caplog.records)
 
     resumed_state = torch.load(state_path, map_location="cpu", weights_only=False)
-    # New saves for this legacy-resumed run keep bridge_sha256 None -- it
-    # never re-pins to whatever the library currently hashes to.
-    assert resumed_state["bridge_sha256"] is None
+    # The new boundary pins the CURRENT digest going forward -- never stays
+    # None.
+    assert resumed_state["bridge_sha256"] == current_digest
+
+    # And having established that boundary, a further resume WITHOUT the
+    # flag proceeds normally (the state is no longer unpinned) and a drift
+    # check against the same, unchanged library still passes.
+    config_extended = replace(config_first, iterations=3)
+    history2 = train_b2b(env, model_config, champion_path, checkpoint_dir, config_extended,
+                         base_seed=5, train_state_every=1, resume_from_state=state_path)
+    assert [row["iteration"] for row in history2] == [1, 2, 3]
+
+
+def test_accept_legacy_unpinned_state_flag_is_noop_for_mock_bridge(tmp_path) -> None:
+    # Mock-bridge states never carry a real digest at all (bridge_kind !=
+    # "go" always resolves to (None, None)) -- the legacy-unpinned-state
+    # branch requires bridge_kind == "go" and must never fire for them,
+    # whether or not the flag is passed.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1,
+                        resume_from_state=checkpoint_dir / "train_state.pt",
+                        accept_legacy_unpinned_state=True)
+    assert [row["iteration"] for row in history] == [1, 2]
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] is None
+
+
+# --- Adversarial round 19, high finding: stale future checkpoints visible
+# during a --resume-from-state replay. Resume truncates history.json/the
+# in-memory history back to start_iteration, but pre-round-19 left any
+# iter_N.pt for N >= start_iteration sitting on disk, live, under the SAME
+# run_id, until the replayed loop happened to overwrite it by name. CUDA
+# replay is not bit-identical, so an old iter_N.pt from before the crash can
+# diverge from the trajectory this resume actually replays -- concurrent
+# screening/eval tooling, or a second crash mid-replay, could silently pick
+# up that obsolete-trajectory checkpoint. ---
+
+def _build_iter_001_through_005_then_rewind_to_state_at_2(tmp_path, monkeypatch):
+    """Produces a checkpoint_dir with iter_001.pt..iter_005.pt all durably on
+    disk and history.json covering iterations 1-5, then rewinds
+    train_state.pt back to the iteration-2 snapshot (next_iteration=3) --
+    simulating a crash where training had already progressed past iteration 2
+    (leaving iter_003.pt..005.pt behind from that progress) before the box
+    died and only the iter-2 state snapshot survived. Returns
+    (env, model_config, champion_path, config2, checkpoint_dir, state_path)."""
+    env, model_config, champion_path, config2 = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config2,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    state_at_2_bytes = state_path.read_bytes()
+
+    config5 = replace(config2, iterations=5)
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config5,
+             base_seed=5, train_state_every=5, resume_from_state=state_path)
+    for i in range(1, 6):
+        assert (checkpoint_dir / f"iter_{i:03d}.pt").exists()
+
+    # Rewind: only the iteration-2 snapshot "survived the crash".
+    state_path.write_bytes(state_at_2_bytes)
+    return env, model_config, champion_path, config2, checkpoint_dir, state_path
+
+
+def test_resume_quarantines_stale_future_checkpoints_before_first_collection(
+        tmp_path, monkeypatch) -> None:
+    (env, model_config, champion_path, config2, checkpoint_dir,
+     state_path) = _build_iter_001_through_005_then_rewind_to_state_at_2(tmp_path, monkeypatch)
+
+    from fh_mahjong_ai import oracle as oracle_module
+    real_collect = oracle_module.collect_b2b_rollouts
+    collection_calls = {"n": 0}
+    observed: dict = {}
+
+    def counting_collect(*args, **kwargs):
+        if collection_calls["n"] == 0:
+            observed["stale_present"] = [
+                (checkpoint_dir / f"iter_{i:03d}.pt.stale").exists() for i in (3, 4, 5)
+            ]
+            observed["live_absent"] = [
+                not (checkpoint_dir / f"iter_{i:03d}.pt").exists() for i in (3, 4, 5)
+            ]
+            observed["history_on_disk"] = [
+                row["iteration"] for row in read_b2b_history_rows(checkpoint_dir / "history.json")
+            ]
+        collection_calls["n"] += 1
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+
+    config5 = replace(config2, iterations=5)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config5,
+                        base_seed=5, train_state_every=5, resume_from_state=state_path)
+
+    # Quarantine (and the durable truncated-history write) happened entirely
+    # before the FIRST collection call.
+    assert observed["stale_present"] == [True, True, True]
+    assert observed["live_absent"] == [True, True, True]
+    assert observed["history_on_disk"] == [1, 2]
+
+    # By the end of the run, the replayed iterations published fresh
+    # checkpoints and each one's .stale sibling was removed.
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4, 5]
+    for i in (3, 4, 5):
+        assert (checkpoint_dir / f"iter_{i:03d}.pt").exists()
+        assert not (checkpoint_dir / f"iter_{i:03d}.pt.stale").exists()
+    history_on_disk = [row["iteration"] for row in
+                       read_b2b_history_rows(checkpoint_dir / "history.json")]
+    assert history_on_disk == [1, 2, 3, 4, 5]
+
+
+def test_resume_sweeps_leftover_stale_checkpoints_at_completion(tmp_path, monkeypatch) -> None:
+    # A resume whose --iterations target stops SHORT of some quarantined
+    # iteration numbers (here: target 4, but iter_005.pt.stale was
+    # quarantined at resume-start) must not leave that .stale file behind
+    # forever -- it is swept at successful completion since this run is
+    # ending without ever regenerating it.
+    (env, model_config, champion_path, config2, checkpoint_dir,
+     state_path) = _build_iter_001_through_005_then_rewind_to_state_at_2(tmp_path, monkeypatch)
+
+    config4 = replace(config2, iterations=4)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config4,
+                        base_seed=5, train_state_every=4, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    assert (checkpoint_dir / "iter_003.pt").exists()
+    assert (checkpoint_dir / "iter_004.pt").exists()
+    # iter_005.pt was never regenerated this run (target stopped at 4) -- its
+    # quarantined .stale sibling must be swept, not left behind, and the live
+    # name must never reappear on its own.
+    assert not (checkpoint_dir / "iter_005.pt.stale").exists()
+    assert not (checkpoint_dir / "iter_005.pt").exists()
+
+
+def test_lineage_scan_ignores_stale_quarantined_checkpoints(tmp_path) -> None:
+    # A checkpoint already quarantined to `.stale` (by
+    # `_quarantine_stale_future_checkpoints`) must never be inspected by the
+    # artifact-lineage scanner -- it drops out of the `iter_*.pt` glob the
+    # moment it is renamed, regardless of what run_id it carries.
+    from fh_mahjong_ai.oracle import _check_artifact_lineage_or_raise
+
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    model = PolicyValueNet(_ENV39, _b2b_config())
+    live_path = checkpoint_dir / "iter_003.pt"
+    save_checkpoint(live_path, model, metadata={"run_id": "foreign-run"})
+    stale_path = live_path.with_name(live_path.name + ".stale")
+    os.rename(live_path, stale_path)
+
+    # Must not raise despite the quarantined file's foreign run_id -- it is
+    # invisible to the scan.
+    _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id="this-run", next_iteration=3)
+
+
+def test_fresh_run_overwrite_moves_leftover_stale_checkpoints_into_backup(tmp_path) -> None:
+    # A leftover `.stale` file from an interrupted resume is a managed
+    # artifact exactly like a live iter_*.pt -- --fresh-run-overwrite must
+    # cover it too, not leave it behind as an untouched stray file.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    model = PolicyValueNet(_ENV39, model_config)
+    stale_path = checkpoint_dir / "iter_003.pt.stale"
+    save_checkpoint(checkpoint_dir / "iter_003.pt", model)
+    os.rename(checkpoint_dir / "iter_003.pt", stale_path)
+
+    found = _find_fresh_run_managed_artifacts(checkpoint_dir)
+    assert stale_path in found
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=9, fresh_run_overwrite=True, train_state_every=1)
+
+    assert not stale_path.exists()

@@ -90,6 +90,18 @@ def main() -> None:
                         "deliberately confirmed the new binary is an acceptable "
                         "substitution and accept that attribution across the resume "
                         "boundary is no longer guaranteed")
+    p.add_argument("--accept-legacy-unpinned-state", action="store_true", default=False,
+                   help="DANGEROUS: --resume-from-state normally refuses to resume a "
+                        "bridge_kind='go' train_state.pt that has bridge_sha256=None -- "
+                        "a LEGACY state saved before bridge identity pinning existed, "
+                        "which would otherwise leave drift detection permanently "
+                        "disabled for the rest of the run's life. This flag "
+                        "acknowledges that this state's pre-boundary iterations have "
+                        "unverifiable simulator provenance, and pins the CURRENT bridge "
+                        "digest as a new provenance boundary starting from this resume "
+                        "-- drift detection then resumes normally for iterations from "
+                        "here forward. Use ONLY for a genuinely pre-pinning legacy "
+                        "state; has no effect on mock-bridge runs")
     p.add_argument("--fresh-run-overwrite", action="store_true", default=False,
                    help="DANGEROUS: a fresh launch (no --resume-from-state) into a "
                         "checkpoint_dir that already holds a prior run's managed "
@@ -126,7 +138,8 @@ def main() -> None:
              growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
              resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset,
              fresh_run_overwrite=args.fresh_run_overwrite,
-             allow_bridge_mismatch=args.allow_bridge_mismatch)
+             allow_bridge_mismatch=args.allow_bridge_mismatch,
+             accept_legacy_unpinned_state=args.accept_legacy_unpinned_state)
 
 
 if __name__ == "__main__":
