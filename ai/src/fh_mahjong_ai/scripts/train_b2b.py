@@ -39,6 +39,11 @@ def main() -> None:
     p.add_argument("--aux-heads", dest="aux_heads", action="store_true", default=True,
                    help="train the belief/deal-in/rank auxiliary heads (default: on)")
     p.add_argument("--no-aux-heads", dest="aux_heads", action="store_false")
+    p.add_argument("--model-growth-blocks", type=int, default=0,
+                   help="deep16-rezero capacity growth: stack this many ReZero residual "
+                        "blocks onto --champion (which must then be a complete post-B2b "
+                        "anchor checkpoint, not the raw 39ch champion the default (0) "
+                        "surgery path expects); 0 = disabled (default)")
     add_model_config_args(p)
     args = p.parse_args()
     num_workers = args.num_workers
@@ -57,7 +62,8 @@ def main() -> None:
     model_config = replace(base_model_config, event_window=args.event_window,
                           privileged_critic=args.privileged_critic, aux_heads=args.aux_heads)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
-             checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed)
+             checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
+             growth_blocks=args.model_growth_blocks)
 
 
 if __name__ == "__main__":

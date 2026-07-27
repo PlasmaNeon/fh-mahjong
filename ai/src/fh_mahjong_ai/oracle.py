@@ -17,7 +17,7 @@ from .ach import ach_update
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
-from .model import PolicyValueNet
+from .model import PolicyValueNet, _reconstruct_env_config
 from .parallel_rollouts import _split_counts
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
@@ -613,6 +613,59 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
     return model
 
 
+def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "cpu") -> PolicyValueNet:
+    """Warm-start a wider B2b net by stacking `growth_blocks` ReZero residual
+    blocks (deep16-rezero) after a post-B2b anchor's existing plane trunk.
+    Unlike `build_b2b_model` (39ch -> B2b surgery), this performs NO surgery:
+    the anchor must already be a complete B2b checkpoint (event encoder,
+    privileged critic, aux heads as applicable), and every one of its tensors
+    must load into the grown net at identical shape — the new `growth.*`
+    blocks are the ONLY architectural delta, and they are identity at
+    alpha=0 (ReZeroResidualBlock), so step-0 outputs equal the anchor's
+    exactly.
+
+    `anchor_checkpoint`'s `metadata["model_config"]` is authoritative for the
+    anchor's full architecture (event_window is not recoverable from tensor
+    shapes alone, so an anchor without this key cannot be grown safely).
+    Growing an already-grown anchor (`growth_blocks > 0` in its own config)
+    is out of scope and rejected: this warm start does not attempt to
+    reconcile two different ReZero stacks."""
+    anchor_checkpoint = Path(anchor_checkpoint)
+    payload = torch.load(anchor_checkpoint, map_location="cpu")
+    metadata = payload.get("metadata") or {}
+    model_config_meta = metadata.get("model_config")
+    if not isinstance(model_config_meta, dict):
+        raise RuntimeError(
+            "anchor lacks complete model_config metadata — grow_b2b_model requires a "
+            "post-B2b checkpoint saved with metadata['model_config'] (event_window is not "
+            "recoverable from tensor shapes alone)"
+        )
+    anchor_config = ModelConfig(**model_config_meta)
+    if anchor_config.growth_blocks != 0:
+        raise RuntimeError(
+            f"anchor checkpoint is already grown (growth_blocks={anchor_config.growth_blocks}); "
+            "growing an already-grown net is out of scope"
+        )
+    grown_config = replace(anchor_config, growth_blocks=growth_blocks)
+    env_config = _reconstruct_env_config(payload["model"], anchor_config)
+    model = PolicyValueNet(env_config, grown_config).to(device)
+    _, report = load_compatible_checkpoint(anchor_checkpoint, model)
+    # FAIL CLOSED: every anchor tensor must load same-shape except the brand
+    # new `growth.*` keys (missing from the anchor by construction, since it
+    # predates this warm start). Anything else silently dropping an anchor
+    # layer would break the step-0 parity invariant.
+    bad_skipped = [k for k in report["skipped_keys"] if not k.startswith("growth.")]
+    bad_missing = [k for k in report["missing_keys"] if not k.startswith("growth.")]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "anchor checkpoint is architecturally incompatible with the grown model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — its "
+            "metadata['model_config'] does not match its own saved tensor shapes"
+        )
+    model.eval()
+    return model
+
+
 def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[int, dict],
                                final_scores: dict[int, float], bust_threshold: float,
                                truncated: bool) -> tuple[np.ndarray, np.ndarray]:
@@ -953,17 +1006,30 @@ class ParallelB2bCollector:
 
 
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Path,
-             checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0) -> list[dict]:
+             checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
+             growth_blocks: int = 0) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
     `batch.events`/`batch.dealin_labels`/`batch.rank_labels`). Mirrors
     `train_selfplay_oracle` minus feature-dropout/ACH/the batched-pool path —
-    B2b has no dropout schedule and always trains PPO."""
+    B2b has no dropout schedule and always trains PPO.
+
+    `growth_blocks > 0` (deep16-rezero capacity growth) routes model
+    construction through `grow_b2b_model` instead: `champion_checkpoint` must
+    then be a complete post-B2b anchor (not the raw 39ch champion the
+    growth_blocks=0 surgery path expects), and `model_config` is superseded
+    by the grown model's own config (the anchor's saved architecture plus
+    `growth_blocks` ReZero blocks) so every downstream checkpoint save below
+    records the true architecture, including `growth_blocks`."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
+    if growth_blocks > 0:
+        model = grow_b2b_model(champion_checkpoint, growth_blocks, device)
+        model_config = model.model_config
+    else:
+        model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
     history: list[dict] = []
