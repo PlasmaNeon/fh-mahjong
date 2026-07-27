@@ -58,14 +58,20 @@ def main() -> None:
                         "every config flag matches what the state was saved under, and "
                         "continues iteration numbering + history.json from where it left off")
     p.add_argument("--force-history-reset", action="store_true", default=False,
-                   help="DANGEROUS: when --resume-from-state's history.json is missing or "
-                        "corrupt, skip the check that the checkpoint-dir's existing iter_*.pt "
-                        "artifacts belong to the same run_id as the resuming state file "
-                        "before resetting history.json. Only the artifact-lineage check is "
-                        "skipped -- config/base_seed mismatches still raise. Use ONLY when "
+                   help="DANGEROUS: skip the check that checkpoint_dir's existing iter_*.pt "
+                        "artifacts all belong to the same run_id as the resuming state file. "
+                        "This check now runs on EVERY --resume-from-state (not only when "
+                        "history.json is missing or corrupt) -- it inspects every iter_*.pt in "
+                        "checkpoint_dir, including ones this resume is about to overwrite, "
+                        "since a foreign checkpoint there is still evidence of a wrong "
+                        "directory. The flag name predates this and now covers both cases: "
+                        "the missing/corrupt-history recovery path AND a resume with an "
+                        "otherwise valid, matching history.json that still has a foreign "
+                        "artifact sitting in checkpoint_dir. Only the artifact-lineage check "
+                        "is skipped -- config/base_seed mismatches still raise. Use ONLY when "
                         "you have manually confirmed checkpoint_dir holds this run's own "
-                        "checkpoints (e.g. a genuine torn/lost history.json), never to force "
-                        "a resume into a directory that might belong to a different run")
+                        "checkpoints, never to force a resume into a directory that might "
+                        "belong to a different run")
     add_model_config_args(p)
     args = p.parse_args()
     if args.champion is None and args.resume_from_state is None:

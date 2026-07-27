@@ -1171,30 +1171,45 @@ def _artifact_run_id(path: Path) -> Optional[str]:
 
 
 def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optional[str]) -> None:
-    """Guard the "reset history" recovery path against silently mixing run
-    lineages (adversarial round 4, high finding): a missing/corrupt
-    `history.json` alone cannot distinguish "this run's own history.json was
-    torn/lost" from "someone pointed --resume-from-state at the wrong
-    checkpoint_dir, whose iter_*.pt files belong to a different run".
+    """Guard EVERY `--resume-from-state` against silently mixing run
+    lineages, whether or not `history.json` itself needed recovery
+    (adversarial round 5, high finding: round 4 only ran this scan on the
+    missing/corrupt-history path, so a resume with a perfectly valid,
+    matching state/history pair never inspected checkpoint_dir's existing
+    iter_*.pt artifacts at all -- a foreign checkpoint left behind by an
+    unrelated run went undetected, since training only overwrites
+    iterations >= start_iteration and leaves earlier foreign files in place
+    for screening/retention tooling to pick up later).
 
-    Scans `checkpoint_dir` for existing `iter_*.pt` artifacts. For each one,
-    its saved `metadata["run_id"]` must equal `state_run_id` -- including the
-    legacy case where both are `None` (pre-run_id artifact resuming from a
-    pre-run_id state; nothing to compare, so it passes, preserving
-    pre-round-4 behavior). Any artifact whose run_id differs (or is `None`
-    while `state_run_id` is set -- lineage can't be proven) raises. An empty
-    or brand-new checkpoint_dir (no iter_*.pt at all) has nothing on disk to
-    contradict the resume, so it passes through untouched -- relocating a
-    state file into a fresh directory is fine.
+    Scans `checkpoint_dir` for existing `iter_*.pt` artifacts -- ALL of
+    them, including ones at iterations >= start_iteration that this resume
+    is about to overwrite anyway: a foreign file sitting there is still
+    evidence of a wrong directory even if training would clobber it a
+    moment later. For each artifact, its saved `metadata["run_id"]` must
+    equal `state_run_id` -- including the legacy case where both are `None`
+    (pre-run_id artifact resuming from a pre-run_id state; nothing to
+    compare, so it passes, preserving pre-round-4 behavior). Any artifact
+    whose run_id differs (or is `None` while `state_run_id` is set --
+    lineage can't be proven) raises. An empty or brand-new checkpoint_dir
+    (no iter_*.pt at all) has nothing on disk to contradict the resume, so
+    it passes through untouched -- relocating a state file into a fresh
+    directory is fine.
+
+    Note on cost: this does a full `torch.load` per `iter_*.pt` (metadata is
+    stored inside the same pickled dict as the tensors, so there is no
+    cheaper metadata-only read) with `map_location="cpu"` to avoid a GPU
+    round-trip. For a large checkpoint_dir this is a one-off cost paid only
+    at resume time (a rare event), not per training iteration.
 
     `--force-history-reset` (the `force_history_reset` flag on `train_b2b`)
-    skips ONLY this check, never the base_seed/config_echo checks in
-    `train_b2b`'s resume path."""
+    skips ONLY this check -- it is the general lineage-validation override,
+    covering both the missing/corrupt-history recovery path and this
+    unconditional every-resume scan -- never the base_seed/config_echo
+    checks in `train_b2b`'s resume path."""
     for artifact_path in sorted(checkpoint_dir.glob("iter_*.pt")):
         artifact_run_id = _artifact_run_id(artifact_path)
         if artifact_run_id != state_run_id:
             raise ValueError(
-                "--resume-from-state history.json is missing/corrupt AND "
                 f"{artifact_path.name} in checkpoint_dir carries "
                 f"run_id={artifact_run_id!r}, which does not match the "
                 f"resuming state file's run_id={state_run_id!r} -- resuming "
@@ -1225,16 +1240,21 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
     before Finding 1 -- lineage is still preserved because the caller writes
     `state_run_id` into the fresh history going forward. Adversarial round 4,
     high finding: that reset used to run BEFORE any lineage check could catch
-    a resume into the wrong checkpoint_dir, so unless `force_history_reset`
-    is set, `_check_artifact_lineage_or_raise` first validates any existing
-    `iter_*.pt` artifacts in `checkpoint_dir` against `state_run_id` and
-    raises on a mismatch instead of silently proceeding."""
+    a resume into the wrong checkpoint_dir. Adversarial round 5, high
+    finding: round 4's fix only ran `_check_artifact_lineage_or_raise` on
+    THIS missing/corrupt-history recovery path -- a resume with a perfectly
+    valid, matching history.json never scanned checkpoint_dir's existing
+    iter_*.pt artifacts at all, so a foreign checkpoint from an unrelated run
+    could sit there undetected. The lineage scan now runs unconditionally on
+    every resume (unless `force_history_reset` is set), before this file is
+    even read, so both the recovery path and the normal valid-history path
+    are covered by the same check."""
+    if not force_history_reset:
+        _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id)
     try:
         raw = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         reason = "missing" if isinstance(exc, FileNotFoundError) else "corrupt"
-        if not force_history_reset:
-            _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id)
         logger.warning(
             "history.json is %s; history was reset from a corrupt or missing "
             "file. Per-iteration checkpoints are unaffected; only the JSON "
@@ -1353,15 +1373,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     (adversarial round 3, Finding 1).
 
     Every `iter_*.pt` checkpoint also carries `metadata["run_id"]`
-    (adversarial round 4, high finding). When history.json is missing or
-    corrupt on a resume, `_check_artifact_lineage_or_raise` validates any
-    existing `iter_*.pt` artifacts' `run_id`s against the resuming state's
-    `run_id` before accepting the "reset history" recovery -- a mismatch (or
-    a legacy artifact with no `run_id` while the state has one) raises
-    instead of silently mixing lineages; an empty checkpoint_dir passes
-    through. `force_history_reset=True` (the CLI's `--force-history-reset`,
-    documented there as dangerous) skips ONLY that artifact-lineage check,
-    never the base_seed/config_echo checks above."""
+    (adversarial round 4, high finding). On EVERY resume (adversarial round
+    5, high finding: not just when history.json is missing or corrupt --
+    round 4's check ran only on that recovery path, so a resume with a
+    perfectly valid, matching history.json never inspected checkpoint_dir at
+    all), `_check_artifact_lineage_or_raise` validates every existing
+    `iter_*.pt` artifact's `run_id` against the resuming state's `run_id`
+    before proceeding -- a mismatch (or a legacy artifact with no `run_id`
+    while the state has one) raises instead of silently mixing lineages; an
+    empty checkpoint_dir passes through. `force_history_reset=True` (the
+    CLI's `--force-history-reset`; the name predates this generalization but
+    is kept to avoid a runbook-breaking rename -- see its `--help` text)
+    skips ONLY that artifact-lineage check, on both the recovery path and
+    this unconditional every-resume scan, never the base_seed/config_echo
+    checks above."""
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -693,9 +694,14 @@ def test_resume_matching_run_id_succeeds_and_persists(tmp_path) -> None:
 
 
 def test_resume_legacy_bare_list_history_and_no_run_id_state_is_compat(tmp_path) -> None:
-    # MIGRATION: a state file and history.json written before this fix have
-    # no run_id at all (bare-list history.json). That pairing must still be
-    # accepted -- both are "pre-run_id" and there is nothing to compare.
+    # MIGRATION: a state file, history.json, and iter_*.pt checkpoints all
+    # written before this fix have no run_id at all (bare-list history.json,
+    # no "run_id" in checkpoint metadata). That fully pre-run_id trio must
+    # still be accepted -- everything is "pre-run_id" and there is nothing
+    # to compare. (Since round 5's lineage scan now runs unconditionally on
+    # every resume -- not only when history.json is missing/corrupt -- the
+    # checkpoints must be downgraded here too, or the scan would correctly
+    # flag them as carrying a real run_id the downgraded state doesn't have.)
     env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
     checkpoint_dir = tmp_path / "ckpt"
 
@@ -703,12 +709,14 @@ def test_resume_legacy_bare_list_history_and_no_run_id_state_is_compat(tmp_path)
              base_seed=5, train_state_every=2)
     state_path = checkpoint_dir / "train_state.pt"
 
-    # Downgrade both files to the legacy pre-run_id shape.
+    # Downgrade state, history, and checkpoints to the legacy pre-run_id shape.
     state = torch.load(state_path, map_location="cpu", weights_only=False)
     del state["run_id"]
     torch.save(state, state_path)
     legacy_rows = read_b2b_history_rows(checkpoint_dir / "history.json")
     (checkpoint_dir / "history.json").write_text(json.dumps(legacy_rows))
+    for artifact_path in checkpoint_dir.glob("iter_*.pt"):
+        _strip_run_id_from_checkpoint_metadata(artifact_path)
 
     config_resumed = replace(config_first, iterations=4)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
@@ -945,3 +953,110 @@ def test_new_checkpoint_metadata_carries_run_id_and_infer_model_config_loads_it(
 
     recovered = infer_model_config(saved["model"], saved["metadata"])
     assert recovered.event_window == model_config.event_window
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 5
+# ---------------------------------------------------------------------------
+#
+# Finding (high): the round-4 artifact-lineage check only ran on the
+# missing/corrupt-history recovery path (inside the `except` branch of
+# `_load_resume_history`). With a VALID, matching state/history pair, it
+# never ran at all -- so a foreign iter_*.pt file left in checkpoint_dir by
+# an unrelated run (e.g. someone copied a state+history pair into a
+# directory that already had leftover checkpoints from a different run) was
+# never inspected. Training only overwrites iterations >= start_iteration,
+# so any foreign earlier checkpoint stays on disk indefinitely where
+# screening/retention tooling could still select it. Fix: run the lineage
+# scan on EVERY resume, not just the recovery path; --force-history-reset
+# remains the one documented override.
+
+def test_resume_valid_history_with_one_foreign_run_id_artifact_raises(tmp_path) -> None:
+    # Two independent runs. Run B's checkpoint_dir picks up a stray iter_*.pt
+    # from run A (e.g. a bad copy), but run B's OWN state.pt/history.json
+    # pair is fully valid and matching. The foreign artifact must still be
+    # caught -- lineage validation cannot be gated on history.json being
+    # broken.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_path_b = dir_b / "train_state.pt"
+    # Plant a foreign checkpoint from run A into run B's checkpoint_dir,
+    # alongside B's own valid, matching train_state.pt/history.json.
+    shutil.copy(dir_a / "iter_001.pt", dir_b / "iter_002.pt")
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path_b)
+
+
+def test_resume_valid_history_all_matching_artifacts_proceeds(tmp_path) -> None:
+    # Control: a normal resume where history.json is intact AND every
+    # iter_*.pt on disk shares the resuming state's run_id must keep working
+    # -- the new unconditional scan must not false-positive on the common
+    # case.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+
+
+def test_resume_valid_history_with_legacy_foreign_artifact_raises(tmp_path) -> None:
+    # Extend the round-4 "pre-run_id legacy artifact" coverage to the VALID
+    # history path: a run_id-carrying state resuming against its own valid,
+    # matching history.json, but with a legacy (no run_id in metadata)
+    # iter_*.pt also sitting in checkpoint_dir, cannot prove that legacy
+    # artifact belongs to this lineage -- must raise.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    _strip_run_id_from_checkpoint_metadata(checkpoint_dir / "iter_001.pt")
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="run_id"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+
+def test_force_history_reset_overrides_mixed_lineage_check_with_valid_history(tmp_path) -> None:
+    # --force-history-reset is the general lineage override, not just a
+    # missing/corrupt-history escape hatch: it must also let a resume proceed
+    # past a foreign artifact when history.json is otherwise valid and
+    # matching.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_path_b = dir_b / "train_state.pt"
+    shutil.copy(dir_a / "iter_001.pt", dir_b / "iter_002.pt")
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path_b,
+                        force_history_reset=True)
+
+    assert [row["iteration"] for row in history] == [1, 2]

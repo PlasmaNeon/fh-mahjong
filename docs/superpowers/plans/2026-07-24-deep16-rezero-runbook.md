@@ -224,13 +224,18 @@ and old bare-list files. Resuming a state file that is already at or past
 `--iterations` now raises instead of silently exiting with nothing trained
 (Finding 2) — bump `--iterations` if you actually meant to keep training.
 
-Every `iter_*.pt` now also carries `run_id` in metadata, so a resume whose
-`history.json` is missing/corrupt validates any existing `iter_*.pt` files'
-lineage against the resuming state before resetting history, raising
-instead of silently mixing checkpoints if they belong to a different run
-(adversarial round 4). Pass `--force-history-reset` only when you have
-manually confirmed `checkpoint_dir` genuinely holds this run's own torn
-history — it skips that lineage check alone, never the config/base_seed
+Every `iter_*.pt` now also carries `run_id` in metadata, so EVERY
+`--resume-from-state` — not only one whose `history.json` is missing or
+corrupt — validates every existing `iter_*.pt` file in `checkpoint_dir`
+against the resuming state's `run_id` before proceeding, raising instead of
+silently mixing checkpoints if they belong to a different run (adversarial
+round 4, generalized to every resume in round 5: a foreign checkpoint left
+behind by another run is evidence of a wrong directory even when this run's
+own `history.json` is perfectly valid). Pass `--force-history-reset` only
+when you have manually confirmed `checkpoint_dir` genuinely holds this
+run's own checkpoints (e.g. a genuine torn/lost history.json) — it skips
+that lineage check alone (both on the missing-history recovery path and on
+this unconditional every-resume scan), never the config/base_seed
 validation above.
 
 ## 5. Screening
