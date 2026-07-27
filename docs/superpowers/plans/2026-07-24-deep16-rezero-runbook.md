@@ -246,6 +246,12 @@ that lineage check alone (both on the missing-history recovery path and on
 this unconditional every-resume scan), never the config/base_seed
 validation above.
 
+A Go-backed run binds to a content-addressed snapshot of the bridge
+library copied into `checkpoint_dir` at start (`.bridge-<sha256prefix>.so`),
+not the mutable build path itself, so rebuilding the source `.so` mid-run
+is safe and silently ignored (resuming across a rebuild between launches
+is still drift-checked as before, at resume start).
+
 ## 5. Screening
 
 At iterations 25/50/75/100/125/150/175/200/225/250/260, evaluate against a

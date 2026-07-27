@@ -2387,19 +2387,23 @@ def test_go_bridge_mock_config_unaffected_no_drift_checks(tmp_path) -> None:
 
 
 def test_fresh_go_run_invariant_blocks_null_pinned_digest(tmp_path, monkeypatch) -> None:
-    # Belt-and-braces: even if some future bug lets
-    # _resolve_current_bridge_fingerprint return (None, None) for a
-    # bridge_kind="go" config, train_b2b's own pre-loop invariant must catch
-    # it and refuse to start training unpinned.
+    # Belt-and-braces: even if some future bug lets the bridge-snapshot
+    # pinning primitive return a None digest for a bridge_kind="go" config,
+    # train_b2b's own `_assert_bridge_pinned` invariant must catch it and
+    # refuse to start training unpinned. Adversarial round 20 moved the
+    # fresh-run pinning primitive from `_resolve_current_bridge_fingerprint`
+    # to `_read_and_hash_bridge_source` (which reads once and copies the
+    # verified bytes into a content-addressed snapshot) -- this patches the
+    # new seam.
     env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
-    # bridge_library_path is never actually resolved -- _resolve_current_
-    # bridge_fingerprint is monkeypatched below -- so it need not exist.
+    # bridge_library_path is never actually resolved -- _read_and_hash_
+    # bridge_source is monkeypatched below -- so it need not exist.
     env = replace(env, bridge_kind="go", bridge_library_path=str(tmp_path / "unused.so"))
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
-        lambda env_config: (None, None),
+        "fh_mahjong_ai.oracle._read_and_hash_bridge_source",
+        lambda source_path: (b"fake-bytes", None),
     )
 
     with pytest.raises(RuntimeError, match=r"unpinned"):
@@ -2661,3 +2665,243 @@ def test_fresh_run_overwrite_moves_leftover_stale_checkpoints_into_backup(tmp_pa
              base_seed=9, fresh_run_overwrite=True, train_state_every=1)
 
     assert not stale_path.exists()
+
+
+# --- Adversarial round 20, high finding: bridge digest not bound to loaded
+# bytes (ABA). Round 13-19 pinned/verified a sha256 of the bridge library
+# PATH, but workers independently `dlopen` that same mutable path later --
+# a swap-and-restore between "hash" and "load" defeats every check, and
+# parallel workers can even load DIFFERENT binaries from each other. The
+# fix: at run start (fresh or resume), the verified library bytes are
+# copied into a run-owned, content-addressed snapshot
+# `<checkpoint_dir>/.bridge-<sha256-prefix16>.so`, and the `EnvConfig`
+# threaded into every rollout collector (`collect_b2b_rollouts` /
+# `ParallelB2bCollector`) is rebound to that snapshot path via
+# `dataclasses.replace` -- so every worker loads the immutable snapshot,
+# never the mutable source path, and per-iteration drift checks verify the
+# SNAPSHOT (which nothing legitimate ever touches) instead of the source.
+#
+# These tests use `bridge_kind="go"` with a real (fabricated-content) file
+# standing in for the `.so` -- `build_bridge` is monkeypatched so
+# `collect_b2b_rollouts` never actually tries to `dlopen` the fake bytes
+# (real Go-bridge dlopen tests are infeasible on this machine, which has no
+# built `.so`); everything under test here -- the snapshot's existence and
+# content, the `EnvConfig.bridge_library_path` actually threaded into
+# collection, and the digest comparisons -- is provable without loading a
+# real library.
+
+def _fake_build_bridge_factory(calls: list):
+    """Records every `EnvConfig` `collect_b2b_rollouts` builds a bridge
+    from, then returns an ordinary mock bridge (bridge_kind is irrelevant to
+    `MockMahjongBridge`) so collection proceeds without touching ctypes."""
+    from fh_mahjong_ai.bridge import MockMahjongBridge
+
+    def fake_build_bridge(cfg):
+        calls.append(cfg)
+        return MockMahjongBridge(cfg)
+
+    return fake_build_bridge
+
+
+def _go_bridge_run_configs(tmp_path: Path, *, iterations: int, lib_path: Path):
+    _, champion_path = _champion39(tmp_path)
+    env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path),
+                    event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model_config = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=2e-5,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    return env, model_config, champion_path, config
+
+
+def test_fresh_run_snapshots_bridge_and_threads_snapshot_into_collection(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.exists()
+    assert snapshot_path.read_bytes() == b"go-bridge-binary-v1"
+
+    # The bridge was built from a config pointing at the SNAPSHOT, never the
+    # mutable source path -- this is the config-threading half of the fix.
+    assert len(calls) == 1
+    assert calls[0].bridge_library_path == str(snapshot_path)
+    assert calls[0].bridge_library_path != str(lib_path)
+
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] == source_digest
+
+
+def test_source_swap_mid_run_neither_aborts_nor_changes_snapshot_digest(tmp_path, monkeypatch) -> None:
+    # The ABA regression itself: a swap-and-restore (or here, just a swap)
+    # of the SOURCE path between iterations must not be observable by the
+    # run at all -- it is bound to the snapshot, not the source.
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config = _go_bridge_run_configs(
+        tmp_path, iterations=2, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    real_save_checkpoint = save_checkpoint
+    state = {"n": 0}
+
+    def swapping_save_checkpoint(*args, **kwargs):
+        real_save_checkpoint(*args, **kwargs)
+        state["n"] += 1
+        if state["n"] == 1:
+            # Fires right after iteration 1's checkpoint lands, strictly
+            # between its post-update drift check and iteration 2's
+            # pre-collection drift check -- the swap happens truly mid-run.
+            lib_path.write_bytes(b"go-bridge-binary-v2-SWAPPED")
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.save_checkpoint", swapping_save_checkpoint)
+
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                        base_seed=5, train_state_every=1)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.read_bytes() == b"go-bridge-binary-v1"
+    assert all(c.bridge_library_path == str(snapshot_path) for c in calls)
+
+
+def test_mutated_snapshot_aborts_at_next_check(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config = _go_bridge_run_configs(
+        tmp_path, iterations=2, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    real_save_checkpoint = save_checkpoint
+    state = {"n": 0}
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+
+    def tampering_save_checkpoint(*args, **kwargs):
+        real_save_checkpoint(*args, **kwargs)
+        state["n"] += 1
+        if state["n"] == 1:
+            # Tamper with the snapshot itself (not the source) -- nothing
+            # legitimate ever does this, so it must abort the run.
+            snapshot_path.write_bytes(b"TAMPERED")
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.save_checkpoint", tampering_save_checkpoint)
+
+    with pytest.raises(ValueError, match="bridge library drift detected mid-run"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                 base_seed=5, train_state_every=1)
+
+
+def test_bridge_snapshot_recreated_on_resume_when_missing_and_source_intact(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    assert snapshot_path.exists()
+    snapshot_path.unlink()  # simulate the snapshot being lost
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert snapshot_path.exists()
+    assert snapshot_path.read_bytes() == b"go-bridge-binary-v1"
+
+
+def test_bridge_snapshot_missing_and_source_drifted_raises_without_override(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_path = checkpoint_dir / f".bridge-{source_digest[:16]}.so"
+    snapshot_path.unlink()
+    lib_path.write_bytes(b"go-bridge-binary-v2-REBUILT")  # source rebuilt
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="bridge library mismatch"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert not snapshot_path.exists()
+
+
+def test_bridge_snapshot_missing_and_source_drifted_allow_mismatch_rebinds(tmp_path, monkeypatch) -> None:
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    source_digest_v1 = hashlib.sha256(b"go-bridge-binary-v1").hexdigest()
+    env, model_config, champion_path, config_first = _go_bridge_run_configs(
+        tmp_path, iterations=1, lib_path=lib_path)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls: list = []
+    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    snapshot_v1_path = checkpoint_dir / f".bridge-{source_digest_v1[:16]}.so"
+    snapshot_v1_path.unlink()
+    lib_path.write_bytes(b"go-bridge-binary-v2-REBUILT")
+    source_digest_v2 = hashlib.sha256(b"go-bridge-binary-v2-REBUILT").hexdigest()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt",
+                        allow_bridge_mismatch=True)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    snapshot_v2_path = checkpoint_dir / f".bridge-{source_digest_v2[:16]}.so"
+    assert snapshot_v2_path.exists()
+    assert snapshot_v2_path.read_bytes() == b"go-bridge-binary-v2-REBUILT"
+    assert any(c.bridge_library_path == str(snapshot_v2_path) for c in calls)
+
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] == source_digest_v2
+
+
+def test_bridge_snapshot_is_a_managed_artifact(tmp_path) -> None:
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    snapshot_path = checkpoint_dir / ".bridge-0123456789abcdef.so"
+    snapshot_path.write_bytes(b"snapshot-bytes")
+
+    found = _find_fresh_run_managed_artifacts(checkpoint_dir)
+    assert snapshot_path in found

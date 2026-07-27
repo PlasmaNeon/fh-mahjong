@@ -1219,6 +1219,178 @@ def _verify_bridge_unchanged(env_config: EnvConfig, pinned_bridge_path: Optional
         warned_state["warned"] = True
 
 
+_BRIDGE_SNAPSHOT_GLOB = ".bridge-*.so"
+
+
+def _bridge_snapshot_path(checkpoint_dir: Path, sha256: str) -> Path:
+    """The content-addressed path a bridge library digest snapshots to:
+    `<checkpoint_dir>/.bridge-<sha256-prefix16>.so`. Deterministic in both
+    directions -- same content always names the same file, so concurrent
+    creators (parallel workers, a fresh run vs a resume of the same
+    lineage) converge on one path -- and the leading dot plus non-`iter_*.pt`
+    name keeps it outside `_check_artifact_lineage_or_raise`'s `iter_*.pt`
+    lineage scan by construction (see that function's docstring)."""
+    return checkpoint_dir / f".bridge-{sha256[:16]}.so"
+
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    """Write `data` to `path` via a tmp sibling + `fsync` + `os.replace`
+    (mirrors `_atomic_torch_save`'s durability pattern), so a crash mid-copy
+    never leaves a torn snapshot for a worker to `dlopen`."""
+    tmp_path = path.with_name(f".{path.name}.tmp-{uuid.uuid4().hex}")
+    with open(tmp_path, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_path, path)
+    _fsync_dir(path.parent)
+
+
+def _read_and_hash_bridge_source(source_path: str) -> tuple[bytes, str]:
+    """Read `source_path` ONCE and return `(bytes, sha256-of-those-bytes)`.
+    Every bridge-snapshot call site (fresh pin, resume recreation) routes
+    through this single function so the digest that gets pinned/compared is
+    always computed from the SAME bytes a snapshot write copies -- never
+    from a second, independent read -- which is what closes the ABA window
+    described in `_write_bridge_snapshot_if_needed`'s docstring."""
+    resolved = Path(source_path)
+    try:
+        data = resolved.read_bytes()
+    except OSError as exc:
+        raise OSError(
+            f"cannot pin Go bridge library identity: failed to read {str(resolved)!r} "
+            f"({exc.__class__.__name__} errno={exc.errno}: {exc.strerror or exc}) "
+            "-- a bridge_kind='go' run must never start (or continue) with an "
+            "unverifiable simulator identity. Fix the missing/unreadable "
+            "library path and retry."
+        ) from exc
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def _write_bridge_snapshot_if_needed(checkpoint_dir: Path, sha256: str, data: bytes) -> str:
+    """Adversarial round 20, high finding: rounds 13-19 pinned/verified a
+    sha256 of the bridge library's PATH, re-reading that path both at pin
+    time and at every drift check -- but every rollout worker (parallel
+    `spawn` workers, and the single-env path) independently `dlopen`s that
+    same MUTABLE path later, on its own schedule. A swap-and-restore of the
+    file between "hash" and a worker's later "load" defeats every check
+    that came before (ABA); parallel workers racing a rebuild can even end
+    up loading DIFFERENT binaries from each other. Hashing the path is not
+    the same as binding to the bytes that get loaded.
+
+    The fix: copy the verified library bytes ONCE into a run-owned,
+    content-addressed snapshot (`_bridge_snapshot_path`) and thread THAT
+    path into every `EnvConfig` handed to collection (see `train_b2b`'s
+    `bridge_env_config`) -- so every worker loads the immutable snapshot,
+    never the mutable source.
+
+    Idempotent by construction: if a snapshot already exists at the
+    content-addressed path for this content's digest with a matching size,
+    the copy is skipped entirely -- the common case, since every worker of
+    the same run (and a resume of the same lineage) computes the identical
+    path for identical content. Returns the snapshot's path as a string."""
+    snapshot_path = _bridge_snapshot_path(checkpoint_dir, sha256)
+    already_present = False
+    try:
+        already_present = snapshot_path.stat().st_size == len(data)
+    except OSError:
+        already_present = False
+    if not already_present:
+        _write_bytes_atomic(snapshot_path, data)
+    return str(snapshot_path)
+
+
+def _create_bridge_snapshot(checkpoint_dir: Path, source_path: str) -> tuple[str, str]:
+    """Read `source_path` once and (idempotently) copy it into this
+    checkpoint dir's content-addressed bridge snapshot. Returns
+    `(snapshot_path, sha256)`. See `_write_bridge_snapshot_if_needed` for
+    the ABA rationale; kept as a single call for call sites (resume
+    recreation) that don't need to split the read from the write."""
+    data, sha256 = _read_and_hash_bridge_source(source_path)
+    snapshot_path = _write_bridge_snapshot_if_needed(checkpoint_dir, sha256, data)
+    return snapshot_path, sha256
+
+
+def _resolve_bridge_snapshot_for_resume(env_config: EnvConfig, checkpoint_dir: Path,
+                                        pinned_bridge_sha256: str,
+                                        allow_bridge_mismatch: bool) -> tuple[str, str]:
+    """Ensure this lineage's content-addressed bridge snapshot exists for a
+    `--resume-from-state` run, returning `(snapshot_path, effective_sha256)`
+    to thread into the resumed run's bridge `EnvConfig`.
+
+    The common case: the snapshot the ORIGINAL run created for
+    `pinned_bridge_sha256` is still sitting in `checkpoint_dir` (it is a
+    managed artifact -- see `_find_fresh_run_managed_artifacts` -- so
+    nothing legitimate removes it) and is reused as-is, without touching
+    the source path at all.
+
+    Only when it is MISSING does this function fall back to the source:
+    if the source's CURRENT content still hashes to `pinned_bridge_sha256`,
+    the snapshot is recreated from it (the source was never a problem, only
+    the snapshot was lost -- e.g. `checkpoint_dir` was partially cleaned).
+    If the source has since changed (rebuilt at the same path), recreating
+    the snapshot under the OLD digest name is impossible -- those exact
+    bytes are gone -- so this raises unless the caller passed
+    `--allow-bridge-mismatch`, in which case the CURRENT source is accepted
+    as this lineage's new baseline: it is snapshotted under its own (new)
+    digest, and that new digest is returned as the effective pin going
+    forward (mirroring `--allow-bridge-mismatch`'s existing
+    attribution-breaking semantics elsewhere in this module)."""
+    snapshot_path = _bridge_snapshot_path(checkpoint_dir, pinned_bridge_sha256)
+    if snapshot_path.exists():
+        return str(snapshot_path), pinned_bridge_sha256
+    source_path = resolve_bridge_library_path(env_config.bridge_library_path)
+    try:
+        data, current_sha256 = _read_and_hash_bridge_source(str(source_path))
+    except OSError as exc:
+        raise OSError(
+            f"cannot recreate missing bridge snapshot {str(snapshot_path)!r}: {exc}"
+        ) from exc
+    if current_sha256 == pinned_bridge_sha256:
+        _write_bridge_snapshot_if_needed(checkpoint_dir, pinned_bridge_sha256, data)
+        return str(snapshot_path), pinned_bridge_sha256
+    if not allow_bridge_mismatch:
+        raise ValueError(
+            f"bridge library mismatch: snapshot {str(snapshot_path)!r} for pinned "
+            f"bridge_sha256={pinned_bridge_sha256!r} is missing, and the source "
+            f"library at {str(source_path)!r} no longer matches it (current "
+            f"digest {current_sha256!r}) -- the source was rebuilt after the "
+            "snapshot was lost, so the originally pinned bytes can no longer be "
+            "recovered. Pass --allow-bridge-mismatch to accept the current "
+            "source as this lineage's new baseline (it will be snapshotted and "
+            "pinned going forward)"
+        )
+    logger.warning(
+        "--allow-bridge-mismatch: bridge snapshot for bridge_sha256=%r was missing "
+        "and the source has since changed (current digest %r at %r) -- accepting "
+        "the CURRENT source as this lineage's new baseline",
+        pinned_bridge_sha256, current_sha256, source_path,
+    )
+    new_snapshot_path = _write_bridge_snapshot_if_needed(checkpoint_dir, current_sha256, data)
+    return new_snapshot_path, current_sha256
+
+
+def _assert_bridge_pinned(env_config: EnvConfig, pinned_bridge_sha256: Optional[str]) -> None:
+    """Adversarial round 16, high finding, belt-and-braces: a
+    `bridge_kind="go"` run must never proceed with a null pinned digest --
+    that is precisely the condition that let `_verify_bridge_unchanged`'s
+    `pinned_bridge_sha256 is None` guard silently no-op for the whole run.
+    Neither `_read_and_hash_bridge_source` nor `_resolve_bridge_snapshot_for_
+    resume` can return `None` for a `bridge_kind == "go"` config (both raise
+    instead), so this should be unreachable in practice; it exists as a hard
+    stop against a future regression re-introducing that silent path.
+    Called both immediately after each pinning path establishes
+    `pinned_bridge_sha256` (before any snapshot/artifact mutation) and once
+    more before the training loop starts, so a hypothetical bug anywhere in
+    between is still caught."""
+    if env_config.bridge_kind == "go" and pinned_bridge_sha256 is None:
+        raise RuntimeError(
+            "internal invariant violated: bridge_kind='go' but this run's "
+            "pinned bridge digest is None -- refusing to start/continue "
+            "training with an unpinned (unverifiable) simulator identity"
+        )
+
+
 def _train_b2b_config_echo(config: PPOConfig, model_config: ModelConfig, env_config: EnvConfig) -> dict:
     """Snapshot of the three config dataclasses that fully determine a
     `train_b2b` recipe, in plain-dict form so it round-trips through
@@ -1789,12 +1961,23 @@ def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     `--resume-from-state`) is included too -- it is exactly as much this run's
     own managed artifact as a live `iter_*.pt`, just temporarily parked
     pending its replacement or an end-of-run sweep; a fresh launch must cover
-    it the same way, not leave it behind as an untouched stray file."""
+    it the same way, not leave it behind as an untouched stray file.
+
+    `.bridge-*.so` (adversarial round 20, high finding) -- the content-
+    addressed bridge-library snapshot a Go-backed run pins its simulator
+    identity to (see `_create_bridge_snapshot`) -- is included too: it is
+    exactly as much this run's own managed artifact as `train_state.pt`,
+    so a fresh launch into a directory that still holds one must fail
+    closed (or, with `--fresh-run-overwrite`, move it into the backup)
+    like every other managed artifact here, rather than silently leaving a
+    stale, disconnected snapshot behind for a NEW run's digest to
+    accidentally collide with."""
     found = [checkpoint_dir / name
              for name in ("history.json", "train_state.pt", "train_state.prev.pt")
              if (checkpoint_dir / name).exists()]
     found.extend(sorted(checkpoint_dir.glob("iter_*.pt")))
     found.extend(sorted(checkpoint_dir.glob("iter_*.pt" + _STALE_CHECKPOINT_SUFFIX)))
+    found.extend(sorted(checkpoint_dir.glob(_BRIDGE_SNAPSHOT_GLOB)))
     return found
 
 
@@ -2136,6 +2319,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # boundary's baseline, not the (missing) original one.
             pinned_bridge_sha256 = saved_bridge_sha256
             pinned_bridge_path = state_payload.get("bridge_library_path")
+            # Adversarial round 20, high finding: rebind this resumed run to
+            # its content-addressed bridge snapshot the same way a fresh run
+            # does -- see `_resolve_bridge_snapshot_for_resume`'s docstring
+            # for the missing-snapshot/drifted-source recovery rules. Every
+            # collector/rollout call below uses `bridge_env_config`, never
+            # `env_config`, so the SOURCE path is never consulted again past
+            # this point.
+            if env_config.bridge_kind == "go":
+                snapshot_path, pinned_bridge_sha256 = _resolve_bridge_snapshot_for_resume(
+                    env_config, checkpoint_dir, pinned_bridge_sha256, allow_bridge_mismatch)
+                _assert_bridge_pinned(env_config, pinned_bridge_sha256)
+                bridge_env_config = replace(env_config, bridge_library_path=snapshot_path)
+            else:
+                bridge_env_config = env_config
             current_echo = _train_b2b_config_echo(config, model_config, env_config)
             _validate_resume_config_echo(current_echo, state_payload["config_echo"])
             model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
@@ -2239,7 +2436,26 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # part of round 18's transactional ordering: this can raise (e.g.
             # a "go" bridge whose library is unreadable), so it too must run
             # before any existing artifact is touched.
-            pinned_bridge_path, pinned_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+            #
+            # Adversarial round 20, high finding: this used to pin just a
+            # digest of the SOURCE path, which every worker later re-resolved
+            # and `dlopen`ed independently -- an ABA swap-and-restore of that
+            # mutable path between this hash and a worker's later load defeats
+            # the pin entirely. The source bytes are read ONCE here (never
+            # re-read after this point); the actual snapshot COPY is deferred
+            # until after the `--fresh-run-overwrite` backup-move below (so a
+            # content-identical leftover snapshot from a PRIOR run in
+            # `existing_artifacts` gets moved into the backup, not confused
+            # with this run's own snapshot-to-be), and `bridge_env_config` --
+            # bound to that snapshot, never the source -- is what every
+            # collector/rollout call below actually uses.
+            if env_config.bridge_kind == "go":
+                pinned_bridge_path = str(resolve_bridge_library_path(env_config.bridge_library_path))
+                bridge_source_bytes, pinned_bridge_sha256 = _read_and_hash_bridge_source(pinned_bridge_path)
+                _assert_bridge_pinned(env_config, pinned_bridge_sha256)
+            else:
+                pinned_bridge_path, pinned_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+                bridge_source_bytes = None
             if existing_artifacts:
                 names = ", ".join(p.name for p in existing_artifacts)
                 overwrite_backup_dir = checkpoint_dir / f".overwrite-backup-{uuid.uuid4().hex}"
@@ -2259,6 +2475,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     len(existing_artifacts), checkpoint_dir, overwrite_backup_dir, names,
                     overwrite_backup_dir, checkpoint_dir,
                 )
+            if env_config.bridge_kind == "go":
+                snapshot_path = _write_bridge_snapshot_if_needed(
+                    checkpoint_dir, pinned_bridge_sha256, bridge_source_bytes)
+                bridge_env_config = replace(env_config, bridge_library_path=snapshot_path)
+            else:
+                bridge_env_config = env_config
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
@@ -2268,26 +2490,11 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # files -- see `_find_fresh_run_managed_artifacts`) into the
             # backup subdirectory above.
             pending_stale_checkpoints: list[Path] = []
-        # Adversarial round 16, high finding, belt-and-braces: a
-        # bridge_kind="go" run must never enter the training loop with a
-        # null pinned digest -- that is precisely the condition that let
-        # `_verify_bridge_unchanged`'s `pinned_bridge_sha256 is None` guard
-        # silently no-op for the whole run. `_resolve_current_bridge_
-        # fingerprint` itself no longer returns `(None, None)` for
-        # `bridge_kind == "go"` (it raises instead), so this should be
-        # unreachable in practice; it exists as a hard stop against a future
-        # regression re-introducing that silent path. Round 19, high finding:
-        # the legacy-unpinned-resume carve-out that used to exempt this check
-        # is gone -- that path now either raises (no
-        # `--accept-legacy-unpinned-state`) or re-pins to the CURRENT digest
-        # (with the flag), so it can never reach here with a null pin either;
-        # there is no longer any legitimate exception to this invariant.
-        if env_config.bridge_kind == "go" and pinned_bridge_sha256 is None:
-            raise RuntimeError(
-                "internal invariant violated: bridge_kind='go' but this run's "
-                "pinned bridge digest is None -- refusing to start/continue "
-                "training with an unpinned (unverifiable) simulator identity"
-            )
+        # Belt-and-braces final check before the training loop starts -- see
+        # `_assert_bridge_pinned`'s docstring; both branches above already
+        # call it right after establishing `pinned_bridge_sha256`, so this
+        # should be unreachable in practice.
+        _assert_bridge_pinned(env_config, pinned_bridge_sha256)
         _write_lock_owner(lock_file, run_id=run_id)
         model.train()
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
@@ -2300,7 +2507,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             random.setstate(state_payload["python_rng"])
         collector = None
         if config.num_workers > 1:
-            collector = ParallelB2bCollector(env_config, model_config, config, config.num_workers)
+            # Adversarial round 20, high finding: threads the SNAPSHOT-bound
+            # env_config into every worker, never the mutable source path --
+            # see `bridge_env_config`'s construction above.
+            collector = ParallelB2bCollector(bridge_env_config, model_config, config, config.num_workers)
             collector.start()
         # Adversarial round 15, high finding: shared across every
         # `_verify_bridge_unchanged` call this run so a persistently-allowed
@@ -2315,14 +2525,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 # (or 0, which never checks at all) a drifted binary could
                 # collect, train, and publish several iterations' artifacts
                 # before the next periodic save finally caught it.
-                _verify_bridge_unchanged(env_config, pinned_bridge_path, pinned_bridge_sha256,
+                _verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
                                          allow_bridge_mismatch, bridge_drift_warned)
                 iter_seed = base_seed + iteration * config.matches_per_iter
                 if collector is not None:
                     state = cpu_state_snapshot(model)
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
-                    batch = collect_b2b_rollouts(env_config, model, config, base_seed=iter_seed)
+                    batch = collect_b2b_rollouts(bridge_env_config, model, config, base_seed=iter_seed)
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
@@ -2366,7 +2576,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 # iteration's own collection/update must still block that
                 # iteration's artifacts from being published, not just the
                 # NEXT iteration's.
-                _verify_bridge_unchanged(env_config, pinned_bridge_path, pinned_bridge_sha256,
+                _verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
                                          allow_bridge_mismatch, bridge_drift_warned)
                 save_checkpoint(
                     checkpoint_dir / f"iter_{iteration:03d}.pt", model,
