@@ -102,6 +102,20 @@ class PolicyValueNet(nn.Module):
         )
         self.action_risk_probability_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
         self.action_risk_severity_head = nn.Linear(model_config.trunk_hidden_dim, env_config.action_space_size)
+        # deep16-rezero: constructed last so that, at growth_blocks=0 (empty Sequential,
+        # zero new state_dict keys), every module above consumes RNG identically to
+        # before this feature existed. Applied functionally right after the legacy
+        # residual stack in encode() below.
+        self.growth = nn.Sequential(
+            *[
+                ReZeroResidualBlock(
+                    model_config.channels,
+                    channel_attention=model_config.channel_attention,
+                    attention_ratio=model_config.channel_attention_ratio,
+                )
+                for _ in range(model_config.growth_blocks)
+            ]
+        )
 
     @property
     def wants_events(self) -> bool:
@@ -119,7 +133,8 @@ class PolicyValueNet(nn.Module):
     def encode(self, planes: Tensor, scalars: Tensor, events: Tensor | None = None,
                event_lengths: Tensor | None = None) -> Tensor:
         policy_planes = planes[:, : self.policy_channels]
-        plane_features = self.plane_head(self.plane_projection(self.plane_blocks(self.plane_stem(policy_planes))))
+        plane_trunk = self.growth(self.plane_blocks(self.plane_stem(policy_planes)))
+        plane_features = self.plane_head(self.plane_projection(plane_trunk))
         expected_scalars = self.scalar_encoder[0].in_features
         if scalars.shape[1] < expected_scalars:
             scalars = torch.nn.functional.pad(scalars, (0, expected_scalars - scalars.shape[1]))
@@ -235,6 +250,28 @@ class ResidualBlock(nn.Module):
 
     def forward(self, inputs: Tensor) -> Tensor:
         return torch.nn.functional.gelu(inputs + self.channel_attention(self.layers(inputs)))
+
+
+class ReZeroResidualBlock(nn.Module):
+    """ReZero-style residual block: x + alpha * attn(F(x)), alpha a learned scalar init to 0.
+
+    No trailing activation (unlike ResidualBlock): with alpha starting at exactly 0,
+    this makes the block an exact identity at init regardless of F's random weights,
+    so stacking these for capacity growth is dormant until training moves alpha.
+    """
+
+    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16) -> None:
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+        )
+        self.channel_attention = ChannelAttention2d(channels, attention_ratio) if channel_attention else nn.Identity()
+        self.alpha = nn.Parameter(torch.zeros(()))
+
+    def forward(self, inputs: Tensor) -> Tensor:
+        return inputs + self.alpha * self.channel_attention(self.layers(inputs))
 
 
 class DuelingQHead(nn.Module):

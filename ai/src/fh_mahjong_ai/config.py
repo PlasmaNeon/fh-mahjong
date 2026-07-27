@@ -59,6 +59,8 @@ class ModelConfig:
     event_hidden_dim: int = 128
     privileged_critic: bool = False
     aux_heads: bool = False
+    # --- deep16-rezero capacity growth (default 0 => state_dict identical to today) ---
+    growth_blocks: int = 0
 
     # Round 20, Finding 1a: `infer_model_config` (model.py) takes
     # `metadata["model_config"]` from a checkpoint as authoritative and
@@ -96,6 +98,7 @@ class ModelConfig:
         )
         self._validate_bounded_int("event_embed_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("event_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("growth_blocks", minimum=0, maximum=self.MAX_RESIDUAL_BLOCKS)
         # Round 16, Finding 2: metadata-authoritative checkpoint loading
         # (model.py's infer_model_config) passes a checkpoint-supplied
         # event_window straight into this constructor. GRU weights are
