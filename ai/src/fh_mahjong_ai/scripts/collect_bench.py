@@ -26,20 +26,22 @@ batch is hashed into one digest; if every worker count in `--workers`
 produces the same digest, the harness proves fan-out doesn't change results.
 
 Worker fan-out here uses `multiprocessing`'s **fork** start method, not the
-spawn context `ParallelB2bCollector` uses for real training: `torch.manual_seed`
-sets PROCESS-global RNG state, so two threads (or two spawned workers racing
-inside one interpreter) calling it concurrently would race on the same
-generator — the collector's per-match determinism only holds when each
-worker owns an independent process. Fork gives each worker its own process
-(so its own independent torch RNG — no races) while still inheriting the
-parent's already-imported, possibly test-monkeypatched module state, which
-plain `spawn` (a fresh interpreter re-importing every module from scratch)
-would not: a test that patches `collect_b2b_rollouts` to inject a failure
-would silently have no effect on spawned children. Fork-after-threads is
-generally unsafe with PyTorch's internal thread pool, so the parent stays
-single-threaded (`torch.set_num_threads(1)`) and never runs a forward pass
-before forking (model warm-start here only copies tensors, no `model(...)`
-call) — the same reason each worker also pins its own thread count to 1.
+spawn context `ParallelB2bCollector` uses for real training. The reason is
+purely about state inheritance, not RNG safety (each forked/spawned worker
+already gets its own independent process and thus its own independent torch
+RNG either way): `spawn` starts a fresh interpreter that re-imports every
+module from scratch, which drops any test monkeypatch state applied in the
+parent — a test that patches `collect_b2b_rollouts` to inject a failure
+would silently have no effect on spawned children. `fork` instead inherits
+the parent's already-imported (possibly monkeypatched) module state via
+copy-on-write memory, so this bench's own tests can patch collection
+behavior and see it take effect in the worker. It is also simply simpler:
+no state_dict re-serialization is needed to hand the warm-started model to
+each worker. Fork-after-threads is generally unsafe with PyTorch's internal
+thread pool, so the parent stays single-threaded (`torch.set_num_threads(1)`)
+and never runs a forward pass before forking (model warm-start here only
+copies tensors, no `model(...)` call) — the same reason each worker also
+pins its own thread count to 1.
 """
 from __future__ import annotations
 
@@ -47,6 +49,7 @@ import argparse
 import hashlib
 import json
 import multiprocessing as mp
+import queue
 import sys
 import time
 import traceback
@@ -63,6 +66,13 @@ from ..oracle import _b2b_model_env_config, build_b2b_model, collect_b2b_rollout
 from ..parallel_rollouts import _split_counts
 from ..ppo import PPOConfig, concat_rollout_batches, cpu_state_snapshot
 from .model_config_args import add_model_config_args, model_config_from_args
+
+# Per-worker timeout (seconds) for collecting a forked worker's result.
+# This is generous relative to a real collection chunk's runtime; it exists
+# only to fail loudly on the documented fork failure mode (e.g. a forked
+# child deadlocking or dying without reaching the except-block that reports
+# errors on `result_q`) instead of hanging the bench forever.
+_WORKER_RESULT_TIMEOUT_SECONDS = 600
 
 
 def _build_model(env_config: EnvConfig, model_config, champion: Path, growth_blocks: int, device: str):
@@ -131,13 +141,25 @@ def run_collection(env_config: EnvConfig, model, ppo_config: PPOConfig,
             proc.start()
             procs.append(proc)
         results: dict[int, object] = {}
+        pending = {worker_id for worker_id in range(len(blocks))}
         for _ in procs:
-            worker_id, batch, err = result_q.get()
+            try:
+                worker_id, batch, err = result_q.get(timeout=_WORKER_RESULT_TIMEOUT_SECONDS)
+            except queue.Empty:
+                for p in procs:
+                    p.terminate()
+                raise RuntimeError(
+                    f"collect-bench: timed out after {_WORKER_RESULT_TIMEOUT_SECONDS}s waiting "
+                    f"for worker result(s); worker(s) still pending: {sorted(pending)} "
+                    f"(this is the documented fork failure mode — a forked child hung or died "
+                    f"without reporting to result_q)"
+                )
             if err is not None:
                 for p in procs:
                     p.terminate()
                 raise RuntimeError(f"collect-bench worker {worker_id} failed:\n{err}")
             results[worker_id] = batch
+            pending.discard(worker_id)
         for p in procs:
             p.join(timeout=30)
         batches = [results[i] for i in range(len(blocks))]
@@ -148,18 +170,32 @@ def run_collection(env_config: EnvConfig, model, ppo_config: PPOConfig,
 
 def _digest_batch(base_seed: int, matches: int, batch) -> str:
     """sha256 over the canonical concatenation of (match seed context,
-    obs-row bytes, action ids, rewards, dealin labels, rank labels,
-    round-outcome telemetry). Row order in `batch` is already canonical by
-    match index (see `run_collection`'s docstring), so no further per-match
-    sorting is needed — hashing the whole concatenation in place respects
-    match-index order for any worker count."""
+    obs-row bytes for ALL FOUR per-row observation arrays — planes, scalars,
+    action_mask, events/event_lengths — action ids, rewards, dealin labels,
+    rank labels, round-outcome telemetry). Row order in `batch` is already
+    canonical by match index (see `run_collection`'s docstring), so no
+    further per-match sorting is needed — hashing the whole concatenation in
+    place respects match-index order for any worker count.
+
+    action_mask, events, and event_lengths are included alongside planes/
+    scalars: a fan-out bug isolated to mask or event handling (e.g. a worker
+    reusing another worker's event-window buffer, or a stale mask left over
+    from a previous match) would leave planes/scalars/actions/rewards
+    untouched and pass silently if those two arrays were the only ones
+    hashed.
+    """
     h = hashlib.sha256()
     h.update(int(base_seed).to_bytes(8, "big", signed=True))
     h.update(int(matches).to_bytes(8, "big", signed=True))
     h.update(np.ascontiguousarray(batch.planes, dtype=np.float32).tobytes())
     h.update(np.ascontiguousarray(batch.scalars, dtype=np.float32).tobytes())
+    h.update(np.ascontiguousarray(batch.action_mask, dtype=np.bool_).tobytes())
     h.update(np.ascontiguousarray(batch.actions, dtype=np.int64).tobytes())
     h.update(np.ascontiguousarray(batch.rewards, dtype=np.float32).tobytes())
+    events = batch.events if batch.events is not None else np.zeros(0, dtype=np.uint32)
+    event_lengths = batch.event_lengths if batch.event_lengths is not None else np.zeros(0, dtype=np.int32)
+    h.update(np.ascontiguousarray(events, dtype=np.uint32).tobytes())
+    h.update(np.ascontiguousarray(event_lengths, dtype=np.int32).tobytes())
     dealin = batch.dealin_labels if batch.dealin_labels is not None else np.zeros(0, dtype=np.float32)
     rank = batch.rank_labels if batch.rank_labels is not None else np.zeros(0, dtype=np.int64)
     h.update(np.ascontiguousarray(dealin, dtype=np.float32).tobytes())
@@ -182,14 +218,27 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
                            match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            oracle_observation=True, event_history_window=event_window)
     warm_started, effective_model_config = _build_model(env_config, model_config, champion, growth_blocks, device)
-    # Rollout collection is always CPU-bound (mirrors `_b2b_worker_loop`,
-    # which never `.to(device)`s its model) regardless of `--device` — a
-    # fresh CPU copy of the warm-started weights, loaded via a snapshot
-    # rather than reusing `warm_started` directly, keeps the collection model
-    # off any CUDA device the champion may have been warm-started on. This
-    # ALSO matters for fork safety below: forking after a CUDA context has
-    # been initialized in the parent is broken, so the parent must never run
-    # a forward pass (or otherwise touch CUDA) before the worker fork.
+    # Rollout collection here is always CPU-bound (mirrors `_b2b_worker_loop`,
+    # which hardcodes `device="cpu"` for every chunk it collects) regardless
+    # of `--device` — a fresh CPU copy of the warm-started weights, loaded via
+    # a snapshot rather than reusing `warm_started` directly, keeps the
+    # collection model off any CUDA device the champion may have been
+    # warm-started on. This ALSO matters for fork safety below: forking
+    # after a CUDA context has been initialized in the parent is broken, so
+    # the parent must never run a forward pass (or otherwise touch CUDA)
+    # before the worker fork.
+    #
+    # IMPORTANT SCOPE NOTE: this bench therefore matches ONLY the MULTI-
+    # WORKER production path (`ParallelB2bCollector` / `_b2b_worker_loop`,
+    # which hardcodes CPU for every worker). `train_b2b`'s num_workers<=1
+    # path calls `collect_b2b_rollouts` directly with the *unmodified*
+    # `PPOConfig` and therefore collects at `config.device` — e.g. on GPU,
+    # if the run was launched with `--device cuda`. This bench does not
+    # cover that single-worker GPU path at all; it only answers "does
+    # fan-out across N CPU workers change results", which is the actual
+    # decision this bench exists to gate (choosing --num-workers for a
+    # multi-worker lap). A single-worker cuda run is out of scope here and
+    # that is acceptable.
     model = PolicyValueNet(_b2b_model_env_config(env_config), effective_model_config)
     model.load_state_dict(cpu_state_snapshot(warm_started))
     model.eval()
@@ -231,7 +280,12 @@ def main() -> None:
     p.add_argument("--max-steps-per-episode", type=int, default=4000)
     p.add_argument("--bridge-kind", choices=("go", "mock"), default="go")
     p.add_argument("--bridge-lib", type=str, default=None)
-    p.add_argument("--device", type=str, default="cpu")
+    p.add_argument("--device", type=str, default="cpu",
+                   help="device to warm-start the model on before snapshotting to CPU for "
+                        "collection; collection itself is always CPU-bound (this bench only "
+                        "covers the multi-worker production path, which hardcodes CPU per "
+                        "worker — it does NOT cover train_b2b's num_workers<=1 direct path, "
+                        "which collects at this config's device, e.g. GPU)")
     p.add_argument("--event-window", type=int, default=128)
     p.add_argument("--json", type=Path, default=None, help="write the full report as JSON")
     add_model_config_args(p)
