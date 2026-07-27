@@ -179,6 +179,26 @@ def test_grow_b2b_model_raises_on_already_grown_anchor(tmp_path) -> None:
         grow_b2b_model(anchor_path, growth_blocks=3)
 
 
+def test_grow_b2b_model_raises_on_anchor_with_undeclared_growth_tensors(tmp_path) -> None:
+    # Adversarial round 13, medium finding: an anchor whose STATE DICT
+    # already carries growth.*.alpha tensors (nonzero alpha, i.e. genuinely
+    # trained growth) but whose metadata LIES about growth_blocks==0 must
+    # still be rejected -- trusting the metadata claim instead of the state
+    # dict would load those tensors into a "fresh" growth run undetected,
+    # breaking the step-0 warm-start parity invariant.
+    anchor_config = _b2b_config(growth_blocks=1)
+    grown_anchor = PolicyValueNet(_ENV39, anchor_config)
+    with torch.no_grad():
+        grown_anchor.growth[0].alpha.fill_(0.7)
+    lying_metadata = model_config_metadata(anchor_config)
+    lying_metadata["growth_blocks"] = 0
+    anchor_path = tmp_path / "lying_anchor.pt"
+    save_checkpoint(anchor_path, grown_anchor, metadata={"model_config": lying_metadata})
+
+    with pytest.raises(RuntimeError, match="growth block"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
 def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
     anchor_config = _b2b_config()
     lying_metadata = model_config_metadata(anchor_config)
@@ -342,6 +362,17 @@ def test_train_b2b_cli_help_shows_growth_blocks_flag() -> None:
     assert "--model-growth-blocks" in result.stdout
 
 
+def test_train_b2b_cli_help_shows_allow_bridge_mismatch_flag() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b", "--help"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "--allow-bridge-mismatch" in result.stdout
+
+
 def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
     # C1 (final review): the library-level resume tests above (e.g.
     # test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correct_config)
@@ -495,6 +526,154 @@ def test_resume_from_state_raises_on_different_base_seed(tmp_path) -> None:
         train_b2b(
             env, model_config, champion_path, checkpoint_dir, config_resumed,
             base_seed=6, resume_from_state=state_path)
+
+
+# --- Adversarial round 13, high finding: resume pins the bridge library ---
+
+def test_resolve_current_bridge_fingerprint_mock_bridge_is_none() -> None:
+    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+
+    env = EnvConfig(bridge_kind="mock")
+    assert _resolve_current_bridge_fingerprint(env) == (None, None)
+
+
+def test_resolve_current_bridge_fingerprint_changes_when_library_is_rebuilt(tmp_path) -> None:
+    # The digest must track the ACTUAL bytes at the resolved path, so a
+    # rebuild of the .so at the SAME path (config unchanged) is detectable.
+    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path))
+
+    resolved_path, digest_v1 = _resolve_current_bridge_fingerprint(env)
+    assert resolved_path == str(lib_path)
+    assert digest_v1 is not None
+
+    lib_path.write_bytes(b"go-bridge-binary-v2-REBUILT")
+    _, digest_v2 = _resolve_current_bridge_fingerprint(env)
+    assert digest_v2 is not None
+    assert digest_v2 != digest_v1
+
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    _, digest_v1_again = _resolve_current_bridge_fingerprint(env)
+    assert digest_v1_again == digest_v1
+
+
+def test_resume_raises_on_bridge_library_rebuild(tmp_path, monkeypatch) -> None:
+    # Simulates the adversarial scenario without needing a real .so: the
+    # actual mock-bridge rollout collection is unaffected (bridge_kind stays
+    # "mock" throughout), only the resolved fingerprint that train_b2b
+    # persists/checks is patched to stand in for a "go" bridge whose binary
+    # changed between the two launches -- config_echo alone (bridge_kind,
+    # bridge_library_path) would NOT catch this, since neither changes.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
+    )
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] == "sha-A"
+    assert state["bridge_library_path"] == "/fake/libfh_mahjong_bridge.so"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
+    )
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match=r"bridge library mismatch.*sha-A.*sha-B"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+
+def test_resume_force_history_reset_does_not_override_bridge_mismatch(tmp_path, monkeypatch) -> None:
+    # --force-history-reset is a DIFFERENT override (artifact-lineage only);
+    # a different simulator binary is never safe to resume under regardless.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
+    )
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
+    )
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="bridge library mismatch"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt",
+                 force_history_reset=True)
+
+
+def test_resume_proceeds_when_bridge_library_identical(tmp_path, monkeypatch) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
+    )
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert [row["iteration"] for row in history] == [1, 2]
+
+
+def test_resume_mock_bridge_round_trip_unaffected(tmp_path) -> None:
+    # No monkeypatching at all: an ordinary mock-bridge run's saved
+    # bridge_sha256 is None, and None == None passes the resume check
+    # exactly as before this fix.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] is None
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+    assert [row["iteration"] for row in history] == [1, 2]
+
+
+def test_resume_allow_bridge_mismatch_overrides_with_warning(tmp_path, monkeypatch, caplog) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
+    )
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
+    )
+    config_resumed = replace(config_first, iterations=2)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt",
+                            allow_bridge_mismatch=True)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert any("bridge" in record.message.lower() and "sha-a" in record.message.lower()
+               for record in caplog.records)
 
 
 def test_resume_with_corrupt_history_succeeds_and_warns(tmp_path, caplog) -> None:

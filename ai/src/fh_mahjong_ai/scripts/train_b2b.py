@@ -78,6 +78,18 @@ def main() -> None:
                         "ONLY when you have manually confirmed checkpoint_dir holds this "
                         "run's own checkpoints, never to force a resume into a directory "
                         "that might belong to a different run")
+    p.add_argument("--allow-bridge-mismatch", action="store_true", default=False,
+                   help="DANGEROUS, ATTRIBUTION-BREAKING: --resume-from-state normally "
+                        "refuses to resume when the Go simulator library's content "
+                        "(sha256) differs from the one train_state.pt was saved under -- "
+                        "e.g. the .so was rebuilt at the same path between runs, which a "
+                        "different simulator can never make safe to ignore by default. "
+                        "This is a SEPARATE check from --force-history-reset (which does "
+                        "NOT cover it) named after fh-mj-compare's own "
+                        "--allow-bridge-mismatch flag. Use ONLY when you have "
+                        "deliberately confirmed the new binary is an acceptable "
+                        "substitution and accept that attribution across the resume "
+                        "boundary is no longer guaranteed")
     p.add_argument("--fresh-run-overwrite", action="store_true", default=False,
                    help="DANGEROUS: a fresh launch (no --resume-from-state) into a "
                         "checkpoint_dir that already holds a prior run's managed "
@@ -113,7 +125,8 @@ def main() -> None:
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
              growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
              resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset,
-             fresh_run_overwrite=args.fresh_run_overwrite)
+             fresh_run_overwrite=args.fresh_run_overwrite,
+             allow_bridge_mismatch=args.allow_bridge_mismatch)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ warm-started from the 39-channel anchor."""
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import math
@@ -21,10 +22,10 @@ import numpy as np
 import torch
 
 from .ach import ach_update
-from .bridge import build_bridge
+from .bridge import build_bridge, resolve_bridge_library_path
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
-from .model import PolicyValueNet, _reconstruct_env_config
+from .model import PolicyValueNet, _derive_growth_blocks, _reconstruct_env_config
 from .parallel_rollouts import _split_counts
 from .ppo import (
     _fsync_dir,
@@ -664,9 +665,19 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
             "recoverable from tensor shapes alone)"
         )
     anchor_config = ModelConfig(**model_config_meta)
-    if anchor_config.growth_blocks != 0:
+    # Adversarial round 13, medium finding: trust the STATE DICT, not the
+    # metadata's growth_blocks claim -- an anchor whose metadata lies about
+    # growth_blocks==0 while its tensors actually carry growth.*.alpha keys
+    # (nonzero alphas) would otherwise load those tensors into "growth_blocks=0"
+    # slots undetected, silently breaking the step-0 warm-start parity this
+    # function exists to guarantee. `_derive_growth_blocks` counts alpha keys
+    # directly off the state dict and fails closed on a malformed/tampered
+    # index set, so this check cannot be fooled by metadata alone.
+    derived_growth_blocks = _derive_growth_blocks(payload["model"])
+    if derived_growth_blocks != 0:
         raise RuntimeError(
-            f"anchor checkpoint is already grown (growth_blocks={anchor_config.growth_blocks}); "
+            f"anchor checkpoint already contains {derived_growth_blocks} growth block(s) "
+            f"in its state dict (metadata claims growth_blocks={anchor_config.growth_blocks}); "
             "growing an already-grown net is out of scope"
         )
     grown_config = replace(anchor_config, growth_blocks=growth_blocks)
@@ -1080,6 +1091,33 @@ class ParallelB2bCollector:
 
 
 _RESUME_MISSING = object()
+
+
+def _resolve_current_bridge_fingerprint(env_config: EnvConfig) -> tuple[Optional[str], Optional[str]]:
+    """(resolved_path, sha256) of the Go bridge library `env_config`'s CURRENT
+    resolution points at, mirroring `fh-mj-compare`'s provenance digest
+    (`evaluate._bridge_library_digest`) so a `--resume-from-state` run can
+    pin the identical simulator binary a fresh launch would load, not just
+    the `bridge_kind`/`bridge_library_path` *configuration* that
+    `config_echo` already records (adversarial round 13, high finding:
+    rebuilding the .so at the same path leaves `config_echo` byte-identical
+    while the actual simulator changes under it).
+
+    `bridge_kind != "go"` (e.g. the mock bridge used throughout tests) has
+    no library to pin -- both are `None`, and `None == None` at the resume
+    check below is a pass, matching `evaluate.py`'s existing convention. An
+    unreadable path also returns `(None, None)` rather than raising here --
+    `resolve_bridge_library_path` mirrors evaluate.py's own tolerance, and
+    the resume check below still fires correctly on the *asymmetric* case
+    (one side has a real digest, the other doesn't)."""
+    if env_config.bridge_kind != "go":
+        return None, None
+    try:
+        path = resolve_bridge_library_path(env_config.bridge_library_path)
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        return str(path), digest
+    except OSError:
+        return None, None
 
 
 def _train_b2b_config_echo(config: PPOConfig, model_config: ModelConfig, env_config: EnvConfig) -> dict:
@@ -1507,6 +1545,11 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
                       env_config: EnvConfig, base_seed: int, run_id: Optional[str]) -> None:
+    # Adversarial round 13, high finding: pin the ACTUAL simulator binary,
+    # not just the bridge_kind/bridge_library_path *configuration* that
+    # config_echo's env_config section already records -- see
+    # `_resolve_current_bridge_fingerprint`'s docstring.
+    bridge_library_path, bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -1518,6 +1561,8 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
         "config_echo": _train_b2b_config_echo(config, model_config, env_config),
         "base_seed": base_seed,
         "run_id": run_id,
+        "bridge_sha256": bridge_sha256,
+        "bridge_library_path": bridge_library_path,
     }
     _atomic_torch_save(payload, path)
 
@@ -1630,7 +1675,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
              growth_blocks: int = 0, train_state_every: int = 5,
              resume_from_state: Optional[Path] = None,
              force_history_reset: bool = False,
-             fresh_run_overwrite: bool = False) -> list[dict]:
+             fresh_run_overwrite: bool = False,
+             allow_bridge_mismatch: bool = False) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -1697,6 +1743,24 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     this unconditional every-resume scan, never the base_seed/config_echo
     checks above.
 
+    A resume also pins the Go simulator library itself, not merely the
+    bridge_kind/bridge_library_path *configuration* `config_echo` already
+    covers: `train_state.pt["bridge_sha256"]` records the sha256 of the
+    library `env_config` resolved to AT SAVE TIME (see
+    `_resolve_current_bridge_fingerprint`), and every resume recomputes it
+    from the CURRENT resolution and raises, naming both digests, on any
+    mismatch -- a rebuild of the .so at the same path leaves `config_echo`
+    byte-identical while silently mixing simulator versions across the
+    resume boundary (adversarial round 13, high finding). This is never
+    safe -- a different simulator changes the very rules the model was
+    trained under -- so `force_history_reset` does NOT cover it. The
+    dedicated, explicitly attribution-breaking override is
+    `allow_bridge_mismatch=True` (the CLI's `--allow-bridge-mismatch`,
+    named after `fh-mj-compare`'s own `--allow-bridge-mismatch`), which
+    proceeds anyway but logs a warning naming both digests. Mock-bridge runs
+    (`bridge_kind != "go"`) have no library to pin: both digests are
+    `None`, which compares equal and always passes.
+
     A fresh (non-`resume_from_state`) call fails closed if `checkpoint_dir`
     already contains ANY managed artifact -- `history.json`,
     `train_state.pt`, or an `iter_*.pt` checkpoint (adversarial round 6,
@@ -1732,6 +1796,36 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     f"state file has {saved_base_seed!r}, requested base_seed is "
                     f"{base_seed!r} — resuming with a different seed schedule is "
                     "not supported (pass the base_seed the original run used)"
+                )
+            # Adversarial round 13, high finding: config_echo's env_config
+            # section only records the bridge_kind/bridge_library_path
+            # *configuration*, which stays byte-identical across a rebuild of
+            # the .so at the same path -- pin the ACTUAL simulator binary via
+            # its content digest instead, recomputed from the CURRENT
+            # resolution (never trusted from the state file, which is exactly
+            # what a rebuild-between-runs would stale-read).
+            saved_bridge_sha256 = state_payload.get("bridge_sha256")
+            current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+            if current_bridge_sha256 != saved_bridge_sha256:
+                if not allow_bridge_mismatch:
+                    raise ValueError(
+                        "--resume-from-state bridge library mismatch: state file was "
+                        f"saved under bridge_sha256={saved_bridge_sha256!r}, the "
+                        f"CURRENT bridge resolution ({current_bridge_path!r}) hashes "
+                        f"to bridge_sha256={current_bridge_sha256!r} -- the Go "
+                        "simulator was rebuilt (or otherwise changed) since this run "
+                        "started. Resuming under a different simulator binary is "
+                        "never safe -- --force-history-reset does NOT override this "
+                        "check. If you have deliberately confirmed the new binary is "
+                        "an acceptable, attribution-breaking substitution, pass "
+                        "--allow-bridge-mismatch to override"
+                    )
+                logger.warning(
+                    "--allow-bridge-mismatch: resuming despite a bridge library "
+                    "mismatch (state file bridge_sha256=%r, current bridge_sha256=%r "
+                    "at %r) -- attribution across this resume boundary is no longer "
+                    "guaranteed",
+                    saved_bridge_sha256, current_bridge_sha256, current_bridge_path,
                 )
             current_echo = _train_b2b_config_echo(config, model_config, env_config)
             _validate_resume_config_echo(current_echo, state_payload["config_echo"])
