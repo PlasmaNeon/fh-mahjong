@@ -1177,6 +1177,25 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
     _atomic_torch_save(payload, path)
 
 
+def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
+    """Mean absolute value of every `ReZeroResidualBlock.alpha` in
+    `model.growth`, or `None` for a growth-free model (`growth_blocks == 0`,
+    an empty `nn.Sequential`).
+
+    Adversarial round 2, Finding 1: `deep16-rezero`'s runbook null-
+    interpretation rule ("alphas hugging 0 = protocol null signal") depends
+    on these magnitudes actually being recorded somewhere — this feeds
+    `train_b2b`'s per-iteration history rows. Returning `None` (rather than
+    0.0) for growth-free runs lets callers distinguish "no growth blocks to
+    report on" from "growth blocks present but still at/near their zero
+    init" — `train_b2b` below omits the history key entirely in the `None`
+    case rather than recording a misleading 0.0."""
+    alphas = [block.alpha.detach().abs().item() for block in model.growth]
+    if not alphas:
+        return None
+    return float(sum(alphas) / len(alphas))
+
+
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
              growth_blocks: int = 0, train_state_every: int = 5,
@@ -1295,6 +1314,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
             if batch.rank_labels is not None:
                 metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+            # Adversarial round 2, Finding 1: record growth-block ReZero alpha
+            # magnitudes so the runbook's null-interpretation rule ("alphas
+            # hugging 0 = protocol null signal") has telemetry to check
+            # against. Omitted (not 0.0) for growth-free runs -- see
+            # `_growth_alpha_mean_abs`'s docstring.
+            growth_alpha_mean_abs = _growth_alpha_mean_abs(model)
+            if growth_alpha_mean_abs is not None:
+                metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
             metrics["truncated_matches"] = int(batch.truncated_matches)
             matches_total = max(1, int(config.matches_per_iter))
             truncation_rate = batch.truncated_matches / matches_total

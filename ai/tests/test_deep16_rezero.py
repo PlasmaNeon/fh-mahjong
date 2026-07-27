@@ -272,6 +272,55 @@ def test_train_b2b_growth_blocks_smoke_saves_metadata(tmp_path) -> None:
     assert saved["metadata"]["model_config"]["growth_blocks"] == 2
 
 
+def test_growth_alpha_mean_abs_reflects_alpha_values() -> None:
+    # Adversarial round 2, Finding 1: the null-interpretation rule ("alphas
+    # hugging 0 = protocol null signal") needs the actual alpha magnitudes in
+    # telemetry, not just their existence. Unit-test the pure helper directly
+    # so this doesn't depend on how much a PPO step happens to move alpha.
+    from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
+
+    model_config = _b2b_config(growth_blocks=2)
+    model = PolicyValueNet(_ENV39, model_config)
+    assert _growth_alpha_mean_abs(model) == pytest.approx(0.0)  # ReZero alphas init to 0
+
+    with torch.no_grad():
+        model.growth[0].alpha.fill_(0.5)
+    # mean(|0.5|, |0.0|) over the two growth blocks.
+    assert _growth_alpha_mean_abs(model) == pytest.approx(0.25)
+
+
+def test_growth_alpha_mean_abs_none_without_growth_blocks() -> None:
+    from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
+
+    model_config = _b2b_config()  # growth_blocks=0 (default)
+    model = PolicyValueNet(_ENV39, model_config)
+    assert _growth_alpha_mean_abs(model) is None
+
+
+def test_train_b2b_history_includes_growth_alpha_telemetry(tmp_path) -> None:
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, anchor_config, anchor_path, tmp_path / "ckpt", config,
+                        base_seed=5, growth_blocks=2)
+
+    assert "growth_alpha_mean_abs" in history[0]
+    assert isinstance(history[0]["growth_alpha_mean_abs"], float)
+
+
+def test_train_b2b_history_omits_growth_alpha_telemetry_without_growth_blocks(tmp_path) -> None:
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+
+    history = train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config, base_seed=5)
+
+    assert "growth_alpha_mean_abs" not in history[0]
+
+
 def test_train_b2b_cli_help_shows_growth_blocks_flag() -> None:
     import subprocess
     import sys

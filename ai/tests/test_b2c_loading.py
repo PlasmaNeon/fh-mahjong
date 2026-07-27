@@ -530,3 +530,58 @@ def test_growth_blocks_zero_round_trips_with_no_growth_keys(tmp_path):
     saved = torch.load(path, map_location="cpu")
     reconstructed = infer_model_config(saved["model"], saved["metadata"])
     assert reconstructed.growth_blocks == 0
+
+
+# --- Adversarial round 2, Finding 2: residual_blocks=0 + growth_blocks>0 +
+# channel_attention=True checkpoints. `_shape_inferred_fields` only ever
+# looked for the attention submodule under `plane_blocks.0.`; when there are
+# no plane_blocks at all, attention (which really lives under `growth.0.`)
+# derives as False and `_verify_metadata_matches_shapes` then rejects the
+# checkpoint's own honest metadata. The fix must derive attention presence
+# from the first EFFECTIVE block (`plane_blocks.0` when residual_blocks>0,
+# else `growth.0`).
+
+def _residual_free_grown_config(**overrides) -> ModelConfig:
+    fields = dict(_SMALL, residual_blocks=0, growth_blocks=2, channel_attention=True)
+    fields.update(overrides)
+    return ModelConfig(**fields)
+
+
+def test_infer_model_config_round_trips_residual_free_grown_attention_checkpoint(tmp_path):
+    model_config = _residual_free_grown_config()
+    path = _save_grown_checkpoint(tmp_path, model_config)
+    saved = torch.load(path, map_location="cpu")
+
+    reconstructed = infer_model_config(saved["model"], saved["metadata"])
+
+    assert reconstructed == model_config
+    assert reconstructed.channel_attention is True
+    assert reconstructed.residual_blocks == 0
+    assert reconstructed.growth_blocks == 2
+
+
+def test_from_checkpoint_loads_residual_free_grown_attention_checkpoint(tmp_path):
+    model_config = _residual_free_grown_config()
+    path = _save_grown_checkpoint(tmp_path, model_config)
+
+    policy = CheckpointPolicy.from_checkpoint(path, device="cpu")
+
+    assert policy.model.model_config.channel_attention is True
+    assert policy.model.model_config.residual_blocks == 0
+    observation = _obs(window=0, history=np.zeros(0, dtype=np.uint32))
+    served = policy.choose(observation)
+    assert served.action_id in observation.legal_actions
+
+
+def test_infer_model_config_still_rejects_doctored_attention_claim_without_residual_blocks():
+    # Negative control: same residual-free/grown architecture, but metadata
+    # dishonestly claims channel_attention=True while the checkpoint was
+    # actually saved WITHOUT attention -- must still be rejected.
+    model_config = _residual_free_grown_config(channel_attention=False)
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["channel_attention"] = True
+    metadata = {"model_config": doctored}
+
+    with pytest.raises(RuntimeError, match="attention"):
+        infer_model_config(model.state_dict(), metadata)

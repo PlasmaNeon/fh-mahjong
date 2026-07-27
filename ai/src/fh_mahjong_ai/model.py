@@ -365,6 +365,27 @@ class EventEncoder(nn.Module):
         return gathered * (lengths > 0).float().unsqueeze(-1)
 
 
+def _first_effective_block_attention_key(residual_blocks: int) -> str:
+    """The state-dict key of the `ChannelAttention2d.shared_mlp` inside
+    whichever block actually runs FIRST in `encode()`'s
+    `self.growth(self.plane_blocks(self.plane_stem(...)))` chain.
+
+    `ResidualBlock` (in `plane_blocks`) and `ReZeroResidualBlock` (in
+    `growth`) both build their attention submodule the same way (a
+    `ChannelAttention2d` at `<prefix>.channel_attention`), so whichever stack
+    contributes the first block is where attention/its bottleneck width must
+    be read from. When `residual_blocks > 0`, `plane_blocks.0` runs first;
+    otherwise (a residual-free architecture, e.g. adversarial round 2,
+    Finding 2: `residual_blocks=0` with `growth_blocks>0`) `growth.0` is the
+    first — and only — place attention can appear. Reading `plane_blocks.0`
+    unconditionally previously derived `channel_attention=False` for any
+    residual-free checkpoint regardless of what `growth.0` actually carried,
+    causing a valid attention+growth checkpoint's own metadata to be
+    rejected."""
+    prefix = "plane_blocks.0" if residual_blocks > 0 else "growth.0"
+    return f"{prefix}.channel_attention.shared_mlp.0.weight"
+
+
 def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     """Fields recoverable purely from tensor shapes.
 
@@ -380,7 +401,8 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     block_indices = {
         int(key.split(".")[1]) for key in state_dict if key.startswith("plane_blocks.")
     }
-    attention_key = "plane_blocks.0.channel_attention.shared_mlp.0.weight"
+    residual_blocks = max(block_indices) + 1 if block_indices else 0
+    attention_key = _first_effective_block_attention_key(residual_blocks)
     channel_attention = attention_key in state_dict
     if channel_attention:
         hidden = int(state_dict[attention_key].shape[0])
@@ -390,7 +412,7 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     dueling_q = "q_head.value_head.0.weight" in state_dict
     fields = dict(
         channels=channels,
-        residual_blocks=max(block_indices) + 1 if block_indices else 0,
+        residual_blocks=residual_blocks,
         plane_feature_dim=int(state_dict["plane_head.0.weight"].shape[0]),
         scalar_hidden_dim=int(state_dict["scalar_encoder.0.weight"].shape[0]),
         trunk_hidden_dim=int(state_dict["trunk.0.weight"].shape[0]),
@@ -501,7 +523,7 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
 
     if config.channel_attention:
         claimed_hidden = _effective_attention_hidden(config.channels, config.channel_attention_ratio)
-        attention_key = "plane_blocks.0.channel_attention.shared_mlp.0.weight"
+        attention_key = _first_effective_block_attention_key(config.residual_blocks)
         if attention_key in state_dict:
             actual_hidden = int(state_dict[attention_key].shape[0])
             if claimed_hidden != actual_hidden:
