@@ -2158,3 +2158,164 @@ def test_history_json_write_fsyncs_tmp_and_directory(tmp_path, monkeypatch) -> N
 
     assert json.loads(path.read_text()) == [{"iteration": 1}]
     assert len(fsynced_fds) >= 2, "expected at least one fsync for the tmp file and one for the dir"
+
+
+# --- Adversarial round 16, high finding: an unreadable Go bridge library
+# silently became the mock sentinel (None, None) instead of a startup
+# error -- a fresh bridge_kind="go" run whose library is missing/unreadable
+# pinned (None, None) exactly like a genuine mock config, and
+# `_verify_bridge_unchanged`'s `pinned_bridge_sha256 is None` guard then
+# no-ops for the WHOLE run, silently disabling drift protection instead of
+# refusing to start. ---
+
+def test_resolve_current_bridge_fingerprint_go_missing_library_raises(tmp_path) -> None:
+    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+
+    missing = tmp_path / "does-not-exist.so"
+    env = EnvConfig(bridge_kind="go", bridge_library_path=str(missing))
+
+    with pytest.raises(OSError, match=re.escape(str(missing))):
+        _resolve_current_bridge_fingerprint(env)
+
+
+def test_go_bridge_missing_library_aborts_before_any_collection(tmp_path, monkeypatch) -> None:
+    # A go-kind config whose library path does not exist must raise at
+    # startup -- before pinning succeeds, before any rollout collection --
+    # never silently degrade to the mock sentinel (None, None).
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=2)
+    missing = tmp_path / "does-not-exist.so"
+    env = replace(env, bridge_kind="go", bridge_library_path=str(missing))
+    checkpoint_dir = tmp_path / "ckpt"
+
+    from fh_mahjong_ai import oracle as oracle_module
+    collection_calls = {"n": 0}
+
+    def counting_collect(*args, **kwargs):
+        collection_calls["n"] += 1
+        raise AssertionError("collection must never run")
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+
+    with pytest.raises(OSError, match=re.escape(str(missing))):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config, base_seed=5)
+
+    assert collection_calls["n"] == 0
+    assert not (checkpoint_dir / "train_state.pt").exists()
+    assert not (checkpoint_dir / "iter_001.pt").exists()
+
+
+def test_go_bridge_transient_read_failure_still_aborts_no_silent_recovery(tmp_path, monkeypatch) -> None:
+    # A read failure that would succeed on a LATER attempt must still abort
+    # the run -- there is no retry-then-silently-proceed-unpinned path. This
+    # guards against a fix that catches OSError and just tries again (or
+    # falls through to (None, None) after one failed attempt).
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path))
+
+    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+
+    real_read_bytes = Path.read_bytes
+    calls = {"n": 0}
+
+    def flaky_read_bytes(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(5, "Input/output error")
+        return real_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky_read_bytes)
+
+    with pytest.raises(OSError):
+        _resolve_current_bridge_fingerprint(env)
+
+    # Exactly one read attempt was made -- no internal retry that would have
+    # quietly succeeded and pinned a digest anyway.
+    assert calls["n"] == 1
+
+
+def test_go_bridge_mock_config_unaffected_no_drift_checks(tmp_path) -> None:
+    # A genuinely non-Go (mock) config must still resolve to (None, None)
+    # with no raise, and a full train_b2b run under it proceeds untouched.
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    assert _resolve_current_bridge_fingerprint(env) == (None, None)
+
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                        base_seed=5, train_state_every=1)
+    assert [row["iteration"] for row in history] == [1]
+    state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
+    assert state["bridge_sha256"] is None
+
+
+def test_fresh_go_run_invariant_blocks_null_pinned_digest(tmp_path, monkeypatch) -> None:
+    # Belt-and-braces: even if some future bug lets
+    # _resolve_current_bridge_fingerprint return (None, None) for a
+    # bridge_kind="go" config, train_b2b's own pre-loop invariant must catch
+    # it and refuse to start training unpinned.
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=1)
+    # bridge_library_path is never actually resolved -- _resolve_current_
+    # bridge_fingerprint is monkeypatched below -- so it need not exist.
+    env = replace(env, bridge_kind="go", bridge_library_path=str(tmp_path / "unused.so"))
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: (None, None),
+    )
+
+    with pytest.raises(RuntimeError, match=r"unpinned"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config, base_seed=5)
+
+    assert not (checkpoint_dir / "train_state.pt").exists()
+
+
+def test_resume_legacy_go_state_with_null_digest_warns_and_is_not_bricked(tmp_path, monkeypatch,
+                                                                           caplog) -> None:
+    # A train_state.pt saved by a run from BEFORE this fix existed may have
+    # bridge_sha256=None even though bridge_kind="go" -- the fix must not
+    # brick that legacy state (raise "mismatch" just because None != a real
+    # current digest). Instead: warn loudly and resume, treating this run as
+    # unpinned-legacy for bridge-drift purposes.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-binary-v1")
+    env = replace(env, bridge_kind="go", bridge_library_path=str(lib_path))
+    checkpoint_dir = tmp_path / "ckpt"
+
+    # bridge_kind="go" is needed so train_b2b's pinning/resume logic takes
+    # the Go branch, but there is no real dlopen-able .so in a unit test --
+    # actual rollout collection is redirected to the mock bridge underneath,
+    # exactly as if a real Go bridge had produced the same decisions.
+    from fh_mahjong_ai import oracle as oracle_module
+    real_collect = oracle_module.collect_b2b_rollouts
+
+    def collect_via_mock(env_config_arg, model, cfg, base_seed):
+        return real_collect(replace(env_config_arg, bridge_kind="mock"), model, cfg,
+                            base_seed=base_seed)
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", collect_via_mock)
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    # Simulate a legacy save: no bridge_sha256 recorded at all.
+    state["bridge_sha256"] = None
+    state["bridge_library_path"] = None
+    torch.save(state, state_path)
+
+    config_resumed = replace(config_first, iterations=2)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2]
+    assert any("legacy" in record.message.lower() for record in caplog.records)
+
+    resumed_state = torch.load(state_path, map_location="cpu", weights_only=False)
+    # New saves for this legacy-resumed run keep bridge_sha256 None -- it
+    # never re-pins to whatever the library currently hashes to.
+    assert resumed_state["bridge_sha256"] is None

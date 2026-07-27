@@ -1105,19 +1105,38 @@ def _resolve_current_bridge_fingerprint(env_config: EnvConfig) -> tuple[Optional
 
     `bridge_kind != "go"` (e.g. the mock bridge used throughout tests) has
     no library to pin -- both are `None`, and `None == None` at the resume
-    check below is a pass, matching `evaluate.py`'s existing convention. An
-    unreadable path also returns `(None, None)` rather than raising here --
-    `resolve_bridge_library_path` mirrors evaluate.py's own tolerance, and
-    the resume check below still fires correctly on the *asymmetric* case
-    (one side has a real digest, the other doesn't)."""
+    check below is a pass, matching `evaluate.py`'s existing convention.
+
+    A `bridge_kind == "go"` run, by contrast, MUST have a real, readable
+    simulator binary to pin. Adversarial round 16, high finding: this used
+    to swallow `OSError` here too and return `(None, None)` -- indistinguish-
+    able from a genuine mock config -- which let a fresh Go-backed run whose
+    library was missing/unreadable pin `(None, None)` silently, and
+    `_verify_bridge_unchanged`'s `pinned_bridge_sha256 is None` guard then
+    no-ops for the WHOLE run, permanently disabling drift protection instead
+    of refusing to start. So for `bridge_kind == "go"`, an `OSError` while
+    resolving/reading the library now propagates (re-raised naming the
+    resolved path and the underlying errno) instead of degrading to the
+    mock sentinel. There is deliberately no retry here: a single failed
+    read aborts the run even if a later read of the identical path would
+    happen to succeed -- a transient/flaky read failure is not
+    distinguishable, from this call alone, from a library that could vanish
+    again mid-run, and "try again and hope" is exactly the silent-recovery
+    behavior this fix removes."""
     if env_config.bridge_kind != "go":
         return None, None
+    path = resolve_bridge_library_path(env_config.bridge_library_path)
     try:
-        path = resolve_bridge_library_path(env_config.bridge_library_path)
         digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        return str(path), digest
-    except OSError:
-        return None, None
+    except OSError as exc:
+        raise OSError(
+            f"cannot pin Go bridge library identity: failed to read {str(path)!r} "
+            f"({exc.__class__.__name__} errno={exc.errno}: {exc.strerror or exc}) "
+            "-- a bridge_kind='go' run must never start (or continue) with an "
+            "unverifiable simulator identity. Fix the missing/unreadable "
+            "library path and retry."
+        ) from exc
+    return str(path), digest
 
 
 def _verify_bridge_unchanged(env_config: EnvConfig, pinned_bridge_path: Optional[str],
@@ -1863,6 +1882,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     lock_file = _acquire_checkpoint_dir_lock(checkpoint_dir)
     try:
         state_payload = None
+        # Adversarial round 16, high finding: whether the pin about to be
+        # computed below is ALLOWED to be null for a bridge_kind="go" run --
+        # true only for the legacy-resume carve-out (a train_state.pt saved
+        # before fingerprint pinning existed). Everywhere else a Go run
+        # pinning `None` is an internal bug, not a legitimate outcome; see
+        # the invariant check right after this if/else.
+        bridge_pin_is_legacy_unpinned = False
         if resume_from_state is not None:
             # weights_only=False: the state includes numpy/python RNG state (plain
             # tuples/arrays, not just tensors), which torch's default safe
@@ -1887,28 +1913,64 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # resolution (never trusted from the state file, which is exactly
             # what a rebuild-between-runs would stale-read).
             saved_bridge_sha256 = state_payload.get("bridge_sha256")
-            current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
-            if current_bridge_sha256 != saved_bridge_sha256:
-                if not allow_bridge_mismatch:
-                    raise ValueError(
-                        "--resume-from-state bridge library mismatch: state file was "
-                        f"saved under bridge_sha256={saved_bridge_sha256!r}, the "
-                        f"CURRENT bridge resolution ({current_bridge_path!r}) hashes "
-                        f"to bridge_sha256={current_bridge_sha256!r} -- the Go "
-                        "simulator was rebuilt (or otherwise changed) since this run "
-                        "started. Resuming under a different simulator binary is "
-                        "never safe -- --force-history-reset does NOT override this "
-                        "check. If you have deliberately confirmed the new binary is "
-                        "an acceptable, attribution-breaking substitution, pass "
-                        "--allow-bridge-mismatch to override"
-                    )
+            # Adversarial round 16, high finding: a `train_state.pt` saved by
+            # a run from BEFORE the fingerprint-pinning fix existed (rounds
+            # 13-15) can legitimately have `bridge_sha256=None` even though
+            # `bridge_kind == "go"` -- it simply never recorded one. Treating
+            # that the same as the round-13 mismatch check below would raise
+            # "bridge library mismatch" (None vs a real current digest) and
+            # brick every pre-fix state file outright, which is exactly the
+            # kind of state-bricking `force_history_reset` was invented to
+            # avoid elsewhere in this function -- except this check does NOT
+            # accept `force_history_reset` (see its docstring), so there
+            # would be no override at all short of `--allow-bridge-mismatch`,
+            # which also (deliberately) logs a scarier "simulator changed
+            # mid-lineage" warning that doesn't fit this case. Instead: a
+            # `None` SAVED digest on a `bridge_kind == "go"` resume warns
+            # loudly and is treated as unpinned-legacy for the rest of THIS
+            # run -- no drift comparison is attempted (there is nothing to
+            # compare the current digest against), and periodic saves keep
+            # writing `bridge_sha256=None` rather than quietly re-pinning to
+            # whatever the library happens to hash to now.
+            legacy_unpinned_go_resume = env_config.bridge_kind == "go" and saved_bridge_sha256 is None
+            bridge_pin_is_legacy_unpinned = legacy_unpinned_go_resume
+            if legacy_unpinned_go_resume:
+                current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
                 logger.warning(
-                    "--allow-bridge-mismatch: resuming despite a bridge library "
-                    "mismatch (state file bridge_sha256=%r, current bridge_sha256=%r "
-                    "at %r) -- attribution across this resume boundary is no longer "
-                    "guaranteed",
-                    saved_bridge_sha256, current_bridge_sha256, current_bridge_path,
+                    "resuming a bridge_kind='go' train_state.pt with "
+                    "bridge_sha256=None -- this is a LEGACY state saved before "
+                    "bridge identity pinning existed (adversarial round 16). "
+                    "Treating this run as unpinned-legacy for bridge-drift "
+                    "purposes rather than bricking it: no drift comparison is "
+                    "possible against a state that never recorded a digest. "
+                    "The library currently resolves to %r (bridge_sha256=%r); "
+                    "periodic saves for this run will keep writing "
+                    "bridge_sha256=None until a fresh run re-pins it.",
+                    current_bridge_path, current_bridge_sha256,
                 )
+            else:
+                current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+                if current_bridge_sha256 != saved_bridge_sha256:
+                    if not allow_bridge_mismatch:
+                        raise ValueError(
+                            "--resume-from-state bridge library mismatch: state file was "
+                            f"saved under bridge_sha256={saved_bridge_sha256!r}, the "
+                            f"CURRENT bridge resolution ({current_bridge_path!r}) hashes "
+                            f"to bridge_sha256={current_bridge_sha256!r} -- the Go "
+                            "simulator was rebuilt (or otherwise changed) since this run "
+                            "started. Resuming under a different simulator binary is "
+                            "never safe -- --force-history-reset does NOT override this "
+                            "check. If you have deliberately confirmed the new binary is "
+                            "an acceptable, attribution-breaking substitution, pass "
+                            "--allow-bridge-mismatch to override"
+                        )
+                    logger.warning(
+                        "--allow-bridge-mismatch: resuming despite a bridge library "
+                        "mismatch (state file bridge_sha256=%r, current bridge_sha256=%r "
+                        "at %r) -- attribution across this resume boundary is no longer "
+                        "guaranteed",
+                        saved_bridge_sha256, current_bridge_sha256, current_bridge_path,
+                    )
             # Adversarial round 14, high finding: the bridge identity this run
             # threads into every _save_train_state call is pinned HERE, once,
             # to the VALIDATED saved digest -- never the freshly-recomputed
@@ -1917,8 +1979,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # behavior) let a mid-run .so replacement quietly become the new
             # baseline; pinning to the saved value keeps the ORIGINAL
             # simulator identity as the one true baseline for this lineage.
+            # A legacy-unpinned resume (round 16) keeps that pinned value at
+            # `None`/`None` too -- unpinned stays unpinned for this lineage.
             pinned_bridge_sha256 = saved_bridge_sha256
-            pinned_bridge_path = state_payload.get("bridge_library_path")
+            pinned_bridge_path = None if legacy_unpinned_go_resume else state_payload.get("bridge_library_path")
             current_echo = _train_b2b_config_echo(config, model_config, env_config)
             _validate_resume_config_echo(current_echo, state_payload["config_echo"])
             model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
@@ -2002,6 +2066,24 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # rather than each recomputing (and thus potentially rebasing
             # onto) whatever binary happens to be on disk at save time.
             pinned_bridge_path, pinned_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+        # Adversarial round 16, high finding, belt-and-braces: a
+        # bridge_kind="go" run must never enter the training loop with a
+        # null pinned digest -- that is precisely the condition that let
+        # `_verify_bridge_unchanged`'s `pinned_bridge_sha256 is None` guard
+        # silently no-op for the whole run. `_resolve_current_bridge_
+        # fingerprint` itself no longer returns `(None, None)` for
+        # `bridge_kind == "go"` (it raises instead), so this should be
+        # unreachable in practice; it exists as a hard stop against a future
+        # regression re-introducing that silent path. The one legitimate
+        # exception is a resume of a pre-fix state file, which explicitly
+        # opts into staying unpinned (see `bridge_pin_is_legacy_unpinned`
+        # above) rather than being bricked.
+        if env_config.bridge_kind == "go" and pinned_bridge_sha256 is None and not bridge_pin_is_legacy_unpinned:
+            raise RuntimeError(
+                "internal invariant violated: bridge_kind='go' but this run's "
+                "pinned bridge digest is None -- refusing to start/continue "
+                "training with an unpinned (unverifiable) simulator identity"
+            )
         _write_lock_owner(lock_file, run_id=run_id)
         model.train()
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
