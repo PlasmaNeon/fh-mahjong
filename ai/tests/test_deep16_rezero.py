@@ -376,3 +376,89 @@ def test_train_state_written_at_completion_even_when_not_multiple_of_every(tmp_p
 
     state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
     assert state["next_iteration"] == 4
+
+
+def test_resume_from_stale_state_reconciles_history_no_duplicates(tmp_path) -> None:
+    # CRITICAL repro (reviewer-reported): train_state.pt is only saved every
+    # `train_state_every` iterations (here 5), but history.json is appended
+    # every iteration. If the process advances past a save point without
+    # reaching the next one (e.g. dies at iteration 7 with the last state
+    # snapshot from iteration 5), resuming from that STALE state must not
+    # replay iterations 6-7 on top of the already-appended rows -- pre-fix,
+    # that produced [1,2,3,4,5,6,7,6,7,8]. The fix reconciles history.json
+    # down to the state's next_iteration boundary before continuing.
+    env, model_config, champion_path, config5 = _b2b_run_configs(tmp_path, iterations=5)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config5,
+             base_seed=5, train_state_every=5)
+    state_path = checkpoint_dir / "train_state.pt"
+    stale_state = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert stale_state["next_iteration"] == 6
+    stale_state_bytes = state_path.read_bytes()  # snapshot the iter-5 state aside
+
+    # Continue to iteration 7 without another state-save boundary (next one
+    # is 10): this appends iterations 6 and 7 to history.json, but the
+    # completion save at the end of THIS call overwrites train_state.pt with
+    # a fresh (non-stale) next_iteration=8 snapshot.
+    config7 = replace(config5, iterations=7)
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config7,
+             base_seed=5, train_state_every=5, resume_from_state=state_path)
+    history_after_7 = json.loads((checkpoint_dir / "history.json").read_text())
+    assert [row["iteration"] for row in history_after_7] == [1, 2, 3, 4, 5, 6, 7]
+
+    # Simulate the crash: the completion save at iteration 7 never made it to
+    # disk (box died first) -- only the iter-5 snapshot survived.
+    state_path.write_bytes(stale_state_bytes)
+
+    config8 = replace(config5, iterations=8)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config8,
+                        base_seed=5, train_state_every=5, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4, 5, 6, 7, 8]
+    history_on_disk = json.loads((checkpoint_dir / "history.json").read_text())
+    iterations_seen = [row["iteration"] for row in history_on_disk]
+    assert iterations_seen == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert len(iterations_seen) == len(set(iterations_seen)), "no duplicate iteration rows"
+    # The replayed iterations (6, 7) also overwrote iter_006.pt/iter_007.pt by
+    # name during the crash-recovery run above; that's benign because
+    # restoring the exact model/optimizer/RNG state before replaying makes
+    # each re-run of iteration N a deterministic recomputation of the same
+    # rollout+update, not a second distinct result.
+    for i in range(1, 9):
+        assert (checkpoint_dir / f"iter_{i:03d}.pt").exists()
+
+
+def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correct_config(tmp_path) -> None:
+    # MINOR 1: exercise --resume-from-state together with a growth_blocks>0
+    # lap. A caller who forgets that resume needs the GROWN model_config
+    # (anchor's architecture + growth_blocks folded in, per train_b2b's
+    # docstring) and instead passes growth_blocks=0 must get a clear,
+    # naming ValueError from _validate_resume_config_echo -- not a silent
+    # shape mismatch deeper in model loading. The correctly-reconstructed
+    # grown config must then resume cleanly.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config_first = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                             max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                             num_workers=1, match_mode="classic")
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, anchor_config, anchor_path, checkpoint_dir, config_first,
+             base_seed=5, growth_blocks=2, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    assert state_path.exists()
+
+    grown_config = replace(anchor_config, growth_blocks=2)
+    wrong_config = replace(anchor_config, growth_blocks=0)
+    config_resumed = replace(config_first, iterations=4)
+
+    with pytest.raises(ValueError, match="growth_blocks"):
+        train_b2b(env, wrong_config, anchor_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+    history = train_b2b(env, grown_config, anchor_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=2, resume_from_state=state_path)
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]

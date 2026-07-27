@@ -1132,7 +1132,7 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
     _atomic_torch_save(payload, path)
 
 
-def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Path,
+def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
              growth_blocks: int = 0, train_state_every: int = 5,
              resume_from_state: Optional[Path] = None) -> list[dict]:
@@ -1182,7 +1182,23 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         model.load_state_dict(state_payload["model"])
         start_iteration = int(state_payload["next_iteration"])
         history_path = checkpoint_dir / "history.json"
-        history: list[dict] = json.loads(history_path.read_text()) if history_path.exists() else []
+        history = json.loads(history_path.read_text()) if history_path.exists() else []
+        # Reconcile against a STALE state file: train_state.pt is only written
+        # every `train_state_every` iterations (plus at completion), but
+        # history.json is appended every iteration. Resuming from a state
+        # older than the last history rows (e.g. state saved at iter 5, then
+        # iters 6-7 ran and appended to history before the process died
+        # without reaching the next state-save at iter 10) must not keep
+        # those orphaned rows — the loop below re-runs and re-appends
+        # iterations >= start_iteration from scratch, so keep only rows
+        # strictly before start_iteration or they'd be duplicated.
+        # Re-running iteration N after restoring the exact model/optimizer/
+        # RNG state from before it is a deterministic replay of that
+        # iteration (same seed derivation from base_seed+iteration, same
+        # torch/numpy/python RNG state), so the per-iteration checkpoint
+        # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
+        # safe to clobber by name, not a second distinct result.
+        history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
     elif growth_blocks > 0:
         model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
         model_config = model.model_config

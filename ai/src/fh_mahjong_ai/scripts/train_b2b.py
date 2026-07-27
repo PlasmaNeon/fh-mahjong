@@ -12,7 +12,10 @@ from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Spec B2b training (event GRU + privileged critic + aux heads)")
-    p.add_argument("--champion", type=Path, required=True, help="39ch champion checkpoint to warm-start from")
+    p.add_argument("--champion", type=Path, default=None,
+                   help="39ch champion checkpoint to warm-start from; required unless "
+                        "--resume-from-state is given (the resume path builds the model from "
+                        "the state file and never touches --champion)")
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--matches-per-iter", type=int, default=256)
@@ -56,6 +59,8 @@ def main() -> None:
                         "continues iteration numbering + history.json from where it left off")
     add_model_config_args(p)
     args = p.parse_args()
+    if args.champion is None and args.resume_from_state is None:
+        p.error("--champion is required unless --resume-from-state is given")
     num_workers = args.num_workers
     if num_workers is None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
