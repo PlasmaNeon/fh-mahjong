@@ -10,6 +10,7 @@ import multiprocessing as mp
 import os
 import queue as _queue
 import random
+import re
 import traceback
 import uuid
 from dataclasses import asdict, replace
@@ -1171,7 +1172,11 @@ def _artifact_run_id(path: Path) -> Optional[str]:
     return metadata.get("run_id")
 
 
-def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optional[str]) -> None:
+_ITER_CHECKPOINT_NAME_RE = re.compile(r"^iter_(\d+)\.pt$")
+
+
+def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optional[str],
+                                     next_iteration: int) -> None:
     """Guard EVERY `--resume-from-state` against silently mixing run
     lineages, whether or not `history.json` itself needed recovery
     (adversarial round 5, high finding: round 4 only ran this scan on the
@@ -1202,13 +1207,55 @@ def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optiona
     round-trip. For a large checkpoint_dir this is a one-off cost paid only
     at resume time (a rare event), not per training iteration.
 
+    Torn-file tolerance (adversarial round 8, high finding): `iter_*.pt` is
+    written non-atomically-no-more (storage.py's `save_checkpoint` now goes
+    through a tmp-sibling + `os.replace`), but old runs and any crash that
+    happened to land exactly between that `torch.save` and `os.replace`
+    (or before this fix shipped) can still leave a torn/truncated file on
+    disk. Without tolerance, `torch.load` raising on that file here would
+    make `--resume-from-state` -- the feature that exists to survive a
+    crash -- fail in precisely the crash window it is meant to cover. An
+    unreadable artifact is handled by comparing its iteration number
+    (parsed from the `iter_NNN.pt` filename) against `next_iteration`: at
+    or past the resume point, training is about to regenerate that file
+    anyway, so it is quarantined (renamed `<name>.corrupt`, with a logged
+    warning) and the scan continues; before the resume point, the file is
+    irreplaceable historical evidence that training will never rewrite, so
+    the scan raises, naming the file (recoverable via
+    `--force-history-reset`, which bypasses this entire scan -- see below).
+    A filename that doesn't match `iter_<digits>.pt` can't be matched
+    against `next_iteration` at all, so it raises rather than guessing.
+
     `--force-history-reset` (the `force_history_reset` flag on `train_b2b`)
     skips ONLY this check -- it is the general lineage-validation override,
     covering both the missing/corrupt-history recovery path and this
     unconditional every-resume scan -- never the base_seed/config_echo
     checks in `train_b2b`'s resume path."""
     for artifact_path in sorted(checkpoint_dir.glob("iter_*.pt")):
-        artifact_run_id = _artifact_run_id(artifact_path)
+        try:
+            artifact_run_id = _artifact_run_id(artifact_path)
+        except Exception as exc:
+            match = _ITER_CHECKPOINT_NAME_RE.match(artifact_path.name)
+            if match is not None and int(match.group(1)) >= next_iteration:
+                quarantined_path = artifact_path.with_name(artifact_path.name + ".corrupt")
+                os.replace(artifact_path, quarantined_path)
+                logger.warning(
+                    "%s is unreadable (%s: %s) and at/past the resume point "
+                    "(iteration %s >= next_iteration %s) -- quarantined to %s; "
+                    "training will regenerate it.",
+                    artifact_path.name, type(exc).__name__, exc,
+                    match.group(1), next_iteration, quarantined_path.name,
+                )
+                continue
+            raise ValueError(
+                f"{artifact_path.name} in checkpoint_dir is unreadable "
+                f"({type(exc).__name__}: {exc}) and is needed historical "
+                "evidence (its iteration is before the resume point, so "
+                "training will never regenerate it) -- resuming cannot "
+                "safely proceed without it (pass --force-history-reset if "
+                "you are certain this file's loss is fine and want to skip "
+                "the artifact-lineage scan entirely)"
+            ) from exc
         if artifact_run_id != state_run_id:
             raise ValueError(
                 f"{artifact_path.name} in checkpoint_dir carries "
@@ -1223,7 +1270,7 @@ def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optiona
 
 
 def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir: Path,
-                         force_history_reset: bool = False) -> list[dict]:
+                         next_iteration: int, force_history_reset: bool = False) -> list[dict]:
     """Load `history.json` for a `--resume-from-state` continuation, enforcing
     that its `run_id` matches the resuming state file's `run_id`.
 
@@ -1251,7 +1298,7 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
     even read, so both the recovery path and the normal valid-history path
     are covered by the same check."""
     if not force_history_reset:
-        _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id)
+        _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id, next_iteration)
     try:
         raw = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as exc:
@@ -1520,6 +1567,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             run_id = state_payload.get("run_id")
             history_path = checkpoint_dir / "history.json"
             history = _load_resume_history(history_path, run_id, checkpoint_dir,
+                                           start_iteration,
                                            force_history_reset=force_history_reset)
             # Reconcile against a STALE state file: train_state.pt is only written
             # every `train_state_every` iterations (plus at completion), but

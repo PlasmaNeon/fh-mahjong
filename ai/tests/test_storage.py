@@ -4,12 +4,15 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from fh_mahjong_ai.storage import (
     ShardedTransitionWriter,
     iter_observation_action_batches,
+    load_checkpoint,
     read_transition_arrays,
     read_transitions,
+    save_checkpoint,
     write_transitions_jsonl,
     write_transitions_npz_shards,
 )
@@ -146,3 +149,47 @@ def test_iter_observation_action_batches_reads_npz_without_transition_objects(tm
     assert batches[0]["planes"].shape == (3, 39, 42, 1)
     assert batches[0]["scalars"].shape == (3, 42)
     assert batches[0]["action_mask"].shape == (3, 204)
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 8
+# ---------------------------------------------------------------------------
+#
+# Finding (high): `save_checkpoint` wrote directly to its target path via a
+# bare `torch.save(payload, path)` -- a crash (OOM kill, box preemption,
+# power loss) mid-serialization leaves a torn/truncated file at that exact
+# path. Every `iter_*.pt` this project writes (oracle.py's per-iteration
+# checkpoints, ppo.py, and every train_*.py script) goes through this
+# function, so a torn file could land at any of those paths. Fixed
+# centrally (all callers pass a plain `path`; none read the destination
+# path mid-write or otherwise depend on the old non-atomic behavior) by
+# writing to a `.tmp` sibling and `os.replace`-ing it into place, mirroring
+# oracle.py's existing `_atomic_torch_save` for `train_state.pt`.
+def test_save_checkpoint_is_atomic_no_tmp_left_behind(tmp_path: Path, monkeypatch) -> None:
+    import fh_mahjong_ai.storage as storage
+
+    path = tmp_path / "iter_001.pt"
+    model = torch.nn.Linear(4, 2)
+    replace_calls = []
+    real_replace = storage.os.replace
+
+    def recording_replace(src, dst):
+        # The final `os.replace` destination must already be a fully
+        # written file at the time of the call -- i.e. `torch.save` targets
+        # a tmp sibling, never `path` itself -- otherwise a crash between
+        # `torch.save` and `os.replace` could never leave `path` untouched.
+        assert Path(src) != Path(dst)
+        assert Path(src).exists()
+        replace_calls.append((Path(src), Path(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(storage.os, "replace", recording_replace)
+
+    save_checkpoint(path, model, step=3)
+
+    assert replace_calls == [(path.with_name(path.name + ".tmp"), path)]
+    assert path.exists()
+    assert not (tmp_path / (path.name + ".tmp")).exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+    step = load_checkpoint(path, torch.nn.Linear(4, 2))
+    assert step == 3

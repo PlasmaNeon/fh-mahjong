@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
@@ -102,6 +103,14 @@ class ShardedTransitionWriter:
 
 
 def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0, metadata: Optional[dict] = None) -> None:
+    """Write via a `.tmp` sibling + `os.replace` (adversarial round 8, high
+    finding) so a crash mid-`torch.save` (OOM kill, box preemption, power
+    loss) never leaves a torn/truncated file at `path` -- every caller
+    (oracle.py's per-iteration `iter_*.pt`, ppo.py, every train_*.py script)
+    only ever reads `path` as a whole, so this is strictly safer for all of
+    them. Mirrors oracle.py's existing `_atomic_torch_save` for
+    `train_state.pt`."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"model": model.state_dict(), "step": step}
     if optimizer is not None:
@@ -111,7 +120,9 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
         # loaders can verify a checkpoint matches the objective they expect. Ignored
         # by load_checkpoint, so this stays backward-compatible.
         payload["metadata"] = dict(metadata)
-    torch.save(payload, path)
+    tmp_path = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
 
 
 def load_checkpoint_from_bytes(

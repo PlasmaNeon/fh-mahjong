@@ -1242,3 +1242,86 @@ def test_resume_path_acquires_checkpoint_dir_lock(tmp_path) -> None:
     lock_path = checkpoint_dir / ".run.lock"
     assert lock_path.exists()
     assert f"pid={os.getpid()}" in lock_path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 8
+# ---------------------------------------------------------------------------
+#
+# Finding (high): iter_*.pt checkpoints were written non-atomically (a bare
+# `torch.save`), and the resume lineage scan (`_check_artifact_lineage_or_
+# raise`) does a full `torch.load` of EVERY iter_*.pt in checkpoint_dir. A
+# crash mid-serialization of any single iter_*.pt therefore left a torn file
+# that made every subsequent `--resume-from-state` -- the very feature meant
+# to survive a crash -- raise on the unrelated `torch.load` failure, not on
+# a genuine lineage problem. Fix: (1) `save_checkpoint` (storage.py, see
+# test_storage.py) now writes atomically; (2) the lineage scan tolerates an
+# unreadable/truncated artifact by comparing its iteration number (parsed
+# from `iter_NNN.pt`) against the resuming state's `next_iteration`: an
+# iteration at or past the resume point will be overwritten by training
+# anyway, so the torn file is quarantined (renamed `<name>.corrupt`, warned,
+# scan continues); an iteration before the resume point is irreplaceable
+# historical evidence, so the scan raises, naming the file and pointing at
+# `--force-history-reset` as the documented override.
+
+def test_resume_raises_naming_torn_historical_checkpoint(tmp_path, caplog) -> None:
+    # iter_002.pt is torn (crash mid-write), and its iteration (2) is BEFORE
+    # the resume point (next_iteration=5) -- training will never regenerate
+    # it, so this is unrecoverable historical evidence and must raise loudly
+    # rather than being silently swept aside.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=4)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state["next_iteration"] == 5
+
+    torn_path = checkpoint_dir / "iter_002.pt"
+    torn_path.write_bytes(b"not a valid torch checkpoint, truncated mid-write")
+
+    config_resumed = replace(config_first, iterations=5)
+    with pytest.raises(ValueError, match="iter_002.pt") as excinfo:
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_path)
+    assert "--force-history-reset" in str(excinfo.value)
+    # The torn file must be left alone -- it is evidence, not garbage --
+    # when the scan can't safely dispose of it.
+    assert torn_path.exists()
+    assert torn_path.read_bytes() == b"not a valid torch checkpoint, truncated mid-write"
+
+
+def test_resume_quarantines_torn_checkpoint_at_or_past_resume_point(tmp_path, caplog) -> None:
+    # iter_005.pt is torn, but its iteration (5) is AT the resume point
+    # (next_iteration=5) -- exactly the crash window the resume feature
+    # exists to survive: training died writing iter_005.pt before it could
+    # also persist train_state.pt. Training is about to regenerate iter_005
+    # anyway, so the torn file is quarantined (renamed .corrupt) instead of
+    # blocking the resume it was meant to enable.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=4)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    state = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state["next_iteration"] == 5
+
+    torn_path = checkpoint_dir / "iter_005.pt"
+    torn_path.write_bytes(b"not a valid torch checkpoint, truncated mid-write")
+    quarantined_path = checkpoint_dir / "iter_005.pt.corrupt"
+
+    config_resumed = replace(config_first, iterations=6)
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4, 5, 6]
+    assert "iter_005.pt" in caplog.text
+    assert quarantined_path.exists()
+    assert quarantined_path.read_bytes() == b"not a valid torch checkpoint, truncated mid-write"
+    # Training regenerated iter_005.pt at the (now-vacated) original path,
+    # with valid, loadable content -- resume genuinely proceeded.
+    regenerated_payload = torch.load(torn_path, map_location="cpu")
+    assert regenerated_payload["metadata"]["run_id"] == state["run_id"]
