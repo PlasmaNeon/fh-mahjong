@@ -1428,6 +1428,150 @@ def test_fresh_run_overwrite_removes_both_train_state_generations(tmp_path) -> N
     assert decoy.read_text() == "do not touch"
 
 
+# ---------------------------------------------------------------------------
+# Adversarial review round 11, high finding: lineage scan ignores
+# destination train_state files
+# ---------------------------------------------------------------------------
+#
+# `_check_artifact_lineage_or_raise` only ever scanned `iter_*.pt`. Resuming
+# run A's state (from any path) into run B's checkpoint_dir proceeded
+# unchallenged whenever B's history/iter_*.pt evidence was already gone and
+# all that remained was B's own `train_state.pt`/`train_state.prev.pt` --
+# exactly the "history corrupt/missing, checkpoints pruned" recovery
+# scenario the earlier rounds were built to protect. The very next
+# `_atomic_torch_save` then rotates/destroys B's last recovery point,
+# silently splicing A's lineage into B's directory. Fix: the scan now also
+# inspects `train_state.pt` and `train_state.prev.pt` in checkpoint_dir,
+# skipping the exact file being resumed FROM (compared via
+# `os.path.realpath` -- the normal case is resuming the destination's own
+# state), and requires any OTHER loadable generation found there to carry
+# the same run_id as the resuming state.
+
+def test_resume_state_a_into_dir_with_only_bs_train_state_raises_naming_it(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    # Simulate history/checkpoints already lost/pruned in B -- only B's own
+    # train_state.pt is left as evidence of B's lineage.
+    (dir_b / "history.json").unlink()
+    (dir_b / "iter_001.pt").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match="train_state.pt"):
+        train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_from_a)
+
+
+def test_resume_destinations_own_state_in_place_proceeds(tmp_path) -> None:
+    # The normal, overwhelmingly common case: resuming checkpoint_dir's own
+    # train_state.pt (the file the scan must recognize via realpath/samefile
+    # as the thing BEING resumed from, not a foreign generation to compare
+    # against itself).
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    (checkpoint_dir / "history.json").unlink()
+    (checkpoint_dir / "iter_001.pt").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [2]
+
+
+def test_resume_matching_run_id_extra_train_state_generation_proceeds(tmp_path) -> None:
+    # A `train_state.prev.pt` left behind by the SAME run (same run_id) is
+    # not foreign lineage -- it must not block the resume.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    state_path = checkpoint_dir / "train_state.pt"
+    prev_path = checkpoint_dir / "train_state.prev.pt"
+    assert prev_path.exists(), "train_state_every=1 across 2 saved iterations should mint a .prev"
+    (checkpoint_dir / "history.json").unlink()
+    (checkpoint_dir / "iter_001.pt").unlink()
+    (checkpoint_dir / "iter_002.pt").unlink()
+
+    config_resumed = replace(config_first, iterations=3)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [3]
+
+
+def test_resume_unreadable_foreign_train_state_generation_raises(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    (dir_b / "history.json").unlink()
+    (dir_b / "iter_001.pt").unlink()
+    # B's own train_state.pt (the destination generation, NOT the file being
+    # resumed from) is torn -- lineage can't be proven, so this must raise
+    # rather than silently waving it through.
+    (dir_b / "train_state.pt").write_bytes(b"torn foreign generation")
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match=r"(?i)train_state.pt.*unreadable"):
+        train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                 base_seed=5, train_state_every=1, resume_from_state=state_from_a)
+
+
+def test_force_history_reset_overrides_train_state_lineage_check(tmp_path) -> None:
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    dir_a = tmp_path / "run_a"
+    dir_b = tmp_path / "run_b"
+
+    train_b2b(env, model_config, champion_path, dir_a, config_first,
+             base_seed=5, train_state_every=1)
+    train_b2b(env, model_config, champion_path, dir_b, config_first,
+             base_seed=5, train_state_every=1)
+
+    state_from_a = dir_a / "train_state.pt"
+    (dir_b / "history.json").unlink()
+    (dir_b / "iter_001.pt").unlink()
+
+    config_resumed = replace(config_first, iterations=2)
+    history = train_b2b(env, model_config, champion_path, dir_b, config_resumed,
+                        base_seed=5, train_state_every=1, resume_from_state=state_from_a,
+                        force_history_reset=True)
+
+    assert [row["iteration"] for row in history] == [2]
+
+
+def test_fresh_launch_into_dir_with_only_train_state_prev_raises(tmp_path) -> None:
+    # Regression guard: `_find_fresh_run_managed_artifacts` already treats
+    # `train_state.prev.pt` as a managed artifact of THIS run (round 9), so
+    # a fresh (non-resume) launch into a directory holding only it must
+    # still fail closed, exactly like `train_state.pt` or `iter_*.pt` alone.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir(parents=True)
+    torch.save({"run_id": "abc"}, checkpoint_dir / "train_state.prev.pt")
+
+    with pytest.raises(ValueError, match="train_state.prev.pt"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_first, base_seed=7)
+
+
 def test_history_json_write_fsyncs_tmp_and_directory(tmp_path, monkeypatch) -> None:
     """Cheap, same-failure-mode fix as train_state.pt: `_write_history_atomic`
     must fsync the tmp file's contents and the parent directory's entry

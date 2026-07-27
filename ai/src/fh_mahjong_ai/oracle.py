@@ -1246,8 +1246,21 @@ def _artifact_run_id(path: Path) -> Optional[str]:
 _ITER_CHECKPOINT_NAME_RE = re.compile(r"^iter_(\d+)\.pt$")
 
 
+def _train_state_run_id(path: Path) -> Optional[str]:
+    """`run_id` of a `train_state.pt`-style payload at `path` (`None` if the
+    payload predates `run_id`). Raises if `path` is unreadable -- unlike an
+    `iter_*.pt` checkpoint (see `_check_artifact_lineage_or_raise`'s torn-
+    file tolerance), a destination train_state generation has no "at/past
+    the resume point, training will regenerate it" escape hatch: it IS
+    recovery evidence for the resume point, so an unreadable one can't be
+    waved through."""
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    return payload.get("run_id")
+
+
 def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optional[str],
-                                     next_iteration: int) -> None:
+                                     next_iteration: int,
+                                     resume_from_state: Optional[Path] = None) -> None:
     """Guard EVERY `--resume-from-state` against silently mixing run
     lineages, whether or not `history.json` itself needed recovery
     (adversarial round 5, high finding: round 4 only ran this scan on the
@@ -1301,7 +1314,28 @@ def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optiona
     skips ONLY this check -- it is the general lineage-validation override,
     covering both the missing/corrupt-history recovery path and this
     unconditional every-resume scan -- never the base_seed/config_echo
-    checks in `train_b2b`'s resume path."""
+    checks in `train_b2b`'s resume path.
+
+    Destination train_state generations (adversarial round 11, high
+    finding): the scan above only ever covered `iter_*.pt`. Resuming run A's
+    state (from any path) into run B's checkpoint_dir proceeded unchallenged
+    whenever B's history.json and iter_*.pt evidence were already gone
+    (corrupt/missing history, pruned checkpoints) and all that remained was
+    B's own `train_state.pt` / `train_state.prev.pt` -- exactly the recovery
+    scenario the earlier rounds exist to protect. The very next
+    `_atomic_torch_save` would then rotate/destroy B's last recovery point,
+    silently splicing A's lineage into B's directory. `checkpoint_dir`'s
+    `train_state.pt` and `train_state.prev.pt` are therefore inspected too,
+    with `resume_from_state` (the exact file being resumed FROM) compared
+    via `os.path.realpath` and skipped -- the overwhelmingly normal case is
+    resuming the destination's own state in place, which is not foreign
+    lineage to compare against itself. Any OTHER loadable generation found
+    must carry the same `run_id` as `state_run_id` (mismatch, including a
+    missing/`None` run_id while `state_run_id` is set, raises naming the
+    file). Unlike `iter_*.pt`, there is no torn-file/at-resume-point
+    tolerance here: an unreadable foreign generation can't have its lineage
+    proven, so it raises rather than being quarantined -- recoverable only
+    via `--force-history-reset`, same as the rest of this scan."""
     for artifact_path in sorted(checkpoint_dir.glob("iter_*.pt")):
         try:
             artifact_run_id = _artifact_run_id(artifact_path)
@@ -1339,9 +1373,42 @@ def _check_artifact_lineage_or_raise(checkpoint_dir: Path, state_run_id: Optiona
                 "not a lineage mixup)"
             )
 
+    resume_from_state_real = (
+        os.path.realpath(resume_from_state) if resume_from_state is not None else None
+    )
+    for state_name in ("train_state.pt", "train_state.prev.pt"):
+        state_path = checkpoint_dir / state_name
+        if not state_path.exists():
+            continue
+        if resume_from_state_real is not None and os.path.realpath(state_path) == resume_from_state_real:
+            continue  # the destination's own state is what's being resumed, not foreign lineage
+        try:
+            generation_run_id = _train_state_run_id(state_path)
+        except Exception as exc:
+            raise ValueError(
+                f"{state_path.name} in checkpoint_dir is unreadable "
+                f"({type(exc).__name__}: {exc}) and its lineage relative to "
+                "the resuming state file cannot be proven -- resuming cannot "
+                "safely proceed without it (pass --force-history-reset if "
+                "you are certain this file's loss is fine and want to skip "
+                "the artifact-lineage scan entirely)"
+            ) from exc
+        if generation_run_id != state_run_id:
+            raise ValueError(
+                f"{state_path.name} in checkpoint_dir carries "
+                f"run_id={generation_run_id!r}, which does not match the "
+                f"resuming state file's run_id={state_run_id!r} -- resuming "
+                "here would silently mix unrelated runs' train state (point "
+                "--resume-from-state at the checkpoint_dir that actually "
+                "belongs to it, or pass --force-history-reset if you are "
+                "certain this is a genuine torn-file recovery and not a "
+                "lineage mixup)"
+            )
+
 
 def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir: Path,
-                         next_iteration: int, force_history_reset: bool = False) -> list[dict]:
+                         next_iteration: int, force_history_reset: bool = False,
+                         resume_from_state: Optional[Path] = None) -> list[dict]:
     """Load `history.json` for a `--resume-from-state` continuation, enforcing
     that its `run_id` matches the resuming state file's `run_id`.
 
@@ -1367,9 +1434,15 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
     could sit there undetected. The lineage scan now runs unconditionally on
     every resume (unless `force_history_reset` is set), before this file is
     even read, so both the recovery path and the normal valid-history path
-    are covered by the same check."""
+    are covered by the same check. Adversarial round 11, high finding: the
+    scan itself now also inspects checkpoint_dir's `train_state.pt` /
+    `train_state.prev.pt` generations, not just `iter_*.pt` -- see
+    `_check_artifact_lineage_or_raise`'s docstring. `resume_from_state` is
+    threaded through so that check can skip the exact file being resumed
+    FROM instead of comparing it against itself."""
     if not force_history_reset:
-        _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id, next_iteration)
+        _check_artifact_lineage_or_raise(checkpoint_dir, state_run_id, next_iteration,
+                                         resume_from_state=resume_from_state)
     try:
         raw = json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as exc:
@@ -1647,7 +1720,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             history_path = checkpoint_dir / "history.json"
             history = _load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
-                                           force_history_reset=force_history_reset)
+                                           force_history_reset=force_history_reset,
+                                           resume_from_state=Path(resume_from_state))
             # Reconcile against a STALE state file: train_state.pt is only written
             # every `train_state_every` iterations (plus at completion), but
             # history.json is appended every iteration. Resuming from a state
