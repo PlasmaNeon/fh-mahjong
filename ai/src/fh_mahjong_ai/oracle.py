@@ -1544,12 +1544,52 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
 
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
-                      env_config: EnvConfig, base_seed: int, run_id: Optional[str]) -> None:
-    # Adversarial round 13, high finding: pin the ACTUAL simulator binary,
-    # not just the bridge_kind/bridge_library_path *configuration* that
-    # config_echo's env_config section already records -- see
-    # `_resolve_current_bridge_fingerprint`'s docstring.
-    bridge_library_path, bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+                      env_config: EnvConfig, base_seed: int, run_id: Optional[str],
+                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str],
+                      allow_bridge_mismatch: bool = False) -> None:
+    # Adversarial round 14, high finding: round 13's fix recomputed the
+    # bridge fingerprint HERE, on every save -- so a .so rebuilt mid-run
+    # (same path, new bytes) silently became the new saved baseline on the
+    # very next periodic save, and a later --resume-from-state happily
+    # accepted a run that had mixed two different simulator binaries under
+    # one lineage. The fix: the bridge identity is now PINNED EXACTLY ONCE,
+    # at run start (see train_b2b's fresh-run / resume branches, which
+    # compute/derive `pinned_bridge_sha256`/`pinned_bridge_path` and pass
+    # them in here) -- this function must never recompute those as the
+    # values to STORE. It only recomputes the CURRENT on-disk digest to
+    # compare against the pinned one (drift detection); a mismatch aborts
+    # the save entirely rather than writing a state that would rebase the
+    # pinned identity, so the last good state on disk keeps the true,
+    # original baseline. `pinned_bridge_sha256 is None` (mock bridge, see
+    # `_resolve_current_bridge_fingerprint`) skips drift detection.
+    if pinned_bridge_sha256 is not None:
+        current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+        if current_bridge_sha256 != pinned_bridge_sha256:
+            message = (
+                "bridge library drift detected during a train_state save: this run "
+                f"pinned bridge_sha256={pinned_bridge_sha256!r} ({pinned_bridge_path!r}) "
+                f"at start, but the CURRENT bridge resolution ({current_bridge_path!r}) "
+                f"now hashes to bridge_sha256={current_bridge_sha256!r} -- the Go "
+                "simulator binary changed underneath this run (e.g. rebuilt at the "
+                "same path mid-run). Saving now would silently make the drifted "
+                "binary the baseline a future --resume-from-state accepts, mixing "
+                "two simulator versions into one lineage."
+            )
+            if not allow_bridge_mismatch:
+                raise ValueError(
+                    message + " Aborting WITHOUT writing a new state -- the last "
+                    "good state already on disk keeps the true, original baseline. "
+                    "If you have deliberately confirmed the new binary is an "
+                    "acceptable, attribution-breaking substitution, pass "
+                    "--allow-bridge-mismatch to downgrade this to a warning (the "
+                    "ORIGINAL pinned digest is still what gets saved, never the "
+                    "drifted one)."
+                )
+            logger.warning(
+                message + " --allow-bridge-mismatch: saving anyway, but keeping the "
+                "ORIGINAL pinned bridge_sha256 (not the drifted one) -- attribution "
+                "past this point is no longer guaranteed."
+            )
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -1561,8 +1601,10 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
         "config_echo": _train_b2b_config_echo(config, model_config, env_config),
         "base_seed": base_seed,
         "run_id": run_id,
-        "bridge_sha256": bridge_sha256,
-        "bridge_library_path": bridge_library_path,
+        # Always the value PINNED at run start -- never the freshly recomputed
+        # current one; see the drift-detection block above.
+        "bridge_sha256": pinned_bridge_sha256,
+        "bridge_library_path": pinned_bridge_path,
     }
     _atomic_torch_save(payload, path)
 
@@ -1827,6 +1869,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "guaranteed",
                     saved_bridge_sha256, current_bridge_sha256, current_bridge_path,
                 )
+            # Adversarial round 14, high finding: the bridge identity this run
+            # threads into every _save_train_state call is pinned HERE, once,
+            # to the VALIDATED saved digest -- never the freshly-recomputed
+            # `current_bridge_sha256` above, even when --allow-bridge-mismatch
+            # let a mismatch through. Recomputing per-save (round 13's
+            # behavior) let a mid-run .so replacement quietly become the new
+            # baseline; pinning to the saved value keeps the ORIGINAL
+            # simulator identity as the one true baseline for this lineage.
+            pinned_bridge_sha256 = saved_bridge_sha256
+            pinned_bridge_path = state_payload.get("bridge_library_path")
             current_echo = _train_b2b_config_echo(config, model_config, env_config)
             _validate_resume_config_echo(current_echo, state_payload["config_echo"])
             model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
@@ -1904,6 +1956,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
+            # Adversarial round 14, high finding: pin the bridge identity for
+            # this fresh run ONCE, before any rollout collection, so every
+            # `_save_train_state` call below threads the SAME pinned digest
+            # rather than each recomputing (and thus potentially rebasing
+            # onto) whatever binary happens to be on disk at save time.
+            pinned_bridge_path, pinned_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
         _write_lock_owner(lock_file, run_id=run_id)
         model.train()
         optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
@@ -2003,6 +2061,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         checkpoint_dir / "train_state.pt", model, optimizer,
                         next_iteration=iteration + 1, config=config, model_config=model_config,
                         env_config=env_config, base_seed=base_seed, run_id=run_id,
+                        pinned_bridge_sha256=pinned_bridge_sha256,
+                        pinned_bridge_path=pinned_bridge_path,
+                        allow_bridge_mismatch=allow_bridge_mismatch,
                     )
         finally:
             if collector is not None:
