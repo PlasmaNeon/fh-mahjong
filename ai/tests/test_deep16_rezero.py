@@ -683,12 +683,14 @@ def test_resume_allow_bridge_mismatch_overrides_with_warning(tmp_path, monkeypat
 # save only checks for drift against that pinned value. ---
 
 def test_periodic_save_raises_when_bridge_binary_is_swapped_mid_run(tmp_path, monkeypatch) -> None:
-    # Simulates a .so rebuild landing on disk between iteration 1 (whose
-    # periodic save succeeds and pins bridge_sha256 to the v1 digest) and
-    # iteration 2 (whose periodic save must detect the drift and abort
-    # WITHOUT overwriting train_state.pt) -- round 13's fix alone doesn't
-    # catch this because it only ever recomputed at save time, so the
-    # rebuilt binary would just become the new baseline silently.
+    # Simulates a .so rebuild landing on disk right after iteration 1
+    # completes cleanly (both its pre-collection and post-update drift
+    # checks saw the v1 digest, and its periodic save pinned bridge_sha256
+    # to v1). Iteration 2's pre-collection check must detect the drift and
+    # abort BEFORE collecting/publishing anything for iteration 2 -- round
+    # 13's fix alone doesn't catch this because it only ever recomputed at
+    # save time, so the rebuilt binary would just become the new baseline
+    # silently.
     env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=2)
     checkpoint_dir = tmp_path / "ckpt"
     lib_path = tmp_path / "libfh_mahjong_bridge.so"
@@ -700,9 +702,12 @@ def test_periodic_save_raises_when_bridge_binary_is_swapped_mid_run(tmp_path, mo
     def fake_resolve(env_config):
         calls["n"] += 1
         digest = hashlib.sha256(lib_path.read_bytes()).hexdigest()
-        if calls["n"] == 2:
-            # Lands right after iteration 1's periodic save read the (still
-            # v1) digest, before iteration 2's periodic save reads it.
+        if calls["n"] == 3:
+            # Call 1 = the fresh-run pin; calls 2 and 3 = iteration 1's
+            # pre-collection and post-update checks (both still v1). Land
+            # the rebuild right after call 3 so iteration 1 finishes clean
+            # and iteration 2's pre-collection check (call 4) is the one
+            # that sees v2.
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
@@ -712,9 +717,18 @@ def test_periodic_save_raises_when_bridge_binary_is_swapped_mid_run(tmp_path, mo
         train_b2b(env, model_config, champion_path, checkpoint_dir, config,
                  base_seed=5, train_state_every=1)
 
+    # Iteration 1 published cleanly (no drift occurred during it).
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    history_after_abort = read_b2b_history_rows(checkpoint_dir / "history.json")
+    assert [row["iteration"] for row in history_after_abort] == [1]
+    # Iteration 2 must NOT have published anything -- the round 15 fix:
+    # the pre-collection check for iteration 2 aborts before that
+    # iteration's checkpoint/history row is ever written.
+    assert not (checkpoint_dir / "iter_002.pt").exists()
+
     # The last GOOD state (iteration 1's save) is untouched: still at
     # next_iteration=2, still holding the ORIGINAL v1 digest -- iteration 2's
-    # aborted save must not have overwritten it with anything.
+    # aborted iteration must not have overwritten it with anything.
     state = torch.load(checkpoint_dir / "train_state.pt", map_location="cpu", weights_only=False)
     assert state["next_iteration"] == 2
     assert state["bridge_sha256"] == digest_v1
@@ -754,7 +768,7 @@ def test_periodic_save_allow_bridge_mismatch_warns_and_keeps_pinned_digest(tmp_p
     def fake_resolve(env_config):
         calls["n"] += 1
         digest = hashlib.sha256(lib_path.read_bytes()).hexdigest()
-        if calls["n"] == 2:
+        if calls["n"] == 3:
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
@@ -769,8 +783,188 @@ def test_periodic_save_allow_bridge_mismatch_warns_and_keeps_pinned_digest(tmp_p
     # Even though the drift was allowed through, the save keeps the run's
     # ORIGINAL pinned digest -- never the drifted one.
     assert state["bridge_sha256"] == digest_v1
-    assert any("bridge" in record.message.lower() and "drift" in record.message.lower()
-               for record in caplog.records)
+    drift_warnings = [record for record in caplog.records
+                      if "bridge" in record.message.lower() and "drift" in record.message.lower()]
+    assert len(drift_warnings) == 1, (
+        "the warning must be logged ONCE for the whole run, not once per "
+        f"_verify_bridge_unchanged call (iteration 2 alone triggers two): got {drift_warnings!r}"
+    )
+
+
+# --- Adversarial round 15, high finding: round 14's drift check lived ONLY
+# inside `_save_train_state`, so it fired only on iterations that happened to
+# coincide with a periodic state save. Every other iteration published its
+# `iter_N.pt` + history row under a drifted binary before the next save's
+# check finally caught it -- `train_state_every > 1` let several through,
+# `train_state_every=0` never checked at all. The fix hoists the check into
+# `_verify_bridge_unchanged`, called before collection AND before publishing
+# each iteration's artifacts, regardless of `train_state_every`. ---
+
+def test_train_state_every_zero_still_blocks_publish_of_drifted_iteration(tmp_path, monkeypatch) -> None:
+    # train_state_every=0 means train_state.pt is NEVER written, so round
+    # 14's fix (check lives inside _save_train_state) would never run at
+    # all -- a drifted binary would silently collect and publish every
+    # iteration forever. The round 15 fix's checks are independent of
+    # train_state_every.
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-v1")
+    digest_v1 = hashlib.sha256(b"go-bridge-v1").hexdigest()
+
+    calls = {"n": 0}
+
+    def fake_resolve(env_config):
+        calls["n"] += 1
+        digest = hashlib.sha256(lib_path.read_bytes()).hexdigest()
+        if calls["n"] == 3:
+            # Call 1 = fresh-run pin; calls 2/3 = iteration 1's
+            # pre-collection/post-update checks (both still v1). Rebuild
+            # lands right after, so iteration 2's pre-collection check
+            # (call 4) is the one that sees v2.
+            lib_path.write_bytes(b"go-bridge-v2-REBUILT")
+        return str(lib_path), digest
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+
+    from fh_mahjong_ai import oracle as oracle_module
+    real_collect = oracle_module.collect_b2b_rollouts
+    collection_calls = {"n": 0}
+
+    def counting_collect(*args, **kwargs):
+        collection_calls["n"] += 1
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+
+    with pytest.raises(ValueError, match=r"bridge library drift"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                 base_seed=5, train_state_every=0)
+
+    assert not (checkpoint_dir / "train_state.pt").exists()
+    # Iteration 1 published cleanly; iteration 2 must not have collected or
+    # published anything -- the pre-collection check aborted first.
+    assert collection_calls["n"] == 1
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    assert not (checkpoint_dir / "iter_002.pt").exists()
+    history = read_b2b_history_rows(checkpoint_dir / "history.json")
+    assert [row["iteration"] for row in history] == [1]
+
+
+def test_train_state_every_three_still_blocks_publish_of_drifted_iteration(tmp_path, monkeypatch) -> None:
+    # train_state_every=3 with a drift landing between iterations 1 and 2:
+    # the next periodic save (iteration 3) would be round 14's ONLY chance
+    # to notice -- by then iteration 2 (and its checkpoint/history row)
+    # would already be published under the drifted binary. The round 15
+    # fix catches it at iteration 2's pre-collection check instead.
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=4)
+    checkpoint_dir = tmp_path / "ckpt"
+    lib_path = tmp_path / "libfh_mahjong_bridge.so"
+    lib_path.write_bytes(b"go-bridge-v1")
+    digest_v1 = hashlib.sha256(b"go-bridge-v1").hexdigest()
+
+    calls = {"n": 0}
+
+    def fake_resolve(env_config):
+        calls["n"] += 1
+        digest = hashlib.sha256(lib_path.read_bytes()).hexdigest()
+        if calls["n"] == 3:
+            lib_path.write_bytes(b"go-bridge-v2-REBUILT")
+        return str(lib_path), digest
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+
+    with pytest.raises(ValueError, match=r"bridge library drift"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                 base_seed=5, train_state_every=3)
+
+    assert not (checkpoint_dir / "train_state.pt").exists()
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    for i in (2, 3, 4):
+        assert not (checkpoint_dir / f"iter_{i:03d}.pt").exists()
+    history = read_b2b_history_rows(checkpoint_dir / "history.json")
+    assert [row["iteration"] for row in history] == [1]
+
+
+def test_resume_pre_collection_check_fires_before_any_collection(tmp_path, monkeypatch) -> None:
+    # Swaps the pinned bridge identity AFTER --resume-from-state's own
+    # startup validation passes (current == saved digest, so that check is
+    # not what catches this) but BEFORE the resumed loop's first iteration
+    # collects anything -- the round 15 fix's pre-collection check must be
+    # the one that fires, and it must fire before any rollout collection.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    monkeypatch.setattr(
+        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
+    )
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    calls = {"n": 0}
+
+    def fake_resolve(env_config):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # The resume-time startup validation: current == saved, passes.
+            return "/fake/libfh_mahjong_bridge.so", "sha-A"
+        # Every call after that -- i.e. the resumed loop's own checks --
+        # sees a drifted binary.
+        return "/fake/libfh_mahjong_bridge.so", "sha-B"
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+
+    from fh_mahjong_ai import oracle as oracle_module
+    real_collect = oracle_module.collect_b2b_rollouts
+    collection_calls = {"n": 0}
+
+    def counting_collect(*args, **kwargs):
+        collection_calls["n"] += 1
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+
+    config_resumed = replace(config_first, iterations=2)
+    with pytest.raises(ValueError, match=r"bridge library drift"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                 base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+    assert collection_calls["n"] == 0
+    assert not (checkpoint_dir / "iter_002.pt").exists()
+
+
+def test_allow_bridge_mismatch_downgrades_pre_and_post_checks_to_one_warning(tmp_path, monkeypatch,
+                                                                              caplog) -> None:
+    # A binary that stays drifted for the WHOLE run triggers the
+    # pre-collection AND post-update check every iteration (2 checks x 3
+    # iterations = 6 potential warnings) -- --allow-bridge-mismatch must
+    # still log only once for the entire run, not once per check.
+    env, model_config, champion_path, config = _b2b_run_configs(tmp_path, iterations=3)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    calls = {"n": 0}
+
+    def fake_resolve(env_config):
+        calls["n"] += 1
+        # Call 1 is the fresh-run pin; every check after that sees a
+        # binary that has already drifted away from the pinned value.
+        return "/fake/libfh_mahjong_bridge.so", ("sha-pinned" if calls["n"] == 1 else "sha-drifted")
+
+    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+
+    with caplog.at_level(logging.WARNING):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
+                            base_seed=5, train_state_every=0, allow_bridge_mismatch=True)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3]
+    for i in (1, 2, 3):
+        assert (checkpoint_dir / f"iter_{i:03d}.pt").exists()
+    drift_warnings = [record for record in caplog.records
+                      if "bridge" in record.message.lower() and "drift" in record.message.lower()]
+    assert len(drift_warnings) == 1, (
+        f"expected exactly one drift warning for the whole run, got {drift_warnings!r}"
+    )
 
 
 def test_resume_with_corrupt_history_succeeds_and_warns(tmp_path, caplog) -> None:

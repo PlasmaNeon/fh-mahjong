@@ -1120,6 +1120,68 @@ def _resolve_current_bridge_fingerprint(env_config: EnvConfig) -> tuple[Optional
         return None, None
 
 
+def _verify_bridge_unchanged(env_config: EnvConfig, pinned_bridge_path: Optional[str],
+                              pinned_bridge_sha256: Optional[str], allow_bridge_mismatch: bool,
+                              warned_state: dict) -> None:
+    """Adversarial round 15, high finding: round 14's drift check lived ONLY
+    inside `_save_train_state`, so it fired only on iterations that happened
+    to coincide with a periodic state save (every `train_state_every`
+    iterations, plus completion). Every OTHER iteration collected its
+    rollouts, ran PPO, and published `iter_N.pt` + a `history.json` row
+    under a simulator binary that had already drifted out from under the
+    pinned identity -- `train_state_every > 1` let several such iterations
+    through before the next save's check finally fired, and
+    `train_state_every=0` (never state-saves) never checked at all.
+
+    The fix: this check is now a standalone gate, called by `train_b2b`
+    TWICE per iteration -- once before rollout collection starts, and once
+    after the PPO update but before that iteration's `iter_N.pt`/history row
+    is written -- so a drifted binary is caught before it can produce ANY
+    artifact, regardless of `train_state_every`. `_save_train_state` no
+    longer performs this check itself; it only ever writes the PINNED
+    digest (see its docstring) once the caller has already verified it here.
+
+    Cost: hashing a ~30MB Go bridge .so is a few milliseconds; doing it
+    twice per iteration (versus once) is negligible next to a ~15-minute
+    self-play iteration.
+
+    `pinned_bridge_sha256 is None` (mock bridge) skips the check entirely,
+    mirroring `_resolve_current_bridge_fingerprint`'s own convention.
+    `allow_bridge_mismatch=True` downgrades a mismatch to a warning instead
+    of raising -- logged ONCE for the whole run (via the shared mutable
+    `warned_state` dict), not once per check, so a persistently drifted
+    binary does not spam the log every iteration."""
+    if pinned_bridge_sha256 is None:
+        return
+    current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+    if current_bridge_sha256 == pinned_bridge_sha256:
+        return
+    message = (
+        "bridge library drift detected mid-run: this run pinned "
+        f"bridge_sha256={pinned_bridge_sha256!r} ({pinned_bridge_path!r}) at "
+        f"start, but the CURRENT bridge resolution ({current_bridge_path!r}) "
+        f"now hashes to bridge_sha256={current_bridge_sha256!r} -- the Go "
+        "simulator binary changed underneath this run (e.g. rebuilt at the "
+        "same path mid-run). Continuing would publish a checkpoint/history "
+        "row produced under a different simulator than the one this "
+        "lineage is pinned to."
+    )
+    if not allow_bridge_mismatch:
+        raise ValueError(
+            message + " Aborting WITHOUT collecting/publishing anything for "
+            "this iteration. If you have deliberately confirmed the new "
+            "binary is an acceptable, attribution-breaking substitution, "
+            "pass --allow-bridge-mismatch to downgrade this to a warning."
+        )
+    if not warned_state.get("warned"):
+        logger.warning(
+            message + " --allow-bridge-mismatch: continuing anyway (this "
+            "warning is logged once for the run, not per iteration) -- "
+            "attribution past this point is no longer guaranteed."
+        )
+        warned_state["warned"] = True
+
+
 def _train_b2b_config_echo(config: PPOConfig, model_config: ModelConfig, env_config: EnvConfig) -> dict:
     """Snapshot of the three config dataclasses that fully determine a
     `train_b2b` recipe, in plain-dict form so it round-trips through
@@ -1545,8 +1607,7 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
                       env_config: EnvConfig, base_seed: int, run_id: Optional[str],
-                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str],
-                      allow_bridge_mismatch: bool = False) -> None:
+                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str]) -> None:
     # Adversarial round 14, high finding: round 13's fix recomputed the
     # bridge fingerprint HERE, on every save -- so a .so rebuilt mid-run
     # (same path, new bytes) silently became the new saved baseline on the
@@ -1556,40 +1617,19 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
     # at run start (see train_b2b's fresh-run / resume branches, which
     # compute/derive `pinned_bridge_sha256`/`pinned_bridge_path` and pass
     # them in here) -- this function must never recompute those as the
-    # values to STORE. It only recomputes the CURRENT on-disk digest to
-    # compare against the pinned one (drift detection); a mismatch aborts
-    # the save entirely rather than writing a state that would rebase the
-    # pinned identity, so the last good state on disk keeps the true,
-    # original baseline. `pinned_bridge_sha256 is None` (mock bridge, see
-    # `_resolve_current_bridge_fingerprint`) skips drift detection.
-    if pinned_bridge_sha256 is not None:
-        current_bridge_path, current_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
-        if current_bridge_sha256 != pinned_bridge_sha256:
-            message = (
-                "bridge library drift detected during a train_state save: this run "
-                f"pinned bridge_sha256={pinned_bridge_sha256!r} ({pinned_bridge_path!r}) "
-                f"at start, but the CURRENT bridge resolution ({current_bridge_path!r}) "
-                f"now hashes to bridge_sha256={current_bridge_sha256!r} -- the Go "
-                "simulator binary changed underneath this run (e.g. rebuilt at the "
-                "same path mid-run). Saving now would silently make the drifted "
-                "binary the baseline a future --resume-from-state accepts, mixing "
-                "two simulator versions into one lineage."
-            )
-            if not allow_bridge_mismatch:
-                raise ValueError(
-                    message + " Aborting WITHOUT writing a new state -- the last "
-                    "good state already on disk keeps the true, original baseline. "
-                    "If you have deliberately confirmed the new binary is an "
-                    "acceptable, attribution-breaking substitution, pass "
-                    "--allow-bridge-mismatch to downgrade this to a warning (the "
-                    "ORIGINAL pinned digest is still what gets saved, never the "
-                    "drifted one)."
-                )
-            logger.warning(
-                message + " --allow-bridge-mismatch: saving anyway, but keeping the "
-                "ORIGINAL pinned bridge_sha256 (not the drifted one) -- attribution "
-                "past this point is no longer guaranteed."
-            )
+    # values to STORE.
+    #
+    # Adversarial round 15, high finding: drift DETECTION used to also live
+    # here, which meant it only ever fired on iterations that happened to
+    # coincide with a periodic save -- every other iteration's checkpoint
+    # and history row were published under a drifted binary before this
+    # function ever ran. Detection has been hoisted out to the caller
+    # (`train_b2b`, via `_verify_bridge_unchanged`), which now verifies
+    # BEFORE rollout collection and again BEFORE this iteration's
+    # checkpoint/history are written -- by the time `_save_train_state` is
+    # reached, the caller has already confirmed no drift occurred for this
+    # iteration (or that `--allow-bridge-mismatch` was given). This function
+    # therefore only ever WRITES the pinned digest, never re-checks it.
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -1976,8 +2016,21 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         if config.num_workers > 1:
             collector = ParallelB2bCollector(env_config, model_config, config, config.num_workers)
             collector.start()
+        # Adversarial round 15, high finding: shared across every
+        # `_verify_bridge_unchanged` call this run so a persistently-allowed
+        # mismatch (`--allow-bridge-mismatch`) logs its warning ONCE for the
+        # whole run rather than once per check (2x per iteration).
+        bridge_drift_warned: dict = {"warned": False}
         try:
             for iteration in range(start_iteration, config.iterations + 1):
+                # Adversarial round 15, high finding: verify BEFORE collecting
+                # this iteration's rollouts -- round 14's check ran only
+                # inside `_save_train_state`, so with `train_state_every > 1`
+                # (or 0, which never checks at all) a drifted binary could
+                # collect, train, and publish several iterations' artifacts
+                # before the next periodic save finally caught it.
+                _verify_bridge_unchanged(env_config, pinned_bridge_path, pinned_bridge_sha256,
+                                         allow_bridge_mismatch, bridge_drift_warned)
                 iter_seed = base_seed + iteration * config.matches_per_iter
                 if collector is not None:
                     state = cpu_state_snapshot(model)
@@ -2020,6 +2073,15 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         "investigate before continuing (raise max_steps_per_episode or "
                         "inspect the policy)"
                     )
+                # Adversarial round 15, high finding: verify AGAIN here, after
+                # the (potentially long-running) rollout collection + PPO
+                # update but strictly BEFORE this iteration's `iter_N.pt`/
+                # history row is written -- a binary that drifted DURING this
+                # iteration's own collection/update must still block that
+                # iteration's artifacts from being published, not just the
+                # NEXT iteration's.
+                _verify_bridge_unchanged(env_config, pinned_bridge_path, pinned_bridge_sha256,
+                                         allow_bridge_mismatch, bridge_drift_warned)
                 save_checkpoint(
                     checkpoint_dir / f"iter_{iteration:03d}.pt", model,
                     # Pins the trained horizon/architecture so fh-mj-evaluate can
@@ -2063,7 +2125,6 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         env_config=env_config, base_seed=base_seed, run_id=run_id,
                         pinned_bridge_sha256=pinned_bridge_sha256,
                         pinned_bridge_path=pinned_bridge_path,
-                        allow_bridge_mismatch=allow_bridge_mismatch,
                     )
         finally:
             if collector is not None:
