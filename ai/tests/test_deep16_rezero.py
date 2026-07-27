@@ -222,6 +222,26 @@ def test_grow_b2b_model_raises_on_anchor_with_undeclared_growth_tensors(tmp_path
         grow_b2b_model(anchor_path, growth_blocks=3)
 
 
+def test_grow_b2b_model_raises_on_lying_growth_blocks_claim_without_state_keys(tmp_path) -> None:
+    # Adversarial round 18, medium finding: the INVERSE of round 13's lying
+    # anchor above. Here metadata claims growth_blocks=2 (already grown) but
+    # the state dict carries NO growth.* keys at all -- a stripped grown
+    # checkpoint. The old guard only rejected `derived_growth_blocks != 0`,
+    # so this case (claim > 0, derived == 0) sailed through undetected and
+    # was then silently treated as a valid growth_blocks=0 anchor safe to
+    # grow further, discarding the metadata's own claim that it was already
+    # grown. The claim and the state-dict-derived count must both be 0 (or
+    # must agree) to proceed.
+    anchor_config = _b2b_config(growth_blocks=0)
+    lying_metadata = model_config_metadata(anchor_config)
+    lying_metadata["growth_blocks"] = 2
+    anchor_path = _save_anchor(tmp_path, anchor_config,
+                               model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="growth_blocks"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
 def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
     anchor_config = _b2b_config()
     lying_metadata = model_config_metadata(anchor_config)
@@ -1712,6 +1732,89 @@ def test_fresh_run_overwrite_removes_only_managed_artifacts_and_proceeds(tmp_pat
     # The prior run's history was cleared, not merged with this run's.
     raw_history = json.loads((checkpoint_dir / "history.json").read_text())
     assert len(raw_history["rows"]) == 1
+
+
+def test_fresh_run_overwrite_invalid_champion_preserves_old_artifacts(tmp_path) -> None:
+    # Adversarial round 18, high finding: --fresh-run-overwrite must be
+    # transactional. The old implementation deleted the prior run's managed
+    # artifacts BEFORE constructing/validating the new model -- an invalid
+    # champion/anchor checkpoint then left checkpoint_dir destroyed with no
+    # replacement. The fix validates everything that can fail first, so a
+    # failing overwrite must leave the old artifacts recoverable (either
+    # untouched or moved into a backup subdirectory), never deleted outright.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+    assert (checkpoint_dir / "iter_001.pt").exists()
+    assert (checkpoint_dir / "train_state.pt").exists()
+    assert (checkpoint_dir / "history.json").exists()
+
+    bad_champion = tmp_path / "does-not-exist.pt"
+    with pytest.raises(Exception):
+        train_b2b(env, model_config, bad_champion, checkpoint_dir, config_first,
+                 base_seed=9, fresh_run_overwrite=True)
+
+    def _artifact_recoverable(name: str) -> bool:
+        if (checkpoint_dir / name).exists():
+            return True
+        return any((backup_dir / name).exists()
+                   for backup_dir in checkpoint_dir.glob(".overwrite-backup-*"))
+
+    assert _artifact_recoverable("iter_001.pt")
+    assert _artifact_recoverable("train_state.pt")
+    assert _artifact_recoverable("history.json")
+
+
+def test_fresh_run_overwrite_cleans_backup_after_first_durable_save(tmp_path) -> None:
+    # A successful overwrite must eventually clean up its backup directory --
+    # once this new run has written its own first durable artifact
+    # (train_state.pt, since train_state_every > 0 here), the old run's
+    # backed-up files are no longer needed to recover from a mid-run failure.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=9, fresh_run_overwrite=True, train_state_every=1)
+
+    assert not list(checkpoint_dir.glob(".overwrite-backup-*"))
+    assert (checkpoint_dir / "iter_002.pt").exists()
+
+
+def test_fresh_run_overwrite_cleans_backup_after_first_checkpoint_when_state_every_zero(tmp_path) -> None:
+    # train_state_every=0 means train_state.pt is never written at all (see
+    # test_train_state_every_zero_still_blocks_publish_of_drifted_iteration),
+    # so the first durable artifact for backup-cleanup purposes must be the
+    # first iter_*.pt checkpoint instead.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=1)
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=9, fresh_run_overwrite=True, train_state_every=0)
+
+    assert not list(checkpoint_dir.glob(".overwrite-backup-*"))
+    assert (checkpoint_dir / "iter_001.pt").exists()
+
+
+def test_overwrite_backup_dir_excluded_from_managed_artifact_guard(tmp_path) -> None:
+    # A leftover (or in-progress) `.overwrite-backup-*` directory must never
+    # itself be treated as a managed artifact of a fresh launch -- it holds a
+    # PRIOR run's backed-up files, not this directory's own live artifacts,
+    # and must survive both the fresh-dir guard's inspection and any future
+    # overwrite's deletion/move logic.
+    checkpoint_dir = tmp_path / "ckpt"
+    checkpoint_dir.mkdir()
+    backup_dir = checkpoint_dir / ".overwrite-backup-deadbeef"
+    backup_dir.mkdir()
+    (backup_dir / "iter_001.pt").write_bytes(b"stale backup content")
+    (backup_dir / "train_state.pt").write_bytes(b"stale backup content")
+    (backup_dir / "history.json").write_text("{}")
+
+    assert _find_fresh_run_managed_artifacts(checkpoint_dir) == []
 
 
 def test_resume_path_unaffected_by_fresh_run_guard(tmp_path) -> None:

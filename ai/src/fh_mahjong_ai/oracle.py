@@ -12,6 +12,7 @@ import os
 import queue as _queue
 import random
 import re
+import shutil
 import traceback
 import uuid
 from dataclasses import asdict, replace
@@ -673,12 +674,29 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
     # function exists to guarantee. `_derive_growth_blocks` counts alpha keys
     # directly off the state dict and fails closed on a malformed/tampered
     # index set, so this check cannot be fooled by metadata alone.
+    #
+    # Adversarial round 18, medium finding: round 13's check above only
+    # covers an UNDER-claim (metadata says 0, state dict has real growth
+    # tensors). The inverse -- metadata OVER-claims growth_blocks>0 while the
+    # state dict carries NO growth.* keys at all (a stripped grown
+    # checkpoint) -- used to sail straight through, since the old guard only
+    # tested `derived_growth_blocks != 0`. Reuse the same shape (claim vs.
+    # state-dict-derived) that `infer_model_config`'s
+    # `_verify_metadata_matches_shapes` uses for every other ModelConfig
+    # field: the claim and the derivation must AGREE, and the only value
+    # this function is willing to grow from is 0/0. Any other combination --
+    # over-claim, under-claim, or a genuinely-already-grown anchor where both
+    # agree at a nonzero count -- raises, naming both values, since growing
+    # an already-grown (or inconsistently-labeled) net is out of scope.
     derived_growth_blocks = _derive_growth_blocks(payload["model"])
-    if derived_growth_blocks != 0:
+    if anchor_config.growth_blocks != 0 or derived_growth_blocks != 0:
         raise RuntimeError(
-            f"anchor checkpoint already contains {derived_growth_blocks} growth block(s) "
-            f"in its state dict (metadata claims growth_blocks={anchor_config.growth_blocks}); "
-            "growing an already-grown net is out of scope"
+            "anchor checkpoint is not a valid growth_blocks=0 base for grow_b2b_model: "
+            f"metadata claims growth_blocks={anchor_config.growth_blocks}, but the state "
+            f"dict's derived growth block count is {derived_growth_blocks} (field: "
+            f"(claimed, shape_derived))=growth_blocks=({anchor_config.growth_blocks}, "
+            f"{derived_growth_blocks}); growing an already-grown net (or a checkpoint "
+            "whose metadata claim disagrees with its own tensors) is out of scope"
         )
     grown_config = replace(anchor_config, growth_blocks=growth_blocks)
     anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
@@ -1695,12 +1713,18 @@ def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     run (adversarial round 6, high finding). An empty or brand-new
     directory returns `[]`. Anything else in the directory (e.g. stray
     notes, unrelated files) is intentionally not included -- the guard, and
-    `--fresh-run-overwrite`'s deletion, only ever touch these managed
+    `--fresh-run-overwrite`'s move-to-backup (adversarial round 18: no longer
+    a delete, see `train_b2b`'s fresh branch), only ever touch these managed
     names. `train_state.prev.pt` (adversarial round 9, high finding: the
     one-generation-back durability fallback `_atomic_torch_save` keeps
     alongside `train_state.pt`) is included here too -- it belongs to this
     run exactly as much as `train_state.pt` itself, and is never
-    lineage-scanned as an `iter_*.pt` file."""
+    lineage-scanned as an `iter_*.pt` file. A `.overwrite-backup-*`
+    subdirectory left behind by a still-completing (or previously
+    interrupted) overwrite is never matched by any of the globs/names above
+    -- it holds a PRIOR run's backed-up files, not this directory's own live
+    artifacts, and must survive both this guard's inspection and any future
+    overwrite's move logic untouched."""
     found = [checkpoint_dir / name
              for name in ("history.json", "train_state.pt", "train_state.prev.pt")
              if (checkpoint_dir / name).exists()]
@@ -1882,6 +1906,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     lock_file = _acquire_checkpoint_dir_lock(checkpoint_dir)
     try:
         state_payload = None
+        # Adversarial round 18, high finding: only ever set (non-None) by the
+        # fresh `--fresh-run-overwrite` path below, when it moved existing
+        # managed artifacts into a backup subdirectory instead of deleting
+        # them. `backup_cleared` starts True so a resume (or a fresh run into
+        # an empty directory, which never creates a backup) never attempts to
+        # clean up a backup that doesn't exist. `durability_trigger` picks
+        # which save this run's OWN first durable artifact is: `train_state.pt`
+        # when periodic state saves happen at all (`train_state_every > 0`),
+        # else the first `iter_*.pt` checkpoint (train_state_every == 0 means
+        # train_state.pt is never written for the whole run -- see
+        # `test_train_state_every_zero_still_blocks_publish_of_drifted_iteration`).
+        overwrite_backup_dir: Optional[Path] = None
+        backup_cleared = True
+        durability_trigger = "state" if train_state_every > 0 else "checkpoint"
         # Adversarial round 16, high finding: whether the pin about to be
         # computed below is ALLOWED to be null for a bridge_kind="go" run --
         # true only for the legacy-resume carve-out (a train_state.pt saved
@@ -2030,42 +2068,71 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
         else:
             existing_artifacts = _find_fresh_run_managed_artifacts(checkpoint_dir)
-            if existing_artifacts:
+            if existing_artifacts and not fresh_run_overwrite:
                 names = ", ".join(p.name for p in existing_artifacts)
-                if not fresh_run_overwrite:
-                    raise ValueError(
-                        f"checkpoint_dir {checkpoint_dir} already contains managed "
-                        f"training artifact(s) ({names}) but this is a fresh run "
-                        "(no --resume-from-state was given) -- launching here would "
-                        "silently reuse/overwrite a prior run's checkpoints, mixing "
-                        "lineages and risking lost progress. Either pass "
-                        "--resume-from-state pointed at this directory's "
-                        "train_state.pt to continue that run, use a new/empty "
-                        "checkpoint_dir for a truly fresh run, or pass "
-                        "--fresh-run-overwrite to delete exactly these managed "
-                        "artifacts and start fresh here"
-                    )
-                for artifact_path in existing_artifacts:
-                    artifact_path.unlink()
-                logger.warning(
-                    "--fresh-run-overwrite: removed %d prior managed artifact(s) from "
-                    "%s before starting fresh: %s",
-                    len(existing_artifacts), checkpoint_dir, names,
+                raise ValueError(
+                    f"checkpoint_dir {checkpoint_dir} already contains managed "
+                    f"training artifact(s) ({names}) but this is a fresh run "
+                    "(no --resume-from-state was given) -- launching here would "
+                    "silently reuse/overwrite a prior run's checkpoints, mixing "
+                    "lineages and risking lost progress. Either pass "
+                    "--resume-from-state pointed at this directory's "
+                    "train_state.pt to continue that run, use a new/empty "
+                    "checkpoint_dir for a truly fresh run, or pass "
+                    "--fresh-run-overwrite to delete exactly these managed "
+                    "artifacts and start fresh here"
                 )
+            # Adversarial round 18, high finding: --fresh-run-overwrite must be
+            # TRANSACTIONAL. The old implementation deleted the prior run's
+            # managed artifacts before doing anything else -- if champion/anchor
+            # validation, model construction, or bridge-fingerprint resolution
+            # then failed, checkpoint_dir was left destroyed with no
+            # replacement. Fix: validate everything that can fail FIRST, while
+            # the old artifacts are still untouched, and only once all of it
+            # succeeds move (never delete outright) the existing managed
+            # artifacts into a timestamped backup subdirectory. The backup is
+            # removed later, once this run's own first durable artifact is
+            # written (see the `overwrite_backup_dir`/`backup_cleared` handling
+            # in the training loop below) -- so a failure at ANY point up to
+            # and including early iterations of the new run still leaves the
+            # old run fully recoverable from the backup directory via a manual
+            # move.
             if growth_blocks > 0:
                 model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
                 model_config = model.model_config
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
-            start_iteration = 1
-            history = []
-            run_id = uuid.uuid4().hex
             # Adversarial round 14, high finding: pin the bridge identity for
             # this fresh run ONCE, before any rollout collection, so every
             # `_save_train_state` call below threads the SAME pinned digest
             # rather than each recomputing (and thus potentially rebasing
-            # onto) whatever binary happens to be on disk at save time.
+            # onto) whatever binary happens to be on disk at save time. Also
+            # part of round 18's transactional ordering: this can raise (e.g.
+            # a "go" bridge whose library is unreadable), so it too must run
+            # before any existing artifact is touched.
             pinned_bridge_path, pinned_bridge_sha256 = _resolve_current_bridge_fingerprint(env_config)
+            if existing_artifacts:
+                names = ", ".join(p.name for p in existing_artifacts)
+                overwrite_backup_dir = checkpoint_dir / f".overwrite-backup-{uuid.uuid4().hex}"
+                overwrite_backup_dir.mkdir()
+                for artifact_path in existing_artifacts:
+                    # os.rename: same filesystem (both under checkpoint_dir), so
+                    # this is an atomic move, not a copy+delete -- there is no
+                    # window where the artifact exists in neither location.
+                    os.rename(str(artifact_path), str(overwrite_backup_dir / artifact_path.name))
+                backup_cleared = False
+                logger.warning(
+                    "--fresh-run-overwrite: moved %d prior managed artifact(s) from %s "
+                    "into backup %s before starting fresh: %s. This backup is kept "
+                    "until the new run writes its first durable checkpoint -- if the "
+                    "new run fails before then, the old run is fully recoverable: move "
+                    "these files back from %s into %s.",
+                    len(existing_artifacts), checkpoint_dir, overwrite_backup_dir, names,
+                    overwrite_backup_dir, checkpoint_dir,
+                )
+            start_iteration = 1
+            history = []
+            run_id = uuid.uuid4().hex
         # Adversarial round 16, high finding, belt-and-braces: a
         # bridge_kind="go" run must never enter the training loop with a
         # null pinned digest -- that is precisely the condition that let
@@ -2189,6 +2256,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
                     })
+                # Adversarial round 18, high finding: this iteration's
+                # `iter_*.pt` checkpoint just landed durably on disk. When
+                # train_state_every == 0 (train_state.pt is never written for
+                # this whole run), THIS is the new run's first durable
+                # artifact -- safe to drop the `--fresh-run-overwrite` backup
+                # of the old run's artifacts now that the new run has its own
+                # durable output.
+                if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "checkpoint":
+                    shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
+                    backup_cleared = True
                 history.append(metrics)
                 # Adversarial round 3, Finding 1: wrap history rows with the run's
                 # run_id so a `--resume-from-state` can bind history.json's
@@ -2208,6 +2285,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         pinned_bridge_sha256=pinned_bridge_sha256,
                         pinned_bridge_path=pinned_bridge_path,
                     )
+                    # Adversarial round 18, high finding: `train_state.pt` just
+                    # landed durably -- this is the new run's first durable
+                    # artifact when periodic state saves are enabled at all
+                    # (see `durability_trigger`). Drop the `--fresh-run-
+                    # overwrite` backup of the old run's artifacts now.
+                    if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "state":
+                        shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
+                        backup_cleared = True
         finally:
             if collector is not None:
                 collector.close()
