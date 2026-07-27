@@ -102,6 +102,33 @@ class ShardedTransitionWriter:
         self.close()
 
 
+def fsync_dir(path: Path) -> None:
+    """Best-effort `fsync` of a directory's entry table, called after an
+    `os.replace` into it so the rename itself survives a power loss, not
+    just the file contents (adversarial round 9, high finding). Some
+    platforms/filesystems don't support `fsync`-ing a directory file
+    descriptor at all; guarded with try/except OSError so callers always get
+    the file-level durability even where the extra directory-level guarantee
+    isn't available.
+
+    Canonical home for this helper (adversarial round 10, high finding):
+    originally defined in `ppo.py` and used by `oracle.py`'s
+    `_atomic_torch_save`/`_write_history_atomic`; moved here so
+    `save_checkpoint` below can share it too instead of duplicating the
+    platform guard. `ppo.py` re-exports `_fsync_dir` as an alias for
+    backward compatibility with `oracle.py`'s existing import."""
+    try:
+        dir_fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
 def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, step: int = 0, metadata: Optional[dict] = None) -> None:
     """Write via a `.tmp` sibling + `os.replace` (adversarial round 8, high
     finding) so a crash mid-`torch.save` (OOM kill, box preemption, power
@@ -109,7 +136,20 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
     (oracle.py's per-iteration `iter_*.pt`, ppo.py, every train_*.py script)
     only ever reads `path` as a whole, so this is strictly safer for all of
     them. Mirrors oracle.py's existing `_atomic_torch_save` for
-    `train_state.pt`."""
+    `train_state.pt`.
+
+    Durability (adversarial round 10, high finding): round 8 above only
+    protected against a torn `path`; it never `fsync`ed the tmp file or the
+    parent directory, unlike `oracle.py`'s `_atomic_torch_save` and
+    `_write_history_atomic` which already do both. A power loss right after
+    `os.replace` returned (but before the filesystem's own writeback) could
+    still leave a truncated `iter_N.pt` on disk while `train_state.pt`
+    already durably records `next_iteration=N+1` -- the lineage scan on
+    resume then finds an unreadable checkpoint it must treat as
+    irreplaceable and aborts. Now the tmp file is flushed and `fsync`ed
+    before the replace, and the parent directory is `fsync`ed afterward
+    (platform-guarded via `fsync_dir`), matching the train_state/history
+    durability contract exactly."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"model": model.state_dict(), "step": step}
@@ -121,8 +161,12 @@ def save_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torc
         # by load_checkpoint, so this stays backward-compatible.
         payload["metadata"] = dict(metadata)
     tmp_path = path.with_name(path.name + ".tmp")
-    torch.save(payload, tmp_path)
+    with open(tmp_path, "wb") as f:
+        torch.save(payload, f)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, path)
+    fsync_dir(path.parent)
 
 
 def load_checkpoint_from_bytes(

@@ -16,7 +16,7 @@ from .env import MahjongEnv
 from .evaluate import evaluate_duplicate_seats
 from .global_ev import GlobalEVNet
 from .model import PolicyValueNet
-from .storage import load_checkpoint, save_checkpoint
+from .storage import fsync_dir, load_checkpoint, save_checkpoint
 from .types import Observation
 
 LEARNING_SEAT = 0
@@ -25,25 +25,11 @@ HISTORY_FILENAME = "history.json"
 
 AUX_LOSS_WEIGHT = 0.1
 
-
-def _fsync_dir(path: Path) -> None:
-    """Best-effort `fsync` of a directory's entry table, called after an
-    `os.replace` into it so the rename itself survives a power loss, not
-    just the file contents (adversarial round 9, high finding). Some
-    platforms/filesystems don't support `fsync`-ing a directory file
-    descriptor at all; guarded with try/except OSError so callers always get
-    the file-level durability even where the extra directory-level guarantee
-    isn't available."""
-    try:
-        dir_fd = os.open(str(path), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(dir_fd)
-    except OSError:
-        pass
-    finally:
-        os.close(dir_fd)
+# Adversarial round 10, high finding: this helper moved to storage.py (so
+# `save_checkpoint` there can share it too, instead of duplicating the
+# platform guard); kept as a local alias so oracle.py's existing
+# `from .ppo import _fsync_dir` keeps working unchanged.
+_fsync_dir = fsync_dir
 
 
 def _write_history_atomic(path: Path, history: List[dict]) -> None:
