@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import torch
 from torch import Tensor, nn
 
@@ -13,6 +15,8 @@ _COMPATIBLE_OPTIONAL_PREFIXES = (
 _B2B_MODULE_PREFIXES = (
     "event_encoder.", "privileged_encoder.", "belief_head.", "dealin_head.", "rank_head.",
 )
+_GROWTH_MODULE_PREFIX = "growth."
+_GROWTH_ALPHA_RE = re.compile(r"^growth\.([^.]+)\.alpha$")
 
 
 class PolicyValueNet(nn.Module):
@@ -408,6 +412,47 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
     return fields
 
 
+def _derive_growth_blocks(state_dict: dict[str, Tensor]) -> int:
+    """Derive the deep16-rezero growth-block count from `growth.{i}.alpha` keys.
+
+    Every `ReZeroResidualBlock` carries exactly one `alpha` parameter (plus
+    conv/attention tensors under the same numeric index), so counting alpha
+    keys — rather than every key under the `growth.` prefix — avoids
+    double-counting a single block's other tensors. This is intentionally
+    NOT folded into `_shape_inferred_fields`: unlike every other shape-derived
+    field, a checkpoint carrying `growth.*` keys must still be rejected
+    up front when there is no usable metadata (see `infer_model_config`'s
+    `has_growth_keys` fail-closed branch) rather than silently shape-inferred,
+    so this helper is only ever consulted once metadata is already known to
+    be present.
+
+    Indices must form the contiguous set `0..N-1`. A non-integer token or a
+    gap means the state dict itself is malformed or tampered with, so this
+    fails closed instead of guessing at a block count.
+    """
+    indices: list[int] = []
+    for key in state_dict:
+        match = _GROWTH_ALPHA_RE.match(key)
+        if match is None:
+            continue
+        token = match.group(1)
+        if not token.isdigit():
+            raise RuntimeError(
+                f"growth block index {token!r} in state dict key {key!r} is not a "
+                "valid non-negative integer -- state dict appears malformed or tampered"
+            )
+        indices.append(int(token))
+    if not indices:
+        return 0
+    indices.sort()
+    if indices != list(range(len(indices))):
+        raise RuntimeError(
+            "growth.*.alpha indices are not the contiguous set 0..N-1: found "
+            f"{indices} -- state dict appears malformed or tampered"
+        )
+    return len(indices)
+
+
 def _effective_attention_hidden(channels: int, ratio: int) -> int:
     """The attention bottleneck width `ChannelAttention2d.__init__` actually
     constructs for a given (channels, ratio) pair. Must match that formula
@@ -461,6 +506,21 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
             actual_hidden = int(state_dict[attention_key].shape[0])
             if claimed_hidden != actual_hidden:
                 mismatched["channel_attention_effective_hidden"] = (claimed_hidden, actual_hidden)
+
+    # deep16-rezero (Task 3): `growth_blocks` is derivable from state-dict
+    # keys (`_derive_growth_blocks`, contiguous `growth.{i}.alpha` count) just
+    # like the fields above, but is intentionally kept out of
+    # `_shape_inferred_fields` (see that helper's docstring) so a checkpoint
+    # with no usable metadata still fails closed instead of being silently
+    # shape-inferred. Metadata is known present here (this function only runs
+    # when it is), so cross-check the claim against the derived count now —
+    # BEFORE `PolicyValueNet` is ever constructed — catching both a doctored
+    # over-claim (metadata says 5, checkpoint has 3) and a doctored
+    # under-claim (metadata says 0 but the checkpoint actually carries
+    # `growth.*` tensors).
+    derived_growth_blocks = _derive_growth_blocks(state_dict)
+    if config.growth_blocks != derived_growth_blocks:
+        mismatched["growth_blocks"] = (config.growth_blocks, derived_growth_blocks)
 
     if mismatched:
         raise RuntimeError(
@@ -532,21 +592,36 @@ def infer_model_config(state_dict: dict[str, Tensor], metadata: dict | None = No
     (the checkpoint's saved `metadata` dict, if any) is consulted first:
 
     1. `metadata["model_config"]` (a complete ModelConfig, saved by newer
-       B2b/B2c training paths) is authoritative if present.
+       B2b/B2c/deep16-rezero training paths) is authoritative if present.
     2. Otherwise `metadata["b2b"]` (the four-flag block older B2b checkpoints
        carry) overlays `event_window`/`privileged_critic`/`aux_heads`/
-       `residual_blocks`; every other field is still shape-inferred.
-    3. Otherwise, if the state dict carries no B2b modules at all, everything
-       is shape-inferred (the pre-B2b legacy path).
-    4. Otherwise (B2b modules present, no usable metadata) this raises — the
-       checkpoint's event_window cannot be recovered from shapes alone.
+       `residual_blocks`; every other field is still shape-inferred (this
+       predates deep16-rezero, so `growth_blocks` is never overlaid here —
+       it stays whatever `_shape_inferred_fields` doesn't set, i.e. the
+       ModelConfig default of 0).
+    3. Otherwise, if the state dict carries no B2b modules and no
+       deep16-rezero `growth.*` keys, everything is shape-inferred (the
+       pre-B2b legacy path).
+    4. Otherwise (B2b modules and/or `growth.*` keys present, no usable
+       metadata) this raises — `event_window` cannot be recovered from
+       shapes alone, and `growth_blocks`, while shape-derivable in
+       principle, is deliberately still required to come from metadata (see
+       `_derive_growth_blocks`'s docstring) so a stripped-metadata grown
+       checkpoint fails with an explicit, clearly-messaged rejection instead
+       of the generic shape-cross-check error it would otherwise hit deeper
+       in `_cross_check_shapes`.
 
     In every case the reconstructed config is cross-checked by instantiating
     a throwaway PolicyValueNet and comparing its state dict's keys/shapes
-    against `state_dict`; any mismatch raises.
+    against `state_dict`; any mismatch raises. When metadata is present,
+    `_verify_metadata_matches_shapes` additionally cross-checks every
+    metadata field that IS derivable from shapes (including
+    `growth_blocks`, via `_derive_growth_blocks`) BEFORE that throwaway
+    `PolicyValueNet` is ever constructed.
     """
     metadata = metadata or {}
     has_b2b_modules = any(key.startswith(_B2B_MODULE_PREFIXES) for key in state_dict)
+    has_growth_keys = any(key.startswith(_GROWTH_MODULE_PREFIX) for key in state_dict)
 
     model_config_meta = metadata.get("model_config")
     b2b_meta = metadata.get("b2b")
@@ -561,14 +636,19 @@ def infer_model_config(state_dict: dict[str, Tensor], metadata: dict | None = No
             residual_blocks=int(b2b_meta["residual_blocks"]),
         )
         config = ModelConfig(**fields)
-    elif has_b2b_modules:
+    elif has_b2b_modules or has_growth_keys:
+        reasons = []
+        if has_b2b_modules:
+            reasons.append("Spec B2b modules (event encoder / privileged critic / aux heads)")
+        if has_growth_keys:
+            reasons.append("deep16-rezero growth blocks (growth.*)")
         raise RuntimeError(
-            "this checkpoint carries Spec B2b modules (event encoder / privileged critic / "
-            "aux heads) but no usable metadata (\"model_config\" or \"b2b\"), so "
-            "infer_model_config cannot reconstruct its ModelConfig from shapes alone. "
-            "Re-save the checkpoint with metadata (save_checkpoint(..., metadata={\"model_config\": "
-            "model_config_metadata(config)})), or evaluate it with fh-mj-evaluate and explicit "
-            "--model-event-window/--model-privileged-critic/--model-aux-heads flags instead."
+            "this checkpoint carries " + " and ".join(reasons) + " but no usable metadata "
+            "(\"model_config\" or \"b2b\"), so infer_model_config cannot reconstruct its "
+            "ModelConfig from shapes alone. Re-save the checkpoint with metadata "
+            "(save_checkpoint(..., metadata={\"model_config\": model_config_metadata(config)})), "
+            "or evaluate it with fh-mj-evaluate and explicit --model-event-window/"
+            "--model-privileged-critic/--model-aux-heads/--model-growth-blocks flags instead."
         )
     else:
         config = ModelConfig(**_shape_inferred_fields(state_dict))

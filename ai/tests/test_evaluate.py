@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 
 import numpy as np
@@ -879,3 +880,60 @@ def test_offline_agreement_rejects_event_models(tmp_path, capsys):
                                     "--model-event-window", "8"])
             evaluate_cli.main()
     assert "offline datasets carry no event histories" in capsys.readouterr().err
+
+
+def test_evaluate_cli_model_growth_blocks_flag_threads_into_explicit_config(tmp_path, monkeypatch):
+    # deep16-rezero Task 3: --model-growth-blocks must reach the explicit-flag
+    # ModelConfig path (mirrors --model-event-window's plumbing), so a grown
+    # checkpoint with no usable metadata still loads under matching flags.
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+                       q_hidden_dim=16, growth_blocks=3)
+    ckpt = tmp_path / "grown.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(bridge_kind="mock"), mcfg))  # no metadata
+
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16", "--model-growth-blocks", "3",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                        lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+    ev.main()  # must not raise: matching --model-growth-blocks loads the grown checkpoint cleanly
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["model_config"]["model_residual_blocks"] == 1
+
+
+def test_evaluate_cli_model_growth_blocks_mismatch_fails_checkpoint_load(tmp_path, monkeypatch, capsys):
+    # Negative control: omitting --model-growth-blocks (default 0) when the
+    # checkpoint was actually saved with growth blocks must fail to load
+    # (shape mismatch), not silently drop the growth tensors.
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+                       q_hidden_dim=16, growth_blocks=3)
+    ckpt = tmp_path / "grown.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(bridge_kind="mock"), mcfg))  # no metadata
+
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(RuntimeError):
+        ev.main()

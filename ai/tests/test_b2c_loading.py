@@ -2,7 +2,9 @@
 and event-aware `CheckpointPolicy` serving."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -376,3 +378,132 @@ def test_evaluate_batch_threads_events_for_event_model(tmp_path):
         expected_probs = torch.softmax(logits.masked_fill(m <= 0, float("-inf")), dim=1)
     np.testing.assert_allclose(probs[0], expected_probs[0].numpy(), atol=1e-5)
     assert values[0] == pytest.approx(float(value.item()), abs=1e-5)
+
+
+# --- Task 3 (deep16-rezero): growth-aware metadata loading, derivable count,
+# fail-closed rules. `_grown_config` deliberately stays plain (no B2b flags)
+# so these tests isolate the growth-only surface from the B2b surface above;
+# `test_deep16_rezero.py` separately covers growth stacked on a B2b anchor
+# via `grow_b2b_model`. ---
+
+def _grown_config(**overrides) -> ModelConfig:
+    fields = dict(_SMALL, growth_blocks=3)
+    fields.update(overrides)
+    return ModelConfig(**fields)
+
+
+def _save_grown_checkpoint(tmp_path: Path, model_config: ModelConfig, *,
+                           metadata_override: dict | None = None) -> Path:
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": metadata_override or model_config_metadata(model_config)}
+    path = tmp_path / "grown.pt"
+    save_checkpoint(path, model, metadata=metadata)
+    return path
+
+
+def test_infer_model_config_round_trips_grown_checkpoint(tmp_path):
+    model_config = _grown_config()
+    path = _save_grown_checkpoint(tmp_path, model_config)
+    saved = torch.load(path, map_location="cpu")
+    reconstructed = infer_model_config(saved["model"], saved["metadata"])
+    assert reconstructed.growth_blocks == 3
+    assert reconstructed == model_config
+
+
+def test_from_checkpoint_loads_grown_checkpoint_and_choose_works(tmp_path):
+    model_config = _grown_config()
+    path = _save_grown_checkpoint(tmp_path, model_config)
+    policy = CheckpointPolicy.from_checkpoint(path, device="cpu")
+    assert policy.model.model_config.growth_blocks == 3
+
+    observation = _obs(window=0, history=np.zeros(0, dtype=np.uint32))
+    served = policy.choose(observation)
+    assert served.action_id in observation.legal_actions
+
+
+def test_infer_model_config_growth_blocks_overclaim_raises_before_construction(tmp_path):
+    # Doctored metadata claims 5 growth blocks; the checkpoint actually has 3.
+    # Must raise BEFORE any PolicyValueNet is constructed (tripwire below).
+    model_config = _grown_config(growth_blocks=3)
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["growth_blocks"] = 5
+    metadata = {"model_config": doctored}
+
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(RuntimeError, match="growth_blocks"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
+
+
+def test_infer_model_config_growth_keys_without_metadata_raises_explicit_message():
+    model_config = _grown_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    with pytest.raises(RuntimeError, match="no usable metadata"):
+        infer_model_config(model.state_dict())
+    # And the message must actually name growth blocks, not just B2b modules
+    # (this checkpoint has neither event encoder, privileged critic, nor aux
+    # heads -- only `growth.*` -- so a message that only mentions B2b modules
+    # would be misleading).
+    with pytest.raises(RuntimeError, match="growth"):
+        infer_model_config(model.state_dict())
+
+
+def test_infer_model_config_growth_claim_positive_but_no_growth_keys_raises():
+    # Metadata claims growth_blocks > 0 but the state dict has no growth.* keys.
+    legacy_config = ModelConfig(**_SMALL)  # growth_blocks == 0
+    legacy_model = PolicyValueNet(_ENV39, legacy_config)
+    doctored = model_config_metadata(legacy_config)
+    doctored["growth_blocks"] = 4
+    metadata = {"model_config": doctored}
+    with pytest.raises(RuntimeError, match="growth_blocks"):
+        infer_model_config(legacy_model.state_dict(), metadata)
+
+
+def test_infer_model_config_rejects_oversized_growth_blocks_claim_with_no_allocation():
+    model_config = _grown_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["growth_blocks"] = 10 ** 6
+    metadata = {"model_config": doctored}
+
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(ValueError, match="growth_blocks"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
+
+
+def test_infer_model_config_legacy_b2b_metadata_without_growth_field_defaults_zero():
+    # legacy/b2b metadata (the four-flag form) never carries growth_blocks ->
+    # growth_blocks defaults to 0 (unchanged pre-deep16-rezero behavior).
+    model_config = _b2b_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"b2b": {
+        "event_window": 8, "privileged_critic": True, "aux_heads": True, "residual_blocks": 1,
+    }}
+    reconstructed = infer_model_config(model.state_dict(), metadata)
+    assert reconstructed.growth_blocks == 0
+
+
+def test_infer_model_config_rejects_non_contiguous_growth_indices():
+    model_config = _grown_config(growth_blocks=3)
+    model = PolicyValueNet(_ENV39, model_config)
+    state_dict = model.state_dict()
+    # Strip the middle block's tensors entirely, leaving indices {0, 2}.
+    for key in [k for k in state_dict if k.startswith("growth.1.")]:
+        del state_dict[key]
+    metadata = {"model_config": model_config_metadata(model_config)}
+    with pytest.raises(RuntimeError, match="contiguous"):
+        infer_model_config(state_dict, metadata)
+
+
+def test_growth_blocks_zero_round_trips_with_no_growth_keys(tmp_path):
+    # Sanity: growth_blocks=0 needs no growth-specific metadata handling at
+    # all (no growth.* keys ever appear), matching pre-deep16-rezero behavior.
+    model_config = ModelConfig(**_SMALL)
+    path = _save_grown_checkpoint(tmp_path, model_config)
+    saved = torch.load(path, map_location="cpu")
+    reconstructed = infer_model_config(saved["model"], saved["metadata"])
+    assert reconstructed.growth_blocks == 0
