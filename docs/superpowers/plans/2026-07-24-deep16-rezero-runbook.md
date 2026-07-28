@@ -119,6 +119,14 @@ this anchor and the lap must not launch.
 
 ## 2. Worker benchmark (adoption rule)
 
+File-descriptor note: multi-worker collection previously hit WSL's default
+`ulimit -n 1024` with `OSError: [Errno 24] Too many open files` (torch's
+`file_descriptor` sharing strategy holds one fd per shared tensor in the
+spawn queues). Both `fh-mj-collect-bench` and `fh-mj-train-b2b` now raise
+`RLIMIT_NOFILE` to the hard limit at startup (and the bench additionally
+switches to the `file_system` sharing strategy), so no manual `ulimit -n`
+is required; the startup log prints the old→new limit for the record.
+
 ```
 uv run --project ai fh-mj-collect-bench \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \

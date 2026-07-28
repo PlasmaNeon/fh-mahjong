@@ -32,8 +32,10 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import torch
 
 from ..config import EnvConfig
+from ..fdlimit import raise_file_descriptor_limit
 from ..oracle import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
 from ..ppo import PPOConfig, RolloutBatch, cpu_state_snapshot
 from .model_config_args import add_model_config_args, model_config_from_args
@@ -208,6 +210,14 @@ def main() -> None:
     p.add_argument("--json", type=Path, default=None, help="write the full report as JSON")
     add_model_config_args(p)
     args = p.parse_args()
+
+    # Multi-worker collection moves many shared tensors through spawn queues;
+    # torch's default file_descriptor sharing strategy costs one fd per shared
+    # tensor and exhausts WSL's default 1024 soft limit (errno 24). Raise the
+    # limit and switch this process to the file_system strategy, which shares
+    # via named files instead of held-open descriptors.
+    raise_file_descriptor_limit()
+    torch.multiprocessing.set_sharing_strategy("file_system")
 
     workers = [int(w.strip()) for w in args.workers.split(",") if w.strip()]
     if not workers:
