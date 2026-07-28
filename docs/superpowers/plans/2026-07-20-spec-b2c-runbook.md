@@ -308,6 +308,7 @@ mismatch, illegal action, or HTTP error is an immediate stop.
 
 ```
 uv run --project ai fh-mj-serving-smoke \
+  --manifest ai/checkpoints/best-checkpoints.json \
   --checkpoint /root/fh-mahjong-runs/b2b/ckpt/iter_075.pt \
   --bridge-kind go --episodes 20 --start-seed 972000
 ```
