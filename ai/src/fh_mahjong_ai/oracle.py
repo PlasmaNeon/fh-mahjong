@@ -1433,6 +1433,18 @@ _RESUME_IGNORED_FIELDS = {
     ("ppo_config", "iterations"),
 }
 
+# "num_workers" changes are logged rather than rejected: it only controls how
+# collection work is sharded across worker processes, not the recipe itself.
+# Per-match seeding makes trajectories worker-count-invariant -- proven by
+# fh-mj-collect-bench's digest equality across 5/10/20 workers, which is that
+# tool's entire purpose. So resuming a run at a different worker count (e.g.
+# dropping from 20 to 10 to fit a smaller box after an OOM) is a legitimate
+# operational adjustment, not a silent recipe drift, and must not block
+# --resume-from-state the way every other field does.
+_RESUME_LOGGED_FIELDS = {
+    ("ppo_config", "num_workers"),
+}
+
 
 def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     """Raise with a clear, specific message on the FIRST field that differs
@@ -1440,7 +1452,9 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     was saved under. Resuming under a different recipe (a changed lr, event
     window, ...) silently corrupts the run (e.g. an optimizer whose momentum
     was tuned for a different lr), so any drift is an error, not a warning —
-    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`)."""
+    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and
+    `ppo_config.num_workers` (see `_RESUME_LOGGED_FIELDS`), which is logged
+    instead of raised."""
     for section in ("ppo_config", "model_config", "env_config"):
         current_section = current[section]
         saved_section = saved[section]
@@ -1451,6 +1465,17 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
             current_value = current_section.get(key, _RESUME_MISSING)
             saved_value = saved_section.get(key, _RESUME_MISSING)
             if current_value != saved_value:
+                if (section, key) in _RESUME_LOGGED_FIELDS:
+                    logger.info(
+                        "--resume-from-state: %s.%s changed (state file has %r, "
+                        "currently-supplied config has %r) -- proceeding: "
+                        "worker count is semantics-neutral for collection "
+                        "(per-match seeding makes trajectories worker-count-"
+                        "invariant, proven by fh-mj-collect-bench's digest "
+                        "equality across 5/10/20 workers)",
+                        section, key, saved_value, current_value,
+                    )
+                    continue
                 raise ValueError(
                     f"--resume-from-state config mismatch in {section}.{key}: "
                     f"state file has {saved_value!r}, currently-supplied config has "

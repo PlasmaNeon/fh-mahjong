@@ -565,6 +565,33 @@ def test_resume_from_state_raises_on_different_lr(tmp_path) -> None:
                  base_seed=5, resume_from_state=state_path)
 
 
+def test_resume_from_state_allows_different_num_workers_with_notice(tmp_path, caplog) -> None:
+    # num_workers is semantics-neutral for collection: per-match seeding makes
+    # trajectories worker-count-invariant (proven by fh-mj-collect-bench's
+    # digest equality across 5/10/20 workers), so a resume that changes only
+    # this field must proceed (with a logged notice) rather than raise -- e.g.
+    # an operational resume at a lower worker count to avoid OOM.
+    env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    assert config_first.num_workers == 1
+
+    config_resumed = replace(config_first, iterations=4, num_workers=2)
+    with caplog.at_level(logging.INFO):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
+                            base_seed=5, train_state_every=2,
+                            resume_from_state=state_path)
+
+    assert len(history) == 4
+    assert any(
+        "num_workers" in record.message and "1" in record.message and "2" in record.message
+        for record in caplog.records
+    )
+
+
 def test_resume_from_state_raises_on_different_base_seed(tmp_path) -> None:
     env, model_config, champion_path, config_first = _b2b_run_configs(
         tmp_path, iterations=1)
