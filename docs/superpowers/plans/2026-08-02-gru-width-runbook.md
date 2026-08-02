@@ -155,12 +155,15 @@ process's in-memory state.
 ## 3. Resume after a crash / box restart
 
 Same launch command, with `--champion` optional (dropped or kept — it is
-ignored once `--resume-from-state` is given) and `--widen-event-hidden`
-KEPT (architecture flags are load-bearing on resume — see below):
+ignored once `--resume-from-state` is given). CRITICAL: `--widen-event-hidden`
+is INERT on resume (it only routes the fresh-launch warm start) — the
+load-bearing architecture flags on resume are `--model-event-hidden-dim 256`
+and `--model-event-output-dim 128`, which must match the saved config echo
+exactly or the resume raises:
 
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
-  --widen-event-hidden 256 \
+  --model-event-hidden-dim 256 --model-event-output-dim 128 \
   --checkpoint-dir /root/fh-mahjong-runs/gru-width/ckpt \
   --base-seed 400000 --iterations <computed — expected ~165> --matches-per-iter 320 \
   --num-workers 10 \
@@ -194,8 +197,7 @@ deep4+12-rezero OOMs.
 At iterations 25/50/75/100/125/150/`<final>`, evaluate against a comparator
 anchor REGENERATED on the identical current bridge, `910000+` seed window
 (120 seeds, strict). Candidate flags carry the new dims explicitly
-(belt-and-suspenders — the checkpoint's own metadata is authoritative, but
-CLI flags document intent in the command line):
+(note: fh-mj-evaluate's greedy path builds the model FROM these flags — they are load-bearing here; metadata-authoritative loading applies to CheckpointPolicy/serving, not this path):
 
 ```
 fh-mj-evaluate --checkpoint /root/fh-mahjong-runs/gru-width/ckpt/iter_XXX.pt \
