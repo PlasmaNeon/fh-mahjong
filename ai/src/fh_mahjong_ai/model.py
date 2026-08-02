@@ -377,9 +377,9 @@ class EventEncoder(nn.Module):
         batch = events.shape[0]
         idx = (lengths - 1).clamp(min=0).view(batch, 1, 1).expand(-1, 1, self.hidden_dim)
         gathered = out.gather(1, idx).squeeze(1)
-        result = gathered * (lengths > 0).float().unsqueeze(-1)
         if self.output_proj is not None:
-            result = self.output_proj(result)
+            gathered = self.output_proj(gathered)
+        result = gathered * (lengths > 0).float().unsqueeze(-1)
         return result
 
 
