@@ -368,6 +368,97 @@ def test_event_output_dim_out_of_bounds_or_non_int_raises(value) -> None:
         ModelConfig(event_output_dim=value)
 
 
+# ---------------------------------------------------------------------------
+# Adversarial review round 2, Finding 1: a nonzero event_output_dim with
+# event_window == 0 is a dormant-encoder configuration -- PolicyValueNet
+# builds no EventEncoder at all in that case, so a positive projection width
+# claim is meaningless, and infer_model_config's shape cross-check rejects
+# the checkpoint's own metadata on load (the projection key the metadata
+# implies can never exist without an encoder). Reject the combination
+# up front in ModelConfig.__post_init__ instead of letting it construct a
+# checkpoint that can't load itself back.
+# ---------------------------------------------------------------------------
+
+def test_event_output_dim_nonzero_with_event_window_zero_raises() -> None:
+    with pytest.raises(ValueError, match="event_output_dim.*event_window|event_window.*event_output_dim"):
+        ModelConfig(event_window=0, event_output_dim=128)
+
+
+def test_event_output_dim_zero_with_event_window_zero_is_fine() -> None:
+    # The dormant default combination must remain legal.
+    config = ModelConfig(event_window=0, event_output_dim=0)
+    assert config.event_output_dim == 0
+
+
+def test_event_output_dim_nonzero_with_event_window_nonzero_round_trips(tmp_path) -> None:
+    # Recommendation follow-up: a legitimate non-dormant config must still
+    # save and load cleanly through infer_model_config's metadata-authoritative
+    # path (the combination Finding 1 rejects is event_window == 0, not
+    # event_output_dim != 0 in general).
+    config = _b2b_config(event_hidden_dim=16, event_output_dim=8)
+    model = PolicyValueNet(_ENV39, config)
+    path = tmp_path / "roundtrip.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(config)})
+
+    from fh_mahjong_ai.model import infer_model_config
+
+    saved = torch.load(path, map_location="cpu")
+    reconstructed = infer_model_config(saved["model"], saved["metadata"])
+    assert reconstructed.event_output_dim == 8
+    assert reconstructed.event_window == 8
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 2, Finding 2: `widen_event_hidden` routes through
+# `> 0` in both the CLI and train_b2b, so a negative value (e.g. -256)
+# silently falls through to the default (unwidened) build_b2b_model path
+# instead of erroring -- with the intended post-B2b anchor, that fallback
+# can succeed (shapes already match) and burn a multi-day lap training the
+# wrong architecture. Reject negative values at both boundaries; 0 stays
+# the "disabled" sentinel.
+# ---------------------------------------------------------------------------
+
+def test_train_b2b_negative_widen_event_hidden_raises(tmp_path) -> None:
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    with pytest.raises(ValueError, match="widen_event_hidden"):
+        train_b2b(env, anchor_config, anchor_path, tmp_path / "ckpt", config,
+                 base_seed=5, widen_event_hidden=-1)
+
+
+def test_train_b2b_widen_event_hidden_zero_is_disabled_and_unchanged(tmp_path) -> None:
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, anchor_config, anchor_path, tmp_path / "ckpt", config,
+                        base_seed=5, widen_event_hidden=0)
+    assert len(history) == 1
+    saved = torch.load(tmp_path / "ckpt" / "iter_001.pt", map_location="cpu")
+    assert saved["metadata"]["model_config"]["event_hidden_dim"] == anchor_config.event_hidden_dim
+
+
+def test_train_b2b_cli_negative_widen_event_hidden_errors_naming_flag(tmp_path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b",
+         "--champion", "/nonexistent/anchor.pt",
+         "--checkpoint-dir", str(tmp_path / "ckpt"),
+         "--bridge-kind", "mock",
+         "--widen-event-hidden", "-256"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "--widen-event-hidden" in result.stderr
+
+
 def test_event_encoder_projection_applied_before_zero_length_mask() -> None:
     """Regression: the output projection must run before the zero-length
     mask, not after. A nonzero projection bias applied to already-zeroed
@@ -451,7 +542,12 @@ def test_model_config_args_has_both_event_hidden_and_output_dim_flags() -> None:
 
     parser = argparse.ArgumentParser()
     add_model_config_args(parser)
-    args = parser.parse_args(["--model-event-hidden-dim", "256", "--model-event-output-dim", "128"])
+    # --model-event-window must also be given here: event_output_dim != 0 with
+    # event_window == 0 is a dormant-encoder combination ModelConfig now
+    # rejects (adversarial round 2, Finding 1) -- this test is only about the
+    # hidden-dim/output-dim flags plumbing through, not that combination.
+    args = parser.parse_args(["--model-event-window", "8", "--model-event-hidden-dim", "256",
+                              "--model-event-output-dim", "128"])
     model_config = model_config_from_args(args)
     assert model_config.event_hidden_dim == 256
     assert model_config.event_output_dim == 128

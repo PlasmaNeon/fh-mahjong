@@ -137,6 +137,25 @@ class ModelConfig:
                 f"event_window {self.event_window} out of bounds "
                 f"[0, {EnvConfig.MAX_EVENT_HISTORY_WINDOW}]"
             )
+        # Adversarial review round 2, Finding 1: event_window == 0 means
+        # PolicyValueNet builds NO EventEncoder at all, so a positive
+        # event_output_dim in that configuration describes a projection
+        # module that will never exist -- the state_dict can never carry the
+        # `event_encoder.output_proj.*` keys such a claim implies. Left
+        # unrejected, this constructs happily but produces a checkpoint whose
+        # own metadata `infer_model_config`'s shape cross-check then refuses
+        # to load (claimed nonzero projection vs. a derived 0), bricking the
+        # checkpoint. Reject the combination here, before anything is built,
+        # rather than normalizing it silently at verification/serialization
+        # time -- a projection width with no encoder to attach it to is not
+        # a meaningful configuration to accept in the first place.
+        if self.event_output_dim != 0 and self.event_window == 0:
+            raise ValueError(
+                f"event_output_dim ({self.event_output_dim}) must be 0 when "
+                f"event_window is 0 -- a dormant event encoder (event_window == 0) "
+                "builds no projection module, so a nonzero event_output_dim claims "
+                "a module that will never exist"
+            )
 
     def _validate_bounded_int(self, field: str, *, minimum: int, maximum: int) -> None:
         value = getattr(self, field)

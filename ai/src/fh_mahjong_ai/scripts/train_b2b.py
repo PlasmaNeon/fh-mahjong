@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
-from fh_mahjong_ai.config import EnvConfig
+from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.fdlimit import raise_file_descriptor_limit
 from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
 from fh_mahjong_ai.oracle import train_b2b
@@ -131,6 +131,12 @@ def main() -> None:
     raise_file_descriptor_limit()
     if args.champion is None and args.resume_from_state is None:
         p.error("--champion is required unless --resume-from-state is given")
+    if args.widen_event_hidden < 0:
+        p.error(f"--widen-event-hidden must not be negative (got {args.widen_event_hidden}); "
+               "0 disables the gru-width warm-start surgery")
+    if args.widen_event_hidden > ModelConfig.MAX_HIDDEN_DIM:
+        p.error(f"--widen-event-hidden ({args.widen_event_hidden}) exceeds maximum "
+               f"{ModelConfig.MAX_HIDDEN_DIM}")
     if args.model_growth_blocks > 0 and args.widen_event_hidden > 0:
         p.error("--model-growth-blocks and --widen-event-hidden cannot both be set "
                "(> 0) in one run -- these are two distinct warm-start surgeries and this "

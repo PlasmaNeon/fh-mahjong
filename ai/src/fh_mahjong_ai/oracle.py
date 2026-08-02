@@ -2506,6 +2506,28 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     directory -- logs what was removed, and then proceeds as a normal fresh
     run. A brand-new or genuinely empty `checkpoint_dir` always proceeds
     without asking (mkdir-if-absent, as before)."""
+    # Adversarial review round 2, Finding 2: the routing below is
+    # `widen_event_hidden > 0`, so any negative value (e.g. a fat-fingered
+    # `-256`) silently falls through to the DEFAULT build_b2b_model path
+    # instead of the requested widen_event_gru surgery. With the intended
+    # post-B2b anchor for that surgery, the fallback path can succeed
+    # outright (its shapes already match a B2b model), silently training the
+    # unwidened architecture for a multi-day run before anyone notices.
+    # Reject negative values outright; 0 remains the "disabled" sentinel and
+    # the upper bound mirrors ModelConfig.MAX_HIDDEN_DIM (the same ceiling
+    # event_hidden_dim itself is bounded by).
+    if widen_event_hidden < 0:
+        raise ValueError(
+            f"train_b2b: widen_event_hidden ({widen_event_hidden}) must not be "
+            "negative -- 0 disables the gru-width warm-start surgery; a negative "
+            "value would silently fall through to the default (unwidened) "
+            "build_b2b_model path instead of erroring"
+        )
+    if widen_event_hidden > ModelConfig.MAX_HIDDEN_DIM:
+        raise ValueError(
+            f"train_b2b: widen_event_hidden ({widen_event_hidden}) exceeds maximum "
+            f"{ModelConfig.MAX_HIDDEN_DIM}"
+        )
     if growth_blocks > 0 and widen_event_hidden > 0:
         raise ValueError(
             f"train_b2b: growth_blocks ({growth_blocks}) and widen_event_hidden "
