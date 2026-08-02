@@ -1299,6 +1299,87 @@ def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(
 
 
 # ---------------------------------------------------------------------------
+# Adversarial review round 5 (gru-width branch), medium finding: round 1's
+# fix above back-filled ANY field missing from a saved echo -- not just the
+# two proven legacy additions -- using ITS OWN dataclass's TODAY's default.
+# That means a malformed/edited state file missing an established field
+# (e.g. ppo_config.gamma, env_config.match_mode) silently resumed under
+# today's default for that field instead of raising, a fail-open regression
+# for every field except the two this was actually meant to cover. Fixed by
+# whitelisting only the proven legacy additions (_LEGACY_ECHO_ADDITIONS);
+# anything else missing must raise naming it.
+# ---------------------------------------------------------------------------
+
+def test_resume_config_echo_missing_ppo_gamma_raises_naming_it() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["gamma"]
+
+    with pytest.raises(ValueError, match="gamma"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_env_match_mode_raises_naming_it() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["env_config"]["match_mode"]
+
+    with pytest.raises(ValueError, match="match_mode"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_event_output_dim_still_proceeds_with_notice(caplog) -> None:
+    # Unchanged behavior for a whitelisted legacy addition.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["event_output_dim"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_missing_growth_blocks_still_proceeds_with_notice(caplog) -> None:
+    # Unchanged behavior for the other whitelisted legacy addition.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["growth_blocks"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_missing_nonwhitelisted_model_field_raises() -> None:
+    # channels is a real, established ModelConfig field -- NOT in the
+    # whitelist -- so its absence must raise, not silently default-fill.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["channels"]
+
+    with pytest.raises(ValueError, match="channels"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+# ---------------------------------------------------------------------------
 # Adversarial review round 3
 # ---------------------------------------------------------------------------
 #

@@ -1658,12 +1658,37 @@ _RESUME_LOGGED_FIELDS = {
 # present comparison then reads that as an explicit drift (missing sentinel
 # != 0) and refuses to resume a perfectly compatible multi-day run. Maps each
 # section name to the dataclass whose `dataclasses.fields(...)` defaults
-# back-fill a legacy echo's missing keys below, so the NEXT new field with a
-# default is handled automatically instead of needing another special case.
+# back-fill a legacy echo's missing keys below.
+#
+# Adversarial round 5 (medium): round 1's fix originally back-filled ANY
+# field missing from a saved echo -- for every dataclass, every field -- not
+# just the two additions it was actually built to cover. That's fail-open:
+# a malformed/edited state file missing an ESTABLISHED field (e.g.
+# ppo_config.gamma, env_config.match_mode) would silently resume under
+# today's default for that field instead of raising. Fixed by narrowing the
+# back-fill to an explicit whitelist of PROVEN legacy additions -- fields
+# that shipped with a default AFTER released `train_state.pt` files already
+# existed without them. Nothing is whitelisted for ppo_config/env_config:
+# every field in those sections has been present since each section's first
+# released echo, so a missing key there is never legitimate legacy silence.
+#
+# Extend this whitelist when (and only when) a new field ships after
+# released states exist -- add "section": {"field_name"} for it, name it in
+# a comment like the two below, and it starts getting the same treatment.
+# A schema-version field on the echo was considered as a more scalable
+# alternative and deferred: an explicit whitelist is equivalent to it while
+# the list stays this short, and simpler to reason about.
 _RESUME_SECTION_DATACLASSES = {
     "ppo_config": PPOConfig,
     "model_config": ModelConfig,
     "env_config": EnvConfig,
+}
+
+_LEGACY_ECHO_ADDITIONS = {
+    "model_config": {
+        "growth_blocks",       # absent from every train_state.pt saved before deep16-rezero
+        "event_output_dim",    # absent from every train_state.pt saved before gru-width
+    },
 }
 
 
@@ -1684,17 +1709,23 @@ def _dataclass_field_defaults(cls: type) -> dict:
 
 
 def _fill_legacy_echo_defaults(section: str, current_section: dict, saved_section: dict) -> dict:
-    """Return a copy of `saved_section` with any key that's present in
-    `current_section` but ABSENT from `saved_section` filled in with that
-    field's dataclass default -- i.e. treat a pre-upgrade echo's silence
-    about a field as "this run used the default", not as a mismatch. A key
-    that IS present in `saved_section` (even if equal to the default) is left
-    untouched and still compares strictly against the current value."""
+    """Return a copy of `saved_section` with any key that's WHITELISTED in
+    `_LEGACY_ECHO_ADDITIONS` for this section, present in `current_section`,
+    but ABSENT from `saved_section`, filled in with that field's dataclass
+    default -- i.e. treat a pre-upgrade echo's silence about a *proven*
+    legacy addition as "this run used the default", not as a mismatch.
+
+    A key that IS present in `saved_section` (even if equal to the default)
+    is left untouched and still compares strictly against the current value.
+    A key missing from `saved_section` that is NOT in the whitelist is left
+    missing here -- `_validate_resume_config_echo` then raises naming it,
+    since there's no proof a legacy echo could ever have lacked it."""
     defaults = _dataclass_field_defaults(_RESUME_SECTION_DATACLASSES[section])
+    whitelisted = _LEGACY_ECHO_ADDITIONS.get(section, frozenset())
     filled = {}
     normalized = dict(saved_section)
     for key in current_section:
-        if key not in normalized and key in defaults:
+        if key not in normalized and key in defaults and key in whitelisted:
             normalized[key] = defaults[key]
             filled[key] = defaults[key]
     if filled:
