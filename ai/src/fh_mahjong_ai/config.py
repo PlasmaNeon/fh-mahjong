@@ -57,6 +57,9 @@ class ModelConfig:
     event_window: int = 0          # 0 = no event encoder (dormant)
     event_embed_dim: int = 32
     event_hidden_dim: int = 128
+    # 0 = equal to event_hidden_dim (no projection module; dormant default,
+    # state_dict byte-identical to pre-gru-width). See EventEncoder.output_dim.
+    event_output_dim: int = 0
     privileged_critic: bool = False
     aux_heads: bool = False
     # --- deep16-rezero capacity growth (default 0 => state_dict identical to today) ---
@@ -98,6 +101,7 @@ class ModelConfig:
         )
         self._validate_bounded_int("event_embed_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("event_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
+        self._validate_bounded_int("event_output_dim", minimum=0, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("growth_blocks", minimum=0, maximum=self.MAX_RESIDUAL_BLOCKS)
         # Round 17: residual_blocks<=64 and growth_blocks<=64 are each
         # individually bounded above, but nothing stopped them composing --
