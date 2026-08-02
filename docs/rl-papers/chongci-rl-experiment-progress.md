@@ -16237,3 +16237,25 @@ merged) with anchor = restart-iter075 (sha ce9d867f...). Box preflight PASSED
 (step-zero parity OK on the real anchor); worker benchmark (5/10/20 @ 320 matches,
 exact-digest gate) running; launch follows per runbook (260 iters, screening 25..260,
 kill only at 100, confirmation window 1070000+).
+
+## 2026-08-02 — deep4+12-rezero capacity lap: confirmation NULL
+
+260/260 iters (two OOM kills mid-run — 20-worker + 16GB master exceeded the 31GB box —
+both recovered via resumable train state; finished at 10 workers after PR #187 exempted
+num_workers from the resume config echo as semantics-neutral). Anchor: restart-iter075.
+
+Screenings (910000+, vs anchor): 25:-0.035 | 50:-0.017 | 75:-0.058 | 100:-0.033 (kill
+rule passed) | 125:-0.078 | 150:-0.021 | 175:-0.021 | 200:+0.028 (pre-registered best) |
+225:-0.021 | 250:-0.022 | 260:+0.010. growth_alpha_mean_abs stayed ~0.0002-0.0006 the
+whole run — ReZero growth blocks barely recruited (the pre-registered "capacity not
+engaging" signature), small late uptick only.
+
+Confirmation (1070000+, 1500 seeds/side, candidate iter_200 sha a785d5ab...):
+-0.0027 ± 0.0203 — NOT significant; large_loss 0.0613 vs anchor 0.0517 (within the
++0.015 bound). GATE FAILED. 1070000+ retired.
+
+Reading: trunk depth is declined by PPO at this recipe even WITH the event
+representation — consistent with the original deep8 null, now at 1.73x params with a
+provably function-preserving warm start. Third lap running where an isolated screening
+peak (+0.028 here) drove the confirmation: 1 hit (restart lap), 2 misses (r2, this).
+Next per ratified menu: GRU-width scaling (post-consult).
