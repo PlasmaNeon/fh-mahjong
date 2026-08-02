@@ -201,6 +201,7 @@ anchor REGENERATED on the identical current bridge, `910000+` seed window
 
 ```
 fh-mj-evaluate --checkpoint /root/fh-mahjong-runs/gru-width/ckpt/iter_XXX.pt \
+  --model-residual-blocks 4 \
   --model-event-window 128 \
   --model-event-hidden-dim 256 --model-event-output-dim 128 \
   --model-privileged-critic --model-aux-heads \
@@ -215,6 +216,7 @@ the deep4+12-rezero comparator was generated — do not reuse it):
 
 ```
 fh-mj-evaluate --checkpoint /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
+  --model-residual-blocks 4 \
   --model-event-window 128 \
   --model-privileged-critic --model-aux-heads \
   --event-history-window 128 --duplicate-seats --online-episodes 120 \
@@ -256,6 +258,7 @@ Fresh `1110000+` window, 1500 seeds/side, back-to-back, same bridge:
 
 ```
 fh-mj-evaluate --checkpoint <selected>.pt \
+  --model-residual-blocks 4 \
   --model-event-window 128 \
   --model-event-hidden-dim 256 --model-event-output-dim 128 \
   --model-privileged-critic --model-aux-heads \
@@ -264,6 +267,7 @@ fh-mj-evaluate --checkpoint <selected>.pt \
   --report-output /root/fh-mahjong-runs/gru-width/confirm-candidate.json
 
 fh-mj-evaluate --checkpoint /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
+  --model-residual-blocks 4 \
   --model-event-window 128 \
   --model-privileged-critic --model-aux-heads \
   --event-history-window 128 --duplicate-seats --online-episodes 1500 \
