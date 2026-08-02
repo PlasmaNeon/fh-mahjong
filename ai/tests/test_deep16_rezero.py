@@ -251,6 +251,45 @@ def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
         grow_b2b_model(anchor_path, growth_blocks=3)
 
 
+def test_grow_b2b_model_raises_on_doctored_channels_claim(tmp_path) -> None:
+    # The anchor's REAL net is built at channels=32, but its metadata lies
+    # and claims channels=16 (the _SMALL default). grow_b2b_model constructs
+    # its grown net from the metadata claim alone
+    # (`PolicyValueNet(anchor_env_config, grown_config)`), so a wrong claim
+    # here would build a differently-shaped net than the anchor's own
+    # tensors before load_compatible_checkpoint ever gets a chance to catch
+    # the drift -- must raise up front, before any construction.
+    real_config = _b2b_config(channels=32)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["channels"] = 16
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="channels"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
+def test_grow_b2b_model_raises_on_doctored_residual_blocks_claim(tmp_path) -> None:
+    # Same class of gap, for residual_blocks: the anchor's REAL net has 2
+    # plane_blocks, but metadata claims 1.
+    real_config = _b2b_config(residual_blocks=2)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["residual_blocks"] = 1
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="residual_blocks"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
+def test_grow_b2b_model_same_shape_happy_path_unaffected_by_dim_check(tmp_path) -> None:
+    # Honest metadata (claim matches the anchor's own tensor shapes) must
+    # still grow successfully -- the new pre-surgery cross-check is not a
+    # blanket rejection.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    grown = grow_b2b_model(anchor_path, growth_blocks=3)
+    assert grown.model_config.growth_blocks == 3
+
+
 def test_grow_b2b_model_ignores_env_config_mismatch_when_not_passed(tmp_path) -> None:
     # Backward-compat: callers that don't pass env_config (e.g. exercising
     # grow_b2b_model in isolation with no "live env" to check against) get

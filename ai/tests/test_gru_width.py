@@ -170,6 +170,46 @@ def test_widen_event_gru_raises_on_anchor_with_undeclared_output_proj_tensors(tm
         widen_event_gru(anchor_path, new_hidden_dim=32)
 
 
+def test_widen_event_gru_raises_on_doctored_event_hidden_dim_claim(tmp_path) -> None:
+    # The anchor's REAL GRU is built at hidden_dim=16, but its metadata lies
+    # and claims event_hidden_dim=8. widen_event_gru's manual gate-row
+    # slicing trusts the metadata claim to compute row boundaries into
+    # weight_ih_l0/weight_hh_l0 -- those tensors are exempt from
+    # load_compatible_checkpoint's same-shape fail-closed check (they're the
+    # surgical keys this function is allowed to reshape), so a wrong claim
+    # must be caught up front, before any surgery, not slide through and
+    # silently misattribute gate rows.
+    real_config = _b2b_config(event_hidden_dim=16)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["event_hidden_dim"] = 8
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="event_hidden_dim"):
+        widen_event_gru(anchor_path, new_hidden_dim=32)
+
+
+def test_widen_event_gru_raises_on_doctored_event_embed_dim_claim(tmp_path) -> None:
+    # Same class of gap, for event_embed_dim (the GRU's input width): the
+    # anchor's REAL embedding is 32-wide, but metadata claims 16.
+    real_config = _b2b_config(event_embed_dim=32)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["event_embed_dim"] = 16
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="event_embed_dim"):
+        widen_event_gru(anchor_path, new_hidden_dim=16)
+
+
+def test_widen_event_gru_same_shape_happy_path_unaffected_by_dim_check(tmp_path) -> None:
+    # Honest metadata (claim matches the anchor's own tensor shapes) must
+    # still widen successfully -- the new pre-surgery cross-check is not a
+    # blanket rejection.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    widened = widen_event_gru(anchor_path, new_hidden_dim=16)
+    assert widened.model_config.event_hidden_dim == 16
+
+
 def test_widen_event_gru_raises_without_model_config_metadata(tmp_path) -> None:
     anchor_path = _save_anchor(tmp_path, _b2b_config(), with_model_config_metadata=False)
     with pytest.raises(RuntimeError, match="model_config"):

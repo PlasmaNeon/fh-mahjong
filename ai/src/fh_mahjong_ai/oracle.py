@@ -26,7 +26,12 @@ from .ach import ach_update
 from .bridge import build_bridge, resolve_bridge_library_path
 from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
-from .model import PolicyValueNet, _derive_growth_blocks, _reconstruct_env_config
+from .model import (
+    PolicyValueNet,
+    _derive_growth_blocks,
+    _reconstruct_env_config,
+    _shape_inferred_fields,
+)
 from .parallel_rollouts import _split_counts
 from .ppo import (
     _fsync_dir,
@@ -746,6 +751,27 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
             f"{derived_growth_blocks}); growing an already-grown net (or a checkpoint "
             "whose metadata claim disagrees with its own tensors) is out of scope"
         )
+    # Cross-check the metadata-claimed dims this warm start's construction
+    # depends on (`channels`, `residual_blocks`) against the anchor's actual
+    # tensor shapes, BEFORE any surgery -- the same claimed-vs-derived
+    # discipline as the growth_blocks check just above, applied to the other
+    # dims a wrong metadata claim could silently misattribute. Reuses
+    # `infer_model_config`'s own shape-inference helper (`_shape_inferred_fields`,
+    # which derives `channels` from the first plane-stem conv's weight shape
+    # and `residual_blocks` from the count of distinct `plane_blocks.{i}`
+    # indices) rather than re-deriving these formulas here.
+    shape_fields = _shape_inferred_fields(payload["model"])
+    dim_mismatches = {
+        field: (getattr(anchor_config, field), shape_fields[field])
+        for field in ("channels", "residual_blocks")
+        if getattr(anchor_config, field) != shape_fields[field]
+    }
+    if dim_mismatches:
+        raise RuntimeError(
+            "grow_b2b_model: anchor metadata's construction dims do not match its own "
+            f"tensor shapes (field: (claimed, shape_derived))={dim_mismatches} -- refusing "
+            "to grow a model built from a mismatched claim"
+        )
     grown_config = replace(anchor_config, growth_blocks=growth_blocks)
     anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
     if env_config is not None:
@@ -851,6 +877,32 @@ def widen_event_gru(anchor_checkpoint: Path, new_hidden_dim: int,
             f"state dict {'has' if derived_has_output_proj else 'does not have'} an "
             "event_encoder.output_proj.weight key; widening an already-widened (or "
             "inconsistently-labeled) anchor is out of scope"
+        )
+    # Cross-check the metadata-claimed `event_hidden_dim`/`event_embed_dim`
+    # against the anchor's actual tensor shapes, BEFORE any surgery. The
+    # manual GRU slicing a few lines down uses `old_hidden_dim` (read
+    # straight off `anchor_config`, i.e. the metadata claim) to compute gate
+    # row boundaries into `event_encoder.gru.weight_ih_l0`/`weight_hh_l0` --
+    # those tensors are exempt from `load_compatible_checkpoint`'s
+    # same-shape fail-closed check below (they're the surgical keys this
+    # function is allowed to reshape), so a wrong `event_hidden_dim` claim
+    # would otherwise slide straight past that check and silently
+    # misattribute gate rows in the slicing instead of failing. Reuses
+    # `infer_model_config`'s own shape-inference helper
+    # (`_shape_inferred_fields`), which derives `event_hidden_dim` as
+    # `weight_ih_l0.shape[0] // 3` and `event_embed_dim` as
+    # `embedding.weight.shape[1]`.
+    shape_fields = _shape_inferred_fields(payload["model"])
+    dim_mismatches = {
+        field: (getattr(anchor_config, field), shape_fields[field])
+        for field in ("event_hidden_dim", "event_embed_dim")
+        if field in shape_fields and getattr(anchor_config, field) != shape_fields[field]
+    }
+    if dim_mismatches:
+        raise RuntimeError(
+            "widen_event_gru: anchor metadata's event dims do not match its own tensor "
+            f"shapes (field: (claimed, shape_derived))={dim_mismatches} -- refusing to "
+            "widen a GRU built from a mismatched claim"
         )
     old_hidden_dim = anchor_config.event_hidden_dim
     if new_hidden_dim <= old_hidden_dim:
