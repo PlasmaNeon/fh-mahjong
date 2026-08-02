@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import logging
@@ -1228,6 +1229,73 @@ def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correc
     history = train_b2b(env, grown_config, anchor_path, checkpoint_dir, config_resumed,
                         base_seed=5, train_state_every=2, resume_from_state=state_path)
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 1 (gru-width branch): a new defaulted field (e.g.
+# ModelConfig.event_output_dim) shows up in every freshly-built config echo
+# but is absent from a train_state.pt saved before that field existed --
+# _validate_resume_config_echo's missing-vs-present comparison must treat
+# that silence as "this run used the field's dataclass default", not as a
+# recipe drift, or every pre-upgrade multi-day run bricks on resume.
+# ---------------------------------------------------------------------------
+
+def _config_echo_triple():
+    from fh_mahjong_ai import oracle as oracle_module
+
+    env = EnvConfig(bridge_kind="mock")
+    model_config = ModelConfig()
+    config = PPOConfig(device="cpu")
+    return oracle_module._train_b2b_config_echo(config, model_config, env)
+
+
+def test_resume_config_echo_missing_new_defaulted_field_proceeds(caplog) -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    assert current["model_config"]["event_output_dim"] == 0
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["event_output_dim"]  # simulate a pre-upgrade echo
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_explicit_different_value_still_raises() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    saved["model_config"]["event_output_dim"] = 4  # explicit, non-default, different value
+
+    with pytest.raises(ValueError, match="event_output_dim"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(caplog) -> None:
+    # Proves the fix isn't special-cased to event_output_dim: deleting a
+    # DIFFERENT defaulted field (growth_blocks, added for deep16-rezero) from
+    # the saved echo must also proceed, standing in for whatever the NEXT new
+    # defaulted field turns out to be.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    assert current["model_config"]["growth_blocks"] == 0
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["growth_blocks"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

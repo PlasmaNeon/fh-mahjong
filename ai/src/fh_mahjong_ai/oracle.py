@@ -15,7 +15,7 @@ import re
 import shutil
 import traceback
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict, fields, MISSING, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -1651,6 +1651,61 @@ _RESUME_LOGGED_FIELDS = {
     ("ppo_config", "num_workers"),
 }
 
+# Adversarial round 1 (high): a new field with a dataclass default (e.g.
+# ModelConfig.event_output_dim, added for Spec B2c serving) appears in every
+# freshly-built config echo, but a `train_state.pt` saved before that field
+# existed has no such key -- `_validate_resume_config_echo`'s missing-vs-
+# present comparison then reads that as an explicit drift (missing sentinel
+# != 0) and refuses to resume a perfectly compatible multi-day run. Maps each
+# section name to the dataclass whose `dataclasses.fields(...)` defaults
+# back-fill a legacy echo's missing keys below, so the NEXT new field with a
+# default is handled automatically instead of needing another special case.
+_RESUME_SECTION_DATACLASSES = {
+    "ppo_config": PPOConfig,
+    "model_config": ModelConfig,
+    "env_config": EnvConfig,
+}
+
+
+def _dataclass_field_defaults(cls: type) -> dict:
+    """Map of field name -> default value for every field of `cls` that
+    declares a plain or factory default. Fields with no default at all
+    (there are currently none in `PPOConfig`/`ModelConfig`/`EnvConfig`) are
+    simply omitted -- a legacy echo missing such a field would still fail
+    the drift check below, which is correct: there's no safe default to
+    assume for it."""
+    defaults = {}
+    for f in fields(cls):
+        if f.default is not MISSING:
+            defaults[f.name] = f.default
+        elif f.default_factory is not MISSING:  # pragma: no cover - none exist today
+            defaults[f.name] = f.default_factory()
+    return defaults
+
+
+def _fill_legacy_echo_defaults(section: str, current_section: dict, saved_section: dict) -> dict:
+    """Return a copy of `saved_section` with any key that's present in
+    `current_section` but ABSENT from `saved_section` filled in with that
+    field's dataclass default -- i.e. treat a pre-upgrade echo's silence
+    about a field as "this run used the default", not as a mismatch. A key
+    that IS present in `saved_section` (even if equal to the default) is left
+    untouched and still compares strictly against the current value."""
+    defaults = _dataclass_field_defaults(_RESUME_SECTION_DATACLASSES[section])
+    filled = {}
+    normalized = dict(saved_section)
+    for key in current_section:
+        if key not in normalized and key in defaults:
+            normalized[key] = defaults[key]
+            filled[key] = defaults[key]
+    if filled:
+        logger.info(
+            "--resume-from-state: %s echo predates field(s) %s -- filling each "
+            "with its current dataclass default for the resume comparison "
+            "(state file was saved before these fields existed)",
+            section, sorted(filled),
+        )
+    return normalized
+
 
 def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     """Raise with a clear, specific message on the FIRST field that differs
@@ -1663,7 +1718,7 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     instead of raised."""
     for section in ("ppo_config", "model_config", "env_config"):
         current_section = current[section]
-        saved_section = saved[section]
+        saved_section = _fill_legacy_echo_defaults(section, current_section, saved[section])
         keys = sorted(set(current_section) | set(saved_section))
         for key in keys:
             if (section, key) in _RESUME_IGNORED_FIELDS:
