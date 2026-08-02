@@ -991,3 +991,38 @@ def test_evaluate_cli_model_growth_blocks_mismatch_fails_checkpoint_load(tmp_pat
     monkeypatch.setattr(sys, "argv", argv)
     with pytest.raises(RuntimeError):
         ev.main()
+
+
+def test_evaluate_cli_model_event_hidden_and_output_dim_flags_thread_into_explicit_config(tmp_path, monkeypatch):
+    # gru-width Task 3: --model-event-hidden-dim/--model-event-output-dim must
+    # reach the explicit-flag ModelConfig path (mirrors --model-growth-blocks'
+    # plumbing above), so a widened (projected) checkpoint with no usable
+    # metadata still loads under matching flags, and the report/provenance
+    # carries both dims.
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint
+    from fh_mahjong_ai.scripts import evaluate as ev
+
+    mcfg = ModelConfig(channels=8, residual_blocks=1, plane_feature_dim=16,
+                       scalar_hidden_dim=16, trunk_hidden_dim=16, value_hidden_dim=16,
+                       q_hidden_dim=16, event_window=8, event_hidden_dim=16, event_output_dim=8)
+    ckpt = tmp_path / "widened.pt"
+    save_checkpoint(ckpt, PolicyValueNet(EnvConfig(bridge_kind="mock"), mcfg))  # no metadata
+
+    argv = ["fh-mj-evaluate", "--checkpoint", str(ckpt),
+            "--online-episodes", "1", "--match-mode", "classic",
+            "--model-channels", "8", "--model-residual-blocks", "1",
+            "--model-plane-feature-dim", "16", "--model-scalar-hidden-dim", "16",
+            "--model-trunk-hidden-dim", "16", "--model-value-hidden-dim", "16",
+            "--model-q-hidden-dim", "16", "--model-event-window", "8",
+            "--model-event-hidden-dim", "16", "--model-event-output-dim", "8",
+            "--event-history-window", "8",
+            "--report-output", str(tmp_path / "rep.json")]
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr("fh_mahjong_ai.evaluate.build_bridge",
+                        lambda cfg: __import__("fh_mahjong_ai.bridge", fromlist=["MockMahjongBridge"]).MockMahjongBridge(cfg))
+    ev.main()  # must not raise: matching flags load the widened checkpoint cleanly
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["model_config"]["model_event_hidden_dim"] == 16
+    assert report["model_config"]["model_event_output_dim"] == 8

@@ -439,3 +439,46 @@ def test_event_output_dim_equal_hidden_collapses_to_identical_state_dict() -> No
     assert set(baseline_state.keys()) == set(projected_state.keys())
     for key, value in baseline_state.items():
         assert torch.equal(value, projected_state[key]), key
+
+
+# --- Task 3: eval CLI flags + provenance ---
+
+
+def test_model_config_args_has_both_event_hidden_and_output_dim_flags() -> None:
+    import argparse
+
+    from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+
+    parser = argparse.ArgumentParser()
+    add_model_config_args(parser)
+    args = parser.parse_args(["--model-event-hidden-dim", "256", "--model-event-output-dim", "128"])
+    model_config = model_config_from_args(args)
+    assert model_config.event_hidden_dim == 256
+    assert model_config.event_output_dim == 128
+
+
+def test_evaluate_cli_help_shows_both_event_dim_flags() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.evaluate", "--help"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "--model-event-hidden-dim" in result.stdout
+    assert "--model-event-output-dim" in result.stdout
+
+
+def test_train_b2b_cli_help_shows_both_event_dim_flags() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b", "--help"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "--model-event-hidden-dim" in result.stdout
+    assert "--model-event-output-dim" in result.stdout
+
+
+def test_model_config_params_includes_event_hidden_and_output_dim() -> None:
+    from fh_mahjong_ai.scripts.model_config_args import model_config_params
+
+    model_config = ModelConfig(event_window=8, event_hidden_dim=256, event_output_dim=128)
+    params = model_config_params(model_config)
+    assert params["model_event_hidden_dim"] == 256
+    assert params["model_event_output_dim"] == 128

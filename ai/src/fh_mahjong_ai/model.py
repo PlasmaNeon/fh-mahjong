@@ -493,6 +493,28 @@ def _derive_growth_blocks(state_dict: dict[str, Tensor]) -> int:
     return len(indices)
 
 
+def _derive_event_output_dim(state_dict: dict[str, Tensor]) -> int:
+    """Derive the event-encoder output-projection width from
+    `event_encoder.output_proj.weight`'s shape (`[out_features, hidden_dim]`).
+
+    Mirrors `_derive_growth_blocks`'s treatment (gru-width, Task 3): this is
+    shape-derivable in principle, but is intentionally kept OUT of
+    `_shape_inferred_fields` for the same reason -- `EventEncoder.__init__`
+    builds no `output_proj` module at all when `output_dim in (0, hidden_dim)`
+    (see its docstring), so the projection key's ABSENCE is ambiguous between
+    "no projection field claimed" (legacy/default, 0) and "field claimed but
+    equal to hidden_dim" (the widening lap's step-zero collapse case) --
+    either way this returns 0, and the caller
+    (`_verify_metadata_matches_shapes`) normalizes the metadata CLAIM the
+    same way before comparing, so both collapse cases agree instead of a
+    false-positive mismatch.
+    """
+    key = "event_encoder.output_proj.weight"
+    if key not in state_dict:
+        return 0
+    return int(state_dict[key].shape[0])
+
+
 def _effective_attention_hidden(channels: int, ratio: int) -> int:
     """The attention bottleneck width `ChannelAttention2d.__init__` actually
     constructs for a given (channels, ratio) pair. Must match that formula
@@ -561,6 +583,27 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
     derived_growth_blocks = _derive_growth_blocks(state_dict)
     if config.growth_blocks != derived_growth_blocks:
         mismatched["growth_blocks"] = (config.growth_blocks, derived_growth_blocks)
+
+    # gru-width (Task 3): `event_output_dim` is derivable from state-dict
+    # shapes (`_derive_event_output_dim`, the projection key's out_features)
+    # just like `growth_blocks` above, but is deliberately kept out of
+    # `_shape_inferred_fields` for the same reason (see
+    # `_derive_event_output_dim`'s docstring) -- a checkpoint with usable
+    # metadata still needs its claim cross-checked here, before
+    # `PolicyValueNet` is constructed. `EventEncoder` collapses BOTH
+    # `event_output_dim == 0` and `event_output_dim == event_hidden_dim` to
+    # "no projection module" (state_dict byte-identical either way), so the
+    # metadata claim is normalized the same way before comparing against the
+    # derived count -- otherwise an honest claim of `event_output_dim ==
+    # event_hidden_dim` (no projection keys expected) would be flagged as a
+    # mismatch against the true "0" derived from the checkpoint's own
+    # (absent) projection key.
+    claimed_event_output_dim = (
+        0 if config.event_output_dim == config.event_hidden_dim else config.event_output_dim
+    )
+    derived_event_output_dim = _derive_event_output_dim(state_dict)
+    if claimed_event_output_dim != derived_event_output_dim:
+        mismatched["event_output_dim"] = (config.event_output_dim, derived_event_output_dim)
 
     if mismatched:
         raise RuntimeError(

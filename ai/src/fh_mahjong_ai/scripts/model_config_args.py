@@ -19,6 +19,14 @@ def add_model_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model-channel-attention-ratio", type=int, default=defaults.channel_attention_ratio)
     parser.add_argument("--model-no-dueling-q", action="store_true")
     parser.add_argument("--model-event-window", type=int, default=defaults.event_window)
+    parser.add_argument("--model-event-hidden-dim", type=int, default=defaults.event_hidden_dim,
+                        help="event-GRU hidden width (gru-width lap); only used on the "
+                             "explicit-flag ModelConfig path, i.e. when the checkpoint carries "
+                             "no usable metadata")
+    parser.add_argument("--model-event-output-dim", type=int, default=defaults.event_output_dim,
+                        help="event-encoder output-projection width; 0 (default) = equal to "
+                             "--model-event-hidden-dim (no projection, dormant); only used on "
+                             "the explicit-flag ModelConfig path")
     parser.add_argument("--model-privileged-critic", action="store_true", default=defaults.privileged_critic)
     parser.add_argument("--model-aux-heads", action="store_true", default=defaults.aux_heads)
 
@@ -37,6 +45,8 @@ def model_config_from_args(args: argparse.Namespace) -> ModelConfig:
         channel_attention_ratio=args.model_channel_attention_ratio,
         dueling_q=not args.model_no_dueling_q,
         event_window=args.model_event_window,
+        event_hidden_dim=args.model_event_hidden_dim,
+        event_output_dim=args.model_event_output_dim,
         privileged_critic=args.model_privileged_critic,
         aux_heads=args.model_aux_heads,
     )
@@ -56,6 +66,8 @@ def model_config_params(model_config: ModelConfig) -> dict[str, object]:
         "model_channel_attention_ratio": model_config.channel_attention_ratio,
         "model_dueling_q": model_config.dueling_q,
         "model_event_window": model_config.event_window,
+        "model_event_hidden_dim": model_config.event_hidden_dim,
+        "model_event_output_dim": model_config.event_output_dim,
         "model_privileged_critic": model_config.privileged_critic,
         "model_aux_heads": model_config.aux_heads,
         "model_growth_blocks": model_config.growth_blocks,

@@ -606,3 +606,119 @@ def test_infer_model_config_still_rejects_doctored_attention_claim_without_resid
 
     with pytest.raises(RuntimeError, match="attention"):
         infer_model_config(model.state_dict(), metadata)
+
+
+# --- gru-width lap (Task 3): metadata-authoritative event_output_dim loading.
+# `_widened_config` builds a genuinely non-dormant projection (event_output_dim
+# != event_hidden_dim and != 0) so `event_encoder.output_proj.*` keys are
+# actually present in the state dict. ---
+
+def _widened_config(**overrides) -> ModelConfig:
+    fields = dict(_SMALL, event_window=8, event_hidden_dim=16, event_output_dim=8)
+    fields.update(overrides)
+    return ModelConfig(**fields)
+
+
+def _save_widened_checkpoint(tmp_path: Path, model_config: ModelConfig, *,
+                             metadata_override: dict | None = None) -> Path:
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": metadata_override or model_config_metadata(model_config)}
+    path = tmp_path / "widened.pt"
+    save_checkpoint(path, model, metadata=metadata)
+    return path
+
+
+def test_infer_model_config_round_trips_widened_checkpoint(tmp_path):
+    model_config = _widened_config()
+    path = _save_widened_checkpoint(tmp_path, model_config)
+    saved = torch.load(path, map_location="cpu")
+
+    reconstructed = infer_model_config(saved["model"], saved["metadata"])
+
+    assert reconstructed == model_config
+    assert reconstructed.event_output_dim == 8
+    assert reconstructed.event_hidden_dim == 16
+
+
+def test_from_checkpoint_loads_widened_checkpoint_and_choose_works(tmp_path):
+    model_config = _widened_config()
+    path = _save_widened_checkpoint(tmp_path, model_config)
+
+    policy = CheckpointPolicy.from_checkpoint(path, device="cpu")
+
+    assert policy.model.model_config.event_output_dim == 8
+    assert policy.model.model_config.event_hidden_dim == 16
+    observation = _obs(window=8, history=np.asarray([0x140, 0x4A51, 0x8B7], dtype=np.uint32))
+    served = policy.choose(observation)
+    assert served.action_id in observation.legal_actions
+
+
+def test_infer_model_config_doctored_event_output_dim_claim_raises_before_construction(tmp_path):
+    # Real checkpoint: event_hidden_dim=16, event_output_dim=8 (a real, present
+    # output_proj key of shape [8, 16]). Metadata lies and claims
+    # event_output_dim=12 (still != hidden_dim, so a projection is still
+    # claimed, just the wrong width) -- must be caught BEFORE PolicyValueNet
+    # is ever constructed, not slide through to the generic post-construction
+    # shape cross-check.
+    model_config = _widened_config()
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["event_output_dim"] = 12
+    metadata = {"model_config": doctored}
+
+    with pytest.raises(RuntimeError, match="event_output_dim"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_projection_keys_without_metadata_raises_explicit_message(tmp_path):
+    # A widened (projected) checkpoint saved with NO metadata at all must
+    # still fail closed with the existing "no usable metadata" message (the
+    # projection keys live under the event_encoder. prefix, already covered
+    # by the B2b-modules guard), not silently shape-infer a wrong config.
+    model_config = _widened_config()
+    model = PolicyValueNet(_ENV39, model_config)
+
+    with pytest.raises(RuntimeError, match="no usable metadata"):
+        infer_model_config(model.state_dict())
+
+
+def test_infer_model_config_event_output_dim_claim_positive_but_no_projection_keys_raises():
+    # Metadata claims event_output_dim > 0 (and != event_hidden_dim, i.e. a
+    # real projection) but the checkpoint's state dict carries no
+    # event_encoder.output_proj.* keys at all (dormant/default architecture).
+    model_config = _b2b_config()  # event_output_dim defaults to 0, dormant
+    model = PolicyValueNet(_ENV39, model_config)
+    doctored = model_config_metadata(model_config)
+    doctored["event_output_dim"] = model_config.event_hidden_dim + 4
+    metadata = {"model_config": doctored}
+
+    with pytest.raises(RuntimeError, match="event_output_dim"):
+        infer_model_config(model.state_dict(), metadata)
+
+
+def test_infer_model_config_event_output_dim_equal_to_hidden_dim_claim_matches_no_projection():
+    # An honest claim of event_output_dim == event_hidden_dim (the
+    # "collapsed to dormant" case -- EventEncoder builds no output_proj
+    # module either way) must round-trip cleanly against a checkpoint with no
+    # projection keys, not be flagged as a mismatch.
+    model_config = _b2b_config(event_output_dim=_b2b_config().event_hidden_dim)
+    model = PolicyValueNet(_ENV39, model_config)
+    metadata = {"model_config": model_config_metadata(model_config)}
+
+    reconstructed = infer_model_config(model.state_dict(), metadata)
+    assert reconstructed.event_output_dim == model_config.event_hidden_dim
+
+
+def test_infer_model_config_legacy_event_output_dim_defaults_zero():
+    legacy = PolicyValueNet(_ENV39, ModelConfig(**_SMALL))
+    config = infer_model_config(legacy.state_dict())
+    assert config.event_output_dim == 0
+
+
+def test_evaluate_report_config_includes_event_output_dim_and_event_hidden_dim(tmp_path):
+    from fh_mahjong_ai.scripts.model_config_args import model_config_params
+
+    model_config = _widened_config()
+    params = model_config_params(model_config)
+    assert params["model_event_output_dim"] == 8
+    assert params["model_event_hidden_dim"] == 16
