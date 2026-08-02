@@ -578,3 +578,39 @@ def test_model_config_params_includes_event_hidden_and_output_dim() -> None:
     params = model_config_params(model_config)
     assert params["model_event_hidden_dim"] == 256
     assert params["model_event_output_dim"] == 128
+
+
+def test_resume_documented_recipe_with_nondefault_residual_blocks(tmp_path) -> None:
+    """Adversarial round 4: the runbook's resume recipe supplies
+    --model-residual-blocks 4 alongside the event-width flags; a widened
+    residual_blocks=4 state echo must accept exactly that reconstruction
+    (and the round-3/4 class of omission — falling back to the default
+    residual_blocks — must raise)."""
+    anchor_config = _b2b_config(residual_blocks=4)
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config_first = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                             max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                             num_workers=1, match_mode="classic")
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, anchor_config, anchor_path, checkpoint_dir, config_first,
+              base_seed=5, widen_event_hidden=16, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    # The documented recipe: residual 4 + widened event dims -> resumes.
+    documented = replace(anchor_config, event_hidden_dim=16,
+                         event_output_dim=anchor_config.event_hidden_dim)
+    assert documented.residual_blocks == 4
+    history = train_b2b(env, documented, anchor_path, checkpoint_dir,
+                        replace(config_first, iterations=4),
+                        base_seed=5, train_state_every=2, resume_from_state=state_path)
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+    # The omission the runbook fix prevents: default residual_blocks -> raise.
+    omitted = replace(documented, residual_blocks=2)
+    with pytest.raises(ValueError, match="residual_blocks"):
+        train_b2b(env, omitted, anchor_path, checkpoint_dir,
+                  replace(config_first, iterations=6),
+                  base_seed=5, train_state_every=2, resume_from_state=state_path)

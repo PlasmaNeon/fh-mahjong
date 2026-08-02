@@ -117,6 +117,7 @@ differs).
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
   --widen-event-hidden 256 \
+  --model-residual-blocks 4 \
   --checkpoint-dir /root/fh-mahjong-runs/gru-width/ckpt \
   --base-seed 400000 --iterations <computed — expected ~165> --matches-per-iter 320 \
   --num-workers 10 \
@@ -163,6 +164,7 @@ exactly or the resume raises:
 
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
+  --model-residual-blocks 4 \
   --model-event-hidden-dim 256 --model-event-output-dim 128 \
   --checkpoint-dir /root/fh-mahjong-runs/gru-width/ckpt \
   --base-seed 400000 --iterations <computed — expected ~165> --matches-per-iter 320 \
