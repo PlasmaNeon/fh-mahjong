@@ -666,8 +666,18 @@ def test_infer_model_config_doctored_event_output_dim_claim_raises_before_constr
     doctored["event_output_dim"] = 12
     metadata = {"model_config": doctored}
 
-    with pytest.raises(RuntimeError, match="event_output_dim"):
-        infer_model_config(model.state_dict(), metadata)
+    # Tripwire (mirrors the growth_blocks overclaim test above): the
+    # cross-check must raise BEFORE any PolicyValueNet is constructed, not
+    # slide through to a later post-construction shape check. Without this,
+    # a regression that moved the event_output_dim check to AFTER the
+    # throwaway `PolicyValueNet(...)` construction in `infer_model_config`
+    # would still pass (RuntimeError still raised, just too late) and go
+    # undetected.
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(RuntimeError, match="event_output_dim"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
 
 
 def test_infer_model_config_projection_keys_without_metadata_raises_explicit_message(tmp_path):
@@ -678,8 +688,13 @@ def test_infer_model_config_projection_keys_without_metadata_raises_explicit_mes
     model_config = _widened_config()
     model = PolicyValueNet(_ENV39, model_config)
 
-    with pytest.raises(RuntimeError, match="no usable metadata"):
-        infer_model_config(model.state_dict())
+    # Tripwire: the "no usable metadata" guard must fire before any
+    # PolicyValueNet is constructed, same reasoning as the sibling above.
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(RuntimeError, match="no usable metadata"):
+            infer_model_config(model.state_dict())
+        mocked_init.assert_not_called()
 
 
 def test_infer_model_config_event_output_dim_claim_positive_but_no_projection_keys_raises():
@@ -692,8 +707,13 @@ def test_infer_model_config_event_output_dim_claim_positive_but_no_projection_ke
     doctored["event_output_dim"] = model_config.event_hidden_dim + 4
     metadata = {"model_config": doctored}
 
-    with pytest.raises(RuntimeError, match="event_output_dim"):
-        infer_model_config(model.state_dict(), metadata)
+    # Tripwire: same reasoning as the overclaim test above -- must fail
+    # closed before any PolicyValueNet is constructed.
+    with patch.object(PolicyValueNet, "__init__",
+                      side_effect=AssertionError("must not construct PolicyValueNet")) as mocked_init:
+        with pytest.raises(RuntimeError, match="event_output_dim"):
+            infer_model_config(model.state_dict(), metadata)
+        mocked_init.assert_not_called()
 
 
 def test_infer_model_config_event_output_dim_equal_to_hidden_dim_claim_matches_no_projection():
@@ -705,7 +725,18 @@ def test_infer_model_config_event_output_dim_equal_to_hidden_dim_claim_matches_n
     model = PolicyValueNet(_ENV39, model_config)
     metadata = {"model_config": model_config_metadata(model_config)}
 
-    reconstructed = infer_model_config(model.state_dict(), metadata)
+    # Positive call-count tripwire (the mirror image of the raise-path
+    # tripwires above): a valid, non-mismatched claim must still reach and
+    # construct the throwaway `PolicyValueNet` used for the post-check shape
+    # cross-check in `infer_model_config` exactly once. This guards against a
+    # regression in the opposite direction -- the equal-to-hidden-dim
+    # normalization incorrectly treating a valid claim as a mismatch and
+    # raising before construction, or the checked path being skipped
+    # entirely.
+    with patch.object(PolicyValueNet, "__init__", autospec=True,
+                       side_effect=PolicyValueNet.__init__) as mocked_init:
+        reconstructed = infer_model_config(model.state_dict(), metadata)
+        assert mocked_init.call_count == 1
     assert reconstructed.event_output_dim == model_config.event_hidden_dim
 
 
