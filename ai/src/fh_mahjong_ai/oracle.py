@@ -625,6 +625,54 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
     return model
 
 
+def _assert_b2b_anchor_matches_live_env(fn_name: str, anchor_env_config: EnvConfig,
+                                        anchor_config: ModelConfig, env_config: EnvConfig) -> None:
+    """Shared env cross-check for the B2b warm-start surgeries (`grow_b2b_model`,
+    `widen_event_gru`): `env_config`, when given, must be the LIVE env config
+    that collection will actually run under. The model is otherwise
+    constructed purely from the anchor's own tensor shapes
+    (`_reconstruct_env_config`), which says nothing about whether those
+    shapes still match the live env — a stale anchor (older action-space
+    size, different scalar-feature count, or a different event-history
+    window) would silently train a model shaped to the wrong wire format,
+    with `encode()`'s zero-pad/truncate masking the drift instead of
+    failing. Passing `env_config` catches that up front."""
+    live_env_config = _b2b_model_env_config(env_config)
+    mismatches = []
+    if anchor_env_config.action_space_size != live_env_config.action_space_size:
+        mismatches.append(
+            "action_space_size (anchor was trained under "
+            f"{anchor_env_config.action_space_size}, live env provides "
+            f"{live_env_config.action_space_size})"
+        )
+    if anchor_env_config.scalar_features != live_env_config.scalar_features:
+        mismatches.append(
+            "scalar_features (anchor was trained under "
+            f"{anchor_env_config.scalar_features}, live env provides "
+            f"{live_env_config.scalar_features})"
+        )
+    anchor_channels, anchor_area, _ = anchor_env_config.plane_shape
+    live_channels, live_area, _ = live_env_config.plane_shape
+    if (anchor_channels, anchor_area) != (live_channels, live_area):
+        mismatches.append(
+            "plane_shape (anchor was trained under "
+            f"{anchor_env_config.plane_shape}, live env provides "
+            f"{live_env_config.plane_shape})"
+        )
+    if anchor_config.event_window != env_config.event_history_window:
+        mismatches.append(
+            "event_window (anchor was trained under "
+            f"{anchor_config.event_window}, live env provides "
+            f"{env_config.event_history_window})"
+        )
+    if mismatches:
+        raise RuntimeError(
+            f"{fn_name}: anchor checkpoint's construction shapes do not match "
+            "the live env_config collection will run under — " + "; ".join(mismatches)
+            + ". Refusing to silently train a model shaped to a stale anchor."
+        )
+
+
 def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "cpu",
                    env_config: Optional[EnvConfig] = None) -> PolicyValueNet:
     """Warm-start a wider B2b net by stacking `growth_blocks` ReZero residual
@@ -701,40 +749,7 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
     grown_config = replace(anchor_config, growth_blocks=growth_blocks)
     anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
     if env_config is not None:
-        live_env_config = _b2b_model_env_config(env_config)
-        mismatches = []
-        if anchor_env_config.action_space_size != live_env_config.action_space_size:
-            mismatches.append(
-                "action_space_size (anchor was trained under "
-                f"{anchor_env_config.action_space_size}, live env provides "
-                f"{live_env_config.action_space_size})"
-            )
-        if anchor_env_config.scalar_features != live_env_config.scalar_features:
-            mismatches.append(
-                "scalar_features (anchor was trained under "
-                f"{anchor_env_config.scalar_features}, live env provides "
-                f"{live_env_config.scalar_features})"
-            )
-        anchor_channels, anchor_area, _ = anchor_env_config.plane_shape
-        live_channels, live_area, _ = live_env_config.plane_shape
-        if (anchor_channels, anchor_area) != (live_channels, live_area):
-            mismatches.append(
-                "plane_shape (anchor was trained under "
-                f"{anchor_env_config.plane_shape}, live env provides "
-                f"{live_env_config.plane_shape})"
-            )
-        if anchor_config.event_window != env_config.event_history_window:
-            mismatches.append(
-                "event_window (anchor was trained under "
-                f"{anchor_config.event_window}, live env provides "
-                f"{env_config.event_history_window})"
-            )
-        if mismatches:
-            raise RuntimeError(
-                "grow_b2b_model: anchor checkpoint's construction shapes do not match "
-                "the live env_config collection will run under — " + "; ".join(mismatches)
-                + ". Refusing to silently train a model shaped to a stale anchor."
-            )
+        _assert_b2b_anchor_matches_live_env("grow_b2b_model", anchor_env_config, anchor_config, env_config)
     model = PolicyValueNet(anchor_env_config, grown_config).to(device)
     _, report = load_compatible_checkpoint(anchor_checkpoint, model)
     # FAIL CLOSED: every anchor tensor must load same-shape except the brand
@@ -749,6 +764,145 @@ def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "c
             f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — its "
             "metadata['model_config'] does not match its own saved tensor shapes"
         )
+    model.eval()
+    return model
+
+
+def widen_event_gru(anchor_checkpoint: Path, new_hidden_dim: int,
+                    env_config: Optional[EnvConfig] = None, device: str = "cpu") -> PolicyValueNet:
+    """Warm-start a wider event-GRU by identity-masked widening (gru-width
+    lap, spec §2). Unlike `grow_b2b_model` (which stacks brand-new ReZero
+    blocks that are identity at alpha=0), this WIDENS an existing recurrent
+    layer in place: the anchor's `event_hidden_dim` (H_old) grows to
+    `new_hidden_dim` (H_new > H_old), and a new `event_encoder.output_proj`
+    (`event_output_dim = H_old`) projects the widened H_new-dim GRU output
+    back down to the trunk's original H_old-dim interface, so every
+    downstream consumer (trunk, privileged value head) sees an unchanged
+    input width and step-0 outputs equal the anchor's exactly.
+
+    The anchor must be a complete post-B2b checkpoint (`metadata['model_config']`
+    present — event_window is not recoverable from tensor shapes alone) with
+    `event_window > 0` (an active event encoder to widen) and
+    `event_output_dim == 0` (dormant/un-widened: widening an already-widened
+    anchor, or one whose own state dict already carries `output_proj` keys
+    while its metadata claims otherwise, is out of scope and rejected — the
+    claim and the state dict must agree, mirroring `grow_b2b_model`'s
+    claimed-vs-derived discipline). `new_hidden_dim <= H_old` is rejected
+    (this warm start only widens). `env_config`, when given, is cross-checked
+    against the anchor's own construction shapes via the same helper
+    `grow_b2b_model` uses (`_assert_b2b_anchor_matches_live_env`).
+
+    Weight surgery (step-zero exactness is the invariant; the parity test is
+    the enforcement) — PyTorch GRU gate order is r, z, n; each gate's weight
+    block is `H` rows/cols wide:
+      - `embedding`, `side_proj`, and every non-`event_encoder.gru`/
+        `event_encoder.output_proj` tensor: copied verbatim (the surgical
+        keys below are the ONLY architectural delta; anything else silently
+        skipped/missing is a fail-closed error).
+      - `weight_ih_l0` ([3*H_new, E]): per gate g, rows
+        `[g*H_new : g*H_new+H_old]` (old units) copied from the anchor's
+        `[g*H_old : (g+1)*H_old]`; the remaining `H_new-H_old` rows per gate
+        (new units) keep their normal random init.
+      - `weight_hh_l0` ([3*H_new, H_new]): per gate g, rows
+        `[g*H_new : g*H_new+H_old]`, columns `[0:H_old]` (the [old, old]
+        block) copied from the anchor; the SAME rows, columns `[H_old:H_new]`
+        (old-gate-rows seeing new-hidden-cols) are ZEROED so old units never
+        see new-unit activations (the invariant this whole surgery hinges
+        on); the new-unit rows (any column) keep their normal random init.
+      - `bias_ih_l0` / `bias_hh_l0` ([3*H_new]): per gate g, entries
+        `[g*H_new : g*H_new+H_old]` copied; the remaining `H_new-H_old`
+        entries per gate keep their normal random init.
+      - `output_proj`: weight `[I_{H_old} | 0]` (identity over the old H_old
+        units, zero over the new H_new-H_old units — so `gathered @
+        weight.T` reproduces exactly the old units' hidden state), bias
+        zero.
+
+    Step-zero parity (binding, tested elsewhere): event features, policy
+    logits, value, Q, aux outputs, and greedy actions EXACTLY equal the
+    anchor's on random obs/event batches (`torch.equal`) — this is what
+    catches any surgery mistake, including a missed old<-new zero block."""
+    anchor_checkpoint = Path(anchor_checkpoint)
+    payload = torch.load(anchor_checkpoint, map_location="cpu")
+    metadata = payload.get("metadata") or {}
+    model_config_meta = metadata.get("model_config")
+    if not isinstance(model_config_meta, dict):
+        raise RuntimeError(
+            "anchor lacks complete model_config metadata — widen_event_gru requires a "
+            "post-B2b checkpoint saved with metadata['model_config'] (event_window is not "
+            "recoverable from tensor shapes alone)"
+        )
+    anchor_config = ModelConfig(**model_config_meta)
+    if anchor_config.event_window <= 0:
+        raise RuntimeError(
+            f"anchor has event_window={anchor_config.event_window} — widen_event_gru requires "
+            "an anchor with an active event encoder (event_window > 0) to widen"
+        )
+    # Trust the STATE DICT, not the metadata's event_output_dim claim (same
+    # discipline as grow_b2b_model's derived-growth-blocks cross-check): an
+    # anchor whose metadata lies about event_output_dim==0 while its tensors
+    # actually carry an event_encoder.output_proj.* key (already widened, or
+    # tampered) would otherwise be accepted as a fresh base, silently
+    # double-widening it.
+    derived_has_output_proj = "event_encoder.output_proj.weight" in payload["model"]
+    if anchor_config.event_output_dim != 0 or derived_has_output_proj:
+        raise RuntimeError(
+            "anchor checkpoint is not a valid event_output_dim=0 base for widen_event_gru: "
+            f"metadata claims event_output_dim={anchor_config.event_output_dim}, but the "
+            f"state dict {'has' if derived_has_output_proj else 'does not have'} an "
+            "event_encoder.output_proj.weight key; widening an already-widened (or "
+            "inconsistently-labeled) anchor is out of scope"
+        )
+    old_hidden_dim = anchor_config.event_hidden_dim
+    if new_hidden_dim <= old_hidden_dim:
+        raise RuntimeError(
+            f"new_hidden_dim ({new_hidden_dim}) must be strictly greater than the anchor's "
+            f"event_hidden_dim ({old_hidden_dim}) — widen_event_gru only widens"
+        )
+    widened_config = replace(anchor_config, event_hidden_dim=new_hidden_dim,
+                             event_output_dim=old_hidden_dim)
+    anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
+    if env_config is not None:
+        _assert_b2b_anchor_matches_live_env("widen_event_gru", anchor_env_config, anchor_config, env_config)
+    model = PolicyValueNet(anchor_env_config, widened_config).to(device)
+    _, report = load_compatible_checkpoint(anchor_checkpoint, model)
+    # FAIL CLOSED: every anchor tensor must load same-shape except the GRU's
+    # own widened tensors and the brand new output_proj — anything else
+    # silently dropping an anchor layer would break the step-0 parity
+    # invariant.
+    surgical_prefixes = ("event_encoder.gru.", "event_encoder.output_proj.")
+    bad_skipped = [k for k in report["skipped_keys"] if not k.startswith(surgical_prefixes)]
+    bad_missing = [k for k in report["missing_keys"] if not k.startswith(surgical_prefixes)]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "anchor checkpoint is architecturally incompatible with the widened model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — its "
+            "metadata['model_config'] does not match its own saved tensor shapes"
+        )
+    anchor_state = payload["model"]
+    with torch.no_grad():
+        gru = model.event_encoder.gru
+        h_old, h_new = old_hidden_dim, new_hidden_dim
+        old_weight_ih = anchor_state["event_encoder.gru.weight_ih_l0"]  # [3*h_old, E]
+        old_weight_hh = anchor_state["event_encoder.gru.weight_hh_l0"]  # [3*h_old, h_old]
+        old_bias_ih = anchor_state["event_encoder.gru.bias_ih_l0"]      # [3*h_old]
+        old_bias_hh = anchor_state["event_encoder.gru.bias_hh_l0"]      # [3*h_old]
+        for gate in range(3):
+            old_rows = slice(gate * h_old, (gate + 1) * h_old)
+            new_old_rows = slice(gate * h_new, gate * h_new + h_old)
+            gru.weight_ih_l0[new_old_rows, :].copy_(old_weight_ih[old_rows, :])
+            gru.bias_ih_l0[new_old_rows].copy_(old_bias_ih[old_rows])
+            gru.bias_hh_l0[new_old_rows].copy_(old_bias_hh[old_rows])
+            # weight_hh: [old rows, old cols] copied verbatim; [old rows, new
+            # cols] ZEROED (old units must never see new-unit activations, or
+            # step-zero drifts). [new rows, any col] keep their normal init —
+            # new-unit dynamics are free, since output_proj masks them out.
+            gru.weight_hh_l0[new_old_rows, :h_old].copy_(old_weight_hh[old_rows, :])
+            gru.weight_hh_l0[new_old_rows, h_old:].zero_()
+        proj = model.event_encoder.output_proj
+        assert proj is not None, "widened_config.event_output_dim == old_hidden_dim > 0"
+        proj.weight.zero_()
+        proj.weight[:, :h_old].copy_(torch.eye(h_old, dtype=proj.weight.dtype))
+        proj.bias.zero_()
     model.eval()
     return model
 
@@ -2092,7 +2246,7 @@ def _write_lock_owner(lock_file, *, run_id: Optional[str]) -> None:
 
 def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
              checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
-             growth_blocks: int = 0, train_state_every: int = 5,
+             growth_blocks: int = 0, widen_event_hidden: int = 0, train_state_every: int = 5,
              resume_from_state: Optional[Path] = None,
              force_history_reset: bool = False,
              fresh_run_overwrite: bool = False,
@@ -2104,6 +2258,19 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     `batch.events`/`batch.dealin_labels`/`batch.rank_labels`). Mirrors
     `train_selfplay_oracle` minus feature-dropout/ACH/the batched-pool path —
     B2b has no dropout schedule and always trains PPO.
+
+    `widen_event_hidden > 0` (gru-width identity-masked warm start) routes
+    model construction through `widen_event_gru` instead: `champion_checkpoint`
+    must then be a complete post-B2b anchor with a dormant (unwidened) event
+    encoder (not the raw 39ch champion the `growth_blocks`/default surgery
+    paths expect), and `model_config` is superseded by the widened model's
+    own config (the anchor's saved architecture with `event_hidden_dim`
+    widened to `widen_event_hidden` and `event_output_dim` set to the
+    anchor's original width) so every downstream checkpoint save below
+    records the true architecture. Mutually exclusive with
+    `growth_blocks > 0` in the same run — both surgeries in one warm start
+    is out of scope; the caller (the CLI) rejects that combination before
+    this function is ever called.
 
     `growth_blocks > 0` (deep16-rezero capacity growth) routes model
     construction through `grow_b2b_model` instead: `champion_checkpoint` must
@@ -2232,6 +2399,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     directory -- logs what was removed, and then proceeds as a normal fresh
     run. A brand-new or genuinely empty `checkpoint_dir` always proceeds
     without asking (mkdir-if-absent, as before)."""
+    if growth_blocks > 0 and widen_event_hidden > 0:
+        raise ValueError(
+            f"train_b2b: growth_blocks ({growth_blocks}) and widen_event_hidden "
+            f"({widen_event_hidden}) cannot both be set in one run -- these are two "
+            "distinct warm-start surgeries (ReZero depth growth vs. event-GRU width "
+            "growth) and this function does not attempt to reconcile applying both to "
+            "the same anchor in a single call"
+        )
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -2517,6 +2692,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # move.
             if growth_blocks > 0:
                 model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
+                model_config = model.model_config
+            elif widen_event_hidden > 0:
+                model = widen_event_gru(champion_checkpoint, widen_event_hidden,
+                                        env_config=env_config, device=device)
                 model_config = model.model_config
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
