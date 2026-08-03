@@ -31,7 +31,26 @@ def add_model_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model-aux-heads", action="store_true", default=defaults.aux_heads)
 
 
-def model_config_from_args(args: argparse.Namespace) -> ModelConfig:
+def model_config_from_args(args: argparse.Namespace, *, event_window: int | None = None) -> ModelConfig:
+    """Build a `ModelConfig` from parsed CLI args in ONE construction.
+
+    `event_window` overrides `args.model_event_window` -- callers that have
+    a separate, more-authoritative event-window value (e.g. `train_b2b.py`'s
+    own `--event-window`, which is NOT the same flag as `--model-event-window`)
+    must pass it here rather than constructing a `ModelConfig` from
+    `args.model_event_window` first and `dataclasses.replace`-ing the
+    effective window in afterward. Adversarial round 6, high finding: that
+    two-step pattern builds an INTERMEDIATE `ModelConfig` with whatever
+    `--model-event-window` defaults to (0) while `--model-event-output-dim`
+    may already be nonzero on the CLI -- `ModelConfig.__post_init__`'s round-2
+    rejection (`event_output_dim != 0` requires `event_window != 0`) fires on
+    that intermediate object before the `replace()` ever runs, so the
+    documented resume recipe (which carries the widened
+    `--model-event-hidden-dim`/`--model-event-output-dim` alongside
+    `--event-window`, not `--model-event-window`) raised unconditionally.
+    Threading the effective window into this single constructor call means
+    no invalid intermediate `ModelConfig` is ever built.
+    """
     return ModelConfig(
         channels=args.model_channels,
         residual_blocks=args.model_residual_blocks,
@@ -44,7 +63,7 @@ def model_config_from_args(args: argparse.Namespace) -> ModelConfig:
         channel_attention=args.model_channel_attention,
         channel_attention_ratio=args.model_channel_attention_ratio,
         dueling_q=not args.model_no_dueling_q,
-        event_window=args.model_event_window,
+        event_window=args.model_event_window if event_window is None else event_window,
         event_hidden_dim=args.model_event_hidden_dim,
         event_output_dim=args.model_event_output_dim,
         privileged_critic=args.model_privileged_critic,

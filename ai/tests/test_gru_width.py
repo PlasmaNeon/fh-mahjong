@@ -614,3 +614,66 @@ def test_resume_documented_recipe_with_nondefault_residual_blocks(tmp_path) -> N
         train_b2b(env, omitted, anchor_path, checkpoint_dir,
                   replace(config_first, iterations=6),
                   base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+
+def test_train_b2b_cli_resume_documented_recipe_survives_config_construction(tmp_path) -> None:
+    """Adversarial round 6, high finding: the gru-width runbook's literal
+    resume command supplies --model-event-hidden-dim/--model-event-output-dim
+    (the widened dims) alongside --event-window -- NOT --model-event-window,
+    a separate flag main() never touches -- so `model_config_from_args(args)`
+    built an INTERMEDIATE ModelConfig with event_window defaulting to 0 while
+    event_output_dim was already nonzero, tripping the round-2 __post_init__
+    rejection (event_output_dim != 0 requires event_window != 0) before
+    `replace(..., event_window=args.event_window)` ever ran. This exercises
+    the actual CLI (subprocess, not the train_b2b() Python API the other
+    tests in this file use) with exactly the runbook's flags and confirms
+    the resume reaches state loading and completes instead of raising."""
+    anchor_config = _b2b_config(residual_blocks=4)
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    common_flags = [
+        "--checkpoint-dir", str(checkpoint_dir),
+        "--bridge-kind", "mock",
+        "--match-mode", "classic",
+        "--max-steps-per-episode", "16",
+        "--num-workers", "1",
+        "--minibatch-size", "8",
+        "--ppo-epochs", "1",
+        "--matches-per-iter", "2",
+        "--model-residual-blocks", "4",
+        "--model-channels", str(_SMALL["channels"]),
+        "--model-plane-feature-dim", str(_SMALL["plane_feature_dim"]),
+        "--model-scalar-hidden-dim", str(_SMALL["scalar_hidden_dim"]),
+        "--model-trunk-hidden-dim", str(_SMALL["trunk_hidden_dim"]),
+        "--model-value-hidden-dim", str(_SMALL["value_hidden_dim"]),
+        "--model-q-hidden-dim", str(_SMALL["q_hidden_dim"]),
+        "--event-window", "8",
+        "--train-state-every", "1",
+        "--base-seed", "5",
+        "--device", "cpu",
+    ]
+
+    fresh = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b",
+         "--champion", str(anchor_path), "--iterations", "1",
+         "--widen-event-hidden", "16", *common_flags],
+        capture_output=True, text=True,
+    )
+    assert fresh.returncode == 0, fresh.stderr
+    state_path = checkpoint_dir / "train_state.pt"
+    assert state_path.exists()
+
+    # The runbook's literal resume recipe: no --champion, no
+    # --widen-event-hidden (inert on resume), and the widened dims carried
+    # explicitly via --model-event-hidden-dim/--model-event-output-dim --
+    # NOT --model-event-window.
+    resumed = subprocess.run(
+        [sys.executable, "-m", "fh_mahjong_ai.scripts.train_b2b",
+         "--iterations", "2",
+         "--model-event-hidden-dim", "16", "--model-event-output-dim", "8",
+         "--resume-from-state", str(state_path), *common_flags],
+        capture_output=True, text=True,
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert "event_output_dim" not in resumed.stderr

@@ -154,8 +154,18 @@ def main() -> None:
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers)
-    base_model_config = model_config_from_args(args)
-    model_config = replace(base_model_config, event_window=args.event_window,
+    # Adversarial round 6, high finding: --event-window (this script's own
+    # flag) is NOT --model-event-window (model_config_args's flag, default
+    # 0) -- threading the effective window straight into
+    # model_config_from_args means no intermediate ModelConfig with
+    # event_window=0 is ever built while --model-event-output-dim is already
+    # nonzero (see model_config_from_args's docstring). The remaining
+    # replace() below only ever touches fields with no cross-field
+    # validation of their own (privileged_critic/aux_heads are plain bools;
+    # growth_blocks combines with the already-valid residual_blocks), so it
+    # never passes through an invalid intermediate object.
+    base_model_config = model_config_from_args(args, event_window=args.event_window)
+    model_config = replace(base_model_config,
                           privileged_critic=args.privileged_critic, aux_heads=args.aux_heads,
                           growth_blocks=args.model_growth_blocks)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
