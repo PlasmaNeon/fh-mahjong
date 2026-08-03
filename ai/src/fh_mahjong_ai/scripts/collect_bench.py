@@ -27,7 +27,7 @@ import hashlib
 import json
 import sys
 import time
-from dataclasses import fields, replace
+from dataclasses import fields
 from pathlib import Path
 from typing import Optional
 
@@ -223,8 +223,13 @@ def main() -> None:
     if not workers:
         p.error("--workers must name at least one worker count")
 
-    base_model_config = model_config_from_args(args)
-    model_config = replace(base_model_config, event_window=args.event_window)
+    # Adversarial round 6, high finding (train_b2b.py): --event-window (this
+    # script's own flag) is NOT --model-event-window (model_config_args's
+    # flag, default 0) -- threading the effective window straight into
+    # model_config_from_args means no intermediate ModelConfig with
+    # event_window=0 is ever built while --model-event-output-dim may already
+    # be nonzero on the CLI (see model_config_from_args's docstring).
+    model_config = model_config_from_args(args, event_window=args.event_window)
 
     report = run_bench(champion=args.champion, model_config=model_config,
                        growth_blocks=args.model_growth_blocks, workers=workers,

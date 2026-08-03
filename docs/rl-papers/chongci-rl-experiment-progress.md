@@ -16259,3 +16259,65 @@ representation — consistent with the original deep8 null, now at 1.73x params 
 provably function-preserving warm start. Third lap running where an isolated screening
 peak (+0.028 here) drove the confirmation: 1 hit (restart lap), 2 misses (r2, this).
 Next per ratified menu: GRU-width scaling (post-consult).
+
+## 2026-08-02 — gru-width: pre-registration (event-encoder width scaling)
+
+Design ratified via Codex consult (canonical session, 2026-08-02), following the
+deep16-rezero recruitment null: `docs/superpowers/specs/2026-08-02-gru-width-design.md`,
+branch `claude/gru-width`. Runbook: `docs/superpowers/plans/2026-08-02-gru-width-runbook.md`.
+Registering the gate BEFORE launch per standing pre-registration discipline.
+
+**Hypothesis under test:** does the SEQUENCE CORE itself have unused capacity, given that
+generic trunk depth has now nulled twice (deep8 pre-events; deep4+12-rezero with events,
+alphas never recruited) while both confirmed champion-line wins came from the event/temporal
+representation? ONE architectural intervention: double the event GRU hidden width (128 ->
+256), keeping the trunk's 128-dim event-feature interface fixed via an identity-masked
+`[I|0]` output projection so step-zero behavior is EXACTLY the anchor's (function-preserving
+warm start, same discipline as `grow_b2b_model`, but widening an existing recurrent layer in
+place rather than stacking new blocks). Trunk, aux heads, and every other recipe knob stay
+fixed — this isolates the sequence-core width variable from the already-nulled depth variable.
+
+**Anchor:** restart-iter075 (unchanged; already a confirmed gate-qualified champion):
+
+```
+/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt
+sha256: ce9d867f803bb41acad30f1f4c137e82d7946ed2c4db769e265d0c9cd08f75d4
+```
+
+**Gate parameters (ratified, binding):**
+- Budget: `iterations = ceil_to_5(150 * candidate_params / anchor_params)` with the
+  MEASURED ratio (expected ~1.08x -> 165) x 320 matches/iter, recipe otherwise
+  byte-identical to the ratified champion recipe (dense per-hand score-delta reward,
+  gamma=0.99, lr=2e-5, entropy 0, 2 PPO epochs, chongci, 10 workers — memory-proven per
+  the deep16 20-worker OOM lesson, no fresh worker benchmark for this lap).
+- Preflight: state-dict sha check + a step-zero parity script (`widen_event_gru` output
+  torch.equal to the anchor on event features/policy logits/value/Q/aux/greedy-action)
+  MUST pass on the box before any training compute is spent; the same script also
+  measures the param-count ratio that fixes the iteration budget.
+- Screening: iterations 25/50/75/100/125/150/`<final>` (the computed budget, expected
+  ~165) vs a REGENERATED anchor comparator, same current bridge, `910000+` window, 120
+  seeds, strict (the deep4+12-rezero comparator is not reused — the bridge has moved).
+  Candidate eval flags add `--model-event-hidden-dim 256 --model-event-output-dim 128`.
+- Kill rule: ONLY at iter 100, if BOTH the iter-75 AND iter-100 champion-relative deltas
+  are `< -0.06`. No other iteration triggers a kill.
+- No extension; selection protocol UNCHANGED from prior laps — best eligible
+  pre-registered screening checkpoint, healthy telemetry, no substitution after seeing
+  later results (ratified per consult: sensitivity over false-launch cost).
+- Confirmation: fresh `1110000+` window (unspent by any prior lap), 1500 seeds/side,
+  back-to-back, same bridge. Promotion requires BOTH the paired placement clustered 95%
+  CI clearing 0 AND `large_loss_rate(candidate) <= large_loss_rate(anchor) + 0.015`
+  absolute.
+- Resumable state every 5 iterations; `PYTHONUNBUFFERED=1` launch; orchestrator +
+  screening chain live under `/root/fh-mahjong-runs/` (reboot-safe paths) — same
+  discipline as the last two laps, since deep4+12-rezero needed two OOM-recovery resumes.
+
+**Kill/null semantics (binding, stated up front):** a null result here means the SEQUENCE
+CORE also has no unused capacity at this recipe under PPO — a THIRD capacity axis (after
+trunk depth twice) declining to pay, not merely a bad warm-start protocol (step-zero parity
+is proven mechanically sound before launch, unlike the depth-null's alpha-recruitment
+ambiguity). Per the ratified scale roadmap, the next menu item after a null here is an
+aux-weight ablation, not a further width/depth variant.
+
+Out of scope for this lap (per spec, unchanged): trunk changes, transformer encoders,
+window changes, aux weights, matches-per-iter changes, deployment of any winner (B2c
+rollout proceeds independently with restart-iter075 regardless of this lap's outcome).

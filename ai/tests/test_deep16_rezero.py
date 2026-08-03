@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import logging
@@ -249,6 +250,45 @@ def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
     anchor_path = _save_anchor(tmp_path, anchor_config, model_config_metadata_override=lying_metadata)
     with pytest.raises(RuntimeError):
         grow_b2b_model(anchor_path, growth_blocks=3)
+
+
+def test_grow_b2b_model_raises_on_doctored_channels_claim(tmp_path) -> None:
+    # The anchor's REAL net is built at channels=32, but its metadata lies
+    # and claims channels=16 (the _SMALL default). grow_b2b_model constructs
+    # its grown net from the metadata claim alone
+    # (`PolicyValueNet(anchor_env_config, grown_config)`), so a wrong claim
+    # here would build a differently-shaped net than the anchor's own
+    # tensors before load_compatible_checkpoint ever gets a chance to catch
+    # the drift -- must raise up front, before any construction.
+    real_config = _b2b_config(channels=32)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["channels"] = 16
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="channels"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
+def test_grow_b2b_model_raises_on_doctored_residual_blocks_claim(tmp_path) -> None:
+    # Same class of gap, for residual_blocks: the anchor's REAL net has 2
+    # plane_blocks, but metadata claims 1.
+    real_config = _b2b_config(residual_blocks=2)
+    lying_metadata = model_config_metadata(real_config)
+    lying_metadata["residual_blocks"] = 1
+    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+
+    with pytest.raises(RuntimeError, match="residual_blocks"):
+        grow_b2b_model(anchor_path, growth_blocks=3)
+
+
+def test_grow_b2b_model_same_shape_happy_path_unaffected_by_dim_check(tmp_path) -> None:
+    # Honest metadata (claim matches the anchor's own tensor shapes) must
+    # still grow successfully -- the new pre-surgery cross-check is not a
+    # blanket rejection.
+    anchor_config = _b2b_config()
+    anchor_path = _save_anchor(tmp_path, anchor_config)
+    grown = grow_b2b_model(anchor_path, growth_blocks=3)
+    assert grown.model_config.growth_blocks == 3
 
 
 def test_grow_b2b_model_ignores_env_config_mismatch_when_not_passed(tmp_path) -> None:
@@ -1189,6 +1229,154 @@ def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correc
     history = train_b2b(env, grown_config, anchor_path, checkpoint_dir, config_resumed,
                         base_seed=5, train_state_every=2, resume_from_state=state_path)
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 1 (gru-width branch): a new defaulted field (e.g.
+# ModelConfig.event_output_dim) shows up in every freshly-built config echo
+# but is absent from a train_state.pt saved before that field existed --
+# _validate_resume_config_echo's missing-vs-present comparison must treat
+# that silence as "this run used the field's dataclass default", not as a
+# recipe drift, or every pre-upgrade multi-day run bricks on resume.
+# ---------------------------------------------------------------------------
+
+def _config_echo_triple():
+    from fh_mahjong_ai import oracle as oracle_module
+
+    env = EnvConfig(bridge_kind="mock")
+    model_config = ModelConfig()
+    config = PPOConfig(device="cpu")
+    return oracle_module._train_b2b_config_echo(config, model_config, env)
+
+
+def test_resume_config_echo_missing_new_defaulted_field_proceeds(caplog) -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    assert current["model_config"]["event_output_dim"] == 0
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["event_output_dim"]  # simulate a pre-upgrade echo
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_explicit_different_value_still_raises() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    saved["model_config"]["event_output_dim"] = 4  # explicit, non-default, different value
+
+    with pytest.raises(ValueError, match="event_output_dim"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(caplog) -> None:
+    # Proves the fix isn't special-cased to event_output_dim: deleting a
+    # DIFFERENT defaulted field (growth_blocks, added for deep16-rezero) from
+    # the saved echo must also proceed, standing in for whatever the NEXT new
+    # defaulted field turns out to be.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    assert current["model_config"]["growth_blocks"] == 0
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["growth_blocks"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review round 5 (gru-width branch), medium finding: round 1's
+# fix above back-filled ANY field missing from a saved echo -- not just the
+# two proven legacy additions -- using ITS OWN dataclass's TODAY's default.
+# That means a malformed/edited state file missing an established field
+# (e.g. ppo_config.gamma, env_config.match_mode) silently resumed under
+# today's default for that field instead of raising, a fail-open regression
+# for every field except the two this was actually meant to cover. Fixed by
+# whitelisting only the proven legacy additions (_LEGACY_ECHO_ADDITIONS);
+# anything else missing must raise naming it.
+# ---------------------------------------------------------------------------
+
+def test_resume_config_echo_missing_ppo_gamma_raises_naming_it() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["gamma"]
+
+    with pytest.raises(ValueError, match="gamma"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_env_match_mode_raises_naming_it() -> None:
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["env_config"]["match_mode"]
+
+    with pytest.raises(ValueError, match="match_mode"):
+        oracle_module._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_event_output_dim_still_proceeds_with_notice(caplog) -> None:
+    # Unchanged behavior for a whitelisted legacy addition.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["event_output_dim"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_missing_growth_blocks_still_proceeds_with_notice(caplog) -> None:
+    # Unchanged behavior for the other whitelisted legacy addition.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["growth_blocks"]
+
+    with caplog.at_level(logging.INFO):
+        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_resume_config_echo_missing_nonwhitelisted_model_field_raises() -> None:
+    # channels is a real, established ModelConfig field -- NOT in the
+    # whitelist -- so its absence must raise, not silently default-fill.
+    from fh_mahjong_ai import oracle as oracle_module
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["channels"]
+
+    with pytest.raises(ValueError, match="channels"):
+        oracle_module._validate_resume_config_echo(current, saved)
 
 
 # ---------------------------------------------------------------------------

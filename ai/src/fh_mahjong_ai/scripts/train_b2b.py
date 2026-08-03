@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
-from fh_mahjong_ai.config import EnvConfig
+from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.fdlimit import raise_file_descriptor_limit
 from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
 from fh_mahjong_ai.oracle import train_b2b
@@ -48,6 +48,15 @@ def main() -> None:
                         "blocks onto --champion (which must then be a complete post-B2b "
                         "anchor checkpoint, not the raw 39ch champion the default (0) "
                         "surgery path expects); 0 = disabled (default)")
+    p.add_argument("--widen-event-hidden", type=int, default=0,
+                   help="gru-width identity-masked warm start: widen the event-GRU's "
+                        "hidden dim to this value (must be strictly greater than "
+                        "--champion's own event_hidden_dim), projecting back down to the "
+                        "anchor's original width so step-0 outputs are unchanged; "
+                        "--champion must then be a complete post-B2b anchor with a "
+                        "dormant (unwidened) event encoder, not the raw 39ch champion the "
+                        "default (0) surgery path expects; 0 = disabled (default); "
+                        "mutually exclusive with --model-growth-blocks > 0")
     p.add_argument("--train-state-every", type=int, default=5,
                    help="write <checkpoint-dir>/train_state.pt (model + optimizer + RNG + "
                         "next-iteration) every N iterations, and always at completion, so "
@@ -122,6 +131,17 @@ def main() -> None:
     raise_file_descriptor_limit()
     if args.champion is None and args.resume_from_state is None:
         p.error("--champion is required unless --resume-from-state is given")
+    if args.widen_event_hidden < 0:
+        p.error(f"--widen-event-hidden must not be negative (got {args.widen_event_hidden}); "
+               "0 disables the gru-width warm-start surgery")
+    if args.widen_event_hidden > ModelConfig.MAX_HIDDEN_DIM:
+        p.error(f"--widen-event-hidden ({args.widen_event_hidden}) exceeds maximum "
+               f"{ModelConfig.MAX_HIDDEN_DIM}")
+    if args.model_growth_blocks > 0 and args.widen_event_hidden > 0:
+        p.error("--model-growth-blocks and --widen-event-hidden cannot both be set "
+               "(> 0) in one run -- these are two distinct warm-start surgeries and this "
+               "CLI does not attempt to reconcile applying both to the same anchor in a "
+               "single run")
     num_workers = args.num_workers
     if num_workers is None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
@@ -134,13 +154,24 @@ def main() -> None:
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers)
-    base_model_config = model_config_from_args(args)
-    model_config = replace(base_model_config, event_window=args.event_window,
+    # Adversarial round 6, high finding: --event-window (this script's own
+    # flag) is NOT --model-event-window (model_config_args's flag, default
+    # 0) -- threading the effective window straight into
+    # model_config_from_args means no intermediate ModelConfig with
+    # event_window=0 is ever built while --model-event-output-dim is already
+    # nonzero (see model_config_from_args's docstring). The remaining
+    # replace() below only ever touches fields with no cross-field
+    # validation of their own (privileged_critic/aux_heads are plain bools;
+    # growth_blocks combines with the already-valid residual_blocks), so it
+    # never passes through an invalid intermediate object.
+    base_model_config = model_config_from_args(args, event_window=args.event_window)
+    model_config = replace(base_model_config,
                           privileged_critic=args.privileged_critic, aux_heads=args.aux_heads,
                           growth_blocks=args.model_growth_blocks)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
-             growth_blocks=args.model_growth_blocks, train_state_every=args.train_state_every,
+             growth_blocks=args.model_growth_blocks, widen_event_hidden=args.widen_event_hidden,
+             train_state_every=args.train_state_every,
              resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset,
              fresh_run_overwrite=args.fresh_run_overwrite,
              allow_bridge_mismatch=args.allow_bridge_mismatch,

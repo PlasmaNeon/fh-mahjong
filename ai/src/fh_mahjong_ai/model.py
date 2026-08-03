@@ -64,8 +64,12 @@ class PolicyValueNet(nn.Module):
 
         trunk_in = model_config.plane_feature_dim + model_config.scalar_hidden_dim
         if model_config.event_window > 0:
-            self.event_encoder = EventEncoder(model_config.event_embed_dim, model_config.event_hidden_dim)
-            trunk_in += model_config.event_hidden_dim
+            self.event_encoder = EventEncoder(
+                model_config.event_embed_dim,
+                model_config.event_hidden_dim,
+                model_config.event_output_dim,
+            )
+            trunk_in += self.event_encoder.output_dim
         self.trunk = nn.Sequential(
             nn.Linear(trunk_in, model_config.trunk_hidden_dim),
             nn.GELU(),
@@ -149,7 +153,7 @@ class PolicyValueNet(nn.Module):
         if self.wants_events:
             if events is None or event_lengths is None:
                 batch = planes.shape[0]
-                event_features = torch.zeros(batch, self.model_config.event_hidden_dim,
+                event_features = torch.zeros(batch, self.event_encoder.output_dim,
                                              device=planes.device, dtype=plane_features.dtype)
             else:
                 event_features = self.event_encoder(events, event_lengths)
@@ -329,12 +333,23 @@ class EventEncoder(nn.Module):
 
     NUM_TOKENS = 8 * 4 * 64  # 2048; the 8 is events.NUM_EVENT_TYPES (asserted below)
 
-    def __init__(self, embed_dim: int, hidden_dim: int) -> None:
+    def __init__(self, embed_dim: int, hidden_dim: int, output_dim: int = 0) -> None:
         super().__init__()
         self.embedding = nn.Embedding(self.NUM_TOKENS, embed_dim)
         self.side_proj = nn.Linear(6, embed_dim)
         self.gru = nn.GRU(embed_dim, hidden_dim, batch_first=True)
         self.hidden_dim = hidden_dim
+        # output_dim == 0 or == hidden_dim both collapse to "no projection"
+        # (dormant): the widening lap's step-zero invariant is that
+        # event_output_dim equal to event_hidden_dim is indistinguishable
+        # from the default, down to the state_dict itself.
+        self.output_proj: nn.Linear | None = None
+        if output_dim not in (0, hidden_dim):
+            self.output_proj = nn.Linear(hidden_dim, output_dim)
+
+    @property
+    def output_dim(self) -> int:
+        return self.output_proj.out_features if self.output_proj is not None else self.hidden_dim
 
     def forward(self, events: Tensor, lengths: Tensor) -> Tensor:
         # Decode bits on-device (cheap, vectorized).
@@ -362,7 +377,10 @@ class EventEncoder(nn.Module):
         batch = events.shape[0]
         idx = (lengths - 1).clamp(min=0).view(batch, 1, 1).expand(-1, 1, self.hidden_dim)
         gathered = out.gather(1, idx).squeeze(1)
-        return gathered * (lengths > 0).float().unsqueeze(-1)
+        if self.output_proj is not None:
+            gathered = self.output_proj(gathered)
+        result = gathered * (lengths > 0).float().unsqueeze(-1)
+        return result
 
 
 def _first_effective_block_attention_key(residual_blocks: int) -> str:
@@ -475,6 +493,28 @@ def _derive_growth_blocks(state_dict: dict[str, Tensor]) -> int:
     return len(indices)
 
 
+def _derive_event_output_dim(state_dict: dict[str, Tensor]) -> int:
+    """Derive the event-encoder output-projection width from
+    `event_encoder.output_proj.weight`'s shape (`[out_features, hidden_dim]`).
+
+    Mirrors `_derive_growth_blocks`'s treatment (gru-width, Task 3): this is
+    shape-derivable in principle, but is intentionally kept OUT of
+    `_shape_inferred_fields` for the same reason -- `EventEncoder.__init__`
+    builds no `output_proj` module at all when `output_dim in (0, hidden_dim)`
+    (see its docstring), so the projection key's ABSENCE is ambiguous between
+    "no projection field claimed" (legacy/default, 0) and "field claimed but
+    equal to hidden_dim" (the widening lap's step-zero collapse case) --
+    either way this returns 0, and the caller
+    (`_verify_metadata_matches_shapes`) normalizes the metadata CLAIM the
+    same way before comparing, so both collapse cases agree instead of a
+    false-positive mismatch.
+    """
+    key = "event_encoder.output_proj.weight"
+    if key not in state_dict:
+        return 0
+    return int(state_dict[key].shape[0])
+
+
 def _effective_attention_hidden(channels: int, ratio: int) -> int:
     """The attention bottleneck width `ChannelAttention2d.__init__` actually
     constructs for a given (channels, ratio) pair. Must match that formula
@@ -543,6 +583,27 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
     derived_growth_blocks = _derive_growth_blocks(state_dict)
     if config.growth_blocks != derived_growth_blocks:
         mismatched["growth_blocks"] = (config.growth_blocks, derived_growth_blocks)
+
+    # gru-width (Task 3): `event_output_dim` is derivable from state-dict
+    # shapes (`_derive_event_output_dim`, the projection key's out_features)
+    # just like `growth_blocks` above, but is deliberately kept out of
+    # `_shape_inferred_fields` for the same reason (see
+    # `_derive_event_output_dim`'s docstring) -- a checkpoint with usable
+    # metadata still needs its claim cross-checked here, before
+    # `PolicyValueNet` is constructed. `EventEncoder` collapses BOTH
+    # `event_output_dim == 0` and `event_output_dim == event_hidden_dim` to
+    # "no projection module" (state_dict byte-identical either way), so the
+    # metadata claim is normalized the same way before comparing against the
+    # derived count -- otherwise an honest claim of `event_output_dim ==
+    # event_hidden_dim` (no projection keys expected) would be flagged as a
+    # mismatch against the true "0" derived from the checkpoint's own
+    # (absent) projection key.
+    claimed_event_output_dim = (
+        0 if config.event_output_dim == config.event_hidden_dim else config.event_output_dim
+    )
+    derived_event_output_dim = _derive_event_output_dim(state_dict)
+    if claimed_event_output_dim != derived_event_output_dim:
+        mismatched["event_output_dim"] = (config.event_output_dim, derived_event_output_dim)
 
     if mismatched:
         raise RuntimeError(
