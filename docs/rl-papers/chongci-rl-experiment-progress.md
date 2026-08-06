@@ -16321,3 +16321,22 @@ aux-weight ablation, not a further width/depth variant.
 Out of scope for this lap (per spec, unchanged): trunk changes, transformer encoders,
 window changes, aux weights, matches-per-iter changes, deployment of any winner (B2c
 rollout proceeds independently with restart-iter075 regardless of this lap's outcome).
+
+## 2026-08-06 — gru-width lap: positive near-miss, independently unconfirmed
+
+Lap ran exactly as ratified (165 iters, ratio 1.0705, step-zero parity, kill@100
+passed). Screenings vs restart-iter075 (910000+): monotonic climb -0.078 (50) →
+-0.050 (75) → -0.011 (100) → +0.033 (125), staying positive at 150/165 (+0.013).
+Selected iter_125 (sha d855aa83...).
+
+Confirmation 1110000+ (1500/side): +0.0170 ± 0.0194 — gate failed by a hair
+(tail passed, 0.0503 vs 0.0540). Codex-ratified single independent replication
+(1150000+, 3000/side, replication ALONE confirmatory; pooling descriptive only):
++0.0029 ± 0.0140 — NOT significant, point estimate collapsed. Verdict per
+pre-registration: near-miss unconfirmed; iter_125 RETIRED; no third window.
+Descriptive pooled estimate +0.008 ± 0.022 — consistent with tiny-or-zero effect.
+
+Scale-campaign scoreboard vs restart-iter075: restart ladder r2 null; deep16
+ReZero recruitment null; gru-width unconfirmed near-miss. Champion line stands:
+iter275 → iter_075 (+0.041) → restart-iter075 (+0.025), promotion in progress.
+Next decision (consult): aux-weight ablation vs concluding recipe saturation.
