@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import unittest
 
 import numpy as np
 import pytest
@@ -1026,3 +1027,53 @@ def test_evaluate_cli_model_event_hidden_and_output_dim_flags_thread_into_explic
     report = json.loads((tmp_path / "rep.json").read_text())
     assert report["model_config"]["model_event_hidden_dim"] == 16
     assert report["model_config"]["model_event_output_dim"] == 8
+
+
+class HandStatsCollectionTest(unittest.TestCase):
+    def test_mock_bridge_episodes_report_empty_hand_stats_with_unknowns(self) -> None:
+        # The mock bridge never emits round_outcome: every completed,
+        # non-truncated episode is one unknown hand boundary.
+        class FirstLegalPolicy:
+            def choose(self, observation: Observation) -> ActionChoice:
+                return ActionChoice(action_id=observation.legal_actions[0])
+
+        report = evaluate_policy_online(
+            policy=FirstLegalPolicy(),
+            episodes=3,
+            seeds=[1, 2, 3],
+            bridge_kind="mock",
+        )
+
+        self.assertIn("hand_stats", report)
+        self.assertIn("per_match_hand_records", report)
+        stats = report["hand_stats"]
+        self.assertEqual(stats["hands_played"], 0)
+        self.assertEqual(stats["matches"], report["episodes"])
+        self.assertEqual(stats["unknown_hands"], report["episodes"])
+        self.assertEqual(len(report["per_match_hand_records"]), report["episodes"])
+        self.assertTrue(all(m == [] for m in report["per_match_hand_records"]))
+
+    def test_episode_round_outcomes_extraction_rules(self) -> None:
+        from fh_mahjong_ai.evaluate import _episode_round_outcomes
+
+        ro_a = {"is_draw": False, "winner_seat": 1, "win_type_name": "ACTION_RON",
+                "discarder_seat": 0, "payouts": [{"seat": 0, "amount": -10}]}
+        ro_b = {"is_draw": True, "winner_seat": -1, "win_type_name": "ACTION_UNKNOWN",
+                "discarder_seat": -1, "payouts": []}
+
+        def _t(info):
+            o = _obs()
+            return Transition(observation=o, action_id=5, rewards=np.zeros(4, np.float32),
+                              next_observation=o, terminated=False, truncated=False,
+                              info=info)
+
+        # Mid-match + terminal outcomes come from transition infos; the
+        # `outcome` param duplicates the terminal transition's info and must
+        # NOT be re-added.
+        episode = [_t({}), _t({"round_outcome": ro_a}), _t({}), _t({"round_outcome": ro_b})]
+        self.assertEqual(_episode_round_outcomes(episode, ro_b), [ro_a, ro_b])
+        # Terminate-at-reset: empty episode, outcome param is the only record.
+        self.assertEqual(_episode_round_outcomes([], ro_a), [ro_a])
+        # Nothing anywhere.
+        self.assertEqual(_episode_round_outcomes([], None), [])
+        self.assertEqual(_episode_round_outcomes([_t({})], None), [])

@@ -17,6 +17,7 @@ from .bridge import build_bridge, resolve_bridge_library_path
 from .config import EnvConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
+from .hand_stats import hand_record, summarize_hand_stats
 from .policies import TorchGreedyPolicy
 from .types import Transition
 
@@ -443,6 +444,28 @@ def update_outcome_counts(outcome_counts: Counter[str], outcome: Optional[dict[s
     outcome_counts["other"] += 1
 
 
+def _episode_round_outcomes(
+    episode: list[Transition],
+    outcome: Optional[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """All hand outcomes delivered during one match, in order.
+
+    Every delivered outcome sits in some transition's ``info["round_outcome"]``
+    (the match-ending hand rides the terminal transition, which the caller
+    appends before recording). The ``outcome`` parameter duplicates the
+    terminal transition's info, so it is used ONLY when the episode has no
+    transitions (terminate-at-reset) — adding it otherwise would double-count
+    the final hand.
+    """
+    outcomes = [
+        ro for t in episode
+        if (ro := (t.info or {}).get("round_outcome")) is not None
+    ]
+    if not episode and outcome is not None:
+        outcomes = [outcome]
+    return outcomes
+
+
 def _normalize_match_mode(match_mode: str) -> str:
     normalized = match_mode.lower()
     if normalized not in {"classic", "chongci"}:
@@ -663,6 +686,8 @@ def evaluate_policy_online(
     wins = 0
     large_losses = 0
     truncations = 0
+    per_match_hand_records: list[list[dict[str, Any]]] = []
+    unknown_hands = 0
 
     def record_episode(
         seed: int,
@@ -673,7 +698,7 @@ def evaluate_policy_online(
         truncated: bool = False,
         reset_rewards=None,
     ) -> None:
-        nonlocal wins, large_losses, truncations
+        nonlocal wins, large_losses, truncations, unknown_hands
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
         # A truncated (step-limit) episode has no final standings. Score it as the
@@ -720,6 +745,15 @@ def evaluate_policy_online(
                 "truncated": bool(truncated),
             }
         )
+        hand_outcomes = _episode_round_outcomes(episode, outcome)
+        per_match_hand_records.append(
+            [hand_record(ro, learning_seat) for ro in hand_outcomes]
+        )
+        if not truncated and not hand_outcomes:
+            # A completed match that delivered no outcome at all: count the
+            # terminal boundary as unknown rather than silently shrinking
+            # the denominator. (Truncations are already tallied separately.)
+            unknown_hands += 1
 
     try:
         for i in range(episodes):
@@ -838,6 +872,8 @@ def evaluate_policy_online(
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
         "round_outcome_rates": outcome_rates(outcome_counts),
+        "hand_stats": summarize_hand_stats(per_match_hand_records, unknown_hands),
+        "per_match_hand_records": per_match_hand_records,
         "policy_choice_counts": dict(sorted(choice_source_counts.items())),
         "policy_choice_rates": action_family_rates(choice_source_counts),
         "policy_q_margins": q_margins,
