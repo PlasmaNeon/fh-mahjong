@@ -107,7 +107,8 @@ are correlated, so hand-level binomial CIs would be overconfident.
 ### 4. Output
 
 - **Stdout:** compact table — rows per seat + overall; columns win rate
-  和了率, deal-in rate 放铳率, avg win value, avg deal-in loss, each ±95% CI;
+  和了率, deal-in rate 放铳率, avg win value, avg deal-in loss, each ±95% CI
+  (Implementation note: 95% CIs are computed for the pooled overall only — per-seat CIs were consciously dropped as too wide to be useful at 100 matches/seat.);
   plus match-level context (avg placement, bust rate, hands/match).
 - **JSON report** at `--out`: checkpoint path, resolved config, seed
   ranges, per-seat and overall `hand_stats` + CIs, and the existing

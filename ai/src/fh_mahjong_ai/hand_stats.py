@@ -4,6 +4,8 @@ Consumes the ``round_outcome`` dicts decoded by ``CtypesGoBridge._decode_round_o
 (keys: ``is_draw``, ``winner_seat``, ``win_type``, ``win_type_name``,
 ``discarder_seat``, ``total_score``, ``payouts=[{seat, amount}]``). Payout amounts
 are actual per-seat nets, so Fenghua liability rules are already reflected.
+
+Denominators count OBSERVED hands only: the Go env can drop a hand's outcome when no learning-seat decision occurs before the next boundary, and such hands are invisible here.
 """
 
 from __future__ import annotations

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from fh_mahjong_ai.evaluate import evaluate_policy_online
-from fh_mahjong_ai.hand_stats import CI_STATS, bootstrap_hand_stats_ci, summarize_hand_stats
+from fh_mahjong_ai.hand_stats import bootstrap_hand_stats_ci, summarize_hand_stats
 from fh_mahjong_ai.policies import TorchGreedyPolicy
 from fh_mahjong_ai.serving import CheckpointPolicy
 
@@ -176,6 +176,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     print()
     print(format_stat_table(merged))
+    unknown = merged["overall"]["hand_stats"]["unknown_hands"]
+    if unknown:
+        print(f"WARNING: {unknown} match(es) completed without any observed hand outcome; "
+              "rates use observed hands only")
     print(f"\nreport written to {out_path}")
 
 
