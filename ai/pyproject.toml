@@ -49,6 +49,7 @@ fh-mj-train-branch-preference-policy = "fh_mahjong_ai.scripts.train_branch_prefe
 fh-mj-train-action-risk = "fh_mahjong_ai.scripts.train_action_risk:main"
 fh-mj-train-offline-q = "fh_mahjong_ai.scripts.train_offline_q:main"
 fh-mj-evaluate = "fh_mahjong_ai.scripts.evaluate:main"
+fh-mj-benchmark = "fh_mahjong_ai.scripts.benchmark:main"
 fh-mj-compare = "fh_mahjong_ai.scripts.compare_reports:main"
 fh-mj-evaluate-risk-guarded = "fh_mahjong_ai.scripts.evaluate_risk_guarded:main"
 fh-mj-reward-calibration = "fh_mahjong_ai.scripts.reward_calibration:main"
