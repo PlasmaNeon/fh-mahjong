@@ -25,7 +25,7 @@ def _deal_in(seat=0, amount=-10):
     )
 
 
-def _seat_report(seat, matches):
+def _seat_report(seat, matches, placements=None):
     from fh_mahjong_ai.hand_stats import summarize_hand_stats
     return {
         "seat": seat,
@@ -35,6 +35,9 @@ def _seat_report(seat, matches):
         "mean_placement": 2.5,
         "truncation_rate": 0.0,
         "round_outcome_counts": {},
+        "per_episode_placements": (
+            placements if placements is not None else [1.0] * len(matches)
+        ),
     }
 
 
@@ -56,6 +59,26 @@ class MergeSeatReportsTest(unittest.TestCase):
         self.assertEqual(set(merged["per_seat"].keys()), {0, 1, 2, 3})
         self.assertAlmostEqual(merged["per_seat"][1]["hand_stats"]["win_rate"], 1.0)
 
+    def test_placement_rates_map_values_to_ranks_with_tie_bucket(self) -> None:
+        # Canonical GRP placement values: 1st=1, 2nd=1/3, 3rd=-1/3, 4th=-1.
+        # A tie produces an averaged value (e.g. 1st/2nd tie -> 2/3) that maps
+        # to no rank and must land in the "tied" bucket, not be mislabeled.
+        reports = {
+            0: _seat_report(0, [[_win(0)], [_win(0)]], placements=[1.0, 1.0 / 3.0]),
+            1: _seat_report(1, [[_win(1)], [_win(1)]], placements=[-1.0 / 3.0, -1.0]),
+            2: _seat_report(2, [[_win(2)], [_win(2)]], placements=[1.0, 2.0 / 3.0]),
+            3: _seat_report(3, [[_win(3)], [_win(3)]], placements=[1.0, 1.0]),
+        }
+        merged = benchmark_cli.merge_seat_reports(reports, bootstrap_iters=50, bootstrap_seed=3)
+        overall = merged["overall"]["placement_rates"]
+        self.assertAlmostEqual(overall["1st"], 4 / 8)
+        self.assertAlmostEqual(overall["2nd"], 1 / 8)
+        self.assertAlmostEqual(overall["3rd"], 1 / 8)
+        self.assertAlmostEqual(overall["4th"], 1 / 8)
+        self.assertAlmostEqual(overall["tied"], 1 / 8)
+        self.assertEqual(merged["per_seat"][3]["placement_rates"]["1st"], 1.0)
+        self.assertEqual(merged["per_seat"][1]["placement_rates"]["1st"], 0.0)
+
     def test_table_renders_core_four_and_seats(self) -> None:
         reports = {s: _seat_report(s, [[_win(s)], [_deal_in(s)]]) for s in range(4)}
         merged = benchmark_cli.merge_seat_reports(reports, bootstrap_iters=50, bootstrap_seed=3)
@@ -65,6 +88,9 @@ class MergeSeatReportsTest(unittest.TestCase):
         self.assertIn("overall", table)
         self.assertIn("seat 0", table)
         self.assertIn("seat 3", table)
+        self.assertIn("placement:", table)
+        self.assertIn("1st", table)
+        self.assertIn("4th", table)
 
 
 class MainTest(unittest.TestCase):

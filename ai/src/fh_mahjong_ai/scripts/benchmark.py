@@ -20,6 +20,30 @@ from fh_mahjong_ai.serving import CheckpointPolicy
 
 _SEATS = (0, 1, 2, 3)
 
+# Canonical GRP placement values (evaluate._EVAL_PLACEMENT_VALUES): 1st..4th.
+# Ties receive AVERAGED values (data.placement_shaped_returns), which match no
+# rank — they are counted in a separate "tied" bucket rather than mislabeled.
+_PLACEMENT_RANKS = (("1st", 1.0), ("2nd", 1.0 / 3.0), ("3rd", -1.0 / 3.0), ("4th", -1.0))
+
+
+def placement_rate_counts(per_episode_placements: Sequence[float]) -> dict[str, int]:
+    """Count matches by final rank from their GRP placement values."""
+    counts = {label: 0 for label, _ in _PLACEMENT_RANKS}
+    counts["tied"] = 0
+    for value in per_episode_placements:
+        for label, canonical in _PLACEMENT_RANKS:
+            if abs(float(value) - canonical) < 1e-6:
+                counts[label] += 1
+                break
+        else:
+            counts["tied"] += 1
+    return counts
+
+
+def _rates_from_counts(counts: dict[str, int]) -> dict[str, float]:
+    total = sum(counts.values())
+    return {label: count / total if total else 0.0 for label, count in counts.items()}
+
 
 def merge_seat_reports(
     seat_reports: dict[int, dict[str, Any]],
@@ -30,19 +54,33 @@ def merge_seat_reports(
     pooled: list[list[dict[str, Any]]] = []
     unknown = 0
     per_seat: dict[int, dict[str, Any]] = {}
+    overall_placement_counts = {label: 0 for label, _ in _PLACEMENT_RANKS}
+    overall_placement_counts["tied"] = 0
     for seat, report in sorted(seat_reports.items()):
         pooled.extend(report["per_match_hand_records"])
         unknown += int(report["hand_stats"]["unknown_hands"])
+        seat_placement_counts = placement_rate_counts(
+            report.get("per_episode_placements", [])
+        )
+        for label, count in seat_placement_counts.items():
+            overall_placement_counts[label] += count
         per_seat[seat] = {
             "hand_stats": report["hand_stats"],
             "mean_placement": report.get("mean_placement"),
             "truncation_rate": report.get("truncation_rate"),
             "round_outcome_counts": report.get("round_outcome_counts", {}),
+            "placement_counts": seat_placement_counts,
+            "placement_rates": _rates_from_counts(seat_placement_counts),
         }
     overall_stats = summarize_hand_stats(pooled, unknown)
     ci95 = bootstrap_hand_stats_ci(pooled, iters=bootstrap_iters, seed=bootstrap_seed)
     return {
-        "overall": {"hand_stats": overall_stats, "ci95": ci95},
+        "overall": {
+            "hand_stats": overall_stats,
+            "ci95": ci95,
+            "placement_counts": overall_placement_counts,
+            "placement_rates": _rates_from_counts(overall_placement_counts),
+        },
         "per_seat": per_seat,
     }
 
@@ -98,6 +136,13 @@ def format_stat_table(merged: dict[str, Any]) -> str:
         f"draw rate={_fmt_rate(overall['draw_rate'], ci['draw_rate'])}  "
         f"unknown hands={overall['unknown_hands']}"
     )
+    rates = merged["overall"]["placement_rates"]
+    placement_line = "placement: " + "  ".join(
+        f"{label} {rates[label] * 100:.1f}%" for label, _ in _PLACEMENT_RANKS
+    )
+    if rates["tied"]:
+        placement_line += f"  tied {rates['tied'] * 100:.1f}%"
+    lines.append(placement_line)
     return "\n".join(lines)
 
 
