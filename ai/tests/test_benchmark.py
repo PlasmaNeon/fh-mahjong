@@ -6,6 +6,7 @@ from unittest import mock
 
 from fh_mahjong_ai.hand_stats import hand_record
 from fh_mahjong_ai.scripts import benchmark as benchmark_cli
+from fh_mahjong_ai.scripts.evaluate import CHONGCI_DEFAULT_MAX_STEPS
 
 
 def _win(seat=0, amount=20):
@@ -106,6 +107,12 @@ class MainTest(unittest.TestCase):
             # Event window flows from checkpoint metadata, chongci is default.
             self.assertTrue(all(c["event_history_window"] == 32 for c in calls))
             self.assertTrue(all(c["match_mode"] == "chongci" for c in calls))
+            # Chongci needs a step budget that reaches MATCH_END: without the
+            # resolver, EnvConfig's 256-step default truncates every match
+            # mid-run (observed live: truncation_rate 1.0 across 400 matches).
+            self.assertTrue(all(
+                c["max_steps_per_episode"] == CHONGCI_DEFAULT_MAX_STEPS for c in calls
+            ))
 
             out = Path(str(ckpt) + ".benchmark.json")
             self.assertTrue(out.exists())

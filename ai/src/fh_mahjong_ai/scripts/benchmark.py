@@ -15,6 +15,7 @@ from typing import Any, Optional, Sequence
 from fh_mahjong_ai.evaluate import evaluate_policy_online
 from fh_mahjong_ai.hand_stats import bootstrap_hand_stats_ci, summarize_hand_stats
 from fh_mahjong_ai.policies import TorchGreedyPolicy
+from fh_mahjong_ai.scripts.evaluate import resolve_max_steps_per_episode
 from fh_mahjong_ai.serving import CheckpointPolicy
 
 _SEATS = (0, 1, 2, 3)
@@ -114,6 +115,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--chongci-starting-score", type=int, default=2000)
     parser.add_argument("--chongci-bust-threshold", type=int, default=0)
     parser.add_argument("--chongci-max-hands", type=int, default=50)
+    parser.add_argument("--max-steps-per-episode", type=int, default=None,
+                        help="bridge decision cap per match; unset resolves like "
+                             "fh-mj-evaluate (chongci gets a budget that reaches "
+                             "MATCH_END instead of truncating at EnvConfig's default)")
     parser.add_argument("--bridge-library-path", type=Path, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--bootstrap-iters", type=int, default=1000)
@@ -130,6 +135,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # Metadata-driven load: architecture (incl. event window) is recovered from
     # the checkpoint itself — no model flags to get wrong. Missing/odd payloads
     # fail loudly inside the loader (checkpoint-metadata invariants).
+    max_steps = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
+
     checkpoint_policy = CheckpointPolicy.from_checkpoint(args.checkpoint, device=args.device)
     model = checkpoint_policy.model
     event_window = int(model.model_config.event_window)
@@ -151,6 +158,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             chongci_starting_score=args.chongci_starting_score,
             chongci_bust_threshold=args.chongci_bust_threshold,
             chongci_max_hands=args.chongci_max_hands,
+            max_steps_per_episode=max_steps,
             event_history_window=event_window,
         )
 
@@ -167,6 +175,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         },
         "episodes_per_seat": args.episodes_per_seat,
         "seed_base": args.seed_base,
+        "max_steps_per_episode": max_steps,
         "event_history_window": event_window,
         "bootstrap": {"iters": args.bootstrap_iters, "seed": args.bootstrap_seed},
         "overall": merged["overall"],
