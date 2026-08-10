@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,7 @@ import (
 )
 
 var _ bot.ContextPolicy = (*HTTPPolicy)(nil)
+var _ bot.ProvenanceContextPolicy = (*HTTPPolicy)(nil)
 
 const defaultTimeout = 750 * time.Millisecond
 
@@ -134,7 +136,7 @@ func (p *HTTPPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAc
 		return nil
 	}
 	callCount := p.remoteCalls.Add(1)
-	action, err := p.chooseRemote(state, seat)
+	action, _, err := p.chooseRemote(state, seat)
 	if err == nil && action != nil {
 		p.remoteSuccesses.Add(1)
 		p.logStatsIfDue(callCount)
@@ -154,10 +156,19 @@ func (p *HTTPPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAc
 // event-history wire form, encoding via rl.EncodeObservationWithEvents with
 // the DECISION INDEX FROM THE CONTEXT (not the internal p.decisionIndex
 // counter, which is only used by the legacy ChooseAction path). Fallback
-// semantics (heuristic + counters) are unchanged.
+// semantics (heuristic + counters) are unchanged. Delegates to
+// ChooseActionCtxProv so the fallback/counter logic exists exactly once.
 func (p *HTTPPolicy) ChooseActionCtx(decisionCtx *bot.DecisionContext) *pb.PlayerAction {
+	action, _ := p.ChooseActionCtxProv(decisionCtx)
+	return action
+}
+
+// ChooseActionCtxProv implements bot.ProvenanceContextPolicy: identical
+// decision flow to ChooseActionCtx, with this decision's provenance returned
+// alongside the action.
+func (p *HTTPPolicy) ChooseActionCtxProv(decisionCtx *bot.DecisionContext) (*pb.PlayerAction, bot.DecisionProvenance) {
 	if p == nil {
-		return nil
+		return nil, bot.DecisionProvenance{Source: "fallback", FallbackReason: FallbackReasonConfig}
 	}
 	callCount := p.remoteCalls.Add(1)
 	var state *pb.GameState
@@ -166,20 +177,26 @@ func (p *HTTPPolicy) ChooseActionCtx(decisionCtx *bot.DecisionContext) *pb.Playe
 		state = decisionCtx.State
 		seat = decisionCtx.Seat
 	}
-	action, err := p.chooseRemoteCtx(decisionCtx)
+	action, prov, err := p.chooseRemoteCtx(decisionCtx)
 	if err == nil && action != nil {
 		p.remoteSuccesses.Add(1)
 		p.logStatsIfDue(callCount)
-		return action
+		return action, bot.DecisionProvenance{
+			Source:         "remote",
+			CheckpointName: prov.name,
+			CheckpointStep: prov.step,
+			CheckpointSha:  prov.sha,
+		}
 	}
 	reason := fallbackReason(err)
 	p.recordFallback(reason, err, seat)
 	p.logStatsIfDue(callCount)
+	fallbackProv := bot.DecisionProvenance{Source: "fallback", FallbackReason: reason}
 	if p.fallback == nil {
 		p.noFallback.Add(1)
-		return nil
+		return nil, fallbackProv
 	}
-	return p.fallback.ChooseAction(state, seat)
+	return p.fallback.ChooseAction(state, seat), fallbackProv
 }
 
 func (p *HTTPPolicy) Stats() HTTPPolicyStats {
@@ -205,20 +222,20 @@ func (p *HTTPPolicy) Stats() HTTPPolicyStats {
 	}
 }
 
-func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerAction, error) {
+func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerAction, remoteProvenance, error) {
 	if p == nil {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil remote policy")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil remote policy")}
 	}
 	if state == nil {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil game state")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil game state")}
 	}
 	if p.endpoint == "" {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
 	}
 
 	observation, err := rl.EncodeObservation(state, seat, p.decisionIndex.Load())
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonEncode, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonEncode, err: err}
 	}
 	p.decisionIndex.Add(1)
 
@@ -243,15 +260,15 @@ func (p *HTTPPolicy) chooseRemote(state *pb.GameState, seat uint32) (*pb.PlayerA
 // encodes the observation with the context's raw event log and the policy's
 // configured event window, and takes the decision index from the context
 // rather than the internal p.decisionIndex counter.
-func (p *HTTPPolicy) chooseRemoteCtx(decisionCtx *bot.DecisionContext) (*pb.PlayerAction, error) {
+func (p *HTTPPolicy) chooseRemoteCtx(decisionCtx *bot.DecisionContext) (*pb.PlayerAction, remoteProvenance, error) {
 	if p == nil {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil remote policy")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil remote policy")}
 	}
 	if decisionCtx == nil || decisionCtx.State == nil {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil game state")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("nil game state")}
 	}
 	if p.endpoint == "" {
-		return nil, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonConfig, err: fmt.Errorf("remote policy endpoint is empty")}
 	}
 
 	state := decisionCtx.State
@@ -259,7 +276,7 @@ func (p *HTTPPolicy) chooseRemoteCtx(decisionCtx *bot.DecisionContext) (*pb.Play
 
 	observation, err := rl.EncodeObservationWithEvents(state, seat, decisionCtx.DecisionIndex, decisionCtx.Events, p.eventWindow)
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonEncode, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonEncode, err: err}
 	}
 
 	requestPayload := actRequest{
@@ -283,10 +300,10 @@ func (p *HTTPPolicy) chooseRemoteCtx(decisionCtx *bot.DecisionContext) (*pb.Play
 // doAct is the shared HTTP/request logic for both the legacy and
 // context-aware serving paths: marshal the request, POST it, validate and
 // decode the response, and attribute the serving checkpoint on success.
-func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actRequest) (*pb.PlayerAction, error) {
+func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actRequest) (*pb.PlayerAction, remoteProvenance, error) {
 	body, err := json.Marshal(requestPayload)
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonRequest, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonRequest, err: err}
 	}
 
 	client := p.client
@@ -301,22 +318,22 @@ func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actR
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonRequest, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonRequest, err: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonRequest, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonRequest, err: err}
 	}
 	defer resp.Body.Close()
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonRequest, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonRequest, err: err}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, policyError{
+		return nil, remoteProvenance{}, policyError{
 			reason: FallbackReasonStatus,
 			err:    fmt.Errorf("remote policy status %d: %s", resp.StatusCode, string(payload)),
 		}
@@ -324,16 +341,16 @@ func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actR
 
 	var response actResponse
 	if err := json.Unmarshal(payload, &response); err != nil {
-		return nil, policyError{reason: FallbackReasonBadJSON, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonBadJSON, err: err}
 	}
 	if response.Error != "" {
-		return nil, policyError{
+		return nil, remoteProvenance{}, policyError{
 			reason: FallbackReasonRemoteError,
 			err:    fmt.Errorf("remote policy error: %s", response.Error),
 		}
 	}
 	if response.ActionID < 0 || response.ActionID >= rl.ActionSpaceSize {
-		return nil, policyError{
+		return nil, remoteProvenance{}, policyError{
 			reason: FallbackReasonIllegalAction,
 			err:    fmt.Errorf("remote policy returned action id %d outside action space", response.ActionID),
 		}
@@ -341,15 +358,21 @@ func (p *HTTPPolicy) doAct(state *pb.GameState, seat uint32, requestPayload actR
 
 	action, err := rl.DecodeActionID(state, seat, response.ActionID)
 	if err != nil {
-		return nil, policyError{reason: FallbackReasonIllegalAction, err: err}
+		return nil, remoteProvenance{}, policyError{reason: FallbackReasonIllegalAction, err: err}
 	}
 	// Attribute the checkpoint only now that its action passed validation
 	// and will actually be played (a rejected response falls back to the
 	// heuristic, which must not be credited to the remote checkpoint).
+	var prov remoteProvenance
 	if response.CheckpointPath != "" {
 		p.recordObservedPolicyID(checkpointIdentity(response.CheckpointPath, response.CheckpointStep))
+		prov = remoteProvenance{
+			name: path.Base(response.CheckpointPath),
+			step: response.CheckpointStep,
+			sha:  response.CheckpointSha256,
+		}
 	}
-	return action, nil
+	return action, prov, nil
 }
 
 // eventContractHealthz mirrors the event-contract handshake fields of
@@ -475,11 +498,21 @@ type actRequest struct {
 }
 
 type actResponse struct {
-	ActionID       int     `json:"action_id"`
-	Value          float64 `json:"value,omitempty"`
-	Error          string  `json:"error,omitempty"`
-	CheckpointPath string  `json:"checkpoint_path,omitempty"`
-	CheckpointStep int64   `json:"checkpoint_step,omitempty"`
+	ActionID         int     `json:"action_id"`
+	Value            float64 `json:"value,omitempty"`
+	Error            string  `json:"error,omitempty"`
+	CheckpointPath   string  `json:"checkpoint_path,omitempty"`
+	CheckpointStep   int64   `json:"checkpoint_step,omitempty"`
+	CheckpointSha256 string  `json:"checkpoint_sha256,omitempty"`
+}
+
+// remoteProvenance carries the serving checkpoint of ONE /act decision back
+// up the call chain (never stored on the policy — a hot reload between two
+// decisions must not cross-attribute).
+type remoteProvenance struct {
+	name string
+	step int64
+	sha  string
 }
 
 // Bounds on remote-reported checkpoint identities: the values come from an

@@ -27,3 +27,25 @@ type DecisionContext struct {
 type ContextPolicy interface {
 	ChooseActionCtx(ctx *DecisionContext) *pb.PlayerAction
 }
+
+// DecisionProvenance identifies where ONE decision's action actually came
+// from: the remote policy server (with the serving checkpoint's identity),
+// a local fallback (with the reason the remote path was not used), or a
+// purely local heuristic policy that never had remote provenance to report.
+// It travels only via return values — never as mutable state on a policy —
+// so a hot reload between two decisions can never cross-attribute.
+type DecisionProvenance struct {
+	Source         string // "remote" | "fallback" | "heuristic"
+	FallbackReason string // set only when Source == "fallback"
+	CheckpointName string // set only when Source == "remote"
+	CheckpointStep int64
+	CheckpointSha  string // may be empty (legacy server)
+}
+
+// ProvenanceContextPolicy is the additive capability: same decision flow as
+// ChooseActionCtx but the provenance of THIS decision travels back with the
+// action (never via mutable policy state).
+type ProvenanceContextPolicy interface {
+	ContextPolicy
+	ChooseActionCtxProv(ctx *DecisionContext) (*pb.PlayerAction, DecisionProvenance)
+}
