@@ -101,7 +101,14 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 						if passErr := r.Engine.ProcessPlayerAction(seat, pass); passErr != nil {
 							log.Printf("bot fallback pass failed for seat %d in room %s: %v", seat, r.ID, passErr)
 						} else if r.Engine.Recorder != nil {
-							r.recordDecision(seat, passSnap, prov)
+							// The engine rejected the policy's claim; this pass is
+							// recovery, not the model's decision, so stamp it with
+							// its own provenance instead of the failed claim's
+							// (which could carry source:"remote" + a checkpoint).
+							// "engine_reject" is room-layer-only -- it is not one of
+							// remote's 9 HTTP fallback reasons.
+							fallbackProv := bot.DecisionProvenance{Source: "fallback", FallbackReason: "engine_reject"}
+							r.recordDecision(seat, passSnap, fallbackProv)
 						}
 					}
 				} else if r.Engine.Recorder != nil {

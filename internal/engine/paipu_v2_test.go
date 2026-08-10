@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,13 @@ func TestPaipuV2DecisionTraceRoundTrip(t *testing.T) {
 	blob, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Raw-bytes guard: a future omitempty on ChosenID would silently drop
+	// pass (id 0) rows from the JSON without the struct round-trip below
+	// ever noticing (Go would just decode the missing field back to its
+	// zero value).
+	if !strings.Contains(string(blob), "\"chosenId\":0") {
+		t.Fatalf("marshaled paipu missing chosenId:0, got: %s", blob)
 	}
 	var back Paipu
 	if err := json.Unmarshal(blob, &back); err != nil {
