@@ -23,7 +23,8 @@ COPY proto/ proto/
 COPY web/ web/
 
 # Build the Go binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server
+ARG GIT_COMMIT=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/plasma/fh-mahjong/internal/api.ServerCommit=${GIT_COMMIT}" -o /server ./cmd/server
 
 # Stage 3: Final Production Image
 FROM alpine:latest

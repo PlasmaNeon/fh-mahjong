@@ -8,10 +8,12 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	"github.com/plasma/fh-mahjong/internal/rules/shanten"
 	"github.com/plasma/fh-mahjong/internal/storage"
@@ -123,6 +125,22 @@ type Room struct {
 	// armed for PHASE_MATCH_END. Idempotency guard so repeated broadcasts
 	// of the terminal phase don't spawn multiple timer goroutines.
 	matchEndScheduled bool
+
+	// drained is set by markDrained() when the matchmaker's server-drain
+	// path (DrainActiveRooms) is what triggered this room's shutdown, so an
+	// aborted persist can distinguish a deploy-time drain from an ordinary
+	// abandoned match (e.g. every human seat disconnected and timed out).
+	// atomic.Bool because it is written from the matchmaker's drain
+	// goroutine and read from the room goroutine during persistMatch.
+	drained atomic.Bool
+}
+
+// markDrained records that this room's shutdown was triggered by a server
+// drain (SIGTERM/redeploy), not an ordinary abandonment. Called from the
+// matchmaker's DrainActiveRooms before signalling the room to shut down, so
+// any persist that follows sees drained() == true.
+func (r *Room) markDrained() {
+	r.drained.Store(true)
 }
 
 type RoomOption func(*Room)
@@ -375,8 +393,33 @@ func (r *Room) persistMatch() error {
 	for i, p := range r.Engine.State.Players {
 		finalScores[i] = p.Score
 	}
+
+	status := "completed"
+	reason := "match_end"
+	if r.Engine.State.Phase != pb.GamePhase_PHASE_MATCH_END {
+		status = "aborted"
+		if r.drained.Load() {
+			reason = "drained"
+		} else {
+			reason = "abandoned"
+		}
+	}
+
 	if r.Engine.Recorder != nil {
 		r.reconcileRLPolicyIDs()
+		placements := placementsFromScores(finalScores)
+		r.Engine.Recorder.SetMatchMeta(engine.PaipuMatchMeta{
+			Status:               status,
+			CompletionReason:     reason,
+			Placements:           &placements,
+			ServerCommit:         ServerCommit,
+			MatchMode:            matchModeLabel(r.Engine.State.MatchMode),
+			Chongci:              paipuChongciConfig(r.Engine.State.ChongciConfig),
+			RulesetVersion:       "fenghua-v1",
+			EventContractVersion: rl.EventContractV1,
+			ProtoEnumsRevision:   engine.ProtoEnumsRevision,
+			ActionCatalogVersion: rl.ActionCatalogVersion,
+		})
 		// Snapshot (not Finalize) so an abort mid-hand keeps the active
 		// hand's deals/actions as a result-less round. At natural MATCH_END
 		// the current round is already closed and this equals Finalize.
@@ -387,11 +430,6 @@ func (r *Room) persistMatch() error {
 		} else {
 			paipuJSON = string(paipuBytes)
 		}
-	}
-
-	status := "completed"
-	if r.Engine.State.Phase != pb.GamePhase_PHASE_MATCH_END {
-		status = "aborted"
 	}
 
 	now := time.Now()
@@ -465,6 +503,48 @@ func (r *Room) reconcileRLPolicyIDs() {
 	}
 }
 
+// matchModeLabel converts the engine's MatchMode enum to the paipu's stable
+// string label. Unspecified/unknown values fall back to "classic" (the
+// engine's own default when no MatchOptions are supplied).
+func matchModeLabel(mode pb.MatchMode) string {
+	if mode == pb.MatchMode_MATCH_MODE_CHONGCI {
+		return "chongci"
+	}
+	return "classic"
+}
+
+// paipuChongciConfig maps the engine's live ChongciConfig into the paipu's
+// stable snapshot type. Nil-safe: a classic match (or a chongci match before
+// its config is set) has no ChongciConfig, and the paipu field stays nil.
+func paipuChongciConfig(cfg *pb.ChongciConfig) *engine.PaipuChongciConfig {
+	if cfg == nil {
+		return nil
+	}
+	return &engine.PaipuChongciConfig{
+		StartingScore: cfg.StartingScore,
+		BustThreshold: cfg.BustThreshold,
+		MaxHands:      cfg.MaxHands,
+	}
+}
+
+// placementsFromScores computes each seat's competition ranking (1st place
+// shared by ties) from final scores, preserving seat index. Shared by the
+// paipu's match meta and persistMatchPlayers so the ranking rule can't drift
+// between the two.
+func placementsFromScores(finalScores [4]int32) [4]uint {
+	var placements [4]uint
+	for seat, score := range finalScores {
+		placement := uint(1)
+		for _, other := range finalScores {
+			if other > score {
+				placement++
+			}
+		}
+		placements[seat] = placement
+	}
+	return placements
+}
+
 // persistMatchPlayers mirrors the paipu's seat entries into relational
 // MatchPlayer rows (seat, user, bot labels, final score, placement) so the
 // dataset can be filtered in SQL without parsing PaipuJSON. Ties share the
@@ -474,18 +554,14 @@ func persistMatchPlayers(tx *gorm.DB, matchID string, paipu *engine.Paipu, final
 	if paipu == nil || len(paipu.Players) == 0 {
 		return nil
 	}
+	placements := placementsFromScores(finalScores)
 	rows := make([]storage.MatchPlayer, 0, len(paipu.Players))
 	for _, p := range paipu.Players {
 		if p.Seat >= uint32(len(finalScores)) {
 			continue
 		}
 		score := finalScores[p.Seat]
-		placement := uint(1)
-		for _, other := range finalScores {
-			if other > score {
-				placement++
-			}
-		}
+		placement := placements[p.Seat]
 		// PolicyID is varchar(512); truncate rather than let an oversized
 		// label fail the insert and roll back the whole match write.
 		policyID := p.PolicyID
