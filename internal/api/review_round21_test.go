@@ -91,9 +91,9 @@ func TestGetReviewStaysPublic(t *testing.T) {
 // each /evaluate request on release until it is closed, letting tests hold a
 // build "in flight" to observe concurrency.
 type blockingPolicyStub struct {
-	release   chan struct{}
-	evalCount int32
-	inFlight  int32
+	release     chan struct{}
+	evalCount   int32
+	inFlight    int32
 	maxInFlight int32
 }
 

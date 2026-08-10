@@ -136,7 +136,7 @@ func TestHTTPClientEvaluateShaMismatchAcrossChunksErrors(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
+	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize+1))
 	if err == nil {
 		t.Fatal("expected error: chunks reported different checkpoint_sha256 for the same path")
 	}
@@ -163,7 +163,7 @@ func TestHTTPClientEvaluateShaAllEqualCarriesSha(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
+	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize+1))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestHTTPClientEvaluateAbsentShaLegacyStillWorks(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
+	results, info, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize+1))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestHTTPClientEvaluateMixedAbsentPresentShaErrors(t *testing.T) {
 	defer stub.Close()
 
 	client := NewHTTPPolicyClient(stub.URL, 0)
-	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize + 1))
+	_, _, err := client.Evaluate(context.Background(), shaObservations(evaluateChunkSize+1))
 	if err == nil {
 		t.Fatal("expected error: one chunk had no checkpoint_sha256, another chunk did")
 	}
