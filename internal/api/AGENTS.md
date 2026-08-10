@@ -47,6 +47,17 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
   - `BroadcastState()` — Serializes `GameState` Protobuf to all connected players
   - Replay recording (appends state snapshots to binary blob)
+  - `persistMatch()` stamps the paipu v2 header via `Recorder.SetMatchMeta` before
+    marshaling: `status`/`completionReason` (`match_end` at natural
+    `PHASE_MATCH_END`; otherwise `aborted` with `drained` (server-drain, see the
+    `drained` atomic.Bool set by `markDrained()`) or `abandoned`), `placements`,
+    `serverCommit` (`ServerCommit`, see `buildinfo.go`), `matchMode`/`chongci`,
+    `rulesetVersion: "fenghua-v1"` (hardcoded — bump by hand if the ruleset
+    changes shape), and the version trio `eventContractVersion`
+    (`rl.EventContractV1`) / `protoEnumsRevision` (`engine.ProtoEnumsRevision`) /
+    `actionCatalogVersion` (`rl.ActionCatalogVersion`). Called once per
+    `persistMatch` run (idempotent on `SetMatchMeta`, so a snapshot-then-Finalize
+    double-persist just overwrites the same fields).
 - **room_bot.go** — Automated-seat ("bot") driving for a `Room` (same package, split out of room.go for focus):
   - `advanceAutomatedSeats()` / `advanceAutomatedSeatsN()` — Play through missing-seat turns, interrupt responses, and round-end `READY` actions, with a circuit-breaker (`maxAutomatedSeatIterations`) to avoid runaway automation loops
   - `botWorkPending()` / `maybeScheduleBotTick()` — Decide when a paced bot step is due and arm a single delayed tick, keeping the room loop responsive to reconnects
@@ -55,6 +66,27 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 
 - **cmd/server/main.go (consumer, not in this package)** — the `RL_AGENT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` family: `RL_AGENT_SHADOW_POLICY_URL` + `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128, capped at `rl.MaxEventHistoryWindow`) wrap the resolved RL primary in a `bot.ShadowPolicy` per RL seat; see `internal/bot/AGENTS.md` for the wrapper itself.
 
+- **room_decisions.go** — Paipu v2 supervision-trace capture (spec:
+  `docs/superpowers/specs/2026-08-09-paipu-v2-provenance-design.md` §2-3). This
+  is the single choke point where every explicit decision passes AND
+  provenance is known; the engine (`internal/engine/paipu.go`) stays
+  provenance-blind and just stores the rows.
+  - `snapshotDecision(seat, action)` — called BEFORE `Engine.ProcessPlayerAction`:
+    enumerates the PRE-action legal catalog IDs (`rl.LegalActions`) and encodes
+    the chosen action's catalog id (`rl.EncodeAction`); either failing sets
+    `snapErr` (never blocks play, just marks `legalIdsError` on the row).
+  - `recordDecision(seat, snap, prov)` — called AFTER the action succeeds;
+    builds an `engine.PaipuDecision` and appends it via `Engine.Recorder.RecordDecision`.
+  - `chooseSeatAction(seat)` — asks the seat's policy for an action, preferring
+    `bot.ProvenanceContextPolicy` > `bot.ContextPolicy` > legacy `bot.Policy`,
+    and returns the decision's `bot.DecisionProvenance` alongside it
+    (`humanProvenance()`/`heuristicProvenance()` for the fixed non-remote labels).
+  - **Capture rules**: every explicit player action (discard, claim, win,
+    flower choice, haitei accept/refuse) and every explicit/inferred pass is
+    traced, at both `room.go`'s human action path (`traced := ... != ACTION_READY`)
+    and `room_bot.go`'s automated-seat loop. `ACTION_READY` acks (round-flow
+    control, not gameplay) and timeout-driven auto-resolutions are **excluded** —
+    they are forced, not decisions.
 - **paipu.go** — Read-only paipu API:
   - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
   - Local-dev fallback: serves checked-in `testdata/paipu/<matchId>.json` fixtures when no in-memory/DB record exists, which keeps replay pages usable without a populated database
@@ -93,6 +125,14 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
 
 - **middleware.go** — Session-cookie lookup, expiry/revocation checks, current-user resolution, and constant-time CSRF validation
+
+- **buildinfo.go** — `ServerCommit` (default `"unknown"`), stamped at build
+  time via `-ldflags "-X .../internal/api.ServerCommit=$(git rev-parse --short HEAD)"`;
+  read into every persisted paipu's v2 `serverCommit` field (`room.go`'s
+  `persistMatch`). The repo's `Dockerfile` accepts a `GIT_COMMIT` build ARG and
+  passes it through this ldflag; **Zeabur's build does not currently supply
+  `GIT_COMMIT`**, so production paipu show `serverCommit: "unknown"` until the
+  deploy config is updated to pass it.
 
 - **response.go** — `respondError(c, status, msg)` / `abortError(c, status, msg)` — the single point for the API's `{"error": msg}` response shape. Handlers use `respondError` (`c.JSON`); middleware uses `abortError` (`c.AbortWithStatusJSON`, short-circuits the chain). Responses that carry extra keys beyond `error` stay inline.
 
@@ -134,6 +174,17 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/tools/calc` and `/room/new` work behind the Go server.
 - Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
 - Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
+- **Trusted read path for training (spec §9).** `loadPaipuJSON`'s fallback
+  chain (in-memory store → `paipu_records` → legacy `Match.PaipuJSON` →
+  checked-in fixtures) exists to serve `handleGetPaipu`/the review API to
+  players and is reachable via `handleUploadPaipu`, which is **admin-writable**
+  and, by construction, outranks the DB on read (the in-memory/`paipu_records`
+  entries are checked first). Any future training-data extraction pipeline
+  MUST read only server-recorded `matches.paipu_json` rows directly from
+  Postgres — never this chain — or an admin-supplied paipu could silently
+  poison a training set. This is a documentation-only rule for now (spec
+  says "enforced when the extractor is built"); nothing in this package
+  currently builds that extractor.
 
 - **server_test.go** — SPA/static serving regression coverage:
   - Built JS asset requests return JavaScript, not `index.html`

@@ -63,9 +63,22 @@ and production-smoked.
    `automatedDecisions`) and `policyId` are kept and still written; the `Decisions` trace is
    the authoritative provenance record. v1 paipus replay exactly as before.
 8. **v2 replay cross-check.** When the review/replay driver consumes a v2 paipu it verifies
-   the decision trace against reconstructed state — chosen ID must be legal in the
-   reconstructed mask and `legalIds` must equal the reconstructed legal set — and **fails
-   loudly** on any disagreement. v1 behavior (inference of implicit passes) is unchanged.
+   the decision trace against reconstructed state and **fails loudly** on any disagreement.
+   This is NOT a strict "next row must belong to this seat" cursor: the trace and the
+   reconstruction do not enumerate decision points the same way — interrupt windows are
+   *recorded* in response order (seat-ascending for bots) but *replayed* winner-first, so a
+   strict in-order cursor false-fails 10-18% of real games. Instead: a cursor advances
+   through the trace with a **bounded lookahead of 2 rows**; at each reconstructed decision
+   point, the row at the cursor is used if it belongs to this seat, otherwise up to 2
+   following rows are scanned for a row that both belongs to this seat AND whose
+   `chosenId` is **legal** in the reconstructed mask (the legality gate stops an untraced
+   timeout point from stealing a later row for the same seat). On an explicit decision path
+   (discard/claim/win/etc.) the matched row's `chosenId` must equal the reconstructed
+   choice **exactly**; an inferred pass is checked **legality-only** (`chosenId` must be
+   legal, since the format never records a losing/declined claim's real choice). Rows
+   consumed are marked; any row still unconsumed at round end, or any explicit-path point
+   with no legal exact match, is an error. v1 behavior (inference of implicit passes) is
+   unchanged.
 9. **Trusted read path for training.** Future training extraction reads only
    server-recorded `matches.paipu_json` v2 rows — never the `handleUploadPaipu`
    in-memory/`paipu_records` chain, which is admin-writable and outranks the DB on read.
