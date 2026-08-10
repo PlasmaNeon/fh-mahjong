@@ -46,6 +46,33 @@ type PaipuAction struct {
 // IntPtr creates an int pointer for PaipuAction fields.
 func IntPtr(v int) *int { return &v }
 
+// PaipuCheckpoint identifies the exact model that served a remote decision.
+// Captured atomically from the same /act response that produced the action.
+type PaipuCheckpoint struct {
+	Name   string `json:"name"`             // checkpoint file base name
+	Step   int64  `json:"step"`             // training step
+	Sha256 string `json:"sha256,omitempty"` // empty when the server predates sha reporting
+}
+
+// PaipuDecision is one row of the v2 supervision trace: a player decision
+// with its full legal-action context and provenance. It is SEPARATE from the
+// Actions replay stream (which stays canonical and pass-free); replay
+// consumers cross-check the two (internal/review).
+type PaipuDecision struct {
+	Index int    `json:"index"` // monotonic within the round, assigned by the recorder
+	Seat  uint32 `json:"seat"`
+	// ChosenID/LegalIDs are catalog action IDs (internal/rl action catalog,
+	// pinned by Paipu.ActionCatalogVersion). NEVER omitempty: id 0 is PASS.
+	ChosenID int   `json:"chosenId"`
+	LegalIDs []int `json:"legalIds"`
+	// LegalIDsError marks a row whose legal-set snapshot failed at record
+	// time (LegalIDs is then nil). Live play never blocks on snapshot errors.
+	LegalIDsError  bool             `json:"legalIdsError,omitempty"`
+	Source         string           `json:"source"` // "human" | "remote" | "fallback" | "heuristic"
+	FallbackReason string           `json:"fallbackReason,omitempty"`
+	Checkpoint     *PaipuCheckpoint `json:"checkpoint,omitempty"` // remote decisions only
+}
+
 type PaipuFlowerReveal struct {
 	Seat        uint32 `json:"seat"`
 	Flower      uint32 `json:"flower"`      // tile ID of flower
@@ -93,7 +120,20 @@ type PaipuRound struct {
 	InitialFlowers []PaipuFlowerReveal `json:"initialFlowers"` // auto-revealed during deal
 	Actions        []PaipuAction       `json:"actions"`
 	Result         *PaipuRoundResult   `json:"result"`
+	Decisions      []PaipuDecision     `json:"decisions,omitempty"`
 }
+
+// Paipu version + proto-enum provenance constants.
+const (
+	// PaipuVersion is the schema version written by this recorder.
+	// v2 (2026-08-09) added the Decisions supervision trace + match metadata.
+	PaipuVersion = 2
+	// ProtoEnumsRevision guards the raw proto enum ints embedded in paipu
+	// JSON (PaipuTile.Suit). Bump if proto/game.proto ever renumbers an enum
+	// a paipu embeds — historical records are only interpretable against the
+	// revision they were written with.
+	ProtoEnumsRevision = 1
+)
 
 type Paipu struct {
 	Version     int           `json:"version"`
@@ -102,6 +142,40 @@ type Paipu struct {
 	Players     []PaipuPlayer `json:"players"`
 	Rounds      []PaipuRound  `json:"rounds"`
 	FinalScores [4]int32      `json:"finalScores"`
+
+	// v2 match metadata (empty/nil in v1 records — readers treat absence as
+	// unknown). Set once at persist time via SetMatchMeta.
+	Status               string              `json:"status,omitempty"`           // "completed" | "aborted"
+	CompletionReason     string              `json:"completionReason,omitempty"` // "match_end" | "drained" | "abandoned"
+	Placements           *[4]uint            `json:"placements,omitempty"`       // competition ranking, ties share best
+	ServerCommit         string              `json:"serverCommit,omitempty"`
+	MatchMode            string              `json:"matchMode,omitempty"` // "classic" | "chongci"
+	Chongci              *PaipuChongciConfig `json:"chongci,omitempty"`
+	RulesetVersion       string              `json:"rulesetVersion,omitempty"`
+	EventContractVersion uint32              `json:"eventContractVersion,omitempty"`
+	ProtoEnumsRevision   int                 `json:"protoEnumsRevision,omitempty"`
+	ActionCatalogVersion int                 `json:"actionCatalogVersion,omitempty"`
+}
+
+// PaipuChongciConfig mirrors the pb.ChongciConfig the match ran under.
+type PaipuChongciConfig struct {
+	StartingScore int32  `json:"startingScore"`
+	BustThreshold int32  `json:"bustThreshold"`
+	MaxHands      uint32 `json:"maxHands"`
+}
+
+// PaipuMatchMeta carries the v2 header fields set at persist time.
+type PaipuMatchMeta struct {
+	Status               string
+	CompletionReason     string
+	Placements           *[4]uint
+	ServerCommit         string
+	MatchMode            string
+	Chongci              *PaipuChongciConfig
+	RulesetVersion       string
+	EventContractVersion uint32
+	ProtoEnumsRevision   int
+	ActionCatalogVersion int
 }
 
 // TileFromId converts a tile ID (0-143) to its suit and value.
@@ -136,7 +210,7 @@ type PaipuRecorder struct {
 func NewPaipuRecorder(matchID, ruleset string) *PaipuRecorder {
 	return &PaipuRecorder{
 		paipu: Paipu{
-			Version: 1,
+			Version: PaipuVersion,
 			MatchID: matchID,
 			Ruleset: ruleset,
 		},
@@ -286,6 +360,34 @@ func (r *PaipuRecorder) RecordHaiteiRefuse(seat uint32) {
 	r.record(PaipuAction{Act: "haiteiRefuse", Seat: seat})
 }
 
+// RecordDecision appends a supervision-trace row to the current round,
+// assigning its monotonic per-round index. No-op between rounds (mirrors
+// record()); callers snapshot legal IDs BEFORE processing the action and
+// call this only AFTER the action succeeded.
+func (r *PaipuRecorder) RecordDecision(d PaipuDecision) {
+	if r.currentRound == nil {
+		return
+	}
+	d.Index = len(r.currentRound.Decisions)
+	r.currentRound.Decisions = append(r.currentRound.Decisions, d)
+}
+
+// SetMatchMeta stamps the v2 match-level header fields. Called at persist
+// time (idempotent — persistMatch may run more than once for snapshots).
+func (r *PaipuRecorder) SetMatchMeta(m PaipuMatchMeta) {
+	p := &r.paipu
+	p.Status = m.Status
+	p.CompletionReason = m.CompletionReason
+	p.Placements = m.Placements
+	p.ServerCommit = m.ServerCommit
+	p.MatchMode = m.MatchMode
+	p.Chongci = m.Chongci
+	p.RulesetVersion = m.RulesetVersion
+	p.EventContractVersion = m.EventContractVersion
+	p.ProtoEnumsRevision = m.ProtoEnumsRevision
+	p.ActionCatalogVersion = m.ActionCatalogVersion
+}
+
 func (r *PaipuRecorder) EndRound(result *PaipuRoundResult) {
 	if r.currentRound == nil {
 		return
@@ -305,7 +407,8 @@ func (r *PaipuRecorder) Finalize(finalScores [4]int32) *Paipu {
 // deals and actions instead of dropping them. Unlike Finalize it never
 // mutates recorder state beyond the returned copy; the current round can
 // still end normally afterwards. Call from the goroutine that owns the
-// recorder (the round's Actions slice is shared with the copy).
+// recorder (the round's Actions and Decisions slices are shared with the
+// copy).
 func (r *PaipuRecorder) Snapshot(finalScores [4]int32) *Paipu {
 	snap := r.paipu
 	snap.FinalScores = finalScores
