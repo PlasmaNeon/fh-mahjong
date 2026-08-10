@@ -54,6 +54,11 @@ func (r *Room) recordDecision(seat uint32, snap decisionSnapshot, prov bot.Decis
 	if r.Engine.Recorder == nil {
 		return
 	}
+	// Zero-valued DecisionProvenance from a misbehaving policy must not
+	// serialize with an empty source; default to heuristic.
+	if prov.Source == "" {
+		prov.Source = "heuristic"
+	}
 	d := engine.PaipuDecision{
 		Seat:           seat,
 		ChosenID:       snap.chosenID,
@@ -82,14 +87,16 @@ func heuristicProvenance() bot.DecisionProvenance { return bot.DecisionProvenanc
 // alongside it (heuristic unless the policy reports otherwise).
 func (r *Room) chooseSeatAction(seat uint32) (*pb.PlayerAction, bot.DecisionProvenance) {
 	policy := r.policyForSeat(seat)
-	prov := heuristicProvenance()
+	var prov bot.DecisionProvenance
 	switch p := policy.(type) {
 	case bot.ProvenanceContextPolicy:
-		action, provOut := p.ChooseActionCtxProv(r.buildDecisionContext(seat))
-		return action, provOut
+		action, prov := p.ChooseActionCtxProv(r.buildDecisionContext(seat))
+		return action, prov
 	case bot.ContextPolicy:
+		prov = heuristicProvenance()
 		return p.ChooseActionCtx(r.buildDecisionContext(seat)), prov
 	default:
+		prov = heuristicProvenance()
 		return policy.ChooseAction(r.Engine.State, seat), prov
 	}
 }

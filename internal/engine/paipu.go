@@ -65,8 +65,12 @@ type PaipuDecision struct {
 	// pinned by Paipu.ActionCatalogVersion). NEVER omitempty: id 0 is PASS.
 	ChosenID int   `json:"chosenId"`
 	LegalIDs []int `json:"legalIds"`
-	// LegalIDsError marks a row whose legal-set snapshot failed at record
-	// time (LegalIDs is then nil). Live play never blocks on snapshot errors.
+	// LegalIDsError marks a row whose legal-set or action-encoding snapshot
+	// failed at record time. Two disambiguated failure shapes:
+	//   - legal-set enumeration failed: LegalIDs is nil, ChosenID unchanged.
+	//   - chosen-action encoding failed: LegalIDs populated, ChosenID == -1.
+	// Consumers disambiguate via ChosenID == -1.
+	// Live play never blocks on snapshot errors.
 	LegalIDsError  bool             `json:"legalIdsError,omitempty"`
 	Source         string           `json:"source"` // "human" | "remote" | "fallback" | "heuristic"
 	FallbackReason string           `json:"fallbackReason,omitempty"`
