@@ -651,12 +651,24 @@ func (r *Room) dispatchClientAction(clientAction ClientAction) {
 		return
 	}
 
-	// 2. Feed action securely to the Core Game Engine
+	// 2. Feed action securely to the Core Game Engine. The paipu v2 decision
+	// trace needs the legal set + chosen id of the PRE-action state, so
+	// snapshot before processing and record only once processing succeeded.
+	// READY is round-flow control, not a gameplay decision — never traced.
+	var snap decisionSnapshot
+	traced := clientAction.Action.Type != pb.ActionType_ACTION_READY
+	if traced && r.Engine.Recorder != nil {
+		snap = r.snapshotDecision(originSeat, clientAction.Action)
+	}
+
 	err := r.Engine.ProcessPlayerAction(originSeat, clientAction.Action)
 	if err != nil {
 		// We don't crash, we just log and ignore illegal moves
 		log.Printf("Illegal move by seat %d: %v", originSeat, err)
 		return
+	}
+	if traced && r.Engine.Recorder != nil {
+		r.recordDecision(originSeat, snap, humanProvenance())
 	}
 
 	// 3. The state has successfully mutated! Broadcast the new state to all 4
