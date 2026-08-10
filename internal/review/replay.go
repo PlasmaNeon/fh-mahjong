@@ -143,6 +143,8 @@ type roundReplayer struct {
 	round         *engine.PaipuRound
 	roundIdx      int
 	cursor        int // next unconsumed index into round.Actions
+	traceCursor   int    // start of the unmatched suffix of round.Decisions (v2 cross-check; unused for v1)
+	traceMatched  []bool // per-row "matched to a reconstructed decision point"; nil until the first v2 point
 	lastDiscard   int // action index of the most recent discard (pass anchor); -1 if none yet
 	decisionIndex uint64
 	eventWindow   uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
@@ -162,7 +164,7 @@ func (r *roundReplayer) run() error {
 				return fmt.Errorf("round %d: %d trailing unconsumed paipu action(s) starting at index %d (%s)",
 					r.roundIdx, len(r.round.Actions)-r.cursor, r.cursor, r.round.Actions[r.cursor].Act)
 			}
-			return nil
+			return r.verifyTraceConsumed()
 
 		case pb.GamePhase_PHASE_PLAYER_TURN:
 			if err := r.stepPlayerTurn(); err != nil {
@@ -211,6 +213,9 @@ func (r *roundReplayer) stepPlayerTurn() error {
 
 	legal, err := rl.LegalActions(game.State, seat)
 	if err != nil {
+		return err
+	}
+	if err := r.crossCheckDecision(seat, legal); err != nil {
 		return err
 	}
 	if len(legal) > 1 {
@@ -273,6 +278,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 		if err != nil {
 			return err
 		}
+		if err := r.crossCheckDecision(matchSeat, legal); err != nil {
+			return err
+		}
 		if len(legal) > 1 {
 			if err := r.recordDecision(matchSeat, r.cursor, id); err != nil {
 				return err
@@ -296,6 +304,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 	passAction, ok := legal[rl.ActionPass]
 	if !ok {
 		return fmt.Errorf("round %d: seat %d has no ACTION_PASS in its legal interrupt map", r.roundIdx, seat)
+	}
+	if err := r.crossCheckDecision(seat, legal); err != nil {
+		return err
 	}
 	if len(legal) > 1 {
 		if r.lastDiscard < 0 {
@@ -363,6 +374,169 @@ func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenActio
 	})
 	r.decisionIndex++
 	return nil
+}
+
+// maxTraceLookahead bounds how far past the trace cursor a decision point may
+// look for its row. One discard opens an interrupt window for at most the
+// three non-discarding seats, and only rows inside a single such window can
+// be reordered relative to the reconstruction (see crossCheckDecision), so
+// three is the structural maximum — never widen it to "fix" a mismatch.
+const maxTraceLookahead = 3
+
+// crossCheckDecision verifies the paipu v2 supervision trace against the
+// reconstruction at one decision point (spec §8). It is a no-op for v1
+// paipu, whose rounds carry no Decisions at all.
+//
+// Alignment. The trace and the reconstruction do not enumerate decision
+// points identically:
+//   - the trace has rows the Actions stream lacks (declined interrupts are
+//     never recorded as actions, only as rows);
+//   - the reconstruction has points the trace lacks (a seat whose interrupt
+//     window timed out never decided anything, so no row exists);
+//   - inside one interrupt window the two ORDERS differ: the room layer
+//     records rows in the order seats responded (seat-ascending for bots,
+//     arbitrary for humans), whereas stepWaitDiscards always replays the
+//     winning call first and only then feeds the other seats' passes.
+//
+// So rows are matched, not merely counted off: the row directly at the cursor
+// wins if it is this seat's (the common, strictly in-order case, checked in
+// full), otherwise the next few rows are scanned for one belonging to this
+// seat whose chosen id is legal here. That legality gate is what keeps a
+// same-seat row from a LATER decision point from being stolen by an untraced
+// timeout point. A point with no match consumes nothing; rows still unmatched
+// at round end are an error (verifyTraceConsumed).
+//
+// Two checks per matched row, per spec: (a) the row's chosen catalog id is
+// legal in the reconstructed legal set, and (b) the row's recorded legal-id
+// set matches the reconstructed one exactly. A row flagged LegalIDsError
+// failed its snapshot at record time, so only what it actually captured is
+// checked: ChosenID == -1 means the encode failed (nothing to verify), and a
+// nil LegalIDs means enumeration failed (skip (b)).
+func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.PlayerAction) error {
+	if len(r.round.Decisions) == 0 {
+		return nil // v1 paipu: no trace, no cross-check.
+	}
+	if r.traceMatched == nil {
+		r.traceMatched = make([]bool, len(r.round.Decisions))
+	}
+	r.advanceTraceCursor()
+	if r.traceCursor >= len(r.round.Decisions) {
+		return nil
+	}
+
+	if row := &r.round.Decisions[r.traceCursor]; row.Seat == seat {
+		r.traceMatched[r.traceCursor] = true
+		r.advanceTraceCursor()
+		return r.verifyTraceRow(row, legal)
+	}
+
+	limit := r.traceCursor + 1 + maxTraceLookahead
+	if limit > len(r.round.Decisions) {
+		limit = len(r.round.Decisions)
+	}
+	for i := r.traceCursor + 1; i < limit; i++ {
+		if r.traceMatched[i] {
+			continue
+		}
+		row := &r.round.Decisions[i]
+		if row.Seat != seat || !chosenIsLegal(row, legal) {
+			continue
+		}
+		r.traceMatched[i] = true
+		return r.verifyTraceRow(row, legal)
+	}
+	// No row for this point: an untraced auto-resolution (timeout), or a row
+	// this reconstruction reaches later. Consume nothing.
+	return nil
+}
+
+// verifyTraceRow applies checks (a) and (b) to a row matched to this point.
+func (r *roundReplayer) verifyTraceRow(row *engine.PaipuDecision, legal map[int]*pb.PlayerAction) error {
+	if !chosenIsLegal(row, legal) {
+		return r.traceError(row, fmt.Sprintf("recorded chosen action id %d is not legal in the reconstructed legal set %v",
+			row.ChosenID, sortedActionIDs(legal)))
+	}
+	if row.LegalIDsError {
+		return nil
+	}
+	got := sortedActionIDs(legal)
+	if !equalActionIDs(row.LegalIDs, got) {
+		return r.traceError(row, fmt.Sprintf("recorded legal set %v does not match the reconstructed legal set %v",
+			row.LegalIDs, got))
+	}
+	return nil
+}
+
+// chosenIsLegal reports check (a). A row whose chosen id failed to encode at
+// record time (ChosenID == -1) carries nothing to verify and passes.
+func chosenIsLegal(row *engine.PaipuDecision, legal map[int]*pb.PlayerAction) bool {
+	if row.ChosenID == -1 {
+		return true
+	}
+	_, ok := legal[row.ChosenID]
+	return ok
+}
+
+// advanceTraceCursor moves the cursor past the matched prefix, so the
+// lookahead window always starts at the oldest still-unmatched row.
+func (r *roundReplayer) advanceTraceCursor() {
+	for r.traceCursor < len(r.traceMatched) && r.traceMatched[r.traceCursor] {
+		r.traceCursor++
+	}
+}
+
+// verifyTraceConsumed runs at round end: every recorded decision row must
+// have been matched to a reconstructed decision point. Leftovers mean the
+// trace and the action stream disagree about what happened.
+func (r *roundReplayer) verifyTraceConsumed() error {
+	if len(r.round.Decisions) == 0 {
+		return nil
+	}
+	if r.traceMatched == nil {
+		r.traceMatched = make([]bool, len(r.round.Decisions))
+	}
+	unmatched := 0
+	var first *engine.PaipuDecision
+	for i := range r.round.Decisions {
+		if r.traceMatched[i] {
+			continue
+		}
+		unmatched++
+		if first == nil {
+			first = &r.round.Decisions[i]
+		}
+	}
+	if unmatched == 0 {
+		return nil
+	}
+	return r.traceError(first, fmt.Sprintf("%d decision row(s) never matched a reconstructed decision point", unmatched))
+}
+
+// traceError is the single fail-loud shape for every cross-check failure.
+func (r *roundReplayer) traceError(row *engine.PaipuDecision, msg string) error {
+	return fmt.Errorf("paipu v2 decision cross-check failed: round %d decision %d seat %d: %s",
+		r.roundIdx, row.Index, row.Seat, msg)
+}
+
+func sortedActionIDs(legal map[int]*pb.PlayerAction) []int {
+	ids := make([]int, 0, len(legal))
+	for id := range legal {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}
+
+func equalActionIDs(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // drainSystemRecords consumes and verifies every "draw"/"flower" record at

@@ -125,6 +125,20 @@ evaluation failure aborts with an error and a nil `*Report`.
   correct window field, and at least one non-empty history — proving
   `game.PublicEvents()` is really reaching the encoder, not silently
   dropped).
+- **replay_v2_test.go** — the paipu v2 decision-trace cross-check tests.
+  `generateHeuristicPaipuV2`/`driveGameWithHeuristicsTraced` are
+  `generateHeuristicPaipu`'s trace-recording twin: they snapshot a
+  `engine.PaipuDecision` (legal ids + chosen catalog id, PRE-action) for
+  every action fed to the engine except READY, mirroring
+  `internal/api/room_decisions.go`'s `snapshotDecision`/`recordDecision`
+  (this package cannot import `internal/api` — cycle). Coverage: a
+  well-formed v2 paipu replays clean; a tampered `ChosenID` and a corrupted
+  `LegalIDs` each abort loudly; a fabricated extra row is caught at round
+  end; a trace-stripped v2 paipu produces decisions identical to the v1
+  paipu of the same seed (zero behavior change for v1);
+  `TestReplayV2CrossCheckAlignsReorderedWindows` pins the seeds whose
+  interrupt windows are recorded in a different order than they are
+  reconstructed (see Design Notes).
 - **report_test.go** — `TestBuildReportAgainstStubServer` runs a full
   heuristic-bot paipu through `BuildReport` against an `httptest.Server`
   stub that returns a uniform distribution over legal actions, verifying the
@@ -190,6 +204,32 @@ evaluation failure aborts with an error and a nil `*Report`.
   If the engine turns out to auto-perform something the paipu also records
   (or vice versa), the fix belongs in this package's cursor handling, never
   in the engine.
+- **Paipu v2 decision-trace cross-check (fail-loud).** When a round carries
+  a v2 `Decisions` trace, every reconstructed decision point also verifies
+  the matching trace row: (a) the row's `ChosenID` must be legal in the
+  reconstructed legal set, and (b) its `LegalIDs` must equal the
+  reconstructed legal-id set exactly. Rows flagged `LegalIDsError` are
+  checked only as far as they were captured (`ChosenID == -1` = encode
+  failed, nothing to verify; nil `LegalIDs` = enumeration failed, skip (b)).
+  Any mismatch aborts with `paipu v2 decision cross-check failed: round %d
+  decision %d seat %d: ...` — never warn-and-continue. A v1 paipu
+  (`Decisions == nil`) skips all of this, byte-for-byte unchanged.
+- **Trace-vs-reconstruction alignment (do not simplify to a plain cursor).**
+  The trace and the reconstruction do not enumerate decision points the same
+  way: the trace holds declined interrupts the Actions stream never records;
+  the reconstruction holds points the trace never recorded (a timed-out
+  interrupt window is not a decision); and *inside one interrupt window the
+  two orders differ* — the room layer records rows in response order
+  (seat-ascending for bots) while `stepWaitDiscards` always replays the
+  winning call first and only then the other seats' passes. A strict
+  "next row must belong to this seat" cursor therefore false-fails on
+  roughly a third of real games (measured over a 55-game heuristic sweep).
+  `crossCheckDecision` instead matches: the row at the cursor wins if it is
+  this seat's, otherwise up to `maxTraceLookahead` (3 — the maximum number
+  of responders to one discard) following rows are scanned for this seat's
+  row *whose chosen id is legal here*. That legality gate is what stops an
+  untraced timeout point from stealing the same seat's later row. Points
+  with no match consume nothing; rows unmatched at round end are an error.
 - **Exact-tile fidelity.** `internal/rl.LegalActions` collapses same-face
   duplicate tiles to one representative id (e.g. the lowest physical id for
   discards). `exactTileAction` clones the matched legal action and
