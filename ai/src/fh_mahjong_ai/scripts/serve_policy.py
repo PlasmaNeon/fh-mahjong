@@ -494,7 +494,17 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                         "logit export token missing or does not match this server's "
                         "--logit-export-token; refusing return_logits"
                     )
-            policy = self.holder.policy
+            # Capture ONE snapshot (policy, checkpoint_sha256) for the whole
+            # request (see `PolicyHolder.snapshot`'s docstring and the
+            # identical note in `_handle_evaluate`): the response below must
+            # publish a checkpoint_sha256 that actually attests the SAME
+            # bytes that produced this action, not whatever happens to be
+            # `self.holder.policy` by the time the response is built — a
+            # concurrent /reload between two separate `self.holder.*` reads
+            # would otherwise mix one checkpoint's action with a different
+            # checkpoint's sha256.
+            snapshot = self.holder.snapshot
+            policy = snapshot.policy
             observation = observation_from_json(payload, policy.model.model_config.event_window)
             # `observation_from_json` is the ONLY thing that produced `observation`
             # above, and for an event model (event_window > 0) it never returns
@@ -524,6 +534,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             "value_calibrated": values_calibrated,
             "checkpoint_path": action.checkpoint_path,
             "checkpoint_step": action.checkpoint_step,
+            "checkpoint_sha256": snapshot.checkpoint_sha256,
         }
         if return_logits and action.logits is not None:
             # These are the MASKED logits argmax was actually taken over
