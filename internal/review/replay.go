@@ -147,7 +147,6 @@ type roundReplayer struct {
 	traceMatched      []bool // per-row "matched to a reconstructed decision point"; nil until the first v2 point
 	multiOptionPoints int    // count of reconstructed points with more than one legal option, INCLUDING inferred passes (v2 wholesale-delete guard; see verifyTraceConsumed)
 	unmatchedExplicit int    // count of EXPLICIT reconstructed points (wantID != nil) that found no trace row (v2 partial-delete guard; see verifyTraceConsumed)
-	lastExplicitOpen  bool   // the most recent EXPLICIT point found no row (forgiven at round end; see verifyTraceConsumed)
 	lastDiscard       int    // action index of the most recent discard (pass anchor); -1 if none yet
 	decisionIndex     uint64
 	eventWindow       uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
@@ -434,9 +433,6 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 	if len(legal) > 1 {
 		r.multiOptionPoints++
 	}
-	if wantID != nil {
-		r.lastExplicitOpen = false
-	}
 	if len(r.round.Decisions) == 0 {
 		if r.paipu.Version < 2 {
 			return nil // v1 paipu: no trace, no cross-check.
@@ -491,7 +487,6 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 func (r *roundReplayer) noTraceRowForPoint(wantID *int) error {
 	if wantID != nil {
 		r.unmatchedExplicit++
-		r.lastExplicitOpen = true
 	}
 	return nil
 }
@@ -543,22 +538,15 @@ func (r *roundReplayer) advanceTraceCursor() {
 // stream disagree about what happened), and every EXPLICIT reconstructed
 // point must have found a row (a missing one means rows were deleted).
 //
-// The round's LAST explicit point is exempt: whoever ends the round (a
-// winning tsumo/ron, haitei acceptance, the exhaustive-draw discard) has its
-// row recorded AFTER ProcessPlayerAction returns, by which time the engine
-// has already run FinishRound and cleared the recorder's current round — so
-// PaipuRecorder.RecordDecision silently drops it. That holds for the real
-// room layer (internal/api/room_bot.go, room.go) exactly as it does for the
-// fixtures here, so one trailing row-less explicit point per round is normal
-// and must not be flagged.
+// There is NO exemption for the round's terminating decision: the row for a
+// winning tsumo/ron (or the haitei acceptance / exhaustive-draw discard that
+// closes the hand) is recorded after the engine has already closed the round,
+// and PaipuRecorder.RecordDecision routes it onto the just-closed round
+// instead of dropping it. Every explicit reconstructed point must match a row.
 func (r *roundReplayer) verifyTraceConsumed() error {
-	unmatchedExplicit := r.unmatchedExplicit
-	if r.lastExplicitOpen && unmatchedExplicit > 0 {
-		unmatchedExplicit--
-	}
-	if r.paipu.Version >= 2 && unmatchedExplicit > 0 {
+	if r.paipu.Version >= 2 && r.unmatchedExplicit > 0 {
 		return fmt.Errorf("paipu v2 decision cross-check failed: round %d: %d explicit reconstructed decision point(s) found no decision row (partially deleted trace?)",
-			r.roundIdx, unmatchedExplicit)
+			r.roundIdx, r.unmatchedExplicit)
 	}
 	if len(r.round.Decisions) == 0 {
 		if r.paipu.Version >= 2 && r.multiOptionPoints > 0 {

@@ -365,15 +365,28 @@ func (r *PaipuRecorder) RecordHaiteiRefuse(seat uint32) {
 }
 
 // RecordDecision appends a supervision-trace row to the current round,
-// assigning its monotonic per-round index. No-op between rounds (mirrors
-// record()); callers snapshot legal IDs BEFORE processing the action and
-// call this only AFTER the action succeeded.
+// assigning its monotonic per-round index. Callers snapshot legal IDs BEFORE
+// processing the action and call this only AFTER the action succeeded.
+//
+// Round-terminating decisions (a winning tsumo/ron, haitei acceptance, the
+// exhaustive-draw discard) are the most valuable rows in the trace, and they
+// arrive when the round is ALREADY closed: the engine runs its round-end path
+// — and therefore EndRound, which nils currentRound — inside the same
+// ProcessPlayerAction the caller is recording. Since a decision is only ever
+// recorded immediately after the engine accepted it, the only way the round
+// can already be closed at that moment is that this very action terminated
+// it, so the row belongs to the just-closed round and is appended there. With
+// no rounds at all this stays a no-op (mirrors record()).
 func (r *PaipuRecorder) RecordDecision(d PaipuDecision) {
-	if r.currentRound == nil {
-		return
+	target := r.currentRound
+	if target == nil {
+		if len(r.paipu.Rounds) == 0 {
+			return
+		}
+		target = &r.paipu.Rounds[len(r.paipu.Rounds)-1]
 	}
-	d.Index = len(r.currentRound.Decisions)
-	r.currentRound.Decisions = append(r.currentRound.Decisions, d)
+	d.Index = len(target.Decisions)
+	target.Decisions = append(target.Decisions, d)
 }
 
 // SetMatchMeta stamps the v2 match-level header fields. Called at persist

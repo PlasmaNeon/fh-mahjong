@@ -73,6 +73,63 @@ func TestPaipuV1FixtureStillLoads(t *testing.T) {
 	}
 }
 
+// TestPaipuRecordDecisionAfterEndRound pins the terminal-decision route: the
+// room layer records a decision immediately AFTER the engine accepted it, so a
+// round-terminating action (winning tsumo/ron, haitei acceptance, the
+// exhaustive-draw discard) is recorded when the engine has already closed the
+// round. That row must land on the just-closed round, not be dropped.
+func TestPaipuRecordDecisionAfterEndRound(t *testing.T) {
+	r := NewPaipuRecorder("m1", "fenghua")
+	r.StartRound(1, 0, 0, [2]uint32{1, 2}, "seed", nil, 16, [4]int32{}, [4][]uint32{})
+	r.RecordDecision(PaipuDecision{Seat: 0, ChosenID: 7, LegalIDs: []int{7, 9}, Source: "heuristic"})
+	r.EndRound(&PaipuRoundResult{Type: "win", ScoreChanges: []int32{0, 0, 0, 0}})
+
+	// The terminal row arrives after the round is closed.
+	r.RecordDecision(PaipuDecision{Seat: 2, ChosenID: 200, LegalIDs: []int{200, 0}, Source: "human"})
+
+	p := r.Finalize([4]int32{})
+	if len(p.Rounds) != 1 {
+		t.Fatalf("rounds = %d, want 1 (post-EndRound row must not open a new round)", len(p.Rounds))
+	}
+	decs := p.Rounds[0].Decisions
+	if len(decs) != 2 {
+		t.Fatalf("closed round has %d decisions, want 2 (terminal row was dropped)", len(decs))
+	}
+	if decs[1].Index != 1 {
+		t.Fatalf("terminal row Index = %d, want 1", decs[1].Index)
+	}
+	if decs[1].Seat != 2 || decs[1].ChosenID != 200 {
+		t.Fatalf("terminal row = %+v, want seat 2 / chosen 200", decs[1])
+	}
+
+	// A second round's rows still go to the new current round.
+	r.StartRound(2, 0, 1, [2]uint32{3, 4}, "seed2", nil, 16, [4]int32{}, [4][]uint32{})
+	r.RecordDecision(PaipuDecision{Seat: 1, ChosenID: 3, LegalIDs: []int{3}, Source: "heuristic"})
+	if got := len(r.CurrentRound().Decisions); got != 1 {
+		t.Fatalf("new round has %d decisions, want 1", got)
+	}
+	if idx := r.CurrentRound().Decisions[0].Index; idx != 0 {
+		t.Fatalf("new round's first row Index = %d, want 0", idx)
+	}
+	if got := len(p.Rounds[0].Decisions); got != 2 {
+		t.Fatalf("closed round grew to %d decisions after a new round started", got)
+	}
+}
+
+// TestPaipuRecordDecisionWithNoRoundsIsNoOp: before any round exists there is
+// nowhere for a row to belong, so RecordDecision stays a no-op.
+func TestPaipuRecordDecisionWithNoRoundsIsNoOp(t *testing.T) {
+	r := NewPaipuRecorder("m1", "fenghua")
+	r.RecordDecision(PaipuDecision{Seat: 0, ChosenID: 7, LegalIDs: []int{7}, Source: "heuristic"})
+	p := r.Finalize([4]int32{})
+	if len(p.Rounds) != 0 {
+		t.Fatalf("rounds = %d, want 0", len(p.Rounds))
+	}
+	if r.CurrentRound() != nil {
+		t.Fatalf("current round = %+v, want nil", r.CurrentRound())
+	}
+}
+
 func TestPaipuSnapshotKeepsInProgressDecisions(t *testing.T) {
 	r := NewPaipuRecorder("m1", "fenghua")
 	r.StartRound(1, 0, 0, [2]uint32{1, 2}, "seed", nil, 16, [4]int32{}, [4][]uint32{})

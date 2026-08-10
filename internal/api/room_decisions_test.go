@@ -90,6 +90,75 @@ func TestDecisionTraceRecordsBotPlay(t *testing.T) {
 	}
 }
 
+// TestDecisionTraceRecordsTerminalAction pins the most valuable row in the
+// trace: the action that ENDS the hand (winning tsumo/ron, haitei acceptance,
+// the exhaustive-draw discard). The room layer records a decision only after
+// ProcessPlayerAction returns, by which point the engine has already closed
+// the round in the recorder — so this row used to be silently dropped from
+// every single round. It must now land at the tail of the just-closed round.
+func TestDecisionTraceRecordsTerminalAction(t *testing.T) {
+	room := NewRoom("decision-trace-terminal", nil, nil)
+	if err := room.Engine.Start(); err != nil {
+		t.Fatalf("Engine.Start: %v", err)
+	}
+
+	beforeTerminal := 0
+	ended := false
+	for i := 0; i < 400; i++ {
+		beforeTerminal = len(allDecisions(room))
+		room.advanceAutomatedSeatsN(1)
+		if room.Engine.State.Phase == pb.GamePhase_PHASE_ROUND_END ||
+			room.Engine.State.Phase == pb.GamePhase_PHASE_MATCH_END {
+			ended = true
+			break
+		}
+	}
+	if !ended {
+		t.Fatalf("hand never reached round end, phase=%v", room.Engine.State.Phase)
+	}
+
+	rows := allDecisions(room)
+	if len(rows) <= beforeTerminal {
+		t.Fatalf("the round-terminating step recorded no decision row (%d rows before and after)", len(rows))
+	}
+
+	// The round is closed in the recorder, so Snapshot's last round IS the
+	// just-ended hand; the terminal row must be its trailing row.
+	rounds := roundsWithDecisions(room)
+	if len(rounds) == 0 {
+		t.Fatal("recorder has no closed round after the hand ended")
+	}
+	last := rounds[len(rounds)-1]
+	if last.Result == nil {
+		t.Fatal("last recorded round has no result (round was not closed)")
+	}
+	if len(last.Decisions) == 0 {
+		t.Fatal("the closed round carries no decision rows at all")
+	}
+	terminal := last.Decisions[len(last.Decisions)-1]
+	if terminal.Index != len(last.Decisions)-1 {
+		t.Fatalf("terminal row Index = %d, want %d", terminal.Index, len(last.Decisions)-1)
+	}
+	if terminal.ChosenID < 0 || terminal.LegalIDsError {
+		t.Fatalf("terminal row failed its snapshot: %+v", terminal)
+	}
+	if !containsInt(terminal.LegalIDs, terminal.ChosenID) {
+		t.Fatalf("terminal row ChosenID %d not in LegalIDs %v", terminal.ChosenID, terminal.LegalIDs)
+	}
+	if last.Result.Type == "win" {
+		if last.Result.Winner == nil {
+			t.Fatal("win result has no winner seat")
+		}
+		if int(terminal.Seat) != *last.Result.Winner {
+			t.Fatalf("terminal row seat = %d, want the winner seat %d", terminal.Seat, *last.Result.Winner)
+		}
+		if terminal.ChosenID != rl.ActionTsumo && terminal.ChosenID != rl.ActionRon {
+			t.Fatalf("terminal row ChosenID = %d, want the tsumo (%d) or ron (%d) catalog id",
+				terminal.ChosenID, rl.ActionTsumo, rl.ActionRon)
+		}
+	}
+}
+
 // TestDecisionTraceExcludesReady: the READY acks at round end are round-flow
 // control, not gameplay decisions — they must never appear in the trace. A
 // READY would encode as no catalog action, so it would show up as a
