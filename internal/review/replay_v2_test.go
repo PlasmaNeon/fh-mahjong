@@ -303,6 +303,35 @@ func TestReplayV2WholesaleDeletedTraceFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestReplayV2PartiallyDeletedTraceFailsLoudly is the partial twin of
+// TestReplayV2WholesaleDeletedTraceFailsLoudly: instead of deleting a round's
+// whole trace (caught by the multiOptionPoints guard), it truncates the trace
+// to its very first row. Every later explicit decision point in that round
+// then finds no row, which must fail loudly — this reproduced as a silent
+// pass on seed 7 round 0 before the unmatchedExplicit counter existed.
+func TestReplayV2PartiallyDeletedTraceFailsLoudly(t *testing.T) {
+	paipu := generateHeuristicPaipuV2(t, 7, engine.MatchOptions{})
+	truncated := false
+	for i := range paipu.Rounds {
+		if len(paipu.Rounds[i].Decisions) > 1 {
+			paipu.Rounds[i].Decisions = paipu.Rounds[i].Decisions[:1]
+			truncated = true
+			break
+		}
+	}
+	if !truncated {
+		t.Fatal("fixture has no round with more than one decision row to truncate")
+	}
+
+	_, err := ExtractDecisions(paipu, 0)
+	if err == nil {
+		t.Fatal("expected an error for a partially deleted v2 decision trace, got nil")
+	}
+	if !strings.Contains(err.Error(), "decision cross-check failed") {
+		t.Fatalf("error %q does not name the cross-check failure", err)
+	}
+}
+
 // TestReplayV2CrossCheckCatchesRetargetedChosenID pins check (a)'s upgrade
 // from "legal" to "identical" on explicit paths: unlike
 // TestReplayV2CrossCheckCatchesTamperedChosenID (which tampers to an

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
+	"github.com/plasma/fh-mahjong/internal/rl"
 	"github.com/plasma/fh-mahjong/internal/rules"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -84,7 +86,7 @@ func playNextHeuristicAction(game *engine.Game, policy bot.Policy) error {
 		if action == nil {
 			return fmt.Errorf("heuristic returned nil turn action for seat %d", seat)
 		}
-		return game.ProcessPlayerAction(seat, action)
+		return feedTracedAction(game, seat, action)
 
 	case pb.GamePhase_PHASE_WAIT_DISCARDS:
 		for seat := uint32(0); seat < uint32(len(game.State.Players)); seat++ {
@@ -99,7 +101,10 @@ func playNextHeuristicAction(game *engine.Game, policy bot.Policy) error {
 			if action == nil {
 				return fmt.Errorf("heuristic returned nil interrupt action for seat %d", seat)
 			}
-			return game.ProcessPlayerAction(seat, action)
+			// Explicit interrupt responses (including explicit passes) are
+			// real decision points and must be traced. ResolveInterrupts
+			// below is engine-internal, so it never gets a row.
+			return feedTracedAction(game, seat, action)
 		}
 		game.ResolveInterrupts()
 		return nil
@@ -107,6 +112,42 @@ func playNextHeuristicAction(game *engine.Game, policy bot.Policy) error {
 	default:
 		return fmt.Errorf("unsupported phase %v", game.State.Phase)
 	}
+}
+
+// feedTracedAction snapshots the v2 supervision trace row on the PRE-action
+// state, feeds the action, and records the row only once the engine accepted
+// it — the same shape as the room layer's snapshotDecision/recordDecision
+// pair (internal/api/room_decisions.go). Without this, the paipu this tool
+// writes carries Version 2 with an empty trace, which internal/review's
+// cross-check rightly rejects as a wholesale-deleted trace.
+func feedTracedAction(game *engine.Game, seat uint32, action *pb.PlayerAction) error {
+	row := snapshotDecision(game, seat, action)
+	if err := game.ProcessPlayerAction(seat, action); err != nil {
+		return err
+	}
+	game.Recorder.RecordDecision(row)
+	return nil
+}
+
+func snapshotDecision(game *engine.Game, seat uint32, action *pb.PlayerAction) engine.PaipuDecision {
+	row := engine.PaipuDecision{Seat: seat, ChosenID: -1, Source: "heuristic"}
+	legal, err := rl.LegalActions(game.State, seat)
+	if err != nil {
+		row.LegalIDsError = true
+	} else {
+		ids := make([]int, 0, len(legal))
+		for id := range legal {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		row.LegalIDs = ids
+	}
+	if id, ok := rl.EncodeAction(game.State, seat, action); ok {
+		row.ChosenID = id
+	} else {
+		row.LegalIDsError = true
+	}
+	return row
 }
 
 func finalScores(state *pb.GameState) [4]int32 {

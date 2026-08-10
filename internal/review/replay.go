@@ -138,19 +138,21 @@ func verifyRoundSetup(game *engine.Game, round *engine.PaipuRound) error {
 // feeding each recorded decision back into engine.Game and recording a
 // Decision wherever the acting seat had more than one legal option.
 type roundReplayer struct {
-	game           *engine.Game
-	paipu          *engine.Paipu
-	round          *engine.PaipuRound
-	roundIdx       int
-	cursor         int    // next unconsumed index into round.Actions
-	traceCursor    int    // start of the unmatched suffix of round.Decisions (v2 cross-check; unused for v1)
-	traceMatched   []bool // per-row "matched to a reconstructed decision point"; nil until the first v2 point
-	explicitPoints int    // count of reconstructed points with more than one legal option (v2 wholesale-delete guard; see verifyTraceConsumed)
-	lastDiscard    int    // action index of the most recent discard (pass anchor); -1 if none yet
-	decisionIndex  uint64
-	eventWindow    uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
-	decisions      []Decision
-	flowerIndex    map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
+	game              *engine.Game
+	paipu             *engine.Paipu
+	round             *engine.PaipuRound
+	roundIdx          int
+	cursor            int    // next unconsumed index into round.Actions
+	traceCursor       int    // start of the unmatched suffix of round.Decisions (v2 cross-check; unused for v1)
+	traceMatched      []bool // per-row "matched to a reconstructed decision point"; nil until the first v2 point
+	multiOptionPoints int    // count of reconstructed points with more than one legal option, INCLUDING inferred passes (v2 wholesale-delete guard; see verifyTraceConsumed)
+	unmatchedExplicit int    // count of EXPLICIT reconstructed points (wantID != nil) that found no trace row (v2 partial-delete guard; see verifyTraceConsumed)
+	lastExplicitOpen  bool   // the most recent EXPLICIT point found no row (forgiven at round end; see verifyTraceConsumed)
+	lastDiscard       int    // action index of the most recent discard (pass anchor); -1 if none yet
+	decisionIndex     uint64
+	eventWindow       uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
+	decisions         []Decision
+	flowerIndex       map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
 }
 
 // run mirrors internal/rl/env.go's advanceToDecision loop shape, except the
@@ -407,7 +409,11 @@ const maxTraceLookahead = 2
 // seat whose chosen id is legal here. That legality gate is what keeps a
 // same-seat row from a LATER decision point from being stolen by an untraced
 // timeout point. A point with no match consumes nothing; rows still unmatched
-// at round end are an error (verifyTraceConsumed).
+// at round end are an error (verifyTraceConsumed), and so is an EXPLICIT point
+// that found no row at all (unmatchedExplicit) — the room layer guarantees a
+// row for every explicit decision point, so a missing one means rows were
+// deleted; only INFERRED points (silent timeouts) may legitimately be
+// row-less.
 //
 // Two checks per matched row, per spec: (a) the row's chosen catalog id is
 // legal in the reconstructed legal set (or, on an explicit path — wantID
@@ -426,7 +432,10 @@ const maxTraceLookahead = 2
 // actual call, not a pass, so only legality is checked there).
 func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.PlayerAction, wantID *int) error {
 	if len(legal) > 1 {
-		r.explicitPoints++
+		r.multiOptionPoints++
+	}
+	if wantID != nil {
+		r.lastExplicitOpen = false
 	}
 	if len(r.round.Decisions) == 0 {
 		if r.paipu.Version < 2 {
@@ -434,7 +443,7 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 		}
 		// v2 paipu with a wholesale-deleted/empty trace: this point simply
 		// finds no matching row (same effect as returning nil here); the
-		// explicitPoints counter lets verifyTraceConsumed turn that into a
+		// multiOptionPoints counter lets verifyTraceConsumed turn that into a
 		// loud error instead of a silent pass.
 		return nil
 	}
@@ -443,7 +452,7 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 	}
 	r.advanceTraceCursor()
 	if r.traceCursor >= len(r.round.Decisions) {
-		return nil
+		return r.noTraceRowForPoint(wantID)
 	}
 
 	if row := &r.round.Decisions[r.traceCursor]; row.Seat == seat {
@@ -469,6 +478,21 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 	}
 	// No row for this point: an untraced auto-resolution (timeout), or a row
 	// this reconstruction reaches later. Consume nothing.
+	return r.noTraceRowForPoint(wantID)
+}
+
+// noTraceRowForPoint books a decision point that matched no trace row. An
+// INFERRED point (wantID == nil) is legitimately row-less — a seat whose
+// interrupt window elapsed silently never decided anything. An EXPLICIT point
+// is not: the room layer records a row for every one of them, so a missing
+// row means the trace lost rows (partial deletion). Counting rather than
+// erroring here keeps the failure attributable to the round as a whole
+// (verifyTraceConsumed), which matches how the wholesale-delete guard reports.
+func (r *roundReplayer) noTraceRowForPoint(wantID *int) error {
+	if wantID != nil {
+		r.unmatchedExplicit++
+		r.lastExplicitOpen = true
+	}
 	return nil
 }
 
@@ -513,14 +537,33 @@ func (r *roundReplayer) advanceTraceCursor() {
 	}
 }
 
-// verifyTraceConsumed runs at round end: every recorded decision row must
-// have been matched to a reconstructed decision point. Leftovers mean the
-// trace and the action stream disagree about what happened.
+// verifyTraceConsumed runs at round end and closes both directions of the
+// match: every recorded decision row must have been matched to a
+// reconstructed decision point (leftovers mean the trace and the action
+// stream disagree about what happened), and every EXPLICIT reconstructed
+// point must have found a row (a missing one means rows were deleted).
+//
+// The round's LAST explicit point is exempt: whoever ends the round (a
+// winning tsumo/ron, haitei acceptance, the exhaustive-draw discard) has its
+// row recorded AFTER ProcessPlayerAction returns, by which time the engine
+// has already run FinishRound and cleared the recorder's current round — so
+// PaipuRecorder.RecordDecision silently drops it. That holds for the real
+// room layer (internal/api/room_bot.go, room.go) exactly as it does for the
+// fixtures here, so one trailing row-less explicit point per round is normal
+// and must not be flagged.
 func (r *roundReplayer) verifyTraceConsumed() error {
+	unmatchedExplicit := r.unmatchedExplicit
+	if r.lastExplicitOpen && unmatchedExplicit > 0 {
+		unmatchedExplicit--
+	}
+	if r.paipu.Version >= 2 && unmatchedExplicit > 0 {
+		return fmt.Errorf("paipu v2 decision cross-check failed: round %d: %d explicit reconstructed decision point(s) found no decision row (partially deleted trace?)",
+			r.roundIdx, unmatchedExplicit)
+	}
 	if len(r.round.Decisions) == 0 {
-		if r.paipu.Version >= 2 && r.explicitPoints > 0 {
+		if r.paipu.Version >= 2 && r.multiOptionPoints > 0 {
 			return fmt.Errorf("paipu v2 decision cross-check failed: round %d: decision trace is empty but %d reconstructed decision point(s) exist (wholesale-deleted trace?)",
-				r.roundIdx, r.explicitPoints)
+				r.roundIdx, r.multiOptionPoints)
 		}
 		return nil
 	}
