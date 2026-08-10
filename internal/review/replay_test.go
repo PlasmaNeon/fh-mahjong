@@ -13,7 +13,12 @@ import (
 
 // generateHeuristicPaipu plays a full deterministic game with the shared
 // heuristic bot and records it, mirroring cmd/rlpaipu. opts selects
-// classic (engine.MatchOptions{}) or chongci mode.
+// classic (engine.MatchOptions{}) or chongci mode. It never calls
+// RecordDecision, so it stands in for this package's tests as a genuinely
+// untraced/legacy paipu — its Version is force-set to 1 to match, since
+// NewPaipuRecorder always stamps the current schema version (2) and the v2
+// decision cross-check (internal/review/replay.go) now gates its "no rows at
+// all" skip on Version < 2, not on row count alone.
 func generateHeuristicPaipu(t *testing.T, seed uint64, opts engine.MatchOptions) *engine.Paipu {
 	t.Helper()
 	game := engine.NewGame(fmt.Sprintf("review-test-%d", seed), &rules.FenghuaRuleset{}, opts)
@@ -31,7 +36,9 @@ func generateHeuristicPaipu(t *testing.T, seed uint64, opts engine.MatchOptions)
 	// ROUND_END ready-ack flow with a derived per-hand wall seed).
 	driveGameWithHeuristics(t, game, policy, seed)
 	// Finalize returns the recorded paipu.
-	return game.Recorder.Finalize(finalScores(game))
+	paipu := game.Recorder.Finalize(finalScores(game))
+	paipu.Version = 1
+	return paipu
 }
 
 // driveGameWithHeuristics plays the game to completion using the heuristic

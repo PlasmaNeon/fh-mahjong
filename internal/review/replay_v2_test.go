@@ -274,11 +274,76 @@ func TestReplayV2CrossCheckCatchesWrongLegalSet(t *testing.T) {
 	}
 }
 
+// TestReplayV2WholesaleDeletedTraceFailsLoudly pins the Version-gated skip:
+// unlike TestReplayV1Unchanged's genuinely-legacy (Version 1) fixtures, this
+// paipu keeps its real Version (2, stamped by NewPaipuRecorder) but has one
+// round's entire Decisions array deleted outright. Reconstruction still
+// finds real decision points in that round, so the empty trace must fail
+// loudly instead of silently passing like a true v1 record would.
+func TestReplayV2WholesaleDeletedTraceFailsLoudly(t *testing.T) {
+	paipu := generateHeuristicPaipuV2(t, 7, engine.MatchOptions{})
+	deleted := false
+	for i := range paipu.Rounds {
+		if len(paipu.Rounds[i].Decisions) > 0 {
+			paipu.Rounds[i].Decisions = nil
+			deleted = true
+			break
+		}
+	}
+	if !deleted {
+		t.Fatal("fixture has no round with decision rows to delete")
+	}
+
+	_, err := ExtractDecisions(paipu, 0)
+	if err == nil {
+		t.Fatal("expected an error for a wholesale-deleted v2 decision trace, got nil")
+	}
+	if !strings.Contains(err.Error(), "decision cross-check failed") {
+		t.Fatalf("error %q does not name the cross-check failure", err)
+	}
+}
+
+// TestReplayV2CrossCheckCatchesRetargetedChosenID pins check (a)'s upgrade
+// from "legal" to "identical" on explicit paths: unlike
+// TestReplayV2CrossCheckCatchesTamperedChosenID (which tampers to an
+// ILLEGAL id), this retargets the row to a DIFFERENT id that is still legal
+// in the same reconstructed set. Before the fix this passed (legality-only);
+// an explicit turn/interrupt row must now match the fed action exactly.
+func TestReplayV2CrossCheckCatchesRetargetedChosenID(t *testing.T) {
+	paipu := generateHeuristicPaipuV2(t, 7, engine.MatchOptions{})
+	row := firstMultiOptionRow(t, paipu)
+	alt := -1
+	for _, id := range row.LegalIDs {
+		if id != row.ChosenID {
+			alt = id
+			break
+		}
+	}
+	if alt < 0 {
+		t.Fatal("row has no alternate legal id to retarget to")
+	}
+	row.ChosenID = alt
+
+	_, err := ExtractDecisions(paipu, 0)
+	if err == nil {
+		t.Fatal("expected an error for a retargeted-but-still-legal chosen id on an explicit path, got nil")
+	}
+	if !strings.Contains(err.Error(), "decision cross-check failed") {
+		t.Fatalf("error %q does not name the cross-check failure", err)
+	}
+}
+
 func TestReplayV1Unchanged(t *testing.T) {
 	// A v2 paipu with its trace stripped must replay exactly like the v1
-	// paipu the same seed produces without any trace at all.
+	// paipu the same seed produces without any trace at all. Both fixtures
+	// come from NewPaipuRecorder, which always stamps the current schema
+	// version (2) — genuinely old records on disk carry a literal Version:1,
+	// so both are force-set to 1 here to actually exercise the Version<2
+	// skip path (crossCheckDecision/verifyTraceConsumed), not just the
+	// row-count coincidence of a paipu that happens to carry zero rows.
 	v2 := generateHeuristicPaipuV2(t, 7, engine.MatchOptions{})
 	stripDecisions(v2)
+	v2.Version = 1
 	stripped, err := ExtractDecisions(v2, 0)
 	if err != nil {
 		t.Fatalf("ExtractDecisions on trace-stripped paipu: %v", err)

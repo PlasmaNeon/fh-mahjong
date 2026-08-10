@@ -223,10 +223,12 @@ evaluation failure aborts with an error and a nil `*Report`.
   (seat-ascending for bots) while `stepWaitDiscards` always replays the
   winning call first and only then the other seats' passes. A strict
   "next row must belong to this seat" cursor therefore false-fails on
-  roughly a third of real games (measured over a 55-game heuristic sweep).
+  ~10-18% of real games (10/55 and 12/120 in two heuristic sweeps).
   `crossCheckDecision` instead matches: the row at the cursor wins if it is
-  this seat's, otherwise up to `maxTraceLookahead` (3 — the maximum number
-  of responders to one discard) following rows are scanned for this seat's
+  this seat's, otherwise up to `maxTraceLookahead` (2 — an interrupt window
+  holds at most 3 same-window rows total, and the cursor always sits on the
+  window's oldest unmatched row, so at most 2 further rows can still belong
+  to it) following rows are scanned for this seat's
   row *whose chosen id is legal here*. That legality gate is what stops an
   untraced timeout point from stealing the same seat's later row. Points
   with no match consume nothing; rows unmatched at round end are an error.
