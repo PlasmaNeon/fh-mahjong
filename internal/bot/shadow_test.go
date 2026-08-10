@@ -388,6 +388,81 @@ func TestShadowPolicyConcurrentChooseActionDuringClose(t *testing.T) {
 	}
 }
 
+// provenanceStubPolicy is a Policy/ContextPolicy/ProvenanceContextPolicy stub
+// that always returns a fixed action and a fixed DecisionProvenance from its
+// ChooseActionCtxProv, for asserting ShadowPolicy forwards it unchanged.
+type provenanceStubPolicy struct {
+	action *pb.PlayerAction
+	prov   DecisionProvenance
+}
+
+func (p *provenanceStubPolicy) ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAction {
+	return p.action
+}
+
+func (p *provenanceStubPolicy) ChooseActionCtx(ctx *DecisionContext) *pb.PlayerAction {
+	return p.action
+}
+
+func (p *provenanceStubPolicy) ChooseActionCtxProv(ctx *DecisionContext) (*pb.PlayerAction, DecisionProvenance) {
+	return p.action, p.prov
+}
+
+var _ Policy = (*provenanceStubPolicy)(nil)
+var _ ContextPolicy = (*provenanceStubPolicy)(nil)
+var _ ProvenanceContextPolicy = (*provenanceStubPolicy)(nil)
+
+// TestShadowPolicyChooseActionCtxProvForwardsPrimaryProvenance pins that
+// ShadowPolicy.ChooseActionCtxProv, when wrapping a primary that implements
+// ProvenanceContextPolicy (e.g. remote.HTTPPolicy), returns that primary's
+// action and provenance exactly, while still mirroring the decision to the
+// shadow like ChooseActionCtx does.
+func TestShadowPolicyChooseActionCtxProvForwardsPrimaryProvenance(t *testing.T) {
+	primaryAction := testDiscardAction(1)
+	primaryProv := DecisionProvenance{Source: "remote", CheckpointSha: "aa"}
+	primary := &provenanceStubPolicy{action: primaryAction, prov: primaryProv}
+	shadow := &blockingShadow{action: testDiscardAction(1)}
+
+	sp := NewShadowPolicy(primary, shadow, 4)
+	defer sp.Close()
+
+	gotAction, gotProv := sp.ChooseActionCtxProv(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 1})
+	if gotAction != primaryAction {
+		t.Fatalf("expected primary action returned, got %v", gotAction)
+	}
+	if gotProv != primaryProv {
+		t.Fatalf("expected primary provenance returned unchanged, got %+v, want %+v", gotProv, primaryProv)
+	}
+
+	waitForDecisions(t, sp, 1)
+	sp.Close()
+	metrics := sp.Metrics()
+	if metrics.Decisions != 1 {
+		t.Fatalf("expected the decision to still be mirrored to the shadow, got %d decisions", metrics.Decisions)
+	}
+}
+
+// TestShadowPolicyChooseActionCtxProvNonProvenancePrimaryIsHeuristic pins
+// that a primary which is only a plain Policy (no provenance capability at
+// all) is labeled "heuristic" by ShadowPolicy.ChooseActionCtxProv — such a
+// primary is, by construction, a local (non-remote) policy.
+func TestShadowPolicyChooseActionCtxProvNonProvenancePrimaryIsHeuristic(t *testing.T) {
+	primaryAction := testDiscardAction(1)
+	primary := &fixedPolicy{action: primaryAction}
+	shadow := &blockingShadow{action: testDiscardAction(1)}
+
+	sp := NewShadowPolicy(primary, shadow, 4)
+	defer sp.Close()
+
+	gotAction, gotProv := sp.ChooseActionCtxProv(&DecisionContext{State: newTestState(1), Seat: 0, DecisionIndex: 1})
+	if gotAction != primaryAction {
+		t.Fatalf("expected primary action returned, got %v", gotAction)
+	}
+	if gotProv != (DecisionProvenance{Source: "heuristic"}) {
+		t.Fatalf("expected heuristic provenance, got %+v", gotProv)
+	}
+}
+
 // --- adversarial round 3, Finding 2: auditable per-decision telemetry -------------------
 
 // TestShadowPolicyPerDecisionLogIncludesLabelAndBothActionIDs pins the

@@ -664,6 +664,30 @@ def test_healthz_carries_sha256_window_and_contract_version(tmp_path: Path) -> N
     assert data["checkpoint_step"] == 1
 
 
+def test_act_response_includes_checkpoint_sha256(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        act_status, act_data = server.request(
+            "POST", "/act",
+            _observation_payload(
+                [0, 1, 2], event_history=[1, 2, 3], event_count=3, event_window=8,
+                contract_version=EVENT_CONTRACT_V1,
+            ),
+        )
+        healthz_status, healthz_data = server.request("GET", "/healthz")
+    finally:
+        server.close()
+
+    assert act_status == 200, act_data
+    expected_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    assert act_data["checkpoint_sha256"] == expected_sha
+    assert healthz_status == 200
+    assert act_data["checkpoint_sha256"] == healthz_data["checkpoint_sha256"]
+    # Existing fields must still be present.
+    assert act_data["checkpoint_step"] == 1
+
+
 # --- /reload validation ------------------------------------------------------------------
 
 

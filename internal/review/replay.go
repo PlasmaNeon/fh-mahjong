@@ -138,16 +138,20 @@ func verifyRoundSetup(game *engine.Game, round *engine.PaipuRound) error {
 // feeding each recorded decision back into engine.Game and recording a
 // Decision wherever the acting seat had more than one legal option.
 type roundReplayer struct {
-	game          *engine.Game
-	paipu         *engine.Paipu
-	round         *engine.PaipuRound
-	roundIdx      int
-	cursor        int // next unconsumed index into round.Actions
-	lastDiscard   int // action index of the most recent discard (pass anchor); -1 if none yet
-	decisionIndex uint64
-	eventWindow   uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
-	decisions     []Decision
-	flowerIndex   map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
+	game              *engine.Game
+	paipu             *engine.Paipu
+	round             *engine.PaipuRound
+	roundIdx          int
+	cursor            int    // next unconsumed index into round.Actions
+	traceCursor       int    // start of the unmatched suffix of round.Decisions (v2 cross-check; unused for v1)
+	traceMatched      []bool // per-row "matched to a reconstructed decision point"; nil until the first v2 point
+	multiOptionPoints int    // count of reconstructed points with more than one legal option, INCLUDING inferred passes (v2 wholesale-delete guard; see verifyTraceConsumed)
+	unmatchedExplicit int    // count of EXPLICIT reconstructed points (wantID != nil) that found no trace row (v2 partial-delete guard; see verifyTraceConsumed)
+	lastDiscard       int    // action index of the most recent discard (pass anchor); -1 if none yet
+	decisionIndex     uint64
+	eventWindow       uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
+	decisions         []Decision
+	flowerIndex       map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
 }
 
 // run mirrors internal/rl/env.go's advanceToDecision loop shape, except the
@@ -162,7 +166,7 @@ func (r *roundReplayer) run() error {
 				return fmt.Errorf("round %d: %d trailing unconsumed paipu action(s) starting at index %d (%s)",
 					r.roundIdx, len(r.round.Actions)-r.cursor, r.cursor, r.round.Actions[r.cursor].Act)
 			}
-			return nil
+			return r.verifyTraceConsumed()
 
 		case pb.GamePhase_PHASE_PLAYER_TURN:
 			if err := r.stepPlayerTurn(); err != nil {
@@ -211,6 +215,9 @@ func (r *roundReplayer) stepPlayerTurn() error {
 
 	legal, err := rl.LegalActions(game.State, seat)
 	if err != nil {
+		return err
+	}
+	if err := r.crossCheckDecision(seat, legal, &id); err != nil {
 		return err
 	}
 	if len(legal) > 1 {
@@ -273,6 +280,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 		if err != nil {
 			return err
 		}
+		if err := r.crossCheckDecision(matchSeat, legal, &id); err != nil {
+			return err
+		}
 		if len(legal) > 1 {
 			if err := r.recordDecision(matchSeat, r.cursor, id); err != nil {
 				return err
@@ -296,6 +306,9 @@ func (r *roundReplayer) stepWaitDiscards() error {
 	passAction, ok := legal[rl.ActionPass]
 	if !ok {
 		return fmt.Errorf("round %d: seat %d has no ACTION_PASS in its legal interrupt map", r.roundIdx, seat)
+	}
+	if err := r.crossCheckDecision(seat, legal, nil); err != nil {
+		return err
 	}
 	if len(legal) > 1 {
 		if r.lastDiscard < 0 {
@@ -363,6 +376,230 @@ func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenActio
 	})
 	r.decisionIndex++
 	return nil
+}
+
+// maxTraceLookahead bounds how far past the trace cursor a decision point may
+// look for its row. An interrupt window holds at most three same-window rows
+// total (one per non-discarding seat), and the cursor always sits on the
+// window's oldest unmatched row (see advanceTraceCursor), so at most two
+// further rows can still belong to that same window — never widen it to "fix"
+// a mismatch, since scanning further risks crossing into the adjacent window
+// and letting an untraced-timeout point steal a foreign same-seat row.
+const maxTraceLookahead = 2
+
+// crossCheckDecision verifies the paipu v2 supervision trace against the
+// reconstruction at one decision point (spec §8). It is a no-op for v1
+// paipu, whose rounds carry no Decisions at all.
+//
+// Alignment. The trace and the reconstruction do not enumerate decision
+// points identically:
+//   - the trace has rows the Actions stream lacks (declined interrupts are
+//     never recorded as actions, only as rows);
+//   - the reconstruction has points the trace lacks (a seat whose interrupt
+//     window timed out never decided anything, so no row exists);
+//   - inside one interrupt window the two ORDERS differ: the room layer
+//     records rows in the order seats responded (seat-ascending for bots,
+//     arbitrary for humans), whereas stepWaitDiscards always replays the
+//     winning call first and only then feeds the other seats' passes.
+//
+// So rows are matched, not merely counted off: the row directly at the cursor
+// wins if it is this seat's (the common, strictly in-order case, checked in
+// full), otherwise the next few rows are scanned for one belonging to this
+// seat whose chosen id is legal here. That legality gate is what keeps a
+// same-seat row from a LATER decision point from being stolen by an untraced
+// timeout point. A point with no match consumes nothing; rows still unmatched
+// at round end are an error (verifyTraceConsumed), and so is an EXPLICIT point
+// that found no row at all (unmatchedExplicit) — the room layer guarantees a
+// row for every explicit decision point, so a missing one means rows were
+// deleted; only INFERRED points (silent timeouts) may legitimately be
+// row-less.
+//
+// Two checks per matched row, per spec: (a) the row's chosen catalog id is
+// legal in the reconstructed legal set (or, on an explicit path — wantID
+// non-nil — identical to the id replay actually fed the engine), and (b) the
+// row's recorded legal-id set matches the reconstructed one exactly. A row
+// flagged LegalIDsError failed its snapshot at record time, so only what it
+// actually captured is checked: ChosenID == -1 means the encode failed
+// (nothing to verify), and a nil LegalIDs means enumeration failed (skip
+// (b)).
+//
+// wantID is the catalog id replay is about to feed the engine on an EXPLICIT
+// path (a recorded turn action or a recorded interrupt response — see the
+// call sites in stepPlayerTurn/stepWaitDiscards), or nil on the INFERRED
+// path (an implicit pass fed for a seat whose interrupt window elapsed
+// silently — the matched row there may legitimately record a losing bidder's
+// actual call, not a pass, so only legality is checked there).
+func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.PlayerAction, wantID *int) error {
+	if len(legal) > 1 {
+		r.multiOptionPoints++
+	}
+	if len(r.round.Decisions) == 0 {
+		if r.paipu.Version < 2 {
+			return nil // v1 paipu: no trace, no cross-check.
+		}
+		// v2 paipu with a wholesale-deleted/empty trace: this point simply
+		// finds no matching row (same effect as returning nil here); the
+		// multiOptionPoints counter lets verifyTraceConsumed turn that into a
+		// loud error instead of a silent pass.
+		return nil
+	}
+	if r.traceMatched == nil {
+		r.traceMatched = make([]bool, len(r.round.Decisions))
+	}
+	r.advanceTraceCursor()
+	if r.traceCursor >= len(r.round.Decisions) {
+		return r.noTraceRowForPoint(wantID)
+	}
+
+	if row := &r.round.Decisions[r.traceCursor]; row.Seat == seat {
+		r.traceMatched[r.traceCursor] = true
+		r.advanceTraceCursor()
+		return r.verifyTraceRow(row, legal, wantID)
+	}
+
+	limit := r.traceCursor + 1 + maxTraceLookahead
+	if limit > len(r.round.Decisions) {
+		limit = len(r.round.Decisions)
+	}
+	for i := r.traceCursor + 1; i < limit; i++ {
+		if r.traceMatched[i] {
+			continue
+		}
+		row := &r.round.Decisions[i]
+		if row.Seat != seat || !chosenIsLegal(row, legal) {
+			continue
+		}
+		r.traceMatched[i] = true
+		return r.verifyTraceRow(row, legal, wantID)
+	}
+	// No row for this point: an untraced auto-resolution (timeout), or a row
+	// this reconstruction reaches later. Consume nothing.
+	return r.noTraceRowForPoint(wantID)
+}
+
+// noTraceRowForPoint books a decision point that matched no trace row. An
+// INFERRED point (wantID == nil) is legitimately row-less — a seat whose
+// interrupt window elapsed silently never decided anything. An EXPLICIT point
+// is not: the room layer records a row for every one of them, so a missing
+// row means the trace lost rows (partial deletion). Counting rather than
+// erroring here keeps the failure attributable to the round as a whole
+// (verifyTraceConsumed), which matches how the wholesale-delete guard reports.
+func (r *roundReplayer) noTraceRowForPoint(wantID *int) error {
+	if wantID != nil {
+		r.unmatchedExplicit++
+	}
+	return nil
+}
+
+// verifyTraceRow applies checks (a) and (b) to a row matched to this point.
+// wantID (see crossCheckDecision) upgrades check (a) from "legal" to
+// "identical" on explicit paths.
+func (r *roundReplayer) verifyTraceRow(row *engine.PaipuDecision, legal map[int]*pb.PlayerAction, wantID *int) error {
+	if !chosenIsLegal(row, legal) {
+		return r.traceError(row, fmt.Sprintf("recorded chosen action id %d is not legal in the reconstructed legal set %v",
+			row.ChosenID, sortedActionIDs(legal)))
+	}
+	if wantID != nil && row.ChosenID != -1 && row.ChosenID != *wantID {
+		return r.traceError(row, fmt.Sprintf("recorded chosen action id %d does not match the replayed action id %d",
+			row.ChosenID, *wantID))
+	}
+	if row.LegalIDsError {
+		return nil
+	}
+	got := sortedActionIDs(legal)
+	if !equalActionIDs(row.LegalIDs, got) {
+		return r.traceError(row, fmt.Sprintf("recorded legal set %v does not match the reconstructed legal set %v",
+			row.LegalIDs, got))
+	}
+	return nil
+}
+
+// chosenIsLegal reports check (a). A row whose chosen id failed to encode at
+// record time (ChosenID == -1) carries nothing to verify and passes.
+func chosenIsLegal(row *engine.PaipuDecision, legal map[int]*pb.PlayerAction) bool {
+	if row.ChosenID == -1 {
+		return true
+	}
+	_, ok := legal[row.ChosenID]
+	return ok
+}
+
+// advanceTraceCursor moves the cursor past the matched prefix, so the
+// lookahead window always starts at the oldest still-unmatched row.
+func (r *roundReplayer) advanceTraceCursor() {
+	for r.traceCursor < len(r.traceMatched) && r.traceMatched[r.traceCursor] {
+		r.traceCursor++
+	}
+}
+
+// verifyTraceConsumed runs at round end and closes both directions of the
+// match: every recorded decision row must have been matched to a
+// reconstructed decision point (leftovers mean the trace and the action
+// stream disagree about what happened), and every EXPLICIT reconstructed
+// point must have found a row (a missing one means rows were deleted).
+//
+// There is NO exemption for the round's terminating decision: the row for a
+// winning tsumo/ron (or the haitei acceptance / exhaustive-draw discard that
+// closes the hand) is recorded after the engine has already closed the round,
+// and PaipuRecorder.RecordDecision routes it onto the just-closed round
+// instead of dropping it. Every explicit reconstructed point must match a row.
+func (r *roundReplayer) verifyTraceConsumed() error {
+	if r.paipu.Version >= 2 && r.unmatchedExplicit > 0 {
+		return fmt.Errorf("paipu v2 decision cross-check failed: round %d: %d explicit reconstructed decision point(s) found no decision row (partially deleted trace?)",
+			r.roundIdx, r.unmatchedExplicit)
+	}
+	if len(r.round.Decisions) == 0 {
+		if r.paipu.Version >= 2 && r.multiOptionPoints > 0 {
+			return fmt.Errorf("paipu v2 decision cross-check failed: round %d: decision trace is empty but %d reconstructed decision point(s) exist (wholesale-deleted trace?)",
+				r.roundIdx, r.multiOptionPoints)
+		}
+		return nil
+	}
+	if r.traceMatched == nil {
+		r.traceMatched = make([]bool, len(r.round.Decisions))
+	}
+	unmatched := 0
+	var first *engine.PaipuDecision
+	for i := range r.round.Decisions {
+		if r.traceMatched[i] {
+			continue
+		}
+		unmatched++
+		if first == nil {
+			first = &r.round.Decisions[i]
+		}
+	}
+	if unmatched == 0 {
+		return nil
+	}
+	return r.traceError(first, fmt.Sprintf("%d decision row(s) never matched a reconstructed decision point", unmatched))
+}
+
+// traceError is the single fail-loud shape for every cross-check failure.
+func (r *roundReplayer) traceError(row *engine.PaipuDecision, msg string) error {
+	return fmt.Errorf("paipu v2 decision cross-check failed: round %d decision %d seat %d: %s",
+		r.roundIdx, row.Index, row.Seat, msg)
+}
+
+func sortedActionIDs(legal map[int]*pb.PlayerAction) []int {
+	ids := make([]int, 0, len(legal))
+	for id := range legal {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}
+
+func equalActionIDs(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // drainSystemRecords consumes and verifies every "draw"/"flower" record at

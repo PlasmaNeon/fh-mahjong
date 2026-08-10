@@ -39,13 +39,7 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 				return payloads
 			}
 
-			policy := r.policyForSeat(seat)
-			var action *pb.PlayerAction
-			if ctxPolicy, ok := policy.(bot.ContextPolicy); ok {
-				action = ctxPolicy.ChooseActionCtx(r.buildDecisionContext(seat))
-			} else {
-				action = policy.ChooseAction(r.Engine.State, seat)
-			}
+			action, prov := r.chooseSeatAction(seat)
 			if action == nil {
 				log.Printf("bot policy produced no action for active seat %d in room %s", seat, r.ID)
 				return payloads
@@ -53,9 +47,18 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 
 			r.sleepBotThink(action.Type)
 
+			// Snapshot the decision context on the PRE-action state.
+			var snap decisionSnapshot
+			if r.Engine.Recorder != nil {
+				snap = r.snapshotDecision(seat, action)
+			}
+
 			if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 				log.Printf("bot action failed for seat %d in room %s: %v", seat, r.ID, err)
 				return payloads
+			}
+			if r.Engine.Recorder != nil {
+				r.recordDecision(seat, snap, prov)
 			}
 			r.automatedDecisions[seat]++
 
@@ -70,24 +73,46 @@ func (r *Room) advanceAutomatedSeatsN(maxIters int) [][]byte {
 					continue
 				}
 
-				policy := r.policyForSeat(seat)
-				var action *pb.PlayerAction
-				if ctxPolicy, ok := policy.(bot.ContextPolicy); ok {
-					action = ctxPolicy.ChooseActionCtx(r.buildDecisionContext(seat))
-				} else {
-					action = policy.ChooseAction(r.Engine.State, seat)
-				}
+				action, prov := r.chooseSeatAction(seat)
 				if action == nil {
+					// A policy that declines to act still decided to pass.
 					action = &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
 				}
 
 				r.sleepBotThink(action.Type)
 
+				var snap decisionSnapshot
+				if r.Engine.Recorder != nil {
+					snap = r.snapshotDecision(seat, action)
+				}
+
 				if err := r.Engine.ProcessPlayerAction(seat, action); err != nil {
 					log.Printf("bot interrupt failed for seat %d in room %s: %v", seat, r.ID, err)
 					if action.Type != pb.ActionType_ACTION_PASS {
-						_ = r.Engine.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS})
+						// Error recovery: the seat still ends up passing, and
+						// that pass IS a processed decision — snapshot it
+						// afresh (the claim's snapshot describes a different
+						// action) and record it only if it succeeded.
+						pass := &pb.PlayerAction{Type: pb.ActionType_ACTION_PASS}
+						var passSnap decisionSnapshot
+						if r.Engine.Recorder != nil {
+							passSnap = r.snapshotDecision(seat, pass)
+						}
+						if passErr := r.Engine.ProcessPlayerAction(seat, pass); passErr != nil {
+							log.Printf("bot fallback pass failed for seat %d in room %s: %v", seat, r.ID, passErr)
+						} else if r.Engine.Recorder != nil {
+							// The engine rejected the policy's claim; this pass is
+							// recovery, not the model's decision, so stamp it with
+							// its own provenance instead of the failed claim's
+							// (which could carry source:"remote" + a checkpoint).
+							// "engine_reject" is room-layer-only -- it is not one of
+							// remote's 9 HTTP fallback reasons.
+							fallbackProv := bot.DecisionProvenance{Source: "fallback", FallbackReason: "engine_reject"}
+							r.recordDecision(seat, passSnap, fallbackProv)
+						}
 					}
+				} else if r.Engine.Recorder != nil {
+					r.recordDecision(seat, snap, prov)
 				}
 				r.automatedDecisions[seat]++
 

@@ -77,8 +77,8 @@ func TestPaipuRecorderBasicFlow(t *testing.T) {
 	// Finalize
 	paipu := rec.Finalize([4]int32{25000, 25000, 25000, 25000})
 
-	if paipu.Version != 1 {
-		t.Errorf("version = %d, want 1", paipu.Version)
+	if paipu.Version != engine.PaipuVersion {
+		t.Errorf("version = %d, want %d", paipu.Version, engine.PaipuVersion)
 	}
 	if len(paipu.Rounds) != 1 {
 		t.Fatalf("rounds = %d, want 1", len(paipu.Rounds))

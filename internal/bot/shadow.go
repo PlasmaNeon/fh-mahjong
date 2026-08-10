@@ -103,6 +103,7 @@ type ShadowPolicy struct {
 
 var _ Policy = (*ShadowPolicy)(nil)
 var _ ContextPolicy = (*ShadowPolicy)(nil)
+var _ ProvenanceContextPolicy = (*ShadowPolicy)(nil)
 
 // decisionCounter and identityReporter mirror the unexported
 // policyDecisionCounter/policyIdentityReporter shapes that
@@ -218,6 +219,32 @@ func (s *ShadowPolicy) ChooseActionCtx(ctx *DecisionContext) *pb.PlayerAction {
 	s.enqueueShadow(ctx, action)
 
 	return action
+}
+
+// ChooseActionCtxProv forwards to the primary's provenance-capable path when
+// it has one (remote.HTTPPolicy), still mirroring the decision to the shadow
+// exactly like ChooseActionCtx. A non-provenance primary is by construction
+// a local policy: label it "heuristic".
+func (s *ShadowPolicy) ChooseActionCtxProv(ctx *DecisionContext) (*pb.PlayerAction, DecisionProvenance) {
+	if s == nil || ctx == nil {
+		return nil, DecisionProvenance{}
+	}
+
+	var action *pb.PlayerAction
+	var prov DecisionProvenance
+	if provPolicy, ok := s.primary.(ProvenanceContextPolicy); ok {
+		action, prov = provPolicy.ChooseActionCtxProv(ctx)
+	} else if ctxPolicy, ok := s.primary.(ContextPolicy); ok {
+		action = ctxPolicy.ChooseActionCtx(ctx)
+		prov = DecisionProvenance{Source: "heuristic"}
+	} else if s.primary != nil {
+		action = s.primary.ChooseAction(ctx.State, ctx.Seat)
+		prov = DecisionProvenance{Source: "heuristic"}
+	}
+
+	s.enqueueShadow(ctx, action)
+
+	return action, prov
 }
 
 // enqueueShadow builds the deep-cloned job and performs the non-blocking

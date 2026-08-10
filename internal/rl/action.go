@@ -8,6 +8,13 @@ import (
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
+// ActionCatalogVersion pins the action-ID ↔ meaning mapping below. Paipu v2
+// records raw catalog IDs (PaipuDecision.ChosenID/LegalIDs) stamped with
+// this version; bump it on ANY change to the constants below or to
+// EncodeAction/DecodeActionID semantics, and record the old→new translation
+// in docs. Guarded by TestActionCatalogPinned.
+const ActionCatalogVersion = 1
+
 const (
 	ActionPass         = 0
 	ActionTsumo        = 1

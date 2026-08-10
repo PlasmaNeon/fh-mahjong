@@ -280,6 +280,7 @@ func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
 			wg.Add(1)
 			go func(r *Room) {
 				defer wg.Done()
+				r.markDrained()
 				select {
 				case r.Shutdown <- true:
 				case <-r.Done: // already shutting down on its own
