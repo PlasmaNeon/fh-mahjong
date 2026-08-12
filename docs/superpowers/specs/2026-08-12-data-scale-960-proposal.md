@@ -31,6 +31,42 @@ result returns to consultation.
    seeds) does not overlap prior training ranges (100k–148k, 200k–248k,
    400k–453k, 4M, 8M) or any eval window (≥870000).
 
+## Amendment 2 (Codex consult, 2026-08-12, post-preflight)
+
+The Stage 0 stop clause TRIGGERED: the 960-match preflight OOM'd the 31GB
+box during the first warmup collection at workers=10 (dmesg: workers killed
+at anon-rss 5.1–6.7GB, bench master at 8.4GB) — the process collector
+dispatches one task per worker per collect, so each worker held its entire
+96-match trajectory block. Consult ruling (same canonical session): **approve
+bounded sequential dispatch inside the existing `ParallelB2bCollector`,
+conditionally** — a collection-transport amendment, NOT a change to the
+scientific intervention (the 960/768 hypothesis remains untested; this is
+not a training null).
+
+Conditions (all implemented):
+1. Chunk cap FROZEN at **320 matches** for this lap: preflight seed blocks
+   700000–700319 / 700320–700639 / 700640–700959; analogous contiguous
+   blocks during training.
+2. Canonical row order preserved (chunks in ascending seed-block order,
+   worker results in worker-id order); no reordering scheduler.
+3. Cap exposed and persisted: `PPOConfig.collect_dispatch_chunk`
+   (`--collect-dispatch-chunk` / bench `--dispatch-chunk`), in the resume
+   config echo (logged-not-rejected on change, like `num_workers` — digest-
+   proven semantics-neutral), legacy states back-filled via the echo
+   whitelist. Bench and trainer exercise the identical collector path.
+4. Gauntlet before the canonical bench rerun: unit tests for seed coverage /
+   order / remainder / duplication / error propagation; exact digest parity
+   unchunked-vs-chunked at a non-divisible match count; chunked-digest
+   repeatability. Then the COMPLETE registered 960/mb768 bench at workers
+   10/16/20 with every original gate (digest + rows/labels equality, host
+   peak ≤ ~26GB, CUDA allocated ≤ ~20GB, label coverage, ~zero truncation),
+   recording process-tree RSS and the chunk cap in the artifact.
+5. If chunked collection fails, parent RSS lacks headroom, or the
+   full-rollout CUDA update fails → STOP, return to consultation. Minibatched
+   host-to-device transfer NOT auto-authorized; GoEnvPool NOT authorized.
+6. All scientific protocol elements stay frozen (anchor, 960/768, lr, seeds,
+   150 iters, screenings, kill rule, confirmation window and gates).
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric

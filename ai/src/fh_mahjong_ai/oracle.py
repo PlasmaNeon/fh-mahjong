@@ -1272,6 +1272,30 @@ class ParallelB2bCollector:
             self._procs.append(p)
 
     def collect(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
+        """Collect `matches_per_iter` matches, in bounded sequential dispatch
+        rounds of at most `ppo_config.collect_dispatch_chunk` matches each
+        (0 = one round, the legacy behavior). Chunking bounds per-worker
+        resident trajectory memory at ~chunk/num_workers matches — without it
+        every worker holds its ENTIRE matches/num_workers block before the
+        first result returns, which OOM'd the 31GB box at 960 matches
+        (data-scale-960 Amendment 2, 2026-08-12 consult). Chunks run over
+        contiguous seed blocks in ascending order and concatenate in that
+        order, so together with per-match seeding
+        (`torch.manual_seed(base_seed + m)` in `collect_b2b_rollouts`) the
+        result is bit-identical to a single dispatch — digest-pinned by
+        test_collect_bench's chunk-parity tests."""
+        cap = int(getattr(self.ppo_config, "collect_dispatch_chunk", 0) or 0)
+        if cap <= 0 or cap >= matches_per_iter:
+            return self._collect_dispatch(state_dict, base_seed, matches_per_iter)
+        chunks = []
+        offset = 0
+        while offset < matches_per_iter:
+            count = min(cap, matches_per_iter - offset)
+            chunks.append(self._collect_dispatch(state_dict, int(base_seed + offset), count))
+            offset += count
+        return concat_rollout_batches(chunks, consume=True)
+
+    def _collect_dispatch(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
         counts = _split_counts(matches_per_iter, self.num_workers)
         offset = 0
         dispatched = 0
@@ -1649,6 +1673,11 @@ _RESUME_IGNORED_FIELDS = {
 # --resume-from-state the way every other field does.
 _RESUME_LOGGED_FIELDS = {
     ("ppo_config", "num_workers"),
+    # Same category as num_workers: collect_dispatch_chunk only bounds how
+    # many matches are in flight per dispatch round, and chunk-parity digest
+    # tests prove trajectories are chunk-invariant. Lowering it on resume
+    # after an OOM is a legitimate operational adjustment, not recipe drift.
+    ("ppo_config", "collect_dispatch_chunk"),
 }
 
 # Adversarial round 1 (high): a new field with a dataclass default (e.g.
@@ -1668,9 +1697,9 @@ _RESUME_LOGGED_FIELDS = {
 # today's default for that field instead of raising. Fixed by narrowing the
 # back-fill to an explicit whitelist of PROVEN legacy additions -- fields
 # that shipped with a default AFTER released `train_state.pt` files already
-# existed without them. Nothing is whitelisted for ppo_config/env_config:
-# every field in those sections has been present since each section's first
-# released echo, so a missing key there is never legitimate legacy silence.
+# existed without them. Nothing is whitelisted for env_config: every field
+# there has been present since the section's first released echo, so a
+# missing key there is never legitimate legacy silence.
 #
 # Extend this whitelist when (and only when) a new field ships after
 # released states exist -- add "section": {"field_name"} for it, name it in
@@ -1688,6 +1717,9 @@ _LEGACY_ECHO_ADDITIONS = {
     "model_config": {
         "growth_blocks",       # absent from every train_state.pt saved before deep16-rezero
         "event_output_dim",    # absent from every train_state.pt saved before gru-width
+    },
+    "ppo_config": {
+        "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2
     },
 }
 

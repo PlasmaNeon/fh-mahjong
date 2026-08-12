@@ -296,7 +296,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
              matches: int, base_seed: int, match_mode: str, bridge_kind: str,
              bridge_lib: Optional[str], device: str,
              max_steps_per_episode: Optional[int], event_window: int,
-             worker_target=None, full_cycle: Optional[FullCycleSettings] = None) -> dict:
+             worker_target=None, full_cycle: Optional[FullCycleSettings] = None,
+             dispatch_chunk: int = 0) -> dict:
     """Run the full worker-count benchmark. Returns
     `{worker_count: {"startup_seconds": float, "steady_seconds": float,
     "digest": str}, "all_digests_equal": bool}`. With `full_cycle` set, each
@@ -322,7 +323,7 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     # task, exactly as multi-worker `train_b2b` does.
     state_dict = cpu_state_snapshot(warm_started)
     ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
-                           device="cpu")
+                           device="cpu", collect_dispatch_chunk=int(dispatch_chunk))
     results: dict[int, dict] = {}
     for w in workers:
         sampler: Optional[_PeakRssSampler] = None
@@ -359,7 +360,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
             results[w]["full_cycle"] = fc
     digests = {r["digest"] for r in results.values()}
     report = {"results": results, "all_digests_equal": len(digests) <= 1,
-             "model_config": effective_model_config}
+             "model_config": effective_model_config,
+             "dispatch_chunk_matches": int(dispatch_chunk)}
     if full_cycle is not None:
         invariant_tuples = {
             tuple(r["full_cycle"][k] for k in _FULL_CYCLE_INVARIANT_KEYS)
@@ -432,6 +434,11 @@ def main() -> None:
                         "worker — it does NOT cover train_b2b's num_workers<=1 direct path, "
                         "which collects at this config's device, e.g. GPU)")
     p.add_argument("--event-window", type=int, default=128)
+    p.add_argument("--dispatch-chunk", type=int, default=0,
+                   help="max matches per sequential dispatch round in the collector "
+                        "(PPOConfig.collect_dispatch_chunk); bounds per-worker resident "
+                        "trajectory memory at ~chunk/workers matches; 0 = single dispatch "
+                        "(legacy). data-scale-960 Amendment 2 freezes 320 for that lap")
     p.add_argument("--full-cycle", action="store_true",
                    help="after each worker count's steady collection, run GAE + one real "
                         "ppo_update on a fresh model copy and measure the FULL iteration: "
@@ -497,7 +504,8 @@ def main() -> None:
                        match_mode=args.match_mode, bridge_kind=args.bridge_kind,
                        bridge_lib=args.bridge_lib, device=args.device,
                        max_steps_per_episode=args.max_steps_per_episode,
-                       event_window=args.event_window, full_cycle=full_cycle)
+                       event_window=args.event_window, full_cycle=full_cycle,
+                       dispatch_chunk=args.dispatch_chunk)
     results = report["results"]
     _print_table(results)
     if full_cycle is not None:
@@ -528,6 +536,7 @@ def main() -> None:
             for w, r in results.items()
         }
         payload["all_digests_equal"] = report["all_digests_equal"]
+        payload["dispatch_chunk_matches"] = report["dispatch_chunk_matches"]
         if full_cycle is not None:
             payload["rows_and_labels_equal"] = report["rows_and_labels_equal"]
         args.json.write_text(json.dumps(payload, indent=2))
