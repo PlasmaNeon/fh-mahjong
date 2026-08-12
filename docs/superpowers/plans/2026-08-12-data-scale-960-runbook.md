@@ -47,11 +47,20 @@ every burned or reserved window — prior training ranges (100k–148k,
 from base seed 500000 × 150 iters × 960), screening (910000+), and the
 confirmation window (1190000+).
 
+**Amendment 2 (2026-08-12):** the first bench run OOM'd the box at
+workers=10 — single-task dispatch made every worker hold its whole 96-match
+block (dmesg: workers at 5.1–6.7GB anon-rss, master 8.4GB, kernel kills).
+The consult approved bounded sequential dispatch (`--dispatch-chunk`,
+`PPOConfig.collect_dispatch_chunk`), digest-proven chunk-invariant; the cap
+is FROZEN at **320** for this lap and must appear in both this bench command
+and the launch command. See the spec's Amendment 2 for the full conditions.
+
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-collect-bench \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
   --workers 10,16,20 \
   --matches 960 --base-seed 700000 \
+  --dispatch-chunk 320 \
   --match-mode chongci --max-steps-per-episode 4000 \
   --event-window 128 \
   --model-residual-blocks 4 --model-privileged-critic --model-aux-heads \
@@ -147,6 +156,7 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --checkpoint-dir /root/fh-mahjong-runs/data-scale-960/ckpt \
   --base-seed 500000 --iterations 150 \
   --matches-per-iter 960 --minibatch-size 768 \
+  --collect-dispatch-chunk 320 \
   --num-workers <from §1 — smallest acceptable count with memory headroom> \
   --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 0.99 \
   --match-mode chongci --max-steps-per-episode 4000 --device cuda \
@@ -155,6 +165,8 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
 
 The ONLY deltas from the gru-width/champion launch are
 `--matches-per-iter 960 --minibatch-size 768` (the coupled intervention),
+`--collect-dispatch-chunk 320` (Amendment 2 collection transport —
+digest-proven semantics-neutral, frozen for this lap),
 `--base-seed 500000` (fresh range, verified non-overlapping), the run dir,
 and no architecture surgery flag (unchanged net). lr is FROZEN at 2e-5 per
 the ratification — a null is terminal for this protocol; there is no
@@ -181,16 +193,18 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --checkpoint-dir /root/fh-mahjong-runs/data-scale-960/ckpt \
   --base-seed 500000 --iterations 150 \
   --matches-per-iter 960 --minibatch-size 768 \
-  --num-workers <same or adjusted — the one semantics-neutral flag> \
+  --collect-dispatch-chunk 320 \
+  --num-workers <same or adjusted — semantics-neutral, like the chunk cap> \
   --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 0.99 \
   --match-mode chongci --max-steps-per-episode 4000 --device cuda \
   --train-state-every 5 \
   --resume-from-state /root/fh-mahjong-runs/data-scale-960/ckpt/train_state.pt
 ```
 
-Every flag except `--num-workers` must match the launch exactly (the resume
-validates against the saved `config_echo` and raises on drift, naming both
-values). The bridge .so is content-pinned across resumes; do not rebuild it
+Every flag except `--num-workers` and `--collect-dispatch-chunk` (both
+semantics-neutral collection sharding, logged rather than rejected) must
+match the launch exactly (the resume validates against the saved
+`config_echo` and raises on drift, naming both values). The bridge .so is content-pinned across resumes; do not rebuild it
 mid-lap.
 
 ## 5. Screening

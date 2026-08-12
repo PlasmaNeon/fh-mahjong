@@ -167,6 +167,104 @@ def test_injected_ppo_field_perturbation_makes_digests_differ(tmp_path, field):
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
 
 
+def test_chunked_dispatch_digest_matches_single_dispatch(tmp_path):
+    """Amendment 2 exact-parity gauntlet: bounded sequential dispatch must
+    reproduce the single-dispatch batch BIT FOR BIT (per-match seeding makes
+    trajectories chunk-invariant), at a match count the chunk cap does NOT
+    divide (4 matches, cap 3 -> chunks of 3 + 1), and repeatably."""
+    kwargs = _bench_kwargs(tmp_path, [2])  # matches=4
+    single = collect_bench.run_bench(**kwargs)
+    chunked = collect_bench.run_bench(**kwargs, dispatch_chunk=3)
+    chunked_again = collect_bench.run_bench(**kwargs, dispatch_chunk=3)
+    assert single["results"][2]["digest"] == chunked["results"][2]["digest"]
+    assert chunked["results"][2]["digest"] == chunked_again["results"][2]["digest"]
+
+
+def test_chunk_dispatch_covers_seed_blocks_in_order(monkeypatch):
+    """Chunk accounting: contiguous seed blocks, canonical order, exact
+    remainder handling, no duplication or omission, and the legacy single
+    dispatch when the cap is 0 or >= the match count."""
+    from dataclasses import replace as dc_replace
+
+    from fh_mahjong_ai.oracle import ParallelB2bCollector
+
+    env = EnvConfig(bridge_kind="mock")
+    mcfg = ModelConfig(**_SMALL, event_window=8)
+
+    def make_collector(cap):
+        return ParallelB2bCollector(
+            env, mcfg, dc_replace(PPOConfig(device="cpu"), collect_dispatch_chunk=cap), 2)
+
+    def install_recorder(collector, calls):
+        def fake(state_dict, base_seed, matches):
+            calls.append((base_seed, matches))
+            batch = _minimal_batch()
+            batch.actions = np.zeros(matches, dtype=np.int64)
+            batch.planes = np.zeros((matches, 1), dtype=np.float32)
+            batch.scalars = np.zeros((matches, 1), dtype=np.float32)
+            batch.action_mask = np.ones((matches, 1), dtype=np.int8)
+            batch.old_logprobs = np.zeros(matches, dtype=np.float32)
+            batch.values = np.zeros(matches, dtype=np.float32)
+            batch.rewards = np.zeros(matches, dtype=np.float32)
+            batch.dones = np.ones(matches, dtype=np.float32)
+            batch.events = np.zeros((matches, 1), dtype=np.uint32)
+            batch.event_lengths = np.ones(matches, dtype=np.int32)
+            batch.dealin_labels = np.zeros(matches, dtype=np.float32)
+            batch.rank_labels = np.zeros(matches, dtype=np.int64)
+            return batch
+        monkeypatch.setattr(collector, "_collect_dispatch", fake)
+
+    calls: list = []
+    collector = make_collector(320)
+    install_recorder(collector, calls)
+    batch = collector.collect({}, 700000, 960)
+    assert calls == [(700000, 320), (700320, 320), (700640, 320)]
+    assert len(batch) == 960
+
+    calls.clear()
+    collector = make_collector(3)
+    install_recorder(collector, calls)
+    batch = collector.collect({}, 100, 7)
+    assert calls == [(100, 3), (103, 3), (106, 1)]
+    assert len(batch) == 7
+
+    for cap in (0, 7, 100):
+        calls.clear()
+        collector = make_collector(cap)
+        install_recorder(collector, calls)
+        collector.collect({}, 100, 7)
+        assert calls == [(100, 7)], f"cap={cap}"
+
+
+def test_chunk_dispatch_propagates_later_chunk_failure(monkeypatch):
+    from dataclasses import replace as dc_replace
+
+    from fh_mahjong_ai.oracle import ParallelB2bCollector
+
+    env = EnvConfig(bridge_kind="mock")
+    mcfg = ModelConfig(**_SMALL, event_window=8)
+    collector = ParallelB2bCollector(
+        env, mcfg, dc_replace(PPOConfig(device="cpu"), collect_dispatch_chunk=2), 2)
+    calls: list = []
+
+    def fake(state_dict, base_seed, matches):
+        calls.append((base_seed, matches))
+        if len(calls) == 2:
+            raise RuntimeError("worker died in chunk 2")
+        batch = _minimal_batch()
+        return batch
+
+    monkeypatch.setattr(collector, "_collect_dispatch", fake)
+    with pytest.raises(RuntimeError, match="chunk 2"):
+        collector.collect({}, 0, 4)
+
+
+def test_cli_dispatch_chunk_flag_passes(tmp_path):
+    result = _run_cli(tmp_path, ["--dispatch-chunk", "3"])
+    assert result.returncode == 0, result.stderr
+    assert "all_digests_equal: True" in result.stdout
+
+
 def _full_cycle_settings():
     return collect_bench.FullCycleSettings(
         minibatch_size=8, ppo_epochs=1, gamma=0.99, gae_lambda=0.95,

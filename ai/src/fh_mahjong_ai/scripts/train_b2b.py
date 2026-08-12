@@ -37,6 +37,14 @@ def main() -> None:
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--event-window", type=int, default=128)
+    p.add_argument("--collect-dispatch-chunk", type=int, default=0,
+                   help="max matches per sequential dispatch round in the parallel "
+                        "collector; bounds per-worker resident trajectory memory at "
+                        "~chunk/workers matches without changing collected data "
+                        "(per-match seeding; digest-proven by fh-mj-collect-bench "
+                        "--dispatch-chunk). 0 = single dispatch (legacy). Semantics-"
+                        "neutral on resume like --num-workers (logged, not rejected). "
+                        "data-scale-960 Amendment 2 freezes 320 for that lap")
     p.add_argument("--privileged-critic", dest="privileged_critic", action="store_true", default=True,
                    help="train a privileged-info critic branch (default: on)")
     p.add_argument("--no-privileged-critic", dest="privileged_critic", action="store_false")
@@ -153,7 +161,8 @@ def main() -> None:
                        ppo_epochs=args.ppo_epochs, minibatch_size=args.minibatch_size,
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
-                       num_workers=num_workers)
+                       num_workers=num_workers,
+                       collect_dispatch_chunk=args.collect_dispatch_chunk)
     # Adversarial round 6, high finding: --event-window (this script's own
     # flag) is NOT --model-event-window (model_config_args's flag, default
     # 0) -- threading the effective window straight into

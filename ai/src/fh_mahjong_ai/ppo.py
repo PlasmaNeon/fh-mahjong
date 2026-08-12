@@ -127,6 +127,14 @@ class PPOConfig:
     match_mode: str = "chongci"
     max_steps_per_episode: Optional[int] = 4000
     num_workers: int = 1
+    # Max matches per sequential dispatch round in ParallelB2bCollector; 0 =
+    # single dispatch (legacy). Bounds PER-WORKER resident trajectory memory
+    # at ~chunk/num_workers matches without changing collected data: matches
+    # are seeded per-match, so trajectories are provably chunk-invariant
+    # (fh-mj-collect-bench digest parity). Added for data-scale-960
+    # Amendment 2 (2026-08-12 consult) — the 960-match preflight OOM'd a
+    # 31GB box when each of 10 workers held its full 96-match block.
+    collect_dispatch_chunk: int = 0
     collector: str = "process"   # "process" (spawn workers) | "batched" (env pool + batched forward)
     pool_slots: int = 128        # concurrent env-pool slots for collector="batched"
     pool_max_size: int = 1
