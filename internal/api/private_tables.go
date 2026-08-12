@@ -464,6 +464,7 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 	table, err := s.Matchmaker.StartPrivateTable(tableID, userID.(uint))
 	if err != nil {
 		status := http.StatusBadRequest
+		message := err.Error()
 		switch {
 		case errors.Is(err, ErrPrivateTableHostOnly):
 			status = http.StatusForbidden
@@ -471,12 +472,26 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 			status = http.StatusNotFound
 		case errors.Is(err, ErrPrivateTableAlreadyStarted):
 			status = http.StatusConflict
+		case errors.Is(err, ErrPrivateTableChangedDuringStart):
+			status = http.StatusConflict
 		case errors.Is(err, ErrPrivateTablePersistFailed):
 			status = http.StatusInternalServerError
 		case errors.Is(err, ErrServerDraining):
 			status = http.StatusServiceUnavailable
+		case errors.Is(err, ErrRLWarmupFailed):
+			// The RL policy service could not be warmed: refuse rather than
+			// start a room whose RL seats would fall back to the heuristic.
+			// Retryable — the host can simply press start again.
+			//
+			// The wrapped detail names the INTERNAL policy endpoint (a
+			// transport error renders as `Post "http://policy.internal:8765/
+			// warmup": ...`), so it never goes on the wire: the client gets
+			// the sentinel text only, and the full error is already logged
+			// server-side by Matchmaker.warmRLEndpoints.
+			status = http.StatusServiceUnavailable
+			message = ErrRLWarmupFailed.Error()
 		}
-		respondError(c, status, err.Error())
+		respondError(c, status, message)
 		return
 	}
 

@@ -75,8 +75,12 @@ class _Server:
         logit_export_token: str | None = None,
         admin_token: str | None = None,
         evaluate_token: str | None = None,
+        policy: CheckpointPolicy | None = None,
     ) -> None:
-        policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+        # `policy` lets a test serve a specifically-configured policy (e.g. a
+        # sampling one); the default is the plain greedy checkpoint policy.
+        if policy is None:
+            policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
         self.holder = PolicyHolder(
             policy, manifest_path=manifest_path, logit_export_token=logit_export_token, admin_token=admin_token,
             evaluate_token=evaluate_token,
@@ -1583,3 +1587,157 @@ def test_http_evaluate_non_privileged_checkpoint_keeps_values(tmp_path: Path) ->
     assert status == 200, data
     assert data["values_calibrated"] is True
     assert isinstance(data["results"][0]["value"], float)
+
+
+# --- POST /warmup ------------------------------------------------------------------------
+# Part 1 of the policy-warmup feature: a dedicated endpoint that performs a
+# genuine forward pass so the Go backend can eliminate serve_policy's
+# post-idle cold start BEFORE admitting an RL room. Part 2 (the Go-side
+# warmup manager that calls this) is separate.
+
+
+def test_http_warmup_returns_200_with_all_fields_matching_healthz(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # no evaluate token -> warmup open
+    try:
+        status, data = server.request("POST", "/warmup", {})
+        healthz_status, healthz_data = server.request("GET", "/healthz")
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["warmed"] is True
+    assert data["checkpoint_path"] == healthz_data["checkpoint"]
+    assert data["checkpoint_step"] == healthz_data["checkpoint_step"]
+    assert data["checkpoint_sha256"] == healthz_data["checkpoint_sha256"]
+    assert data["contract_version"] == healthz_data["contract_version"]
+    assert data["event_window"] == healthz_data["event_window"] == 0
+    assert isinstance(data["latency_ms"], float)
+    assert data["latency_ms"] > 0
+
+
+def test_http_warmup_accepts_empty_body(tmp_path: Path) -> None:
+    """POST /warmup with no body at all (not even '{}') must still work —
+    its content is always ignored."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request("POST", "/warmup", None)
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["warmed"] is True
+
+
+def test_http_warmup_disabled_token_no_header_rejected(tmp_path: Path) -> None:
+    """When an evaluate token IS configured, /warmup piggybacks on it —
+    mirroring /evaluate's 403 status for a missing bearer header."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
+    try:
+        status, data = server.request("POST", "/warmup", {})
+    finally:
+        server.close()
+
+    assert status == 403
+    assert "error" in data
+
+
+def test_http_warmup_wrong_token_rejected(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
+    try:
+        status, data = server.request(
+            "POST", "/warmup", {}, headers=_bearer("wrong-token"),
+        )
+    finally:
+        server.close()
+
+    assert status == 403
+    assert "error" in data
+
+
+def test_http_warmup_correct_token_succeeds(tmp_path: Path) -> None:
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
+    try:
+        status, data = server.request(
+            "POST", "/warmup", {}, headers=_bearer("eval-token"),
+        )
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["warmed"] is True
+
+
+def test_http_warmup_open_when_no_token_configured(tmp_path: Path) -> None:
+    """No --evaluate-token configured at all: /warmup must stay open and
+    unauthenticated — the primary production instance runs tokenless, and
+    warmup exists precisely to serve it."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    server = _Server(checkpoint, tmp_path / "manifest.json")  # evaluate_token defaults None
+    try:
+        status, data = server.request("POST", "/warmup", {})
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["warmed"] is True
+
+
+def test_http_warmup_does_not_advance_the_sampling_rng(tmp_path: Path) -> None:
+    """/warmup's action is thrown away, so it must NOT consume draws from the
+    sampling RNG: otherwise a warmed server would play a DIFFERENT game than
+    an unwarmed one (and every restart-plus-warm would resample), turning an
+    observability feature into a behavioural change. The warmup forward pass
+    therefore takes the greedy path (`choose(..., force_greedy=True)`).
+
+    Pinned end to end: the sampled /act sequence after two /warmup calls must
+    be byte-identical to the same sequence with no warmup at all."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+
+    def sampled_sequence(warmups: int) -> tuple[list[int], tuple]:
+        policy = CheckpointPolicy.from_checkpoint(
+            checkpoint, sample_temperature=1.0, seed=20260812,
+        )
+        server = _Server(checkpoint, tmp_path / "manifest.json", policy=policy)
+        try:
+            for _ in range(warmups):
+                status, data = server.request("POST", "/warmup", {})
+                assert status == 200, data
+            actions = []
+            for _ in range(12):
+                status, data = server.request(
+                    "POST", "/act", _observation_payload([0, 1, 2, 3, 4]),
+                )
+                assert status == 200, data
+                actions.append(data["action_id"])
+        finally:
+            server.close()
+        return actions, policy._rng.bit_generator.state["state"]["state"]
+
+    warmed_actions, warmed_rng = sampled_sequence(warmups=2)
+    cold_actions, cold_rng = sampled_sequence(warmups=0)
+
+    assert warmed_actions == cold_actions, "warmup shifted the sampling stream"
+    assert warmed_rng == cold_rng, "warmup consumed RNG draws"
+    # Guard the guard: the policy really is sampling, so the equality above is
+    # a statement about the RNG, not about a degenerate all-greedy run.
+    assert len(set(warmed_actions)) > 1, "sampling policy produced a constant action"
+
+
+def test_http_warmup_event_window_checkpoint_succeeds(tmp_path: Path) -> None:
+    """An event model (event_window > 0) must also get a genuine forward
+    pass, exercising the event encoder path, not just window-0 models."""
+    checkpoint = _save_checkpoint(tmp_path, _event_model_config(window=8))
+    server = _Server(checkpoint, tmp_path / "manifest.json")
+    try:
+        status, data = server.request("POST", "/warmup", {})
+    finally:
+        server.close()
+
+    assert status == 200, data
+    assert data["warmed"] is True
+    assert data["event_window"] == 8

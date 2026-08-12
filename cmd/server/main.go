@@ -218,6 +218,25 @@ func main() {
 	}
 	log.Printf("Private-room RL agent endpoint: %s (offered when reachable)", rlPolicyURL)
 
+	// Cold-start gate: warm every configured policy endpoint (primary, plus the
+	// shadow candidate when configured) with a real forward pass BEFORE the
+	// first RL private room is admitted, so no in-match /act ever pays the
+	// cold-start cost and silently falls back to the heuristic. Warmup is
+	// endpoint-scoped and warm-once per process (see
+	// internal/bot/remote/warmup.go), with its own 10s budget rather than the
+	// 750ms /act budget a cold forward pass would blow.
+	//
+	// RL_AGENT_SHADOW_POLICY_TOKEN carries the candidate service's evaluate
+	// token: serve_policy.py token-gates /warmup with its FH_MJ_EVALUATE_TOKEN
+	// whenever one is configured, so the backend must be given the SAME value
+	// here (empty = the service runs tokenless and /warmup is open, which is
+	// the primary production service's posture).
+	shadowPolicyToken := strings.TrimSpace(os.Getenv("RL_AGENT_SHADOW_POLICY_TOKEN"))
+	warmupManager := remote.NewWarmupManager(nil).
+		WithWarmupTTL(warmupTTL()).
+		WithWarmupLogger(log.Printf)
+	matchmaker.WarmRLEndpoints = newRLWarmupHook(warmupManager, rlPolicyURL, shadowPolicyURL, shadowPolicyToken)
+
 	// When using the local default endpoint, bring the policy server up as a
 	// managed child process so the RL agent connects automatically on boot.
 	// Skipped when an external endpoint is configured (AI_BOT_POLICY_URL or
@@ -308,6 +327,58 @@ func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEven
 		}
 		return bot.NewPolicy(d)
 	}
+}
+
+// newRLWarmupHook builds the api.Matchmaker.WarmRLEndpoints closure: warm the
+// primary endpoint first (it serves every real decision), then the shadow
+// candidate when one is configured. BOTH must be warm before an RL room is
+// admitted — a cold shadow candidate would time out on its first mirrored
+// decision and pollute the shadow-error gate the rollout runbook reads. The
+// primary is warmed tokenless (production serve_policy.py runs without an
+// evaluate token, which leaves /warmup open); the shadow candidate sends
+// shadowToken when non-empty. Split out from main() so it is directly
+// testable.
+func newRLWarmupHook(manager *remote.WarmupManager, rlPolicyURL, shadowPolicyURL, shadowToken string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := manager.Warm(ctx, rlPolicyURL, ""); err != nil {
+			return fmt.Errorf("primary policy endpoint: %w", err)
+		}
+		if shadowPolicyURL == "" {
+			return nil
+		}
+		if err := manager.Warm(ctx, shadowPolicyURL, shadowToken); err != nil {
+			return fmt.Errorf("shadow policy endpoint: %w", err)
+		}
+		return nil
+	}
+}
+
+// defaultWarmupTTL is how long a successful warmup is trusted before the
+// endpoint is warmed again. It is deliberately NOT "once per process": the
+// policy service is a separate process (a Zeabur service that is redeployed,
+// restarted, and evicted independently of this backend), so a warm-once
+// manager would keep reporting "warm" against a service that has since gone
+// cold — the exact failure the warmup gate exists to prevent, with the gate
+// showing green. Re-warming costs one forward pass per 15 idle minutes.
+const defaultWarmupTTL = 15 * time.Minute
+
+// warmupTTL reads RL_AGENT_WARMUP_TTL (a time.ParseDuration string, e.g.
+// "15m"). Unset -> defaultWarmupTTL. An EXPLICIT "0" (only when the env var is
+// actually set) disables the TTL, i.e. warm exactly once per process — an
+// opt-in for a fixed, never-restarted policy process. Unparseable or negative
+// values fall back to the default rather than being silently reinterpreted as
+// "disabled".
+func warmupTTL() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("RL_AGENT_WARMUP_TTL"))
+	if raw == "" {
+		return defaultWarmupTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		log.Printf("ignoring invalid RL_AGENT_WARMUP_TTL %q (using default %s)", raw, defaultWarmupTTL)
+		return defaultWarmupTTL
+	}
+	return d
 }
 
 func getEnv(key, fallback string) string {
