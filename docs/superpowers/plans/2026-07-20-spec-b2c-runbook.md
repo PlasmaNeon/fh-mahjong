@@ -329,7 +329,33 @@ Enable shadow mode on the live `RL Agent` seat: set on the PRODUCTION backend
 ```
 RL_AGENT_SHADOW_POLICY_URL=http://127.0.0.1:8766/act
 RL_AGENT_SHADOW_EVENT_WINDOW=128
+# Only when the candidate service runs with --evaluate-token: /warmup
+# piggybacks on that token, so the backend must be given the SAME value or
+# the shadow endpoint can never be warmed (and the table start is refused).
+RL_AGENT_SHADOW_POLICY_TOKEN=<candidate FH_MJ_EVALUATE_TOKEN>
+# Optional. Default is 15m: a warmed endpoint is re-warmed after that long,
+# so a policy-service redeploy/restart mid-window cannot leave the gate
+# green against a cold service. Set to 0 only to disable the TTL entirely.
+RL_AGENT_WARMUP_TTL=15m
 ```
+
+**Warmup precondition.** RL private tables are admission-gated on `POST
+/warmup`: the backend warms the primary AND the shadow endpoint before the
+first RL room of the window starts (a refused start returns `503 RL agent is
+not ready` and the table stays configuring — just press Start again). This is
+what makes "no cold-start decision" a property of the window rather than a
+hope, and it is why the criteria below can be strict about firsts. Every
+attempt logs one grep-able line:
+
+```
+grep 'policy warmup:' <backend logs>
+# policy warmup: endpoint="http://127.0.0.1:8766/act" ok=true latency_ms=... \
+#   server_latency_ms=... checkpoint_sha=... checkpoint_step=... event_window=128
+```
+
+Capture these lines (both endpoints, `ok=true`, and the `checkpoint_sha` they
+report) in the progress note: they are part of the gate's evidence, and the
+`checkpoint_sha` independently confirms WHICH checkpoint each side served.
 
 pointing at the candidate service verified above (not a reload of the
 production `policy` service), and restart the backend. `bot.ShadowPolicy`
@@ -340,12 +366,23 @@ shadow_latency_ms, shadow_error?}` per decision. Because the primary is
 untouched, this is a true iter_075-vs-iter275 shadow comparison, not a
 comparison against fallback traffic.
 
-Exit criteria (ALL required, over >= 50 completed games):
-- zero shadow-side errors/fallbacks (`shadow_error` empty on every logged
-  decision; dropped-request counter is informational, not a failure — the
-  shadow must never block play, but a drop should still be rare at
-  production event volume)
-- p95 shadow act latency < 200 ms
+Exit criteria — RATIFIED STRICT (ALL required, over >= 50 completed games).
+The warmup gate removed the cold-start excuse that previously justified
+tolerating a first-decision outlier, so nothing is exempted any more:
+- **zero primary fallbacks** (`HTTPPolicy.Stats().Fallbacks == 0`) — the
+  primary must serve every decision itself
+- **zero shadow-side errors** (`shadow_error` empty on every logged decision)
+- **zero drops** — the drop counter must read 0, not merely "low". It is no
+  longer informational: with both endpoints pre-warmed there is no legitimate
+  source of backpressure at production event volume, so a drop means
+  something real went wrong. (The shadow still never blocks play; the gate
+  is on the counter, not on the mechanism.)
+- **p95 < 200 ms across ALL real decisions, INCLUDING the first decision of
+  every match/round** — no warm-up allowance, no discarding of firsts. The
+  `/warmup` pass already paid that cost off the critical path.
+- **the counters were restarted at zero for this window** — record the
+  restart (or explicit reset) in the progress note; a count carried over
+  from a pre-warmup run invalidates all four criteria above
 - disagreement rate recorded in the progress note (RECORDED, not judged —
   two different policies are expected to disagree; this is not a gate on
   the rate itself)

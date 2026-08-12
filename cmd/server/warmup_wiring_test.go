@@ -98,11 +98,15 @@ func TestNewRLWarmupHook_NoShadowConfigured(t *testing.T) {
 }
 
 func TestWarmupTTLEnv(t *testing.T) {
+	// Unset -> the 15m default (a warm-once manager would report warm across
+	// a policy-service restart). Only an EXPLICIT "0" disables the TTL.
 	cases := map[string]time.Duration{
-		"":      0,
+		"":      defaultWarmupTTL,
 		"15m":   15 * time.Minute,
-		"bogus": 0,
-		"-1m":   0,
+		"30s":   30 * time.Second,
+		"0":     0,
+		"bogus": defaultWarmupTTL,
+		"-1m":   defaultWarmupTTL,
 	}
 	for raw, want := range cases {
 		t.Run("ttl="+raw, func(t *testing.T) {

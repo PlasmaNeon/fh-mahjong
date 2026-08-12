@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,12 +37,17 @@ var (
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
 	ErrServerDraining             = errors.New("server is shutting down")
 	ErrRLWarmupFailed             = errors.New("RL agent is not ready")
+	// ErrPrivateTableChangedDuringStart is returned when the table was
+	// reconfigured while StartPrivateTable had released table.mu to warm the
+	// policy endpoints. Retryable: the host simply starts again, against the
+	// new configuration.
+	ErrPrivateTableChangedDuringStart = errors.New("table configuration changed during start; try again")
 )
 
 // rlWarmupBudget bounds how long StartPrivateTable will block waiting for the
-// RL policy endpoints to warm. It covers BOTH endpoints (primary + shadow) and
-// only ever elapses on the very first RL room of the process — warmup is
-// endpoint-scoped and warm-once (see internal/bot/remote/warmup.go).
+// RL policy endpoints to warm. It covers BOTH endpoints (primary + shadow) and,
+// after the first RL room, only elapses again once the warmup TTL has expired —
+// warmup is endpoint-scoped (see internal/bot/remote/warmup.go).
 const rlWarmupBudget = 25 * time.Second
 
 // InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
@@ -390,24 +396,72 @@ func tableHasRLSeat(table *PrivateTable) bool {
 	return false
 }
 
-// warmRLEndpointsForTable blocks (up to rlWarmupBudget) until every configured
-// policy endpoint is warm, but only for tables that actually seat the RL agent.
-// Tables with no RL seat never touch the policy service at all, so they must
-// not pay — or fail on — a warmup. A warmup error is wrapped in
-// ErrRLWarmupFailed so the handler can map it to a clear, user-visible 503
-// instead of starting a room whose "RL" seats would fall back to the heuristic.
-// Caller must hold table.mu.
-func (m *Matchmaker) warmRLEndpointsForTable(table *PrivateTable) error {
-	if m == nil || m.WarmRLEndpoints == nil || !tableHasRLSeat(table) {
+// seatSignature renders the seat configuration as a comparable string, used to
+// detect a table being reconfigured while StartPrivateTable had released
+// table.mu for the warmup. Caller must hold table.mu.
+func seatSignature(table *PrivateTable) string {
+	if table == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, s := range table.Seats {
+		fmt.Fprintf(&b, "%s/%d/%d|", s.Kind, s.UserID, int32(s.Difficulty))
+	}
+	return b.String()
+}
+
+// validateStartLocked runs the cheap, purely-in-memory start validation:
+// the table is still configuring, the requester is the host, and all four
+// seats are filled. Caller must hold table.mu. Run BEFORE the warmup (to
+// avoid warming for a start that would be refused anyway) and again AFTER it
+// (the lock is released while warming, so any of these can have changed).
+func validateStartLocked(table *PrivateTable, requesterUserID uint) error {
+	if table.State != "configuring" {
+		return ErrPrivateTableAlreadyStarted
+	}
+	if requesterUserID != table.HostUserID {
+		return ErrPrivateTableHostOnly
+	}
+	return table.canStart()
+}
+
+// warmRLEndpoints blocks (up to rlWarmupBudget) until every configured policy
+// endpoint is warm. It must be called WITHOUT holding table.mu: a cold warm
+// costs seconds, and holding the table lock across it would stall every
+// join/seat/state handler for that table (and serialize N impatient Start
+// clicks into N sequential waits). tableID is for telemetry only.
+//
+// A warmup error is wrapped in ErrRLWarmupFailed so the handler can map it to
+// a 503 instead of starting a room whose "RL" seats would fall back to the
+// heuristic. The wrapped detail (which can name the internal policy endpoint)
+// is for logs — the HTTP layer sanitizes it, see handlePrivateTableStart.
+func (m *Matchmaker) warmRLEndpoints(tableID string) error {
+	if m == nil || m.WarmRLEndpoints == nil {
 		return nil
 	}
 	warmCtx, cancel := context.WithTimeout(context.Background(), rlWarmupBudget)
 	defer cancel()
 	if err := m.WarmRLEndpoints(warmCtx); err != nil {
-		log.Printf("policy warmup: refusing RL table %s start: %v", table.TableID, err)
+		log.Printf("policy warmup: refusing RL table %s start: %v", tableID, err)
 		return fmt.Errorf("%w: %w", ErrRLWarmupFailed, err)
 	}
 	return nil
+}
+
+// prepareStartUnderLock does the cheap start validation under table.mu and
+// reports whether the table needs an RL warmup, along with the seat signature
+// observed while the lock was held. The caller warms with the lock RELEASED
+// and then re-validates against this signature.
+func (m *Matchmaker) prepareStartUnderLock(table *PrivateTable, requesterUserID uint) (needWarm bool, signature string, err error) {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+	if verr := validateStartLocked(table, requesterUserID); verr != nil {
+		return false, "", verr
+	}
+	// Tables with no RL seat never touch the policy service at all, so they
+	// must neither pay for — nor fail on — a warmup.
+	needWarm = m != nil && m.WarmRLEndpoints != nil && tableHasRLSeat(table)
+	return needWarm, seatSignature(table), nil
 }
 
 // legacyRulesetAliases maps deprecated ruleset queue keys to their current
@@ -686,27 +740,39 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 	var humanSeats map[uint32]uint
 	var matchID string
 
-	err := func() error {
+	// Admission gate: an RL table only starts once the policy service is warm,
+	// so the first in-match decision never eats the cold-start cost (which
+	// would blow the 750ms /act budget and silently fall back to the
+	// heuristic). The warm can take seconds, so it runs with table.mu
+	// RELEASED: (1) cheap validation under the lock, (2) unlock, (3) warm,
+	// (4) re-acquire and re-validate everything below. Holding the lock across
+	// the warm would freeze that table's join/seat/state handlers for the full
+	// budget and serialize repeated Start clicks into sequential waits.
+	needWarm, startSignature, err := m.prepareStartUnderLock(table, requesterUserID)
+	if err != nil {
+		return nil, err
+	}
+	if needWarm {
+		if werr := m.warmRLEndpoints(tableID); werr != nil {
+			return nil, werr
+		}
+	}
+
+	err = func() error {
 		table.mu.Lock()
 		defer table.mu.Unlock()
 
-		if table.State != "configuring" {
-			return ErrPrivateTableAlreadyStarted
+		// Re-validate: everything checked before the warm could have changed
+		// while the lock was released (another start won the race, seats were
+		// reconfigured, a human left). Any change is a normal validation
+		// failure — in particular a seat change means the warm decision itself
+		// was made against a configuration that no longer exists, so the host
+		// must start again (and be re-gated).
+		if verr := validateStartLocked(table, requesterUserID); verr != nil {
+			return verr
 		}
-		if requesterUserID != table.HostUserID {
-			return ErrPrivateTableHostOnly
-		}
-		if err := table.canStart(); err != nil {
-			return err
-		}
-		// Admission gate: an RL table only starts once the policy service is
-		// warm, so the first in-match decision never eats the cold-start cost
-		// (which would blow the 750ms /act budget and silently fall back to
-		// the heuristic). No-op for tables without an RL seat, and — thanks to
-		// the warmup manager's warm-once semantics — for every RL table after
-		// the first one of this process.
-		if err := m.warmRLEndpointsForTable(table); err != nil {
-			return err
+		if seatSignature(table) != startSignature {
+			return ErrPrivateTableChangedDuringStart
 		}
 
 		seatPolicies := make(map[uint32]bot.Policy)

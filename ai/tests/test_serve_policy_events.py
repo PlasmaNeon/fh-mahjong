@@ -75,8 +75,12 @@ class _Server:
         logit_export_token: str | None = None,
         admin_token: str | None = None,
         evaluate_token: str | None = None,
+        policy: CheckpointPolicy | None = None,
     ) -> None:
-        policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+        # `policy` lets a test serve a specifically-configured policy (e.g. a
+        # sampling one); the default is the plain greedy checkpoint policy.
+        if policy is None:
+            policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
         self.holder = PolicyHolder(
             policy, manifest_path=manifest_path, logit_export_token=logit_export_token, admin_token=admin_token,
             evaluate_token=evaluate_token,
@@ -1681,6 +1685,47 @@ def test_http_warmup_open_when_no_token_configured(tmp_path: Path) -> None:
 
     assert status == 200, data
     assert data["warmed"] is True
+
+
+def test_http_warmup_does_not_advance_the_sampling_rng(tmp_path: Path) -> None:
+    """/warmup's action is thrown away, so it must NOT consume draws from the
+    sampling RNG: otherwise a warmed server would play a DIFFERENT game than
+    an unwarmed one (and every restart-plus-warm would resample), turning an
+    observability feature into a behavioural change. The warmup forward pass
+    therefore takes the greedy path (`choose(..., force_greedy=True)`).
+
+    Pinned end to end: the sampled /act sequence after two /warmup calls must
+    be byte-identical to the same sequence with no warmup at all."""
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+
+    def sampled_sequence(warmups: int) -> tuple[list[int], tuple]:
+        policy = CheckpointPolicy.from_checkpoint(
+            checkpoint, sample_temperature=1.0, seed=20260812,
+        )
+        server = _Server(checkpoint, tmp_path / "manifest.json", policy=policy)
+        try:
+            for _ in range(warmups):
+                status, data = server.request("POST", "/warmup", {})
+                assert status == 200, data
+            actions = []
+            for _ in range(12):
+                status, data = server.request(
+                    "POST", "/act", _observation_payload([0, 1, 2, 3, 4]),
+                )
+                assert status == 200, data
+                actions.append(data["action_id"])
+        finally:
+            server.close()
+        return actions, policy._rng.bit_generator.state["state"]["state"]
+
+    warmed_actions, warmed_rng = sampled_sequence(warmups=2)
+    cold_actions, cold_rng = sampled_sequence(warmups=0)
+
+    assert warmed_actions == cold_actions, "warmup shifted the sampling stream"
+    assert warmed_rng == cold_rng, "warmup consumed RNG draws"
+    # Guard the guard: the policy really is sampling, so the equality above is
+    # a statement about the RNG, not about a degenerate all-greedy run.
+    assert len(set(warmed_actions)) > 1, "sampling policy produced a constant action"
 
 
 def test_http_warmup_event_window_checkpoint_succeeds(tmp_path: Path) -> None:

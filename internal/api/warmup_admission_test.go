@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	pb "github.com/plasma/fh-mahjong/proto"
@@ -148,6 +149,108 @@ func TestStartPrivateTable_SkipsWarmupWithoutRLSeats(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&warmCalls); got != 0 {
 		t.Fatalf("warmup hook called %d time(s) for a table with no RL seat, want 0", got)
+	}
+}
+
+// TestStartPrivateTable_WarmupDoesNotHoldTableLock pins the lock discipline:
+// the (seconds-long) warm runs with table.mu RELEASED, so a concurrent
+// table.mu operation — here SnapshotProto, the same lock every join/seat/state
+// handler takes — completes while the warm is still in flight. Holding the
+// lock across the warm would freeze the whole table for the 25s budget and
+// serialize repeated Start clicks into sequential waits.
+func TestStartPrivateTable_WarmupDoesNotHoldTableLock(t *testing.T) {
+	m := newWarmupTestMatchmaker()
+	warming := make(chan struct{}) // closed once the warm hook is running
+	release := make(chan struct{}) // closed to let the warm finish
+	m.WarmRLEndpoints = func(ctx context.Context) error {
+		close(warming)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	configureTable(t, m, "t-warm-lock", [3]pb.Difficulty{
+		pb.Difficulty_DIFFICULTY_RL,
+		pb.Difficulty_DIFFICULTY_HEURISTIC,
+		pb.Difficulty_DIFFICULTY_HEURISTIC,
+	})
+	table := m.GetConfiguringPrivateTable("t-warm-lock")
+	if table == nil {
+		t.Fatal("table should be configuring")
+	}
+
+	startErr := make(chan error, 1)
+	go func() { _, err := m.StartPrivateTable("t-warm-lock", 101); startErr <- err }()
+
+	<-warming // the warm is in flight; the lock must NOT be held
+
+	snapshotted := make(chan *pb.PrivateTableState, 1)
+	go func() { snapshotted <- table.SnapshotProto() }()
+	select {
+	case snap := <-snapshotted:
+		if snap.State != "configuring" {
+			t.Errorf("snapshot during warmup: state = %q, want configuring", snap.State)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("SnapshotProto blocked while a warmup was in flight: table.mu is held across the warm")
+	}
+
+	close(release)
+	if err := <-startErr; err != nil {
+		t.Fatalf("StartPrivateTable: %v", err)
+	}
+}
+
+// TestStartPrivateTable_RevalidatesAfterWarmup pins the other half of the
+// lock-free warm: because the lock is released, the table can be reconfigured
+// mid-warm — and a start must then be refused rather than proceeding on a
+// configuration that was never validated (or warmed) for.
+func TestStartPrivateTable_RevalidatesAfterWarmup(t *testing.T) {
+	m := newWarmupTestMatchmaker()
+	warming := make(chan struct{})
+	release := make(chan struct{})
+	m.WarmRLEndpoints = func(ctx context.Context) error {
+		close(warming)
+		<-release
+		return nil
+	}
+
+	configureTable(t, m, "t-warm-revalidate", [3]pb.Difficulty{
+		pb.Difficulty_DIFFICULTY_RL,
+		pb.Difficulty_DIFFICULTY_HEURISTIC,
+		pb.Difficulty_DIFFICULTY_HEURISTIC,
+	})
+
+	startErr := make(chan error, 1)
+	go func() { _, err := m.StartPrivateTable("t-warm-revalidate", 101); startErr <- err }()
+
+	<-warming
+	// Swap a seat while the warm is in flight (the host clicking around in
+	// another tab). This is only reachable BECAUSE the lock is released.
+	if _, err := m.MutatePrivateTable("t-warm-revalidate", func(pt *PrivateTable) error {
+		return pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_RL)
+	}); err != nil {
+		t.Fatalf("reconfigure during warmup: %v", err)
+	}
+	close(release)
+
+	err := <-startErr
+	if !errors.Is(err, ErrPrivateTableChangedDuringStart) {
+		t.Fatalf("err = %v, want ErrPrivateTableChangedDuringStart", err)
+	}
+	table := m.GetConfiguringPrivateTable("t-warm-revalidate")
+	if table == nil || table.SnapshotProto().State != "configuring" {
+		t.Fatal("table should still be configuring (retryable) after a mid-start reconfiguration")
+	}
+	// Retryable against the new configuration (re-warmed, this time without
+	// the blocking stub).
+	m.WarmRLEndpoints = func(context.Context) error { return nil }
+	if _, err := m.StartPrivateTable("t-warm-revalidate", 101); err != nil {
+		t.Fatalf("retry after reconfiguration: %v", err)
 	}
 }
 

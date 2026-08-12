@@ -193,6 +193,58 @@ func TestWarmupCoalescesConcurrentCalls(t *testing.T) {
 	}
 }
 
+// TestWarmupCoalescedFailurePropagates: the followers that attached to a
+// leader's in-flight warmup must receive the LEADER'S ERROR — not a hang, and
+// emphatically not a nil "success" that would admit an RL room against a cold
+// policy service. The endpoint is also left cold so the next attempt retries.
+func TestWarmupCoalescedFailurePropagates(t *testing.T) {
+	var hits atomic.Int64
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		http.Error(w, "model not loaded", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	manager := NewWarmupManager(server.Client())
+	endpoint := server.URL + "/act"
+
+	const callers = 8
+	errs := make([]error, callers)
+	var started, done sync.WaitGroup
+	started.Add(callers)
+	done.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer done.Done()
+			started.Done()
+			errs[i] = manager.Warm(context.Background(), endpoint, "")
+		}(i)
+	}
+	started.Wait()
+	// Let the followers attach to the leader's call before it fails.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	done.Wait()
+
+	for i, err := range errs {
+		if err == nil {
+			t.Errorf("caller %d got a nil error from a FAILED coalesced warmup", i)
+			continue
+		}
+		if !strings.Contains(err.Error(), "model not loaded") {
+			t.Errorf("caller %d error = %v, want the leader's warmup failure", i, err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("HTTP hits = %d, want 1 (the failure is shared, not re-issued per caller)", got)
+	}
+	if manager.Warmed(endpoint) {
+		t.Fatal("endpoint must stay cold after a failed warmup")
+	}
+}
+
 func TestWarmupSendsBearerTokenOnlyWhenProvided(t *testing.T) {
 	var gotAuth atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

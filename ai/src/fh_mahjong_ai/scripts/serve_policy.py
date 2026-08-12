@@ -792,7 +792,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             snapshot = self.holder.snapshot
             policy = snapshot.policy
             model_config = policy.model.model_config
-            observation = _synthetic_warmup_observation(model_config)
+            observation = _synthetic_warmup_observation()
             # This is the SAME `choose()` call /act makes — a genuine
             # forward pass through the currently-loaded model, not a stub —
             # so its latency actually reflects (and eliminates) /act's
@@ -801,8 +801,21 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             # zero-event early-round observation (see `choose`'s docstring);
             # the synthetic observation below always presents that
             # legitimate case, for both window-0 and event models.
+            #
+            # `force_greedy=True` is the ONE deviation from /act, and it is
+            # required for observability, not speed: on a sampling-configured
+            # policy the sampled branch draws from `self._rng`, so a warmup —
+            # whose action is discarded — would silently advance the sampling
+            # stream and make a warmed server play differently from an
+            # unwarmed one. The forward pass itself is identical either way,
+            # which is all warmup is for.
             start = time.perf_counter()
-            policy.choose(observation, return_logits=False, allow_empty_event_history=True)
+            policy.choose(
+                observation,
+                return_logits=False,
+                allow_empty_event_history=True,
+                force_greedy=True,
+            )
             latency_ms = (time.perf_counter() - start) * 1000.0
         except PermissionError as exc:
             self._write_json({"error": str(exc)}, status=403)
@@ -935,7 +948,7 @@ def observation_from_json(payload: dict, model_event_window: int) -> Observation
     )
 
 
-def _synthetic_warmup_observation(model_config) -> Observation:
+def _synthetic_warmup_observation() -> Observation:
     """Build a minimal but legitimate `Observation` used ONLY to drive a
     genuine forward pass through the currently-loaded model on POST
     /warmup — its `action_id`/`value` are discarded, never reported or acted
@@ -950,7 +963,10 @@ def _synthetic_warmup_observation(model_config) -> Observation:
     `event_history` is empty and passed through `choose(...,
     allow_empty_event_history=True)`, the same mechanism /act uses for a
     validated, explicit zero-event early-round request — this is safe for
-    BOTH window-0 and event (`model_config.event_window > 0`) models."""
+    BOTH window-0 and event (`event_window > 0`) models, and takes no model
+    configuration at all: an empty history needs no window to size, and
+    `choose()` already pads the scalar vector to whatever the loaded model
+    expects."""
     env_config = EnvConfig()
     planes = np.zeros(env_config.plane_shape, dtype=np.float32)
     scalars = np.zeros(env_config.scalar_features, dtype=np.float32)

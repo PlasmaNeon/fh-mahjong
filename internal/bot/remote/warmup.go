@@ -70,10 +70,14 @@ func NewWarmupManager(client *http.Client) *WarmupManager {
 }
 
 // WithWarmupTTL makes a warmed endpoint go cold again after d, so a long-lived
-// backend re-warms a policy service that may itself have gone idle. The
-// default, 0, means warm exactly once per process. Returns the receiver so it
-// can be chained onto NewWarmupManager. Not safe to call concurrently with
-// Warm (call it at construction time).
+// backend re-warms a policy service that may itself have gone idle, been
+// redeployed, or been restarted underneath it — otherwise the manager would
+// keep reporting "warm" for a process that is cold again, which is exactly the
+// failure this package exists to prevent. d == 0 DISABLES the TTL (warm once
+// per process) and must only be chosen deliberately; cmd/server defaults to
+// 15 minutes and only passes 0 when RL_AGENT_WARMUP_TTL is explicitly "0".
+// Returns the receiver so it can be chained onto NewWarmupManager. Not safe to
+// call concurrently with Warm (call it at construction time).
 func (m *WarmupManager) WithWarmupTTL(d time.Duration) *WarmupManager {
 	if m == nil {
 		return m
@@ -205,7 +209,7 @@ func (m *WarmupManager) doWarmup(ctx context.Context, warmupURL, endpoint, token
 	defer cancel()
 
 	started := time.Now()
-	resp, body, err := m.postWarmup(reqCtx, warmupURL, token)
+	resp, body, err := postWarmup(reqCtx, client, warmupURL, token)
 	elapsed := time.Since(started)
 	if err != nil {
 		m.logAttempt(endpoint, elapsed, warmupResponse{}, err)
@@ -232,10 +236,13 @@ func (m *WarmupManager) doWarmup(ctx context.Context, warmupURL, endpoint, token
 	return nil
 }
 
-// postWarmup issues the request and reads a capped response body. The body is
-// an empty JSON object: /warmup ignores it, but sending "{}" (with an explicit
-// Content-Length) keeps the request well-formed for proxies.
-func (m *WarmupManager) postWarmup(ctx context.Context, warmupURL, token string) (*http.Response, []byte, error) {
+// postWarmup issues the request with the CALLER-RESOLVED client (never
+// m.client directly: doWarmup substitutes a default client when the manager
+// was built without one, and using m.client here would nil-deref on that
+// path) and reads a capped response body. The body is an empty JSON object:
+// /warmup ignores it, but sending "{}" (with an explicit Content-Length) keeps
+// the request well-formed for proxies.
+func postWarmup(ctx context.Context, client *http.Client, warmupURL, token string) (*http.Response, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, warmupURL, strings.NewReader("{}"))
 	if err != nil {
 		return nil, nil, err
@@ -246,7 +253,7 @@ func (m *WarmupManager) postWarmup(ctx context.Context, warmupURL, token string)
 		// token when the service is configured with one, and is open otherwise.
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := m.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}

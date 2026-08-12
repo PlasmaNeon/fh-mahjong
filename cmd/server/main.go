@@ -353,21 +353,30 @@ func newRLWarmupHook(manager *remote.WarmupManager, rlPolicyURL, shadowPolicyURL
 	}
 }
 
+// defaultWarmupTTL is how long a successful warmup is trusted before the
+// endpoint is warmed again. It is deliberately NOT "once per process": the
+// policy service is a separate process (a Zeabur service that is redeployed,
+// restarted, and evicted independently of this backend), so a warm-once
+// manager would keep reporting "warm" against a service that has since gone
+// cold — the exact failure the warmup gate exists to prevent, with the gate
+// showing green. Re-warming costs one forward pass per 15 idle minutes.
+const defaultWarmupTTL = 15 * time.Minute
+
 // warmupTTL reads RL_AGENT_WARMUP_TTL (a time.ParseDuration string, e.g.
-// "15m"). The default, 0, means warm each endpoint exactly ONCE per process;
-// a positive value makes a warmed endpoint go cold again after that long, so a
-// long-lived backend re-warms a policy service that has itself gone idle.
-// Unparseable or negative values fall back to the default rather than being
-// silently reinterpreted.
+// "15m"). Unset -> defaultWarmupTTL. An EXPLICIT "0" (only when the env var is
+// actually set) disables the TTL, i.e. warm exactly once per process — an
+// opt-in for a fixed, never-restarted policy process. Unparseable or negative
+// values fall back to the default rather than being silently reinterpreted as
+// "disabled".
 func warmupTTL() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("RL_AGENT_WARMUP_TTL"))
 	if raw == "" {
-		return 0
+		return defaultWarmupTTL
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil || d < 0 {
-		log.Printf("ignoring invalid RL_AGENT_WARMUP_TTL %q (warming once per process)", raw)
-		return 0
+		log.Printf("ignoring invalid RL_AGENT_WARMUP_TTL %q (using default %s)", raw, defaultWarmupTTL)
+		return defaultWarmupTTL
 	}
 	return d
 }

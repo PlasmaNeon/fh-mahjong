@@ -133,7 +133,15 @@ class CheckpointPolicy:
         return_logits: bool = False,
         *,
         allow_empty_event_history: bool = False,
+        force_greedy: bool = False,
     ) -> ServedAction:
+        """`force_greedy=True` takes the argmax path regardless of this
+        policy's sampling configuration, and — critically — WITHOUT touching
+        `self._rng`. It exists for callers whose result is thrown away (POST
+        /warmup's forward pass): consuming RNG draws there would shift every
+        subsequent sampled decision of the process, making a warmed server
+        play a different game than an unwarmed one. Real decisions (/act)
+        never pass it."""
         legal_actions = observation.legal_actions
         if not legal_actions:
             raise ValueError("observation has no legal actions")
@@ -194,9 +202,11 @@ class CheckpointPolicy:
 
         logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
         greedy_action_id = int(torch.argmax(logits, dim=1).item())
-        sampling_actions = self._sampling_actions(legal_actions)
-        sampling_applied = self.sample_temperature > 0.0 and bool(sampling_actions)
-        if self.sample_temperature > 0.0 and sampling_actions:
+        sampling_actions = [] if force_greedy else self._sampling_actions(legal_actions)
+        sampling_applied = (
+            not force_greedy and self.sample_temperature > 0.0 and bool(sampling_actions)
+        )
+        if sampling_applied:
             legal_actions = sampling_actions
             candidate_actions = np.asarray(legal_actions, dtype=np.int64)
             legal_logits = logits[0, legal_actions].detach().cpu().numpy().astype(np.float64)
