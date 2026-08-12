@@ -167,6 +167,81 @@ def test_injected_ppo_field_perturbation_makes_digests_differ(tmp_path, field):
     assert report["results"][1]["digest"] != report["results"][2]["digest"]
 
 
+def _full_cycle_settings():
+    return collect_bench.FullCycleSettings(
+        minibatch_size=8, ppo_epochs=1, gamma=0.99, gae_lambda=0.95,
+        lr=2e-5, entropy_coef=0.0, device="cpu", update_seed=0,
+    )
+
+
+def test_full_cycle_reports_update_metrics_and_invariance(tmp_path):
+    """data-scale-960 Stage 0 preflight: the bench must measure a FULL
+    collect + PPO update cycle per worker count — transition rows, optimizer
+    steps, throughput, label coverage, truncation, KL, clip fraction, host
+    peak RSS — and prove rows/labels are worker-count-invariant."""
+    kwargs = _bench_kwargs(tmp_path, [1, 2])
+    report = collect_bench.run_bench(**kwargs, full_cycle=_full_cycle_settings())
+    assert report["all_digests_equal"] is True
+    assert report["rows_and_labels_equal"] is True
+
+    cycles = {w: report["results"][w]["full_cycle"] for w in (1, 2)}
+    for fc in cycles.values():
+        assert fc["transition_rows"] > 0
+        expected_steps = -(-fc["transition_rows"] // 8)  # ceil, 1 epoch
+        assert fc["optimizer_steps"] == expected_steps
+        assert fc["matches_per_second"] > 0.0
+        assert fc["update_seconds"] >= 0.0
+        for key in ("policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction"):
+            assert np.isfinite(fc[key])
+        # B2b batches always carry aux labels; their coverage is the
+        # spec-mandated label-coverage measurement.
+        assert 0.0 <= fc["dealin_positive_rate"] <= 1.0
+        assert 0.0 <= fc["rank_label_coverage"] <= 1.0
+        assert fc["truncated_matches"] >= 0
+        assert 0.0 <= fc["truncation_rate"] <= 1.0
+        assert fc["host_peak_rss_bytes"] > 0
+        assert fc["cuda_peak_allocated_bytes"] is None  # cpu update: no CUDA stats
+
+    # Identical batch (digest-equal) + identical warm-start weights + fixed
+    # update seed on cpu => the PPO update itself must be worker-count
+    # invariant, bit for bit.
+    for key in ("transition_rows", "optimizer_steps", "policy_loss", "value_loss",
+                "entropy", "approx_kl", "clip_fraction",
+                "dealin_positive_rate", "rank_label_coverage",
+                "truncated_matches"):
+        assert cycles[1][key] == cycles[2][key], key
+
+
+def test_full_cycle_cli_exits_zero_and_prints_cycle_table(tmp_path):
+    result = _run_cli(tmp_path, [
+        "--full-cycle", "--minibatch-size", "8", "--ppo-epochs", "1",
+        "--gamma", "0.99", "--gae-lambda", "0.95", "--lr", "2e-5",
+        "--entropy-coef", "0", "--ppo-device", "cpu",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert "all_digests_equal: True" in result.stdout
+    assert "rows_and_labels_equal: True" in result.stdout
+    assert "optimizer_steps" in result.stdout
+
+
+def test_full_cycle_json_report_includes_cycle_metrics(tmp_path):
+    import json as json_mod
+    out = tmp_path / "report.json"
+    result = _run_cli(tmp_path, [
+        "--full-cycle", "--minibatch-size", "8", "--ppo-epochs", "1",
+        "--ppo-device", "cpu", "--json", str(out),
+    ])
+    assert result.returncode == 0, result.stderr
+    payload = json_mod.loads(out.read_text())
+    assert payload["all_digests_equal"] is True
+    assert payload["rows_and_labels_equal"] is True
+    for w in ("1", "2"):
+        fc = payload[w]["full_cycle"]
+        assert fc["transition_rows"] > 0
+        assert fc["optimizer_steps"] > 0
+        assert np.isfinite(fc["approx_kl"])
+
+
 def _minimal_batch() -> RolloutBatch:
     return RolloutBatch(
         planes=np.zeros((1, 1), dtype=np.float32),
