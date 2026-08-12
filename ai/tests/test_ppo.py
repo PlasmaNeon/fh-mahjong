@@ -131,6 +131,52 @@ def test_ppo_update_returns_finite_metrics():
         assert np.isfinite(metrics[key])
 
 
+def test_ppo_update_reports_optimizer_steps():
+    model, env = _tiny_model()
+    batch = _synthetic_batch(env)  # n=16
+    adv = np.ones(len(batch), dtype=np.float32)
+    ret = np.zeros(len(batch), dtype=np.float32)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # 16 rows / minibatch 6 -> ceil = 3 minibatches per epoch, 2 epochs = 6 steps.
+    metrics = ppo_update(model, opt, batch, adv, ret,
+                         PPOConfig(minibatch_size=6, ppo_epochs=2, device="cpu"))
+    assert metrics["optimizer_steps"] == 6
+
+
+def test_ppo_update_telemetry_aggregates_over_all_minibatches():
+    """Metrics must be the row-weighted mean over ALL minibatches, not the
+    final minibatch's values (data-scale-960 Stage 0: final-minibatch-only
+    telemetry is inadequate for comparing batch scales). With lr=0 the model
+    never changes, so every per-row quantity is independent of how the
+    permutation partitions rows into minibatches — the aggregate over a
+    5/5/5/1 split must equal the single full-batch minibatch's value. The
+    old last-minibatch-only code reported just the final 1-row slice here."""
+    import copy
+
+    model, env = _tiny_model()
+    batch = _synthetic_batch(env)  # n=16
+    adv = np.linspace(-1.0, 1.0, len(batch)).astype(np.float32)
+    ret = np.linspace(0.0, 1.0, len(batch)).astype(np.float32)
+
+    model_full = copy.deepcopy(model)
+    opt_full = torch.optim.AdamW(model_full.parameters(), lr=0.0)
+    torch.manual_seed(0)
+    full = ppo_update(model_full, opt_full, batch, adv, ret,
+                      PPOConfig(minibatch_size=16, ppo_epochs=1, device="cpu"))
+
+    model_split = copy.deepcopy(model)
+    opt_split = torch.optim.AdamW(model_split.parameters(), lr=0.0)
+    torch.manual_seed(1)  # different permutation on purpose: aggregate must not care
+    split = ppo_update(model_split, opt_split, batch, adv, ret,
+                       PPOConfig(minibatch_size=5, ppo_epochs=1, device="cpu"))
+
+    assert full["optimizer_steps"] == 1
+    assert split["optimizer_steps"] == 4
+    for key in ("policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction"):
+        np.testing.assert_allclose(split[key], full[key], rtol=1e-5, atol=1e-6,
+                                   err_msg=key)
+
+
 def test_ppo_update_increases_prob_of_positive_advantage_action():
     model, env = _tiny_model()
     n = 8

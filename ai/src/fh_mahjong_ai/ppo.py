@@ -283,7 +283,15 @@ def ppo_update(
             )
         belief_target = (planes[:, 39:51] > 0).float().squeeze(-1)
 
-    last = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "approx_kl": 0.0, "clip_fraction": 0.0}
+    # Telemetry is aggregated over ALL minibatches (row-weighted, so the
+    # ragged final minibatch counts by its true size) rather than reporting
+    # only the final minibatch's values — final-minibatch-only metrics are a
+    # single-slice sample that cannot be compared across batch scales
+    # (data-scale-960 Stage 0 prerequisite). `optimizer_steps` counts every
+    # optimizer.step() taken, i.e. ppo_epochs * ceil(n / minibatch_size).
+    metric_totals: dict[str, float] = {}
+    rows_seen = 0
+    optimizer_steps = 0
     model.train()
     for _ in range(config.ppo_epochs):
         perm = torch.randperm(n, device=device)
@@ -333,7 +341,7 @@ def ppo_update(
             with torch.no_grad():
                 approx_kl = (old_logprobs[idx] - new_logprobs).mean()
                 clip_fraction = (torch.abs(ratio - 1.0) > config.clip_eps).float().mean()
-            last = {
+            step_metrics = {
                 "policy_loss": float(policy_loss.item()),
                 "value_loss": float(value_loss.item()),
                 "entropy": float(entropy.item()),
@@ -341,7 +349,18 @@ def ppo_update(
                 "clip_fraction": float(clip_fraction.item()),
                 **aux_metrics,
             }
-    return last
+            mb_rows = int(idx.shape[0])
+            rows_seen += mb_rows
+            optimizer_steps += 1
+            for key, value in step_metrics.items():
+                metric_totals[key] = metric_totals.get(key, 0.0) + value * mb_rows
+    if rows_seen:
+        metrics = {key: total / rows_seen for key, total in metric_totals.items()}
+    else:  # ppo_epochs == 0: keep the historical zeroed shape
+        metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
+                   "approx_kl": 0.0, "clip_fraction": 0.0}
+    metrics["optimizer_steps"] = optimizer_steps
+    return metrics
 
 
 def _obs_to_tensors(obs: Observation, device: str):
