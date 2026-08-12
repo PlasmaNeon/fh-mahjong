@@ -20,6 +20,13 @@ This package adapts Python-served AI checkpoints to the Go bot policy interface.
     action id (never a separate `/healthz` read, which could race a
     `/reload`). Any fallback path returns `bot.DecisionProvenance{Source:
     "fallback", FallbackReason: <one of the 9 reasons>}` instead.
+- **warmup.go** — `WarmupManager` drives `serve_policy.py`'s `POST /warmup` (URL derived from the `/act` endpoint exactly as `deriveHealthURL` derives `/healthz`), which takes a genuine forward pass so no in-match `/act` ever pays the cold-start cost. Contract:
+  - **Endpoint-scoped and warm-once per process** — `Warm(ctx, endpoint, token)` is a no-op after a success, no matter how many rooms/seats ask. `WithWarmupTTL(d)` (env `RL_AGENT_WARMUP_TTL` in `cmd/server`) makes a warmed endpoint go cold again after `d`; the default `0` = once per process.
+  - **Coalescing** — concurrent `Warm` calls for the same endpoint share ONE HTTP request and all receive its result.
+  - **Failure is never latched** — a non-2xx, non-JSON body, `warmed != true`, or timeout leaves the endpoint cold so the next admission attempt retries.
+  - **Its own 10s budget**, deliberately separate from the 750ms `/act` timeout a cold forward pass would blow; never outlives the caller's context.
+  - **Auth** — `token`, when non-empty, is sent as `Authorization: Bearer <token>`, the same scheme `internal/review`'s client uses for `/evaluate`. `/warmup` piggybacks on the service's `FH_MJ_EVALUATE_TOKEN` when one is configured and is OPEN when none is (the primary production service's posture, so it is warmed tokenless).
+  - **Telemetry** — every attempt logs one grep-able line prefixed `policy warmup:` with endpoint, observed round-trip `latency_ms`, the server-reported `server_latency_ms`, `checkpoint_sha`, and `ok=true|false`. These lines are the rollout gate's evidence.
 - **http_policy_test.go** — Tests for successful remote decisions, fallback behavior, fallback logging, and instrumentation counters.
 
 ## Architecture Notes

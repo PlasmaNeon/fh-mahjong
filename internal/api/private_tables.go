@@ -475,6 +475,11 @@ func (s *Server) handlePrivateTableStart(c *gin.Context) {
 			status = http.StatusInternalServerError
 		case errors.Is(err, ErrServerDraining):
 			status = http.StatusServiceUnavailable
+		case errors.Is(err, ErrRLWarmupFailed):
+			// The RL policy service could not be warmed: refuse rather than
+			// start a room whose RL seats would fall back to the heuristic.
+			// Retryable — the host can simply press start again.
+			status = http.StatusServiceUnavailable
 		}
 		respondError(c, status, err.Error())
 		return

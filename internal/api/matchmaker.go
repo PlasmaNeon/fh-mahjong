@@ -35,7 +35,14 @@ var (
 	ErrPrivateTableHostOnly       = errors.New("only the host can start the match")
 	ErrPrivateTablePersistFailed  = errors.New("persist match failed")
 	ErrServerDraining             = errors.New("server is shutting down")
+	ErrRLWarmupFailed             = errors.New("RL agent is not ready")
 )
+
+// rlWarmupBudget bounds how long StartPrivateTable will block waiting for the
+// RL policy endpoints to warm. It covers BOTH endpoints (primary + shadow) and
+// only ever elapses on the very first RL room of the process — warmup is
+// endpoint-scoped and warm-once (see internal/bot/remote/warmup.go).
+const rlWarmupBudget = 25 * time.Second
 
 // InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
 // semantics (RPush/LRange/LPopCount). Matchmaking is in-memory by design while
@@ -177,6 +184,16 @@ type Matchmaker struct {
 	// and recorded in the paipu so the dataset knows which model played. Nil
 	// or empty means unknown.
 	RLPolicyIdentity func() string
+
+	// WarmRLEndpoints, when set, must leave every configured policy endpoint
+	// (primary and, when configured, shadow) warm — i.e. each has taken a real
+	// forward pass — before an RL private room is admitted. cmd/server wires it
+	// to a remote.WarmupManager, so it is warm-once per process and a no-op on
+	// every table after the first. A non-nil error FAILS the table start: a
+	// room the host explicitly asked to be played by the RL agent must never
+	// silently degrade to the heuristic because the model server was still
+	// cold. Failures are retryable — the next start attempt warms again.
+	WarmRLEndpoints func(ctx context.Context) error
 
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
@@ -357,6 +374,40 @@ func (m *Matchmaker) ValidateSeatDifficulty(d pb.Difficulty) error {
 // the health-checked RLAgentAvailable function installed by cmd/server.
 func (m *Matchmaker) rlAgentAvailable() bool {
 	return m != nil && m.RLAgentAvailable != nil && m.RLAgentAvailable()
+}
+
+// tableHasRLSeat reports whether any seat of the table is a DIFFICULTY_RL bot.
+// Caller must hold table.mu.
+func tableHasRLSeat(table *PrivateTable) bool {
+	if table == nil {
+		return false
+	}
+	for _, s := range table.Seats {
+		if s.Kind == "bot" && s.Difficulty == pb.Difficulty_DIFFICULTY_RL {
+			return true
+		}
+	}
+	return false
+}
+
+// warmRLEndpointsForTable blocks (up to rlWarmupBudget) until every configured
+// policy endpoint is warm, but only for tables that actually seat the RL agent.
+// Tables with no RL seat never touch the policy service at all, so they must
+// not pay — or fail on — a warmup. A warmup error is wrapped in
+// ErrRLWarmupFailed so the handler can map it to a clear, user-visible 503
+// instead of starting a room whose "RL" seats would fall back to the heuristic.
+// Caller must hold table.mu.
+func (m *Matchmaker) warmRLEndpointsForTable(table *PrivateTable) error {
+	if m == nil || m.WarmRLEndpoints == nil || !tableHasRLSeat(table) {
+		return nil
+	}
+	warmCtx, cancel := context.WithTimeout(context.Background(), rlWarmupBudget)
+	defer cancel()
+	if err := m.WarmRLEndpoints(warmCtx); err != nil {
+		log.Printf("policy warmup: refusing RL table %s start: %v", table.TableID, err)
+		return fmt.Errorf("%w: %w", ErrRLWarmupFailed, err)
+	}
+	return nil
 }
 
 // legacyRulesetAliases maps deprecated ruleset queue keys to their current
@@ -646,6 +697,15 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 			return ErrPrivateTableHostOnly
 		}
 		if err := table.canStart(); err != nil {
+			return err
+		}
+		// Admission gate: an RL table only starts once the policy service is
+		// warm, so the first in-match decision never eats the cold-start cost
+		// (which would blow the 750ms /act budget and silently fall back to
+		// the heuristic). No-op for tables without an RL seat, and — thanks to
+		// the warmup manager's warm-once semantics — for every RL table after
+		// the first one of this process.
+		if err := m.warmRLEndpointsForTable(table); err != nil {
 			return err
 		}
 
