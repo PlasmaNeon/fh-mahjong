@@ -102,3 +102,112 @@ func TestEncodeTileActionsUseRulesBackendTileOrder(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeChiiClientShapeUsesActiveDiscard covers the production bug: the
+// web client submits chii claims with Tile unset, sending only MeldTiles
+// (the two hand tiles); the engine (internal/engine/game.go:1104) infers the
+// claimed tile from state.ActiveDiscard. EncodeAction must mirror that
+// inference instead of refusing the action.
+func TestEncodeChiiClientShapeUsesActiveDiscard(t *testing.T) {
+	// Claimed discard is 7p; hand tiles are 5p, 6p (client shape: Tile nil).
+	state := &pb.GameState{
+		ActiveDiscard: &pb.Tile{Id: 96, Suit: pb.Suit_SUIT_PIN, Value: 7},
+	}
+	action := &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_CHII,
+		Tile: nil,
+		MeldTiles: []*pb.Tile{
+			{Id: 91, Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Id: 93, Suit: pb.Suit_SUIT_PIN, Value: 6},
+		},
+	}
+
+	got, ok := encodeAction(state, 0, action)
+	if !ok {
+		t.Fatalf("encodeAction(client-shaped chii) returned !ok")
+	}
+	want := ChiiBase + 11 // pin suitOffset 7 + (lowest value 5 - 1) = 11 -> id 194
+	if got != want {
+		t.Fatalf("encodeAction(client-shaped chii) = %d, want %d", got, want)
+	}
+	if want != 194 {
+		t.Fatalf("sanity check failed: expected id 194 to match production legal set, got %d", want)
+	}
+}
+
+// TestEncodeChiiClientShapeNilActiveDiscardFails ensures we don't guess a
+// claimed tile out of thin air when there's nothing to infer it from.
+func TestEncodeChiiClientShapeNilActiveDiscardFails(t *testing.T) {
+	action := &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_CHII,
+		Tile: nil,
+		MeldTiles: []*pb.Tile{
+			{Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Suit: pb.Suit_SUIT_PIN, Value: 6},
+		},
+	}
+
+	// Nil state.
+	if _, ok := encodeAction(nil, 0, action); ok {
+		t.Fatalf("encodeAction(client-shaped chii, nil state) = ok, want !ok")
+	}
+
+	// State with nil ActiveDiscard.
+	state := &pb.GameState{}
+	if _, ok := encodeAction(state, 0, action); ok {
+		t.Fatalf("encodeAction(client-shaped chii, nil ActiveDiscard) = ok, want !ok")
+	}
+}
+
+// TestEncodeChiiRoundTripsThroughDecode confirms the client-shaped chii id
+// matches what DecodeActionID would offer as the legal action for the same
+// state, closing the loop described in the production incident (legal set
+// contained 194 but EncodeAction of the human's chii returned !ok).
+func TestEncodeChiiRoundTripsThroughDecode(t *testing.T) {
+	discard := &pb.Tile{Id: 96, Suit: pb.Suit_SUIT_PIN, Value: 7}
+	state := &pb.GameState{
+		Phase:         pb.GamePhase_PHASE_WAIT_DISCARDS,
+		ActiveDiscard: discard,
+		Players: []*pb.PlayerState{
+			{
+				ValidActions: []*pb.PlayerAction{
+					{
+						Type: pb.ActionType_ACTION_CHII,
+						Tile: discard,
+						MeldTiles: []*pb.Tile{
+							{Id: 91, Suit: pb.Suit_SUIT_PIN, Value: 5},
+							{Id: 93, Suit: pb.Suit_SUIT_PIN, Value: 6},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	clientAction := &pb.PlayerAction{
+		Type: pb.ActionType_ACTION_CHII,
+		Tile: nil,
+		MeldTiles: []*pb.Tile{
+			{Id: 91, Suit: pb.Suit_SUIT_PIN, Value: 5},
+			{Id: 93, Suit: pb.Suit_SUIT_PIN, Value: 6},
+		},
+	}
+
+	got, ok := EncodeAction(state, 0, clientAction)
+	if !ok {
+		t.Fatalf("EncodeAction(client-shaped chii) returned !ok")
+	}
+
+	decoded, err := DecodeActionID(state, 0, got)
+	if err != nil {
+		t.Fatalf("DecodeActionID(%d) returned error: %v", got, err)
+	}
+
+	roundTripped, ok := EncodeAction(state, 0, decoded)
+	if !ok {
+		t.Fatalf("EncodeAction(decoded action) returned !ok")
+	}
+	if roundTripped != got {
+		t.Fatalf("round trip mismatch: encoded %d, decoded then re-encoded %d", got, roundTripped)
+	}
+}

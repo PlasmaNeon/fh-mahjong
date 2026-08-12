@@ -242,7 +242,7 @@ func encodeAction(state *pb.GameState, seat uint32, action *pb.PlayerAction) (in
 			return 0, false
 		}
 	case pb.ActionType_ACTION_CHII:
-		startIndex, ok := chiiSequenceIndex(action)
+		startIndex, ok := chiiSequenceIndex(state, action)
 		if !ok {
 			return 0, false
 		}
@@ -252,17 +252,30 @@ func encodeAction(state *pb.GameState, seat uint32, action *pb.PlayerAction) (in
 	}
 }
 
-func chiiSequenceIndex(action *pb.PlayerAction) (int, bool) {
-	if action == nil || action.Tile == nil {
+// chiiSequenceIndex resolves the claimed tile the same way the engine does
+// (internal/engine/game.go:1104): the client submits claim actions with
+// Tile unset and only MeldTiles populated, relying on the engine to infer
+// the claimed tile from state.ActiveDiscard. Mirror that here so paipu v2
+// can encode client-shaped chii actions instead of recording them as
+// illegal (chosenId -1).
+func chiiSequenceIndex(state *pb.GameState, action *pb.PlayerAction) (int, bool) {
+	if action == nil {
 		return 0, false
 	}
-	if action.Tile.Suit != pb.Suit_SUIT_SOU && action.Tile.Suit != pb.Suit_SUIT_PIN && action.Tile.Suit != pb.Suit_SUIT_MAN {
+	claimedTile := action.Tile
+	if claimedTile == nil {
+		if state == nil || state.ActiveDiscard == nil {
+			return 0, false
+		}
+		claimedTile = state.ActiveDiscard
+	}
+	if claimedTile.Suit != pb.Suit_SUIT_SOU && claimedTile.Suit != pb.Suit_SUIT_PIN && claimedTile.Suit != pb.Suit_SUIT_MAN {
 		return 0, false
 	}
 
-	values := []uint32{action.Tile.Value}
+	values := []uint32{claimedTile.Value}
 	for _, tile := range action.MeldTiles {
-		if tile == nil || tile.Suit != action.Tile.Suit {
+		if tile == nil || tile.Suit != claimedTile.Suit {
 			return 0, false
 		}
 		values = append(values, tile.Value)
@@ -273,7 +286,7 @@ func chiiSequenceIndex(action *pb.PlayerAction) (int, bool) {
 	}
 
 	suitOffset := 0
-	switch action.Tile.Suit {
+	switch claimedTile.Suit {
 	case pb.Suit_SUIT_MAN:
 		suitOffset = 0
 	case pb.Suit_SUIT_PIN:
