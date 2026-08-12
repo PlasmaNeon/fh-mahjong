@@ -9,6 +9,7 @@ import math
 import os
 import stat
 import threading
+import time
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,6 +60,12 @@ MAX_RELOAD_REQUEST_BYTES = 64 * 1024
 MAX_ACT_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_EVALUATE_REQUEST_BYTES = 64 * 1024 * 1024
 
+# POST /warmup's body is always ignored (it accepts an empty or '{}' body),
+# so this only bounds how much a caller can make a worker thread read before
+# that body is discarded — matching /reload's small-JSON cap is generous
+# headroom for a body nobody parses.
+MAX_WARMUP_REQUEST_BYTES = 64 * 1024
+
 
 def _parse_content_length(headers, cap: int) -> int:
     """Validate the Content-Length header and return it as an int WITHOUT
@@ -87,6 +94,17 @@ def _read_capped_body(handler: "PolicyRequestHandler", cap: int) -> bytes:
     and only then read exactly that many bytes from `handler.rfile`."""
     length = _parse_content_length(handler.headers, cap)
     return handler.rfile.read(length) if length else b""
+
+
+def _read_capped_body_if_present(handler: "PolicyRequestHandler", cap: int) -> bytes:
+    """Like `_read_capped_body`, but for endpoints (POST /warmup) that accept
+    a caller omitting Content-Length entirely for a truly empty body — the
+    body is ignored either way, so a missing header is treated as length 0
+    rather than rejected. When the header IS present, it is still validated
+    against `cap` before any bytes are read, same as `_read_capped_body`."""
+    if handler.headers.get("content-length") is None:
+        return b""
+    return _read_capped_body(handler, cap)
 
 
 _BEARER_PREFIX = "Bearer "
@@ -453,6 +471,8 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             self._handle_evaluate()
         elif self.path == "/reload":
             self._handle_reload()
+        elif self.path == "/warmup":
+            self._handle_warmup()
         else:
             self.send_error(404)
 
@@ -730,6 +750,78 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def _handle_warmup(self) -> None:
+        status = 403
+        try:
+            # Deliberate asymmetry with /evaluate's gating: /evaluate is
+            # DISABLED ENTIRELY when no evaluate token is configured, because
+            # it has no legitimate unauthenticated caller. /warmup is the
+            # opposite — its whole purpose is letting the Go backend force a
+            # genuine forward pass on the PRIMARY production serving
+            # instance (which runs tokenless, no --evaluate-token) before
+            # admitting an RL room, so refusing it there would defeat the
+            # feature. So: no token configured on this server at all -> OPEN
+            # (skip straight to the forward pass, no auth check). Token
+            # configured -> /warmup piggybacks on that SAME evaluate token
+            # (not a separate warmup-only secret) so hardened instances that
+            # do gate /evaluate aren't left with a free unauthenticated
+            # compute sink either. When gated, the check mirrors /evaluate's
+            # ordering and status code (403, checked before the body is
+            # read) — NOT /reload's, since there is no separate warmup token
+            # to distinguish "disabled" from "wrong token" the way /reload's
+            # admin token does.
+            configured_evaluate_token = self.holder.evaluate_token
+            if configured_evaluate_token:
+                request_token = _extract_bearer_token(self)
+                if request_token is None or not hmac.compare_digest(
+                    configured_evaluate_token, request_token
+                ):
+                    raise PermissionError(
+                        "missing or invalid 'Authorization: Bearer <token>' header; refusing warmup"
+                    )
+            status = 400
+            # The body is ignored (POST /warmup accepts an empty or '{}'
+            # body) but is still read, capped, so a caller can't pin a
+            # worker thread streaming an oversized/slow body for no reason.
+            _read_capped_body_if_present(self, MAX_WARMUP_REQUEST_BYTES)
+            # Capture ONE snapshot for the whole request, same discipline as
+            # /act, /evaluate, and /healthz (see PolicyHolder.snapshot's
+            # docstring): the response must attest the SAME checkpoint the
+            # forward pass below actually ran against, not whatever a
+            # concurrent /reload swaps in afterward.
+            snapshot = self.holder.snapshot
+            policy = snapshot.policy
+            model_config = policy.model.model_config
+            observation = _synthetic_warmup_observation(model_config)
+            # This is the SAME `choose()` call /act makes — a genuine
+            # forward pass through the currently-loaded model, not a stub —
+            # so its latency actually reflects (and eliminates) /act's
+            # first-call cold start. `allow_empty_event_history=True` is the
+            # identical mechanism /act uses for a validated, EXPLICIT
+            # zero-event early-round observation (see `choose`'s docstring);
+            # the synthetic observation below always presents that
+            # legitimate case, for both window-0 and event models.
+            start = time.perf_counter()
+            policy.choose(observation, return_logits=False, allow_empty_event_history=True)
+            latency_ms = (time.perf_counter() - start) * 1000.0
+        except PermissionError as exc:
+            self._write_json({"error": str(exc)}, status=403)
+            return
+        except Exception as exc:
+            self._write_json({"error": str(exc)}, status=status)
+            return
+        self._write_json(
+            {
+                "warmed": True,
+                "checkpoint_path": str(policy.checkpoint_path),
+                "checkpoint_step": policy.checkpoint_step,
+                "checkpoint_sha256": snapshot.checkpoint_sha256,
+                "contract_version": EVENT_CONTRACT_V1,
+                "event_window": model_config.event_window,
+                "latency_ms": latency_ms,
+            }
+        )
+
     def log_message(self, format: str, *args: object) -> None:
         return None
 
@@ -840,6 +932,37 @@ def observation_from_json(payload: dict, model_event_window: int) -> Observation
         action_mask=action_mask,
         event_history=event_history,
         metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def _synthetic_warmup_observation(model_config) -> Observation:
+    """Build a minimal but legitimate `Observation` used ONLY to drive a
+    genuine forward pass through the currently-loaded model on POST
+    /warmup — its `action_id`/`value` are discarded, never reported or acted
+    on. Planes/scalars are zeroed: `choose()`'s forward pass is shape/dtype-
+    sensitive (what makes it slow to JIT/warm the first time), not value-
+    sensitive, so an all-zero encoding exercises the identical tensor ops
+    /act runs with real data. The action mask marks action_id 0 as the only
+    legal action: `choose()` raises on an all-illegal mask (a deliberate
+    defense-in-depth guard — see its `if not legal_actions` check), so
+    warmup must present at least one legal action for the forward pass to
+    complete; which one is irrelevant since the result is thrown away.
+    `event_history` is empty and passed through `choose(...,
+    allow_empty_event_history=True)`, the same mechanism /act uses for a
+    validated, explicit zero-event early-round request — this is safe for
+    BOTH window-0 and event (`model_config.event_window > 0`) models."""
+    env_config = EnvConfig()
+    planes = np.zeros(env_config.plane_shape, dtype=np.float32)
+    scalars = np.zeros(env_config.scalar_features, dtype=np.float32)
+    action_mask = np.zeros(env_config.action_space_size, dtype=np.int8)
+    action_mask[0] = 1
+    return Observation(
+        seat=0,
+        planes=planes,
+        scalars=scalars,
+        action_mask=action_mask,
+        event_history=np.zeros(0, dtype=np.uint32),
+        metadata={},
     )
 
 
@@ -963,6 +1086,10 @@ def main() -> None:
     print(
         "Evaluate (/evaluate): "
         f"{'enabled(token)' if args.evaluate_token else 'disabled'}"
+    )
+    print(
+        "Warmup (/warmup): "
+        f"{'open, gated by --evaluate-token' if args.evaluate_token else 'open, unauthenticated'}"
     )
     server.serve_forever()
 
