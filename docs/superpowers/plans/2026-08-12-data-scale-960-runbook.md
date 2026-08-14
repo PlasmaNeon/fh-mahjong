@@ -88,10 +88,19 @@ Go / no-go (ALL must hold; spec Stage 0 items 1–2):
    count — no OOM kill, no CUDA OOM.
 2. `all_digests_equal: True` and `rows_and_labels_equal: True` — worker
    count must not alter collected rows or labels.
-3. Host peak RSS leaves real headroom on the 31 GB box (rule of thumb from
-   the deep16 OOM lesson: peak ≤ ~26 GB, and prefer the SMALLEST worker
-   count whose throughput is acceptable — speed alone never justifies a
-   count; memory failures killed a prior lap twice).
+3. Host peak RSS gate — RESTATED by Amendment 3 (the original "≤ ~26 GB on
+   the 31 GB box" gate is superseded): the box's WSL2 cap is raised to
+   `memory=52GB` (Windows host has 64 GB; record the effective limit via
+   `free -g` after `wsl --shutdown` + restart before the run counts), and
+   the gate is **peak AGGREGATE process-tree RSS ≤ 40 GiB** with ≥ 12 GiB
+   nominal headroom. Log master RSS and summed child RSS separately for
+   diagnosis; the hard go/no-go is the aggregate figure. Recommended
+   containment (not a substitute for the gate): cgroup-v2
+   `memory.high=44GiB`, `memory.max=48GiB`, `memory.swap.max=0`,
+   `memory.oom.group=1` around the bench/lap process tree. Still prefer
+   the SMALLEST worker count whose throughput is acceptable — speed alone
+   never justifies a count; memory failures killed a prior lap twice and
+   this preflight twice.
 4. CUDA peak allocated fits the 4090's 24 GB with headroom for the training
    loop's own model/optimizer copies (bench measures model + full rollout +
    update transients; keep peak ≤ ~20 GB).
@@ -148,6 +157,12 @@ EOF
 Do not launch unless it prints `IDENTITY WARM START OK`.
 
 ## 3. Launch
+
+Amendment 3: the lap runs under the same verified 52 GiB WSL cap and the
+same ≤ 40 GiB aggregate process-tree RSS gate as the preflight, monitored
+continuously — crossing 40 GiB is a hard stop back to consultation. Use
+the same cgroup-v2 containment (`memory.high=44GiB`, `memory.max=48GiB`,
+`memory.swap.max=0`, `memory.oom.group=1`) when available.
 
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \

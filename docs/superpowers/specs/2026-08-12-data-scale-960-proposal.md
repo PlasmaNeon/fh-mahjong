@@ -67,6 +67,42 @@ Conditions (all implemented):
 6. All scientific protocol elements stay frozen (anchor, 960/768, lr, seeds,
    150 iters, screenings, kill rule, confirmation window and gates).
 
+## Amendment 3 (Codex consult, 2026-08-14, post-Amendment-2 preflight)
+
+Amendment 2's stop clause triggered when the chunk-320 workers remained
+bounded (~1.3GB each — the Amendment 2 worker fix WORKED) but the benchmark
+master accumulated the full 960-match rollout (anon-rss 17.0GB + ~5.3GB
+swapped at kill) and the 31GiB-default WSL2 instance OOM-killed the
+benchmark. This is an infrastructure failure, not a training null; the
+960/768 hypothesis remains untested. The Windows host has 64GB physical
+RAM, so the WSL2 cap is raised operationally to `memory=52GB`, with no
+code, data-path, numerical, or scientific-protocol change. After restart,
+the effective WSL memory limit must be recorded and the identical
+chunk-320 full-cycle bench rerun at workers 10/16/20, seeds 700000–700959.
+
+The restated host gate is peak aggregate process-tree RSS ≤40GiB, leaving
+≥12GiB nominal headroom under the verified 52GiB cap (log master RSS and
+summed child RSS separately for diagnosis; the hard go/no-go is the
+aggregate figure); CUDA allocated remains ≤20GiB and every digest,
+rows/labels, truncation, and coverage gate remains unchanged. The eventual
+150-iteration lap runs under the same cap and RSS gate, monitored
+continuously — crossing 40GiB is a hard stop back to consultation.
+
+A whole-process-tree cgroup-v2 guard of `memory.high=44GiB`,
+`memory.max=48GiB`, `memory.swap.max=0`, and `memory.oom.group=1` is
+recommended (containment ceilings only — they do not relax the 40GiB
+scientific go/no-go; if cgroup enforcement isn't available, proceed under
+the 52GiB cap with the launch lock guard and external monitoring, logged
+as an exception). If the clean bench exceeds 40GiB, hits the cgroup
+ceiling, fails collection, or fails the full CUDA update, stop and return
+to consultation. Disk spilling, float16 host storage, 640 matches,
+GoEnvPool, and minibatched host-to-device transfer remain unauthorized.
+
+(The failed 2026-08-12 attempt is additionally non-scoring because a
+duplicate bench stack — an ssh-level double-execution quirk, since fixed
+with a flock launch guard — contaminated the box at kill time; only the
+clean rerun counts as a measurement.)
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
