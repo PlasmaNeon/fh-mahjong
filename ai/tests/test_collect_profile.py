@@ -106,6 +106,33 @@ def test_probe_cleared_after_profile(tmp_path):
     assert memprobe._probe_fn is None
 
 
+def test_pool_teardown_before_final_concat(tmp_path):
+    """Amendment 5: the worker pool must close after the FINAL dispatch's
+    results are received and before remaining assembly — the checkpoint
+    stream must show pool_closed_before_concat, then the final
+    dispatch_return, then collector_return."""
+    report = collect_profile.run_profile(**_profile_kwargs(tmp_path))
+    labels = _labels(report)
+    assert labels.count("pool_closed_before_concat") == 1
+    closed_at = labels.index("pool_closed_before_concat")
+    final_dispatch = max(i for i, l in enumerate(labels) if l == "dispatch_return")
+    collector_return = labels.index("collector_return")
+    assert closed_at < final_dispatch < collector_return
+    # The closed-pool checkpoint must observe zero live child processes.
+    assert report["checkpoints"][closed_at]["children_count"] == 0
+
+
+def test_teardown_does_not_perturb_digest_across_runs(tmp_path):
+    """Amendment 5: teardown cannot perturb seed coverage or row order — two
+    profiles through the same settings must reproduce the digest. (Pool
+    auto-restart on a reused collector is exercised by test_collect_bench's
+    warmup+steady runs, which now span a teardown between collects.)"""
+    kwargs = _profile_kwargs(tmp_path)
+    first = collect_profile.run_profile(**kwargs)
+    second = collect_profile.run_profile(**kwargs)
+    assert first["digest"] == second["digest"]
+
+
 def test_full_cycle_profile_covers_gae_and_update_checkpoints(tmp_path):
     settings = collect_bench.FullCycleSettings(
         minibatch_size=8, ppo_epochs=1, gamma=0.99, gae_lambda=0.95,

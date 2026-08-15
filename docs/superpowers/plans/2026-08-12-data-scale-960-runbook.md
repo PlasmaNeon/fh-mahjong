@@ -55,10 +55,24 @@ The consult approved bounded sequential dispatch (`--dispatch-chunk`,
 is FROZEN at **320** for this lap and must appear in both this bench command
 and the launch command. See the spec's Amendment 2 for the full conditions.
 
+**Amendment 5 (2026-08-15):** the Amendment 4 profile ruled the full-rollout
+device transfer infeasible at 960 on the 24GB 4090 (projected ~23.7GiB
+allocated > the 20GiB gate) and the workers=16/20 phases knowingly
+infeasible on host memory (persistent pool = 18.4GiB at 10 workers alone).
+The canonical bench is restated to **workers=10 only**, with two authorized
+transport changes (parity-gauntleted before trust; see the spec's
+Amendment 5): synchronous minibatched host-to-device transfer
+(`--minibatch-device-transfer` / `PPOConfig.minibatch_device_transfer`) and
+worker-pool teardown after the final dispatch result, before outer
+assembly (automatic in `ParallelB2bCollector`; the pool restarts on the
+next collect). Before this bench may run, optimized 320/640 full-cycle
+profiles must project `P960 = max(P320, P640, P640+(P640-P320))` ≤ 36GiB
+host aggregate AND ≤ 20GiB CUDA allocated.
+
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-collect-bench \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
-  --workers 10,16,20 \
+  --workers 10 \
   --matches 960 --base-seed 700000 \
   --dispatch-chunk 320 \
   --match-mode chongci --max-steps-per-episode 4000 \
@@ -66,7 +80,7 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-collect-bench \
   --model-residual-blocks 4 --model-privileged-critic --model-aux-heads \
   --full-cycle --minibatch-size 768 --ppo-epochs 2 \
   --gamma 0.99 --gae-lambda 0.95 --lr 2e-5 --entropy-coef 0 \
-  --ppo-device cuda \
+  --ppo-device cuda --minibatch-device-transfer \
   --json /root/fh-mahjong-runs/data-scale-960/preflight-960-mb768.json
 ```
 
@@ -171,8 +185,8 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --checkpoint-dir /root/fh-mahjong-runs/data-scale-960/ckpt \
   --base-seed 500000 --iterations 150 \
   --matches-per-iter 960 --minibatch-size 768 \
-  --collect-dispatch-chunk 320 \
-  --num-workers <from §1 — smallest acceptable count with memory headroom> \
+  --collect-dispatch-chunk 320 --minibatch-device-transfer \
+  --num-workers 10 \
   --lr 2e-5 --entropy-coef 0 --ppo-epochs 2 --gamma 0.99 \
   --match-mode chongci --max-steps-per-episode 4000 --device cuda \
   --train-state-every 5
