@@ -103,6 +103,63 @@ duplicate bench stack — an ssh-level double-execution quirk, since fixed
 with a flock launch guard — contaminated the box at kill time; only the
 clean rerun counts as a measurement.)
 
+## Amendment 4 (Codex consult, 2026-08-14, post-Amendment-3 clean preflight)
+
+Amendment 3's clean single-stack rerun triggered its stop clause. Under a
+verified 50 GiB WSL cap and whole-tree cgroup containment, the workers=10
+chunk-320 phase reached the 48 GiB cgroup ceiling after 64m50s; the master
+was 33.8 GiB anonymous RSS and still growing, with ten bounded workers
+totaling approximately 16 GiB. The cgroup terminated the complete stack
+and preserved the box. This is a third infrastructure failure, not a
+training null; the 960/768 hypothesis remains untested. No further RAM
+increase is authorized.
+
+Authorize a measurement-only memory profile of the unchanged current path
+at 320 and 640 matches, workers=10, chunk=320, using fresh processes and
+the corresponding base-seed-700000 prefixes. Required accounting includes
+master and child RSS, smaps/PSS where available, cgroup current/peak,
+live RolloutBatch field shape/dtype/nbytes and ownership, and checkpoints
+after every dispatch, outer concatenation field, collector return, GAE,
+dtype/device conversion, and update. `tracemalloc` is supplemental only.
+
+After profiling, authorize one targeted copy-elimination change limited
+to redundant object ownership, field lifetime, allocator retention, and
+unnecessary host dtype copies. Full in-memory rollout semantics,
+chunk/order, field values and dtypes at consumer boundaries, GAE/PPO
+mathematics, and full-rollout device transfer remain unchanged. Disk
+spill/memmap, float16 storage, streaming GAE, minibatched host-to-device
+transfer, GoEnvPool, and a 640-match scientific intervention remain
+unauthorized (640 is authorized only as an infrastructure
+profiling/parity workload).
+
+Trust requires exact baseline-versus-optimized canonical rollout digest
+parity at a three-chunk non-divisible small case and at 640
+matches/chunk320/workers10; byte-identical GAE outputs and device-input
+tensors; identical minibatch ordering and optimizer-step count; and
+post-update model/optimizer parity under the established
+unchanged-baseline CUDA determinism envelope. Repeat optimized collection
+must reproduce the digest. The optimized 320/640 memory slope must
+project workers-10 aggregate 960 peak ≤36 GiB before the canonical bench
+is attempted (a pre-bench spending guard, not a new gate).
+
+The registered host gate remains peak aggregate process-tree RSS ≤40 GiB
+under the verified 50 GiB WSL cap (containment `memory.high=44GiB`,
+`memory.max=48GiB`, `swap.max=0`, `oom.group=1` unchanged); CUDA ≤20 GiB
+and all digest, rows/labels, truncation, and coverage gates remain
+unchanged. If profiling cannot identify the copies, parity fails,
+projected peak exceeds 36 GiB, or the canonical workers 10/16/20
+full-cycle bench exceeds 40 GiB or otherwise fails, stop and return to
+consultation. No further in-box engineering or infrastructure escalation
+is automatic; the next ruling must choose a larger-memory machine or
+close 960 on this hardware.
+
+Candidate copy sites flagged during the consult (hypotheses to be
+confirmed by the profile, not conclusions): the chunk-list accumulation
+in the chunked dispatch loop (`oracle.py`), optional-array concatenation
+without the same release choreography as required fields
+(`concat_rollout_batches`, `ppo.py`), and dtype-normalizing NumPy
+conversions before device transfer (`ppo_update`, `ppo.py`).
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric

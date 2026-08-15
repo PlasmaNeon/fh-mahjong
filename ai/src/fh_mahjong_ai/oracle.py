@@ -32,6 +32,7 @@ from .model import (
     _reconstruct_env_config,
     _shape_inferred_fields,
 )
+from . import memprobe
 from .parallel_rollouts import _split_counts
 from .ppo import (
     _fsync_dir,
@@ -1286,14 +1287,20 @@ class ParallelB2bCollector:
         test_collect_bench's chunk-parity tests."""
         cap = int(getattr(self.ppo_config, "collect_dispatch_chunk", 0) or 0)
         if cap <= 0 or cap >= matches_per_iter:
-            return self._collect_dispatch(state_dict, base_seed, matches_per_iter)
+            batch = self._collect_dispatch(state_dict, base_seed, matches_per_iter)
+            memprobe.probe("collector_return", rows=len(batch), chunks=1)
+            return batch
         chunks = []
         offset = 0
         while offset < matches_per_iter:
             count = min(cap, matches_per_iter - offset)
             chunks.append(self._collect_dispatch(state_dict, int(base_seed + offset), count))
+            memprobe.probe("chunk_collected", chunk_index=len(chunks) - 1,
+                           matches=int(count), rows=len(chunks[-1]))
             offset += count
-        return concat_rollout_batches(chunks, consume=True)
+        batch = concat_rollout_batches(chunks, consume=True)
+        memprobe.probe("collector_return", rows=len(batch), chunks=len(chunks))
+        return batch
 
     def _collect_dispatch(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
         counts = _split_counts(matches_per_iter, self.num_workers)
@@ -1321,7 +1328,9 @@ class ParallelB2bCollector:
             results[worker_id] = batch
             received += 1
         ordered = [results[w] for w in sorted(results)]
-        return concat_rollout_batches(ordered, consume=True)
+        dispatch_batch = concat_rollout_batches(ordered, consume=True)
+        memprobe.probe("dispatch_return", rows=len(dispatch_batch), workers=len(ordered))
+        return dispatch_batch
 
     def close(self) -> None:
         if not self._procs:
