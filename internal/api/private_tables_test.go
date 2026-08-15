@@ -34,7 +34,7 @@ func privateTableSession(t *testing.T, server *Server, credential string) (*http
 		t.Fatalf("invalid test user id: %v", err)
 	}
 	userID, username := uint(id64), parts[1]
-	user := storage.User{ID: userID, Email: fmt.Sprintf("test-%d@example.com", userID), Username: username, PasswordHash: "test", Rating: 1500}
+	user := storage.User{ID: userID, Username: username, PasswordHash: "test", Rating: 1500}
 	if err := server.DB.Where("id = ?", userID).FirstOrCreate(&user).Error; err != nil {
 		t.Fatalf("create test user: %v", err)
 	}

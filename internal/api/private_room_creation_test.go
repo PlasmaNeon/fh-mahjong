@@ -25,12 +25,12 @@ func newAuthenticatedPrivateTableServer(t *testing.T) *Server {
 	return NewServer(db, hub, matchmaker)
 }
 
-func registerSession(t *testing.T, server *Server, email, username string) (*http.Cookie, string) {
+func registerSession(t *testing.T, server *Server, username string) (*http.Cookie, string) {
 	t.Helper()
 	rec := authRequest(t, server.Router, http.MethodPost, "/api/v1/auth/register",
-		`{"email":"`+email+`","username":"`+username+`","password":"hunter2pw"}`, nil, "")
+		`{"username":"`+username+`","password":"hunter2pw"}`, nil, "")
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("register %s = %d: %s", email, rec.Code, rec.Body.String())
+		t.Fatalf("register %s = %d: %s", username, rec.Code, rec.Body.String())
 	}
 	var response AuthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
@@ -41,7 +41,7 @@ func registerSession(t *testing.T, server *Server, email, username string) (*htt
 
 func TestCreatePrivateRoomIsExplicitAndSeatsHost(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	cookie, csrf := registerSession(t, server, "host@example.com", "Rain Host")
+	cookie, csrf := registerSession(t, server, "Rain Host")
 	rec := authRequest(t, server.Router, http.MethodPost, "/api/v1/rooms", `{}`, cookie, csrf)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create room = %d: %s", rec.Code, rec.Body.String())
@@ -63,7 +63,7 @@ func TestCreatePrivateRoomIsExplicitAndSeatsHost(t *testing.T) {
 
 func TestJoinMissingPrivateRoomDoesNotCreateIt(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	cookie, csrf := registerSession(t, server, "invitee@example.com", "Invitee")
+	cookie, csrf := registerSession(t, server, "Invitee")
 	rec := authRequest(t, server.Router, http.MethodPost, "/api/v1/rooms/not-real/join", `{}`, cookie, csrf)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("join missing room = %d: %s", rec.Code, rec.Body.String())
@@ -75,7 +75,7 @@ func TestJoinMissingPrivateRoomDoesNotCreateIt(t *testing.T) {
 
 func TestAuthenticatedInviteeJoinsExistingRoom(t *testing.T) {
 	server := newAuthenticatedPrivateTableServer(t)
-	hostCookie, hostCSRF := registerSession(t, server, "host@example.com", "Host")
+	hostCookie, hostCSRF := registerSession(t, server, "Host")
 	created := authRequest(t, server.Router, http.MethodPost, "/api/v1/rooms", `{}`, hostCookie, hostCSRF)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create room = %d: %s", created.Code, created.Body.String())
@@ -84,7 +84,7 @@ func TestAuthenticatedInviteeJoinsExistingRoom(t *testing.T) {
 	_ = json.Unmarshal(created.Body.Bytes(), &room)
 	roomID := room["tableId"].(string)
 
-	guestCookie, guestCSRF := registerSession(t, server, "guest@example.com", "Guest")
+	guestCookie, guestCSRF := registerSession(t, server, "Guest")
 	joined := authRequest(t, server.Router, http.MethodPost, "/api/v1/rooms/"+roomID+"/join", `{}`, guestCookie, guestCSRF)
 	if joined.Code != http.StatusOK {
 		t.Fatalf("join existing room = %d: %s", joined.Code, joined.Body.String())

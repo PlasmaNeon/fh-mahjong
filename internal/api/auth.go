@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	netmail "net/mail"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/plasma/fh-mahjong/internal/mail"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -24,12 +26,19 @@ const (
 	prodSessionCookieName = "__Host-fh_session"
 )
 
+// AuthHandler owns account creation, login, and password recovery. Mail and
+// ResetLimiter are only used by the password-reset endpoints.
 type AuthHandler struct {
-	DB *gorm.DB
+	DB           *gorm.DB
+	Mail         mail.Sender
+	ResetLimiter *keyedRateLimiter
 }
 
+// RegisterRequest creates an account from a username and password only.
+// Email is deliberately absent: it is an optional profile field set later
+// through PATCH /users/me, never collected at signup. `displayName` remains
+// as the legacy alias for `username`.
 type RegisterRequest struct {
-	Email       string `json:"email" binding:"required,email"`
 	Username    string `json:"username"`
 	DisplayName string `json:"displayName"`
 	Password    string `json:"password" binding:"required,min=8"`
@@ -120,8 +129,15 @@ func createSession(db *gorm.DB, userID uint) (string, storage.UserSession, error
 	return rawToken, session, nil
 }
 
-func isProductionCookie() bool {
+// isProduction reports whether this process is running as a production
+// deployment. It gates both Secure-cookie behaviour and anything else that
+// must not behave like a development convenience in production.
+func isProduction() bool {
 	return strings.EqualFold(os.Getenv("APP_ENV"), "production") || strings.EqualFold(os.Getenv("GIN_MODE"), "release")
+}
+
+func isProductionCookie() bool {
+	return isProduction()
 }
 
 func setSessionCookie(c *gin.Context, rawToken string) {
@@ -196,7 +212,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 	user := storage.User{
-		Email:        normalizeEmail(req.Email),
 		Username:     username,
 		UsernameKey:  usernameKey,
 		PasswordHash: string(hashedPassword),
@@ -214,7 +229,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	})
 	if err != nil {
 		if isUniqueConstraintError(err) {
-			respondError(c, http.StatusConflict, "Email or username is already registered")
+			respondError(c, http.StatusConflict, "Username is already registered")
 			return
 		}
 		respondError(c, http.StatusInternalServerError, "Failed to create account")
@@ -241,15 +256,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	var user storage.User
-	var lookupErr error
-	if strings.Contains(identifier, "@") {
-		lookupErr = h.DB.Where("email = ?", normalizeEmail(identifier)).First(&user).Error
-	} else {
-		_, key := storage.NormalizeUsername(identifier)
-		lookupErr = h.DB.Where("username_key = ?", key).First(&user).Error
-	}
-	if lookupErr != nil {
+	user, found := lookupUserByIdentifier(h.DB, identifier)
+	if !found {
 		bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
 		respondError(c, http.StatusUnauthorized, "Invalid username/email or password")
 		return
@@ -289,8 +297,25 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// UpdateProfileRequest carries an optional username and/or email change. For
+// Email the three JSON states are distinct: key absent (or null) means "no
+// change", a non-empty string sets or replaces the address, and "" clears it
+// back to NULL.
+//
+// Email deliberately carries no `binding:"...email"` tag. go-playground's
+// validator only treats a *string as empty (for `omitempty`) when the
+// pointer itself is nil; a non-nil pointer to "" — exactly the clear
+// request — still hits the `email` format check and gets rejected (verified
+// against this repo's pinned validator v10.30.1). UpdateMe instead validates
+// format by hand, and only when the normalized value is non-empty, so
+// clearing is never subject to format validation. The hand-rolled check is
+// deliberately stricter than a bare net/mail.ParseAddress call: ParseAddress
+// alone accepts RFC 5322 display-name forms ("Rain <rain@example.com>") and
+// quoted local parts, so it also requires the parsed address to have no
+// display name, to equal the normalized input exactly, and the input to
+// contain exactly one "@" — accepting only a bare addr-spec.
 type UpdateProfileRequest struct {
-	Email           *string `json:"email" binding:"omitempty,email"`
+	Email           *string `json:"email"`
 	Username        *string `json:"username"`
 	DisplayName     *string `json:"displayName"`
 	CurrentPassword *string `json:"currentPassword"`
@@ -329,11 +354,27 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 			return
 		}
 	}
-	newEmail := ""
+	// newEmail nil while emailChange is true means "clear it".
+	var newEmail *string
 	emailChange := false
 	if req.Email != nil {
-		newEmail = normalizeEmail(*req.Email)
-		emailChange = newEmail != user.Email
+		normalized := normalizeEmail(*req.Email)
+		switch {
+		case normalized == "":
+			emailChange = user.Email != nil
+		case user.Email == nil || *user.Email != normalized:
+			if len(normalized) > 255 {
+				respondError(c, http.StatusBadRequest, "Invalid email address")
+				return
+			}
+			parsed, err := netmail.ParseAddress(normalized)
+			if err != nil || parsed.Name != "" || parsed.Address != normalized || strings.Count(normalized, "@") != 1 {
+				respondError(c, http.StatusBadRequest, "Invalid email address")
+				return
+			}
+			emailChange = true
+			newEmail = &normalized
+		}
 	}
 	newUsername, newUsernameKey := user.Username, user.UsernameKey
 	usernameChange := false
@@ -362,13 +403,32 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	}
 	updates := map[string]any{}
 	if emailChange {
-		updates["email"] = newEmail
+		if newEmail == nil {
+			updates["email"] = nil
+		} else {
+			updates["email"] = *newEmail
+		}
+		// A newly set or cleared address is never a verified one.
+		updates["email_verified_at"] = nil
 	}
 	if usernameChange {
 		updates["username"] = newUsername
 		updates["username_key"] = newUsernameKey
 	}
-	if err := h.DB.Model(&user).Updates(updates).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&user).Updates(updates).Error; err != nil {
+			return err
+		}
+		if !emailChange {
+			return nil
+		}
+		// Any code already in flight went to the OLD address. Changing or
+		// clearing the address must retire it, or whoever still controls that
+		// inbox can complete the reset the owner just acted to prevent.
+		return tx.Model(&storage.PasswordResetCode{}).
+			Where("user_id = ? AND consumed_at IS NULL", user.ID).
+			Update("consumed_at", time.Now()).Error
+	}); err != nil {
 		if isUniqueConstraintError(err) {
 			respondError(c, http.StatusConflict, "Email or username is already registered")
 			return

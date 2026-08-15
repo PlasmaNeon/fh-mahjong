@@ -1,17 +1,14 @@
 import { useState, type FormEvent } from 'react'
 import { Button, Field, Note, ToolsRow } from '../../theme'
 import { useAuth } from '../../contexts/AuthContext'
-import { authenticatedFetch, type AuthPayload } from './authClient'
+import { authenticatedFetch, authRequestBody, type AuthMode, type AuthPayload } from './authClient'
 import { useI18n } from '../../i18n/I18nContext'
-
-type Mode = 'login' | 'register'
 
 export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { onAuthenticated?: (payload: AuthPayload) => void; intent?: 'continue' | 'join table' }) {
   const { completeAuth } = useAuth()
   const { t } = useI18n()
-  const [mode, setMode] = useState<Mode>('login')
+  const [mode, setMode] = useState<AuthMode>('login')
   const [identifier, setIdentifier] = useState('')
-  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [username, setUsername] = useState('')
   const [error, setError] = useState('')
@@ -25,7 +22,7 @@ export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { o
       const isRegister = mode === 'register'
       const response = await authenticatedFetch(isRegister ? '/api/v1/auth/register' : '/api/v1/auth/login', 'POST', undefined, {
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isRegister ? { email, password, username } : { identifier, password }),
+        body: JSON.stringify(authRequestBody(mode, { identifier, username, password })),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || t('auth.failed'))
@@ -49,14 +46,13 @@ export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { o
       ) : (
         <>
           <Field label={t('auth.username')} value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" />
-          <Field label={t('auth.email')} type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" style={{ marginTop: '0.85rem' }} />
           <Note>{t('auth.usernameHint')}</Note>
         </>
       )}
       <Field label={t('auth.password')} type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
       {error && <Note tone="error">{error}</Note>}
       <ToolsRow>
-        <Button type="submit" variant="primary" disabled={submitting || !password || (mode === 'login' ? !identifier : !email || !username)}>
+        <Button type="submit" variant="primary" disabled={submitting || !password || (mode === 'login' ? !identifier : !username)}>
           {submitting
             ? t('auth.opening')
             : mode === 'login'

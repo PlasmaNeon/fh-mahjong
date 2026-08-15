@@ -25,9 +25,9 @@ export default function Account() {
             return
         }
         if (user) {
-            setEmail(user.email)
+            setEmail(user.email ?? '')
             setUsername(user.username)
-            setInitialEmail(user.email)
+            setInitialEmail(user.email ?? '')
             setInitialUsername(user.username)
         }
     }, [authStatus, navigate, user])
@@ -46,9 +46,9 @@ export default function Account() {
             const data = await response.json().catch(() => ({}))
             if (!response.ok) throw new Error(data.error || t('account.saveFailed'))
             completeAuth(data as AuthPayload)
-            setInitialEmail(data.user.email)
+            setInitialEmail(data.user.email ?? '')
             setInitialUsername(data.user.username)
-            setEmail(data.user.email)
+            setEmail(data.user.email ?? '')
             setUsername(data.user.username)
             setCurrentPassword('')
             if (usernameChanged) { disconnect(); connect() }
@@ -77,7 +77,8 @@ export default function Account() {
                     {authStatus === 'offline' && <><Note tone="error">{t('account.offline')}</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow></>}
                     {user && <>
                         <Field label={t('auth.username')} value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" />
-                        <Field label={t('auth.email')} type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" style={{ marginTop: '0.85rem' }} />
+                        <Field label={t('auth.emailOptional')} type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" style={{ marginTop: '0.85rem' }} />
+                        <Note>{t('account.emailHelp')}</Note>
                         <Field label={t('auth.currentPassword')} type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" style={{ marginTop: '0.85rem' }} />
                         {error && <Note tone="error">{error}</Note>}
                         {status && <Note tone="ok">{status}</Note>}
