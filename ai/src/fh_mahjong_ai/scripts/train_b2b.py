@@ -45,6 +45,15 @@ def main() -> None:
                         "--dispatch-chunk). 0 = single dispatch (legacy). Semantics-"
                         "neutral on resume like --num-workers (logged, not rejected). "
                         "data-scale-960 Amendment 2 freezes 320 for that lap")
+    p.add_argument("--minibatch-device-transfer", action="store_true",
+                   help="keep the full rollout in host memory and synchronously move "
+                        "each minibatch to the update device inside the PPO loop "
+                        "(PPOConfig.minibatch_device_transfer). Bit-identical update "
+                        "(same permutation RNG, global advantage normalization, and "
+                        "values; parity-gauntleted). data-scale-960 Amendment 5: "
+                        "required at 960 matches — the full-rollout transfer projects "
+                        "~23.7GiB CUDA, over the 24GB 4090. Semantics-neutral on "
+                        "resume like --num-workers (logged, not rejected)")
     p.add_argument("--privileged-critic", dest="privileged_critic", action="store_true", default=True,
                    help="train a privileged-info critic branch (default: on)")
     p.add_argument("--no-privileged-critic", dest="privileged_critic", action="store_false")
@@ -162,7 +171,8 @@ def main() -> None:
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers,
-                       collect_dispatch_chunk=args.collect_dispatch_chunk)
+                       collect_dispatch_chunk=args.collect_dispatch_chunk,
+                       minibatch_device_transfer=args.minibatch_device_transfer)
     # Adversarial round 6, high finding: --event-window (this script's own
     # flag) is NOT --model-event-window (model_config_args's flag, default
     # 0) -- threading the effective window straight into

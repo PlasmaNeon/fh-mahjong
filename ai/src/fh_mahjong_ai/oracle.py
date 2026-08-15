@@ -1284,17 +1284,32 @@ class ParallelB2bCollector:
         order, so together with per-match seeding
         (`torch.manual_seed(base_seed + m)` in `collect_b2b_rollouts`) the
         result is bit-identical to a single dispatch — digest-pinned by
-        test_collect_bench's chunk-parity tests."""
+        test_collect_bench's chunk-parity tests.
+
+        Amendment 5 (data-scale-960, 2026-08-15): the worker pool is closed
+        after the FINAL dispatch's results have been received and before any
+        remaining concatenation, then recreated on the next collect. The
+        Amendment 4 profile measured the persistent pool at ~18.4GiB (10
+        workers) held through the master's outer-concat transient — the two
+        together are what breached the host ceiling at 960 matches. Teardown
+        happens after every result is in hand, so seed coverage and canonical
+        row order are untouched; the error paths inside `_collect_dispatch`
+        already close the pool."""
+        if not self._procs:
+            self.start()
         cap = int(getattr(self.ppo_config, "collect_dispatch_chunk", 0) or 0)
         if cap <= 0 or cap >= matches_per_iter:
-            batch = self._collect_dispatch(state_dict, base_seed, matches_per_iter)
+            batch = self._collect_dispatch(state_dict, base_seed, matches_per_iter,
+                                           final_dispatch=True)
             memprobe.probe("collector_return", rows=len(batch), chunks=1)
             return batch
         chunks = []
         offset = 0
         while offset < matches_per_iter:
             count = min(cap, matches_per_iter - offset)
-            chunks.append(self._collect_dispatch(state_dict, int(base_seed + offset), count))
+            final = (offset + count) >= matches_per_iter
+            chunks.append(self._collect_dispatch(state_dict, int(base_seed + offset),
+                                                 count, final_dispatch=final))
             memprobe.probe("chunk_collected", chunk_index=len(chunks) - 1,
                            matches=int(count), rows=len(chunks[-1]))
             offset += count
@@ -1302,7 +1317,8 @@ class ParallelB2bCollector:
         memprobe.probe("collector_return", rows=len(batch), chunks=len(chunks))
         return batch
 
-    def _collect_dispatch(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
+    def _collect_dispatch(self, state_dict, base_seed: int, matches_per_iter: int,
+                          final_dispatch: bool = False) -> RolloutBatch:
         counts = _split_counts(matches_per_iter, self.num_workers)
         offset = 0
         dispatched = 0
@@ -1327,6 +1343,12 @@ class ParallelB2bCollector:
                 raise RuntimeError(f"B2b rollout worker {worker_id} failed:\n{err}")
             results[worker_id] = batch
             received += 1
+        if final_dispatch:
+            # Amendment 5: all of this collect's results are in hand — free the
+            # pool's ~1.8GiB-per-worker runtime footprint before any further
+            # (memory-transient) assembly. The next collect() restarts it.
+            self.close()
+            memprobe.probe("pool_closed_before_concat", workers=self.num_workers)
         ordered = [results[w] for w in sorted(results)]
         dispatch_batch = concat_rollout_batches(ordered, consume=True)
         memprobe.probe("dispatch_return", rows=len(dispatch_batch), workers=len(ordered))
@@ -1687,6 +1709,12 @@ _RESUME_LOGGED_FIELDS = {
     # tests prove trajectories are chunk-invariant. Lowering it on resume
     # after an OOM is a legitimate operational adjustment, not recipe drift.
     ("ppo_config", "collect_dispatch_chunk"),
+    # Amendment 5: minibatch_device_transfer changes only WHERE rollout
+    # tensors live between optimizer steps (host vs update device), not any
+    # value, permutation, or update — bit-parity pinned by test_ppo's
+    # path-equivalence tests and the on-box gauntlet. Toggling it on resume
+    # (e.g. to fit a card) is operational, not recipe drift.
+    ("ppo_config", "minibatch_device_transfer"),
 }
 
 # Adversarial round 1 (high): a new field with a dataclass default (e.g.
@@ -1729,6 +1757,7 @@ _LEGACY_ECHO_ADDITIONS = {
     },
     "ppo_config": {
         "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2
+        "minibatch_device_transfer",  # absent from every train_state.pt saved before data-scale-960 Amendment 5
     },
 }
 

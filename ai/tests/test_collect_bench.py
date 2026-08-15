@@ -196,7 +196,9 @@ def test_chunk_dispatch_covers_seed_blocks_in_order(monkeypatch):
             env, mcfg, dc_replace(PPOConfig(device="cpu"), collect_dispatch_chunk=cap), 2)
 
     def install_recorder(collector, calls):
-        def fake(state_dict, base_seed, matches):
+        monkeypatch.setattr(collector, "start", lambda: None)  # no real spawn
+
+        def fake(state_dict, base_seed, matches, final_dispatch=False):
             calls.append((base_seed, matches))
             batch = _minimal_batch()
             batch.actions = np.zeros(matches, dtype=np.int64)
@@ -247,13 +249,14 @@ def test_chunk_dispatch_propagates_later_chunk_failure(monkeypatch):
         env, mcfg, dc_replace(PPOConfig(device="cpu"), collect_dispatch_chunk=2), 2)
     calls: list = []
 
-    def fake(state_dict, base_seed, matches):
+    def fake(state_dict, base_seed, matches, final_dispatch=False):
         calls.append((base_seed, matches))
         if len(calls) == 2:
             raise RuntimeError("worker died in chunk 2")
         batch = _minimal_batch()
         return batch
 
+    monkeypatch.setattr(collector, "start", lambda: None)  # no real spawn
     monkeypatch.setattr(collector, "_collect_dispatch", fake)
     with pytest.raises(RuntimeError, match="chunk 2"):
         collector.collect({}, 0, 4)

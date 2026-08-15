@@ -160,6 +160,104 @@ without the same release choreography as required fields
 (`concat_rollout_batches`, `ppo.py`), and dtype-normalizing NumPy
 conversions before device transfer (`ppo_update`, `ppo.py`).
 
+## Amendment 5 (Codex consult, 2026-08-15, post-Amendment-4 memory profile)
+
+Amendment 4 completed cleanly: all four registered 320/640 profile runs
+exited zero, and the measurement instrumentation plus digest-parity tests
+merged as PR #202. The profile identifies two independent infrastructure
+limits. First, the Amendment-3 host kill occurred during the outer
+`np.concatenate` transient: at 960, the planes sources and destination
+would coexist at approximately 30.4 GiB in the master. The master is not a
+steady three-copy accumulator. Second, the ten persistent spawn workers
+consume approximately 18.4 GiB independent of chunk size. Measured aggregate
+host peaks were 29.5 GiB at 320 and 40.1-40.2 GiB at 640, projecting
+approximately 50.7-51.0 GiB at 960 on the unchanged path.
+
+The profile also establishes a new independent CUDA blocker. Full-cycle peak
+allocated memory was 9.32 GiB at 320 and 16.49 GiB at 640, projecting
+approximately 23.7 GiB at 960, above both the registered 20 GiB gate and the
+practical capacity of the 24 GB RTX 4090. Therefore host-only copy elimination
+cannot make the registered full-rollout device-transfer path viable. These
+are infrastructure failures, not training nulls; the 960/768 scientific
+hypothesis remains untested.
+
+Ruling: authorize option (i), conditionally. The complete RolloutBatch remains
+in host memory, while each registered minibatch is synchronously transferred
+to CUDA inside the unchanged PPO update loop. No asynchronous prefetch,
+double buffering, disk or memmap storage, float16 rollout storage, streaming
+GAE, GoEnvPool, or PPO/data/scientific change is authorized. Global advantage
+normalization, minibatch size 768, two PPO epochs, CUDA permutation generation,
+losses, auxiliary targets, optimizer behavior, and all other mathematics
+remain unchanged.
+
+Also authorize closing and joining the persistent worker pool after the final
+dispatch result has been received and before outer rollout concatenation.
+The pool is recreated for the next iteration. Shutdown must preserve complete
+seed coverage and canonical row order, occur on exception paths, and be used
+identically by the trainer and full-cycle profiler.
+
+Trust requires:
+
+1. Exact baseline-versus-candidate canonical rollout digest parity, including
+   shapes, dtypes, bytes, order, labels, and truncation, at a three-chunk
+   non-divisible small case and at 640 matches/workers10/chunk320/seeds700000+.
+   Repeated candidate collection must reproduce the digest.
+2. Byte-identical GAE advantages and returns. Advantage normalization remains
+   global over the full rollout, and every normalized advantage minibatch
+   delivered to CUDA must be byte-identical to baseline.
+3. Identical initial model, optimizer, CPU RNG, and CUDA RNG states; identical
+   CUDA `torch.randperm` call order and permutations for both epochs; and
+   identical minibatch indices and optimizer-step count
+   `2 * ceil(rows / 768)`.
+4. For every optimizer step, including the ragged tail, identical shape,
+   dtype, layout/stride, and bytes for CUDA planes, scalars, action masks,
+   actions, old log-probabilities, normalized advantages, returns, events,
+   event lengths, deal-in labels, rank labels, and derived belief targets.
+   Per-minibatch event casting is allowed only when the resulting CUDA int64
+   tensor is byte-identical to baseline.
+5. Exact non-floating model/optimizer/RNG state after the update, with floating
+   model parameters, optimizer tensors, and aggregated telemetry no farther
+   from baseline than the fixed established unchanged-baseline CUDA
+   determinism envelope. The envelope may not be widened after candidate
+   results are observed. Any unexplained parity failure stops this branch.
+
+After parity, rerun optimized full-cycle profiles at 320 and 640 using fresh
+processes/cgroups, workers=10, chunk=320, and the registered seed prefixes.
+For aggregate host RSS and CUDA allocated memory, project conservatively as
+`P960 = max(P320, P640, P640 + (P640 - P320))`. Do not attempt the canonical
+960 bench unless projected host peak is <=36 GiB and projected CUDA allocated
+peak is <=20 GiB.
+
+The canonical Stage-0 bench is restated from workers 10/16/20 to workers=10
+only. The measured persistent-worker footprint makes the 16/20 phases
+knowingly infeasible and they add no scientific evidence. Workers=10 is
+frozen for both the canonical bench and the lap; workers=6 is not an automatic
+fallback. The 960/mb768 full-cycle bench must complete under the unchanged
+whole-tree containment (`memory.high=44GiB`, `memory.max=48GiB`,
+`memory.swap.max=0`, `memory.oom.group=1`) with aggregate process-tree RSS
+<=40 GiB, CUDA allocated <=20 GiB, no host or CUDA OOM, expected rows and
+optimizer steps, zero truncation, and healthy labels/telemetry.
+
+If parity fails, either 320/640 projection guard fails, or the canonical
+workers=10 960 full-cycle bench fails any registered gate, stop all further
+in-box engineering. Option (ii), a machine with sufficient host RAM and VRAM,
+is then the remaining execution branch; closing 960 remains available by
+consultation.
+
+Measured workers=10 throughput implies approximately 29 minutes collection
+plus 2 minutes update per iteration, or 77.5 hours for 150 iterations. Even
+with approximately one additional minute per iteration for pool recreation,
+the estimate is approximately 80 hours (3.33 days), within the registered
+2.5-3.5-day runbook ballpark. Screening, confirmation, and downtime are
+budgeted separately. Wall clock does not authorize adaptive worker-count or
+protocol changes.
+
+All scientific controls remain frozen: anchor and checkpoint SHA, coupled
+960/768 intervention, lr=2e-5, two PPO epochs, reward and auxiliary recipe,
+chunk=320, training and evaluation seed windows, 150 iterations, screening
+schedule, kill rule, fresh confirmation window, clustered paired-CI gate,
+large-loss delta cap, no optional stopping, and no automatic capacity lap.
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric

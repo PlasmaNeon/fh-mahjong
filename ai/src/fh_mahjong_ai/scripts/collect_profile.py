@@ -211,6 +211,9 @@ def main() -> None:
     p.add_argument("--entropy-coef", type=float, default=fc_defaults.entropy_coef)
     p.add_argument("--ppo-device", type=str, default=fc_defaults.device)
     p.add_argument("--update-seed", type=int, default=fc_defaults.update_seed)
+    p.add_argument("--minibatch-device-transfer", action="store_true",
+                   help="profile the Amendment 5 host-resident update path "
+                        "(per-minibatch synchronous device transfer)")
     p.add_argument("--json", type=Path, default=None, help="write the full report as JSON")
     add_model_config_args(p)
     args = p.parse_args()
@@ -225,7 +228,8 @@ def main() -> None:
             minibatch_size=args.minibatch_size, ppo_epochs=args.ppo_epochs,
             gamma=args.gamma, gae_lambda=args.gae_lambda, lr=args.lr,
             entropy_coef=args.entropy_coef, device=args.ppo_device,
-            update_seed=args.update_seed)
+            update_seed=args.update_seed,
+            minibatch_device_transfer=args.minibatch_device_transfer)
 
     report = run_profile(
         champion=args.champion, model_config=model_config,

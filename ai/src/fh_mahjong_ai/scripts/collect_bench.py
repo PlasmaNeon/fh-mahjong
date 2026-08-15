@@ -150,6 +150,9 @@ class FullCycleSettings:
     entropy_coef: float = 0.01
     device: str = "cpu"
     update_seed: int = 0
+    # Amendment 5: synchronous per-minibatch host-to-device transfer instead
+    # of one full-rollout transfer (PPOConfig.minibatch_device_transfer).
+    minibatch_device_transfer: bool = False
 
 
 def _linux_descendant_pids(root_pid: int) -> list[int]:
@@ -264,6 +267,7 @@ def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: fl
         gamma=settings.gamma, gae_lambda=settings.gae_lambda, lr=settings.lr,
         entropy_coef=settings.entropy_coef, match_mode=match_mode,
         max_steps_per_episode=max_steps_per_episode, device=settings.device,
+        minibatch_device_transfer=settings.minibatch_device_transfer,
     )
     use_cuda = settings.device.startswith("cuda") and torch.cuda.is_available()
     model = copy.deepcopy(warm_started).to(settings.device)
@@ -466,6 +470,11 @@ def main() -> None:
                    help="torch seed set before every --full-cycle update so the minibatch "
                         "permutation — and hence the whole update — is identical across "
                         "worker counts")
+    p.add_argument("--minibatch-device-transfer", action="store_true",
+                   help="run the --full-cycle update with the rollout kept in host "
+                        "memory and each minibatch synchronously moved to --ppo-device "
+                        "(data-scale-960 Amendment 5; bit-identical update, parity-"
+                        "gauntleted; required at 960 on a 24GB card)")
     p.add_argument("--json", type=Path, default=None, help="write the full report as JSON")
     add_model_config_args(p)
     args = p.parse_args()
@@ -496,7 +505,8 @@ def main() -> None:
             minibatch_size=args.minibatch_size, ppo_epochs=args.ppo_epochs,
             gamma=args.gamma, gae_lambda=args.gae_lambda, lr=args.lr,
             entropy_coef=args.entropy_coef, device=args.ppo_device,
-            update_seed=args.update_seed)
+            update_seed=args.update_seed,
+            minibatch_device_transfer=args.minibatch_device_transfer)
 
     report = run_bench(champion=args.champion, model_config=model_config,
                        growth_blocks=args.model_growth_blocks, workers=workers,
