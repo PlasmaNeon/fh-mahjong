@@ -9,6 +9,7 @@ from typing import Callable, List, Optional, Tuple
 import numpy as np
 import torch
 
+from . import memprobe
 from .bridge import build_bridge
 from .config import EnvConfig, ModelConfig
 from .data import placement_shaped_returns
@@ -204,10 +205,14 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
         if consume:
             for b in nonempty:
                 setattr(b, name, None)
+        memprobe.probe("concat_field", field=name, nbytes=int(fields[name].nbytes),
+                       consume=bool(consume), sources=len(nonempty))
     for name in _ROLLOUT_OPTIONAL_ARRAY_FIELDS:
         present = [getattr(b, name) is not None for b in nonempty]
         if all(present):
             fields[name] = np.concatenate([getattr(b, name) for b in nonempty], axis=0)
+            memprobe.probe("concat_field", field=name, nbytes=int(fields[name].nbytes),
+                           consume=False, sources=len(nonempty))
         elif any(present):
             raise ValueError(
                 f"concat_rollout_batches: '{name}' is present in some batches but "
@@ -216,7 +221,9 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
             )
         else:
             fields[name] = None
-    return RolloutBatch(**fields, truncated_matches=truncated_matches)
+    result = RolloutBatch(**fields, truncated_matches=truncated_matches)
+    memprobe.probe("concat_done", rows=len(result), sources=len(nonempty))
+    return result
 
 
 def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributions.Categorical:
@@ -249,6 +256,7 @@ def compute_gae(
         last_adv = delta + gamma * gae_lambda * next_nonterminal * last_adv
         advantages[t] = last_adv
     returns = advantages + values
+    memprobe.probe("gae_done", rows=int(n))
     return advantages, returns
 
 
@@ -278,6 +286,7 @@ def ppo_update(
         lengths_t = torch.from_numpy(np.asarray(batch.event_lengths, dtype=np.int64)).to(device)
         dealin_t = torch.from_numpy(np.asarray(batch.dealin_labels, dtype=np.float32)).to(device)
         rank_t = torch.from_numpy(np.asarray(batch.rank_labels, dtype=np.int64)).to(device)
+    memprobe.probe("ppo_tensors_ready", rows=int(n), device=str(device))
 
     model_config = getattr(model, "model_config", None)
     has_aux = bool(getattr(model_config, "aux_heads", False))
@@ -368,6 +377,7 @@ def ppo_update(
         metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
                    "approx_kl": 0.0, "clip_fraction": 0.0}
     metrics["optimizer_steps"] = optimizer_steps
+    memprobe.probe("ppo_update_done", rows=int(n), optimizer_steps=int(optimizer_steps))
     return metrics
 
 
