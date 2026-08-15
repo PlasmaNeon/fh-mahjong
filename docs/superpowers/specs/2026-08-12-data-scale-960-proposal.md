@@ -258,6 +258,85 @@ chunk=320, training and evaluation seed windows, 150 iterations, screening
 schedule, kill rule, fresh confirmation window, clustered paired-CI gate,
 large-loss delta cap, no optional stopping, and no automatic capacity lap.
 
+## Amendment 6 (Codex consult, 2026-08-15, post-Amendment-5 CUDA gauntlet)
+
+Amendment 5 implementation merged as PR #203. CPU bit-parity tests passed,
+and the on-box 640-match/workers10/chunk320/seeds700000+ gauntlet completed.
+Conditions 1-4 passed: the candidate reproduced the recorded pre-Amendment-5
+rollout digest, repeated through an automatic pool restart, and matched the
+real-bridge non-divisible chunk case; GAE remained unchanged; both update
+paths executed exactly 3308 optimizer steps; and the complete permutation,
+minibatch-index, and device-input hash sequence matched through both epochs,
+including the ragged tail.
+
+The candidate reduced CUDA peak allocation from 16.49 GiB to 2.26 GiB
+(7.3x) while update time changed from 96 seconds to 99 seconds (+3%).
+The change therefore has the measured memory and performance behavior
+authorized by Amendment 5.
+
+Condition 5 did not pass its original numerical envelope. The envelope was
+fixed before candidate observation from one repeated baseline pair:
+maximum per-tensor parameter delta 1.888e-03 and maximum metric delta
+8.9e-06. Candidate versus baseline1 reached 2.702e-03, with approximately
+30 of 150 tensors outside their individual one-pair envelopes. The worst
+tensor was `event_encoder.embedding.weight`; all discrepancies remained
+the same order of magnitude as baseline self-divergence.
+
+Ruling: adjudicate this result as explained but not yet a condition-5 pass.
+The byte-identical 3308-step input sequence, CPU bit parity, and nonzero
+baseline self-divergence make CUDA backward nondeterminism the supported
+explanation. A single baseline pair is not a calibrated bound for a
+maximum over approximately 150 tensors, so exceeding it by 1.4x is not
+evidence of a semantic update-path defect. Condition 5 nevertheless remains
+open until an exact deterministic-mode proof passes.
+
+Authorize deterministic-mode equivalence proof only. Run four fresh
+processes in order: legacy full-device B1, legacy full-device B2,
+minibatched-H2D C1, and minibatched-H2D C2. All use the identical recorded
+640-match rollout, anchor bytes, model/optimizer initialization, RNG state,
+minibatch configuration, software stack, and RTX 4090.
+
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` must be present before PyTorch import or
+CUDA initialization. Each process must use
+`torch.use_deterministic_algorithms(True, warn_only=False)`,
+`torch.set_deterministic_debug_mode("error")`,
+`torch.backends.cudnn.benchmark=False`, and
+`torch.backends.cudnn.deterministic=True`. TF32, matmul precision, PyTorch,
+CUDA, cuDNN, driver, and GPU settings must be identical and recorded.
+
+Every operation is considered deterministically supported only if the full
+3308-step update completes without a deterministic-algorithm exception or
+warning and B1 equals B2 bit for bit. No operator, model, optimizer, loss,
+minibatch, or hyperparameter substitution is allowed.
+
+Pass requires B1 == B2 == C1 == C2 with zero tolerance for the complete
+permutation/index sequence; every condition-4 forward and loss/target tensor;
+all final model parameters and buffers; all optimizer tensors, counters, and
+parameter-group state; per-step and aggregate metric digests; CPU/CUDA RNG
+states; and optimizer-step count. Tensor comparisons include presence, dtype,
+shape, layout/stride, and bytes. The prior nondeterministic candidate result
+is excluded from this new proof.
+
+The proposed K=5 distributional envelope is not authorized as an automatic
+fallback. A maximum-pairwise range from five baseline runs is not calibrated
+for simultaneous per-tensor maxima and has no pre-registered family-wise
+error rule. If any deterministic operator is unavailable, B1 differs from
+B2, or any candidate comparison differs, stop and return to consultation.
+Do not change the implementation or proceed to memory profiling.
+
+On an exact deterministic pass, Amendment 5 resumes unchanged: run fresh
+optimized 320/640 full-cycle profiles at workers=10/chunk320, apply
+`P960 = max(P320, P640, P640 + (P640 - P320))`, require projected aggregate
+host peak <=36 GiB and projected CUDA allocated peak <=20 GiB, then run the
+canonical workers=10 960/mb768 full-cycle bench under the unchanged cgroup,
+<=40 GiB aggregate host gate, <=20 GiB CUDA allocated gate, and all existing
+science/telemetry gates.
+
+Deterministic mode is proof-only. The optimized profiles, canonical bench,
+and lap must run in fresh processes under the frozen production CUDA
+configuration, with deterministic mode disabled and
+`CUBLAS_WORKSPACE_CONFIG` absent. All scientific controls remain frozen.
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
