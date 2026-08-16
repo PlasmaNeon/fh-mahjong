@@ -107,6 +107,76 @@ def test_train_b2b_two_iters_mock(tmp_path):
         assert key in history[0]
 
 
+def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
+    """Amendment 8 (data-scale-960) lifetime gauntlet: at entry to iteration
+    2's collection, after test-side garbage collection, the ENTIRE previous
+    iteration's rollout must be unreachable — the RolloutBatch object, every
+    required and optional field array, and the derived advantages/returns.
+
+    Before the `del batch, advantages, returns` fix in train_b2b's loop this
+    test FAILS (verified against the pre-fix tree: the loop locals keep ~17GiB
+    of iteration N's rollout alive through the whole of iteration N+1's
+    collection at 960 matches — the breach that killed the lap at iteration
+    2). Only test-side gc is used; the production fix is plain rebinding."""
+    import gc
+    import weakref
+
+    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai.ppo import RolloutBatch as _RB
+
+    refs: list = []
+    calls = {"n": 0}
+    real_collect = oracle_mod.collect_b2b_rollouts
+    real_gae = oracle_mod.compute_gae
+    field_names = (
+        "planes", "scalars", "action_mask", "actions", "old_logprobs",
+        "values", "rewards", "dones", "events", "event_lengths",
+        "dealin_labels", "rank_labels",
+    )
+
+    def wrapped_collect(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            gc.collect()
+            alive = [r for r in refs if r() is not None]
+            assert refs and not alive, (
+                f"{len(alive)} of {len(refs)} prior-iteration references "
+                "still alive at entry to iteration 2 collection "
+                "(Amendment 8 lifetime violation)")
+        batch = real_collect(*args, **kwargs)
+        if calls["n"] == 1:
+            refs.append(weakref.ref(batch))
+            for name in field_names:
+                arr = getattr(batch, name)
+                if arr is not None:
+                    refs.append(weakref.ref(arr))
+        return batch
+
+    def wrapped_gae(rewards, values, dones, gamma, lam):
+        adv, ret = real_gae(rewards, values, dones, gamma, lam)
+        if calls["n"] == 1:
+            refs.append(weakref.ref(adv))
+            refs.append(weakref.ref(ret))
+        return adv, ret
+
+    monkeypatch.setattr(oracle_mod, "collect_b2b_rollouts", wrapped_collect)
+    monkeypatch.setattr(oracle_mod, "compute_gae", wrapped_gae)
+
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+                                         aux_heads=True),
+                        champion_path, tmp_path / "ckpt", config, base_seed=5)
+    assert calls["n"] == 2
+    assert len(history) == 2
+    # Optional-field weakrefs registered: batch + 12 fields + adv + ret = 15.
+    assert len(refs) == 15
+
+
 def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
     # The bridge must simulate under the SAME chongci values the hindsight
     # labels are computed with — a silent mismatch here mislabels every rank.
