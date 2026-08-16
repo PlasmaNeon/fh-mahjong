@@ -166,6 +166,17 @@ Note: the proto uses `ACTION_CHII`/`ACTION_PON`/`ACTION_KAN` — the same chii/p
    ```
 6. **Update CLAUDE.md**: When modifying code in any directory, update that directory's `CLAUDE.md` to reflect the changes (new files, renamed exports, changed architecture, etc.).
 
+## Per-directory docs: CLAUDE.md and AGENTS.md
+
+Every directory carries a `CLAUDE.md` (the real file) plus an `AGENTS.md` **symlink**
+pointing at it, so Claude Code and Codex both auto-load the same content.
+
+- **Edit `CLAUDE.md`.** Editing `AGENTS.md` also works — it resolves to the same file —
+  but write the real name.
+- **Never replace an `AGENTS.md` symlink with a regular file.** Two real files drift, and
+  the two tools would then read different docs for the same directory.
+- New directory ⇒ create `CLAUDE.md`, then `ln -s CLAUDE.md AGENTS.md` beside it.
+
 ## Proto Regeneration
 
 Go bindings:
