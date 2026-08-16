@@ -337,6 +337,75 @@ and lap must run in fresh processes under the frozen production CUDA
 configuration, with deterministic mode disabled and
 `CUBLAS_WORKSPACE_CONFIG` absent. All scientific controls remain frozen.
 
+## Amendment 7 (Codex consult, 2026-08-15, post-Amendment-6 proof and optimized profiles)
+
+The Amendment 6 deterministic-mode equivalence proof passed exactly. Four
+fresh processes—legacy full-device B1/B2 and minibatched-H2D C1/C2—used the
+same recorded 640-match rollout re-anchored to digest
+`abf132032d5b9d41...`. All four produced identical final model-state digest
+`0a3788db3a9e168c...`, identical optimizer-state digest, identical 3308-step
+forward-input and gradient hash sequences, identical metric digests, and
+identical CPU/CUDA RNG states. Deterministic mode completed without exception.
+B1==B2 and C1==C2 establish deterministic repeatability; B1==C1 establishes
+exact path equivalence. Candidate CUDA peak was 2.29 GiB versus 16.53 GiB for
+the legacy path. Amendment 5 condition 5 is closed with an exact pass, and
+the authorized minibatched-H2D and worker-pool-teardown path is trusted.
+
+Fresh optimized production-mode 320/640 profiles then completed. All rollout
+digests matched their pre-Amendment-5 anchors; truncation was zero;
+deal-in-positive rates were 0.127/0.128; rank coverage was 1.0; KL was
+0.0027/0.0031; and optimizer steps were the expected 1650/3308. CUDA allocated
+peaks were 2.21 and 2.24 GiB, producing the registered conservative projection
+of 2.27 GiB at 960, decisively below the 20 GiB gate.
+
+Aggregate host peaks were 24.90 GiB at 320 and 30.49 GiB at 640. The registered
+formula projects:
+
+`P960 = max(24.90, 30.49, 30.49 + (30.49 - 24.90)) = 36.08 GiB`.
+
+This literally exceeds the 36 GiB pre-bench spending guard by 0.08 GiB
+(0.2%); it is not recorded as a guard pass. The remaining peak is during
+collection—persistent workers plus accumulated and in-flight chunks—not
+outer assembly. The projected value remains 3.92 GiB below the registered
+40 GiB canonical host gate, while the 0.08 GiB excess is smaller than useful
+sampled-peak measurement precision.
+
+Ruling: grant a one-time spend-guard waiver and authorize exactly one canonical
+workers=10 960/mb768 full-cycle bench. The 36 GiB guard was explicitly a
+pre-bench spending guard rather than the feasibility gate; it has served that
+purpose by returning the 36.08 GiB projection to consultation. This waiver
+does not redefine the guard, authorize rounding, or permit repeated attempts
+to obtain a favorable peak. The definitive decision remains the registered
+canonical bench under the unchanged 40 GiB aggregate host and 20 GiB CUDA
+allocated gates.
+
+The canonical bench remains frozen at workers=10, chunk=320, seeds
+700000–700959, the registered anchor and recipe, and synchronous
+minibatch-at-a-time device transfer. It must run in a fresh production-mode
+process with deterministic-proof settings disabled and
+`CUBLAS_WORKSPACE_CONFIG` absent, under an exclusive launch lock with no
+unrelated workload in its cgroup.
+
+Containment remains `memory.high=44GiB`, `memory.max=48GiB`,
+`memory.swap.max=0`, and `memory.oom.group=1`. Monitor aggregate process-tree
+RSS at intervals no greater than 250 ms across startup, collection, assembly,
+GAE, update, and teardown. Record master and child RSS separately, cgroup
+`memory.current`, `memory.peak`, and `memory.events`, plus CUDA allocated and
+reserved peaks. A watchdog must terminate the complete cgroup immediately if
+sampled aggregate process-tree RSS exceeds 40.00 GiB or monitoring fails.
+Any new cgroup `high`, `max`, `oom`, or `oom_kill` event is a failure.
+
+The bench passes only if aggregate process-tree RSS remains <=40 GiB, CUDA
+allocated remains <=20 GiB, no host or CUDA OOM occurs, and every existing
+digest, row, optimizer-step, truncation, coverage, KL, and clip gate passes.
+Missing or incomplete monitoring is not a pass. A memory failure, monitoring
+failure, OOM, or other gate failure receives no automatic retry and stops the
+in-box branch pending consultation; option (ii) or closure then remains.
+
+If the single canonical bench passes every gate, Stage 0 is complete and the
+existing Amendment 5 data-scale-960/mb768 run authorization resumes unchanged.
+All scientific controls, screening and confirmation windows, kill rule,
+tail-risk gate, and no-optional-stopping rule remain frozen.
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
