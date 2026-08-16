@@ -452,6 +452,123 @@ lacked an `if __name__ == "__main__"` guard under `spawn` (fixed, relaunched);
 never `rm` a flock file inside the same ssh command that launches (the ssh
 layer double-executes and defeats the lock — one A5 re-profile had to be
 killed and relaunched); use a distinct lock file per launcher.
+
+## Amendment 8 (Codex consult, 2026-08-15, post-launch iteration-2 memory kill)
+
+The data-scale-960 lap launched after the Amendment 7 canonical pass under
+the union of the registered guards: aggregate process-tree RSS <=40 GiB and
+cgroup `memory.peak` <=36 GiB. At 2026-08-15 19:30:46 PDT, during iteration
+2 collection, unit `ds960-lap` was terminated through `cgroup.kill`.
+The cgroup guard observed `memory.peak=38,948,155,392` bytes (36.27 GiB),
+above its 36 GiB limit. At the same sample aggregate tree RSS was
+41,925,881,856 bytes (39.05 GiB) and rising toward the independent 40 GiB
+watchdog. This is a registered stop, not an infrastructure pass and not a
+scientific training result.
+
+Iteration 1 completed and durably wrote `iter_001.pt` and `history.json`.
+Its telemetry matched the canonical bench on the same seeds. No
+`train_state.pt` existed because `--train-state-every 5` had not yet fired,
+so the killed attempt is not resumable.
+
+The canonical bench exercised only one collect-update cycle. The multi-
+iteration trainer retains the previous iteration's `RolloutBatch`,
+advantages, and returns in loop locals until the next collection returns
+and reassigns them. At iteration 2 this leaves approximately 17 GiB of the
+previous rollout resident while the restarted ten-worker pool consumes
+approximately 18.4 GiB and begins accumulating the next rollout. The
+observed approximately 39 GiB tree RSS matches this ownership overlap.
+The single-cycle bench could not expose it.
+
+Ruling: authorize one targeted B2b trainer lifetime repair within Amendment
+4's object-ownership and field-lifetime class. After `ppo_update` and every
+batch-derived telemetry/truncation calculation have completed, explicitly
+drop all strong references to the completed `batch`, `advantages`, and
+`returns` before the next iteration begins its model snapshot or collection.
+No rollout value, field, dtype, ordering, seed, GAE/PPO calculation, RNG call,
+optimizer operation, collector behavior, allocator setting, or scientific
+control may change. `gc.collect()`, `malloc_trim`, allocator tuning, and
+additional memory engineering are not authorized.
+
+Before on-box execution, an instrumented two-iteration trainer test must hold
+only weak references to the first iteration's RolloutBatch, all required and
+optional field arrays, advantages, and returns. At entry to iteration 2
+collection, after test-side garbage collection, every weak reference must be
+dead. The test must reproduce the retained-reference failure before the fix.
+A deterministic two-iteration baseline-versus-fixed comparison must then
+produce exactly identical rollout digests, per-iteration model and optimizer
+states, history/metrics, RNG states, permutations, and optimizer-step
+sequences. Run the focused B2b trainer, resume/state, collector-restart, PPO,
+and profile tests, followed by the complete AI suite.
+
+Do not require the fresh production `iter_001.pt` model bytes to equal the
+killed run's checkpoint: production CUDA update bytes are known to vary
+nondeterministically outside the Amendment 6 proof configuration. Instead,
+require exact iteration-1 rollout digest, seed coverage, rows, labels,
+truncation, and optimizer-step count; record its metrics diagnostically.
+Retain the killed `iter_001.pt` and history as immutable failure evidence.
+
+After the code gauntlet, run a bounded three-iteration production-mode probe
+from iteration 0 in a disposable checkpoint directory. Use the exact lap
+configuration except `--iterations 3`; probe checkpoints and state are never
+promoted into or resumed by the scientific lap. This probe exercises both
+iteration-1-to-2 and iteration-2-to-3 collection transitions that the
+single-cycle canonical bench could not observe.
+
+Both guards remain unchanged during the probe: cgroup `memory.peak` must stay
+<=36.00 GiB and aggregate process-tree RSS must stay <=40.00 GiB. Preserve
+the <=250 ms monitor, watchdog, `memory.high=44GiB`, `memory.max=48GiB`,
+`memory.swap.max=0`, `memory.oom.group=1`, CUDA allocated <=20 GiB, and every
+digest, row, label, truncation, KL, clip, and optimizer-step gate. Record
+per-iteration and per-phase host/cgroup/CUDA peaks, with explicit
+pre-collection checkpoints for iterations 2 and 3 showing no previous
+rollout or GAE ownership. Any guard breach, monitoring gap, cgroup event, or
+unexplained accumulation stops the in-box branch; no automatic second fix or
+probe retry is authorized.
+
+If the three-iteration probe passes, archive the killed attempt and probe
+artifacts separately and relaunch the 150-iteration lap from iteration 0 in
+a clean canonical checkpoint directory. Do not resume from the killed
+`iter_001.pt` or from the probe. The full relaunch retains both memory guards,
+containment, monitoring, and all frozen scientific controls. Any later breach
+is another hard stop requiring consultation.
+
+The concurrently running comparator regeneration was in a separate cgroup
+and did not contribute to the lap cgroup's measured peak; it is not assigned
+as this failure's cause. Future execution is nevertheless serialized because
+the processes share the WSL host, CPU, and GPU. Comparator regeneration must
+finish before the probe, and no `fh-mj-evaluate` or other substantial
+CPU/GPU/memory workload may overlap the probe or lap. Scheduled screenings
+are queued against durable milestone checkpoints without changing their
+registered seeds, checkpoints, gates, or no-optional-stopping rule.
+
+The 960/768 scientific hypothesis remains untested beyond one completed
+training iteration. This amendment changes only lifetime management and
+operational validation.
+
+### Amendment 8 operational notes (2026-08-16)
+
+- Kill evidence (immutable): `lap-cgroup-guard.csv` (1 Hz cgroup
+  current/peak + tree RSS), `lap-rss.csv` (5 Hz watchdog), `lap.log`,
+  killed run `ckpt/iter_001.pt` + `history.json`. Timeline: iteration-1
+  collect started from ~4 GiB cgroup and peaked 34.2 GiB; iteration-2 collect
+  started from a ~19–22 GiB baseline (retained batch + restarted pool) and
+  reached 36.27 GiB after its first 320-match chunk.
+- Serialization: the comparator regeneration (`anchor-screen-current-bridge.json`,
+  910000+, 120 seeds) completed 2026-08-16 02:37Z, BEFORE the probe. The
+  followup orchestrator (`datascale960_followup.py`) was then STOPPED and
+  stays stopped for the probe and the full lap; it is reboot-safe/idempotent,
+  so restarting it after the lap replays every registered screening
+  (25/50/75/100/125/150) against the durable checkpoints with unchanged
+  seeds, then selection and confirmation — no protocol change.
+- Guards for probe and relaunch: `/root/watchdog_lap.sh` (5 Hz tree RSS,
+  kill > 40 GiB) and `/root/cgroup_guard.sh <unit>` (kill on cgroup
+  `memory.peak` > 36 GiB or tree RSS > 40 GiB; armed before launch, waits for
+  the unit; per-unit `<unit>-cgroup-guard.{csv,txt,lock}`). Probe unit
+  `ds960-probe` (disposable checkpoint dir, `--iterations 3`); acceptance
+  includes pre-collection troughs for iterations 2 and 3 at the iteration-1
+  baseline (~4–6 GiB), not 19–22 GiB. On pass: archive killed attempt and
+  probe separately, fresh 150-iteration lap from iteration 0 in a clean
+  `ckpt/` (unit `ds960-lap`), both guards re-armed.
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
