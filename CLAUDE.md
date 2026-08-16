@@ -32,20 +32,30 @@ fh-mahjong/
 │   ├── api/        REST API + WebSocket server
 │   ├── storage/    GORM database models (User, Match)
 │   ├── bot/        Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
-│   └── rl/         Deterministic RL environment wrapper, observation encoder, and action catalog
+│   │   └── remote/ HTTP client driving an external Python policy server as a bot seat
+│   ├── rl/         Deterministic RL environment wrapper, observation encoder, and action catalog
+│   ├── review/     Paipu → decision reconstruction → champion policy critique (post-game review)
+│   └── tiles/      Shared low-level tile helpers (keying, cloning) used across engine/rules/bot/rl
 ├── cmd/
 │   ├── server/     Production HTTP server entry point
 │   ├── cli/        CLI debugging tool
 │   ├── wasm/       WebAssembly build target
-│   └── rlbridge/   c-shared bridge entry point for Python RL
+│   ├── rlbridge/   c-shared bridge entry point for Python RL
+│   ├── rlpaipu/    Debug CLI writing replay-viewer-compatible paipu JSON
+│   └── rlsmoke/    Paipu-v2 rollout-gate smoke driver against a live server
 └── web/            React frontend application
     └── src/
-        ├── contexts/   Socket + Game state providers
-        ├── pages/      Route pages (Login, Lobby, Game, Calc)
-        ├── hooks/      Custom hooks (WASM loader)
-        ├── utils/      Tile utilities
+        ├── contexts/   Auth + Socket + Game state providers
+        ├── features/   Feature folders owning their routes (auth, lobby, calc, shanten, replay, game, dev)
+        ├── table/      Shared tabletop presenter for live play and replay
+        ├── theme/      Rainy Mahjong Club design system (tokens, base CSS, primitives)
+        ├── i18n/       English + Simplified Chinese resources and locale detection
+        ├── hooks/      Custom hooks (WASM loader, stage layout)
+        ├── utils/      Tile utilities and the shared tile value-model
         └── proto/      Auto-generated JS/TS Protobuf bindings
 ```
+
+There is no `web/src/pages/` — route pages live inside `web/src/features/*` since the 2026-06-27 reorg.
 
 ## Key Files
 
@@ -81,11 +91,13 @@ fh-mahjong/
 ### Suit Names (use these in all code comments and docs)
 | Name | Chinese | Suffix | Range | Proto Constant |
 |------|---------|--------|-------|----------------|
-| man | 万子 (Characters) | `m` | 1m–9m | `SUIT_CHARACTERS` |
-| pin | 筒子 (Dots) | `p` | 1p–9p | `SUIT_DOTS` |
-| sou | 索子 (Bamboo) | `s` | 1s–9s | `SUIT_BAMBOO` |
-| jihai | 字牌 (Honors) | `z` | 1z–7z | `SUIT_HONORS` |
-| flower | 花牌 (Flowers) | — | 1–8 | `SUIT_FLOWER` |
+| man | 万子 (Characters) | `m` | 1m–9m | `SUIT_MAN` = 3 |
+| pin | 筒子 (Dots) | `p` | 1p–9p | `SUIT_PIN` = 2 |
+| sou | 索子 (Bamboo) | `s` | 1s–9s | `SUIT_SOU` = 1 |
+| jihai | 字牌 (Honors) | `z` | 1z–7z | `SUIT_JIHAI` = 4 |
+| flower | 花牌 (Flowers) | — | 1–8 | `SUIT_FLOWER` = 5 |
+
+The proto uses the *Japanese-derived* suit names (`SUIT_MAN`/`SUIT_PIN`/`SUIT_SOU`/`SUIT_JIHAI`), not the English glosses. There is no `SUIT_CHARACTERS`/`SUIT_DOTS`/`SUIT_BAMBOO`/`SUIT_HONORS`.
 
 Jihai values: 1z=East, 2z=South, 3z=West, 4z=North, 5z=Haku(白), 6z=Hatsu(発), 7z=Chun(中)
 Flower values: 1=Spring(春), 2=Summer(夏), 3=Autumn(秋), 4=Winter(冬), 5=Plum(梅), 6=Orchid(兰), 7=Chrysanthemum(菊), 8=Bamboo(竹). Each flower is unique (1 copy, not 4).
@@ -115,18 +127,18 @@ NOT as: `C1C2C3 D4D5D6 B7B8B9 H1H1H1 H2` (old notation — do not use)
 
 ## Protobuf Schema (proto/game.proto)
 
-- `Suit`: BAMBOO=1, DOTS=2, CHARACTERS=3, HONORS=4, FLOWER=5 (proto constants — do not rename)
-- `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}` — IDs 0-135 for standard tiles, 136-143 for flowers
-- `ActionType`: DRAW, DISCARD, CHOW, PONG, KONG, TSUMO, RON, PASS, FLOWER_REVEAL, READY
-- `GamePhase`: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END
+- `Suit`: `SUIT_SOU`=1, `SUIT_PIN`=2, `SUIT_MAN`=3, `SUIT_JIHAI`=4, `SUIT_FLOWER`=5 (proto constants — do not rename)
+- `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}` — IDs 0-135 for standard tiles, 136-143 for flowers. **Tile id `0` is a real tile (the first 1s), never a sentinel** — optional tile-id fields must be proto `optional` so unset decodes as null
+- `ActionType`: `ACTION_DRAW`=1, `DISCARD`=2, `CHII`=3, `PON`=4, `KAN`=5, `TSUMO`=6, `RON`=7, `PASS`=8, `FLOWER_REVEAL`=9, `READY`=10, `ACCEPT_HAITEI`=11
+- `GamePhase`: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END, plus the terminal `PHASE_MATCH_END`
 - `GameState`: match_id, phase, active_player, players[4], wall_count, wild_tiles, prevailing_wind, round_result, player_ready
 - `PlayerState`: closed_hand, open_melds, discards, seat_wind, flower_melds, kong bonus flags
-- `ScoreEntry`: `{pattern_name string, points int32}` — one entry per scoring pattern
+- `ScoreEntry`: `{pattern_name string, points int32, pattern_id string}` — one entry per scoring pattern. Build **only** via `rules.NewScoreEntry(id, points)`; logic and localization key off the stable `pattern_id`, never the display-only `pattern_name`. Never rename an existing `pattern_id` (replays and clients persist them)
 - `PlayerPayout`: `{seat uint32, amount int32}` — negative=pays, positive=receives
 - `RoundResult`: winner_seat, win_type, discarder_seat, winning_hand, winning_melds, win_tile, breakdown[], total_score, payouts[], is_draw
 - RL bridge messages: `EnvConfig`, `SeatObservation`, `EnvResetRequest/Response`, `EnvStepRequest/Response`, `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
 
-Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use chii/pon/kan only in comments and documentation.
+Note: the proto uses `ACTION_CHII`/`ACTION_PON`/`ACTION_KAN` — the same chii/pon/kan terms as the docs. There is no `ACTION_CHOW`/`ACTION_PONG`/`ACTION_KONG`.
 
 ## Scoring Summary (Fenghua Rules)
 
@@ -145,11 +157,14 @@ Note: Proto enum names (CHOW, PONG, KONG) are kept as-is in generated code. Use 
 2. **Interface before implementation**: If new ruleset capabilities are needed, update the `RuleEngine` interface in `internal/engine/rules.go` first, then implement in `internal/rules/fh.go`.
 3. **Test everything in the rules package**: Hand evaluation logic in `internal/rules/fh.go` must have a corresponding test case in `internal/rules/fh_test.go`.
 4. **State machine is ruleset-agnostic**: `internal/engine/game.go` must never import `internal/rules/`. All ruleset logic flows through the `RuleEngine` interface.
-5. **Run tests before marking done**:
+5. **Run the CI gates before marking done.** `.github/workflows/ci.yml` hard-fails on any of these:
    ```bash
+   gofmt -l .        # must print nothing
+   go vet ./...
    go test ./...
+   cd web && npx tsc && npx vitest run
    ```
-6. **Update AGENTS.md**: When modifying code in any directory, update that directory's `AGENTS.md` to reflect the changes (new files, renamed exports, changed architecture, etc.).
+6. **Update CLAUDE.md**: When modifying code in any directory, update that directory's `CLAUDE.md` to reflect the changes (new files, renamed exports, changed architecture, etc.).
 
 ## Proto Regeneration
 
@@ -176,8 +191,23 @@ protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 
 ```bash
 go test ./...                    # Run all Go tests
-go run cmd/server/main.go        # Start backend server on :8080
+make run                         # Start backend server on :8080 (production-equivalent)
+make dev                         # Same, but with the all-hands debug god-view
 cd web && npm run dev            # Start frontend dev server on :3000
+cd web && npm test               # Run frontend tests (vitest)
+```
+
+**Use the package form `go run ./cmd/server`, never `go run cmd/server/main.go`.** `cmd/server`
+is a multi-file package; the file form omits `policy_autostart.go` and fails to compile with
+`undefined: maybeStartPolicyServer`. The `Makefile` targets already use the correct form.
+
+`make dev` sets `MAHJONG_DEV_REVEAL_HANDS=1`, which disables the fail-closed opponent-hand
+redaction in `internal/api/room.go`. Never set that flag in a deployed environment.
+
+Python RL package (always via uv, per `docs/CLAUDE.md`):
+```bash
+uv sync --project ai --extra dev
+uv run --project ai <command>
 ```
 
 Default local development split:
@@ -189,7 +219,7 @@ Default local development split:
 Notes:
 - Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
 - `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
-- For single-service production deploys (for example root `zeabur.json`), build `web/dist` first; the Go server will serve that SPA for non-API routes when the bundle is present.
+- For single-service production deploys, build `web/dist` first; `web/embed.go` embeds it and the Go server serves that SPA for non-API routes. Production deploys on Zeabur build via the root `Dockerfile` (there is no `zeabur.json`).
 
 ## Module
 

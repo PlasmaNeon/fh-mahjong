@@ -97,4 +97,4 @@ Dev-only preview pages that render real components with mock data (no live match
 - `Calc.tsx` is intentionally self-contained and does not share state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
 - Player perspective: `mySeatId` determines which player is rendered at the bottom position; others are rotated around the table.
 - Action buttons appear contextually: interrupt actions during `PHASE_WAIT_DISCARDS` (phase 3), turn actions during `PHASE_PLAYER_TURN` (phase 2).
-- See `../../table/AGENTS.md` for the shared tabletop presenter, `../../theme/AGENTS.md` for the ledger design system, and `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md` for the calc/shanten UI spec.
+- See `../../table/CLAUDE.md` for the shared tabletop presenter, `../../theme/CLAUDE.md` for the ledger design system, and `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md` for the calc/shanten UI spec.

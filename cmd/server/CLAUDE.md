@@ -18,7 +18,7 @@ Bootstraps the full backend: connects to PostgreSQL via GORM, initializes the We
 
 ## Architecture Notes
 
-- This is the main production binary. Run with `go run cmd/server/main.go` (package form — `go run main.go` alone misses `policy_autostart.go`).
+- This is the main production binary. Run with the **package form** `go run ./cmd/server` (or `make run` / `make dev`). The file form `go run cmd/server/main.go` misses `policy_autostart.go` and fails to compile — `undefined: maybeStartPolicyServer`, `undefined: rlEndpointURL`, `undefined: installSignalCleanup`.
 - Database config defaults: host=localhost, port=5432, user=fh_admin, dbname=fh_mahjong.
 - Set `AI_BOT_POLICY_URL=http://host:port/act` to let empty seats call the served Python checkpoint policy. Leave it unset to use the deterministic heuristic bot.
 - `RL_AGENT_POLICY_URL` / `RL_AGENT_SHADOW_POLICY_URL` / `RL_AGENT_CHECKPOINT_ID` / `RL_AGENT_AUTOSTART` / `RL_AGENT_SERVE_CMD` govern the private-room RL agent (see `policy_autostart.go`); `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128) sets the shadow policy's event-history window.

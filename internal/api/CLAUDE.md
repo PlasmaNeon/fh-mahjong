@@ -64,7 +64,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `isAutomatedSeat()`, `sleepBotThink()`, `policyForSeat()` — seat automation predicate, human-pace delay, and the per-seat → room-default → heuristic policy fallback (`fallbackHeuristicPolicy`)
   - Every automated-seat call site type-asserts the resolved policy for `bot.ContextPolicy` first (`ChooseActionCtx`), falling back to the legacy `bot.Policy.ChooseAction` only when it isn't implemented. `buildDecisionContext(seat)` (room-lock held) snapshots the atomic decision: `r.Engine.State`, the seat, a room-owned monotonic `policyDecisionIndex` counter, and a **copy** of `r.Engine.PublicEvents()` (raw, unwindowed — each policy applies its own declared event window when it encodes for `/act`, per the DecisionContext design in `internal/bot`)
 
-- **cmd/server/main.go (consumer, not in this package)** — the `RL_AGENT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` family: `RL_AGENT_SHADOW_POLICY_URL` + `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128, capped at `rl.MaxEventHistoryWindow`) wrap the resolved RL primary in a `bot.ShadowPolicy` per RL seat; see `internal/bot/AGENTS.md` for the wrapper itself.
+- **cmd/server/main.go (consumer, not in this package)** — the `RL_AGENT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` family: `RL_AGENT_SHADOW_POLICY_URL` + `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128, capped at `rl.MaxEventHistoryWindow`) wrap the resolved RL primary in a `bot.ShadowPolicy` per RL seat; see `internal/bot/CLAUDE.md` for the wrapper itself.
 
 - **room_decisions.go** — Paipu v2 supervision-trace capture (spec:
   `docs/superpowers/specs/2026-08-09-paipu-v2-provenance-design.md` §2-3). This

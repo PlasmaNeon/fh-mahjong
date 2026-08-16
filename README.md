@@ -40,7 +40,7 @@ fh-mahjong/
         └── rules.md           # Rules + Go implementation design
 ```
 
-> Per-directory `AGENTS.md` files are the authoritative, up-to-date reference for
+> Per-directory `CLAUDE.md` files are the authoritative, up-to-date reference for
 > each package's architecture.
 
 ## Status
