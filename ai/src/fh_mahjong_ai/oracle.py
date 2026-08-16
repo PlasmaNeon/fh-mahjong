@@ -3070,6 +3070,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         "investigate before continuing (raise max_steps_per_episode or "
                         "inspect the policy)"
                     )
+                # Amendment 8 (data-scale-960): drop the completed rollout and
+                # GAE arrays NOW — every batch-derived telemetry/truncation
+                # value above has been computed, and nothing below reads them.
+                # Without this, ~17GiB of iteration N's rollout stayed
+                # referenced through the WHOLE of iteration N+1's collection
+                # (loop locals rebind only after the next collect returns),
+                # which breached the 36GiB cgroup guard at iteration 2 of the
+                # 960-match lap while the restarted worker pool held another
+                # ~18GiB. Plain rebinding only: gc.collect()/allocator tuning
+                # are explicitly NOT authorized by the ruling. Lifetime pinned
+                # by test_b2b_training's weakref test.
+                del batch, advantages, returns
                 # Adversarial round 15, high finding: verify AGAIN here, after
                 # the (potentially long-running) rollout collection + PPO
                 # update but strictly BEFORE this iteration's `iter_N.pt`/
