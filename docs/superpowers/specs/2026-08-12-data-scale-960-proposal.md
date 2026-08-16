@@ -406,6 +406,52 @@ If the single canonical bench passes every gate, Stage 0 is complete and the
 existing Amendment 5 data-scale-960/mb768 run authorization resumes unchanged.
 All scientific controls, screening and confirmation windows, kill rule,
 tail-risk gate, and no-optional-stopping rule remain frozen.
+
+### Amendment 7 addendum (2026-08-16): parallel ruling, bench result, lap launch
+
+**Second ruling on the same decision.** A parallel session consulted the
+canonical thread on the identical 36.08 GiB projection before PR #205 was
+visible. That ruling was "agree with amendment, not reinterpretation": no
+waiver; one diagnostic canonical bench under the unchanged containment, the
+registered proc-tree RSS <= 40.0 GiB gate, CUDA <= 20 GiB, and an ADDED
+physical gate cgroup `memory.peak <= 36.0 GiB` (proc-tree RSS double-counts
+shared pages across the 10 workers; the physical projection was 33.7 GiB);
+any failure closes 960 on this machine. Lap gates: same three limits enforced
+continuously (run-level cgroup peak <= 36 GiB), any infrastructure or
+science-integrity failure aborts the lap and is recorded as infrastructure
+failure, never as an RL null; scientific protocol unchanged. Both rulings are
+recorded; the union (stricter) is applied.
+
+**Bench result (unit `ds960-bench-a7`, 2026-08-16 00:57–01:49Z): PASS on
+every gate of both rulings.** workers=10, chunk=320, 960 matches, seeds
+700000+, `--minibatch-device-transfer`, production CUDA mode. Rows
+1,901,991; optimizer steps 4954 (= 2 × ⌈1901991/768⌉, ragged tail included);
+truncation 0; dealin+ 0.128; rank coverage 1.0; approx_kl 0.0033;
+clip 0.035; startup/steady digests equal; rows and labels equal. Host
+proc-tree sampled RSS peak 36.11 GiB (bench sampler) / 36.18 GiB (external
+5 Hz watchdog, verdict CLEAN) <= 40; cgroup `memory.peak` 33.61 GiB <= 36
+(no high/max/oom events); CUDA allocated 2.26 GiB (reserved 2.54) <= 20;
+collect ~1500 s + update 125 s (~27 min/iter → ~68 h for 150 iters). The
+registered projections (36.08 host, 33.7 cgroup) were accurate to within
+0.1 GiB.
+
+**Lap launched 2026-08-16 01:53:08Z** as unit `ds960-lap` with the runbook
+§3 command verbatim (base-seed 500000, 150 iters, 960/mb768, chunk 320,
+`--minibatch-device-transfer`, `--num-workers 10`, train-state every 5),
+containment high=44G/max=48G/swap=0/oom.group=1. Continuous guards:
+`/root/watchdog_lap.sh` (5 Hz tree RSS, kill > 40 GiB, `lap-rss.csv`) and
+`/root/lap_cgroup_guard.sh` (kill on cgroup `memory.peak` > 36 GiB or tree
+RSS > 40 GiB, `lap-cgroup-guard.csv`). Followup orchestrator
+`datascale960_followup.py` started (single instance via
+`/root/start_followup.sh`): comparator regeneration on the current bridge,
+screenings 25/50/75/100/125/150, kill rule at 100, selection, confirmation on
+1190000+ — no auto-chaining after the verdict.
+
+Ops notes: the first A6 proof launch hung 15 h because `a6_collect.py`
+lacked an `if __name__ == "__main__"` guard under `spawn` (fixed, relaunched);
+never `rm` a flock file inside the same ssh command that launches (the ssh
+layer double-executes and defeats the lock — one A5 re-profile had to be
+killed and relaunched); use a distinct lock file per launcher.
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
