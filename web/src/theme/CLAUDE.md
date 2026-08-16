@@ -30,24 +30,14 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
   `.ldg-section`, `.ldg-tile`, `.ldg-btn`, `.ldg-input`, …) consuming the tokens.
 - **index.css** — `@import`s tokens.css then base.css.
 - **index.ts** — side-effect-imports `index.css` and re-exports the primitives (the public API).
-- **components/** — `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`,
-  `TextLink`, `Field`, `Note`, `Toggle`, `ToolsRow`, `ClubShell`, `ToolTabs`, and `GameDialog`.
-
-`Field` binds every visible label to its input. Success and error `Note` messages expose
-live status semantics so validation changes are announced without changing consumer props.
-`LoadingScreen` accepts an optional retry action for recoverable offline states.
-
-`ClubShell` owns ordinary-page localized club identity, the global language override, and Profile navigation; it deliberately has no
-Back/breadcrumb control, leaving history navigation to the browser. Route pages must not
-recreate ad-hoc Home/Play/Account link clusters. `ToolTabs` owns the
-localized Scoring/Shanten switcher while preserving both tool deep links.
+- **components/** — The typed React primitives that form the design system's public API:
+  `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`, `TextLink`,
+  `Field`, `Note`, `Toggle`, `LoadingScreen`, `ToolsRow`, `ClubShell`, `ToolTabs`, and
+  `GameDialog`. Per-component detail and accessibility contracts are in
+  [components/CLAUDE.md](components/CLAUDE.md).
 
 The bone-paper authentication popup is implemented by `features/auth/AuthDialog.tsx`, while
 its material classes live in `base.css` alongside the compact home switchboard and paipu slips.
-
-`GameDialog` is the semantic modal shell used by game exit and match-end surfaces. It
-owns labelled-dialog markup, initial focus, optional Escape cancellation, the compass
-mark, tone styling, and shared action layout; callers continue to own business actions.
 
 ## Usage
 
