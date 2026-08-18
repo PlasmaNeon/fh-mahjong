@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
-import { ClubShell, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import { ClubShell, InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   countTiles,
@@ -201,18 +201,14 @@ export default function Shanten() {
 
             <LedgerTileRow tiles={hand} emptyLabel={t('shanten.noTiles')} onTileClick={removeTile} />
 
-            <div className="ldg-input-row">
-              <input
-                className="ldg-input"
-                value={handInput}
-                onChange={e => setHandInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && applyHandInput()}
-                placeholder="11234455666792p"
-              />
-              <button type="button" className="ldg-btn" onClick={applyHandInput}>
-                {t('shanten.apply')}
-              </button>
-            </div>
+            <InputApplyRow
+              value={handInput}
+              onChange={setHandInput}
+              onApply={applyHandInput}
+              applyLabel={t('shanten.apply')}
+              placeholder="11234455666792p"
+              submitOnEnter
+            />
 
             <div className="ldg-tools-row ldg-tools-row--end">
               <button type="button" className="ldg-btn" onClick={doSort}>{t('shanten.sort')}</button>
@@ -248,18 +244,14 @@ export default function Shanten() {
             </div>
 
             {paletteTarget === 'wild' && (
-                <div className="ldg-input-row">
-                  <input
-                    className="ldg-input"
-                    value={wildInput}
-                    onChange={e => setWildInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && applyWildInput()}
-                    placeholder="9s"
-                  />
-                  <button type="button" className="ldg-btn" onClick={applyWildInput}>
-                    {t('shanten.apply')}
-                  </button>
-                </div>
+                <InputApplyRow
+                  value={wildInput}
+                  onChange={setWildInput}
+                  onApply={applyWildInput}
+                  applyLabel={t('shanten.apply')}
+                  placeholder="9s"
+                  submitOnEnter
+                />
             )}
           </section>
 

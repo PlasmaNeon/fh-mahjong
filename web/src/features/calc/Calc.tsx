@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
 import { game } from '../../proto/game'
-import { ClubShell, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import { ClubShell, InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   buildCalcRequestPayload,
@@ -469,17 +469,13 @@ export default function Calc() {
             </div>
 
             {!collapsedSections.closedHand && (
-              <div className="ldg-input-row">
-                <input
-                  className="ldg-input"
-                  value={closedHandInput}
-                  onChange={(event) => setClosedHandInput(event.target.value)}
-                  placeholder="1m2m3m 4p5p6p 7s8s9s 3z"
-                />
-                <button type="button" className="ldg-btn" onClick={applyClosedHandInput}>
-                  {t('calc.apply')}
-                </button>
-              </div>
+              <InputApplyRow
+                value={closedHandInput}
+                onChange={setClosedHandInput}
+                onApply={applyClosedHandInput}
+                applyLabel={t('calc.apply')}
+                placeholder="1m2m3m 4p5p6p 7s8s9s 3z"
+              />
             )}
 
             <LedgerTileRow tiles={closedHand} emptyLabel={t('calc.noClosedHand')} onTileClick={removeClosedHandTile} />
@@ -510,17 +506,13 @@ export default function Calc() {
 
               {!collapsedSections.winTile && (
                 <>
-                  <div className="ldg-input-row">
-                    <input
-                      className="ldg-input"
-                      value={winTileInput}
-                      onChange={(event) => setWinTileInput(event.target.value)}
-                      placeholder="3z"
-                    />
-                    <button type="button" className="ldg-btn" onClick={applyWinTileInput}>
-                      {t('calc.apply')}
-                    </button>
-                  </div>
+                  <InputApplyRow
+                    value={winTileInput}
+                    onChange={setWinTileInput}
+                    onApply={applyWinTileInput}
+                    applyLabel={t('calc.apply')}
+                    placeholder="3z"
+                  />
                   {!winTile && (
                     <p className="ldg-note">{t('calc.noWinTile')}</p>
                   )}
@@ -550,17 +542,13 @@ export default function Calc() {
 
               {!collapsedSections.wildTile && (
                 <>
-                  <div className="ldg-input-row">
-                    <input
-                      className="ldg-input"
-                      value={wildTileInput}
-                      onChange={(event) => setWildTileInput(event.target.value)}
-                      placeholder="9s"
-                    />
-                    <button type="button" className="ldg-btn" onClick={applyWildTileInput}>
-                      {t('calc.apply')}
-                    </button>
-                  </div>
+                  <InputApplyRow
+                    value={wildTileInput}
+                    onChange={setWildTileInput}
+                    onApply={applyWildTileInput}
+                    applyLabel={t('calc.apply')}
+                    placeholder="9s"
+                  />
                   {!wildTile && (
                     <p className="ldg-note">{t('calc.noWildTile')}</p>
                   )}
