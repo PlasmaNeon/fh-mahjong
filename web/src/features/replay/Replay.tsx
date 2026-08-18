@@ -16,6 +16,7 @@ import { SEVERITY_THRESHOLDS, decisionSeverity, type SeverityThresholds } from '
 import './replay.css'
 import { useI18n } from '../../i18n/I18nContext'
 import { useAuth } from '../../contexts/AuthContext'
+import { makeWildTilePredicate } from '../../utils/tileModel'
 
 /**
  * Compute calledDirection from seat layout:
@@ -166,10 +167,7 @@ export default function Replay() {
   const state: ReplayState = engine.getState()
   const actionDesc = engine.getActionDescription(shortLanguage)
 
-  const wildTileSet = new Set(
-    (state.wildTiles || []).map(w => `${w.suit}-${w.value}`)
-  )
-  const isWild = (tile: ReplayTile) => wildTileSet.has(`${tile.suit}-${tile.value}`)
+  const isWild = makeWildTilePredicate(state.wildTiles)
 
   const { shellStyle: stageShellStyle, stageStyle } = stageLayout
 

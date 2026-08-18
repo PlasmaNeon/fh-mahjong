@@ -21,6 +21,7 @@ import { resolveHandTileClick } from './handTileClick';
 import { shouldClearLift } from './clearLift';
 import { tileIdsEqual } from '../../table/meldOrdering';
 import { useI18n } from '../../i18n/I18nContext';
+import { makeWildTilePredicate } from '../../utils/tileModel';
 
 export default function Game() {
     const { t } = useI18n();
@@ -284,12 +285,8 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         }
     }, [gameState.handNum, liftedTileId, myPlayer]);
 
-    // Check if a tile is wild (memoized per gameState.wildTiles)
-    const wildTileSet = useRef(new Set<string>());
-    wildTileSet.current = new Set(
-        (gameState.wildTiles || []).map((w: any) => `${w.suit}-${w.value}`)
-    );
-    const isWildTile = (tile: game.ITile) => wildTileSet.current.has(`${tile.suit}-${tile.value}`);
+    // Check if a tile is wild (rebuilt per gameState.wildTiles)
+    const isWildTile = makeWildTilePredicate(gameState.wildTiles);
 
     const getActionMeta = (action: any) => {
         if (action.type === game.ActionType.ACTION_CHII) {

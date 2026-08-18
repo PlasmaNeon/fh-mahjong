@@ -10,6 +10,7 @@ import {
   remainingCount,
   countTiles,
   type ParseMessages,
+  makeWildTilePredicate,
 } from './tileModel'
 
 const messages: ParseMessages = {
@@ -81,5 +82,32 @@ describe('tileModel', () => {
   it('sameTileValue compares by face', () => {
     expect(sameTileValue({ suit: game.Suit.SUIT_MAN, value: 1 }, { suit: game.Suit.SUIT_MAN, value: 1 })).toBe(true)
     expect(sameTileValue({ suit: game.Suit.SUIT_MAN, value: 1 }, null)).toBe(false)
+  })
+})
+
+describe('makeWildTilePredicate', () => {
+  const wilds = [{ suit: 3, value: 5 }, { suit: 1, value: 9 }]
+
+  it('matches tiles by suit and value', () => {
+    const isWild = makeWildTilePredicate(wilds)
+    expect(isWild({ suit: 3, value: 5 })).toBe(true)
+    expect(isWild({ suit: 1, value: 9 })).toBe(true)
+  })
+
+  it('rejects tiles that are not wild', () => {
+    const isWild = makeWildTilePredicate(wilds)
+    expect(isWild({ suit: 3, value: 6 })).toBe(false)
+    expect(isWild({ suit: 2, value: 5 })).toBe(false)
+  })
+
+  it('never matches when there are no wild tiles', () => {
+    expect(makeWildTilePredicate([])({ suit: 3, value: 5 })).toBe(false)
+    expect(makeWildTilePredicate(null)({ suit: 3, value: 5 })).toBe(false)
+  })
+
+  it('tolerates the proto tile shape the live board passes', () => {
+    const isWild = makeWildTilePredicate([{ suit: 3, value: 5 }])
+    const protoTile: game.ITile = { id: 12, suit: 3, value: 5 }
+    expect(isWild(protoTile)).toBe(true)
   })
 })
