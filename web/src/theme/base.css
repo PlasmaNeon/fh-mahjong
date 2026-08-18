@@ -1,12 +1,6 @@
 /* ---------- Page wrapper ---------- */
 .ledger-page {
-  background: var(--page);
-  color: var(--ink);
-  font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
 }
 
 /* ---------- Loading screen ---------- */
@@ -21,19 +15,10 @@
   align-items: center;
   gap: 0.9rem;
 }
-.ldg-loading__spinner {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  border: 2px solid var(--rule);
-  border-top-color: var(--accent);
-  animation: ldg-spin 0.9s linear infinite;
-}
 .ldg-loading__label {
   font-size: 0.95rem;
   font-weight: 400;
   letter-spacing: 0.04em;
-  color: var(--ink-2);
 }
 @keyframes ldg-spin {
   to { transform: rotate(360deg); }
@@ -44,11 +29,8 @@
 
 /* ---------- Shell ---------- */
 .ledger-shell {
-  max-width: var(--col);
   margin: 0 auto;
-  padding: 2.5rem var(--gutter) 5rem;
 }
-.ledger-shell--wide { max-width: 860px; }
 
 /* ---------- Club navigation ---------- */
 .club-nav {
@@ -176,57 +158,31 @@
   .ledger-shell { padding-top: 1.25rem; }
 }
 
-/* ---------- Page card ---------- */
-.ldg-page {
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 2.5rem clamp(1.25rem, 4vw, 2.25rem) 3rem;
-}
-
 .ldg-page-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--rule);
   gap: 1rem;
 }
 .ldg-page-head__title {
-  font-size: 1.5rem;
-  font-weight: 600;
   margin: 0;
-  letter-spacing: -0.01em;
   color: var(--ink);
 }
 .ldg-page-head__title small {
   display: block;
-  font-weight: 400;
-  font-size: 0.85rem;
-  color: var(--ink-3);
-  margin-top: 0.2rem;
 }
 .ldg-page-head__nav {
   display: flex;
   gap: 1rem;
   align-items: center;
-  font-size: 0.85rem;
   flex-shrink: 0;
 }
-
-/* ---------- Sections ---------- */
-.ldg-section { margin-top: var(--space); }
 
 .ldg-section-row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 0.85rem;
   gap: 0.5rem;
 }
 .ldg-section-title {
-  font-size: 0.95rem;
-  font-weight: 500;
   color: var(--ink);
   margin: 0;
 }
@@ -234,11 +190,8 @@
   display: block;
   color: var(--ink-3);
   font-weight: 400;
-  font-size: 0.82rem;
-  margin-top: 1px;
 }
 .ldg-section-meta {
-  font-family: var(--mono);
   font-size: 0.85rem;
   color: var(--ink-3);
   white-space: nowrap;
@@ -254,8 +207,6 @@
   background-image: url('/Regular_shortnames/Front.svg');
   background-size: 100% 100%;
   background-color: var(--tile-face);
-  border-radius: 4px;
-  box-shadow: var(--tile-shadow);
   position: relative;
   cursor: pointer;
   transition: transform 120ms, box-shadow 120ms;
@@ -266,7 +217,6 @@
 }
 button.ldg-tile:not(:disabled):hover {
   transform: translateY(-2px);
-  box-shadow: var(--tile-shadow-h);
 }
 .ldg-tile img {
   width: 86%;
@@ -286,7 +236,6 @@ button.ldg-tile:not(:disabled):hover {
   min-width: 46px;
   min-height: 66px;
 }
-.ldg-tile--sel { box-shadow: 0 0 0 2px var(--accent); }
 .ldg-tile--dim { opacity: 0.28; cursor: not-allowed; }
 .ldg-tile--static { cursor: default; }
 
@@ -300,10 +249,7 @@ button.ldg-tile:not(:disabled):hover {
   font-weight: 600;
   line-height: 1;
   padding: 2px 4px;
-  border-radius: 9999px;
-  background: var(--surface);
   border: 1px solid var(--rule);
-  color: var(--ink-3);
 }
 
 /* ---------- Tile row ---------- */
@@ -333,16 +279,11 @@ button.ldg-tile:not(:disabled):hover {
 .ldg-palette-drawer {
   margin-top: 0.85rem;
   padding: 0.85rem;
-  background: var(--surface-2);
   border: 1px solid var(--rule);
-  border-radius: 6px;
 }
 .ldg-palette-drawer__head {
   font-size: 0.78rem;
-  font-weight: 500;
   color: var(--ink-4);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   margin-bottom: 0.65rem;
 }
 
@@ -356,48 +297,20 @@ button.ldg-tile:not(:disabled):hover {
   flex: 1;
   font-family: var(--mono);
   font-size: 0.88rem;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
   padding: 0.55rem 0.75rem;
   outline: none;
   transition: border-color 120ms;
   min-width: 0;
 }
-.ldg-input:focus { border-color: var(--accent); }
 .ldg-input::placeholder { color: var(--ink-4); }
 
 /* ---------- Buttons ---------- */
 .ldg-btn {
-  font-family: var(--font);
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--ink);
-  background: var(--btn-bg);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 0.55rem 0.95rem;
   cursor: pointer;
-  transition: background 120ms, border-color 120ms;
   white-space: nowrap;
   flex-shrink: 0;
 }
-.ldg-btn:hover:not(:disabled) { background: var(--btn-bg-hover); }
 .ldg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.ldg-btn--primary {
-  background: var(--ink);
-  color: var(--surface);
-  border-color: var(--ink);
-}
-.ldg-btn--primary:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
-
-.ldg-btn--danger {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  background: var(--danger-soft);
-}
 .ldg-btn--danger:hover:not(:disabled) {
   background: var(--danger);
   color: var(--surface);
@@ -416,16 +329,12 @@ button.ldg-tile:not(:disabled):hover {
 /* ---------- Chooser (segmented control) ---------- */
 .ldg-chooser {
   display: inline-flex;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
   overflow: hidden;
 }
 .ldg-chooser__btn {
   font-family: var(--mono);
   font-size: 0.88rem;
   color: var(--ink-2);
-  background: var(--surface);
-  border: none;
   border-right: 1px solid var(--rule);
   padding: 0.5rem 0.95rem;
   cursor: pointer;
@@ -433,33 +342,27 @@ button.ldg-tile:not(:disabled):hover {
 }
 .ldg-chooser__btn:last-child { border-right: none; }
 .ldg-chooser__btn:hover { background: var(--surface-2); }
-.ldg-chooser__btn.is-active { background: var(--ink); color: var(--surface); }
 
 /* ---------- Toggle ---------- */
 .ldg-toggle {
   display: inline-flex;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
   overflow: hidden;
 }
 .ldg-toggle__btn {
   font-family: var(--font);
   font-size: 0.88rem;
   color: var(--ink-2);
-  background: var(--surface);
-  border: none;
   border-right: 1px solid var(--rule);
   padding: 0.5rem 1.1rem;
   cursor: pointer;
   transition: background 120ms, color 120ms;
 }
 .ldg-toggle__btn:last-child { border-right: none; }
-.ldg-toggle__btn.is-active { background: var(--ink); color: var(--surface); }
 
 /* ---------- Notes ---------- */
-.ldg-note { font-size: 0.85rem; color: var(--ink-3); margin-top: 0.6rem; }
-.ldg-note--err { color: var(--danger); }
-.ldg-note--ok  { color: var(--accent); }
+.ldg-note {
+  font-size: 0.85rem; margin-top: 0.6rem;
+}
 
 /* ---------- Result block ---------- */
 .ldg-result {
@@ -476,9 +379,6 @@ button.ldg-tile:not(:disabled):hover {
 }
 .ldg-result-label {
   font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--ink-3);
 }
 .ldg-result-status { font-size: 0.95rem; color: var(--ink); }
@@ -490,19 +390,17 @@ button.ldg-tile:not(:disabled):hover {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 1.5rem 0;
   border-bottom: 1px solid var(--rule-soft);
 }
-.ldg-big-stat__label { font-size: 0.95rem; color: var(--ink-2); }
+.ldg-big-stat__label {
+  font-size: 0.95rem;
+}
 .ldg-big-stat__value {
-  font-family: var(--mono);
   font-size: 3rem;
   font-weight: 500;
   line-height: 1;
-  color: var(--ink);
   letter-spacing: -0.02em;
 }
-.ldg-big-stat__value--accent { color: var(--accent); }
 
 /* ---------- Breakdown list ---------- */
 .ldg-breakdown { list-style: none; margin: 1rem 0 0; padding: 0; }
@@ -541,7 +439,6 @@ button.ldg-tile:not(:disabled):hover {
 
 /* ---------- Text link ---------- */
 .ldg-link {
-  color: var(--ink-2);
   text-decoration: none;
   border-bottom: 1px solid var(--rule);
   padding-bottom: 1px;
@@ -554,7 +451,6 @@ button.ldg-tile:not(:disabled):hover {
   font-size: inherit;
   transition: color 120ms, border-color 120ms;
 }
-.ldg-link:hover { color: var(--ink); border-bottom-color: var(--ink-3); }
 
 /* ---------- Footnote ---------- */
 .ldg-footnote {
@@ -575,21 +471,15 @@ button.ldg-tile:not(:disabled):hover {
 
 /* ---------- Calc: Field (label + select/input) ---------- */
 .ldg-field { display: flex; flex-direction: column; gap: 0.4rem; }
-.ldg-field__label { font-size: 0.82rem; color: var(--ink-3); }
 
 .ldg-select {
   font-family: var(--font);
   font-size: 0.88rem;
-  color: var(--ink);
-  background: var(--surface-2);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
   padding: 0.5rem 0.75rem;
   outline: none;
   transition: border-color 120ms;
   cursor: pointer;
 }
-.ldg-select:focus { border-color: var(--accent); }
 .ldg-select:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ---------- Calc: Check row ---------- */
@@ -609,13 +499,7 @@ button.ldg-tile:not(:disabled):hover {
 .ldg-meld {
   padding: 1rem;
   border: 1px solid var(--rule);
-  border-radius: 6px;
   margin-top: 0.75rem;
-  background: var(--surface);
-}
-.ldg-meld--active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .seat-card { min-height: 150px; padding-right: 4.4rem; }
@@ -694,30 +578,22 @@ button.ldg-tile:not(:disabled):hover {
   font-size: 0.78rem;
   padding: 0.25rem 0.65rem;
   border: 1px solid var(--rule);
-  border-radius: 12px;
   color: var(--ink-3);
-  background: var(--surface);
   cursor: pointer;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
 .ldg-chip:hover { border-color: var(--ink-3); color: var(--ink); }
-.ldg-chip--active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
 
 .ldg-chips-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
 
 /* ---------- Calc: Debug block ---------- */
 .ldg-debug {
   padding: 0.85rem;
-  background: var(--surface-2);
   border: 1px solid var(--rule);
-  border-radius: 6px;
   margin-top: 0.5rem;
 }
 .ldg-debug__label {
-  font-family: var(--mono);
   font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
   color: var(--ink-4);
   margin-bottom: 0.4rem;
 }
