@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
-import { getTileName, getTileSvgName } from '../../utils/tileUtils'
-import { ClubShell, ToolTabs } from '../../theme'
+import { ClubShell, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   countTiles,
@@ -17,9 +16,7 @@ import {
   ShantenResult,
   sortHand,
   TileDraft,
-  TILE_LIBRARY,
   TileValue,
-  tileKey,
 } from './shantenHelpers'
 
 const TEXT = {
@@ -100,101 +97,6 @@ const TEXT = {
     advancedSetupHelp: '副露数量',
   },
 } as const
-
-// ─── Tile component ───
-
-function ShantenTile({
-  tile,
-  onClick,
-  size = 'normal',
-  selected = false,
-  dimmed = false,
-  badge,
-}: {
-  tile: TileValue
-  onClick?: () => void
-  size?: 'normal' | 'small' | 'palette'
-  selected?: boolean
-  dimmed?: boolean
-  badge?: string
-}) {
-  const svgName = getTileSvgName(tile)
-  const cls = [
-    'ldg-tile',
-    size === 'small' ? 'ldg-tile--sm' : '',
-    size === 'palette' ? 'ldg-tile--pal' : '',
-    selected ? 'ldg-tile--sel' : '',
-    dimmed ? 'ldg-tile--dim' : '',
-    !onClick ? 'ldg-tile--static' : '',
-  ].filter(Boolean).join(' ')
-
-  return (
-    <button
-      type="button"
-      className={cls}
-      onClick={onClick}
-      disabled={dimmed && !selected}
-      title={getTileName(tile)}
-    >
-      <img src={`/Regular_shortnames/${svgName}`} alt={getTileName(tile)} draggable="false" />
-      {badge && <span className="ldg-tile__badge">{badge}</span>}
-    </button>
-  )
-}
-
-// ─── Hand row ───
-
-function HandRow({ tiles, emptyLabel, onTileClick }: {
-  tiles: TileDraft[]
-  emptyLabel: string
-  onTileClick: (id: string) => void
-}) {
-  if (tiles.length === 0) {
-    return (
-      <div className="ldg-tile-row ldg-tile-row--empty">
-        <span className="ldg-note" style={{ marginTop: 0 }}>{emptyLabel}</span>
-      </div>
-    )
-  }
-  return (
-    <div className="ldg-tile-row">
-      {tiles.map((tile) => (
-        <ShantenTile key={tile.id} tile={tile} onClick={() => onTileClick(tile.id)} />
-      ))}
-    </div>
-  )
-}
-
-// ─── Palette grid ───
-
-function PaletteGrid({ onTileClick, usedCounts, selectedTile = null, dimSelected = false }: {
-  onTileClick: (tile: TileValue) => void
-  usedCounts: Map<string, number>
-  selectedTile?: TileValue | null
-  dimSelected?: boolean
-}) {
-  return (
-    <div className="ldg-palette-grid">
-      {TILE_LIBRARY.map((tile) => {
-        const key = tileKey(tile)
-        const remaining = 4 - (usedCounts.get(key) ?? 0)
-        const isSelected = sameTile(tile, selectedTile)
-        const isDimmed = remaining <= 0 || (dimSelected && isSelected)
-        return (
-          <ShantenTile
-            key={formatTile(tile)}
-            tile={tile}
-            onClick={() => onTileClick(tile)}
-            size="palette"
-            selected={isSelected}
-            dimmed={isDimmed}
-            badge={remaining < 4 ? `${remaining}` : undefined}
-          />
-        )
-      })}
-    </div>
-  )
-}
 
 // ─── Main page ───
 
@@ -377,7 +279,7 @@ export default function Shanten() {
               <span className="ldg-section-meta">{hand.length} / {baseSize}–{maxSize}</span>
             </div>
 
-            <HandRow tiles={hand} emptyLabel={text.noTiles} onTileClick={removeTile} />
+            <LedgerTileRow tiles={hand} emptyLabel={text.noTiles} onTileClick={removeTile} />
 
             <div className="ldg-input-row">
               <input
@@ -408,7 +310,7 @@ export default function Shanten() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
               {wildTile ? (
-                <ShantenTile
+                <LedgerTile
                   tile={wildTile}
                   onClick={() => { setWildTile(null); setWildInput('') }}
                   selected
@@ -451,7 +353,7 @@ export default function Shanten() {
             </div>
             <div className="ldg-palette-drawer">
               <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : text.wildTile}</div>
-              <PaletteGrid onTileClick={paletteTarget === 'hand' ? addTile : selectWild} usedCounts={paletteTarget === 'hand' ? usedCounts : new Map()} selectedTile={paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
+              <LedgerPaletteGrid onTileClick={paletteTarget === 'hand' ? addTile : selectWild} usedCounts={paletteTarget === 'hand' ? usedCounts : new Map()} selectedTile={paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
@@ -525,7 +427,7 @@ export default function Shanten() {
                     {text.drawnTileLabel}
                     {' '}
                     <span style={{ display: 'inline-flex', verticalAlign: 'middle', margin: '0 0.2rem' }}>
-                      <ShantenTile tile={result.drawnTile} size="small" />
+                      <LedgerTile tile={result.drawnTile} size="small" />
                     </span>
                     {' · '}
                     <button
@@ -552,12 +454,12 @@ export default function Shanten() {
                         <div key={discardKey} className="ldg-discard-row">
                           <span>
                             <span className="ldg-discard-row__tag">{text.discard}</span>
-                            <ShantenTile tile={opt.discard} size="small" />
+                            <LedgerTile tile={opt.discard} size="small" />
                           </span>
                           <span className="ldg-discard-row__shanten">{shantenText}</span>
                           <span className="ldg-discard-row__draws">
                             {(opt.usefulTiles ?? []).map(t => (
-                              <ShantenTile
+                              <LedgerTile
                                 key={`${t.suit}-${t.value}`}
                                 tile={{ suit: t.suit, value: t.value }}
                                 size="small"
