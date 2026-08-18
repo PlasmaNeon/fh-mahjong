@@ -6,6 +6,7 @@ import type { AuthRouteState } from '../auth/authModal'
 import { parseReplayReference } from './replayReference'
 import { useI18n } from '../../i18n/I18nContext'
 import { WIND_I18N_KEYS } from '../../utils/winds'
+import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
 type ReplayPlayer = { seat: number; name: string; finalScore: number }
 type ReplaySummary = {
@@ -55,8 +56,8 @@ export default function ReplayLibrary() {
       if (cursor) query.set('cursor', cursor)
       const response = await apiFetch(`/api/v1/users/me/replays?${query}`, { signal })
       if (signal?.aborted) return
-      const data = await response.json().catch(() => ({})) as Partial<ReplayHistoryResponse> & { error?: string }
-      if (!response.ok) throw new Error(data.error || t('library.loadFailed'))
+      const data = await readJsonBody(response) as Partial<ReplayHistoryResponse> & { error?: string }
+      if (!response.ok) throw new Error(errorMessage(data, t('library.loadFailed')))
       setReplays(current => cursor ? [...current, ...(data.replays ?? [])] : (data.replays ?? []))
       setNextCursor(data.nextCursor ?? null)
       setHistoryState('ready')

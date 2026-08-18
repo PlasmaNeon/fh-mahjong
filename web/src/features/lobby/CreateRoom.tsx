@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useSocket } from '../../contexts/SocketContext'
 import { Button, Card, ClubShell, Note, PageHeader, Section, ToolsRow } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
+import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
 export default function CreateRoom() {
   const { status, apiFetch, refreshSession } = useAuth()
@@ -17,8 +18,8 @@ export default function CreateRoom() {
     setError('')
     try {
       const response = await apiFetch('/api/v1/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || t('room.createFailed'))
+      const data = await readJsonBody(response)
+      if (!response.ok) throw new Error(errorMessage(data, t('room.createFailed')))
       connect()
       navigate(`/room/${data.tableId}`, { replace: true })
     } catch (reason) {

@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import type { AuthRouteState } from '../auth/authModal'
 import { consumePlayIntent, rememberPlayIntent } from './navigation'
 import { useI18n } from '../../i18n/I18nContext'
+import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 
@@ -43,8 +44,8 @@ export default function Lobby() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ruleset }),
       })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || t('lobby.joinFailed'))
+      const data = await readJsonBody(response)
+      if (!response.ok) throw new Error(errorMessage(data, t('lobby.joinFailed')))
       setQueueState('queued')
     } catch (err) {
       setError(err instanceof TypeError ? t('auth.offline') : err instanceof Error ? err.message : t('lobby.contactFailed'))
@@ -66,13 +67,13 @@ export default function Lobby() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ruleset }),
       })
-      const data = await response.json().catch(() => ({}))
+      const data = await readJsonBody(response)
       if (response.status === 409) {
-        setError(data.error || t('lobby.forming'))
+        setError(errorMessage(data, t('lobby.forming')))
         setQueueState('queued')
         return
       }
-      if (!response.ok) throw new Error(data.error || t('lobby.cancelFailed'))
+      if (!response.ok) throw new Error(errorMessage(data, t('lobby.cancelFailed')))
       setQueueState('idle')
     } catch (err) {
       setError(err instanceof Error ? err.message : t('lobby.cancelFailed'))
