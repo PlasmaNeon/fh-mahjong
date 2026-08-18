@@ -78,3 +78,47 @@ New shared homes — pages must not re-implement these:
   four characterization tests were written against the duplicated code and seen to pass.
 - The design doc listed `replayEngine.ts:228-231` as a third wild-tile-key site. It has no such
   code; nothing was changed there.
+
+## 2026-08-16 — PR 1b: frontend CSS and copy de-duplication
+
+Second half of the web pass. Net **-393 production lines**, -381 of them CSS.
+
+| Change | Result |
+|---|---|
+| Deleted the orphaned legacy seat-layout CSS in `index.css` | 36 rules + 5 grouped-selector trims, -267 lines, -4.1KB built |
+| Removed `theme/base.css`'s dead first-layer declarations | 121 declarations + 20 emptied rules, -124 lines, -2.9KB built |
+| Moved the calc/shanten private dictionaries into `i18n/locales` | 97 entries now type-checked for EN/ZH parity |
+| Extracted `theme/components/InputApplyRow.tsx` | replaced 5 hand-typed `.ldg-input-row` blocks |
+
+### How the CSS changes were verified (there is no type checker for CSS)
+
+- **Dead CSS:** a guard test (`table/deadCss.test.ts`) asserts each removed family has zero
+  component references, with the live classes as a *control* proving the check can tell dead
+  from live. The built stylesheet was then diffed rule-by-rule: 40 rules disappear, every one
+  explained by a dead class, and the single altered selector group keeps byte-identical
+  declarations.
+- **base.css:** the transform deletes only declarations that a *later same-selector rule already
+  overrides* — it never moves a rule. Merging rules (as first planned) would reorder the cascade,
+  and a rule-set diff cannot detect that. Guards: a declaration is removed only when every
+  selector in its rule's list is restated later with that property; `!important` is never removed
+  and never counts as coverage; `@media`/`@keyframes` blocks are untouched. Verified by computing
+  the effective last-wins declaration map for all 226 selectors before and after — zero differences.
+
+### i18n scoping — do not merge these later
+
+Only **9** of the tool-page keys are shared (`tools.*`); the rest stay `calc.*` / `shanten.*`.
+Three pairs share English text but differ in Chinese, so merging would silently change the zh UI:
+
+| key | calc | shanten |
+|---|---|---|
+| `apply` | 应用 | 确认 |
+| `tilePalette` | 牌库 | 选牌 |
+| `language` | English | EN |
+
+`i18n/I18nContext.test.ts` asserts this split.
+
+### Still outstanding from the design doc's web Tier 1
+
+Task 11 — the three ad-hoc en/zh label mechanisms in `features/replay/`, the four hand-rolled
+segmented controls that duplicate the `Toggle` primitive, the `東` compass mark in three places,
+and the repeated tile-box size blocks (~200 lines). Not started.
