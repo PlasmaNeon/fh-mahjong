@@ -45,135 +45,6 @@ type CollapsedSections = {
 
 type Lang = 'en' | 'zh'
 
-const UI_TEXT = {
-  en: {
-    language: '中文',
-    title: 'Calculator',
-    closedHand: 'Closed hand',
-    winTile: 'Win tile',
-    wildTile: 'Wild tile',
-    expectedCount: 'Expected',
-    openMelds: 'open meld(s)',
-    apply: 'Apply',
-    edit: 'Edit',
-    tilePalette: 'Tile palette',
-    noClosedHand: 'No tiles in the closed hand yet.',
-    noWinTile: 'No win tile selected.',
-    noWildTile: 'No wild tile selected.',
-    openMeldsTitle: 'Open melds',
-    activeMeldPalette: 'Meld palette',
-    add: 'Add',
-    noOpenMelds: 'No open melds yet.',
-    openMeld: 'Meld',
-    tiles: 'tiles',
-    usePalette: 'Use palette',
-    clear: 'Clear',
-    remove: 'Remove',
-    meldType: 'Type',
-    calledDirection: 'Direction',
-    calledTile: 'Called tile',
-    addTilesFirst: 'Add tiles first',
-    meldEmpty: 'Use the palette or change type to start composing.',
-    kanContext: 'Kan context',
-    noKanContext: 'No extra context',
-    roundContext: 'Round context',
-    winType: 'Win type',
-    tsumo: 'Tsumo',
-    ron: 'Ron',
-    flowerKong: 'Win by flower replacement',
-    seatWind: 'Seat wind',
-    prevailingWind: 'Prevailing wind',
-    flowerMelds: 'Flower melds',
-    calculating: 'Calculating…',
-    calculatePoints: 'Calculate Score',
-    noValidationErrors: 'No issues.',
-    result: 'Result',
-    validHand: 'Valid hand',
-    invalidHand: 'Invalid hand',
-    awaitingEvaluation: 'Awaiting evaluation',
-    totalScore: 'Total score',
-    breakdown: 'Breakdown',
-    noEntries: 'No scoring entries.',
-    submitToSeeResult: 'Submit a hand to see the score.',
-    normalizedSummary: 'Normalized request',
-    context: 'Context',
-    expectedClosedHandLength: 'Expected closed hand',
-    none: '—',
-    evaluateToCapture: 'Evaluate a hand to see the normalized request.',
-    showDebug: 'Show normalized request',
-    hideDebug: 'Hide normalized request',
-    tileTray: 'Tile tray',
-    tileTrayHelp: 'Choose a target, then use this one shared tray.',
-    tileTarget: 'Tile target',
-    addingTo: 'Adding to',
-    advancedSetup: 'Advanced setup',
-    advancedSetupHelp: 'melds, winds, flowers, and kan context',
-  },
-  zh: {
-    language: 'English',
-    title: '算分器',
-    closedHand: '手牌',
-    winTile: '和牌',
-    wildTile: '搭牌',
-    expectedCount: '应有',
-    openMelds: '副露',
-    apply: '应用',
-    edit: '编辑',
-    tilePalette: '牌库',
-    noClosedHand: '当前还没有手牌。',
-    noWinTile: '尚未选择和牌。',
-    noWildTile: '尚未选择搭牌。',
-    openMeldsTitle: '副露',
-    activeMeldPalette: '副露牌库',
-    add: '新增',
-    noOpenMelds: '当前还没有副露。',
-    openMeld: '副露',
-    tiles: '张',
-    usePalette: '牌库加牌',
-    clear: '清空',
-    remove: '删除',
-    meldType: '类型',
-    calledDirection: '来源',
-    calledTile: '被叫牌',
-    addTilesFirst: '请先加入牌张',
-    meldEmpty: '使用上方牌库，或先切换类型开始编辑。',
-    kanContext: '杠牌上下文',
-    noKanContext: '无额外上下文',
-    roundContext: '牌局上下文',
-    winType: '和牌方式',
-    tsumo: '自摸',
-    ron: '点炮',
-    flowerKong: '补花自摸',
-    seatWind: '门风',
-    prevailingWind: '圈风',
-    flowerMelds: '花牌',
-    calculating: '计算中…',
-    calculatePoints: '计算分数',
-    noValidationErrors: '无校验错误。',
-    result: '结果',
-    validHand: '可和牌',
-    invalidHand: '不可和牌',
-    awaitingEvaluation: '等待计算',
-    totalScore: '总分',
-    breakdown: '明细',
-    noEntries: '当前没有返回算分条目。',
-    submitToSeeResult: '提交一次计算请求后，这里会显示结果。',
-    normalizedSummary: '标准化请求',
-    context: '上下文',
-    expectedClosedHandLength: '应有手牌张数',
-    none: '—',
-    evaluateToCapture: '进行一次计算后，这里会显示标准化调试摘要。',
-    showDebug: '显示标准化请求',
-    hideDebug: '隐藏标准化请求',
-    tileTray: '选牌区',
-    tileTrayHelp: '先选择目标，再从共用牌盘中选牌。',
-    tileTarget: '选牌目标',
-    addingTo: '正在添加到',
-    advancedSetup: '高级设置',
-    advancedSetupHelp: '副露、风位、花牌与杠牌情境',
-  },
-} as const
-
 const KONG_FLAG_OPTIONS: Array<{ key: keyof CalcKongFlags; label: string }> = [
   { key: 'hasBuddingDirectKong', label: 'Budding Direct Kong' },
   { key: 'hasBloomingDirectKong', label: 'Blooming Direct Kong' },
@@ -283,7 +154,7 @@ function localizeDebugValue(value: string, lang: Lang): string {
 // ─── Main page ───
 
 export default function Calc() {
-  const { shortLanguage: lang, toggleLanguage } = useI18n()
+  const { t, shortLanguage: lang, toggleLanguage } = useI18n()
   const [closedHand, setClosedHand] = useState<CalcTileDraft[]>([])
   const [winTile, setWinTile] = useState<CalcTileDraft | null>(null)
   const [wildTile, setWildTile] = useState<CalcTileDraft | null>(null)
@@ -543,7 +414,6 @@ export default function Calc() {
   const combinedErrors = [...inputErrors.closedHand, ...inputErrors.winTile, ...inputErrors.wildTile, ...serverErrors]
   const allErrors = [...combinedErrors, ...validationErrors]
   const expectedHandLength = expectedClosedHandSize(openMelds.length)
-  const text = UI_TEXT[lang]
 
   const addPaletteTile = (tile: CalcTileValue) => {
     if (paletteTarget === 'hand') addTileToClosedHand(tile)
@@ -553,7 +423,7 @@ export default function Calc() {
   }
 
   return (
-    <ClubShell wide title={lang === 'en' ? 'Table Tools' : '牌桌工具'}>
+    <ClubShell wide title={t('nav.tools')}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
@@ -562,7 +432,7 @@ export default function Calc() {
           <div className="ldg-page-head">
             <div>
               <h1 className="ldg-page-head__title">
-                {text.title}
+                {t('calc.title')}
                 <small>{lang === 'en' ? '奉化算分器' : 'Fenghua Calculator'}</small>
               </h1>
             </div>
@@ -572,7 +442,7 @@ export default function Calc() {
                 className="ldg-link"
                 onClick={toggleLanguage}
               >
-                {text.language}
+                {t('calc.language')}
               </button>
             </div>
           </div>
@@ -581,8 +451,8 @@ export default function Calc() {
           <section className="ldg-section">
             <div className="ldg-section-row">
               <h2 className="ldg-section-title">
-                {text.closedHand}
-                <small>{text.expectedCount} {expectedHandLength} {text.tiles}</small>
+                {t('tools.closedHand')}
+                <small>{t('calc.expectedCount')} {expectedHandLength} {t('tools.tiles')}</small>
               </h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <span className="ldg-section-meta">{closedHand.length} / {expectedHandLength}</span>
@@ -592,7 +462,7 @@ export default function Calc() {
                     className="ldg-link"
                     onClick={() => setCollapsedSections((current) => ({ ...current, closedHand: false }))}
                   >
-                    {text.edit}
+                    {t('tools.edit')}
                   </button>
                 )}
               </div>
@@ -607,12 +477,12 @@ export default function Calc() {
                   placeholder="1m2m3m 4p5p6p 7s8s9s 3z"
                 />
                 <button type="button" className="ldg-btn" onClick={applyClosedHandInput}>
-                  {text.apply}
+                  {t('calc.apply')}
                 </button>
               </div>
             )}
 
-            <LedgerTileRow tiles={closedHand} emptyLabel={text.noClosedHand} onTileClick={removeClosedHandTile} />
+            <LedgerTileRow tiles={closedHand} emptyLabel={t('calc.noClosedHand')} onTileClick={removeClosedHandTile} />
 
           </section>
 
@@ -621,7 +491,7 @@ export default function Calc() {
             {/* Win tile */}
             <div>
               <div className="ldg-section-row" style={{ marginBottom: '0.85rem' }}>
-                <h2 className="ldg-section-title">{text.winTile}</h2>
+                <h2 className="ldg-section-title">{t('calc.winTile')}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                   {collapsedSections.winTile && winTile && (
                     <LedgerTile tile={winTile} onClick={() => { setWinTile(null); clearServerState() }} size="small" />
@@ -632,7 +502,7 @@ export default function Calc() {
                       className="ldg-link"
                       onClick={() => setCollapsedSections((current) => ({ ...current, winTile: false }))}
                     >
-                      {text.edit}
+                      {t('tools.edit')}
                     </button>
                   )}
                 </div>
@@ -648,11 +518,11 @@ export default function Calc() {
                       placeholder="3z"
                     />
                     <button type="button" className="ldg-btn" onClick={applyWinTileInput}>
-                      {text.apply}
+                      {t('calc.apply')}
                     </button>
                   </div>
                   {!winTile && (
-                    <p className="ldg-note">{text.noWinTile}</p>
+                    <p className="ldg-note">{t('calc.noWinTile')}</p>
                   )}
                 </>
               )}
@@ -661,7 +531,7 @@ export default function Calc() {
             {/* Wild tile */}
             <div>
               <div className="ldg-section-row" style={{ marginBottom: '0.85rem' }}>
-                <h2 className="ldg-section-title">{text.wildTile}</h2>
+                <h2 className="ldg-section-title">{t('calc.wildTile')}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                   {collapsedSections.wildTile && wildTile && (
                     <LedgerTile tile={wildTile} onClick={() => { setWildTile(null); clearServerState() }} size="small" selected />
@@ -672,7 +542,7 @@ export default function Calc() {
                       className="ldg-link"
                       onClick={() => setCollapsedSections((current) => ({ ...current, wildTile: false }))}
                     >
-                      {text.edit}
+                      {t('tools.edit')}
                     </button>
                   )}
                 </div>
@@ -688,11 +558,11 @@ export default function Calc() {
                       placeholder="9s"
                     />
                     <button type="button" className="ldg-btn" onClick={applyWildTileInput}>
-                      {text.apply}
+                      {t('calc.apply')}
                     </button>
                   </div>
                   {!wildTile && (
-                    <p className="ldg-note">{text.noWildTile}</p>
+                    <p className="ldg-note">{t('calc.noWildTile')}</p>
                   )}
                 </>
               )}
@@ -701,30 +571,30 @@ export default function Calc() {
 
           <section className="ldg-section workbench-palette">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.tileTray}<small>{text.tileTrayHelp}</small></h2>
+              <h2 className="ldg-section-title">{t('tools.tileTray')}<small>{t('calc.tileTrayHelp')}</small></h2>
             </div>
-            <div className="ldg-chooser" aria-label={text.tileTarget}>
-              {([['hand', text.closedHand], ['win', text.winTile], ['wild', text.wildTile], ['meld', text.openMeldsTitle]] as const).map(([value, label]) => (
+            <div className="ldg-chooser" aria-label={t('tools.tileTarget')}>
+              {([['hand', t('tools.closedHand')], ['win', t('calc.winTile')], ['wild', t('calc.wildTile')], ['meld', t('calc.openMeldsTitle')]] as const).map(([value, label]) => (
                 <button key={value} type="button" disabled={value === 'meld' && !activeMeldId} className={`ldg-chooser__btn${paletteTarget === value ? ' is-active' : ''}`} onClick={() => setPaletteTarget(value)}>{label}</button>
               ))}
             </div>
             <div className="ldg-palette-drawer">
-              <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : paletteTarget === 'win' ? text.winTile : paletteTarget === 'wild' ? text.wildTile : text.openMeldsTitle}</div>
+              <div className="ldg-palette-drawer__head">{t('tools.addingTo')} {paletteTarget === 'hand' ? t('tools.closedHand') : paletteTarget === 'win' ? t('calc.winTile') : paletteTarget === 'wild' ? t('calc.wildTile') : t('calc.openMeldsTitle')}</div>
               <LedgerPaletteGrid onTileClick={addPaletteTile} selectedTile={paletteTarget === 'win' ? winTile : paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
           <details className="advanced-setup">
-          <summary>{text.advancedSetup} <span>{text.advancedSetupHelp}</span></summary>
+          <summary>{t('tools.advancedSetup')} <span>{t('calc.advancedSetupHelp')}</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.openMeldsTitle}</h2>
+              <h2 className="ldg-section-title">{t('calc.openMeldsTitle')}</h2>
               <span className="ldg-section-meta">{openMelds.length}</span>
             </div>
 
             {openMelds.length === 0 ? (
-              <p className="ldg-note">{text.noOpenMelds}</p>
+              <p className="ldg-note">{t('calc.noOpenMelds')}</p>
             ) : (
               openMelds.map((meld, index) => {
                 const meldError = validateMeldShape(meld)
@@ -733,9 +603,9 @@ export default function Calc() {
                   <div key={meld.id} className={`ldg-meld${isActive ? ' ldg-meld--active' : ''}`}>
                     <div className="ldg-meld__head">
                       <div>
-                        <p className="ldg-meld__title">{text.openMeld} {index + 1}</p>
+                        <p className="ldg-meld__title">{t('calc.openMeld')} {index + 1}</p>
                         <p className="ldg-meld__meta">
-                          {meld.tiles.length}/{meldRequiredTileCount(meld.type)} {text.tiles}
+                          {meld.tiles.length}/{meldRequiredTileCount(meld.type)} {t('tools.tiles')}
                           {' · '}{getDirectionLabelForLang(meld.calledDirection, lang)}
                         </p>
                       </div>
@@ -745,20 +615,20 @@ export default function Calc() {
                           className={`ldg-btn${isActive ? ' ldg-btn--primary' : ''}`}
                           onClick={() => { setActiveMeldId(isActive ? null : meld.id); if (!isActive) setPaletteTarget('meld') }}
                         >
-                          {text.usePalette}
+                          {t('calc.usePalette')}
                         </button>
                         <button type="button" className="ldg-btn" onClick={() => clearMeld(meld.id)}>
-                          {text.clear}
+                          {t('tools.clear')}
                         </button>
                         <button type="button" className="ldg-btn ldg-btn--danger" onClick={() => removeMeld(meld.id)}>
-                          {text.remove}
+                          {t('calc.remove')}
                         </button>
                       </div>
                     </div>
 
                     <div className="ldg-grid-3" style={{ marginBottom: '0.75rem' }}>
                       <div className="ldg-field">
-                        <label className="ldg-field__label">{text.meldType}</label>
+                        <label className="ldg-field__label">{t('calc.meldType')}</label>
                         <select
                           className="ldg-select"
                           value={meld.type}
@@ -773,7 +643,7 @@ export default function Calc() {
                       </div>
 
                       <div className="ldg-field">
-                        <label className="ldg-field__label">{text.calledDirection}</label>
+                        <label className="ldg-field__label">{t('calc.calledDirection')}</label>
                         <select
                           className="ldg-select"
                           value={meld.calledDirection}
@@ -793,7 +663,7 @@ export default function Calc() {
                       </div>
 
                       <div className="ldg-field">
-                        <label className="ldg-field__label">{text.calledTile}</label>
+                        <label className="ldg-field__label">{t('calc.calledTile')}</label>
                         <select
                           className="ldg-select"
                           value={meld.calledTileIndex}
@@ -801,7 +671,7 @@ export default function Calc() {
                           disabled={meld.tiles.length === 0}
                         >
                           {meld.tiles.length === 0 ? (
-                            <option value={0}>{text.addTilesFirst}</option>
+                            <option value={0}>{t('calc.addTilesFirst')}</option>
                           ) : (
                             meld.tiles.map((tile: CalcTileDraft, tileIndex: number) => (
                               <option key={tile.id} value={tileIndex}>
@@ -815,19 +685,19 @@ export default function Calc() {
 
                     <LedgerTileRow
                       tiles={meld.tiles}
-                      emptyLabel={text.meldEmpty}
+                      emptyLabel={t('calc.meldEmpty')}
                       onTileClick={(tileId) => removeMeldTile(meld.id, tileId)}
                     />
 
                     {meld.type === game.ActionType.ACTION_KAN && (
                       <div className="ldg-field" style={{ marginTop: '0.75rem' }}>
-                        <label className="ldg-field__label">{text.kanContext}</label>
+                        <label className="ldg-field__label">{t('calc.kanContext')}</label>
                         <select
                           className="ldg-select"
                           value={meld.kongContext}
                           onChange={(event) => updateMeldKongContext(meld.id, event.target.value as CalcKongContextKey)}
                         >
-                          <option value="">{text.noKanContext}</option>
+                          <option value="">{t('calc.noKanContext')}</option>
                           {KONG_FLAG_OPTIONS.map((option) => (
                             <option key={`${meld.id}-${option.key}`} value={option.key}>
                               {getKongFlagLabelForLang(option.key, lang)}
@@ -855,12 +725,12 @@ export default function Calc() {
           {/* Round context */}
           <section className="ldg-section">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.roundContext}</h2>
+              <h2 className="ldg-section-title">{t('calc.roundContext')}</h2>
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
               <span className="ldg-section-title" style={{ fontSize: '0.85rem', color: 'var(--ink-3)' }}>
-                {text.winType}
+                {t('calc.winType')}
               </span>
               <div className="ldg-toggle">
                 <button
@@ -868,21 +738,21 @@ export default function Calc() {
                   className={`ldg-toggle__btn${isTsumo ? ' is-active' : ''}`}
                   onClick={() => { setIsTsumo(true); clearServerState() }}
                 >
-                  {text.tsumo}
+                  {t('calc.tsumo')}
                 </button>
                 <button
                   type="button"
                   className={`ldg-toggle__btn${!isTsumo ? ' is-active' : ''}`}
                   onClick={() => { setIsTsumo(false); clearServerState() }}
                 >
-                  {text.ron}
+                  {t('calc.ron')}
                 </button>
               </div>
             </div>
 
             <div className="ldg-grid-2">
               <div className="ldg-field">
-                <label className="ldg-field__label">{text.seatWind}</label>
+                <label className="ldg-field__label">{t('calc.seatWind')}</label>
                 <select
                   className="ldg-select"
                   value={seatWind}
@@ -896,7 +766,7 @@ export default function Calc() {
                 </select>
               </div>
               <div className="ldg-field">
-                <label className="ldg-field__label">{text.prevailingWind}</label>
+                <label className="ldg-field__label">{t('calc.prevailingWind')}</label>
                 <select
                   className="ldg-select"
                   value={prevailingWind}
@@ -912,7 +782,7 @@ export default function Calc() {
             </div>
 
             <div className="ldg-check-row" style={{ marginTop: '0.75rem' }}>
-              <div className="ldg-check-row__label">{text.flowerKong}</div>
+              <div className="ldg-check-row__label">{t('calc.flowerKong')}</div>
               <input
                 type="checkbox"
                 checked={hasBloomingFlowerKong}
@@ -925,7 +795,7 @@ export default function Calc() {
           {/* Flower melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.flowerMelds}</h2>
+              <h2 className="ldg-section-title">{t('calc.flowerMelds')}</h2>
               <span className="ldg-section-meta">{flowerMelds.length > 0 ? flowerMelds.join(', ') : '—'}</span>
             </div>
             <div className="ldg-chips-row">
@@ -957,7 +827,7 @@ export default function Calc() {
                   ))}
                 </ul>
               ) : (
-                <span className="ldg-note ldg-note--ok" style={{ marginTop: 0 }}>{text.noValidationErrors}</span>
+                <span className="ldg-note ldg-note--ok" style={{ marginTop: 0 }}>{t('calc.noValidationErrors')}</span>
               )}
             </div>
             <button
@@ -966,29 +836,29 @@ export default function Calc() {
               onClick={handleCalculate}
               disabled={isSubmitting}
             >
-              {isSubmitting ? text.calculating : text.calculatePoints}
+              {isSubmitting ? t('calc.calculating') : t('calc.calculatePoints')}
             </button>
           </div>
 
           {/* Result */}
           <section className="ldg-result">
             <div className="ldg-result-row">
-              <div className="ldg-result-label">{text.result}</div>
+              <div className="ldg-result-label">{t('tools.result')}</div>
               <div className={`ldg-result-status${
                 result
                   ? result.canWin ? ' ldg-result-status--ok' : ' ldg-result-status--err'
                   : ''
               }`}>
                 {result
-                  ? result.canWin ? text.validHand : text.invalidHand
-                  : text.awaitingEvaluation}
+                  ? result.canWin ? t('calc.validHand') : t('calc.invalidHand')
+                  : t('calc.awaitingEvaluation')}
               </div>
             </div>
 
             {result ? (
               <>
                 <div className="ldg-big-stat">
-                  <div className="ldg-big-stat__label">{text.totalScore}</div>
+                  <div className="ldg-big-stat__label">{t('calc.totalScore')}</div>
                   <div className="ldg-big-stat__value">{result.score}</div>
                 </div>
 
@@ -1002,11 +872,11 @@ export default function Calc() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="ldg-note">{text.noEntries}</p>
+                  <p className="ldg-note">{t('calc.noEntries')}</p>
                 )}
               </>
             ) : (
-              <p className="ldg-note">{text.submitToSeeResult}</p>
+              <p className="ldg-note">{t('calc.submitToSeeResult')}</p>
             )}
           </section>
 
@@ -1017,41 +887,41 @@ export default function Calc() {
               className="ldg-footnote__toggle"
               onClick={() => setShowDebug(v => !v)}
             >
-              {showDebug ? '▴' : '▾'} {showDebug ? text.hideDebug : text.showDebug}
+              {showDebug ? '▴' : '▾'} {showDebug ? t('calc.hideDebug') : t('calc.showDebug')}
             </button>
 
             {showDebug && result && (
               <div style={{ marginTop: '1.25rem' }}>
                 <div className="ldg-grid-2" style={{ gap: '0.6rem' }}>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.closedHand}</div>
-                    <div className="ldg-debug__value">{result.normalized.closedHand || text.none}</div>
+                    <div className="ldg-debug__label">{t('tools.closedHand')}</div>
+                    <div className="ldg-debug__value">{result.normalized.closedHand || t('calc.none')}</div>
                   </div>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.winTile}</div>
-                    <div className="ldg-debug__value">{result.normalized.winTile || text.none}</div>
+                    <div className="ldg-debug__label">{t('calc.winTile')}</div>
+                    <div className="ldg-debug__value">{result.normalized.winTile || t('calc.none')}</div>
                   </div>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.wildTile}</div>
-                    <div className="ldg-debug__value">{result.normalized.wildTile || text.none}</div>
+                    <div className="ldg-debug__label">{t('calc.wildTile')}</div>
+                    <div className="ldg-debug__value">{result.normalized.wildTile || t('calc.none')}</div>
                   </div>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.context}</div>
+                    <div className="ldg-debug__label">{t('calc.context')}</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', marginTop: '0.2rem' }}>
                       <div className="ldg-kv">
-                        <div className="ldg-kv__key">{text.winType}</div>
-                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.winType, lang) || text.none}</div>
+                        <div className="ldg-kv__key">{t('calc.winType')}</div>
+                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.winType, lang) || t('calc.none')}</div>
                       </div>
                       <div className="ldg-kv">
-                        <div className="ldg-kv__key">{text.seatWind}</div>
-                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.seatWind, lang) || text.none}</div>
+                        <div className="ldg-kv__key">{t('calc.seatWind')}</div>
+                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.seatWind, lang) || t('calc.none')}</div>
                       </div>
                       <div className="ldg-kv">
-                        <div className="ldg-kv__key">{text.prevailingWind}</div>
-                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.prevailingWind, lang) || text.none}</div>
+                        <div className="ldg-kv__key">{t('calc.prevailingWind')}</div>
+                        <div className="ldg-kv__val">{localizeDebugValue(result.normalized.prevailingWind, lang) || t('calc.none')}</div>
                       </div>
                       <div className="ldg-kv">
-                        <div className="ldg-kv__key">{text.expectedClosedHandLength}</div>
+                        <div className="ldg-kv__key">{t('calc.expectedClosedHandLength')}</div>
                         <div className="ldg-kv__val">{result.normalized.expectedHandLen}</div>
                       </div>
                     </div>
@@ -1060,12 +930,12 @@ export default function Calc() {
 
                 {result.normalized.openMelds.length > 0 && (
                   <div className="ldg-debug" style={{ marginTop: '0.6rem' }}>
-                    <div className="ldg-debug__label">{text.openMeldsTitle}</div>
+                    <div className="ldg-debug__label">{t('calc.openMeldsTitle')}</div>
                     {result.normalized.openMelds.map((meld, index) => (
                       <div key={`${meld.type}-${meld.tiles}-${index}`} style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
                         <div style={{ fontFamily: 'var(--mono)', color: 'var(--ink-2)' }}>
                           {localizeDebugValue(meld.type, lang)}({meld.tiles})
-                          {' · '}{text.calledTile} {meld.calledTile} #{meld.calledTileIndex + 1}
+                          {' · '}{t('calc.calledTile')} {meld.calledTile} #{meld.calledTileIndex + 1}
                           {' · '}{localizeDebugValue(meld.calledDirection, lang)}
                         </div>
                         {meld.kongFlags.length > 0 && (
@@ -1082,9 +952,9 @@ export default function Calc() {
 
                 <div className="ldg-grid-2" style={{ gap: '0.6rem', marginTop: '0.6rem' }}>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.flowerMelds}</div>
+                    <div className="ldg-debug__label">{t('calc.flowerMelds')}</div>
                     {result.normalized.flowerMelds.length === 0 ? (
-                      <span className="ldg-debug__value">{text.none}</span>
+                      <span className="ldg-debug__value">{t('calc.none')}</span>
                     ) : (
                       <div className="ldg-chips-row">
                         {result.normalized.flowerMelds.map((flower) => (
@@ -1094,9 +964,9 @@ export default function Calc() {
                     )}
                   </div>
                   <div className="ldg-debug">
-                    <div className="ldg-debug__label">{text.kanContext}</div>
+                    <div className="ldg-debug__label">{t('calc.kanContext')}</div>
                     {result.normalized.kongFlags.length === 0 ? (
-                      <span className="ldg-debug__value">{text.none}</span>
+                      <span className="ldg-debug__value">{t('calc.none')}</span>
                     ) : (
                       <div className="ldg-chips-row">
                         {result.normalized.kongFlags.map((flag) => (
@@ -1110,7 +980,7 @@ export default function Calc() {
             )}
 
             {showDebug && !result && (
-              <p className="ldg-note" style={{ marginTop: '0.75rem' }}>{text.evaluateToCapture}</p>
+              <p className="ldg-note" style={{ marginTop: '0.75rem' }}>{t('calc.evaluateToCapture')}</p>
             )}
           </div>
 
