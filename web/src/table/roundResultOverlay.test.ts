@@ -1,10 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { TableRoundResultOverlay, type RoundResultView } from './TableScene'
-import { I18nProvider } from '../i18n/I18nContext'
+import { readSourceCss, ruleBody } from '../test/cssContract'
+import { renderStatic } from '../test/renderStatic'
 
 const result: RoundResultView = {
   isDraw: false,
@@ -26,9 +24,8 @@ const result: RoundResultView = {
 }
 
 describe('TableRoundResultOverlay', () => {
-  const renderOverlay = (overlayResult: RoundResultView) => renderToStaticMarkup(
-    createElement(I18nProvider, null, createElement(TableRoundResultOverlay, { result: overlayResult })),
-  )
+  const renderOverlay = (overlayResult: RoundResultView) =>
+    renderStatic(createElement(TableRoundResultOverlay, { result: overlayResult }))
 
   it('keeps a labelled scroll body before a persistent action footer', () => {
     const markup = renderOverlay(result)
@@ -67,16 +64,7 @@ describe('TableRoundResultOverlay', () => {
 })
 
 function readRoundResultCss() {
-  return ['src/index.css', 'src/table/roundResult.css']
-    .map((path) => resolve(process.cwd(), path))
-    .filter((path) => existsSync(path))
-    .map((path) => readFileSync(path, 'utf8'))
-    .join('\n')
-}
-
-function ruleBody(css: string, selector: string) {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+  return readSourceCss('src/index.css', 'src/table/roundResult.css')
 }
 
 describe('round-result CSS reachability contract', () => {
@@ -102,7 +90,7 @@ describe('round-result CSS reachability contract', () => {
 
     expect(ruleBody(css, '.round-result-overlay')).toContain('container: round-result / size')
     expect(ruleBody(css, '.round-result-modal')).toContain('max-height: min(780px, calc(100% - 1.5rem))')
-    expect(readFileSync(resolve(process.cwd(), 'src/table/roundResult.css'), 'utf8')).not.toContain('100dvh')
+    expect(readSourceCss('src/table/roundResult.css')).not.toContain('100dvh')
     expect(css).toContain('@container round-result (max-height: 500px) and (min-width: 600px)')
     expect(css).toMatch(/@container round-result[^]*?\.round-result-scroll\s*\{[^}]*overflow:\s*hidden/)
     expect(css).toMatch(/@container round-result[^]*?\.round-result-scroll\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/)

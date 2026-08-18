@@ -1,12 +1,10 @@
 import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import AuthDialog from './AuthDialog'
-import { I18nProvider } from '../../i18n/I18nContext'
+import { renderStatic } from '../../test/renderStatic'
 
-const renderDialog = (props: Parameters<typeof AuthDialog>[0]) => renderToStaticMarkup(
-  createElement(I18nProvider, null, createElement(AuthDialog, props)),
-)
+const renderDialog = (props: Parameters<typeof AuthDialog>[0]) =>
+  renderStatic(createElement(AuthDialog, props))
 
 describe('AuthDialog', () => {
   it('labels the popup and exposes a close control for optional login', () => {

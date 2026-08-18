@@ -1,29 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadDiscardMode, parseDiscardMode, saveDiscardMode } from './discardMode'
-
-// discardMode.ts reads window.localStorage. The node test env has no window,
-// so stub one with a minimal in-memory Storage; a fresh store per test keeps
-// the round-trip cases isolated without relying on jsdom.
-function createStorageStub(): Storage {
-  const store = new Map<string, string>()
-  return {
-    get length() {
-      return store.size
-    },
-    clear: () => store.clear(),
-    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
-    key: (index: number) => Array.from(store.keys())[index] ?? null,
-    removeItem: (key: string) => {
-      store.delete(key)
-    },
-    setItem: (key: string, value: string) => {
-      store.set(key, String(value))
-    },
-  }
-}
+import { createMemoryStorage } from '../../test/memoryStorage'
 
 beforeEach(() => {
-  vi.stubGlobal('window', { localStorage: createStorageStub() })
+  vi.stubGlobal('window', { localStorage: createMemoryStorage() })
 })
 
 afterEach(() => {
