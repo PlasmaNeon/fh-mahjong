@@ -5,6 +5,7 @@ import { Button, Card, ClubShell, Field, Note, PageHeader, Section, ToolsRow } f
 import type { AuthRouteState } from '../auth/authModal'
 import { parseReplayReference } from './replayReference'
 import { useI18n } from '../../i18n/I18nContext'
+import { WIND_I18N_KEYS } from '../../utils/winds'
 
 type ReplayPlayer = { seat: number; name: string; finalScore: number }
 type ReplaySummary = {
@@ -35,7 +36,7 @@ function formatEndedAt(value: string, locale: string) {
 export default function ReplayLibrary() {
   const { status, apiFetch, refreshSession } = useAuth()
   const { t, language, shortLanguage } = useI18n()
-  const winds = [t('common.east'), t('common.south'), t('common.west'), t('common.north')]
+  const winds = WIND_I18N_KEYS.map((key) => t(key))
   const location = useLocation()
   const navigate = useNavigate()
   const [reference, setReference] = useState('')

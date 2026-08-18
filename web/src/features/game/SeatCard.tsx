@@ -2,6 +2,7 @@
 import { game } from '../../proto/game';
 import { Button } from '../../theme';
 import { useI18n } from '../../i18n/I18nContext';
+import { WIND_KANJI, windI18nKey } from '../../utils/winds';
 
 type SeatConfig = game.ISeatConfig;
 type Difficulty = game.Difficulty;
@@ -28,7 +29,6 @@ function difficultyOptions(rlAgentAvailable: boolean): Array<{ value: Difficulty
     ];
 }
 
-const SEAT_WIND = ['東', '南', '西', '北'];
 
 export default function SeatCard(props: SeatCardProps) {
     const { t } = useI18n();
@@ -38,10 +38,10 @@ export default function SeatCard(props: SeatCardProps) {
 
     return (
         <div className={`ldg-meld seat-card seat-card--${seat.kind || 'empty'}`}>
-            <div className="seat-card__wind" aria-hidden="true">{SEAT_WIND[seatIndex]}</div>
+            <div className="seat-card__wind" aria-hidden="true">{WIND_KANJI[seatIndex + 1]}</div>
             <div className="ldg-meld__head">
                 <div>
-                    <div className="ldg-meld__meta">{t('room.seatWind', { seat: seatIndex + 1, wind: t((['common.east', 'common.south', 'common.west', 'common.north'] as const)[seatIndex]) })}</div>
+                    <div className="ldg-meld__meta">{t('room.seatWind', { seat: seatIndex + 1, wind: t(windI18nKey(seatIndex + 1)) })}</div>
                     <div className="ldg-meld__title" style={{ marginTop: 4 }}>
                         {seat.kind === 'human' && <>{seat.username || `Player ${seat.userId ?? ''}`}</>}
                         {seat.kind === 'bot' && <>AI · {t(Number(seat.difficulty) === game.Difficulty.DIFFICULTY_RL ? 'room.rlAgent' : 'room.heuristic')}</>}
