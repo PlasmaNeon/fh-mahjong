@@ -44,11 +44,6 @@ export type MotionSnapshot = {
 // that merely re-sorted in place).
 const MIN_TRAVEL_DISTANCE = 4
 
-export function tileIdsEqual(left: unknown, right: unknown) {
-  if (left == null || right == null) return false
-  return String(left) === String(right)
-}
-
 function shouldAnimateTileTransfer(previousRole: TileMotionRole, currentRole: TileMotionRole) {
   // Only fly tiles leaving a hand for the discard pond. The drawn -> hand merge
   // (a tile sliding from the drawn slot into its sorted spot on discard) is owned

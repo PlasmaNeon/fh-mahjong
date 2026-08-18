@@ -1,9 +1,7 @@
 import type { MeldLike, SeatLaneDirection } from './types'
+import { tileIdsEqual } from './tileId'
 
-export function tileIdsEqual(left: unknown, right: unknown): boolean {
-  if (left == null || right == null) return false
-  return String(left) === String(right)
-}
+export { tileIdsEqual }
 
 export function reorderMeldTiles(meld: MeldLike) {
   const addedTileId = meld.addedTileId ?? -1
