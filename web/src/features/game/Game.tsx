@@ -318,19 +318,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
 
     const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
     const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
-    const stageShellStyle = {
-        '--game-stage-scaled-width': `${stageLayout.scaledWidth}px`,
-        '--game-stage-scaled-height': `${stageLayout.scaledHeight}px`,
-        '--game-stage-available-width': `${stageLayout.availableWidth}px`,
-        '--game-stage-available-height': `${stageLayout.availableHeight}px`,
-    } as React.CSSProperties;
-
-    const stageStyle = {
-        width: `${stageLayout.stageWidth}px`,
-        height: `${stageLayout.stageHeight}px`,
-        zoom: stageLayout.scale,
-    } as React.CSSProperties;
-    const stageFrameStyle = {} as React.CSSProperties;
+    const { shellStyle: stageShellStyle, stageStyle } = stageLayout;
 
     const activeDiscardTile = gameState.players
         .find((player: any) => player.seat === gameState.activePlayer)
@@ -552,7 +540,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                     matchId={matchId}
                 />
             )}
-            <div className="game-stage-frame" style={stageFrameStyle}>
+            <div className="game-stage-frame">
                 <div
                     className="game-stage"
                     data-discard-mode={discardMode}

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { CSSProperties } from 'react'
 import { useGameStageLayout } from '../../hooks/useGameStageLayout'
 import { game } from '../../proto/game'
 import { TableBoard, TableRoundResultOverlay } from '../../table/TableScene'
@@ -127,18 +126,7 @@ export default function TableSample() {
       }
     : null
 
-  const stageShellStyle = {
-    '--game-stage-scaled-width': `${stageLayout.scaledWidth}px`,
-    '--game-stage-scaled-height': `${stageLayout.scaledHeight}px`,
-    '--game-stage-available-width': `${stageLayout.availableWidth}px`,
-    '--game-stage-available-height': `${stageLayout.availableHeight}px`,
-  } as CSSProperties
-
-  const stageStyle = {
-    width: `${stageLayout.stageWidth}px`,
-    height: `${stageLayout.stageHeight}px`,
-    zoom: stageLayout.scale,
-  } as CSSProperties
+  const { shellStyle: stageShellStyle, stageStyle } = stageLayout
 
   const actionBar = fixture === 'active' || fixture === 'interrupt' || fixture === 'multi-chii' ? (
     <div className="table-action-bar">

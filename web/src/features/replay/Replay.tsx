@@ -171,19 +171,7 @@ export default function Replay() {
   )
   const isWild = (tile: ReplayTile) => wildTileSet.has(`${tile.suit}-${tile.value}`)
 
-  const stageShellStyle = {
-    '--game-stage-scaled-width': `${stageLayout.scaledWidth}px`,
-    '--game-stage-scaled-height': `${stageLayout.scaledHeight}px`,
-    '--game-stage-available-width': `${stageLayout.availableWidth}px`,
-    '--game-stage-available-height': `${stageLayout.availableHeight}px`,
-  } as React.CSSProperties
-
-  const stageStyle = {
-    width: `${stageLayout.stageWidth}px`,
-    height: `${stageLayout.stageHeight}px`,
-    zoom: stageLayout.scale,
-  } as React.CSSProperties
-  const stageFrameStyle = {} as React.CSSProperties
+  const { shellStyle: stageShellStyle, stageStyle } = stageLayout
 
   const hudChips = [
     { label: `${t('replay.round')} ${state.roundNum}` },
@@ -277,7 +265,7 @@ export default function Replay() {
         ref={stageLayout.containerRef}
         style={stageShellStyle}
       >
-        <div className="game-stage-frame" style={stageFrameStyle}>
+        <div className="game-stage-frame">
           <div className="game-stage" data-compact={stageLayout.compact ? 'true' : undefined} style={stageStyle}>
             <TableBoard
               viewSeat={viewSeat}
