@@ -2,7 +2,6 @@ package api
 
 import (
 	"log"
-	"sort"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
@@ -33,11 +32,7 @@ func (r *Room) snapshotDecision(seat uint32, action *pb.PlayerAction) decisionSn
 		log.Printf("paipu decision snapshot: legal-set enumeration failed for seat %d in room %s: %v", seat, r.ID, err)
 		snap.snapErr = true
 	} else {
-		snap.legalIDs = make([]int, 0, len(legal))
-		for id := range legal {
-			snap.legalIDs = append(snap.legalIDs, id)
-		}
-		sort.Ints(snap.legalIDs)
+		snap.legalIDs = rl.SortedLegalIDs(legal)
 	}
 	if id, ok := rl.EncodeAction(r.Engine.State, seat, action); ok {
 		snap.chosenID = id

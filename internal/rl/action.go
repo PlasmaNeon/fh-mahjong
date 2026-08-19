@@ -306,3 +306,16 @@ func LegalActions(state *pb.GameState, seat uint32) (map[int]*pb.PlayerAction, e
 func EncodeAction(state *pb.GameState, seat uint32, action *pb.PlayerAction) (int, bool) {
 	return encodeAction(state, seat, action)
 }
+
+// SortedLegalIDs returns the action ids of a legal-action set in ascending
+// order. The paipu-v2 supervision trace compares legal sets across the server,
+// the offline generator and the review harness, so the ordering is part of the
+// recorded contract, not a display detail — collect and sort in one place.
+func SortedLegalIDs(legal map[int]*pb.PlayerAction) []int {
+	ids := make([]int, 0, len(legal))
+	for id := range legal {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}

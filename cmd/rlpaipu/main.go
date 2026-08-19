@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
@@ -135,12 +134,7 @@ func snapshotDecision(game *engine.Game, seat uint32, action *pb.PlayerAction) e
 	if err != nil {
 		row.LegalIDsError = true
 	} else {
-		ids := make([]int, 0, len(legal))
-		for id := range legal {
-			ids = append(ids, id)
-		}
-		sort.Ints(ids)
-		row.LegalIDs = ids
+		row.LegalIDs = rl.SortedLegalIDs(legal)
 	}
 	if id, ok := rl.EncodeAction(game.State, seat, action); ok {
 		row.ChosenID = id
