@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { getTileName, getTileSvgName } from '../utils/tileDisplay'
-import type { PlayerTableView, SeatLaneDirection, TileLike } from './TableScene'
+import type { PlayerTableView, SeatLaneDirection, TileLike } from './types'
 import {
   planTileFlights,
   hiddenHandSlotsByDirection,

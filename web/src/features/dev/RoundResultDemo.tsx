@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { TableRoundResultOverlay } from '../../table/TableScene'
+import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay'
 import {
   SCENARIO_KEYS,
   SCENARIO_LABELS,

@@ -11,7 +11,8 @@ import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import GameSettingsButton from './GameSettingsButton';
 import { preloadAllTileSvgs } from '../../utils/tileDisplay';
-import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
+import { TableBoard, TileComponent } from '../../table/TableBoard'
+import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';

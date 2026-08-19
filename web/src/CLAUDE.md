@@ -55,7 +55,7 @@ Contains all React components, context providers, custom hooks, and utility func
 ## Architecture Notes
 
 - State flow: WebSocket binary message → `GameContext` decodes Protobuf → `gameState` updates → components re-render.
-- Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableScene.tsx` instead of maintaining two separate seat/discard DOM trees.
+- Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableBoard.tsx` instead of maintaining two separate seat/discard DOM trees.
 - The live board now uses `useGameStageLayout()` from `table/stage/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.

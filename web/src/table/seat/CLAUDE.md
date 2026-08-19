@@ -4,12 +4,12 @@
 
 ## Overview
 
-One seat's worth of tabletop, decomposed into zones. `TableScene.tsx` composes four of these (bottom/right/top/left) into a board; live play and replay both go through that same path, so a fix here lands in both.
+One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes four of these (bottom/right/top/left) into a board; live play and replay both go through that same path, so a fix here lands in both.
 
 ## Key Files
 
-- **SeatBundle.tsx** — Assembles one seat's zones into the seat lane. The unit `TableScene` places per position.
-- **PlayerSeat.tsx** — The seat plaque: name, wind, score, turn/readiness state.
+- **SeatBundle.tsx** — Assembles one seat's zones into the seat lane. The unit `TableBoard` places per position.
+- **PlayerSeat.tsx** — The seat-lane composition: concealed-hand rail, flex gap, exposed meld rail, and flower rail for one seat. (Name, wind and score are rendered by `../CenterHud.tsx`, not here.)
 - **ClosedHand.tsx** — Concealed-hand rail. Keeps the drawn tile in a dedicated slot next to the rail rather than folding it back into the sorted closed-hand list.
 - **OpenMelds.tsx** / **OpenMeldZone.tsx** — Exposed meld rendering and its lane placement.
 - **FlowerZone.tsx** — Revealed flower tiles.

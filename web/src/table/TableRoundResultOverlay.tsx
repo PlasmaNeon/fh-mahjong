@@ -1,0 +1,153 @@
+import { TileComponent } from './Tile'
+import { sortTiles } from './handOrdering'
+import { OpenMelds } from './seat/OpenMelds'
+import { orderMeldsForRecap } from './meldOrdering'
+import type { TileLike, RoundResultView } from './types'
+import { useI18n } from '../i18n/I18nContext'
+
+export type { RoundResultView }
+
+export function TableRoundResultOverlay({
+  result,
+  isWildTile = () => false,
+}: {
+  result?: RoundResultView | null
+  isWildTile?: (tile: TileLike) => boolean
+}) {
+  const { t } = useI18n()
+  if (!result) return null
+
+  const breakdown = result.breakdown || []
+  const payouts = result.payouts || []
+  const closedHand = sortTiles(result.closedHand || [])
+  const winningMelds = orderMeldsForRecap(result.winningMelds || [])
+  const flowers = result.flowers || []
+
+  return (
+    <div className="round-result-overlay">
+      <section
+        className={`round-result-modal round-result-modal-${result.isDraw ? 'draw' : result.winType ?? 'draw'}`}
+        role="dialog"
+        aria-modal={true}
+        aria-labelledby="round-result-title"
+      >
+        <div className="round-result-scroll" tabIndex={0}>
+          {result.isDraw ? (
+            <header className="round-result-heading round-result-heading-draw">
+              <div className="round-result-badge round-result-badge-draw">{t('result.draw')}</div>
+              <div>
+                <div className="round-result-eyebrow">{t('result.settled')}</div>
+                <h2 id="round-result-title" className="round-result-title round-result-title-draw">
+                  {t('result.exhaustiveDraw')}
+                </h2>
+                <p className="round-result-subtitle">{t('result.noTiles')}</p>
+              </div>
+            </header>
+          ) : (
+            <>
+              <header className="round-result-heading">
+                <div className="round-result-heading-main">
+                  <div className={`round-result-badge ${result.winType === 'tsumo' ? 'round-result-badge-tsumo' : 'round-result-badge-ron'}`}>
+                    {t(result.winType === 'tsumo' ? 'result.tsumo' : 'result.ron')}
+                  </div>
+                  <div>
+                    <div className="round-result-eyebrow">{t('result.settled')}</div>
+                    <h2 id="round-result-title" className={`round-result-title ${result.winType === 'tsumo' ? 'round-result-title-tsumo' : 'round-result-title-ron'}`}>
+                      {result.winnerLabel}
+                    </h2>
+                    {result.discarderLabel && (
+                      <p className="round-result-subtitle">{result.discarderLabel}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="round-result-total" aria-label={t('result.totalAria', { score: result.totalScore ?? 0 })}>
+                  <span>{t('result.total')}</span>
+                  <strong>{result.totalScore ?? 0}</strong>
+                </div>
+              </header>
+
+              <section className="round-result-section round-result-hand-section" aria-label={t('result.winningHand')}>
+                <div className="round-result-section-label">{t('result.winningHand')}</div>
+                <div className="round-result-hand-rack">
+                  <div className="round-result-hand-row">
+                    <div className="round-result-closed-hand">
+                      {closedHand.map((tile) => (
+                        <div key={tile.id} className="pov-bottom small">
+                          <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
+                        </div>
+                      ))}
+
+                      {result.winTile && (
+                        <div className="pov-bottom small round-result-win-tile">
+                          <TileComponent tile={result.winTile} size="small" isWild={isWildTile(result.winTile)} />
+                        </div>
+                      )}
+                    </div>
+
+                    {winningMelds.length > 0 && (
+                      <div className="round-result-melds-divider">
+                        <OpenMelds melds={winningMelds} isWildTile={isWildTile} />
+                      </div>
+                    )}
+
+                    {flowers.length > 0 && (
+                      <div className="round-result-melds-divider">
+                        {flowers.map((tile) => (
+                          <div key={`fl-${tile.id}`} className="pov-bottom small">
+                            <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {breakdown.length > 0 && (
+                <section className="round-result-section round-result-breakdown-section" aria-label={t('result.breakdown')}>
+                  <div className="round-result-section-label">{t('result.ledger')}</div>
+                  <div className="round-result-breakdown-grid">
+                    {breakdown.map((entry, index) => (
+                      <div key={`${entry.name}-${index}`} className="round-result-breakdown-item">
+                        <div className="round-result-breakdown-name">{entry.name}</div>
+                        <div className="round-result-breakdown-points">+{entry.points}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="round-result-section round-result-payout-section" aria-label={t('result.payouts')}>
+                <div className="round-result-payout-grid">
+                  {payouts.map((payout) => (
+                    <div
+                      key={`${payout.seat}-${payout.label}`}
+                      className={`round-result-payout-cell ${payout.amount > 0 ? 'round-result-payout-positive' : 'round-result-payout-negative'}`}
+                    >
+                      <div className="round-result-payout-seat">{payout.label}</div>
+                      <div className="round-result-payout-amount">
+                        {payout.amount > 0 ? '+' : ''}{payout.amount}
+                      </div>
+                      {payout.readyLabel && (
+                        <div className={`round-result-payout-status ${payout.readyActive ? 'round-result-payout-status-ready' : 'round-result-payout-status-waiting'}`}>
+                          <span className="round-result-payout-status-dot" aria-hidden="true" />
+                          {payout.readyLabel}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+
+        {result.actions && (
+          <div className="round-result-actions">
+            {result.actions}
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}

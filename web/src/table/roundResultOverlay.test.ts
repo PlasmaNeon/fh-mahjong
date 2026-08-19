@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
-import { TableRoundResultOverlay, type RoundResultView } from './TableScene'
+import { TableRoundResultOverlay, type RoundResultView } from './TableRoundResultOverlay'
 import { readSourceCss, ruleBody } from '../test/cssContract'
 import { renderStatic } from '../test/renderStatic'
 
