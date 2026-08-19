@@ -178,6 +178,18 @@ continuously — crossing 40 GiB is a hard stop back to consultation. Use
 the same cgroup-v2 containment (`memory.high=44GiB`, `memory.max=48GiB`,
 `memory.swap.max=0`, `memory.oom.group=1`) when available.
 
+Amendment 9 (2026-08-18): the run-level cgroup `memory.peak` gate (second
+Amendment 7 ruling) is prospectively restated from 36.00 GiB to **38.00 GiB**
+after 118 iterations measured the per-iteration envelope at 33.5–35.6 GiB
+(outlier 36.05 killed attempt 2 at iteration 119); tree RSS ≤ 40 GiB, CUDA
+≤ 20 GiB, and containment are unchanged. Guards: `watchdog_lap.sh` (5 Hz
+tree RSS) + `cgroup_guard38.sh` (cgroup peak > 38 GiB, tree > 40 GiB, or
+any new `memory.events` high/max/oom/oom_kill → kill). A further breach
+gets no retry or gate increase — consult; default = larger machine or
+closure. Resume (§4) requires archiving the prior attempt first and the
+first resumed collection must reproduce its original iteration's rows /
+optimizer steps / labels / truncation exactly (checkpoint bytes need not).
+
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --champion /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt \
