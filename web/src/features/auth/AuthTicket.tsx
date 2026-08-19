@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Button, Field, Note, ToolsRow } from '../../theme'
+import { Button, Field, Note, ButtonRow } from '../../theme'
 import { useAuth } from '../../contexts/AuthContext'
 import { authenticatedFetch, type AuthPayload } from './authClient'
 import { useI18n } from '../../i18n/I18nContext'
@@ -56,7 +56,7 @@ export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { o
       )}
       <Field label={t('auth.password')} type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
       {error && <Note tone="error">{error}</Note>}
-      <ToolsRow>
+      <ButtonRow>
         <Button type="submit" variant="primary" disabled={submitting || !password || (mode === 'login' ? !identifier : !email || !username)}>
           {submitting
             ? t('auth.opening')
@@ -64,7 +64,7 @@ export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { o
               ? t('auth.signInContinue', { intent: t(intent === 'join table' ? 'auth.joinTable' : 'auth.continue') })
               : t('auth.createContinue', { intent: t(intent === 'join table' ? 'auth.joinTable' : 'auth.continue') })}
         </Button>
-      </ToolsRow>
+      </ButtonRow>
     </form>
   )
 }

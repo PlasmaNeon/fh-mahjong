@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useSocket } from '../../contexts/SocketContext'
 import { useGameState } from '../../contexts/GameContext'
-import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ToolsRow } from '../../theme'
+import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ButtonRow } from '../../theme'
 import { useAuth } from '../../contexts/AuthContext'
 import type { AuthRouteState } from '../auth/authModal'
 import { consumePlayIntent, rememberPlayIntent } from './navigation'
@@ -100,7 +100,7 @@ export default function Lobby() {
           <Section title={t('lobby.listening')} subtitle={t(ruleset === 'fenghua' ? 'lobby.classicTable' : 'lobby.chongciTable')}>
             <div className="queue-compass" aria-hidden="true"><span>東</span></div>
             <Note>{t(queueState === 'joining' ? 'lobby.joining' : queueState === 'leaving' ? 'lobby.leaving' : 'lobby.searching')}</Note>
-            <ToolsRow><Button onClick={cancelQueue} disabled={queueState !== 'queued'}>{t('lobby.cancel')}</Button></ToolsRow>
+            <ButtonRow><Button onClick={cancelQueue} disabled={queueState !== 'queued'}>{t('lobby.cancel')}</Button></ButtonRow>
           </Section>
         ) : (
           <>

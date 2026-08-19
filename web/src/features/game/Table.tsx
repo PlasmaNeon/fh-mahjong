@@ -14,7 +14,7 @@ import {
 import type { LeftMatchMarker } from './rejoinMatch';
 import SeatCard from './SeatCard';
 import { game } from '../../proto/game';
-import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
+import { ClubShell, Card, PageHeader, Section, ButtonRow, Button, Field, Note, Toggle } from '../../theme';
 import { useI18n } from '../../i18n/I18nContext';
 import { errorMessage, readJsonBody } from '../../utils/apiJson';
 
@@ -274,7 +274,7 @@ export default function Table() {
                 <Card>
                     <PageHeader title={t('room.clubOffline')} subtitle={roomId} />
                     <Section title={t('room.inviteSafe')} subtitle={t('room.inviteSafeHelp')}>
-                        <ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow>
+                        <ButtonRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ButtonRow>
                     </Section>
                 </Card>
             </ClubShell>
@@ -289,9 +289,9 @@ export default function Table() {
                         <Section title={t(error ? 'room.inviteFailed' : 'room.takingSeat')} subtitle={t(error ? 'room.noReplacement' : 'room.takingSeatHelp')}>
                             {error && <Note tone="error">{error}</Note>}
                             {!error && <Note>{t(authStatus === 'loading' ? 'account.checking' : 'room.joiningShort')}</Note>}
-                            <ToolsRow>
+                            <ButtonRow>
                                 {error && <><Button variant="primary" onClick={() => void performJoin()}>{t('common.tryAgain')}</Button><Button onClick={() => navigate('/play')}>{t('room.backPlay')}</Button></>}
-                            </ToolsRow>
+                            </ButtonRow>
                         </Section>
                     </Card>
             </ClubShell>
@@ -304,10 +304,10 @@ export default function Table() {
                 <Card>
                     <PageHeader title={t('room.matchProgress')} subtitle={roomId} />
                     <Section title={t('room.seatHeld')} subtitle={t('room.seatHeldHelp')}>
-                        <ToolsRow>
+                        <ButtonRow>
                             <Button variant="primary" onClick={handleRejoin}>{t('room.rejoin')}</Button>
                             <Button variant="default" onClick={copyTableLink}>{t(shareState === 'copied' ? 'room.linkCopied' : shareState === 'failed' ? 'room.copyFailed' : 'room.share')}</Button>
-                        </ToolsRow>
+                        </ButtonRow>
                     </Section>
                 </Card>
             </ClubShell>

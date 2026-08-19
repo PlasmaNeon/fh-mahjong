@@ -12,7 +12,8 @@ Every component here consumes tokens from `../tokens.css` through the structural
 - **Page.tsx** / **Shell.tsx** / **Card.tsx** / **Section.tsx** — The page → shell → card → section nesting every route uses.
 - **PageHeader.tsx** — Title, subtitle, and optional `nav` slot.
 - **ClubShell.tsx** — Ordinary-page localized club identity, the global language override, and Profile navigation. **Deliberately has no Back/breadcrumb control** — history navigation is left to the browser. Route pages must not recreate ad-hoc Home/Play/Account link clusters.
-- **ToolsRow.tsx** / **ToolTabs.tsx** — Tool affordances; `ToolTabs` owns the localized Scoring/Shanten switcher while preserving both tool deep links.
+- **ButtonRow.tsx** — Horizontal row of buttons/links; `end` right-aligns them. Used on account, lobby, room and replay pages.
+- **ToolTabs.tsx** — The localized Scoring/Shanten switcher, preserving both tool deep links.
 
 ### Controls and content
 - **Button.tsx** — `Button` and `ButtonLink` plus the `ButtonVariant` type.

@@ -32,7 +32,7 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
 - **index.ts** — side-effect-imports `index.css` and re-exports the primitives (the public API).
 - **components/** — The typed React primitives that form the design system's public API:
   `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`, `TextLink`,
-  `Field`, `Note`, `Toggle`, `LoadingScreen`, `ToolsRow`, `ClubShell`, `ToolTabs`, and
+  `Field`, `Note`, `Toggle`, `LoadingScreen`, `ButtonRow`, `ClubShell`, `ToolTabs`, and
   `GameDialog`. Per-component detail and accessibility contracts are in
   [components/CLAUDE.md](components/CLAUDE.md).
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket } from '../../contexts/SocketContext'
-import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note } from '../../theme'
+import { ClubShell, Card, PageHeader, Section, ButtonRow, Button, Field, Note } from '../../theme'
 import type { AuthPayload } from './authClient'
 import { useI18n } from '../../i18n/I18nContext'
 import { errorMessage, readJsonBody } from '../../utils/apiJson'
@@ -75,14 +75,14 @@ export default function Account() {
                 <PageHeader title={t('account.title')} subtitle={t('account.subtitle')} />
                 <Section title={t('account.identity')} subtitle={t('account.identityHelp')}>
                     {authStatus === 'loading' && <Note>{t('account.checking')}</Note>}
-                    {authStatus === 'offline' && <><Note tone="error">{t('account.offline')}</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+                    {authStatus === 'offline' && <><Note tone="error">{t('account.offline')}</Note><ButtonRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ButtonRow></>}
                     {user && <>
                         <Field label={t('auth.username')} value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" />
                         <Field label={t('auth.email')} type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" style={{ marginTop: '0.85rem' }} />
                         <Field label={t('auth.currentPassword')} type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" style={{ marginTop: '0.85rem' }} />
                         {error && <Note tone="error">{error}</Note>}
                         {status && <Note tone="ok">{status}</Note>}
-                        <ToolsRow><Button variant="primary" onClick={save}>{t('account.save')}</Button><Button onClick={signOut}>{t('account.signOut')}</Button></ToolsRow>
+                        <ButtonRow><Button variant="primary" onClick={save}>{t('account.save')}</Button><Button onClick={signOut}>{t('account.signOut')}</Button></ButtonRow>
                     </>}
                 </Section>
             </Card>
