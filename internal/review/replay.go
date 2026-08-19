@@ -840,30 +840,17 @@ func matchChiiID(legal map[int]*pb.PlayerAction, pa *engine.PaipuAction) (int, e
 	return 0, fmt.Errorf("no legal chii action matches recorded tiles %v", pa.Tiles)
 }
 
-// faceIndex42FromTileID converts a tile id (0-143) to its 0-41 face index:
-// man(0-8), pin(9-17), sou(18-26), jihai(27-33), flower(34-41). Paipu tile
-// ids are laid out SOU-first (see engine.TileFromId); the face order used by
-// the rl catalog is MAN-first — this function bridges the two.
+// faceIndex42FromTileID and faceIndex34FromTileID wrap the engine's face-index
+// helpers, keeping this package's -1-on-error contract: callers add the result
+// to an rl action base directly rather than checking an ok flag.
 func faceIndex42FromTileID(id uint32) int {
-	suit, value := engine.TileFromId(id)
-	switch suit {
-	case pb.Suit_SUIT_MAN:
-		return int(value - 1)
-	case pb.Suit_SUIT_PIN:
-		return 9 + int(value-1)
-	case pb.Suit_SUIT_SOU:
-		return 18 + int(value-1)
-	case pb.Suit_SUIT_JIHAI:
-		return 27 + int(value-1)
-	case pb.Suit_SUIT_FLOWER:
-		return 34 + int(value-1)
-	default:
+	index, ok := engine.FaceIndex42FromID(id)
+	if !ok {
 		return -1
 	}
+	return index
 }
 
-// faceIndex34FromTileID is faceIndex42FromTileID restricted to the standard
-// 0-33 tile range (man/pin/sou/jihai) used by pon/kan/chii catalog ids.
 func faceIndex34FromTileID(id uint32) int {
 	index := faceIndex42FromTileID(id)
 	if index >= 34 {

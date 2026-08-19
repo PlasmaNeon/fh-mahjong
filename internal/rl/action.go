@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/tiles"
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -39,49 +40,12 @@ const (
 	ActionSpaceSize = ChiiBase + ChiiCount
 )
 
-func tileFaceIndex42(tile *pb.Tile) (int, bool) {
-	if tile == nil {
-		return 0, false
-	}
+// tileFaceIndex42 and tileFaceIndex34 are the engine's face-index helpers. The
+// RL action catalog and observation encoder share the 42-face space with the
+// event codec, so the mapping has exactly one definition (engine/events.go).
+func tileFaceIndex42(tile *pb.Tile) (int, bool) { return engine.FaceIndex42(tile) }
 
-	switch tile.Suit {
-	case pb.Suit_SUIT_MAN:
-		if tile.Value < 1 || tile.Value > 9 {
-			return 0, false
-		}
-		return int(tile.Value - 1), true
-	case pb.Suit_SUIT_PIN:
-		if tile.Value < 1 || tile.Value > 9 {
-			return 0, false
-		}
-		return 9 + int(tile.Value-1), true
-	case pb.Suit_SUIT_SOU:
-		if tile.Value < 1 || tile.Value > 9 {
-			return 0, false
-		}
-		return 18 + int(tile.Value-1), true
-	case pb.Suit_SUIT_JIHAI:
-		if tile.Value < 1 || tile.Value > 7 {
-			return 0, false
-		}
-		return 27 + int(tile.Value-1), true
-	case pb.Suit_SUIT_FLOWER:
-		if tile.Value < 1 || tile.Value > 8 {
-			return 0, false
-		}
-		return 34 + int(tile.Value-1), true
-	default:
-		return 0, false
-	}
-}
-
-func tileFaceIndex34(tile *pb.Tile) (int, bool) {
-	index, ok := tileFaceIndex42(tile)
-	if !ok || index >= 34 {
-		return 0, false
-	}
-	return index, true
-}
+func tileFaceIndex34(tile *pb.Tile) (int, bool) { return engine.FaceIndex34(tile) }
 
 func legalActionMap(state *pb.GameState, seat uint32) (map[int]*pb.PlayerAction, error) {
 	if state == nil || int(seat) >= len(state.Players) {
