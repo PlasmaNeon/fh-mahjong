@@ -4,25 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-
-	"github.com/glebarez/sqlite"
-	"github.com/plasma/fh-mahjong/internal/storage"
-	"gorm.io/gorm"
 )
 
 func newAuthenticatedPrivateTableServer(t *testing.T) *Server {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := storage.AutoMigrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	hub := NewHub()
-	go hub.Run()
-	matchmaker := NewMatchmaker(NewInMemoryQueue(), db, hub)
-	return NewServer(db, hub, matchmaker)
+	return newTestServer(t)
 }
 
 func registerSession(t *testing.T, server *Server, email, username string) (*http.Cookie, string) {
