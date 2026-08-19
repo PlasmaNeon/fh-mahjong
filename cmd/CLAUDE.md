@@ -9,7 +9,7 @@ Contains `main.go` files for each build target. The Go module now produces six d
 ## Subdirectories
 
 - **server/** — Production HTTP server (Gin + WebSocket, connects to PostgreSQL)
-- **cli/** — Offline CLI tool for hand evaluation and game simulation, now using the shared heuristic bot for non-human seats
+- **play/** — Interactive terminal match: seat 0 is you, seats 1-3 are the shared heuristic bot (renamed from `cli/` in 2026-08)
 - **wasm/** — WebAssembly build (`GOOS=js GOARCH=wasm`) for client-side action validation
 - **rlbridge/** — c-shared build target exposing protobuf-based RL environment functions to Python via `ctypes`
 - **rlsmoke/** — Paipu-v2 rollout-gate smoke driver against a LIVE server: plays a real match end-to-end over the real protocol, then verifies every provenance gate. Exit 0 = gate satisfied. See [rlsmoke/CLAUDE.md](rlsmoke/CLAUDE.md).
