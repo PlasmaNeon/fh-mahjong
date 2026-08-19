@@ -99,56 +99,21 @@ func driveGameWithHeuristics(t *testing.T, game *engine.Game, policy bot.Policy,
 	t.Fatalf("game did not finish within %d actions", maxActions)
 }
 
-// readyAllPlayersForNextRound acks every seat's ROUND_END ready state,
-// deriving a fresh wall seed for the next hand before the final ack —
-// mirroring internal/rl/env.go readyAllPlayersForNextRound so multi-round
-// chongci paipu are reproducible from the seeds the recorder captures.
+// readyAllPlayersForNextRound acks every seat's ROUND_END ready state using the
+// seed rule these fixtures were generated with (baseSeed*1000+handNum), which
+// deliberately differs from internal/rl's splitmix deriveHandSeed -- changing it
+// would change every recorded paipu.
 func readyAllPlayersForNextRound(game *engine.Game, baseSeed uint64) error {
-	for seat := uint32(0); seat < 4; seat++ {
-		if game.State.Phase != pb.GamePhase_PHASE_ROUND_END {
-			return nil
-		}
-		if len(game.State.PlayerReady) > int(seat) && game.State.PlayerReady[seat] {
-			continue
-		}
-		if isFinalReadyBeforeNextRound(game, seat) {
-			nextHand := uint64(game.State.HandNum) + 1
-			game.SetWallSeed(engine.SeedFromUint64(baseSeed*1000 + nextHand))
-		}
-		if err := game.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func isFinalReadyBeforeNextRound(game *engine.Game, seat uint32) bool {
-	if game == nil || game.State == nil {
-		return false
-	}
-	if game.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
-		return false
-	}
-	for other := uint32(0); other < 4; other++ {
-		if other == seat {
-			continue
-		}
-		if len(game.State.PlayerReady) <= int(other) || !game.State.PlayerReady[other] {
-			return false
-		}
-	}
-	return true
+	return rl.ReadyAllPlayersForNextRound(game, func(handNum uint64) uint64 {
+		return baseSeed*1000 + handNum
+	})
 }
 
 func finalScores(game *engine.Game) [4]int32 {
-	var scores [4]int32
-	if game == nil || game.State == nil {
-		return scores
+	if game == nil {
+		return [4]int32{}
 	}
-	for seat := 0; seat < len(scores) && seat < len(game.State.Players); seat++ {
-		scores[seat] = game.State.Players[seat].Score
-	}
-	return scores
+	return rl.FinalScores(game.State)
 }
 
 // actMatchesCatalogFamily reports whether a paipu action verb and a catalog

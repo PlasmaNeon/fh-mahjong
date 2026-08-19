@@ -66,7 +66,7 @@ func generateHeuristicPaipu(matchID string, seed uint64, maxActions int) (*engin
 	policy := bot.NewHeuristicPolicy()
 	for actionCount := 0; actionCount < maxActions; actionCount++ {
 		if game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
-			return game.Recorder.Finalize(finalScores(game.State)), nil
+			return game.Recorder.Finalize(rl.FinalScores(game.State)), nil
 		}
 
 		if err := playNextHeuristicAction(game, policy); err != nil {
@@ -142,15 +142,4 @@ func snapshotDecision(game *engine.Game, seat uint32, action *pb.PlayerAction) e
 		row.LegalIDsError = true
 	}
 	return row
-}
-
-func finalScores(state *pb.GameState) [4]int32 {
-	var scores [4]int32
-	if state == nil {
-		return scores
-	}
-	for seat := 0; seat < len(scores) && seat < len(state.Players); seat++ {
-		scores[seat] = state.Players[seat].Score
-	}
-	return scores
 }
