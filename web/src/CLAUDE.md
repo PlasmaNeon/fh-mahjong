@@ -47,7 +47,7 @@ Contains all React components, context providers, custom hooks, and utility func
   - `replay/` — Account paipu library plus Replay + replayEngine + replayTypes (routes `/replay`, `/replay/:matchId`)
   - `game/` — Game, Table, SeatCard, MatchEndOverlay, ExitMatchButton, privateRoomSession, rejoinMatch (routes `/room/:roomId`, `/match/:matchId`)
 - **table/** — Shared tabletop presentation primitives for live play and replay
-- **hooks/** — Custom React hooks (WASM loader)
+- **hooks/** — Custom React hooks (the WASM loader; the fixed-stage layout moved to `table/stage/`)
 - **utils/** — Utility functions (tile name/SVG mapping)
 - **i18n/** — Typed English/Simplified Chinese resources, device-language selection, document-language synchronization, and the shared translation hook
 - **proto/** — Auto-generated Protobuf JS/TS bindings
@@ -56,7 +56,7 @@ Contains all React components, context providers, custom hooks, and utility func
 
 - State flow: WebSocket binary message → `GameContext` decodes Protobuf → `gameState` updates → components re-render.
 - Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableScene.tsx` instead of maintaining two separate seat/discard DOM trees.
-- The live board now uses `useGameStageLayout()` from `hooks/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
+- The live board now uses `useGameStageLayout()` from `table/stage/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.

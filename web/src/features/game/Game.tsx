@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../contexts/SocketContext';
 import { useGameState } from '../../contexts/GameContext';
 import { game } from '../../proto/game';
-import { useGameStageLayout } from '../../hooks/useGameStageLayout';
+import { useGameStageLayout } from '../../table/stage/useGameStageLayout';
 import { loadPrivateRoomSession } from './privateRoomSession';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';

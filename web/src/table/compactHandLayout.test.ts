@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeStageLayout } from '../hooks/computeStageLayout'
+import { computeStageLayout } from './stage/computeStageLayout'
 import { pixelVariable, readSourceCss, ruleBody } from '../test/cssContract'
 
 function compactTableRule() {

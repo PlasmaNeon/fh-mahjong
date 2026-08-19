@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useGameStageLayout } from '../../hooks/useGameStageLayout'
+import { useGameStageLayout } from '../../table/stage/useGameStageLayout'
 import { game } from '../../proto/game'
 import { TableBoard, TableRoundResultOverlay } from '../../table/TableScene'
 import type { MeldLike, PlayerTableView, TileLike } from '../../table/types'
