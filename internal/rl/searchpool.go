@@ -2,8 +2,6 @@ package rl
 
 import (
 	"fmt"
-	"sort"
-	"sync"
 
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -210,30 +208,10 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 // clone, skip idles it, reset_seed is a per-slot error. Commanded slots run
 // concurrently (each clone is touched by its own goroutine).
 func (p *SearchPool) Step(request *pb.EnvPoolStepRequest) (*pb.EnvPoolStepResponse, error) {
-	commands := request.GetCommands()
-	seen := make(map[uint32]bool, len(commands))
-	for _, cmd := range commands {
-		if int(cmd.GetSlot()) >= len(p.clones) {
-			return nil, fmt.Errorf("slot %d out of range (pool has %d clones)", cmd.GetSlot(), len(p.clones))
-		}
-		if seen[cmd.GetSlot()] {
-			return nil, fmt.Errorf("duplicate command for slot %d", cmd.GetSlot())
-		}
-		seen[cmd.GetSlot()] = true
+	results, err := runSlotCommands(request.GetCommands(), len(p.clones), "clones", p.stepOne)
+	if err != nil {
+		return nil, err
 	}
-
-	results := make([]slotResult, len(commands))
-	var wg sync.WaitGroup
-	for i, cmd := range commands {
-		wg.Add(1)
-		go func(i int, cmd *pb.SlotCommand) {
-			defer wg.Done()
-			results[i] = p.stepOne(cmd)
-		}(i, cmd)
-	}
-	wg.Wait()
-
-	sort.Slice(results, func(a, b int) bool { return results[a].slot < results[b].slot })
 	return assembleSearchResponse(results)
 }
 
