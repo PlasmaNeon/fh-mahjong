@@ -52,6 +52,7 @@ func backfillLegacyMatchPlayers(db *gorm.DB) (LegacyMatchBackfillStats, error) {
 			continue
 		}
 
+		placements := PlacementsFromScores(paipu.FinalScores)
 		seenSeats := make(map[uint32]struct{}, 4)
 		rows := make([]MatchPlayer, 0, len(paipu.Players))
 		for _, player := range paipu.Players {
@@ -64,12 +65,7 @@ func backfillLegacyMatchPlayers(db *gorm.DB) (LegacyMatchBackfillStats, error) {
 			seenSeats[player.Seat] = struct{}{}
 
 			score := paipu.FinalScores[player.Seat]
-			placement := uint(1)
-			for _, other := range paipu.FinalScores {
-				if other > score {
-					placement++
-				}
-			}
+			placement := placements[player.Seat]
 			policyID := player.PolicyID
 			if len(policyID) > 512 {
 				policyID = policyID[:512]
@@ -111,4 +107,26 @@ func backfillLegacyMatchPlayers(db *gorm.DB) (LegacyMatchBackfillStats, error) {
 	}
 
 	return stats, nil
+}
+
+// PlacementsFromScores computes each seat's competition ranking from the four
+// final scores, preserving seat index: 1st place is shared by ties, and the
+// next distinct score takes the place after the tied group (scores 30/30/20/10
+// rank 1/1/3/4).
+//
+// Shared by the live persist path (internal/api) and the backfill above so the
+// ranking rule cannot drift between what a match records at the time and what a
+// re-import computes later.
+func PlacementsFromScores(finalScores [4]int32) [4]uint {
+	var placements [4]uint
+	for seat, score := range finalScores {
+		placement := uint(1)
+		for _, other := range finalScores {
+			if other > score {
+				placement++
+			}
+		}
+		placements[seat] = placement
+	}
+	return placements
 }
