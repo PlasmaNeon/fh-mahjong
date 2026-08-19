@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -293,15 +292,5 @@ func (m *WarmupManager) logAttempt(endpoint string, elapsed time.Duration, paylo
 }
 
 // deriveWarmupURL maps an /act endpoint to the serve_policy.py /warmup route,
-// exactly as deriveHealthURL maps it to /healthz. Returns "" when the endpoint
-// cannot be parsed.
-func deriveWarmupURL(actEndpoint string) string {
-	u, err := url.Parse(actEndpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	u.Path = "/warmup"
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
-}
+// exactly as deriveHealthURL maps it to /healthz.
+func deriveWarmupURL(actEndpoint string) string { return siblingRoute(actEndpoint, "/warmup") }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -69,19 +70,22 @@ func NewHealthChecker(actEndpoint string, opts ...HealthCheckerOption) *HealthCh
 	return h
 }
 
-// deriveHealthURL maps an /act endpoint to the serve_policy.py /healthz route.
-// Returns "" when the endpoint cannot be parsed, which makes the checker report
-// unhealthy.
-func deriveHealthURL(actEndpoint string) string {
+// siblingRoute maps an /act endpoint to another serve_policy.py route on the
+// same host, dropping any query or fragment. Returns "" when the endpoint is
+// not a usable absolute URL.
+func siblingRoute(actEndpoint, route string) string {
 	u, err := url.Parse(actEndpoint)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
 	}
-	u.Path = "/healthz"
+	u.Path = route
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
 }
+
+// deriveHealthURL maps an /act endpoint to the serve_policy.py /healthz route.
+func deriveHealthURL(actEndpoint string) string { return siblingRoute(actEndpoint, "/healthz") }
 
 // Healthy reports whether the endpoint responded to its last (cached) probe.
 // It is safe to call concurrently and from a nil receiver.
@@ -165,47 +169,47 @@ func validHealthzBody(raw []byte) bool {
 	return envelope.Ok != nil && *envelope.Ok
 }
 
-func (h *HealthChecker) probe() (healthy bool, identity string) {
-	timeout := h.client.Timeout
+// fetchHealthzBody performs the GET /healthz round-trip shared by
+// HealthChecker.probe and HTTPPolicy.ValidateServer: apply the timeout, read a
+// bounded body, and reject anything that is not a genuine healthz response.
+//
+// The vacuity check is part of this helper deliberately. A 2xx body that is not
+// the healthz contract -- a misrouted URL, a reverse-proxy error page, an SPA
+// fallback, {} , JSON null, or "ok": false -- once let a misrouted endpoint
+// advertise itself as a healthy RL agent while every /act silently fell back to
+// the heuristic (rounds 16 and 17). Keeping the rule here means a third caller
+// cannot forget it.
+func fetchHealthzBody(ctx context.Context, client *http.Client, healthURL string, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = defaultHealthTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.healthURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, healthURL, nil)
 	if err != nil {
-		return false, ""
+		return nil, err
 	}
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return false, ""
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, ""
+		return nil, fmt.Errorf("healthz status %d", resp.StatusCode)
 	}
-
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if err != nil {
-		return false, ""
+		return nil, err
 	}
-
 	if !validHealthzBody(raw) {
-		// A non-JSON/undecodable body (round 16, Finding 1) is unhealthy for
-		// EVERY window, including window-0: a misrouted URL, a reverse-proxy
-		// error page, or an SPA fallback all return 2xx with a body that
-		// isn't the healthz contract, and every real policy server
-		// (including the pre-B2c legacy one) always returns JSON on
-		// /healthz. Tolerating a 2xx/non-JSON body as "legacy reachability"
-		// let a misrouted endpoint advertise itself as a healthy RL agent
-		// while every subsequent /act silently fell back to the heuristic.
-		//
-		// Round 17, Finding 1: the same is true of a decodable-but-vacuous
-		// body ({}, JSON null) or an explicit "ok": false — serve_policy.py
-		// ALWAYS emits "ok": true on success, so anything else is never
-		// legitimate legacy reachability either. Legacy compatibility is
-		// still honored below: JSON that carries "ok": true but merely
-		// OMITS the event-contract fields.
+		return nil, fmt.Errorf("healthz body is not a valid healthz response")
+	}
+	return raw, nil
+}
+
+func (h *HealthChecker) probe() (healthy bool, identity string) {
+	raw, err := fetchHealthzBody(context.Background(), h.client, h.healthURL, h.client.Timeout)
+	if err != nil {
 		return false, ""
 	}
 
