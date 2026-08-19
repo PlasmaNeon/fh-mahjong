@@ -569,6 +569,87 @@ operational validation.
   baseline (~4–6 GiB), not 19–22 GiB. On pass: archive killed attempt and
   probe separately, fresh 150-iteration lap from iteration 0 in a clean
   `ckpt/` (unit `ds960-lap`), both guards re-armed.
+## Amendment 9 (Codex consult, 2026-08-18, post-relaunch iteration-119 memory-peak stop)
+
+The Amendment 8 relaunch completed 118 of 150 iterations before unit
+`ds960-lap` attempt 2 was terminated during iteration 119 collection at
+2026-08-18T10:15:31Z. The cgroup guard observed
+`memory.peak=38,704,152,576` bytes (36.05 GiB), above the registered
+36.00 GiB physical-memory gate. Aggregate tree RSS at the kill sample was
+36.84 GiB; the independent 40.00 GiB tree-RSS watchdog did not fire and
+reported a clean whole-run peak of approximately 37.91 GiB. Containment
+at `memory.high=44GiB`, `memory.max=48GiB`, `memory.swap.max=0`, and
+`memory.oom.group=1` did not engage, and no kernel OOM occurred.
+
+This is a registered infrastructure stop, not an RL null. Checkpoints
+`iter_001.pt` through `iter_118.pt` are durable. The periodic
+`train_state.pt` records `next_iteration=116` and is resumable through the
+previously gauntleted run-id lineage, content-pinned bridge, config echo,
+RNG/optimizer restoration, fsync, and transactional checkpoint machinery.
+
+The Amendment 8 lifetime repair is validated. Across all 118 completed
+iterations, per-iteration cgroup-current peaks remained in an approximately
+33.5–35.6 GiB envelope and every iteration returned to an approximately
+4.8 GiB pre-collection trough. There is no evidence of retained prior
+RolloutBatch, advantages, returns, or monotonic ownership accumulation.
+Iteration 119's 36.05 GiB observation is a physical-envelope outlier on a
+gate having only 0.62 GiB margin over the three-iteration probe's
+35.38 GiB peak.
+
+Ruling: authorize one resume from the durable `train_state.pt` and
+prospectively restate the cgroup physical-memory gate from 36.00 GiB to
+38.00 GiB. This reconciles the divergent Amendment 7 rulings using the
+118-iteration measured physical envelope. It does not reinterpret the
+iteration-119 breach as a pass, alter the scientific intervention, or
+authorize repeated threshold changes. No registered screening result was
+observed in making this ruling.
+
+The independent aggregate process-tree RSS gate remains <=40.00 GiB.
+CUDA allocated remains <=20.00 GiB. Containment remains
+`memory.high=44GiB`, `memory.max=48GiB`, `memory.swap.max=0`, and
+`memory.oom.group=1`. Monitoring remains at intervals no greater than
+250 ms for tree RSS, with continuous cgroup current/peak/events logging.
+The complete cgroup must be terminated if cgroup `memory.peak` exceeds
+38.00 GiB, sampled tree RSS exceeds 40.00 GiB, monitoring fails, or any
+new `high`, `max`, `oom`, or `oom_kill` event occurs. Any such failure
+receives no automatic retry, engineering change, or further gate increase
+and returns to consultation; larger-machine execution or closure is then
+the default disposition.
+
+Before resume, archive the attempt-2 guards, logs, checkpoint hashes,
+history, and original iteration-116 through iteration-118 artifacts as
+immutable evidence. Resume with the exact frozen workers=10, chunk=320,
+bridge bytes, anchor, seeds, 960/768 recipe, optimizer schedule, and all
+other scientific controls. No screening, comparator evaluation, or other
+substantial workload may overlap the resumed lap.
+
+Resume integrity requires successful lineage/config/bridge/state validation
+and exact reproduction, for the first collection directly restored from
+the saved state, of the corresponding original rollout digest, seed
+coverage, rows, labels, truncation, and optimizer-step count. Production
+CUDA checkpoint bytes need not match. Because production CUDA updates are
+known to be nondeterministic outside the Amendment 6 proof configuration,
+later re-executed iterations need not exactly reproduce the superseded
+branch's rollout statistics; they must instead satisfy every registered
+seed, row/step arithmetic, truncation, telemetry, and science-integrity
+gate. The resumed lineage is canonical from its first rewritten checkpoint;
+the archived prior branch remains failure evidence.
+
+The scientific budget remains 150 iterations. Screening and selection
+remain restricted to iterations 25/50/75/100/125/150; iteration 118 is not
+an admissible candidate. Deferred screenings run only after the lap stops
+or completes. If the registered kill-at-100 predicate is true for both
+iterations 75 and 100, checkpoints after 100 are excluded from selection.
+Otherwise selection and the single fresh `1190000+`, 1500-seed-per-side
+confirmation proceed unchanged. No optional stopping and no automatic
+capacity lap are authorized.
+
+The canonical consultation thread was rotated on 2026-08-18 because its
+writer remained wedged after recovery attempts. No ruling was produced or
+lost in that failure. The new persistent consultation thread
+`01a0147d-c23d-76b3-a585-1a0c4bc09456` is the canonical successor, and
+every subsequent result returns to it.
+
 ## Motivation
 
 The 2026-08-06 campaign-retirement verdict was precise: *warm-started symmetric
