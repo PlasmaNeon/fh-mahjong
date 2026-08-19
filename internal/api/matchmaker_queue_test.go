@@ -15,7 +15,7 @@ func TestJoinQueueIsIdempotentPerRuleset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := m.Queue.LRange("queue:fenghua"); len(got) != 1 || got[0] != "42" {
+	if got := m.Queue.Items("queue:fenghua"); len(got) != 1 || got[0] != "42" {
 		t.Fatalf("queue = %v, want one entry for user 42", got)
 	}
 }
@@ -30,10 +30,10 @@ func TestLeaveQueueRemovesOnlyTheRequestedRuleset(t *testing.T) {
 	if !removed {
 		t.Fatal("expected the fenghua queue entry to be removed")
 	}
-	if got := m.Queue.LRange("queue:fenghua"); len(got) != 0 {
+	if got := m.Queue.Items("queue:fenghua"); len(got) != 0 {
 		t.Fatalf("fenghua queue = %v, want empty", got)
 	}
-	if got := m.Queue.LRange("queue:chongci-fh"); len(got) != 1 || got[0] != "42" {
+	if got := m.Queue.Items("queue:chongci-fh"); len(got) != 1 || got[0] != "42" {
 		t.Fatalf("chongci queue = %v, want user 42 preserved", got)
 	}
 }
@@ -41,7 +41,7 @@ func TestLeaveQueueRemovesOnlyTheRequestedRuleset(t *testing.T) {
 func TestLeaveQueueReportsAlreadyClaimedPlayer(t *testing.T) {
 	m := NewMatchmaker(NewInMemoryQueue(), nil, NewHub())
 	_ = m.JoinQueue(42, "fenghua")
-	if got := m.Queue.LPopCount("queue:fenghua", 1); len(got) != 1 {
+	if got := m.Queue.PopN("queue:fenghua", 1); len(got) != 1 {
 		t.Fatalf("popped = %v, want user 42", got)
 	}
 
@@ -58,7 +58,7 @@ func TestLeaveQueueEndpointReturnsConflictAfterClaim(t *testing.T) {
 	if joined.Code != http.StatusOK {
 		t.Fatalf("join status = %d, body = %s", joined.Code, joined.Body.String())
 	}
-	server.Matchmaker.Queue.LPopCount("queue:fenghua", 1)
+	server.Matchmaker.Queue.PopN("queue:fenghua", 1)
 
 	left, body := doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/matchmaking/leave", token, map[string]any{"ruleset": "fenghua"})
 	if left.Code != http.StatusConflict {

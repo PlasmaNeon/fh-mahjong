@@ -50,116 +50,6 @@ var (
 // warmup is endpoint-scoped (see internal/bot/remote/warmup.go).
 const rlWarmupBudget = 25 * time.Second
 
-// InMemoryQueue is a mutex-guarded in-process FIFO queue with Redis-list-style
-// semantics (RPush/LRange/LPopCount). Matchmaking is in-memory by design while
-// the server is single-process; a Redis-backed implementation would only be
-// needed if the server ever runs multi-instance.
-type InMemoryQueue struct {
-	mu    sync.Mutex
-	lists map[string][]string
-}
-
-func NewInMemoryQueue() *InMemoryQueue {
-	return &InMemoryQueue{
-		lists: make(map[string][]string),
-	}
-}
-
-func (q *InMemoryQueue) RPush(key string, val string) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.lists[key] = append(q.lists[key], val)
-}
-
-// RPushUnique appends val only when it is not already waiting in the list.
-// The membership check and append share one lock so duplicate join requests
-// cannot create duplicate seats.
-func (q *InMemoryQueue) RPushUnique(key string, val string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	for _, queued := range q.lists[key] {
-		if queued == val {
-			return false
-		}
-	}
-	q.lists[key] = append(q.lists[key], val)
-	return true
-}
-
-// Remove deletes every occurrence of val from key and reports whether the
-// player was still waiting. A false result means the queue watcher may already
-// have claimed the player for a match.
-func (q *InMemoryQueue) Remove(key string, val string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	list := q.lists[key]
-	kept := list[:0]
-	removed := false
-	for _, queued := range list {
-		if queued == val {
-			removed = true
-			continue
-		}
-		kept = append(kept, queued)
-	}
-	q.lists[key] = kept
-	return removed
-}
-
-func (q *InMemoryQueue) LRange(key string) []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	// Return a copy to avoid race conditions
-	if lst, ok := q.lists[key]; ok {
-		copied := make([]string, len(lst))
-		copy(copied, lst)
-		return copied
-	}
-	return nil
-}
-
-func (q *InMemoryQueue) LLen(key string) int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return len(q.lists[key])
-}
-
-func (q *InMemoryQueue) LPopCount(key string, count int) []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	lst, ok := q.lists[key]
-	if !ok || len(lst) < count {
-		return nil
-	}
-
-	popped := lst[:count]
-	q.lists[key] = lst[count:]
-
-	return popped
-}
-
-func (q *InMemoryQueue) Keys(pattern string) []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	var prefix string
-	if len(pattern) > 2 && pattern[len(pattern)-2:] == ":*" {
-		prefix = pattern[:len(pattern)-1]
-	}
-
-	var matched []string
-	for k := range q.lists {
-		if prefix == "" || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
-			matched = append(matched, k)
-		}
-	}
-	return matched
-}
-
 type Matchmaker struct {
 	Queue *InMemoryQueue
 	DB    *gorm.DB
@@ -485,7 +375,7 @@ func (m *Matchmaker) JoinQueue(userID uint, ruleset string) error {
 	queueKey := "queue:" + ruleset
 
 	// Duplicate network requests are harmless: one user occupies one queue slot.
-	m.Queue.RPushUnique(queueKey, fmt.Sprintf("%d", userID))
+	m.Queue.PushUnique(queueKey, fmt.Sprintf("%d", userID))
 
 	log.Printf("User %d joined queue '%s'", userID, ruleset)
 	return nil
@@ -562,10 +452,10 @@ func (m *Matchmaker) StartQueueWatcher(ruleset string) {
 		// Here we use LPop with count for simplicity)
 
 		// Check length first
-		length := m.Queue.LLen(queueKey)
+		length := m.Queue.Len(queueKey)
 		if length >= 4 {
 			// Pop exactly 4 players
-			players := m.Queue.LPopCount(queueKey, 4)
+			players := m.Queue.PopN(queueKey, 4)
 			if len(players) == 4 {
 				log.Printf("Matchmaker found 4 players: %v", players)
 				go m.createMatch(players, ruleset, "")

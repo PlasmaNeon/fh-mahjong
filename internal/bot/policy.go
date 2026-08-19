@@ -11,6 +11,16 @@ import (
 // round's public event log at the moment of the decision. Events is a
 // snapshot COPY (RAW, unwindowed) — callers may hold onto it after the
 // room's lock is released.
+// Policy is the seat-decision contract every bot implements: given a game
+// state and a seat, return that seat's action. HeuristicPolicy (heuristic.go)
+// and remote.HTTPPolicy are the implementations.
+//
+// ContextPolicy and ProvenanceContextPolicy below are optional extensions --
+// callers type-assert for them and fall back to Policy.
+type Policy interface {
+	ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAction
+}
+
 type DecisionContext struct {
 	State         *pb.GameState
 	Seat          uint32

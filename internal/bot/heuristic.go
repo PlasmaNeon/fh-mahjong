@@ -8,10 +8,6 @@ import (
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
-type Policy interface {
-	ChooseAction(state *pb.GameState, seat uint32) *pb.PlayerAction
-}
-
 type HeuristicPolicy struct{}
 
 func NewHeuristicPolicy() *HeuristicPolicy {
