@@ -19,7 +19,8 @@ Contains all React components, context providers, custom hooks, and utility func
   - `VITE_WS_BASE_URL` may be supplied as `http(s)` or `ws(s)`; the helper normalizes `http -> ws` and `https -> wss`
 - **contexts/AuthContext.tsx** — Owns persistent-login bootstrap and the in-memory CSRF token; API credentials live only in the server-set HttpOnly cookie
 - **features/game/privateRoomSession.ts** — Stores only the non-sensitive current `tableId` so an expired login can return to the correct invite after authentication
-- **index.css** — Global reset and fixed-stage geometry (TailwindCSS + table layout); Rainy Club visual values live under `theme/` and `table/table-theme.css`
+- **index.css** — App globals only (23 lines): the Tailwind import, the `body` / `#root` / `.app-root` reset, and `@import`s of `table/roundResult.css` and `table/table-geometry.css`
+- **table/table-geometry.css** — The fixed-stage table geometry, moved out of `index.css` in PR 2. Rainy Club visual values live under `theme/` and `table/table-theme.css`
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
   - Includes the centered match HUD plus the fixed-stage seat-lane / discard-lane styling used by the shared table presenter
   - Seat lanes now own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives instead of page-specific side rules

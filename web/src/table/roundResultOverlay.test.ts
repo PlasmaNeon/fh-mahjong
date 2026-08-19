@@ -64,7 +64,7 @@ describe('TableRoundResultOverlay', () => {
 })
 
 function readRoundResultCss() {
-  return readSourceCss('src/index.css', 'src/table/roundResult.css')
+  return readSourceCss('src/table/table-geometry.css', 'src/table/roundResult.css')
 }
 
 describe('round-result CSS reachability contract', () => {

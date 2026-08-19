@@ -9,7 +9,7 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 ## Rainy Mahjong Club skin
 
 - `table-theme.css` is the visual-only table layer: felt/lacquer/brass materials, wind-compass HUD, call slips, tile emphasis, wild indicator plaque, score slip, and fixture toolbar.
-- Fixed-stage geometry, seat coordinates, compact overrides, and flight positioning remain in `web/src/index.css`; do not move values between the two files casually because geometry changes require layout and flight regression checks.
+- Fixed-stage geometry, seat coordinates, compact overrides, and flight positioning remain in `web/src/table/table-geometry.css`; do not move values between the two files casually because geometry changes require layout and flight regression checks.
 - `TableRoundResultOverlay` remains the single live + replay score-slip implementation and still calls `orderMeldsForRecap(...)` exactly once.
 - `TableBoard` and `TableRoundResultOverlay` read shared i18n resources for the wild badge, settlement headings, score labels, and accessibility names; callers continue to supply player names and backend scoring-pattern text.
 - `TileComponent` expresses wild/no-glow/interactive state with classes so the table skin owns shadows and emphasis without inline palette values.

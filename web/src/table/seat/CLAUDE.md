@@ -18,7 +18,7 @@ One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes f
 
 ## Architecture Notes
 
-- **Geometry lives in CSS, not here.** Seat lanes own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives in `web/src/index.css`; these components supply structure and data.
+- **Geometry lives in CSS, not here.** Seat lanes own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives in `web/src/table/table-geometry.css`; these components supply structure and data.
 - Left/right lanes intentionally preserve the original main-branch semantics rather than pure rotational symmetry: right concealed hands flow `column-reverse`, left flow `column`; right exposed rails sit above the hand, left below it. Do not "fix" this into symmetry.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with a `small` modifier.
 - Preview changes on `/tools/table-sample` (`features/dev/`), not by deploying a live match.

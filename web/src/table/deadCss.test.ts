@@ -16,7 +16,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 const ALL_SOURCE = sourceFiles(SRC).map((f) => readFileSync(f, 'utf8')).join('\n')
-const TABLE_CSS = readFileSync(join(SRC, 'index.css'), 'utf8')
+const TABLE_CSS = readFileSync(join(SRC, 'table', 'table-geometry.css'), 'utf8')
 
 // The legacy per-direction seat layout, superseded by the BEM seat-hand /
 // discard-lane system. Removed in PR 1b. If one of these ever comes back it
@@ -42,7 +42,7 @@ describe('legacy seat-layout CSS', () => {
     expect(ALL_SOURCE).not.toContain(cls)
   })
 
-  it.each(REMOVED)('%s is absent from index.css', (cls) => {
+  it.each(REMOVED)('%s is absent from table-geometry.css', (cls) => {
     expect(TABLE_CSS).not.toContain(cls)
   })
 

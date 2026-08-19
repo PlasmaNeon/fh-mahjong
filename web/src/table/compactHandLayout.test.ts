@@ -7,7 +7,7 @@ function compactTableRule() {
 }
 
 function tableCss() {
-  return readSourceCss('src/index.css')
+  return readSourceCss('src/table/table-geometry.css')
 }
 
 describe('compact phone self-hand geometry', () => {

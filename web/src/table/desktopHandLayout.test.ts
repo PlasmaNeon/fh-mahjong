@@ -3,7 +3,7 @@ import { computeStageLayout } from './stage/computeStageLayout'
 import { pixelVariable, readSourceCss, ruleBody } from '../test/cssContract'
 
 function desktopTableRule() {
-  return ruleBody(readSourceCss('src/index.css'), '.game-stage .mahjong-table')
+  return ruleBody(readSourceCss('src/table/table-geometry.css'), '.game-stage .mahjong-table')
 }
 
 describe('desktop self-hand geometry', () => {
