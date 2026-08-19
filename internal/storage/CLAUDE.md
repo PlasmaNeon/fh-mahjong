@@ -8,7 +8,7 @@ Defines the database schema for user accounts and match history using GORM (Go O
 
 ## Key Files
 
-- **db.go** — Database models and migration:
+- **models.go** — the GORM models (`User`, `UserSession`, `Match`, `MatchPlayer`, `PaipuRecord`, `MatchReview`) plus `NormalizeUsername`/`generateUserID`; **migrate.go** — `AutoMigrate` and the legacy-username backfill:
   - `User` — Player account: normalized email and case-insensitive `UsernameKey` are unique login identities; `Username` preserves the visible friendly form. Existing duplicates are deterministically suffixed during migration. IDs remain random sparse values in [10000, 99999]
   - `UserSession` — Revocable 30-day browser session. Stores only the SHA-256 hash of the opaque cookie plus its CSRF token and expiry; raw session credentials never enter the database
   - `Match` — Single game record: match ID, status, ruleset name, binary replay URL/blob, and structured paipu JSON

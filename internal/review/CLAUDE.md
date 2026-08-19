@@ -13,7 +13,7 @@ actions the paipu recorded, and returns the catalog-indexed action
 one legal option. Every `Decision` also carries the 39ch visible
 `pb.SeatObservation` the champion policy would have seen at that decision
 (`rl.EncodeObservationWithEvents`, never the oracle variant), encoded against
-a Chongci-context-dressed clone of the live replay state — see `context.go`
+a Chongci-context-dressed clone of the live replay state — see `chongci_context.go`
 and Design Notes below. `eventWindow` (0 for a champion with no event
 history) is forwarded verbatim to `EncodeObservationWithEvents` alongside the
 live `r.game.PublicEvents()` log at that decision; with `eventWindow == 0`
@@ -29,7 +29,7 @@ no fallback or best-effort mode: `ExtractDecisions` either returns exact
 decisions for the whole paipu or an error.
 
 `BuildReport` (report.go) takes those decisions, batches their observations
-through a `PolicyClient` (client.go's `HTTPPolicyClient` POSTs
+through a `PolicyClient` (policy_client.go's `HTTPPolicyClient` POSTs
 `{baseURL}/evaluate` in chunks of 256), and assembles a `Report`: per-decision
 legal-action probability distributions plus per-seat rollups. Like
 `ExtractDecisions`, it never returns a partial report — any extraction or
@@ -45,9 +45,9 @@ evaluation failure aborts with an error and a nil `*Report`.
   cloning, face-key comparison). It must not fork rules or state-transition
   logic — every mutation goes through `engine.Game.ProcessPlayerAction` /
   `ResolveInterrupts`, never a re-implementation.
-- **context.go** — `isChongciPaipu` and `reviewState`, the encode-time
+- **chongci_context.go** — `isChongciPaipu` and `reviewState`, the encode-time
   context normalization described below.
-- **client.go** — `PolicyClient` interface, `PolicyResult`,
+- **policy_client.go** — `PolicyClient` interface, `PolicyResult`,
   `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient(baseURL,
   eventWindow)` — no auth token, equivalent to
   `NewHTTPPolicyClientWithToken(baseURL, eventWindow, "")` — or
