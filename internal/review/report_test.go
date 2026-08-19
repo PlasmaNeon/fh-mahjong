@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,41 +16,10 @@ func TestBuildReportAgainstStubServer(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
 
 	var gotBatches [][]map[string]any
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/evaluate" {
-			http.NotFound(w, r)
-			return
-		}
-		var req struct {
-			Observations []map[string]any `json:"observations"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode: %v", err)
-		}
-		gotBatches = append(gotBatches, req.Observations)
-		results := make([]map[string]any, len(req.Observations))
-		for i, o := range req.Observations {
-			mask := o["action_mask"].([]any)
-			probs := make([]float64, len(mask))
-			legal := 0
-			for _, m := range mask {
-				if m.(float64) == 1 {
-					legal++
-				}
-			}
-			for j, m := range mask {
-				if m.(float64) == 1 {
-					probs[j] = 1.0 / float64(legal) // uniform over legal
-				}
-			}
-			results[i] = map[string]any{"probs": probs, "value": 0.25}
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
-			"checkpoint_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-		})
-	}))
-	defer stub.Close()
+	stub, _ := reviewtest.NewEvaluateStub(t, reviewtest.Options{
+		OnBatch: func(observations []map[string]any) { gotBatches = append(gotBatches, observations) },
+		Sha:     func() string { return "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+	})
 
 	report, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0)
 	if err != nil {
@@ -115,36 +85,9 @@ func TestBuildReportEventWindowZeroPayloadUnchanged(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
 
 	var gotBatches [][]map[string]any
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Observations []map[string]any `json:"observations"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode: %v", err)
-		}
-		gotBatches = append(gotBatches, req.Observations)
-		results := make([]map[string]any, len(req.Observations))
-		for i, o := range req.Observations {
-			mask := o["action_mask"].([]any)
-			probs := make([]float64, len(mask))
-			legal := 0
-			for _, m := range mask {
-				if m.(float64) == 1 {
-					legal++
-				}
-			}
-			for j, m := range mask {
-				if m.(float64) == 1 {
-					probs[j] = 1.0 / float64(legal)
-				}
-			}
-			results[i] = map[string]any{"probs": probs, "value": 0.0}
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 1,
-		})
-	}))
-	defer stub.Close()
+	stub, _ := reviewtest.NewEvaluateStub(t, reviewtest.Options{
+		OnBatch: func(observations []map[string]any) { gotBatches = append(gotBatches, observations) },
+	})
 
 	if _, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, 0), 0); err != nil {
 		t.Fatalf("BuildReport: %v", err)
@@ -172,36 +115,9 @@ func TestBuildReportEventWindowEightEnrichesPayload(t *testing.T) {
 	paipu := generateHeuristicPaipu(t, 7, engine.MatchOptions{})
 
 	var gotBatches [][]map[string]any
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Observations []map[string]any `json:"observations"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode: %v", err)
-		}
-		gotBatches = append(gotBatches, req.Observations)
-		results := make([]map[string]any, len(req.Observations))
-		for i, o := range req.Observations {
-			mask := o["action_mask"].([]any)
-			probs := make([]float64, len(mask))
-			legal := 0
-			for _, m := range mask {
-				if m.(float64) == 1 {
-					legal++
-				}
-			}
-			for j, m := range mask {
-				if m.(float64) == 1 {
-					probs[j] = 1.0 / float64(legal)
-				}
-			}
-			results[i] = map[string]any{"probs": probs, "value": 0.0}
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 1,
-		})
-	}))
-	defer stub.Close()
+	stub, _ := reviewtest.NewEvaluateStub(t, reviewtest.Options{
+		OnBatch: func(observations []map[string]any) { gotBatches = append(gotBatches, observations) },
+	})
 
 	if _, err := BuildReport(context.Background(), paipu, NewHTTPPolicyClient(stub.URL, window), window); err != nil {
 		t.Fatalf("BuildReport: %v", err)

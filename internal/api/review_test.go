@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,102 +63,32 @@ func reviewFixtureJSON(t *testing.T) string {
 // round 22 tightened handlePostReview to fail closed (503) on an actual
 // healthz error, so this stub now answers /healthz explicitly to keep
 // exercising the "true legacy" path it's meant to.
+// newStubPolicyServer and newStubPolicyServerWithSha wrap the shared stub in
+// internal/review/reviewtest so both this package and internal/review exercise
+// one implementation. The *int counter is kept for the existing call sites;
+// reviewtest.Ctl.EvalCount() is the race-free equivalent for new tests.
 func newStubPolicyServer(t *testing.T, requestCount *int) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true}`))
-			return
-		}
-		if r.URL.Path != "/evaluate" {
-			// requestCount only counts /evaluate calls — the thing that
-			// actually costs the policy server RL-serving capacity.
-			http.NotFound(w, r)
-			return
-		}
-		if requestCount != nil {
-			*requestCount++
-		}
-		var req struct {
-			Observations []map[string]any `json:"observations"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode: %v", err)
-			return
-		}
-		results := make([]map[string]any, len(req.Observations))
-		for i, o := range req.Observations {
-			mask := o["action_mask"].([]any)
-			probs := make([]float64, len(mask))
-			legal := 0
-			for _, m := range mask {
-				if m.(float64) == 1 {
-					legal++
-				}
-			}
-			for j, m := range mask {
-				if m.(float64) == 1 {
-					probs[j] = 1.0 / float64(legal)
-				}
-			}
-			results[i] = map[string]any{"probs": probs, "value": 0.25}
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
-		})
-	}))
+	server, _ := reviewtest.NewEvaluateStub(t, reviewtest.Options{
+		OnEvaluate: countInto(requestCount),
+	})
+	return server
 }
 
-// newStubPolicyServerWithSha behaves like newStubPolicyServer but reports a
-// checkpoint_sha256, so cache-identity tests can simulate a same-path hot
-// reload (new bytes, same checkpoint_path) by varying sha across servers.
-// /healthz reports the SAME sha (round 22, Finding 3): a real serve_policy.py
-// exposes its currently-loaded checkpoint's sha256 on both routes.
 func newStubPolicyServerWithSha(t *testing.T, requestCount *int, sha string) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "checkpoint_sha256": sha})
-			return
-		}
-		if r.URL.Path != "/evaluate" {
-			http.NotFound(w, r)
-			return
-		}
-		if requestCount != nil {
-			*requestCount++
-		}
-		var req struct {
-			Observations []map[string]any `json:"observations"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode: %v", err)
-			return
-		}
-		results := make([]map[string]any, len(req.Observations))
-		for i, o := range req.Observations {
-			mask := o["action_mask"].([]any)
-			probs := make([]float64, len(mask))
-			legal := 0
-			for _, m := range mask {
-				if m.(float64) == 1 {
-					legal++
-				}
-			}
-			for j, m := range mask {
-				if m.(float64) == 1 {
-					probs[j] = 1.0 / float64(legal)
-				}
-			}
-			results[i] = map[string]any{"probs": probs, "value": 0.25}
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
-			"checkpoint_sha256": sha,
-		})
-	}))
+	server, _ := reviewtest.NewEvaluateStub(t, reviewtest.Options{
+		Sha:        func() string { return sha },
+		OnEvaluate: countInto(requestCount),
+	})
+	return server
+}
+
+func countInto(counter *int) func() {
+	if counter == nil {
+		return nil
+	}
+	return func() { *counter++ }
 }
 
 func doReviewRequest(t *testing.T, server *Server, method, path string) *httptest.ResponseRecorder {
