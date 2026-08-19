@@ -21,7 +21,7 @@ import { errorMessage, readJsonBody } from '../../utils/apiJson';
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
 
-export default function Table() {
+export default function PrivateRoom() {
     const { t } = useI18n();
     const { roomId } = useParams();
     const [joining, setJoining] = useState(false);
