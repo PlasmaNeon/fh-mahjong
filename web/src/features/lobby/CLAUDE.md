@@ -8,7 +8,7 @@
 - **Lobby.tsx** — Single Play screen for Quick Match and Private Table. An active search must confirm `POST /matchmaking/leave` before the screen returns to idle; `409 match_forming` keeps the player connected rather than dropping them.
 - **CreateRoom.tsx** — Auth gate plus protected `POST /rooms`. **It navigates only after the server confirms creation**, so an invite URL can never point at a room that was never created.
 - **playIntent.ts** — One-shot play-intent helper used by the simplified lobby flow.
-- **playIntent.test.ts** / **streamlinedNavigation.test.ts** — Coverage for the play-intent handoff and the simplified flow.
+- **playIntent.test.ts** / **Home.test.ts** — Coverage for the play-intent handoff and the simplified flow.
 
 ## Architecture Notes
 
