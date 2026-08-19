@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { getTileName, getTileSvgName } from '../utils/tileUtils'
+import { getTileName, getTileSvgName } from '../utils/tileDisplay'
 import type { PlayerTableView, SeatLaneDirection, TileLike } from './TableScene'
 import {
   planTileFlights,

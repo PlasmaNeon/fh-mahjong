@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { getApiUrl } from '../../config'
-import { preloadAllTileSvgs } from '../../utils/tileUtils'
+import { preloadAllTileSvgs } from '../../utils/tileDisplay'
 import { useGameStageLayout } from '../../hooks/useGameStageLayout'
 import type { Paipu } from './replayTypes'
 import { tileObjectFromId } from './replayTypes'

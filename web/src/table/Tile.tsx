@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { getTileName, getTileSvgName } from '../utils/tileUtils'
+import { getTileName, getTileSvgName } from '../utils/tileDisplay'
 import type { TileLike } from './types'
 
 type TileComponentProps = {

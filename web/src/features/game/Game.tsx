@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import GameSettingsButton from './GameSettingsButton';
-import { preloadAllTileSvgs } from '../../utils/tileUtils';
+import { preloadAllTileSvgs } from '../../utils/tileDisplay';
 import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';

@@ -1,4 +1,4 @@
-import { getTileName, getTileSvgName } from '../../utils/tileUtils'
+import { getTileName, getTileSvgName } from '../../utils/tileDisplay'
 import {
   TILE_LIBRARY,
   formatTile,
