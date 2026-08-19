@@ -1,4 +1,4 @@
-import type { ActionProb, ReportDecision, ReviewReport } from './reviewTypes'
+import type { ActionProb, ReportDecision, ReviewReport } from './reviewClient'
 
 export type Severity = 'ok' | 'disagreement' | 'mistake'
 

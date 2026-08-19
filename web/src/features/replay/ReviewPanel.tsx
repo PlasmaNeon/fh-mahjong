@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ReportDecision, ReviewReport } from './reviewTypes'
+import type { ReportDecision, ReviewReport } from './reviewClient'
 import {
   SEVERITY_COLORS,
   SEVERITY_LABELS,

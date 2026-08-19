@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveAuthDialogMode } from './authModal'
+import { resolveAuthDialogMode } from './authRouteState'
 
 describe('resolveAuthDialogMode', () => {
   it('keeps optional background-location login dismissible', () => {

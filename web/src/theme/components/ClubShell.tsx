@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import type { AuthRouteState } from '../../features/auth/authModal'
+import type { AuthRouteState } from '../../features/auth/authRouteState'
 import { useI18n } from '../../i18n/I18nContext'
 import Page from './Page'
 import Shell from './Shell'

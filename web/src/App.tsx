@@ -15,7 +15,7 @@ import CreateRoom from './features/lobby/CreateRoom'
 import Account from './features/auth/Account'
 import TableSample from './features/dev/TableSample'
 import RoundResultDemo from './features/dev/RoundResultDemo'
-import type { AuthRouteState } from './features/auth/authModal'
+import type { AuthRouteState } from './features/auth/authRouteState'
 
 // Keying the waiting room by its room id forces a fresh component instance per
 // room, so route-local seats, requests, and reconnect state never carry over

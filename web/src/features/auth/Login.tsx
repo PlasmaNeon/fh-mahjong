@@ -6,8 +6,8 @@ import { Note } from '../../theme'
 import AuthTicket from './AuthTicket'
 import { safeReturnTo } from './authClient'
 import AuthDialog from './AuthDialog'
-import { resolveAuthDialogMode, type AuthRouteState } from './authModal'
-import { clearPlayIntent } from '../lobby/navigation'
+import { resolveAuthDialogMode, type AuthRouteState } from './authRouteState'
+import { clearPlayIntent } from '../lobby/playIntent'
 import { useI18n } from '../../i18n/I18nContext'
 
 export default function Login() {

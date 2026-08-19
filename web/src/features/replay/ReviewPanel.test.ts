@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ReviewPanel from './ReviewPanel'
-import type { ReportDecision, ReviewReport } from './reviewTypes'
+import type { ReportDecision, ReviewReport } from './reviewClient'
 import { SEVERITY_THRESHOLDS } from './reviewUtils'
 
 // NOTE: web/package.json has no @testing-library/react, and vitest.config.ts
