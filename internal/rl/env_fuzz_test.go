@@ -75,10 +75,11 @@ func dumpDupState(t *testing.T, env *Env, seed int64, err error) {
 	}
 }
 
-// TestFuzzDuplicateKanAction drives many random self-play games and reports any
-// "duplicate action id" error from action-mask building, dumping the real state.
-// Run on pre-fix code to reproduce; on fixed code it should find none.
-func TestFuzzDuplicateKanAction(t *testing.T) {
+// TestFuzzActionMaskHasNoDuplicateIDs drives 300 random self-play games and
+// fails if action-mask building ever emits the same action id twice, dumping
+// the offending state. Originally written to reproduce a duplicate-kan bug; it
+// now guards the invariant that bug violated, for every action family.
+func TestFuzzActionMaskHasNoDuplicateIDs(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},
 		AutoPlayHeuristics: false,

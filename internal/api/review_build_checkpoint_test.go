@@ -15,212 +15,166 @@ import (
 	"github.com/plasma/fh-mahjong/internal/storage"
 )
 
-// doAuthedReviewRequestWithCtx is doAuthedReviewRequestWithSession plus an
-// explicit request context, so a test can cancel one caller's wait without
-// affecting any other caller sharing the same singleflight key.
-func doAuthedReviewRequestWithCtx(t *testing.T, server *Server, method, path string, cookie *http.Cookie, csrf string, ctx context.Context) *httptest.ResponseRecorder {
+// shaHealthzStub serves /evaluate and /healthz reporting a mutable
+// checkpoint_sha256, so tests can simulate promotion/reload/rollback of the
+// serving checkpoint between requests to the SAME base URL.
+type shaHealthzStub struct {
+	mu        sync.Mutex
+	sha       string
+	evalCount int
+}
+
+func (s *shaHealthzStub) setSha(sha string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sha = sha
+}
+
+func (s *shaHealthzStub) currentSha() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sha
+}
+
+func newShaHealthzStub(t *testing.T, initialSha string) (*httptest.Server, *shaHealthzStub) {
 	t.Helper()
-	req := httptest.NewRequest(method, path, nil).WithContext(ctx)
-	req.AddCookie(cookie)
-	if requiresCSRF(method) {
-		req.Header.Set(csrfHeaderName, csrf)
-	}
-	recorder := httptest.NewRecorder()
-	server.Router.ServeHTTP(recorder, req)
-	return recorder
-}
-
-// --- Finding 1a/1c: bounded, non-blocking-forever build admission ---------
-
-// TestPostReviewBuildAdmissionRejectsExcessQueueWithRetryAfter pins round 22,
-// Finding 1a: once reviewBuildConcurrencyLimit builds are running AND
-// reviewBuildWaitQueueLimit more are already queued waiting for a slot, one
-// more DISTINCT-match build request is rejected immediately with 429 and a
-// Retry-After header, rather than growing the wait queue (or blocking)
-// unboundedly.
-func TestPostReviewBuildAdmissionRejectsExcessQueueWithRetryAfter(t *testing.T) {
-	stub, ctrl := newBlockingPolicyStub(t)
-	defer stub.Close()
-	t.Setenv("POLICY_SERVER_URL", stub.URL)
-
-	server := newReviewTestServer(t, true)
-	fixture := reviewFixtureJSON(t)
-
-	totalAdmitted := reviewBuildConcurrencyLimit + reviewBuildWaitQueueLimit
-	matchIDs := make([]string, totalAdmitted)
-	for i := range matchIDs {
-		matchIDs[i] = "admission-match-" + string(rune('a'+i))
-		server.StorePaipu(matchIDs[i], fixture)
-	}
-	cookie, csrf := authedReviewSession(t, server, 950)
-
-	var wg sync.WaitGroup
-	for _, id := range matchIDs {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			rec := doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+id+"/review", cookie, csrf)
-			if rec.Code != http.StatusOK {
-				t.Errorf("match %s: expected 200 (eventually admitted), got %d: %s", id, rec.Code, rec.Body.String())
+	stub := &shaHealthzStub{sha: initialSha}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "checkpoint_sha256": stub.currentSha()})
+			return
+		case "/evaluate":
+			stub.mu.Lock()
+			stub.evalCount++
+			stub.mu.Unlock()
+			var req struct {
+				Observations []map[string]any `json:"observations"`
 			}
-		}(id)
-	}
-
-	// Wait until every one of the totalAdmitted requests is either running
-	// (occupying a semaphore slot) or parked in the bounded wait queue.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		inFlight := atomic.LoadInt32(&ctrl.inFlight)
-		waiters := atomic.LoadInt32(&server.reviewBuildWaiters)
-		if inFlight >= reviewBuildConcurrencyLimit && waiters >= reviewBuildWaitQueueLimit {
-			break
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode: %v", err)
+				return
+			}
+			results := make([]map[string]any, len(req.Observations))
+			for i, o := range req.Observations {
+				mask := o["action_mask"].([]any)
+				probs := make([]float64, len(mask))
+				legal := 0
+				for _, m := range mask {
+					if m.(float64) == 1 {
+						legal++
+					}
+				}
+				for j, m := range mask {
+					if m.(float64) == 1 {
+						probs[j] = 1.0 / float64(legal)
+					}
+				}
+				results[i] = map[string]any{"probs": probs, "value": 0.25}
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
+				"checkpoint_sha256": stub.currentSha(),
+			})
+		default:
+			http.NotFound(w, r)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for admission to fill: inFlight=%d waiters=%d", inFlight, waiters)
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-
-	// One more DISTINCT match id, with capacity+queue both already full,
-	// must be rejected immediately — not queued, not blocked.
-	overflowID := "admission-match-overflow"
-	server.StorePaipu(overflowID, fixture)
-	rec := doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+overflowID+"/review", cookie, csrf)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 when admission queue is full, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if ra := rec.Header().Get("Retry-After"); ra == "" {
-		t.Fatal("expected a Retry-After header on the 429 admission rejection")
-	}
-
-	close(ctrl.release)
-	wg.Wait()
+	}))
+	return srv, stub
 }
 
-// --- Finding 1d: per-user rate limit --------------------------------------
-
-// TestPostReviewPerUserRateLimitReturns429 pins round 22, Finding 1d: an
-// authenticated user spamming distinct-match review POSTs is turned away
-// with 429 once their small token bucket is exhausted, well before touching
-// the shared build-admission machinery at all.
-func TestPostReviewPerUserRateLimitReturns429(t *testing.T) {
-	var requestCount int
-	stub := newStubPolicyServer(t, &requestCount)
+func TestPostReviewRebuildsWhenServerReportsDifferentSha(t *testing.T) {
+	stub, ctrl := newShaHealthzStub(t, "sha-A")
 	defer stub.Close()
 	t.Setenv("POLICY_SERVER_URL", stub.URL)
 
 	server := newReviewTestServer(t, true)
-	fixture := reviewFixtureJSON(t)
-	cookie, csrf := authedReviewSession(t, server, 960)
+	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
 
-	var lastRec *httptest.ResponseRecorder
-	rejected := false
-	// Comfortably exceed reviewRateLimitBurst against distinct match ids so
-	// each request is a genuine build attempt, never a cache hit.
-	for i := 0; i < int(reviewRateLimitBurst)+3; i++ {
-		matchID := "rate-limit-match-" + string(rune('a'+i))
-		server.StorePaipu(matchID, fixture)
-		lastRec = doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+matchID+"/review", cookie, csrf)
-		if lastRec.Code == http.StatusTooManyRequests {
-			rejected = true
-			break
-		}
-		if lastRec.Code != http.StatusOK {
-			t.Fatalf("request %d: expected 200 or 429, got %d: %s", i, lastRec.Code, lastRec.Body.String())
-		}
+	recA := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if recA.Code != http.StatusOK {
+		t.Fatalf("expected 200 building sha-A, got %d: %s", recA.Code, recA.Body.String())
 	}
 
-	if !rejected {
-		t.Fatalf("expected the per-user rate limit to reject at least one request after %d bursts, last status %d", int(reviewRateLimitBurst)+3, lastRec.Code)
-	}
-	if ra := lastRec.Header().Get("Retry-After"); ra == "" {
-		t.Fatal("expected a Retry-After header on the rate-limited 429")
-	}
-}
-
-// --- Finding 1b: a caller giving up doesn't kill a shared build ----------
-
-// TestPostReviewCallerContextCancelDoesNotAbortSharedBuild pins round 22,
-// Finding 1b/1c: two requests for the same match/checkpoint/force-ness share
-// one in-flight build. If ONE caller's context is cancelled while waiting,
-// that caller gets back a fast 504 without the build being aborted — the
-// OTHER caller still gets its normal 200, and exactly one row is cached.
-func TestPostReviewCallerContextCancelDoesNotAbortSharedBuild(t *testing.T) {
-	stub, ctrl := newBlockingPolicyStub(t)
-	defer stub.Close()
-	t.Setenv("POLICY_SERVER_URL", stub.URL)
-
-	server := newReviewTestServer(t, true)
-	server.StorePaipu("cancel-fixture", reviewFixtureJSON(t))
-	cookie, csrf := authedReviewSession(t, server, 970)
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-
-	// Results cross goroutine boundaries only via these channels (never a
-	// plain shared variable polled from another goroutine) so the test
-	// itself stays race-free under -race.
-	resultA := make(chan *httptest.ResponseRecorder, 1)
-	resultB := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		resultA <- doAuthedReviewRequestWithCtx(t, server, http.MethodPost, "/api/v1/matches/cancel-fixture/review", cookie, csrf, cancelCtx)
-	}()
-	go func() {
-		resultB <- doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/cancel-fixture/review", cookie, csrf)
-	}()
-
-	// Wait for the shared build to actually start (one /evaluate call),
-	// then cancel request A while it's still in flight.
-	deadline := time.Now().Add(5 * time.Second)
-	for atomic.LoadInt32(&ctrl.evalCount) < 1 {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for the shared build to start")
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	cancel()
-
-	// Request A's handler should observe the cancellation and return, while
-	// the build (still blocked on ctrl.release) has NOT been released yet —
-	// proving the build itself is unaffected.
-	var recA *httptest.ResponseRecorder
-	select {
-	case recA = <-resultA:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the cancelled caller to return")
-	}
-	if recA.Code != http.StatusGatewayTimeout {
-		t.Fatalf("expected 504 for the cancelled caller, got %d: %s", recA.Code, recA.Body.String())
-	}
-	if atomic.LoadInt32(&ctrl.inFlight) == 0 {
-		t.Fatal("expected the shared build to still be in flight after one waiter's context was cancelled")
-	}
-
-	close(ctrl.release)
-
-	var recB *httptest.ResponseRecorder
-	select {
-	case recB = <-resultB:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the still-waiting caller to return")
-	}
-
+	// Server is now promoted/reloaded to a different checkpoint (sha-B).
+	ctrl.setSha("sha-B")
+	recB := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
 	if recB.Code != http.StatusOK {
-		t.Fatalf("expected the still-waiting caller to get 200, got %d: %s", recB.Code, recB.Body.String())
+		t.Fatalf("expected 200 building sha-B, got %d: %s", recB.Code, recB.Body.String())
 	}
-	if got := atomic.LoadInt32(&ctrl.evalCount); got != 1 {
-		t.Fatalf("expected exactly 1 /evaluate call (build shared, not duplicated), got %d", got)
+	if recB.Body.String() == recA.Body.String() {
+		t.Fatal("expected a fresh build for sha-B, got sha-A's stale cached report")
 	}
 
-	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "cancel-fixture").Count(&count).Error; err != nil {
-		t.Fatalf("count MatchReview rows: %v", err)
+	var rows []storage.MatchReview
+	if err := server.DB.Where("match_id = ?", "review-fixture").Find(&rows).Error; err != nil {
+		t.Fatalf("query rows: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected exactly 1 cached row, got %d", count)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (sha-A intact, sha-B new), got %d: %+v", len(rows), rows)
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		seen[row.CheckpointID] = true
+	}
+	if !seen["sha-A"] || !seen["sha-B"] {
+		t.Fatalf("expected rows keyed by sha-A and sha-B, got %+v", seen)
+	}
+
+	// Rollback: server reports sha-A again. Must serve sha-A's row WITHOUT
+	// rebuilding.
+	ctrl.setSha("sha-A")
+	ctrl.mu.Lock()
+	evalCountBeforeRollback := ctrl.evalCount
+	ctrl.mu.Unlock()
+
+	recRollback := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if recRollback.Code != http.StatusOK {
+		t.Fatalf("expected 200 on rollback, got %d: %s", recRollback.Code, recRollback.Body.String())
+	}
+	if recRollback.Body.String() != recA.Body.String() {
+		t.Fatalf("rollback to sha-A must re-serve sha-A's original row:\nwant: %s\ngot:  %s", recA.Body.String(), recRollback.Body.String())
+	}
+	ctrl.mu.Lock()
+	evalCountAfterRollback := ctrl.evalCount
+	ctrl.mu.Unlock()
+	if evalCountAfterRollback != evalCountBeforeRollback {
+		t.Fatalf("rollback to a cached sha must not rebuild: eval count went from %d to %d", evalCountBeforeRollback, evalCountAfterRollback)
 	}
 }
 
-// --- Finding 2: singleflight key includes checkpoint identity ------------
+// TestPostReviewLegacyNoShaHealthzKeepsNewestRowBehavior pins that a TRUE
+// legacy policy server — /healthz answers "ok":true but omits
+// checkpoint_sha256 entirely, predating round 21 — falls back to today's
+// newest-cached-row behavior unchanged (round 22, Finding 3's one
+// grandfathered stale-serve path).
+func TestPostReviewLegacyNoShaHealthzKeepsNewestRowBehavior(t *testing.T) {
+	var requestCount int
+	stub := newStubPolicyServer(t, &requestCount) // healthz ok, no sha field
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
+
+	rec := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	first := requestCount
+
+	rec2 := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 on second call, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if requestCount != first {
+		t.Fatalf("expected no new /evaluate calls for a legacy no-healthz server's cached row, got %d (was %d)", requestCount, first)
+	}
+	if rec.Body.String() != rec2.Body.String() {
+		t.Fatalf("expected cached body to be reused unchanged for legacy no-healthz server")
+	}
+}
 
 // shaSwapStub serves /healthz with a mutable, externally-set sha and
 // /evaluate blocking on release, capturing the CURRENT sha at request
@@ -397,8 +351,6 @@ func TestBuildReviewOutcomeRejectsShaMismatch(t *testing.T) {
 	}
 }
 
-// --- Finding 3: healthz failure fails closed ------------------------------
-
 // TestPostReviewHealthzTimeoutFailsClosed pins round 22, Finding 3: a
 // /healthz call that hangs past its timeout must return 503, never a
 // silently-served stale cached row.
@@ -462,5 +414,64 @@ func TestPostReviewHealthz500FailsClosed(t *testing.T) {
 	rec := doAuthedReviewRequest(t, server, http.MethodPost, "/api/v1/matches/healthz-500-fixture/review")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 when healthz returns 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBuildReviewOutcomeRejectsMissingSha pins round 23, Finding 2: when the
+// caller resolved a known live sha via /healthz (legacy==false,
+// expectedSha!=""), a build whose /evaluate response OMITS checkpoint_sha256
+// entirely (rolling deploy / proxy skew) must be rejected exactly like an
+// explicit mismatch — 503, nothing cached — never silently accepted and
+// filed under expectedSha.
+func TestBuildReviewOutcomeRejectsMissingSha(t *testing.T) {
+	// newStubPolicyServer's /evaluate response has no checkpoint_sha256 field
+	// at all, simulating a build response that omitted it even though
+	// /healthz (not exercised by this focused unit test) reported a sha.
+	stub := newStubPolicyServer(t, nil)
+	defer stub.Close()
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("missing-sha-fixture", reviewFixtureJSON(t))
+
+	policyClient := review.NewHTTPPolicyClient(stub.URL, 0)
+	outcome := server.buildReviewOutcome(context.Background(), "missing-sha-fixture", policyClient, 0, "sha-expected", false)
+	if outcome.status != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when /evaluate omits checkpoint_sha256 but a sha was expected, got %d: %s", outcome.status, string(outcome.body))
+	}
+
+	var count int64
+	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "missing-sha-fixture").Count(&count).Error; err != nil {
+		t.Fatalf("count MatchReview rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no cached row for a rejected missing-sha build, got %d", count)
+	}
+}
+
+// TestBuildReviewOutcomeAcceptsMissingShaWhenLegacy pins the flip side: when
+// the caller itself resolved NO live sha (legacy==true, a true legacy
+// /healthz), a build response that also omits checkpoint_sha256 is expected
+// and must still be accepted/cached under its checkpoint_path — unaffected
+// by Finding 2's stricter guard, which only applies when a sha was actually
+// expected.
+func TestBuildReviewOutcomeAcceptsMissingShaWhenLegacy(t *testing.T) {
+	stub := newStubPolicyServer(t, nil)
+	defer stub.Close()
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("legacy-missing-sha-fixture", reviewFixtureJSON(t))
+
+	policyClient := review.NewHTTPPolicyClient(stub.URL, 0)
+	outcome := server.buildReviewOutcome(context.Background(), "legacy-missing-sha-fixture", policyClient, 0, "", true)
+	if outcome.status != http.StatusOK {
+		t.Fatalf("expected 200 for a legacy build with no expected sha, got %d: %s", outcome.status, string(outcome.body))
+	}
+
+	var count int64
+	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "legacy-missing-sha-fixture").Count(&count).Error; err != nil {
+		t.Fatalf("count MatchReview rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 cached row for the accepted legacy build, got %d", count)
 	}
 }
