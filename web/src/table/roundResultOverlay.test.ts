@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
-import { TableRoundResultOverlay, type RoundResultView } from './TableScene'
+import { TableRoundResultOverlay, type RoundResultView } from './TableRoundResultOverlay'
 import { readSourceCss, ruleBody } from '../test/cssContract'
 import { renderStatic } from '../test/renderStatic'
 
@@ -64,7 +64,7 @@ describe('TableRoundResultOverlay', () => {
 })
 
 function readRoundResultCss() {
-  return readSourceCss('src/index.css', 'src/table/roundResult.css')
+  return readSourceCss('src/table/table-geometry.css', 'src/table/roundResult.css')
 }
 
 describe('round-result CSS reachability contract', () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket } from '../../contexts/SocketContext'
-import { Button, Card, ClubShell, Note, PageHeader, Section, ToolsRow } from '../../theme'
+import { Button, Card, ClubShell, Note, PageHeader, Section, ButtonRow } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
@@ -39,9 +39,9 @@ export default function CreateRoom() {
         <PageHeader title={t('room.opening')} subtitle={t('room.hostEast')} />
         <Section title={t(error ? 'room.closed' : 'room.setting')} subtitle={t(error ? 'room.closedHelp' : 'room.settingHelp')}>
           {status === 'loading' && <Note>{t('account.checking')}</Note>}
-          {status === 'offline' && <><Note tone="error">{t('room.offlineCreate')}</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {status === 'offline' && <><Note tone="error">{t('room.offlineCreate')}</Note><ButtonRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ButtonRow></>}
           {status === 'authenticated' && !error && <Note>{t('room.reserving')}</Note>}
-          {error && <><Note tone="error">{error}</Note><ToolsRow><Button variant="primary" onClick={() => setAttempt(value => value + 1)}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {error && <><Note tone="error">{error}</Note><ButtonRow><Button variant="primary" onClick={() => setAttempt(value => value + 1)}>{t('common.tryAgain')}</Button></ButtonRow></>}
         </Section>
       </Card>
     </ClubShell>

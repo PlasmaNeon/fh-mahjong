@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clearPlayIntent, consumePlayIntent, rememberPlayIntent } from './navigation'
+import { clearPlayIntent, consumePlayIntent, rememberPlayIntent } from './playIntent'
 import { createMemoryStorage } from '../../test/memoryStorage'
 
 describe('club navigation intents', () => {

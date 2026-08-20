@@ -9,19 +9,19 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 ## Rainy Mahjong Club skin
 
 - `table-theme.css` is the visual-only table layer: felt/lacquer/brass materials, wind-compass HUD, call slips, tile emphasis, wild indicator plaque, score slip, and fixture toolbar.
-- Fixed-stage geometry, seat coordinates, compact overrides, and flight positioning remain in `web/src/index.css`; do not move values between the two files casually because geometry changes require layout and flight regression checks.
+- Fixed-stage geometry, seat coordinates, compact overrides, and flight positioning remain in `web/src/table/table-geometry.css`; do not move values between the two files casually because geometry changes require layout and flight regression checks.
 - `TableRoundResultOverlay` remains the single live + replay score-slip implementation and still calls `orderMeldsForRecap(...)` exactly once.
 - `TableBoard` and `TableRoundResultOverlay` read shared i18n resources for the wild badge, settlement headings, score labels, and accessibility names; callers continue to supply player names and backend scoring-pattern text.
 - `TileComponent` expresses wild/no-glow/interactive state with classes so the table skin owns shadows and emphasis without inline palette values.
 
 ## Key Files
 
-- **TableScene.tsx** — Shared tabletop presentation module:
+- **TableBoard.tsx** — The shared tabletop presenter:
   - `TableBoard` composes the center HUD, wild-tile badge, action bar slot, four discard lanes, and four seat lanes
-  - `SeatLane` owns one player's concealed-hand rail, flex gap, exposed meld rail, and flower rail as a single reusable layout unit
-  - `DiscardLane` owns one player's discard tray, wrapping rules, callable highlight, and discard entry animation offsets
-  - `TableRoundResultOverlay` renders the shared live/replay end-of-hand settlement dialog with a scrollable result body and a separate persistent action footer
   - `getSeatDirection()` is the single source of truth for seat-to-view direction mapping
+  - Re-exports `TileComponent` and the `./types` view types for page consumers
+  - The per-seat lane is assembled by `seat/SeatBundle.tsx`; the discard tray by `seat/DiscardZone.tsx`. There are no `SeatLane`/`DiscardLane` components — the CSS class names `.seat-*` / `.discard-lane*` are what carry those words.
+- **TableRoundResultOverlay.tsx** — The shared live/replay end-of-hand settlement dialog, with a scrollable result body and a separate persistent action footer. Split out of the old `TableScene.tsx` in PR 2; pairs with `roundResult.css` and `roundResultOverlay.test.ts`.
 - **roundResult.css** — Fenghua settlement-ledger styling for the shared result dialog:
   - Centers the dialog on wide/short-landscape screens and turns it into a safe-area-aware bottom sheet on portrait phones
   - Sizes from the actual overlay container rather than the scaled 1600x900 stage or unrotated viewport, so the live phone-portrait shell keeps `Ready` and `Exit` visible

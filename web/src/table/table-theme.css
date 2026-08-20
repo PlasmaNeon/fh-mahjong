@@ -1,5 +1,5 @@
 /* Rainy Mahjong Club table skin.
-   Geometry stays in ../index.css; this file only changes materials, typography,
+   Geometry stays in ./table-geometry.css; this file only changes materials, typography,
    interaction treatment, and responsive presentation around that geometry. */
 
 .stage-rotator,

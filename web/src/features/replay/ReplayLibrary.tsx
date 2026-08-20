@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { Button, Card, ClubShell, Field, Note, PageHeader, Section, ToolsRow } from '../../theme'
-import type { AuthRouteState } from '../auth/authModal'
+import { Button, Card, ClubShell, Field, Note, PageHeader, Section, ButtonRow } from '../../theme'
+import type { AuthRouteState } from '../auth/authRouteState'
 import { parseReplayReference } from './replayReference'
 import { useI18n } from '../../i18n/I18nContext'
 import { WIND_I18N_KEYS } from '../../utils/winds'
@@ -125,10 +125,10 @@ export default function ReplayLibrary() {
 
         <Section title={t('library.mine')} subtitle={t('library.mineHelp')}>
           {status === 'loading' && <Note>{t('account.checking')}</Note>}
-          {status === 'anonymous' && <><Note>{t('library.signInHelp')}</Note><ToolsRow><Button variant="primary" onClick={signIn}>{t('library.signIn')}</Button></ToolsRow></>}
-          {status === 'offline' && <><Note tone="error">{t('library.offline')}</Note><ToolsRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {status === 'anonymous' && <><Note>{t('library.signInHelp')}</Note><ButtonRow><Button variant="primary" onClick={signIn}>{t('library.signIn')}</Button></ButtonRow></>}
+          {status === 'offline' && <><Note tone="error">{t('library.offline')}</Note><ButtonRow><Button variant="primary" onClick={() => void refreshSession()}>{t('common.tryAgain')}</Button></ButtonRow></>}
           {historyState === 'loading' && <Note>{t('library.loading')}</Note>}
-          {(historyState === 'offline' || historyState === 'error') && <><Note tone="error">{historyError}</Note><ToolsRow><Button variant="primary" onClick={() => void loadHistory()}>{t('common.tryAgain')}</Button></ToolsRow></>}
+          {(historyState === 'offline' || historyState === 'error') && <><Note tone="error">{historyError}</Note><ButtonRow><Button variant="primary" onClick={() => void loadHistory()}>{t('common.tryAgain')}</Button></ButtonRow></>}
           {historyState === 'ready' && replays.length === 0 && <Note>{t('library.empty')}</Note>}
           {replays.length > 0 && (
             <div className="paipu-list">
@@ -150,7 +150,7 @@ export default function ReplayLibrary() {
               ))}
             </div>
           )}
-          {nextCursor && <ToolsRow><Button onClick={() => void loadHistory(nextCursor)} disabled={historyState === 'loading-more'}>{t(historyState === 'loading-more' ? 'common.loading' : 'library.loadMore')}</Button></ToolsRow>}
+          {nextCursor && <ButtonRow><Button onClick={() => void loadHistory(nextCursor)} disabled={historyState === 'loading-more'}>{t(historyState === 'loading-more' ? 'common.loading' : 'library.loadMore')}</Button></ButtonRow>}
         </Section>
       </Card>
     </ClubShell>

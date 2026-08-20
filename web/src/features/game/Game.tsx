@@ -4,14 +4,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../contexts/SocketContext';
 import { useGameState } from '../../contexts/GameContext';
 import { game } from '../../proto/game';
-import { useGameStageLayout } from '../../hooks/useGameStageLayout';
+import { useGameStageLayout } from '../../table/stage/useGameStageLayout';
 import { loadPrivateRoomSession } from './privateRoomSession';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import GameSettingsButton from './GameSettingsButton';
-import { preloadAllTileSvgs } from '../../utils/tileUtils';
-import { TableBoard, TableRoundResultOverlay, TileComponent } from '../../table/TableScene';
+import { preloadAllTileSvgs } from '../../utils/tileDisplay';
+import { TableBoard, TileComponent } from '../../table/TableBoard'
+import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';

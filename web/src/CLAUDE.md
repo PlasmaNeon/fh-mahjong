@@ -19,7 +19,8 @@ Contains all React components, context providers, custom hooks, and utility func
   - `VITE_WS_BASE_URL` may be supplied as `http(s)` or `ws(s)`; the helper normalizes `http -> ws` and `https -> wss`
 - **contexts/AuthContext.tsx** — Owns persistent-login bootstrap and the in-memory CSRF token; API credentials live only in the server-set HttpOnly cookie
 - **features/game/privateRoomSession.ts** — Stores only the non-sensitive current `tableId` so an expired login can return to the correct invite after authentication
-- **index.css** — Global reset and fixed-stage geometry (TailwindCSS + table layout); Rainy Club visual values live under `theme/` and `table/table-theme.css`
+- **index.css** — App globals only (23 lines): the Tailwind import, the `body` / `#root` / `.app-root` reset, and `@import`s of `table/roundResult.css` and `table/table-geometry.css`
+- **table/table-geometry.css** — The fixed-stage table geometry, moved out of `index.css` in PR 2. Rainy Club visual values live under `theme/` and `table/table-theme.css`
   - Includes table-corner HUD styling such as the face-up wild-tile badge shown on the game table
   - Includes the centered match HUD plus the fixed-stage seat-lane / discard-lane styling used by the shared table presenter
   - Seat lanes now own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives instead of page-specific side rules
@@ -47,7 +48,7 @@ Contains all React components, context providers, custom hooks, and utility func
   - `replay/` — Account paipu library plus Replay + replayEngine + replayTypes (routes `/replay`, `/replay/:matchId`)
   - `game/` — Game, Table, SeatCard, MatchEndOverlay, ExitMatchButton, privateRoomSession, rejoinMatch (routes `/room/:roomId`, `/match/:matchId`)
 - **table/** — Shared tabletop presentation primitives for live play and replay
-- **hooks/** — Custom React hooks (WASM loader)
+- **hooks/** — Custom React hooks (the WASM loader; the fixed-stage layout moved to `table/stage/`)
 - **utils/** — Utility functions (tile name/SVG mapping)
 - **i18n/** — Typed English/Simplified Chinese resources, device-language selection, document-language synchronization, and the shared translation hook
 - **proto/** — Auto-generated Protobuf JS/TS bindings
@@ -55,8 +56,8 @@ Contains all React components, context providers, custom hooks, and utility func
 ## Architecture Notes
 
 - State flow: WebSocket binary message → `GameContext` decodes Protobuf → `gameState` updates → components re-render.
-- Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableScene.tsx` instead of maintaining two separate seat/discard DOM trees.
-- The live board now uses `useGameStageLayout()` from `hooks/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
+- Live play and replay now adapt their own state into the shared presenter in `web/src/table/TableBoard.tsx` instead of maintaining two separate seat/discard DOM trees.
+- The live board now uses `useGameStageLayout()` from `table/stage/` to compute a uniform DOM stage scale instead of depending on `vw`/`vh` geometry for seat placement.
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.

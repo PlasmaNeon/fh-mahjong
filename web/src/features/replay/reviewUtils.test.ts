@@ -10,8 +10,8 @@ import {
   selectPanelDecisions,
   severityCounts,
 } from './reviewUtils'
-import type { ReportDecision, ReviewReport } from './reviewTypes'
-import { fetchReview, generateReview } from './reviewTypes'
+import type { ReportDecision, ReviewReport } from './reviewClient'
+import { fetchReview, generateReview } from './reviewClient'
 
 function dec(actions: [number, number][], chosen: number): ReportDecision {
   return {

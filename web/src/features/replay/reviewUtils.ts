@@ -1,4 +1,4 @@
-import type { ActionProb, ReportDecision, ReviewReport } from './reviewTypes'
+import type { ActionProb, ReportDecision, ReviewReport } from './reviewClient'
 
 export type Severity = 'ok' | 'disagreement' | 'mistake'
 
@@ -127,7 +127,7 @@ export const SEVERITY_LABELS: Record<Severity, { en: string; zh: string }> = {
 // upgraded kan; 183-203 chii (3 suits x sequence starts 1-7, order
 // man/pin/sou). Face order: man(0-8), pin(9-17), sou(18-26), jihai(27-33),
 // flower(34-41, discard-only). jihai/flower names copied from
-// web/src/utils/tileUtils.ts's value->name mapping — do not guess.
+// web/src/utils/tileDisplay.ts's value->name mapping — do not guess.
 
 const DISCARD_BASE = 5
 const DISCARD_COUNT = 42
@@ -139,11 +139,11 @@ const KAN_CLOSED_BASE = KAN_DIRECT_BASE + KAN_MODE_COUNT // 115
 const KAN_UPGRADED_BASE = KAN_CLOSED_BASE + KAN_MODE_COUNT // 149
 const CHII_BASE = KAN_UPGRADED_BASE + KAN_MODE_COUNT // 183
 
-// jihai value order 1-7, from tileUtils.ts's jihaiMap / getTileName.
+// jihai value order 1-7, from tileDisplay.ts's jihaiMap / getTileName.
 const JIHAI_EN = ['East', 'South', 'West', 'North', 'Haku', 'Hatsu', 'Chun']
 const JIHAI_ZH = ['东', '南', '西', '北', '白', '发', '中']
 
-// flower value order 1-8, from tileUtils.ts's flowerNameMap / flowerSvgMap.
+// flower value order 1-8, from tileDisplay.ts's flowerNameMap / flowerSvgMap.
 const FLOWER_EN = ['Spring', 'Summer', 'Autumn', 'Winter', 'Plum', 'Orchid', 'Chrysanthemum', 'Bamboo']
 const FLOWER_ZH = ['春', '夏', '秋', '冬', '梅', '兰', '菊', '竹']
 

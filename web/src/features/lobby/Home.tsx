@@ -1,6 +1,6 @@
 import { Link, useLocation, type LinkProps } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import type { AuthRouteState } from '../auth/authModal'
+import type { AuthRouteState } from '../auth/authRouteState'
 import { useI18n } from '../../i18n/I18nContext'
 
 export default function Home() {

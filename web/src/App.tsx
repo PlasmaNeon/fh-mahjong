@@ -5,7 +5,7 @@ import { GameProvider } from './contexts/GameContext'
 import Home from './features/lobby/Home'
 import Login from './features/auth/Login'
 import Lobby from './features/lobby/Lobby'
-import Table from './features/game/Table'
+import PrivateRoom from './features/game/PrivateRoom'
 import Game from './features/game/Game'
 import Calc from './features/calc/Calc'
 import Shanten from './features/shanten/Shanten'
@@ -15,14 +15,14 @@ import CreateRoom from './features/lobby/CreateRoom'
 import Account from './features/auth/Account'
 import TableSample from './features/dev/TableSample'
 import RoundResultDemo from './features/dev/RoundResultDemo'
-import type { AuthRouteState } from './features/auth/authModal'
+import type { AuthRouteState } from './features/auth/authRouteState'
 
 // Keying the waiting room by its room id forces a fresh component instance per
 // room, so route-local seats, requests, and reconnect state never carry over
 // when navigating between different room links.
-function TableRoute() {
+function PrivateRoomRoute() {
     const { roomId } = useParams()
-    return <Table key={roomId} />
+    return <PrivateRoom key={roomId} />
 }
 
 function LoginBackdrop() {
@@ -43,7 +43,7 @@ function AppRoutes() {
                 <Route path="/play" element={<Lobby />} />
                 <Route path="/account" element={<Account />} />
                 <Route path="/room/new" element={<CreateRoom />} />
-                <Route path="/room/:roomId" element={<TableRoute />} />
+                <Route path="/room/:roomId" element={<PrivateRoomRoute />} />
                 <Route path="/match/:matchId" element={<Game />} />
                 <Route path="/replay" element={<ReplayLibrary />} />
                 <Route path="/replay/:matchId" element={<Replay />} />

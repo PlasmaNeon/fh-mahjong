@@ -122,3 +122,49 @@ Three pairs share English text but differ in Chinese, so merging would silently 
 Task 11 — the three ad-hoc en/zh label mechanisms in `features/replay/`, the four hand-rolled
 segmented controls that duplicate the `Toggle` primitive, the `東` compass mark in three places,
 and the repeated tile-box size blocks (~200 lines). Not started.
+
+## 2026-08-16 — PR 2: frontend renames
+
+Pure motion, per §6.2 of the design doc. Every rename is `git mv` + exact-path import updates +
+the matching `CLAUDE.md` edit, one commit each. **All 11 renamed files keep their history under
+`git log --follow`** (verified; `PrivateRoom.tsx` traces 23 commits, `table-geometry.css` 33).
+
+| Was | Now | Why |
+|---|---|---|
+| `src/index.css` (1,244 lines) | `table/table-geometry.css` + a 23-line `index.css` | It was the fixed-stage table geometry, not an app stylesheet |
+| `table/TableScene.tsx` | `table/TableBoard.tsx` + `table/TableRoundResultOverlay.tsx` | There was no `TableScene` symbol; the file held two unrelated components |
+| `features/game/Table.tsx` | `features/game/PrivateRoom.tsx` | It is the `/room/:roomId` waiting screen, one import from `TableScene`/`TableSample` |
+| `hooks/{computeStageLayout,useGameStageLayout}` | `table/stage/` | `computeStageLayout` is not a hook |
+| `features/replay/reviewTypes.ts` | `reviewClient.ts` | It exports `fetchReview`/`generateReview` |
+| `features/auth/authModal.ts` | `authRouteState.ts` | It owns route state, not a modal |
+| `features/lobby/navigation.ts` | `playIntent.ts` | A one-shot play-intent store, not routing |
+| `utils/tileUtils.ts` | `utils/tileDisplay.ts` | Distinguishes it from `tileModel.ts`, the value model |
+| `theme/components/ToolsRow.tsx` | `ButtonRow.tsx` | A generic button row, not tool-specific |
+| `replayLibrary.test.ts`, `streamlinedNavigation.test.ts` | `replayReference.test.ts`, `Home.test.ts` | Named after what they test |
+
+### Two things worth knowing
+
+- **The `TableScene` split is two commits on purpose.** Done in one, git paired the rename with the
+  *overlay* (65% similarity) and recorded `TableBoard.tsx` as a new file, so `--follow` needed a
+  lowered threshold. Splitting into "pure rename" then "extract the overlay" gives both files clean
+  history. Do the same for any future split.
+- **`index.css` cannot preserve exact rule order.** CSS requires `@import` before other rules, so
+  the geometry now precedes `body`/`#root`/`.app-root` instead of following them. Verified inert:
+  same 851 rules and 91,770 bytes, identical rule set, and the geometry never styles those three
+  selectors (nor they anything it styles), so nothing can win differently.
+
+### Also fixed (stale docs the audit found)
+
+- `table/CLAUDE.md` documented `SeatLane`/`DiscardLane` components inside `TableScene.tsx` — neither
+  exists; those words live in CSS class names.
+- `table/seat/CLAUDE.md` called `PlayerSeat` "the seat plaque: name, wind, score" — it is the
+  seat-lane composition; wind and score render in `CenterHud.tsx`.
+- `utils/CLAUDE.md` pointed at `Game.tsx` for `TileComponent` — it lives in `table/Tile.tsx`.
+- `hooks/CLAUDE.md` described the directory as "focused on WASM integration" and now records what
+  the audit found: **`useMahjongWasm.ts` has zero importers.**
+
+### Deferred (endorsed, not done)
+
+`public/Regular_shortnames/` → `public/tiles/` (needs a matching mount change in
+`internal/api/server.go`); regrouping `features/game/{PrivateRoom,SeatCard,roomNavigation}` into
+`features/room/`; deleting the dead `useMahjongWasm.ts` (a judgement call, not a rename).

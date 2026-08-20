@@ -1,4 +1,4 @@
-import { getTileName } from '../../utils/tileUtils'
+import { getTileName } from '../../utils/tileDisplay'
 import type { Paipu, PaipuRound } from './replayTypes'
 import { tileObjectFromId } from './replayTypes'
 

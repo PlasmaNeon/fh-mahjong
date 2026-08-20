@@ -5,8 +5,8 @@
 ## Key Files
 
 ### Components
-- **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower-reveal handling, and live round-result action buttons. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableScene.tsx`, and keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Intentional exits clear local game state and close the WebSocket with application code `4000`, letting the server release the seat immediately while ordinary refreshes retain reconnect grace.
-- **Table.tsx** — Private-table waiting screen with persistent Share Table, disclosed rules, and one sticky host Start Match action.
+- **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower-reveal handling, and live round-result action buttons. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableBoard.tsx`, and keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Intentional exits clear local game state and close the WebSocket with application code `4000`, letting the server release the seat immediately while ordinary refreshes retain reconnect grace.
+- **PrivateRoom.tsx** — Private-room waiting screen (route `/room/:roomId`; `App.tsx` wraps it as `PrivateRoomRoute`) with persistent Share Table, disclosed rules, and one sticky host Start Match action.
 - **SeatCard.tsx** — Single seat plaque. Empty seats expose one default Add AI action; AI type is an advanced disclosure.
 - **MatchEndOverlay.tsx** — Chongci final standings, Back to Club primary, Watch Replay secondary.
 - **ExitMatchButton.tsx** / **GameSettingsButton.tsx** — Leave-match and in-match settings controls.

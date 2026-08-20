@@ -1,4 +1,4 @@
-import type { HudChip } from './TableScene'
+import type { HudChip } from './types'
 
 export type CenterHudSeat = {
   direction: 'bottom' | 'right' | 'top' | 'left'
