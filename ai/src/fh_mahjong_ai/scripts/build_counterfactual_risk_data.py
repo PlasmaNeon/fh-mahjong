@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from fh_mahjong_ai.paired_trace import counterfactual_label_from_pair
-from fh_mahjong_ai.storage import SHARDED_TRANSITIONS_SCHEMA_VERSION
+from fh_mahjong_ai.storage import SHARDED_TRANSITIONS_SCHEMA_VERSION, write_single_shard_dataset
 
 
 def build_counterfactual_risk_arrays(
@@ -195,22 +195,7 @@ def selected_divergences(pair: dict[str, Any], divergence_source: str = "first")
 
 
 def write_counterfactual_shard(output_dir: Path, arrays: dict[str, np.ndarray], metadata: dict[str, Any]) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for path in output_dir.glob("transitions-*.npz"):
-        path.unlink()
-    shard_name = "transitions-00000.npz"
-    np.savez(output_dir / shard_name, **arrays)
-    manifest = {
-        "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
-        "format": "npz_shards",
-        "compressed": False,
-        "shard_size": int(arrays["action_ids"].shape[0]),
-        "transitions": int(arrays["action_ids"].shape[0]),
-        "shards": [{"path": shard_name, "transitions": int(arrays["action_ids"].shape[0])}],
-        "counterfactual": metadata,
-    }
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return manifest
+    return write_single_shard_dataset(output_dir, arrays, metadata, metadata_key="counterfactual")
 
 
 def main() -> None:

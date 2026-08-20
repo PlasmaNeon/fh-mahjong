@@ -15,6 +15,44 @@ from .types import Observation, Transition
 
 SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
 
+def write_single_shard_dataset(
+    output_dir: Path,
+    arrays: dict[str, "np.ndarray"],
+    metadata: dict,
+    *,
+    metadata_key: str = "counterfactual",
+) -> dict:
+    """Write one npz shard plus its manifest, replacing any shard already there.
+
+    Used by the counterfactual and divergence dataset builders, which both emit
+    a single shard rather than streaming. Existing ``transitions-*.npz`` files
+    are removed first so a re-run cannot leave a stale second shard that the
+    manifest does not mention.
+
+    ``metadata_key`` names the manifest block the caller's provenance goes in.
+    It defaults to "counterfactual" because that is what BOTH existing callers
+    emit -- including the divergence builder, whose block is named
+    "counterfactual" for historical reasons that its readers depend on.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for path in output_dir.glob("transitions-*.npz"):
+        path.unlink()
+    shard_name = "transitions-00000.npz"
+    np.savez(output_dir / shard_name, **arrays)
+    count = int(arrays["action_ids"].shape[0])
+    manifest = {
+        "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
+        "format": "npz_shards",
+        "compressed": False,
+        "shard_size": count,
+        "transitions": count,
+        "shards": [{"path": shard_name, "transitions": count}],
+        metadata_key: metadata,
+    }
+    write_json_report(output_dir / "manifest.json", manifest)
+    return manifest
+
+
 def write_json_report(path: Path, report: dict) -> None:
     """Write a CLI report as pretty, key-sorted JSON with a trailing newline.
 
