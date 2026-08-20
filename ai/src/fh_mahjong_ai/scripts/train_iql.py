@@ -13,7 +13,7 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.global_ev import GlobalEVNet
-from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+from fh_mahjong_ai.streaming_buffer import StreamingReplayBuffer
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import (
     RiskCase,

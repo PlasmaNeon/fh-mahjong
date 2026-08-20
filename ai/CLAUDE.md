@@ -100,7 +100,7 @@ Go c-shared lib  →  bridge.py / envpool.py  →  env.py       ← authoritativ
    collectors: oracle.py (ParallelB2bCollector), parallel_rollouts.py,
                batched_selfplay.py, trainer.py
                                 ↓
-   storage.py (sharded NPZ + manifest)  ↔  buffer.py / streaming_data.py
+   storage.py (sharded NPZ + manifest)  ↔  buffer.py / streaming_buffer.py
                                 ↓
    trainers: trainer.py (BC/AWBC/IQL/offline-Q), ppo.py, ach.py, oracle.py
                                 ↓
@@ -136,7 +136,7 @@ Quick map of what is where:
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
 | Training | `ppo.py`, `ach.py`, `oracle.py`, `trainer.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
-| Data and storage | `data.py`, `buffer.py`, `streaming_data.py`, `storage.py`, `checkpoint_manifest.py` |
+| Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
