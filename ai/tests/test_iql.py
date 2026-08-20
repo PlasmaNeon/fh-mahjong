@@ -14,7 +14,7 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import RiskCase
 from fh_mahjong_ai.scripts.train_iql import load_iql_replay_buffer, risk_context_indices, train_iql
 from fh_mahjong_ai.storage import load_compatible_checkpoint, save_checkpoint, write_transitions_jsonl, write_transitions_npz_shards
-from fh_mahjong_ai.trainer import (
+from fh_mahjong_ai.offline_trainers import (
     DiscreteIQLTrainer,
     discounted_terminal_returns,
     external_risk_policy_regularizer,

@@ -16,7 +16,7 @@ from fh_mahjong_ai.evaluate import compute_action_agreement, compute_action_agre
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
-from fh_mahjong_ai.trainer import BehaviorCloningTrainer, TrainMetrics
+from fh_mahjong_ai.offline_trainers import BehaviorCloningTrainer, TrainMetrics
 
 BC_ARRAY_KEYS = (
     "seats",

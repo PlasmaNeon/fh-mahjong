@@ -30,7 +30,7 @@ from fh_mahjong_ai.storage import (
     read_transitions,
     save_checkpoint,
 )
-from fh_mahjong_ai.trainer import DiscreteIQLMetrics, DiscreteIQLTrainer
+from fh_mahjong_ai.offline_trainers import DiscreteIQLMetrics, DiscreteIQLTrainer
 
 IQL_ARRAY_KEYS = (
     "seats",

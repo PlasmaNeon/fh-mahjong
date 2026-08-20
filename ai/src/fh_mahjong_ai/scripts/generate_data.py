@@ -15,7 +15,7 @@ from fh_mahjong_ai.data import backfill_returns
 from fh_mahjong_ai.env import MahjongEnv
 from fh_mahjong_ai.policies import RandomMaskedPolicy
 from fh_mahjong_ai.storage import ShardedTransitionWriter, write_transitions_jsonl
-from fh_mahjong_ai.trainer import collect_episode
+from fh_mahjong_ai.offline_trainers import collect_episode
 from fh_mahjong_ai.types import Transition
 
 # Episodes per bridge export request when the caller does not specify one.

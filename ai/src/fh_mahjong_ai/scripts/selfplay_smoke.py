@@ -7,7 +7,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig, TrainConfig
 from fh_mahjong_ai.env import MahjongEnv
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import RandomMaskedPolicy
-from fh_mahjong_ai.trainer import BehaviorCloningTrainer, collect_episode
+from fh_mahjong_ai.offline_trainers import BehaviorCloningTrainer, collect_episode
 
 
 def main() -> None:

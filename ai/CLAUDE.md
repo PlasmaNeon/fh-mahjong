@@ -98,11 +98,11 @@ Go c-shared lib  →  bridge.py / envpool.py  →  env.py       ← authoritativ
                         (ctypes, protobuf)      searchpool.py
                                 ↓
    collectors: oracle.py (ParallelB2bCollector), parallel_rollouts.py,
-               batched_selfplay.py, trainer.py
+               batched_selfplay.py, offline_trainers.py
                                 ↓
    storage.py (sharded NPZ + manifest)  ↔  buffer.py / streaming_buffer.py
                                 ↓
-   trainers: trainer.py (BC/AWBC/IQL/offline-Q), ppo.py, ach.py, oracle.py
+   trainers: offline_trainers.py (BC/AWBC/IQL/offline-Q), ppo.py, ach.py, oracle.py
                                 ↓
    checkpoints  →  serving.py  →  scripts/serve_policy.py  →  Go bot seat
                         ↓
@@ -135,7 +135,7 @@ Quick map of what is where:
 | Contracts and configuration | `config.py`, `types.py`, `action_catalog.py`, `events.py` |
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
-| Training | `ppo.py`, `ach.py`, `oracle.py`, `trainer.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
+| Training | `ppo.py`, `ach.py`, `oracle.py`, `offline_trainers.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
 | Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |

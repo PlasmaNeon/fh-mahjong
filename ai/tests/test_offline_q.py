@@ -10,7 +10,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig, OfflineQConfig, TrainCo
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_offline_q import train_offline_q
 from fh_mahjong_ai.storage import write_transitions_jsonl, write_transitions_npz_shards
-from fh_mahjong_ai.trainer import OfflineQTrainer
+from fh_mahjong_ai.offline_trainers import OfflineQTrainer
 from fh_mahjong_ai.types import Observation, Transition
 
 

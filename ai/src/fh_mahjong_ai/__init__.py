@@ -12,7 +12,7 @@ from .config import (
 from .env import MahjongEnv
 from .model import PolicyValueNet
 from .serving import CheckpointPolicy
-from .trainer import AdvantageWeightedBCTrainer, DiscreteIQLTrainer, OfflineQTrainer
+from .offline_trainers import AdvantageWeightedBCTrainer, DiscreteIQLTrainer, OfflineQTrainer
 
 __all__ = [
     "AdvantageWeightedBCConfig",
