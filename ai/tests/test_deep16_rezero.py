@@ -24,28 +24,7 @@ from fh_mahjong_ai.oracle import (
 )
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
-from conftest import SMALL_MODEL
-
-# Reused from test_checkpoint_loading.py: a tiny B2b architecture + a 39ch mock-bridge
-# EnvConfig, so anchor checkpoints in this file build and load fast.
-_ENV39 = EnvConfig(bridge_kind="mock")
-
-
-def _b2b_config(**overrides) -> ModelConfig:
-    fields = dict(SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
-    fields.update(overrides)
-    return ModelConfig(**fields)
-
-
-def _save_anchor(tmp_path: Path, model_config: ModelConfig, *, with_model_config_metadata: bool = True,
-                 model_config_metadata_override: dict | None = None) -> Path:
-    model = PolicyValueNet(_ENV39, model_config)
-    metadata = {}
-    if with_model_config_metadata:
-        metadata["model_config"] = model_config_metadata_override or model_config_metadata(model_config)
-    path = tmp_path / "anchor.pt"
-    save_checkpoint(path, model, metadata=metadata)
-    return path
+from conftest import MOCK_ENV, b2b_model_config, save_b2b_anchor, small_model_config
 
 
 def _batch(n: int = 4, event_window: int = 8, seed: int = 0):
@@ -146,8 +125,8 @@ def test_full_net_forward_identical_with_zero_alpha_growth_blocks() -> None:
 # --- Task 2: grow_b2b_model warm-start + step-zero parity ---
 
 def test_grow_b2b_model_preserves_every_anchor_tensor(tmp_path) -> None:
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
     anchor_state = torch.load(anchor_path, map_location="cpu")["model"]
 
     grown = grow_b2b_model(anchor_path, growth_blocks=3)
@@ -160,9 +139,9 @@ def test_grow_b2b_model_preserves_every_anchor_tensor(tmp_path) -> None:
 
 
 def test_grow_b2b_model_step_zero_parity(tmp_path) -> None:
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
-    anchor = PolicyValueNet(_ENV39, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
+    anchor = PolicyValueNet(MOCK_ENV, anchor_config)
     load_checkpoint(anchor_path, anchor)
     anchor.eval()
 
@@ -191,13 +170,13 @@ def test_grow_b2b_model_step_zero_parity(tmp_path) -> None:
 
 
 def test_grow_b2b_model_raises_without_model_config_metadata(tmp_path) -> None:
-    anchor_path = _save_anchor(tmp_path, _b2b_config(), with_model_config_metadata=False)
+    anchor_path = save_b2b_anchor(tmp_path, b2b_model_config(), with_model_config_metadata=False)
     with pytest.raises(RuntimeError, match="model_config"):
         grow_b2b_model(anchor_path, growth_blocks=3)
 
 
 def test_grow_b2b_model_raises_on_already_grown_anchor(tmp_path) -> None:
-    anchor_path = _save_anchor(tmp_path, _b2b_config(growth_blocks=2))
+    anchor_path = save_b2b_anchor(tmp_path, b2b_model_config(growth_blocks=2))
     with pytest.raises(RuntimeError, match="grow"):
         grow_b2b_model(anchor_path, growth_blocks=3)
 
@@ -209,8 +188,8 @@ def test_grow_b2b_model_raises_on_anchor_with_undeclared_growth_tensors(tmp_path
     # still be rejected -- trusting the metadata claim instead of the state
     # dict would load those tensors into a "fresh" growth run undetected,
     # breaking the step-0 warm-start parity invariant.
-    anchor_config = _b2b_config(growth_blocks=1)
-    grown_anchor = PolicyValueNet(_ENV39, anchor_config)
+    anchor_config = b2b_model_config(growth_blocks=1)
+    grown_anchor = PolicyValueNet(MOCK_ENV, anchor_config)
     with torch.no_grad():
         grown_anchor.growth[0].alpha.fill_(0.7)
     lying_metadata = model_config_metadata(anchor_config)
@@ -232,10 +211,10 @@ def test_grow_b2b_model_raises_on_lying_growth_blocks_claim_without_state_keys(t
     # grow further, discarding the metadata's own claim that it was already
     # grown. The claim and the state-dict-derived count must both be 0 (or
     # must agree) to proceed.
-    anchor_config = _b2b_config(growth_blocks=0)
+    anchor_config = b2b_model_config(growth_blocks=0)
     lying_metadata = model_config_metadata(anchor_config)
     lying_metadata["growth_blocks"] = 2
-    anchor_path = _save_anchor(tmp_path, anchor_config,
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config,
                                model_config_metadata_override=lying_metadata)
 
     with pytest.raises(RuntimeError, match="growth_blocks"):
@@ -243,10 +222,10 @@ def test_grow_b2b_model_raises_on_lying_growth_blocks_claim_without_state_keys(t
 
 
 def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
-    anchor_config = _b2b_config()
+    anchor_config = b2b_model_config()
     lying_metadata = model_config_metadata(anchor_config)
     lying_metadata["trunk_hidden_dim"] = anchor_config.trunk_hidden_dim * 2
-    anchor_path = _save_anchor(tmp_path, anchor_config, model_config_metadata_override=lying_metadata)
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config, model_config_metadata_override=lying_metadata)
     with pytest.raises(RuntimeError):
         grow_b2b_model(anchor_path, growth_blocks=3)
 
@@ -259,10 +238,10 @@ def test_grow_b2b_model_raises_on_doctored_channels_claim(tmp_path) -> None:
     # here would build a differently-shaped net than the anchor's own
     # tensors before load_compatible_checkpoint ever gets a chance to catch
     # the drift -- must raise up front, before any construction.
-    real_config = _b2b_config(channels=32)
+    real_config = b2b_model_config(channels=32)
     lying_metadata = model_config_metadata(real_config)
     lying_metadata["channels"] = 16
-    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+    anchor_path = save_b2b_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
 
     with pytest.raises(RuntimeError, match="channels"):
         grow_b2b_model(anchor_path, growth_blocks=3)
@@ -271,10 +250,10 @@ def test_grow_b2b_model_raises_on_doctored_channels_claim(tmp_path) -> None:
 def test_grow_b2b_model_raises_on_doctored_residual_blocks_claim(tmp_path) -> None:
     # Same class of gap, for residual_blocks: the anchor's REAL net has 2
     # plane_blocks, but metadata claims 1.
-    real_config = _b2b_config(residual_blocks=2)
+    real_config = b2b_model_config(residual_blocks=2)
     lying_metadata = model_config_metadata(real_config)
     lying_metadata["residual_blocks"] = 1
-    anchor_path = _save_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
+    anchor_path = save_b2b_anchor(tmp_path, real_config, model_config_metadata_override=lying_metadata)
 
     with pytest.raises(RuntimeError, match="residual_blocks"):
         grow_b2b_model(anchor_path, growth_blocks=3)
@@ -284,8 +263,8 @@ def test_grow_b2b_model_same_shape_happy_path_unaffected_by_dim_check(tmp_path) 
     # Honest metadata (claim matches the anchor's own tensor shapes) must
     # still grow successfully -- the new pre-surgery cross-check is not a
     # blanket rejection.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
     grown = grow_b2b_model(anchor_path, growth_blocks=3)
     assert grown.model_config.growth_blocks == 3
 
@@ -294,24 +273,24 @@ def test_grow_b2b_model_ignores_env_config_mismatch_when_not_passed(tmp_path) ->
     # Backward-compat: callers that don't pass env_config (e.g. exercising
     # grow_b2b_model in isolation with no "live env" to check against) get
     # the old unchecked behavior.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
     grown = grow_b2b_model(anchor_path, growth_blocks=3)
     assert grown.model_config.growth_blocks == 3
 
 
 def test_grow_b2b_model_raises_on_scalar_feature_drift_against_live_env(tmp_path) -> None:
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
-    live_env = EnvConfig(bridge_kind="mock", scalar_features=_ENV39.scalar_features + 1)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
+    live_env = EnvConfig(bridge_kind="mock", scalar_features=MOCK_ENV.scalar_features + 1)
     with pytest.raises(RuntimeError, match="scalar_features"):
         grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
 
 
 def test_grow_b2b_model_raises_on_action_space_drift_against_live_env(tmp_path) -> None:
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
-    live_env = EnvConfig(bridge_kind="mock", action_space_size=_ENV39.action_space_size + 10)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
+    live_env = EnvConfig(bridge_kind="mock", action_space_size=MOCK_ENV.action_space_size + 10)
     with pytest.raises(RuntimeError, match="action_space_size"):
         grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
 
@@ -320,8 +299,8 @@ def test_grow_b2b_model_matched_env_config_unchanged(tmp_path) -> None:
     # Live env_config matches what the anchor was actually built under (39ch
     # mock, default scalar/action-space sizes, matching event_window) — the
     # cross-check must be a no-op.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
     live_env = EnvConfig(bridge_kind="mock", event_history_window=anchor_config.event_window)
     grown = grow_b2b_model(anchor_path, growth_blocks=3, env_config=live_env)
     assert grown.model_config.growth_blocks == 3
@@ -332,12 +311,12 @@ def test_train_b2b_growth_raises_on_stale_anchor_env_config_drift(tmp_path) -> N
     # cross-check the anchor's construction shapes against the LIVE
     # env_config collection will run under, not silently build a model
     # shaped to a stale anchor while collection runs on a different env.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
 
     live_env = EnvConfig(bridge_kind="mock", event_history_window=anchor_config.event_window,
                          oracle_observation=True, max_steps_per_episode=16,
-                         scalar_features=_ENV39.scalar_features + 1)
+                         scalar_features=MOCK_ENV.scalar_features + 1)
     config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
@@ -351,8 +330,8 @@ def test_grow_b2b_model_raises_on_missing_non_growth_tensor(tmp_path) -> None:
     # non-growth tensor (e.g. a stripped belief_head) must raise via the
     # bad_missing path, not silently build a model with a randomly
     # initialized head the anchor never trained.
-    anchor_config = _b2b_config()
-    model = PolicyValueNet(_ENV39, anchor_config)
+    anchor_config = b2b_model_config()
+    model = PolicyValueNet(MOCK_ENV, anchor_config)
     state_dict = model.state_dict()
     missing_keys = [k for k in state_dict if k.startswith("belief_head.")]
     assert missing_keys, "expected aux_heads=True anchor to have belief_head tensors"
@@ -369,8 +348,8 @@ def test_train_b2b_growth_blocks_smoke_saves_metadata(tmp_path) -> None:
     # growth_blocks>0 warm-starts from a post-B2b anchor (grow_b2b_model's
     # contract), not the raw 39ch champion the surgery path (growth_blocks=0)
     # expects.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
@@ -391,8 +370,8 @@ def test_growth_alpha_mean_abs_reflects_alpha_values() -> None:
     # so this doesn't depend on how much a PPO step happens to move alpha.
     from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
 
-    model_config = _b2b_config(growth_blocks=2)
-    model = PolicyValueNet(_ENV39, model_config)
+    model_config = b2b_model_config(growth_blocks=2)
+    model = PolicyValueNet(MOCK_ENV, model_config)
     assert _growth_alpha_mean_abs(model) == pytest.approx(0.0)  # ReZero alphas init to 0
 
     with torch.no_grad():
@@ -404,14 +383,14 @@ def test_growth_alpha_mean_abs_reflects_alpha_values() -> None:
 def test_growth_alpha_mean_abs_none_without_growth_blocks() -> None:
     from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
 
-    model_config = _b2b_config()  # growth_blocks=0 (default)
-    model = PolicyValueNet(_ENV39, model_config)
+    model_config = b2b_model_config()  # growth_blocks=0 (default)
+    model = PolicyValueNet(MOCK_ENV, model_config)
     assert _growth_alpha_mean_abs(model) is None
 
 
 def test_train_b2b_history_includes_growth_alpha_telemetry(tmp_path) -> None:
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
@@ -481,8 +460,8 @@ def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
     import subprocess
     import sys
 
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
     checkpoint_dir = tmp_path / "ckpt"
 
     common_flags = [
@@ -520,7 +499,7 @@ def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
 
 def _champion39(tmp_path: Path) -> tuple[EnvConfig, Path]:
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
+    model = PolicyValueNet(env39, small_model_config())
     path = tmp_path / "champion.pt"
     save_checkpoint(path, model)
     return env39, path
@@ -530,7 +509,7 @@ def _b2b_run_configs(tmp_path: Path, *, iterations: int, lr: float = 2e-5):
     _, champion_path = _champion39(tmp_path)
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
-    model_config = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
+    model_config = b2b_model_config()
     config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=lr,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
@@ -1203,8 +1182,8 @@ def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correc
     # naming ValueError from _validate_resume_config_echo -- not a silent
     # shape mismatch deeper in model loading. The correctly-reconstructed
     # grown config must then resume cleanly.
-    anchor_config = _b2b_config()
-    anchor_path = _save_anchor(tmp_path, anchor_config)
+    anchor_config = b2b_model_config()
+    anchor_path = save_b2b_anchor(tmp_path, anchor_config)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
@@ -2849,7 +2828,7 @@ def test_lineage_scan_ignores_stale_quarantined_checkpoints(tmp_path) -> None:
 
     checkpoint_dir = tmp_path / "ckpt"
     checkpoint_dir.mkdir()
-    model = PolicyValueNet(_ENV39, _b2b_config())
+    model = PolicyValueNet(MOCK_ENV, b2b_model_config())
     live_path = checkpoint_dir / "iter_003.pt"
     save_checkpoint(live_path, model, metadata={"run_id": "foreign-run"})
     stale_path = live_path.with_name(live_path.name + ".stale")
@@ -2867,7 +2846,7 @@ def test_fresh_run_overwrite_moves_leftover_stale_checkpoints_into_backup(tmp_pa
     env, model_config, champion_path, config_first = _b2b_run_configs(tmp_path, iterations=1)
     checkpoint_dir = tmp_path / "ckpt"
     checkpoint_dir.mkdir()
-    model = PolicyValueNet(_ENV39, model_config)
+    model = PolicyValueNet(MOCK_ENV, model_config)
     stale_path = checkpoint_dir / "iter_003.pt.stale"
     save_checkpoint(checkpoint_dir / "iter_003.pt", model)
     os.rename(checkpoint_dir / "iter_003.pt", stale_path)
@@ -2922,7 +2901,7 @@ def _go_bridge_run_configs(tmp_path: Path, *, iterations: int, lib_path: Path):
     env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path),
                     event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
-    model_config = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
+    model_config = b2b_model_config()
     config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=2e-5,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")

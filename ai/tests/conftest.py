@@ -90,3 +90,34 @@ def save_checkpoint(
     path = tmp_path / name
     _save(path, model, cfg, model_config, step=step)
     return path
+
+
+# The 39-channel mock-bridge environment B2b anchors are built against. Using
+# the mock bridge means no Go shared library is loaded, so an anchor checkpoint
+# builds and loads in milliseconds.
+MOCK_ENV = EnvConfig(bridge_kind="mock")
+
+
+def b2b_model_config(**overrides) -> ModelConfig:
+    """The B2b event-model shape: the small architecture plus an event window,
+    a privileged critic, and the auxiliary heads. Overrides win."""
+    fields = dict(event_window=8, privileged_critic=True, aux_heads=True)
+    fields.update(overrides)
+    return small_model_config(**fields)
+
+
+def save_b2b_anchor(tmp_path: Path, model_config: ModelConfig, *,
+                    with_model_config_metadata: bool = True,
+                    model_config_metadata_override: dict | None = None) -> Path:
+    """Write a B2b anchor checkpoint, optionally with a missing or doctored
+    ``metadata["model_config"]`` block so loaders can be tested against it."""
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint as _save
+
+    model = PolicyValueNet(MOCK_ENV, model_config)
+    metadata = {}
+    if with_model_config_metadata:
+        metadata["model_config"] = model_config_metadata_override or model_config_metadata(model_config)
+    path = tmp_path / "anchor.pt"
+    _save(path, model, metadata=metadata)
+    return path
