@@ -228,7 +228,7 @@
   - `b2b-anchor075-restart-iter075.pt` (10 MB) — the B2b anchor.
 
   When a new champion is promoted, replace the served file here **and** update `Dockerfile.deploy`'s `--checkpoint` arg in the same PR that updates `best-checkpoints.json`.
-- **Dockerfile** — Local docker-compose image for `fh-mj-serve-policy`: `uv sync` from `ai/uv.lock` (CUDA torch), checkpoint supplied via a mounted volume (see `docker-compose.yml`).
+- **Dockerfile.compose** — Local docker-compose image for `fh-mj-serve-policy`: `uv sync` from `ai/uv.lock` (CUDA torch), checkpoint supplied via a mounted volume (see `docker-compose.yml`).
 - **Dockerfile.deploy** — Production/Zeabur image for `fh-mj-serve-policy`: CPU-only torch + numpy + protobuf (the serving import path pulls in `bridge.py` → `generated/proto/game_pb2`, so the protobuf runtime is required and pinned to the `uv.lock` version to satisfy the gencode runtime guard) plus `pip install --no-deps` for the package itself; a build-time import check catches further drift. Bakes `checkpoints/deploy/` into the image. Build context is the repo root.
 - **README.md** — Python stack workflow notes, including the WSL/4090 policy-server flow, SSH tunnel setup, live Go integration check, and `AI_BOT_POLICY_URL` server wiring.
 

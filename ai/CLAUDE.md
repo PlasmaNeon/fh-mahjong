@@ -141,7 +141,7 @@ Quick map of what is where:
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
 | Scripts | `scripts/` — see the Commands section above for the CLI each one backs |
-| Deployment | `checkpoints/deploy/`, `Dockerfile`, `Dockerfile.deploy` |
+| Deployment | `checkpoints/deploy/`, `Dockerfile.compose`, `Dockerfile.deploy` |
 
 ## Gotchas
 
