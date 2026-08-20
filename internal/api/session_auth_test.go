@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/plasma/fh-mahjong/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -32,13 +31,7 @@ func TestLoginDummyHashEqualizesTiming(t *testing.T) {
 func newAuthSessionFixture(t *testing.T) authSessionFixture {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := storage.AutoMigrate(db); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := newTestDB(t)
 	h := &AuthHandler{DB: db}
 	r := gin.New()
 	r.POST("/api/v1/auth/register", h.Register)

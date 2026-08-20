@@ -527,22 +527,10 @@ func paipuChongciConfig(cfg *pb.ChongciConfig) *engine.PaipuChongciConfig {
 	}
 }
 
-// placementsFromScores computes each seat's competition ranking (1st place
-// shared by ties) from final scores, preserving seat index. Shared by the
-// paipu's match meta and persistMatchPlayers so the ranking rule can't drift
-// between the two.
+// placementsFromScores is storage.PlacementsFromScores; the ranking rule lives
+// there so the live persist path and the backfill importer cannot drift.
 func placementsFromScores(finalScores [4]int32) [4]uint {
-	var placements [4]uint
-	for seat, score := range finalScores {
-		placement := uint(1)
-		for _, other := range finalScores {
-			if other > score {
-				placement++
-			}
-		}
-		placements[seat] = placement
-	}
-	return placements
+	return storage.PlacementsFromScores(finalScores)
 }
 
 // persistMatchPlayers mirrors the paipu's seat entries into relational

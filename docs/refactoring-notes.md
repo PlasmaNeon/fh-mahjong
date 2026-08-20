@@ -168,3 +168,53 @@ the matching `CLAUDE.md` edit, one commit each. **All 11 renamed files keep thei
 `public/Regular_shortnames/` → `public/tiles/` (needs a matching mount change in
 `internal/api/server.go`); regrouping `features/game/{PrivateRoom,SeatCard,roomNavigation}` into
 `features/room/`; deleting the dead `useMahjongWasm.ts` (a judgement call, not a rename).
+
+## 2026-08-16 — PR 3: Go de-duplication
+
+Behaviour-preserving, per §7.1 of the design doc. Every commit gated on
+`gofmt -l . && go vet ./... && go test ./...`, and the engine-touching ones additionally on a
+**seeded-paipu differential harness**: `cmd/rlpaipu` over 7 fixed seeds must stay byte-identical
+to `main`. It did, at every step.
+
+| Shared home | Owns | Copies removed from |
+|---|---|---|
+| `engine.FaceIndex42` / `FaceIndex34` / `FaceIndex42FromID` | the 42-face tile space | `rl.tileFaceIndex42/34`, `review.faceIndex42FromTileID/34` |
+| `rl.SortedLegalIDs` | the paipu-v2 legal-id snapshot | `api/room_decisions.go`, `cmd/rlpaipu` |
+| `rl.ReadyAllPlayersForNextRound` / `IsFinalReadyBeforeNextRound` / `FinalScores` | the ROUND_END ready-ack loop | `rl/env.go`, `review/replay_test.go`, `cmd/rlpaipu` |
+| `rl.runSlotCommands` | pool command validation + fan-out + slot ordering | `EnvPool.ApplyCommands`, `SearchPool.Step` |
+| `remote.fetchHealthzBody` / `siblingRoute` | the healthz round-trip and /act→sibling-route mapping | `HealthChecker.probe`, `HTTPPolicy.ValidateServer`, `deriveWarmupURL` |
+| `storage.PlacementsFromScores` | competition ranking | `api/room.go`, `storage/match_history.go` |
+| `internal/review/reviewtest` | the `/evaluate` policy stub | 5 of 26 `httptest` stubs across `api` + `review` |
+| `api.newTestDB` / `newTestServer` | in-memory sqlite + AutoMigrate | 5 api test files |
+
+### Divergences made explicit rather than unified
+
+Two "duplicates" were really two behaviours wearing the same shape. Both now take the difference
+as a parameter, so it is visible instead of hidden in look-alike functions:
+
+- **Hand-seed derivation.** `internal/rl` uses a splitmix `deriveHandSeed`; the review fixtures were
+  generated with `baseSeed*1000+handNum`. `ReadyAllPlayersForNextRound` takes the seed rule as an
+  argument. Unifying them would change every recorded paipu.
+- **First-legal-action fallback.** `env_test` returns `-1` when nothing is legal; the pool and bench
+  copies return `0` because they feed the value straight into a step request.
+
+### Deliberately NOT merged
+
+- **`review.HTTPPolicyClient.CurrentCheckpointSha256`** is a third `/healthz` caller, but returns
+  `(string, error)`, reads `checkpoint_sha256` rather than the event-contract fields, and lives in a
+  package that does not import `internal/bot/remote`. Sharing would mean a new package dependency
+  and a union payload more complex than the three callers.
+- **`remote.actionMaskJSON` vs `review.actionMaskToInts`** — identical six-line `[]byte`→`[]int`
+  converters spanning those same two packages. Coupling them for six obvious lines costs more than
+  it saves.
+- **The five remaining `httptest` stubs** are genuinely bespoke (fixed `[1,0]` probability vectors,
+  a sha that changes between chunks to drive the mismatch path).
+
+### Still outstanding from the design doc's Go Tier 1
+
+- **Task 7, api handler/room boilerplate** (~65 lines): the private-table handler prelude, the
+  sentinel-error → HTTP-status mapping, and the `BroadcastState`/`SendStateToClient` state-prep.
+  The broadcast half is the risky one — the two paths differ in per-seat redaction, and leaking an
+  opponent's concealed hand is exactly what `state_redaction_test.go` guards. Left for its own PR.
+- **G12, a tile-notation parser for test hands** (~450 lines, the single largest item), and
+  **G13/G14** (`engine/game.go`, `rules/fh.go`) which §10 of the design doc excludes.

@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/storage"
@@ -17,13 +16,7 @@ import (
 
 func newPersistTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if err := storage.AutoMigrate(db); err != nil {
-		t.Fatalf("automigrate: %v", err)
-	}
+	db := newTestDB(t)
 	return db
 }
 

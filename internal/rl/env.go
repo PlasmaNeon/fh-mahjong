@@ -432,40 +432,13 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 }
 
 func (e *Env) readyAllPlayersForNextRound() error {
-	for seat := uint32(0); seat < 4; seat++ {
-		if e.game.State.Phase != pb.GamePhase_PHASE_ROUND_END {
-			return nil
-		}
-		if len(e.game.State.PlayerReady) > int(seat) && e.game.State.PlayerReady[seat] {
-			continue
-		}
-		if e.isFinalReadyBeforeNextRound(seat) {
-			nextHand := uint64(e.game.State.HandNum) + 1
-			e.game.SetWallSeed(engine.SeedFromUint64(deriveHandSeed(e.baseSeed, nextHand)))
-		}
-		if err := e.game.ProcessPlayerAction(seat, &pb.PlayerAction{Type: pb.ActionType_ACTION_READY}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ReadyAllPlayersForNextRound(e.game, func(handNum uint64) uint64 {
+		return deriveHandSeed(e.baseSeed, handNum)
+	})
 }
 
 func (e *Env) isFinalReadyBeforeNextRound(seat uint32) bool {
-	if e == nil || e.game == nil || e.game.State == nil {
-		return false
-	}
-	if e.game.State.MatchMode != pb.MatchMode_MATCH_MODE_CHONGCI {
-		return false
-	}
-	for other := uint32(0); other < 4; other++ {
-		if other == seat {
-			continue
-		}
-		if len(e.game.State.PlayerReady) <= int(other) || !e.game.State.PlayerReady[other] {
-			return false
-		}
-	}
-	return true
+	return IsFinalReadyBeforeNextRound(e.game, seat)
 }
 
 func deriveHandSeed(baseSeed uint64, handNum uint64) uint64 {

@@ -21,15 +21,6 @@ func BenchmarkEnvStepChongci(b *testing.B) {
 		})
 	}
 
-	firstLegal := func(mask []byte) int {
-		for i, v := range mask {
-			if v == 1 {
-				return i
-			}
-		}
-		return 0
-	}
-
 	b.ReportAllocs()
 	b.ResetTimer()
 
@@ -55,7 +46,7 @@ func BenchmarkEnvStepChongci(b *testing.B) {
 			terminated, truncated = reset.Terminated, reset.Truncated
 			continue
 		}
-		step, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(firstLegal(obs.ActionMask))})
+		step, err := env.Step(&pb.EnvStepRequest{ActionId: firstLegal(obs.ActionMask)})
 		if err != nil {
 			b.Fatalf("step: %v", err)
 		}

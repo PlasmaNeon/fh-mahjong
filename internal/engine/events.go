@@ -67,6 +67,24 @@ func FaceIndex42(tile *pb.Tile) (int, bool) {
 	return 0, false
 }
 
+// FaceIndex34 is FaceIndex42 restricted to the 34 standard tile faces
+// (man/pin/sou/jihai). Flowers report !ok.
+func FaceIndex34(tile *pb.Tile) (int, bool) {
+	index, ok := FaceIndex42(tile)
+	if !ok || index >= 34 {
+		return 0, false
+	}
+	return index, true
+}
+
+// FaceIndex42FromID is FaceIndex42 keyed by tile id (0-143) instead of a decoded
+// tile. Paipu records tile ids, and their wall layout is SOU-first (see
+// TileFromId) while the 42-face space is MAN-first — this bridges the two.
+func FaceIndex42FromID(id uint32) (int, bool) {
+	suit, value := TileFromId(id)
+	return FaceIndex42(&pb.Tile{Suit: suit, Value: value})
+}
+
 func faceOf(tile *pb.Tile) int16 {
 	if idx, ok := FaceIndex42(tile); ok {
 		return int16(idx)

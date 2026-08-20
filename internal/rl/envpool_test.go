@@ -17,11 +17,12 @@ func poolTestConfig() *pb.EnvConfig {
 	}
 }
 
+// firstLegal is firstLegalActionID (env_test.go) with this file's own
+// no-legal-action fallback: the pool cases expect action 0 rather than -1,
+// because they feed the result straight into a step request.
 func firstLegal(mask []byte) uint32 {
-	for i, v := range mask {
-		if v == 1 {
-			return uint32(i)
-		}
+	if id := firstLegalActionID(mask); id >= 0 {
+		return uint32(id)
 	}
 	return 0
 }

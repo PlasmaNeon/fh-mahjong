@@ -211,3 +211,27 @@ func TestEncodeChiiRoundTripsThroughDecode(t *testing.T) {
 		t.Fatalf("round trip mismatch: encoded %d, decoded then re-encoded %d", got, roundTripped)
 	}
 }
+
+func TestSortedLegalIDsAscendingAndComplete(t *testing.T) {
+	legal := map[int]*pb.PlayerAction{
+		42: {}, 7: {}, 200: {}, 0: {},
+	}
+	got := SortedLegalIDs(legal)
+	want := []int{0, 7, 42, 200}
+	if len(got) != len(want) {
+		t.Fatalf("SortedLegalIDs returned %d ids, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SortedLegalIDs = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSortedLegalIDsEmptyIsNonNil(t *testing.T) {
+	// Callers marshal this straight into paipu JSON; a nil slice would encode
+	// as null where an empty legal set should encode as [].
+	if got := SortedLegalIDs(map[int]*pb.PlayerAction{}); got == nil {
+		t.Fatal("SortedLegalIDs returned nil for an empty legal set")
+	}
+}

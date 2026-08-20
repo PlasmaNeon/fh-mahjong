@@ -43,12 +43,19 @@ type slotResult struct {
 	err         error
 }
 
-func (p *EnvPool) ApplyCommands(request *pb.EnvPoolStepRequest) (*pb.EnvPoolStepResponse, error) {
-	commands := request.GetCommands()
+// runSlotCommands validates a batch of per-slot commands and applies them
+// concurrently, one goroutine per commanded slot, returning the results in slot
+// order. Shared by EnvPool.ApplyCommands and SearchPool.Step: both pools accept
+// at most one command per slot and both must return slot-ordered results,
+// because the Python side zips the response against its own slot list.
+//
+// slotNoun appears in the out-of-range error ("slots" for the env pool,
+// "clones" for the search pool).
+func runSlotCommands(commands []*pb.SlotCommand, slotCount int, slotNoun string, apply func(*pb.SlotCommand) slotResult) ([]slotResult, error) {
 	seen := make(map[uint32]bool, len(commands))
 	for _, cmd := range commands {
-		if int(cmd.GetSlot()) >= len(p.envs) {
-			return nil, fmt.Errorf("slot %d out of range (pool has %d slots)", cmd.GetSlot(), len(p.envs))
+		if int(cmd.GetSlot()) >= slotCount {
+			return nil, fmt.Errorf("slot %d out of range (pool has %d %s)", cmd.GetSlot(), slotCount, slotNoun)
 		}
 		if seen[cmd.GetSlot()] {
 			return nil, fmt.Errorf("duplicate command for slot %d", cmd.GetSlot())
@@ -62,12 +69,20 @@ func (p *EnvPool) ApplyCommands(request *pb.EnvPoolStepRequest) (*pb.EnvPoolStep
 		wg.Add(1)
 		go func(i int, cmd *pb.SlotCommand) {
 			defer wg.Done()
-			results[i] = p.applyOne(cmd)
+			results[i] = apply(cmd)
 		}(i, cmd)
 	}
 	wg.Wait()
 
 	sort.Slice(results, func(a, b int) bool { return results[a].slot < results[b].slot })
+	return results, nil
+}
+
+func (p *EnvPool) ApplyCommands(request *pb.EnvPoolStepRequest) (*pb.EnvPoolStepResponse, error) {
+	results, err := runSlotCommands(request.GetCommands(), len(p.envs), "slots", p.applyOne)
+	if err != nil {
+		return nil, err
+	}
 	return assemblePoolResponse(results)
 }
 
