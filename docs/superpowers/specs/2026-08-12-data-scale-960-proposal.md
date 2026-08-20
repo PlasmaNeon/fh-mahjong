@@ -759,3 +759,44 @@ event_hidden 128, 150 iterations.
 Final line from the session record: *"Ratified: `data-scale-960/mb768` will
 proceed under exactly the pre-registered protocol stated above, with no
 amendments."*
+
+
+## Final Outcome (2026-08-20, protocol CLOSED)
+
+**Verdict: scientifically valid NULL under the pre-registered gate.**
+
+The lap completed 150/150 iterations (run_id `ca6768e82c354bf8be6c5b7c73524573`,
+one Amendment-9 resume with an exactly-passed iteration-116 resume-integrity gate;
+guards clean throughout: cgroup peak 35.93 GiB <= 38, tree-RSS <= 40 GiB, zero
+truncated matches). The pre-registered evaluation chain then ran exactly as
+registered, serialized after the lap:
+
+- **Screenings** (910000+, 120 matches, duplicate seats, delta vs regenerated
+  anchor comparator): iter 25 = -0.0208, 50 = **+0.0181**, 75 = -0.0083,
+  100 = -0.0056, 125 = -0.0431, 150 = +0.0097.
+- **Kill rule @100** (both 75 & 100 < -0.06): passed (-0.0083 / -0.0056).
+- **Selection** (max eligible screening delta, registered milestones only):
+  `iter_050` (sha256 `e0eb21524692be80...`).
+- **Confirmation** (fresh window 1190000+, 1500 paired seeds x 4 duplicate
+  seats vs anchor075; config_check=strict, bridge_check=match,
+  window_check=match): mean_delta **+0.0175**, clustered SEM 0.00945,
+  clustered CI95 **[-0.0010, +0.0360]** -> crosses zero -> `significant=false`.
+  Large-loss gate passed (candidate 0.0487 vs champion 0.0505).
+
+**Ratified borderline wording** (Codex consult, thread
+`01a0147d-c23d-76b3-a585-1a0c4bc09456`, concurring on all disposition points):
+"The estimate was positive (+0.0175; CI95 -0.0010 to +0.0360) and is compatible
+with either no improvement or a small positive effect below this experiment's
+resolution; it does not alter the pre-registered null verdict or authorize
+further sampling."
+
+**Final ruling:** record data-scale-960/mb768 as a scientifically valid NULL;
+anchor075 remains champion; `iter_050` is a retained research artifact that
+failed confirmation — not a promotion or deployment candidate; the complete
+evidence (run id, checkpoint SHAs, frozen config, checkpoints, train state,
+histories, guard logs, screening/confirmation reports, comparison outputs) is
+archived read-only on the training box (`/root/fh-mahjong-runs/data-scale-960/`,
+`CLOSEOUT-MANIFEST.json`); the live status file is retired; the protocol is
+CLOSED with **no rerun, extension, promotion, deployment, or successor
+experiment** — any future intervention requires fresh authorization via a new
+consult decision.
