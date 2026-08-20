@@ -16,7 +16,7 @@ from conftest import SMALL_MODEL
 
 _ENV39 = EnvConfig(bridge_kind="mock")
 
-# Reused from test_deep16_rezero.py: a tiny B2b architecture so anchor
+# Reused from test_b2b_growth.py: a tiny B2b architecture so anchor
 # checkpoints in this file build and load fast.
 
 

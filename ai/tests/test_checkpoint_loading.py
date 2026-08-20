@@ -382,7 +382,7 @@ def test_evaluate_batch_threads_events_for_event_model(tmp_path):
 # --- Task 3 (deep16-rezero): growth-aware metadata loading, derivable count,
 # fail-closed rules. `_grown_config` deliberately stays plain (no B2b flags)
 # so these tests isolate the growth-only surface from the B2b surface above;
-# `test_deep16_rezero.py` separately covers growth stacked on a B2b anchor
+# `test_b2b_growth.py` separately covers growth stacked on a B2b anchor
 # via `grow_b2b_model`. ---
 
 def _grown_config(**overrides) -> ModelConfig:
