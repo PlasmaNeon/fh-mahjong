@@ -16,6 +16,7 @@ import SeatCard from './SeatCard';
 import { game } from '../../proto/game';
 import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note, Toggle } from '../../theme';
 import { useI18n } from '../../i18n/I18nContext';
+import { errorMessage, readJsonBody } from '../../utils/apiJson';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
@@ -142,15 +143,15 @@ export default function Table() {
                 signal,
             });
             if (signal?.aborted) return;
-            const data = await res.json().catch(() => ({}));
+            const data = await readJsonBody(res);
             if (res.status === 401) {
                 navigate(`/login?returnTo=${encodeURIComponent(`/room/${roomId}`)}`, { replace: true });
                 return;
             }
             if (!res.ok) {
                 if (res.status === 404) setError(t('room.unavailableLink'));
-                else if (res.status === 409) setError(data.error || t('room.full'));
-                else setError(data.error || t('room.joinFailed'));
+                else if (res.status === 409) setError(errorMessage(data, t('room.full')));
+                else setError(errorMessage(data, t('room.joinFailed')));
                 return;
             }
             const matchId = roomActiveRedirectMatchId(data, leftMarker, roomId);
@@ -194,8 +195,8 @@ export default function Table() {
                 body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED }),
             });
             if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                setError(data.error || t('room.updateSeatFailed'));
+                const data = await readJsonBody(res);
+                setError(errorMessage(data, t('room.updateSeatFailed')));
             }
         } catch (err: any) {
             setError(err.message || t('room.updateSeatFailed'));
@@ -211,8 +212,8 @@ export default function Table() {
                 body: JSON.stringify({ mode, chongci_config: cfg }),
             });
             if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                setError(data.error || t('room.updateModeFailed'));
+                const data = await readJsonBody(res);
+                setError(errorMessage(data, t('room.updateModeFailed')));
             }
         } catch (err: any) {
             setError(err.message || t('room.updateModeFailed'));
@@ -243,9 +244,9 @@ export default function Table() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
             });
-            const data = await res.json().catch(() => ({}));
+            const data = await readJsonBody(res);
             if (!res.ok) {
-                setError(data.error || t('room.startFailed'));
+                setError(errorMessage(data, t('room.startFailed')));
                 setStarting(false);
                 return;
             }

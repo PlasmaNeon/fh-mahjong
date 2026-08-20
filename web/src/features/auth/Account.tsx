@@ -5,6 +5,7 @@ import { useSocket } from '../../contexts/SocketContext'
 import { ClubShell, Card, PageHeader, Section, ToolsRow, Button, Field, Note } from '../../theme'
 import type { AuthPayload } from './authClient'
 import { useI18n } from '../../i18n/I18nContext'
+import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
 export default function Account() {
     const { status: authStatus, user, apiFetch, completeAuth, logout, refreshSession } = useAuth()
@@ -43,9 +44,9 @@ export default function Account() {
             if (emailChanged) { body.email = email.trim(); body.currentPassword = currentPassword }
             if (usernameChanged) body.username = username.trim()
             const response = await apiFetch('/api/v1/users/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-            const data = await response.json().catch(() => ({}))
-            if (!response.ok) throw new Error(data.error || t('account.saveFailed'))
-            completeAuth(data as AuthPayload)
+            const data = await readJsonBody<AuthPayload>(response)
+            if (!response.ok) throw new Error(errorMessage(data, t('account.saveFailed')))
+            completeAuth(data)
             setInitialEmail(data.user.email)
             setInitialUsername(data.user.username)
             setEmail(data.user.email)

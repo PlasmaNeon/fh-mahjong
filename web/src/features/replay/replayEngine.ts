@@ -180,22 +180,10 @@ export class ReplayEngine {
           activeDiscard = tileObjectFromId(action.tile as number)
           break
 
+        // Every steal-from-discard claim: the claimed tiles leave the hand, the
+        // discarder's last discard is taken, and the two form an open meld.
         case 'chii':
-        case 'pon': {
-          p.drawnTileId = null
-          for (const tid of (action.tiles ?? [])) {
-            removeFromHand(p.hand, tid)
-          }
-          const fromP = players[action.from as number]
-          if (fromP.discards.length > 0) {
-            const stolen = fromP.discards.pop()!
-            const meldTiles = [...(action.tiles ?? []).map(tileObjectFromId), stolen]
-            p.melds.push({ type: action.act, tiles: meldTiles, from: action.from as number })
-          }
-          activeDiscard = null
-          break
-        }
-
+        case 'pon':
         case 'okan': {
           p.drawnTileId = null
           for (const tid of (action.tiles ?? [])) {
@@ -205,7 +193,9 @@ export class ReplayEngine {
           if (fromP.discards.length > 0) {
             const stolen = fromP.discards.pop()!
             const meldTiles = [...(action.tiles ?? []).map(tileObjectFromId), stolen]
-            p.melds.push({ type: 'kan', tiles: meldTiles, from: action.from as number })
+            // An open kong is 'okan' in the paipu but renders as a kan meld.
+            const meldType = action.act === 'okan' ? 'kan' : action.act
+            p.melds.push({ type: meldType, tiles: meldTiles, from: action.from as number })
           }
           activeDiscard = null
           break

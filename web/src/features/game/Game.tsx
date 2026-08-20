@@ -21,6 +21,7 @@ import { resolveHandTileClick } from './handTileClick';
 import { shouldClearLift } from './clearLift';
 import { tileIdsEqual } from '../../table/meldOrdering';
 import { useI18n } from '../../i18n/I18nContext';
+import { makeWildTilePredicate } from '../../utils/tileModel';
 
 export default function Game() {
     const { t } = useI18n();
@@ -284,12 +285,8 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         }
     }, [gameState.handNum, liftedTileId, myPlayer]);
 
-    // Check if a tile is wild (memoized per gameState.wildTiles)
-    const wildTileSet = useRef(new Set<string>());
-    wildTileSet.current = new Set(
-        (gameState.wildTiles || []).map((w: any) => `${w.suit}-${w.value}`)
-    );
-    const isWildTile = (tile: game.ITile) => wildTileSet.current.has(`${tile.suit}-${tile.value}`);
+    // Check if a tile is wild (rebuilt per gameState.wildTiles)
+    const isWildTile = makeWildTilePredicate(gameState.wildTiles);
 
     const getActionMeta = (action: any) => {
         if (action.type === game.ActionType.ACTION_CHII) {
@@ -318,19 +315,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
 
     const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
     const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
-    const stageShellStyle = {
-        '--game-stage-scaled-width': `${stageLayout.scaledWidth}px`,
-        '--game-stage-scaled-height': `${stageLayout.scaledHeight}px`,
-        '--game-stage-available-width': `${stageLayout.availableWidth}px`,
-        '--game-stage-available-height': `${stageLayout.availableHeight}px`,
-    } as React.CSSProperties;
-
-    const stageStyle = {
-        width: `${stageLayout.stageWidth}px`,
-        height: `${stageLayout.stageHeight}px`,
-        zoom: stageLayout.scale,
-    } as React.CSSProperties;
-    const stageFrameStyle = {} as React.CSSProperties;
+    const { shellStyle: stageShellStyle, stageStyle } = stageLayout;
 
     const activeDiscardTile = gameState.players
         .find((player: any) => player.seat === gameState.activePlayer)
@@ -552,7 +537,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                     matchId={matchId}
                 />
             )}
-            <div className="game-stage-frame" style={stageFrameStyle}>
+            <div className="game-stage-frame">
                 <div
                     className="game-stage"
                     data-discard-mode={discardMode}

@@ -29,3 +29,18 @@ Every component here consumes tokens from `../tokens.css` through the structural
 - The identity is intentionally single-theme and does **not** follow `prefers-color-scheme`.
 - `Calc.tsx` and `Shanten.tsx` are deliberate exceptions: they use the utility classes directly for dense tool layouts (palettes, discard rows, melds, big-stat). Componentizing those was scoped out as YAGNI.
 - `features/auth/AuthDialog.tsx` is implemented in the auth feature, but its material classes live in `../base.css` alongside the compact home switchboard and paipu slips.
+
+## LedgerTile.tsx
+
+The ledger-workbench tile widgets shared by the calc and shanten tool pages:
+
+- `LedgerTile` — the `.ldg-tile` button (face image, size/selected/dimmed modifiers, optional badge)
+- `LedgerTileRow` — a row of drafted tiles, or the empty-state note
+- `LedgerPaletteGrid` — the full `TILE_LIBRARY` palette
+
+`disabled` is an explicit prop, not derived from `dimmed`: the shanten palette disables
+exhausted tiles while the calc palette dims the selected tile but stays clickable. Passing
+`usedCounts` to `LedgerPaletteGrid` switches on the shanten behaviour (remaining-copies
+badge, exhausted tiles dimmed and disabled).
+
+Tool pages must not re-implement these — extend the primitives instead.

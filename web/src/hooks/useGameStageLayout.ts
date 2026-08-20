@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from 'react';
 import type { RefCallback } from 'react';
-import { computeStageLayout, type StageLayoutOptions } from './computeStageLayout';
+import { computeStageLayout, stageStyles, type StageLayoutOptions } from './computeStageLayout';
 
 type StageBounds = {
     width: number;
@@ -73,11 +73,17 @@ export function useGameStageLayout(options: StageLayoutOptions = {}) {
     }, [containerElement]);
 
     const layout = computeStageLayout(bounds.width, bounds.height, options);
+    const styles = stageStyles({
+        ...layout,
+        availableWidth: bounds.width,
+        availableHeight: bounds.height,
+    });
 
     return {
         containerRef: setContainerElement as RefCallback<HTMLDivElement>,
         availableWidth: bounds.width,
         availableHeight: bounds.height,
         ...layout,
+        ...styles,
     };
 }

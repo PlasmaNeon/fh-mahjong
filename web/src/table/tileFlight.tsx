@@ -8,12 +8,12 @@ import {
   planTileFlights,
   hiddenHandSlotsByDirection,
   hiddenTileIdsFromAnimations,
-  tileIdsEqual,
   type FlyingTileAnimation,
   type MotionSnapshot,
   type TileMotionDescriptor,
   type TileRect,
 } from './tileFlightPlan'
+import { tileIdsEqual } from './tileId'
 
 export { tileIdsEqual }
 

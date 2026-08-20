@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
 import { game } from '../../proto/game'
-import { getTileName, getTileSvgName } from '../../utils/tileUtils'
-import { ClubShell, ToolTabs } from '../../theme'
+import { ClubShell, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   buildCalcRequestPayload,
@@ -26,9 +25,7 @@ import {
   normalizeCalcSuccessResponse,
   parseSingleTileInput,
   parseTehaiInput,
-  sameTileValue,
   sortTiles,
-  TILE_LIBRARY,
   validateCalculatorState,
   validateMeldShape,
   WIND_OPTIONS,
@@ -200,90 +197,6 @@ const MELD_DIRECTION_OPTIONS = [
 ]
 
 // ─── Tile component ───
-
-function CalcTile({
-  tile,
-  onClick,
-  size = 'normal',
-  selected = false,
-  dimmed = false,
-}: {
-  tile: CalcTileValue
-  onClick?: () => void
-  size?: 'normal' | 'small' | 'palette'
-  selected?: boolean
-  dimmed?: boolean
-}) {
-  const svgName = getTileSvgName(tile)
-  const cls = [
-    'ldg-tile',
-    size === 'small' ? 'ldg-tile--sm' : '',
-    size === 'palette' ? 'ldg-tile--pal' : '',
-    selected ? 'ldg-tile--sel' : '',
-    dimmed ? 'ldg-tile--dim' : '',
-    !onClick ? 'ldg-tile--static' : '',
-  ].filter(Boolean).join(' ')
-
-  return (
-    <button
-      type="button"
-      className={cls}
-      onClick={onClick}
-      title={getTileName(tile)}
-    >
-      <img src={`/Regular_shortnames/${svgName}`} alt={getTileName(tile)} draggable="false" />
-    </button>
-  )
-}
-
-// ─── Tile row ───
-
-function TileRow({ tiles, emptyLabel, onTileClick }: {
-  tiles: CalcTileDraft[]
-  emptyLabel: string
-  onTileClick: (tileId: string) => void
-}) {
-  if (tiles.length === 0) {
-    return (
-      <div className="ldg-tile-row ldg-tile-row--empty">
-        <span className="ldg-note" style={{ marginTop: 0 }}>{emptyLabel}</span>
-      </div>
-    )
-  }
-  return (
-    <div className="ldg-tile-row">
-      {tiles.map((tile) => (
-        <CalcTile key={tile.id} tile={tile} onClick={() => onTileClick(tile.id)} />
-      ))}
-    </div>
-  )
-}
-
-// ─── Palette grid ───
-
-function PaletteGrid({ onTileClick, selectedTile = null, dimSelected = false }: {
-  onTileClick: (tile: CalcTileValue) => void
-  selectedTile?: CalcTileDraft | null
-  dimSelected?: boolean
-}) {
-  return (
-    <div className="ldg-palette-grid">
-      {TILE_LIBRARY.map((tile) => {
-        const isSelectedPaletteTile = sameTileValue(tile, selectedTile)
-        return (
-          <CalcTile
-            key={formatTile(tile)}
-            tile={tile}
-            onClick={() => onTileClick(tile)}
-            size="palette"
-            selected={isSelectedPaletteTile}
-            dimmed={dimSelected && isSelectedPaletteTile}
-          />
-        )
-      })}
-    </div>
-  )
-}
 
 // ─── Helpers ───
 
@@ -699,7 +612,7 @@ export default function Calc() {
               </div>
             )}
 
-            <TileRow tiles={closedHand} emptyLabel={text.noClosedHand} onTileClick={removeClosedHandTile} />
+            <LedgerTileRow tiles={closedHand} emptyLabel={text.noClosedHand} onTileClick={removeClosedHandTile} />
 
           </section>
 
@@ -711,7 +624,7 @@ export default function Calc() {
                 <h2 className="ldg-section-title">{text.winTile}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                   {collapsedSections.winTile && winTile && (
-                    <CalcTile tile={winTile} onClick={() => { setWinTile(null); clearServerState() }} size="small" />
+                    <LedgerTile tile={winTile} onClick={() => { setWinTile(null); clearServerState() }} size="small" />
                   )}
                   {collapsedSections.winTile && (
                     <button
@@ -751,7 +664,7 @@ export default function Calc() {
                 <h2 className="ldg-section-title">{text.wildTile}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                   {collapsedSections.wildTile && wildTile && (
-                    <CalcTile tile={wildTile} onClick={() => { setWildTile(null); clearServerState() }} size="small" selected />
+                    <LedgerTile tile={wildTile} onClick={() => { setWildTile(null); clearServerState() }} size="small" selected />
                   )}
                   {collapsedSections.wildTile && (
                     <button
@@ -797,7 +710,7 @@ export default function Calc() {
             </div>
             <div className="ldg-palette-drawer">
               <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : paletteTarget === 'win' ? text.winTile : paletteTarget === 'wild' ? text.wildTile : text.openMeldsTitle}</div>
-              <PaletteGrid onTileClick={addPaletteTile} selectedTile={paletteTarget === 'win' ? winTile : paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
+              <LedgerPaletteGrid onTileClick={addPaletteTile} selectedTile={paletteTarget === 'win' ? winTile : paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
@@ -900,7 +813,7 @@ export default function Calc() {
                       </div>
                     </div>
 
-                    <TileRow
+                    <LedgerTileRow
                       tiles={meld.tiles}
                       emptyLabel={text.meldEmpty}
                       onTileClick={(tileId) => removeMeldTile(meld.id, tileId)}

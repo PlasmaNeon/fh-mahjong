@@ -19,6 +19,7 @@ import type {
   RoundResultView,
 } from './types'
 import { useI18n } from '../i18n/I18nContext'
+import { WIND_KANJI } from '../utils/winds'
 
 export { TileComponent }
 export type {
@@ -48,7 +49,6 @@ type TableBoardProps = {
   callableDiscard?: { seat: number; tileId: number } | null
 }
 
-const WIND_KANJI = ['', '東', '南', '西', '北']
 const POSITIONS: SeatLaneDirection[] = ['bottom', 'right', 'top', 'left']
 
 export function getSeatDirection(seat: number, viewSeat: number): SeatLaneDirection {

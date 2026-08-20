@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 export type StageLayoutOptions = {
   baseHeight?: number
   compactBaseHeight?: number
@@ -62,5 +64,36 @@ export function computeStageLayout(
     offsetX: Math.max((safeWidth - scaledWidth) / 2, 0),
     offsetY: Math.max((safeHeight - scaledHeight) / 2, 0),
     compact,
+  }
+}
+
+export type StageStyleInput = StageLayout & {
+  availableWidth: number
+  availableHeight: number
+}
+
+/**
+ * The fixed-stage wrapper styles, shared by every page that renders the board
+ * (live match, replay, and the dev table sample).
+ *
+ * `zoom` rather than `transform: scale()` is deliberate: it keeps Framer Motion
+ * tile transitions in a less surprising coordinate space (see web/src/CLAUDE.md).
+ */
+export function stageStyles(layout: StageStyleInput): {
+  shellStyle: CSSProperties
+  stageStyle: CSSProperties
+} {
+  return {
+    shellStyle: {
+      '--game-stage-scaled-width': `${layout.scaledWidth}px`,
+      '--game-stage-scaled-height': `${layout.scaledHeight}px`,
+      '--game-stage-available-width': `${layout.availableWidth}px`,
+      '--game-stage-available-height': `${layout.availableHeight}px`,
+    } as CSSProperties,
+    stageStyle: {
+      width: `${layout.stageWidth}px`,
+      height: `${layout.stageHeight}px`,
+      zoom: layout.scale,
+    } as CSSProperties,
   }
 }

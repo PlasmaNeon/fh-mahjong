@@ -3,6 +3,7 @@ import { Button, Field, Note, ToolsRow } from '../../theme'
 import { useAuth } from '../../contexts/AuthContext'
 import { authenticatedFetch, type AuthPayload } from './authClient'
 import { useI18n } from '../../i18n/I18nContext'
+import { errorMessage, readJsonBody } from '../../utils/apiJson'
 
 type Mode = 'login' | 'register'
 
@@ -27,8 +28,8 @@ export default function AuthTicket({ onAuthenticated, intent = 'continue' }: { o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isRegister ? { email, password, username } : { identifier, password }),
       })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || t('auth.failed'))
+      const data = await readJsonBody(response)
+      if (!response.ok) throw new Error(errorMessage(data, t('auth.failed')))
       completeAuth(data as AuthPayload)
       onAuthenticated?.(data as AuthPayload)
     } catch (err) {

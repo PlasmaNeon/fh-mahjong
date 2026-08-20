@@ -1,16 +1,9 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { computeStageLayout } from '../hooks/computeStageLayout'
+import { pixelVariable, readSourceCss, ruleBody } from '../test/cssContract'
 
 function desktopTableRule() {
-  const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
-  return css.match(/\.game-stage \.mahjong-table\s*\{([^}]*)\}/)?.[1] ?? ''
-}
-
-function pixelVariable(rule: string, name: string) {
-  const value = rule.match(new RegExp(`${name}:\\s*([\\d.]+)px`))?.[1]
-  return Number(value)
+  return ruleBody(readSourceCss('src/index.css'), '.game-stage .mahjong-table')
 }
 
 describe('desktop self-hand geometry', () => {

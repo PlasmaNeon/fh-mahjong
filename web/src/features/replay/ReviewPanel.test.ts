@@ -44,62 +44,51 @@ function fixtureReport(): ReviewReport {
   }
 }
 
+type PanelProps = Parameters<typeof ReviewPanel>[0]
+
+/** Renders ReviewPanel with the common prop set, overriding only what a case cares about. */
+function renderPanel(overrides: Partial<PanelProps> = {}): string {
+  return renderToStaticMarkup(
+    React.createElement(ReviewPanel, {
+      report: fixtureReport(),
+      status: 'ready',
+      onRequestReview: () => {},
+      viewSeat: 0,
+      position: { round: 0, actionIndex: 3 },
+      onJump: () => {},
+      lang: 'en',
+      onLangToggle: () => {},
+      thresholds: SEVERITY_THRESHOLDS,
+      onThresholdsChange: () => {},
+      ...overrides,
+    } as PanelProps),
+  )
+}
+
 describe('ReviewPanel', () => {
   it('renders the severity badge and the champion top-action bar row for the decision at the current position', () => {
-    const report = fixtureReport()
-    const html = renderToStaticMarkup(
-      React.createElement(ReviewPanel, {
-        report,
-        status: 'ready',
-        onRequestReview: () => {},
-        viewSeat: 0,
-        position: { round: 0, actionIndex: 3 }, // matches decisions[0], a mistake (gap 0.79)
-        onJump: () => {},
-        lang: 'en',
-        onLangToggle: () => {},
-        thresholds: SEVERITY_THRESHOLDS,
-        onThresholdsChange: () => {},
-      }),
-    )
+    const html = renderPanel()
 
     expect(html).toContain('Mistake') // severity badge
     expect(html).toContain('Discard 1m') // champion's top-action bar row label
   })
 
   it('shows the request-review button when no report exists yet', () => {
-    const html = renderToStaticMarkup(
-      React.createElement(ReviewPanel, {
-        report: null,
-        status: 'empty',
-        onRequestReview: () => {},
-        viewSeat: 0,
-        position: { round: 0, actionIndex: -1 },
-        onJump: () => {},
-        lang: 'en',
-        onLangToggle: () => {},
-        thresholds: SEVERITY_THRESHOLDS,
-        onThresholdsChange: () => {},
-      }),
-    )
+    const html = renderPanel({
+      report: null,
+      status: 'empty',
+      position: { round: 0, actionIndex: -1 },
+    })
 
     expect(html).toContain('Request review')
   })
 
   it('shows the neutral unavailable message on a 503 status', () => {
-    const html = renderToStaticMarkup(
-      React.createElement(ReviewPanel, {
-        report: null,
-        status: 'unavailable',
-        onRequestReview: () => {},
-        viewSeat: 0,
-        position: { round: 0, actionIndex: -1 },
-        onJump: () => {},
-        lang: 'en',
-        onLangToggle: () => {},
-        thresholds: SEVERITY_THRESHOLDS,
-        onThresholdsChange: () => {},
-      }),
-    )
+    const html = renderPanel({
+      report: null,
+      status: 'unavailable',
+      position: { round: 0, actionIndex: -1 },
+    })
 
     expect(html).toContain('Reviewer unavailable')
     expect(html).not.toContain('wrong')
@@ -114,20 +103,9 @@ describe('ReviewPanel', () => {
         dec({ round: 0, actionIndex: 5, chosenActionId: 5, chosenProb: 0.8, value: null }),
       ],
     }
-    const html = renderToStaticMarkup(
-      React.createElement(ReviewPanel, {
-        report,
-        status: 'ready',
-        onRequestReview: () => {},
-        viewSeat: 0,
-        position: { round: 0, actionIndex: 3 },
-        onJump: () => {},
-        lang: 'en',
-        onLangToggle: () => {},
-        thresholds: SEVERITY_THRESHOLDS,
-        onThresholdsChange: () => {},
-      }),
-    )
+    const html = renderPanel({
+      report,
+    })
 
     expect(html).toContain('Value estimates are unavailable for this policy')
     expect(html).not.toContain('review-sparkline')
@@ -142,20 +120,9 @@ describe('ReviewPanel', () => {
     void _drop
     const report = legacyReport as ReviewReport
 
-    const html = renderToStaticMarkup(
-      React.createElement(ReviewPanel, {
-        report,
-        status: 'ready',
-        onRequestReview: () => {},
-        viewSeat: 0,
-        position: { round: 0, actionIndex: 3 },
-        onJump: () => {},
-        lang: 'en',
-        onLangToggle: () => {},
-        thresholds: SEVERITY_THRESHOLDS,
-        onThresholdsChange: () => {},
-      }),
-    )
+    const html = renderPanel({
+      report,
+    })
 
     expect(html).toContain('review-sparkline')
     expect(html).not.toContain('Value estimates are unavailable for this policy')

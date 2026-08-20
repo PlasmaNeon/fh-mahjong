@@ -182,7 +182,29 @@ export function parseSingleTile(
 }
 
 export function tileKey(tile: TileValue): string {
+  return faceKey(tile)
+}
+
+/**
+ * The suit/value face key, tolerant of the proto's optional-field shape
+ * (`game.ITile` has `suit?: number | null`). Callers on the live board and in
+ * replay pass decoded proto tiles, so the loose type is deliberate.
+ */
+type TileFaceLike = { suit?: number | null; value?: number | null }
+
+function faceKey(tile: TileFaceLike): string {
   return `${tile.suit}-${tile.value}`
+}
+
+/**
+ * Builds a wild-tile (搭) test from the round's wild indicators. The live board
+ * and the replay viewer were each re-inlining `${suit}-${value}` key sets.
+ */
+export function makeWildTilePredicate(
+  wildTiles: readonly TileFaceLike[] | null | undefined,
+): (tile: TileFaceLike) => boolean {
+  const keys = new Set((wildTiles || []).map(faceKey))
+  return (tile: TileFaceLike) => keys.has(faceKey(tile))
 }
 
 export function countTiles(tiles: TileValue[]): Map<string, number> {
