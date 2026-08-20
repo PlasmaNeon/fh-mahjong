@@ -23,16 +23,13 @@ from fh_mahjong_ai.scripts.serve_policy import (
 )
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
+from conftest import SMALL_MODEL
 
-_SMALL = dict(
-    channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-    trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16,
-)
 _ENV = EnvConfig()
 
 
 def _event_model_config(window: int = 8) -> ModelConfig:
-    return ModelConfig(**dict(_SMALL, event_window=window))
+    return ModelConfig(**dict(SMALL_MODEL, event_window=window))
 
 
 def _save_checkpoint(tmp_path: Path, model_config: ModelConfig, step: int = 1, name: str = "model.pt") -> Path:
@@ -338,7 +335,7 @@ def test_http_act_window_zero_model_rejects_garbage_event_fields(tmp_path: Path)
     window-0 model no longer silently ignores garbage event fields — see
     test_observation_from_json_window_zero_rejects_garbage_event_fields for
     the unit-level version of this same tightening."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
         status, data = server.request(
@@ -356,7 +353,7 @@ def test_http_act_window_zero_model_rejects_garbage_event_fields(tmp_path: Path)
 
 
 def test_http_act_window_zero_model_accepts_no_event_fields(tmp_path: Path) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
         status, data = server.request("POST", "/act", _observation_payload([0, 1, 2]))
@@ -371,7 +368,7 @@ def test_http_act_window_zero_model_accepts_go_legacy_scalars(tmp_path: Path) ->
     """The Go legacy path always sends event_count/event_window/
     contract_version as 0/0/1 even against a window-0 model — must still
     succeed (window 0 == 0, version 1 matches)."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
         status, data = server.request(
@@ -468,7 +465,7 @@ def test_http_evaluate_window_zero_model_rejects_garbage_event_fields(tmp_path: 
     /evaluate applies the same symmetric validation as /act — a window-0
     model no longer silently ignores partially-present garbage event
     fields."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
@@ -484,7 +481,7 @@ def test_http_evaluate_window_zero_model_rejects_garbage_event_fields(tmp_path: 
 
 
 def test_http_evaluate_window_zero_model_accepts_no_event_fields(tmp_path: Path) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
@@ -529,7 +526,7 @@ def test_http_evaluate_disabled_without_token_configured(tmp_path: Path, monkeyp
     immediately (403) WITHOUT ever invoking evaluate_batch — a tripwire on
     evaluate_batch itself, not just an assertion on the status code, so a
     regression that authenticates but still runs inference is caught."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json")  # evaluate_token defaults None
 
     def _tripwire(*args: object, **kwargs: object) -> None:
@@ -551,7 +548,7 @@ def test_http_evaluate_disabled_without_token_configured(tmp_path: Path, monkeyp
 def test_http_evaluate_wrong_bearer_token_rejected_no_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
 
     def _tripwire(*args: object, **kwargs: object) -> None:
@@ -575,7 +572,7 @@ def test_http_evaluate_wrong_bearer_token_rejected_no_invocation(
 def test_http_evaluate_missing_bearer_header_rejected_no_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
 
     def _tripwire(*args: object, **kwargs: object) -> None:
@@ -1494,7 +1491,7 @@ def test_policy_holder_reload_checkpoint_id_happy_path_still_works(tmp_path: Pat
 
 
 def _privileged_event_model_config(window: int = 8) -> ModelConfig:
-    return ModelConfig(**dict(_SMALL, event_window=window, privileged_critic=True, aux_heads=True))
+    return ModelConfig(**dict(SMALL_MODEL, event_window=window, privileged_critic=True, aux_heads=True))
 
 
 def test_http_act_privileged_critic_checkpoint_nulls_value(tmp_path: Path) -> None:
@@ -1573,7 +1570,7 @@ def test_http_evaluate_privileged_critic_checkpoint_nulls_values_and_flags_respo
 
 def test_http_evaluate_non_privileged_checkpoint_keeps_values(tmp_path: Path) -> None:
     """Window-0 old-champion-style checkpoint: values unchanged, flag true."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0, privileged_critic=False
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0, privileged_critic=False
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
@@ -1597,7 +1594,7 @@ def test_http_evaluate_non_privileged_checkpoint_keeps_values(tmp_path: Path) ->
 
 
 def test_http_warmup_returns_200_with_all_fields_matching_healthz(tmp_path: Path) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
     server = _Server(checkpoint, tmp_path / "manifest.json")  # no evaluate token -> warmup open
     try:
         status, data = server.request("POST", "/warmup", {})
@@ -1619,7 +1616,7 @@ def test_http_warmup_returns_200_with_all_fields_matching_healthz(tmp_path: Path
 def test_http_warmup_accepts_empty_body(tmp_path: Path) -> None:
     """POST /warmup with no body at all (not even '{}') must still work —
     its content is always ignored."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json")
     try:
         status, data = server.request("POST", "/warmup", None)
@@ -1633,7 +1630,7 @@ def test_http_warmup_accepts_empty_body(tmp_path: Path) -> None:
 def test_http_warmup_disabled_token_no_header_rejected(tmp_path: Path) -> None:
     """When an evaluate token IS configured, /warmup piggybacks on it —
     mirroring /evaluate's 403 status for a missing bearer header."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request("POST", "/warmup", {})
@@ -1645,7 +1642,7 @@ def test_http_warmup_disabled_token_no_header_rejected(tmp_path: Path) -> None:
 
 
 def test_http_warmup_wrong_token_rejected(tmp_path: Path) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
@@ -1659,7 +1656,7 @@ def test_http_warmup_wrong_token_rejected(tmp_path: Path) -> None:
 
 
 def test_http_warmup_correct_token_succeeds(tmp_path: Path) -> None:
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json", evaluate_token="eval-token")
     try:
         status, data = server.request(
@@ -1676,7 +1673,7 @@ def test_http_warmup_open_when_no_token_configured(tmp_path: Path) -> None:
     """No --evaluate-token configured at all: /warmup must stay open and
     unauthenticated — the primary production instance runs tokenless, and
     warmup exists precisely to serve it."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
     server = _Server(checkpoint, tmp_path / "manifest.json")  # evaluate_token defaults None
     try:
         status, data = server.request("POST", "/warmup", {})
@@ -1696,7 +1693,7 @@ def test_http_warmup_does_not_advance_the_sampling_rng(tmp_path: Path) -> None:
 
     Pinned end to end: the sampled /act sequence after two /warmup calls must
     be byte-identical to the same sequence with no warmup at all."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))
 
     def sampled_sequence(warmups: int) -> tuple[list[int], tuple]:
         policy = CheckpointPolicy.from_checkpoint(

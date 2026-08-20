@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
+from fh_mahjong_ai.evaluate import parse_seed_windows
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.paired_trace import (
     compare_policy_traces,
@@ -28,18 +29,6 @@ def load_model(checkpoint: Path, device: str, model_config: ModelConfig) -> Poli
     return model
 
 
-def parse_seed_windows(values: list[str], episodes: int) -> list[int]:
-    seeds: list[int] = []
-    for value in values:
-        if ":" in value:
-            start_text, count_text = value.split(":", 1)
-            start = int(start_text)
-            count = int(count_text)
-        else:
-            start = int(value)
-            count = episodes
-        seeds.extend(range(start, start + count))
-    return seeds
 
 
 def load_resume_pairs(path: Path) -> list[dict[str, Any]]:

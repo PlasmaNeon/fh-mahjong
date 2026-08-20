@@ -17,6 +17,7 @@ from fh_mahjong_ai.storage import (
     write_transitions_npz_shards,
 )
 from fh_mahjong_ai.types import Observation, Transition
+from conftest import SMALL_MODEL
 
 
 def _observation(seed: int, seat: int = 0) -> Observation:
@@ -264,11 +265,9 @@ def test_save_checkpoint_precedes_history_and_state_writes_in_train_b2b(tmp_path
     from fh_mahjong_ai.oracle import train_b2b
     from fh_mahjong_ai.ppo import PPOConfig
 
-    _SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-                  trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
     env39 = EnvConfig(bridge_kind="mock")
     champion_path = tmp_path / "champion.pt"
-    save_checkpoint(champion_path, PolicyValueNet(env39, ModelConfig(**_SMALL)))
+    save_checkpoint(champion_path, PolicyValueNet(env39, ModelConfig(**SMALL_MODEL)))
 
     calls: list[str] = []
     real_save_checkpoint = oracle_module.save_checkpoint
@@ -296,7 +295,7 @@ def test_save_checkpoint_precedes_history_and_state_writes_in_train_b2b(tmp_path
     config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
-    train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+    train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
                                aux_heads=True),
               champion_path, tmp_path / "ckpt", config, base_seed=5,
               train_state_every=1)

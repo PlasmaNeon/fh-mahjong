@@ -14,7 +14,7 @@ from fh_mahjong_ai.action_catalog import action_family
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
-from fh_mahjong_ai.storage import SHARDED_TRANSITIONS_SCHEMA_VERSION, load_checkpoint, read_transition_arrays
+from fh_mahjong_ai.storage import SHARDED_TRANSITIONS_SCHEMA_VERSION, load_checkpoint, read_transition_arrays, write_single_shard_dataset
 
 REPLAY_KEYS = (
     "planes",
@@ -288,22 +288,10 @@ def build_anchor_preservation_divergence_arrays(
 
 
 def write_divergence_shard(output_dir: Path, arrays: dict[str, np.ndarray], metadata: dict[str, Any]) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for path in output_dir.glob("transitions-*.npz"):
-        path.unlink()
-    shard_name = "transitions-00000.npz"
-    np.savez(output_dir / shard_name, **arrays)
-    manifest = {
-        "schema_version": SHARDED_TRANSITIONS_SCHEMA_VERSION,
-        "format": "npz_shards",
-        "compressed": False,
-        "shard_size": int(arrays["action_ids"].shape[0]),
-        "transitions": int(arrays["action_ids"].shape[0]),
-        "shards": [{"path": shard_name, "transitions": int(arrays["action_ids"].shape[0])}],
-        "counterfactual": metadata,
-    }
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return manifest
+    # The manifest block is "counterfactual" even here: that is the key this
+    # writer has always emitted, and the readers/tests depend on it. Renaming it
+    # would be an on-disk format change, not a refactor.
+    return write_single_shard_dataset(output_dir, arrays, metadata)
 
 
 def main() -> None:

@@ -259,3 +259,45 @@ Splitting `api/room.go` (1,258 lines), `api/server.go`, and `cmd/server/main.go`
 All real, all file surgery on the busiest files in the backend; they should not ride along with a
 rename PR. `cmd/rlpaipu` → `cmd/paipugen` and `cmd/rlsmoke` → `cmd/paipusmoke` were endorsed only
 weakly (low value, 9 refs including Makefile and runbooks) and are dropped.
+
+## 2026-08-16 — PR 5: ai de-duplication (partial)
+
+Behaviour-preserving, per §8.1 of the design doc. Gated on
+`uv run --project ai pytest ai/tests` (**915 → 921 passed**, 2 skipped) and, for anything touching
+the model or serving path, on `fh-mj-serving-parity --in-process` against the committed champion
+(189/189 decisions, max logit diff 0.000e+00).
+
+| Shared home | Owns | Copies removed from |
+|---|---|---|
+| `evaluate.parse_seed_windows` | seed-window expansion | 5 CLIs (4 identical + 1 variant) |
+| `storage.write_json_report` | the report JSON encoding | 3 eval CLIs |
+| `storage.write_single_shard_dataset` | one-shard npz + manifest | `build_counterfactual_risk_data`, `replay_policy_diagnostics` |
+| `model.build_plane_scalar_encoders` | the plane/scalar observation trunk | `PolicyValueNet`, `GlobalEVNet`, `ActionGlobalEVNet` |
+| `ai/tests/conftest.py` | `SMALL_MODEL`, `small_model_config`, `make_observation`, `save_checkpoint` | 8 test files (there was no conftest at all) |
+
+### The encoder trunk is the one to be careful with
+
+`build_plane_scalar_encoders` returns the modules **loose**, as a NamedTuple, for the caller to
+assign under their historical attribute names. It deliberately does **not** wrap them in a container
+`Module`: those attribute names *are* the `state_dict` keys in every committed checkpoint, so
+nesting them would prefix every key (`trunk.plane_stem.*`) and stop the deployed champion loading.
+
+Verified by capturing the key sets before and after (36 keys for `PolicyValueNet`, 18 for
+`GlobalEVNet` — identical), loading the champion, and running serving-parity.
+`test_model.py` now pins the shape so a future "tidy-up" into a sub-Module fails loudly.
+
+### Two traps worth remembering
+
+- **`test_storage.py`'s `_SMALL` was function-local**, not module-level. An unanchored regex removed
+  its text and left the indentation behind, which surfaced as an `IndentationError` two lines later.
+  Every touched file is now `ast.parse`-checked.
+- **`write_divergence_shard` emits a manifest block named `"counterfactual"`**, not `"divergence"`.
+  Parameterising it by function name looked like an improvement and was an on-disk format change;
+  the test suite caught it. Both callers keep the historical key.
+
+### Still outstanding from the design doc's ai Tier 1
+
+`scripts/env_args.py` and `ppo_args.py` (the argparse blocks, ~225 lines), MLflow arg/run setup
+(~90), the checkpoint→net loader (~45), the diagnostics statistics helpers (~70), the
+`evaluate_duplicate_seats` near-copy (~135), the four spawn rollout pools (~210), the serving-test
+HTTP harness (~80), and A15 `tensorize` (the serving path — gate with `fh-mj-serving-parity`).

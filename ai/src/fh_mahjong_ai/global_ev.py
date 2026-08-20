@@ -9,7 +9,7 @@ from torch import Tensor, nn
 
 from .config import EnvConfig, ModelConfig
 from .data import placement_shaped_returns
-from .model import ResidualBlock
+from .model import ResidualBlock, build_plane_scalar_encoders
 
 
 GLOBAL_EV_ARRAY_KEYS = (
@@ -59,40 +59,12 @@ class GlobalEVNet(nn.Module):
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig) -> None:
         super().__init__()
-        channels, height, width = env_config.plane_shape
-        self.plane_stem = nn.Sequential(
-            nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
-            nn.GELU(),
-        )
-        self.plane_blocks = nn.Sequential(
-            *[
-                ResidualBlock(
-                    model_config.channels,
-                    channel_attention=model_config.channel_attention,
-                    attention_ratio=model_config.channel_attention_ratio,
-                )
-                for _ in range(model_config.residual_blocks)
-            ]
-        )
-        if model_config.pool_planes:
-            plane_projection_dim = model_config.channels
-            self.plane_projection = nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
-                nn.Flatten(start_dim=1),
-            )
-        else:
-            plane_projection_dim = model_config.channels * height * width
-            self.plane_projection = nn.Flatten(start_dim=1)
-        self.plane_head = nn.Sequential(
-            nn.Linear(plane_projection_dim, model_config.plane_feature_dim),
-            nn.GELU(),
-        )
-        self.scalar_encoder = nn.Sequential(
-            nn.Linear(env_config.scalar_features, model_config.scalar_hidden_dim),
-            nn.GELU(),
-            nn.Linear(model_config.scalar_hidden_dim, model_config.scalar_hidden_dim),
-            nn.GELU(),
-        )
+        encoders = build_plane_scalar_encoders(env_config, model_config)
+        self.plane_stem = encoders.plane_stem
+        self.plane_blocks = encoders.plane_blocks
+        self.plane_projection = encoders.plane_projection
+        self.plane_head = encoders.plane_head
+        self.scalar_encoder = encoders.scalar_encoder
         self.head = nn.Sequential(
             nn.Linear(model_config.plane_feature_dim + model_config.scalar_hidden_dim, model_config.trunk_hidden_dim),
             nn.GELU(),
@@ -117,40 +89,12 @@ class ActionGlobalEVNet(nn.Module):
 
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig) -> None:
         super().__init__()
-        channels, height, width = env_config.plane_shape
-        self.plane_stem = nn.Sequential(
-            nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
-            nn.GELU(),
-        )
-        self.plane_blocks = nn.Sequential(
-            *[
-                ResidualBlock(
-                    model_config.channels,
-                    channel_attention=model_config.channel_attention,
-                    attention_ratio=model_config.channel_attention_ratio,
-                )
-                for _ in range(model_config.residual_blocks)
-            ]
-        )
-        if model_config.pool_planes:
-            plane_projection_dim = model_config.channels
-            self.plane_projection = nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
-                nn.Flatten(start_dim=1),
-            )
-        else:
-            plane_projection_dim = model_config.channels * height * width
-            self.plane_projection = nn.Flatten(start_dim=1)
-        self.plane_head = nn.Sequential(
-            nn.Linear(plane_projection_dim, model_config.plane_feature_dim),
-            nn.GELU(),
-        )
-        self.scalar_encoder = nn.Sequential(
-            nn.Linear(env_config.scalar_features, model_config.scalar_hidden_dim),
-            nn.GELU(),
-            nn.Linear(model_config.scalar_hidden_dim, model_config.scalar_hidden_dim),
-            nn.GELU(),
-        )
+        encoders = build_plane_scalar_encoders(env_config, model_config)
+        self.plane_stem = encoders.plane_stem
+        self.plane_blocks = encoders.plane_blocks
+        self.plane_projection = encoders.plane_projection
+        self.plane_head = encoders.plane_head
+        self.scalar_encoder = encoders.scalar_encoder
         action_embedding_dim = min(64, max(8, model_config.scalar_hidden_dim // 2))
         self.action_embedding = nn.Embedding(env_config.action_space_size, action_embedding_dim)
         self.head = nn.Sequential(

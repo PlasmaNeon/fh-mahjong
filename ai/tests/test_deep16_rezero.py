@@ -24,16 +24,15 @@ from fh_mahjong_ai.oracle import (
 )
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
+from conftest import SMALL_MODEL
 
 # Reused from test_b2c_loading.py: a tiny B2b architecture + a 39ch mock-bridge
 # EnvConfig, so anchor checkpoints in this file build and load fast.
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 _ENV39 = EnvConfig(bridge_kind="mock")
 
 
 def _b2b_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    fields = dict(SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -254,7 +253,7 @@ def test_grow_b2b_model_raises_on_mismatched_trunk_shape(tmp_path) -> None:
 
 def test_grow_b2b_model_raises_on_doctored_channels_claim(tmp_path) -> None:
     # The anchor's REAL net is built at channels=32, but its metadata lies
-    # and claims channels=16 (the _SMALL default). grow_b2b_model constructs
+    # and claims channels=16 (the SMALL_MODEL default). grow_b2b_model constructs
     # its grown net from the metadata claim alone
     # (`PolicyValueNet(anchor_env_config, grown_config)`), so a wrong claim
     # here would build a differently-shaped net than the anchor's own
@@ -521,7 +520,7 @@ def test_cli_resume_growth_lap_with_only_cli_flags(tmp_path) -> None:
 
 def _champion39(tmp_path: Path) -> tuple[EnvConfig, Path]:
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     path = tmp_path / "champion.pt"
     save_checkpoint(path, model)
     return env39, path
@@ -531,7 +530,7 @@ def _b2b_run_configs(tmp_path: Path, *, iterations: int, lr: float = 2e-5):
     _, champion_path = _champion39(tmp_path)
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
-    model_config = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    model_config = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
     config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=lr,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
@@ -2923,7 +2922,7 @@ def _go_bridge_run_configs(tmp_path: Path, *, iterations: int, lib_path: Path):
     env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path),
                     event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
-    model_config = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    model_config = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
     config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=2e-5,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
