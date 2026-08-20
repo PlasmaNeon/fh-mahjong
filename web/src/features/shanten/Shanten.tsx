@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
-import { ClubShell, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import { ClubShell, InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   countTiles,
@@ -19,89 +19,10 @@ import {
   TileValue,
 } from './shantenHelpers'
 
-const TEXT = {
-  en: {
-    language: '中文',
-    title: 'Shanten',
-    closedHand: 'Closed hand',
-    tiles: 'tiles',
-    openMelds: 'open melds',
-    apply: 'Apply',
-    tilePalette: 'Tile palette',
-    noTiles: 'Click tiles below to build your hand.',
-    wildTile: 'Wild tile (搭)',
-    noWild: 'None set',
-    openMeldsLabel: 'Open melds',
-    result: 'Result',
-    complete: 'Complete',
-    tenpai: 'Tenpai',
-    shantenAway: '-shanten',
-    usefulTiles: 'Useful tiles',
-    noUseful: 'No useful tiles.',
-    totalRemaining: 'tiles remaining',
-    clear: 'Clear',
-    sort: 'Sort',
-    redraw: 'Redraw',
-    drawnTileLabel: 'Drawn tile',
-    waiting13: 'Add tiles to build a hand.',
-    error: 'Error',
-    discard: 'disc',
-    draw: 'draw',
-    discardAnalysis: 'Discard analysis',
-    count: 'count',
-    edit: 'Edit',
-    expected: 'Expected',
-    tileTray: 'Tile tray',
-    tileTrayHelp: 'One tray for the hand and wild indicator.',
-    tileTarget: 'Tile target',
-    addingTo: 'Adding to',
-    advancedSetup: 'Advanced setup',
-    advancedSetupHelp: 'open meld count',
-  },
-  zh: {
-    language: 'EN',
-    title: '向听',
-    closedHand: '手牌',
-    tiles: '张',
-    openMelds: '副露',
-    apply: '确认',
-    tilePalette: '选牌',
-    noTiles: '点击下方的牌来构建手牌。',
-    wildTile: '搭牌（百搭）',
-    noWild: '未设置',
-    openMeldsLabel: '副露数',
-    result: '结果',
-    complete: '和了',
-    tenpai: '听牌',
-    shantenAway: '向听',
-    usefulTiles: '有效牌',
-    noUseful: '无有效牌。',
-    totalRemaining: '张可用',
-    clear: '清空',
-    sort: '排序',
-    redraw: '重新摸牌',
-    drawnTileLabel: '摸到的牌',
-    waiting13: '添加牌来构建手牌。',
-    error: '错误',
-    discard: '打',
-    draw: '摸',
-    discardAnalysis: '打牌分析',
-    count: '枚',
-    edit: '编辑',
-    expected: '需要',
-    tileTray: '选牌区',
-    tileTrayHelp: '手牌和搭牌共用一个牌盘。',
-    tileTarget: '选牌目标',
-    addingTo: '正在添加到',
-    advancedSetup: '高级设置',
-    advancedSetupHelp: '副露数量',
-  },
-} as const
-
 // ─── Main page ───
 
 export default function Shanten() {
-  const { shortLanguage: lang, toggleLanguage } = useI18n()
+  const { t, shortLanguage: lang, toggleLanguage } = useI18n()
   const [hand, setHand] = useState<TileDraft[]>([])
   const [wildTile, setWildTile] = useState<TileValue | null>(null)
   const [openMelds, setOpenMelds] = useState(0)
@@ -113,7 +34,6 @@ export default function Shanten() {
   const initializedRef = useRef(false)
 
   const baseSize = 13 - 3 * openMelds
-  const text = TEXT[lang]
 
   useEffect(() => {
     if (initializedRef.current) return
@@ -239,13 +159,13 @@ export default function Shanten() {
 
   const shantenStatusLabel = useMemo(() => {
     if (!result) return null
-    if (result.shanten === -1) return { label: text.complete, ok: true }
-    if (result.shanten === 0) return { label: text.tenpai, ok: true }
-    return { label: `${result.shanten}${text.shantenAway}`, ok: false }
-  }, [result, text])
+    if (result.shanten === -1) return { label: t('shanten.complete'), ok: true }
+    if (result.shanten === 0) return { label: t('shanten.tenpai'), ok: true }
+    return { label: `${result.shanten}${t('shanten.shantenAway')}`, ok: false }
+  }, [result, t])
 
   return (
-    <ClubShell title={lang === 'en' ? 'Table Tools' : '牌桌工具'}>
+    <ClubShell title={t('nav.tools')}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
@@ -254,7 +174,7 @@ export default function Shanten() {
           <div className="ldg-page-head">
             <div>
               <h1 className="ldg-page-head__title">
-                {text.title}
+                {t('shanten.title')}
                 <small>{lang === 'en' ? '奉化向听' : 'Shanten Calculator'}</small>
               </h1>
             </div>
@@ -264,7 +184,7 @@ export default function Shanten() {
                 className="ldg-link"
                 onClick={toggleLanguage}
               >
-                {text.language}
+                {t('shanten.language')}
               </button>
             </div>
           </div>
@@ -273,30 +193,26 @@ export default function Shanten() {
           <section className="ldg-section">
             <div className="ldg-section-row">
               <h2 className="ldg-section-title">
-                {text.closedHand}
-                <small>{baseSize}–{maxSize} {text.tiles}</small>
+                {t('tools.closedHand')}
+                <small>{baseSize}–{maxSize} {t('tools.tiles')}</small>
               </h2>
               <span className="ldg-section-meta">{hand.length} / {baseSize}–{maxSize}</span>
             </div>
 
-            <LedgerTileRow tiles={hand} emptyLabel={text.noTiles} onTileClick={removeTile} />
+            <LedgerTileRow tiles={hand} emptyLabel={t('shanten.noTiles')} onTileClick={removeTile} />
 
-            <div className="ldg-input-row">
-              <input
-                className="ldg-input"
-                value={handInput}
-                onChange={e => setHandInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && applyHandInput()}
-                placeholder="11234455666792p"
-              />
-              <button type="button" className="ldg-btn" onClick={applyHandInput}>
-                {text.apply}
-              </button>
-            </div>
+            <InputApplyRow
+              value={handInput}
+              onChange={setHandInput}
+              onApply={applyHandInput}
+              applyLabel={t('shanten.apply')}
+              placeholder="11234455666792p"
+              submitOnEnter
+            />
 
             <div className="ldg-tools-row ldg-tools-row--end">
-              <button type="button" className="ldg-btn" onClick={doSort}>{text.sort}</button>
-              <button type="button" className="ldg-btn" onClick={clearHand}>{text.clear}</button>
+              <button type="button" className="ldg-btn" onClick={doSort}>{t('shanten.sort')}</button>
+              <button type="button" className="ldg-btn" onClick={clearHand}>{t('tools.clear')}</button>
             </div>
 
           </section>
@@ -304,7 +220,7 @@ export default function Shanten() {
           {/* Wild tile */}
           <section className="ldg-section">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.wildTile}</h2>
+              <h2 className="ldg-section-title">{t('shanten.wildTile')}</h2>
               <span className="ldg-section-meta">{wildTile ? formatTile(wildTile) : '—'}</span>
             </div>
 
@@ -316,53 +232,49 @@ export default function Shanten() {
                   selected
                 />
               ) : (
-                <span className="ldg-note" style={{ marginTop: 0 }}>{text.noWild}</span>
+                <span className="ldg-note" style={{ marginTop: 0 }}>{t('shanten.noWild')}</span>
               )}
               <button
                 type="button"
                 className="ldg-link"
                 onClick={() => setPaletteTarget('wild')}
               >
-                {text.edit}
+                {t('tools.edit')}
               </button>
             </div>
 
             {paletteTarget === 'wild' && (
-                <div className="ldg-input-row">
-                  <input
-                    className="ldg-input"
-                    value={wildInput}
-                    onChange={e => setWildInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && applyWildInput()}
-                    placeholder="9s"
-                  />
-                  <button type="button" className="ldg-btn" onClick={applyWildInput}>
-                    {text.apply}
-                  </button>
-                </div>
+                <InputApplyRow
+                  value={wildInput}
+                  onChange={setWildInput}
+                  onApply={applyWildInput}
+                  applyLabel={t('shanten.apply')}
+                  placeholder="9s"
+                  submitOnEnter
+                />
             )}
           </section>
 
           <section className="ldg-section workbench-palette">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.tileTray}<small>{text.tileTrayHelp}</small></h2>
+              <h2 className="ldg-section-title">{t('tools.tileTray')}<small>{t('shanten.tileTrayHelp')}</small></h2>
             </div>
-            <div className="ldg-chooser" aria-label={text.tileTarget}>
-              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'hand' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('hand')}>{text.closedHand}</button>
-              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'wild' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('wild')}>{text.wildTile}</button>
+            <div className="ldg-chooser" aria-label={t('tools.tileTarget')}>
+              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'hand' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('hand')}>{t('tools.closedHand')}</button>
+              <button type="button" className={`ldg-chooser__btn${paletteTarget === 'wild' ? ' is-active' : ''}`} onClick={() => setPaletteTarget('wild')}>{t('shanten.wildTile')}</button>
             </div>
             <div className="ldg-palette-drawer">
-              <div className="ldg-palette-drawer__head">{text.addingTo} {paletteTarget === 'hand' ? text.closedHand : text.wildTile}</div>
+              <div className="ldg-palette-drawer__head">{t('tools.addingTo')} {paletteTarget === 'hand' ? t('tools.closedHand') : t('shanten.wildTile')}</div>
               <LedgerPaletteGrid onTileClick={paletteTarget === 'hand' ? addTile : selectWild} usedCounts={paletteTarget === 'hand' ? usedCounts : new Map()} selectedTile={paletteTarget === 'wild' ? wildTile : null} dimSelected={paletteTarget === 'wild'} />
             </div>
           </section>
 
           <details className="advanced-setup">
-          <summary>{text.advancedSetup} <span>{text.advancedSetupHelp}</span></summary>
+          <summary>{t('tools.advancedSetup')} <span>{t('shanten.advancedSetupHelp')}</span></summary>
           {/* Open melds */}
           <section className="ldg-section">
             <div className="ldg-section-row">
-              <h2 className="ldg-section-title">{text.openMeldsLabel}</h2>
+              <h2 className="ldg-section-title">{t('shanten.openMeldsLabel')}</h2>
               <span className="ldg-section-meta">{openMelds}</span>
             </div>
             <div className="ldg-chooser">
@@ -382,14 +294,14 @@ export default function Shanten() {
               ))}
             </div>
             <p className="ldg-note">
-              {text.expected}: {baseSize}–{baseSize + 1} {text.tiles}
+              {t('shanten.expected')}: {baseSize}–{baseSize + 1} {t('tools.tiles')}
             </p>
           </section>
           </details>
 
           <div className="ldg-actions-row">
             <div className="ldg-validation-area">
-              <span className="ldg-note" style={{ marginTop: 0 }}>{hand.length} / {baseSize}–{maxSize} {text.tiles}</span>
+              <span className="ldg-note" style={{ marginTop: 0 }}>{hand.length} / {baseSize}–{maxSize} {t('tools.tiles')}</span>
             </div>
             <button type="button" className="ldg-btn ldg-btn--primary" onClick={() => calculate(hand, wildTile, openMelds)}>
               {lang === 'en' ? 'Analyze Hand' : '分析手牌'}
@@ -399,7 +311,7 @@ export default function Shanten() {
           {/* Result */}
           <section className="ldg-result">
             <div className="ldg-result-row">
-              <div className="ldg-result-label">{text.result}</div>
+              <div className="ldg-result-label">{t('tools.result')}</div>
               {shantenStatusLabel && (
                 <div className={`ldg-result-status${shantenStatusLabel.ok ? ' ldg-result-status--ok' : ''}`}>
                   {shantenStatusLabel.label}
@@ -408,7 +320,7 @@ export default function Shanten() {
             </div>
 
             {error && (
-              <p className="ldg-note ldg-note--err">{text.error}: {error}</p>
+              <p className="ldg-note ldg-note--err">{t('shanten.error')}: {error}</p>
             )}
 
             {result ? (
@@ -424,7 +336,7 @@ export default function Shanten() {
 
                 {result.drawnTile && (
                   <p className="ldg-note" style={{ marginTop: '1rem' }}>
-                    {text.drawnTileLabel}
+                    {t('shanten.drawnTileLabel')}
                     {' '}
                     <span style={{ display: 'inline-flex', verticalAlign: 'middle', margin: '0 0.2rem' }}>
                       <LedgerTile tile={result.drawnTile} size="small" />
@@ -435,7 +347,7 @@ export default function Shanten() {
                       className="ldg-link"
                       onClick={() => calculate(hand, wildTile, openMelds)}
                     >
-                      {text.redraw}
+                      {t('shanten.redraw')}
                     </button>
                   </p>
                 )}
@@ -443,17 +355,17 @@ export default function Shanten() {
                 {result.discardOptions && result.discardOptions.length > 0 && (
                   <div style={{ marginTop: '2rem' }}>
                     <div className="ldg-result-row" style={{ marginBottom: '0.75rem' }}>
-                      <div className="ldg-result-label">{text.discardAnalysis}</div>
+                      <div className="ldg-result-label">{t('shanten.discardAnalysis')}</div>
                     </div>
                     {result.discardOptions.map((opt: DiscardOption) => {
                       const discardKey = `${opt.discard.suit}-${opt.discard.value}`
                       const shantenText = opt.shanten === 0
                         ? (lang === 'zh' ? '听牌' : 'tenpai')
-                        : `${opt.shanten}${text.shantenAway}`
+                        : `${opt.shanten}${t('shanten.shantenAway')}`
                       return (
                         <div key={discardKey} className="ldg-discard-row">
                           <span>
-                            <span className="ldg-discard-row__tag">{text.discard}</span>
+                            <span className="ldg-discard-row__tag">{t('shanten.discard')}</span>
                             <LedgerTile tile={opt.discard} size="small" />
                           </span>
                           <span className="ldg-discard-row__shanten">{shantenText}</span>
@@ -476,7 +388,7 @@ export default function Shanten() {
                 )}
               </>
             ) : (
-              !error && <p className="ldg-note">{text.waiting13}</p>
+              !error && <p className="ldg-note">{t('shanten.waiting13')}</p>
             )}
           </section>
 
