@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,7 @@ from fh_mahjong_ai.evaluate import evaluate_duplicate_seats_policy, parse_seed_w
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import GuardedQPolicy
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
-from fh_mahjong_ai.storage import load_checkpoint
+from fh_mahjong_ai.storage import load_checkpoint, write_json_report
 
 
 def load_model(checkpoint: Path, device: str, model_config: ModelConfig) -> tuple[PolicyValueNet, int]:
@@ -22,9 +21,6 @@ def load_model(checkpoint: Path, device: str, model_config: ModelConfig) -> tupl
     return model, step
 
 
-def write_report(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 
@@ -116,7 +112,7 @@ def main() -> None:
         else None,
         "reports_by_margin": reports,
     }
-    write_report(args.report_output, final_report)
+    write_json_report(args.report_output, final_report)
     print(f"\nReport saved to {args.report_output}")
 
 

@@ -14,6 +14,21 @@ from .data import compute_steps_to_done
 from .types import Observation, Transition
 
 SHARDED_TRANSITIONS_MANIFEST = "manifest.json"
+
+def write_json_report(path: Path, report: dict) -> None:
+    """Write a CLI report as pretty, key-sorted JSON with a trailing newline.
+
+    Sorted keys and a stable trailing newline are deliberate: reports are diffed
+    between runs and committed alongside checkpoints, so an unstable key order
+    would make every diff unreadable. Parent directories are created.
+
+    This is the same encoding the shard manifest writer above uses; it was also
+    copied verbatim into three eval CLIs.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 SHARDED_TRANSITIONS_SCHEMA_VERSION = 1
 
 
