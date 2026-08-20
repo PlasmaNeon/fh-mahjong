@@ -12,17 +12,16 @@ from fh_mahjong_ai.model import EventEncoder, PolicyValueNet
 from fh_mahjong_ai.oracle import train_b2b, widen_event_gru
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
+from conftest import SMALL_MODEL
 
 _ENV39 = EnvConfig(bridge_kind="mock")
 
 # Reused from test_deep16_rezero.py: a tiny B2b architecture so anchor
 # checkpoints in this file build and load fast.
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 
 
 def _b2b_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, event_window=8, event_hidden_dim=8, privileged_critic=True, aux_heads=True)
+    fields = dict(SMALL_MODEL, event_window=8, event_hidden_dim=8, privileged_critic=True, aux_heads=True)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -642,12 +641,12 @@ def test_train_b2b_cli_resume_documented_recipe_survives_config_construction(tmp
         "--ppo-epochs", "1",
         "--matches-per-iter", "2",
         "--model-residual-blocks", "4",
-        "--model-channels", str(_SMALL["channels"]),
-        "--model-plane-feature-dim", str(_SMALL["plane_feature_dim"]),
-        "--model-scalar-hidden-dim", str(_SMALL["scalar_hidden_dim"]),
-        "--model-trunk-hidden-dim", str(_SMALL["trunk_hidden_dim"]),
-        "--model-value-hidden-dim", str(_SMALL["value_hidden_dim"]),
-        "--model-q-hidden-dim", str(_SMALL["q_hidden_dim"]),
+        "--model-channels", str(SMALL_MODEL["channels"]),
+        "--model-plane-feature-dim", str(SMALL_MODEL["plane_feature_dim"]),
+        "--model-scalar-hidden-dim", str(SMALL_MODEL["scalar_hidden_dim"]),
+        "--model-trunk-hidden-dim", str(SMALL_MODEL["trunk_hidden_dim"]),
+        "--model-value-hidden-dim", str(SMALL_MODEL["value_hidden_dim"]),
+        "--model-q-hidden-dim", str(SMALL_MODEL["q_hidden_dim"]),
         "--event-window", "8",
         "--train-state-every", "1",
         "--base-seed", "5",

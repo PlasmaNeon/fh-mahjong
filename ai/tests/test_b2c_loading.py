@@ -16,15 +16,14 @@ from fh_mahjong_ai.policies import TorchGreedyPolicy
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
 from fh_mahjong_ai.types import Observation
+from conftest import SMALL_MODEL
 
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 
 _ENV39 = EnvConfig(bridge_kind="mock")
 
 
 def _b2b_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    fields = dict(SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -106,7 +105,7 @@ def test_infer_model_config_raises_without_metadata_for_b2b_modules():
 
 
 def test_infer_model_config_legacy_checkpoints_still_infer_fine():
-    legacy = PolicyValueNet(_ENV39, ModelConfig(**_SMALL))
+    legacy = PolicyValueNet(_ENV39, ModelConfig(**SMALL_MODEL))
     config = infer_model_config(legacy.state_dict())
     assert config.residual_blocks == 1
     assert config.event_window == 0
@@ -120,7 +119,7 @@ def test_infer_model_config_tolerates_whole_prefix_absent_optional_head():
     # existing checkpoint in these tests exercises that branch; strip it
     # entirely here to simulate an older checkpoint saved before that head
     # existed, and confirm the exemption lets reconstruction through cleanly.
-    legacy = PolicyValueNet(_ENV39, ModelConfig(**_SMALL))
+    legacy = PolicyValueNet(_ENV39, ModelConfig(**SMALL_MODEL))
     state_dict = {
         key: value for key, value in legacy.state_dict().items()
         if not key.startswith("large_loss_head.")
@@ -275,7 +274,7 @@ def test_choose_raises_on_empty_history_for_event_model(tmp_path):
 
 
 def test_choose_window_zero_model_unaffected_by_empty_history(tmp_path):
-    model_config = ModelConfig(**_SMALL)  # event_window == 0
+    model_config = ModelConfig(**SMALL_MODEL)  # event_window == 0
     model = PolicyValueNet(_ENV39, model_config)
     path = tmp_path / "legacy.pt"
     save_checkpoint(path, model)
@@ -338,12 +337,12 @@ def test_infer_model_config_rejects_oversized_event_window_in_b2b_four_flag_meta
 
 
 def test_model_config_accepts_boundary_event_window_512():
-    ModelConfig(**_SMALL, event_window=512)  # must not raise
+    ModelConfig(**SMALL_MODEL, event_window=512)  # must not raise
 
 
 def test_model_config_rejects_event_window_513():
     with pytest.raises(ValueError, match="event_window"):
-        ModelConfig(**_SMALL, event_window=513)
+        ModelConfig(**SMALL_MODEL, event_window=513)
 
 
 def test_evaluate_batch_threads_events_for_event_model(tmp_path):
@@ -387,7 +386,7 @@ def test_evaluate_batch_threads_events_for_event_model(tmp_path):
 # via `grow_b2b_model`. ---
 
 def _grown_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, growth_blocks=3)
+    fields = dict(SMALL_MODEL, growth_blocks=3)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -473,7 +472,7 @@ def test_infer_model_config_growth_keys_without_metadata_raises_explicit_message
 
 def test_infer_model_config_growth_claim_positive_but_no_growth_keys_raises():
     # Metadata claims growth_blocks > 0 but the state dict has no growth.* keys.
-    legacy_config = ModelConfig(**_SMALL)  # growth_blocks == 0
+    legacy_config = ModelConfig(**SMALL_MODEL)  # growth_blocks == 0
     legacy_model = PolicyValueNet(_ENV39, legacy_config)
     doctored = model_config_metadata(legacy_config)
     doctored["growth_blocks"] = 4
@@ -546,7 +545,7 @@ def test_infer_model_config_rejects_non_contiguous_growth_indices():
 def test_growth_blocks_zero_round_trips_with_no_growth_keys(tmp_path):
     # Sanity: growth_blocks=0 needs no growth-specific metadata handling at
     # all (no growth.* keys ever appear), matching pre-deep16-rezero behavior.
-    model_config = ModelConfig(**_SMALL)
+    model_config = ModelConfig(**SMALL_MODEL)
     path = _save_grown_checkpoint(tmp_path, model_config)
     saved = torch.load(path, map_location="cpu")
     reconstructed = infer_model_config(saved["model"], saved["metadata"])
@@ -563,7 +562,7 @@ def test_growth_blocks_zero_round_trips_with_no_growth_keys(tmp_path):
 # else `growth.0`).
 
 def _residual_free_grown_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, residual_blocks=0, growth_blocks=2, channel_attention=True)
+    fields = dict(SMALL_MODEL, residual_blocks=0, growth_blocks=2, channel_attention=True)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -614,7 +613,7 @@ def test_infer_model_config_still_rejects_doctored_attention_claim_without_resid
 # actually present in the state dict. ---
 
 def _widened_config(**overrides) -> ModelConfig:
-    fields = dict(_SMALL, event_window=8, event_hidden_dim=16, event_output_dim=8)
+    fields = dict(SMALL_MODEL, event_window=8, event_hidden_dim=16, event_output_dim=8)
     fields.update(overrides)
     return ModelConfig(**fields)
 
@@ -741,7 +740,7 @@ def test_infer_model_config_event_output_dim_equal_to_hidden_dim_claim_matches_n
 
 
 def test_infer_model_config_legacy_event_output_dim_defaults_zero():
-    legacy = PolicyValueNet(_ENV39, ModelConfig(**_SMALL))
+    legacy = PolicyValueNet(_ENV39, ModelConfig(**SMALL_MODEL))
     config = infer_model_config(legacy.state_dict())
     assert config.event_output_dim == 0
 

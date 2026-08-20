@@ -7,14 +7,13 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.oracle import build_b2b_model, collect_b2b_rollouts, train_b2b
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import save_checkpoint
+from conftest import SMALL_MODEL
 
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 
 
 def _champion(tmp_path):
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     path = tmp_path / "champion.pt"
     save_checkpoint(path, model)
     return env39, path
@@ -22,12 +21,12 @@ def _champion(tmp_path):
 
 def test_warm_start_logit_equivalence(tmp_path):
     env39, champion_path = _champion(tmp_path)
-    champion = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    champion = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     from fh_mahjong_ai.storage import load_checkpoint
     load_checkpoint(champion_path, champion)
     champion.eval()
 
-    b2b_config = ModelConfig(**_SMALL, event_window=16, privileged_critic=True, aux_heads=True)
+    b2b_config = ModelConfig(**SMALL_MODEL, event_window=16, privileged_critic=True, aux_heads=True)
     model = build_b2b_model(env39, b2b_config, champion_path)
     model.eval()
 
@@ -55,7 +54,7 @@ def test_collect_b2b_records_events_and_labels(tmp_path):
     env39 = EnvConfig(bridge_kind="mock", event_history_window=8)
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=32)
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL, event_window=8,
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL, event_window=8,
                                               privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=2, max_steps_per_episode=32,
                        match_mode="classic")
@@ -98,7 +97,7 @@ def test_train_b2b_two_iters_mock(tmp_path):
     config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
-    history = train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+    history = train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
                                          aux_heads=True),
                         champion_path, tmp_path / "ckpt", config, base_seed=5)
     assert len(history) == 2
@@ -168,7 +167,7 @@ def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
     config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="classic")
-    history = train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+    history = train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
                                          aux_heads=True),
                         champion_path, tmp_path / "ckpt", config, base_seed=5)
     assert calls["n"] == 2
@@ -196,7 +195,7 @@ def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
                     chongci_starting_score=3333, chongci_bust_threshold=111,
                     chongci_max_hands=7)
     model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
-                           ModelConfig(**_SMALL, event_window=8,
+                           ModelConfig(**SMALL_MODEL, event_window=8,
                                        privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
                        match_mode="chongci")
@@ -236,13 +235,13 @@ def test_infer_model_config_rejects_b2b_checkpoints(tmp_path):
     from fh_mahjong_ai.model import infer_model_config
 
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL, event_window=8,
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL, event_window=8,
                                               privileged_critic=True, aux_heads=True))
     with _pytest.raises(RuntimeError, match="no usable metadata"):
         infer_model_config(model.state_dict())
 
     # Legacy checkpoints still infer fine.
-    legacy = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    legacy = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     config = infer_model_config(legacy.state_dict())
     assert config.residual_blocks == 1
 
@@ -307,7 +306,7 @@ def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
     model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
-                           ModelConfig(**_SMALL, event_window=8,
+                           ModelConfig(**SMALL_MODEL, event_window=8,
                                        privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
                        match_mode="chongci")
@@ -367,7 +366,7 @@ def test_rank_labels_exact_at_bust_threshold(monkeypatch):
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=64)
     model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
-                           ModelConfig(**_SMALL, event_window=8,
+                           ModelConfig(**SMALL_MODEL, event_window=8,
                                        privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=64,
                        match_mode="chongci")
@@ -416,7 +415,7 @@ def test_zero_outcome_chongci_collection_fails_fast(monkeypatch):
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
     model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
-                           ModelConfig(**_SMALL, event_window=8,
+                           ModelConfig(**SMALL_MODEL, event_window=8,
                                        privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
                        match_mode="chongci")
@@ -453,12 +452,12 @@ def test_warm_start_rejects_architecture_mismatch(tmp_path):
     import pytest as _pytest
 
     env39 = EnvConfig(bridge_kind="mock")
-    champion4 = PolicyValueNet(env39, ModelConfig(**{**_SMALL, "residual_blocks": 2}))
+    champion4 = PolicyValueNet(env39, ModelConfig(**{**SMALL_MODEL, "residual_blocks": 2}))
     path = tmp_path / "champion4.pt"
     from fh_mahjong_ai.storage import save_checkpoint as _save
     _save(path, champion4)
 
-    mismatched = ModelConfig(**_SMALL, event_window=8, privileged_critic=True, aux_heads=True)
+    mismatched = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
     assert mismatched.residual_blocks == 1  # differs from the 2-block champion
     with _pytest.raises(RuntimeError, match="architecturally incompatible"):
         build_b2b_model(env39, mismatched, path)
@@ -499,6 +498,6 @@ def test_train_b2b_halts_on_truncation_rate(tmp_path, monkeypatch):
                        max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
                        num_workers=1, match_mode="chongci")
     with pytest.raises(RuntimeError, match="truncation rate"):
-        train_b2b(env, ModelConfig(**_SMALL, event_window=8, privileged_critic=True,
+        train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
                                    aux_heads=True),
                   champion_path, tmp_path / "ckpt2", config, base_seed=9)

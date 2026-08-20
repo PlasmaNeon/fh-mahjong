@@ -19,14 +19,13 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch, compute_gae, ppo_update
 from fh_mahjong_ai.scripts import collect_bench, collect_profile
 from fh_mahjong_ai.storage import save_checkpoint
+from conftest import SMALL_MODEL
 
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 
 
 def _champion(tmp_path):
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     path = tmp_path / "champion.pt"
     save_checkpoint(path, model)
     return path
@@ -35,7 +34,7 @@ def _champion(tmp_path):
 def _profile_kwargs(tmp_path, **overrides):
     kwargs = dict(
         champion=_champion(tmp_path),
-        model_config=ModelConfig(**_SMALL, event_window=8),
+        model_config=ModelConfig(**SMALL_MODEL, event_window=8),
         growth_blocks=0,
         workers=2,
         matches=4,
@@ -93,7 +92,7 @@ def test_profile_digest_matches_uninstrumented_bench(tmp_path):
     profile = collect_profile.run_profile(**kwargs)
     bench = collect_bench.run_bench(
         champion=kwargs["champion"],
-        model_config=ModelConfig(**_SMALL, event_window=8),
+        model_config=ModelConfig(**SMALL_MODEL, event_window=8),
         growth_blocks=0, workers=[2], matches=4, base_seed=100,
         match_mode="classic", bridge_kind="mock", bridge_lib=None,
         device="cpu", max_steps_per_episode=16, event_window=8,

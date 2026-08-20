@@ -13,6 +13,7 @@ from fh_mahjong_ai.oracle import _b2b_model_env_config, collect_b2b_rollouts
 from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
 from fh_mahjong_ai.scripts import collect_bench
 from fh_mahjong_ai.storage import save_checkpoint
+from conftest import SMALL_MODEL
 
 
 def _perturbing_b2b_worker_loop(env_config, model_config, ppo_config, task_q, result_q,
@@ -55,13 +56,11 @@ def _perturbing_b2b_worker_loop(env_config, model_config, ppo_config, task_q, re
         except Exception:  # noqa: BLE001 - report any worker failure to the parent
             result_q.put((worker_id, None, traceback.format_exc()))
 
-_SMALL = dict(channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-              trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16)
 
 
 def _champion(tmp_path):
     env39 = EnvConfig(bridge_kind="mock")
-    model = PolicyValueNet(env39, ModelConfig(**_SMALL))
+    model = PolicyValueNet(env39, ModelConfig(**SMALL_MODEL))
     path = tmp_path / "champion.pt"
     save_checkpoint(path, model)
     return path
@@ -71,7 +70,7 @@ def _bench_kwargs(tmp_path, workers):
     champion = _champion(tmp_path)
     return dict(
         champion=champion,
-        model_config=ModelConfig(**_SMALL, event_window=8),
+        model_config=ModelConfig(**SMALL_MODEL, event_window=8),
         growth_blocks=0,
         workers=workers,
         matches=4,
@@ -189,7 +188,7 @@ def test_chunk_dispatch_covers_seed_blocks_in_order(monkeypatch):
     from fh_mahjong_ai.oracle import ParallelB2bCollector
 
     env = EnvConfig(bridge_kind="mock")
-    mcfg = ModelConfig(**_SMALL, event_window=8)
+    mcfg = ModelConfig(**SMALL_MODEL, event_window=8)
 
     def make_collector(cap):
         return ParallelB2bCollector(
@@ -244,7 +243,7 @@ def test_chunk_dispatch_propagates_later_chunk_failure(monkeypatch):
     from fh_mahjong_ai.oracle import ParallelB2bCollector
 
     env = EnvConfig(bridge_kind="mock")
-    mcfg = ModelConfig(**_SMALL, event_window=8)
+    mcfg = ModelConfig(**SMALL_MODEL, event_window=8)
     collector = ParallelB2bCollector(
         env, mcfg, dc_replace(PPOConfig(device="cpu"), collect_dispatch_chunk=2), 2)
     calls: list = []
@@ -431,7 +430,7 @@ def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
             2: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "bbb"},
         },
         "all_digests_equal": False,
-        "model_config": ModelConfig(**_SMALL, event_window=8),
+        "model_config": ModelConfig(**SMALL_MODEL, event_window=8),
     }
     monkeypatch.setattr(collect_bench, "run_bench", lambda **kwargs: fake_report)
     argv = [

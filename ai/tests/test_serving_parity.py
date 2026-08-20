@@ -31,17 +31,14 @@ from fh_mahjong_ai.scripts.serving_parity import (
 )
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
+from conftest import SMALL_MODEL
 
-_SMALL = dict(
-    channels=16, residual_blocks=1, plane_feature_dim=32, scalar_hidden_dim=16,
-    trunk_hidden_dim=32, value_hidden_dim=16, q_hidden_dim=16,
-)
 _ENV = EnvConfig()
 _WINDOW = 8
 
 
 def _event_model_config(window: int = _WINDOW) -> ModelConfig:
-    return ModelConfig(**dict(_SMALL, event_window=window))
+    return ModelConfig(**dict(SMALL_MODEL, event_window=window))
 
 
 def _save_checkpoint(tmp_path: Path, model_config: ModelConfig, step: int = 1, name: str = "model.pt") -> Path:
@@ -78,7 +75,7 @@ def test_in_process_parity_passes_on_window_zero_model(tmp_path: Path) -> None:
     """The event-free (window=0) legacy path must also parity-check cleanly —
     this is the runbook's step-1 regression bar (new server image, old
     champion, byte-identical behavior)."""
-    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**_SMALL))  # event_window=0
+    checkpoint = _save_checkpoint(tmp_path, ModelConfig(**SMALL_MODEL))  # event_window=0
 
     report = run_serving_parity(
         checkpoint=checkpoint,
