@@ -85,7 +85,7 @@ uv run --project ai <command>
 These four are real tools but are **not** in `[project.scripts]` — run them as modules:
 
 ```bash
-uv run --project ai python -m fh_mahjong_ai.scripts.evaluate_guarded
+uv run --project ai python -m fh_mahjong_ai.scripts.evaluate_q_guarded
 uv run --project ai python -m fh_mahjong_ai.scripts.evaluate_tail_constrained
 uv run --project ai python -m fh_mahjong_ai.scripts.extract_near_state_discards
 uv run --project ai python -m fh_mahjong_ai.scripts.build_counterfactual_risk_data
