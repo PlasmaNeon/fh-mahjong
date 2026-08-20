@@ -22,7 +22,7 @@ from fh_mahjong_ai.policies import TorchGreedyPolicy
 from fh_mahjong_ai.scripts.build_counterfactual_risk_data import write_counterfactual_shard
 from fh_mahjong_ai.scripts.generate_data import current_git_commit
 from fh_mahjong_ai.scripts.generate_sampled_branch_counterfactuals import family_counts, summarize_branch_results
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 from fh_mahjong_ai.storage import load_checkpoint
 from fh_mahjong_ai.types import BranchResult, Observation
 

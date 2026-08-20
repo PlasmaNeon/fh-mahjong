@@ -1,5 +1,5 @@
-"""Spec B2c Task 4: metadata-authoritative checkpoint loading (`infer_model_config`)
-and event-aware `CheckpointPolicy` serving."""
+"""Metadata-authoritative checkpoint loading (`infer_model_config`) and
+event-aware `CheckpointPolicy` serving."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -382,7 +382,7 @@ def test_evaluate_batch_threads_events_for_event_model(tmp_path):
 # --- Task 3 (deep16-rezero): growth-aware metadata loading, derivable count,
 # fail-closed rules. `_grown_config` deliberately stays plain (no B2b flags)
 # so these tests isolate the growth-only surface from the B2b surface above;
-# `test_deep16_rezero.py` separately covers growth stacked on a B2b anchor
+# `test_b2b_growth.py` separately covers growth stacked on a B2b anchor
 # via `grow_b2b_model`. ---
 
 def _grown_config(**overrides) -> ModelConfig:
@@ -746,7 +746,7 @@ def test_infer_model_config_legacy_event_output_dim_defaults_zero():
 
 
 def test_evaluate_report_config_includes_event_output_dim_and_event_hidden_dim(tmp_path):
-    from fh_mahjong_ai.scripts.model_config_args import model_config_params
+    from fh_mahjong_ai.model_config_args import model_config_params
 
     model_config = _widened_config()
     params = model_config_params(model_config)

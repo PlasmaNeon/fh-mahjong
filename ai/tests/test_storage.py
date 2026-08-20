@@ -259,10 +259,11 @@ def test_save_checkpoint_precedes_history_and_state_writes_in_train_b2b(tmp_path
     N strictly before it writes that iteration's history row or
     `train_state.pt`. Verified end-to-end (not just by reading the source)
     by recording the call sequence through a tiny real `train_b2b` run."""
-    import fh_mahjong_ai.oracle as oracle_module
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai import train_state as train_state_mod
     from fh_mahjong_ai.config import EnvConfig, ModelConfig
     from fh_mahjong_ai.model import PolicyValueNet
-    from fh_mahjong_ai.oracle import train_b2b
+    from fh_mahjong_ai.train_b2b import train_b2b
     from fh_mahjong_ai.ppo import PPOConfig
 
     env39 = EnvConfig(bridge_kind="mock")
@@ -270,9 +271,9 @@ def test_save_checkpoint_precedes_history_and_state_writes_in_train_b2b(tmp_path
     save_checkpoint(champion_path, PolicyValueNet(env39, ModelConfig(**SMALL_MODEL)))
 
     calls: list[str] = []
-    real_save_checkpoint = oracle_module.save_checkpoint
-    real_write_history_atomic = oracle_module._write_history_atomic
-    real_save_train_state = oracle_module._save_train_state
+    real_save_checkpoint = train_b2b_mod.save_checkpoint
+    real_write_history_atomic = train_b2b_mod._write_history_atomic
+    real_save_train_state = train_state_mod._save_train_state
 
     def recording_save_checkpoint(*args, **kwargs):
         calls.append("checkpoint")
@@ -286,9 +287,9 @@ def test_save_checkpoint_precedes_history_and_state_writes_in_train_b2b(tmp_path
         calls.append("train_state")
         return real_save_train_state(*args, **kwargs)
 
-    monkeypatch.setattr(oracle_module, "save_checkpoint", recording_save_checkpoint)
-    monkeypatch.setattr(oracle_module, "_write_history_atomic", recording_write_history_atomic)
-    monkeypatch.setattr(oracle_module, "_save_train_state", recording_save_train_state)
+    monkeypatch.setattr(train_b2b_mod, "save_checkpoint", recording_save_checkpoint)
+    monkeypatch.setattr(train_b2b_mod, "_write_history_atomic", recording_write_history_atomic)
+    monkeypatch.setattr(train_state_mod, "_save_train_state", recording_save_train_state)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)

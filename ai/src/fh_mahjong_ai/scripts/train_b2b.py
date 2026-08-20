@@ -7,8 +7,8 @@ from pathlib import Path
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.fdlimit import raise_file_descriptor_limit
 from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
-from fh_mahjong_ai.oracle import train_b2b
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.train_b2b import train_b2b
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 
 
 def main() -> None:

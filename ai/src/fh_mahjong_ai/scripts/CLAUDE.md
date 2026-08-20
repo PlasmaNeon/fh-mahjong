@@ -4,7 +4,7 @@
 
 Each module here backs one console script declared in `ai/pyproject.toml`'s
 `[project.scripts]`. Four are **not** registered and must be run as modules:
-`evaluate_guarded`, `evaluate_tail_constrained`, `extract_near_state_discards`, and
+`evaluate_q_guarded`, `evaluate_tail_constrained`, `extract_near_state_discards`, and
 `build_counterfactual_risk_data`.
 
 - **[`ai/CLAUDE.md`](../../../CLAUDE.md)** — the full command list, grouped by task

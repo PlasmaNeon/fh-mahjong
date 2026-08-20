@@ -14,7 +14,7 @@ from fh_mahjong_ai.data import backfill_returns
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
-from fh_mahjong_ai.trainer import OfflineQMetrics, OfflineQTrainer
+from fh_mahjong_ai.offline_trainers import OfflineQMetrics, OfflineQTrainer
 
 
 def train_offline_q(

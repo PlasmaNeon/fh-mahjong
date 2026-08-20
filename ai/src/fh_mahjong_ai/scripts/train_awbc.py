@@ -15,7 +15,7 @@ from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact,
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_bc import BC_ARRAY_KEYS
 from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
-from fh_mahjong_ai.trainer import AdvantageWeightedBCMetrics, AdvantageWeightedBCTrainer
+from fh_mahjong_ai.offline_trainers import AdvantageWeightedBCMetrics, AdvantageWeightedBCTrainer
 
 
 def train_awbc(

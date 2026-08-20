@@ -235,7 +235,7 @@ def test_choose_empty_event_history_with_explicit_flag_succeeds(tmp_path: Path) 
 
 
 def _event_checkpoint(tmp_path: Path, event_window: int = 8) -> Path:
-    # Mirrors ai/tests/test_b2c_loading.py's small event-model helpers: a tiny
+    # Mirrors ai/tests/test_checkpoint_loading.py's small event-model helpers: a tiny
     # PolicyValueNet with event_window > 0 (a B2b-style event checkpoint),
     # saved with complete model_config metadata so CheckpointPolicy.from_checkpoint
     # reconstructs model_config.event_window == event_window.

@@ -4,7 +4,7 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.oracle import build_b2b_model, collect_b2b_rollouts, train_b2b
+from fh_mahjong_ai.train_b2b import build_b2b_model, collect_b2b_rollouts, train_b2b
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import save_checkpoint
 from conftest import SMALL_MODEL
@@ -71,7 +71,7 @@ def test_collect_b2b_records_events_and_labels(tmp_path):
 def test_hindsight_label_assembly_fixture():
     # Pure-function check on the label assembler with a scripted match:
     # 2 hands; hand 0 ends in a ron paid by seat 2; hand 1 is a draw.
-    from fh_mahjong_ai.oracle import _assemble_hindsight_labels
+    from fh_mahjong_ai.train_b2b import _assemble_hindsight_labels
 
     # rows: (seat, hand_id) in emission order for a 3-seat toy
     rows = [(0, 0), (2, 0), (2, 0), (1, 1), (2, 1)]
@@ -120,13 +120,13 @@ def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
     import gc
     import weakref
 
-    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
     from fh_mahjong_ai.ppo import RolloutBatch as _RB
 
     refs: list = []
     calls = {"n": 0}
-    real_collect = oracle_mod.collect_b2b_rollouts
-    real_gae = oracle_mod.compute_gae
+    real_collect = train_b2b_mod.collect_b2b_rollouts
+    real_gae = train_b2b_mod.compute_gae
     field_names = (
         "planes", "scalars", "action_mask", "actions", "old_logprobs",
         "values", "rewards", "dones", "events", "event_lengths",
@@ -158,8 +158,8 @@ def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
             refs.append(weakref.ref(ret))
         return adv, ret
 
-    monkeypatch.setattr(oracle_mod, "collect_b2b_rollouts", wrapped_collect)
-    monkeypatch.setattr(oracle_mod, "compute_gae", wrapped_gae)
+    monkeypatch.setattr(train_b2b_mod, "collect_b2b_rollouts", wrapped_collect)
+    monkeypatch.setattr(train_b2b_mod, "compute_gae", wrapped_gae)
 
     env39, champion_path = _champion(tmp_path)
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
@@ -179,7 +179,7 @@ def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
 def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
     # The bridge must simulate under the SAME chongci values the hindsight
     # labels are computed with — a silent mismatch here mislabels every rank.
-    import fh_mahjong_ai.oracle as oracle_mod
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
     from fh_mahjong_ai.bridge import build_bridge as real_build_bridge
 
     captured = {}
@@ -188,7 +188,7 @@ def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
         captured["cfg"] = cfg
         return real_build_bridge(cfg)
 
-    monkeypatch.setattr(oracle_mod, "build_bridge", capturing_build_bridge)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", capturing_build_bridge)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16,
@@ -199,7 +199,7 @@ def test_collect_b2b_forwards_chongci_config_to_bridge(monkeypatch):
                                        privileged_critic=True, aux_heads=True))
     config = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
                        match_mode="chongci")
-    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai.train_b2b import collect_b2b_rollouts
     # The mock bridge never surfaces round outcomes, so the stale-bridge
     # capability guard fires after collection — config capture still happens.
     with pytest.raises(RuntimeError, match="no round outcomes"):
@@ -215,7 +215,7 @@ def test_hindsight_rank_labels_use_reward_scale():
     # net reward is -2.5 (i.e. -2500 points) from a 2000-point start is
     # BUSTED (final -500 <= 0). Mixing raw points with reward-scale nets
     # reconstructed 1997.5 and labeled it ranked — the corrupted-label bug.
-    from fh_mahjong_ai.oracle import _assemble_hindsight_labels
+    from fh_mahjong_ai.train_b2b import _assemble_hindsight_labels
 
     rows = [(0, 0), (1, 0), (2, 0), (3, 0)]
     # Reward-scale final scores: start 2.0 (=2000 pts / 1000) + net deltas.
@@ -250,8 +250,8 @@ def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
     # A payout landing BEFORE a seat's first decision (e.g. dealer tsumo on
     # the opening hand) must still count toward that seat's final score for
     # rank labels — the transition-crediting buffers drop it by design.
-    import fh_mahjong_ai.oracle as oracle_mod
-    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.train_b2b import collect_b2b_rollouts
     from fh_mahjong_ai.types import Observation, StepResult
 
     rng = np.random.default_rng(0)
@@ -300,8 +300,8 @@ def test_rank_labels_include_pre_first_decision_rewards(monkeypatch):
                                                       "win_type_name": "ACTION_UNKNOWN",
                                                       "discarder_seat": 0}})
 
-    monkeypatch.setattr(oracle_mod, "MahjongEnv", _ScriptedEnv)
-    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+    monkeypatch.setattr(train_b2b_mod, "MahjongEnv", _ScriptedEnv)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", lambda cfg: None)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
@@ -321,8 +321,8 @@ def test_rank_labels_exact_at_bust_threshold(monkeypatch):
     # float32 reward accumulation must not flip an exact-threshold bust:
     # 20 deltas of -0.1 (float32) sum to ~-2.0000001; integer-point rounding
     # reconstructs exactly -2000, so start 2000 -> final 0 <= 0 -> BUSTED.
-    import fh_mahjong_ai.oracle as oracle_mod
-    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.train_b2b import collect_b2b_rollouts
     from fh_mahjong_ai.types import Observation, StepResult
 
     rng = np.random.default_rng(1)
@@ -360,8 +360,8 @@ def test_rank_labels_exact_at_bust_threshold(monkeypatch):
             return StepResult(observation=_obs(0), rewards=rewards,
                               terminated=terminated, truncated=False, info=info)
 
-    monkeypatch.setattr(oracle_mod, "MahjongEnv", _DriftEnv)
-    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+    monkeypatch.setattr(train_b2b_mod, "MahjongEnv", _DriftEnv)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", lambda cfg: None)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=64)
@@ -379,8 +379,8 @@ def test_zero_outcome_chongci_collection_fails_fast(monkeypatch):
     # A bridge predating chongci round-outcome delivery yields completed
     # matches with zero outcomes — the collector must refuse, not silently
     # train the deal-in head on all-negative labels.
-    import fh_mahjong_ai.oracle as oracle_mod
-    from fh_mahjong_ai.oracle import collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.train_b2b import collect_b2b_rollouts
     from fh_mahjong_ai.types import Observation, StepResult
 
     rng = np.random.default_rng(4)
@@ -409,8 +409,8 @@ def test_zero_outcome_chongci_collection_fails_fast(monkeypatch):
             return StepResult(observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
                               terminated=self._t >= 4, truncated=False, info={})
 
-    monkeypatch.setattr(oracle_mod, "MahjongEnv", _NoOutcomeEnv)
-    monkeypatch.setattr(oracle_mod, "build_bridge", lambda cfg: None)
+    monkeypatch.setattr(train_b2b_mod, "MahjongEnv", _NoOutcomeEnv)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", lambda cfg: None)
 
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=16)
@@ -427,7 +427,7 @@ def test_rank_labels_share_competition_rank_on_ties():
     # Tied scores share a rank (competition ranking, matching the engine's
     # standings) — an arbitrary tiebreak would teach one tied leader that it
     # finished second, injecting contradictory gradients.
-    from fh_mahjong_ai.oracle import _assemble_hindsight_labels
+    from fh_mahjong_ai.train_b2b import _assemble_hindsight_labels
 
     rows = [(0, 0), (1, 0), (2, 0), (3, 0)]
     # Two-way tie at the top.
@@ -466,8 +466,8 @@ def test_warm_start_rejects_architecture_mismatch(tmp_path):
 def test_train_b2b_halts_on_truncation_rate(tmp_path, monkeypatch):
     # Truncated matches keep censored returns; a rising truncation rate is
     # the stall-exploit signature and must halt the run loudly.
-    import fh_mahjong_ai.oracle as oracle_mod
-    from fh_mahjong_ai.oracle import train_b2b
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.train_b2b import train_b2b
     from fh_mahjong_ai.ppo import RolloutBatch
 
     def _all_truncated_collect(env_config, model, config, base_seed):
@@ -489,7 +489,7 @@ def test_train_b2b_halts_on_truncation_rate(tmp_path, monkeypatch):
             rank_labels=np.full(n, -1, dtype=np.int64),
         )
 
-    monkeypatch.setattr(oracle_mod, "collect_b2b_rollouts", _all_truncated_collect)
+    monkeypatch.setattr(train_b2b_mod, "collect_b2b_rollouts", _all_truncated_collect)
 
     env39, champion_path = _champion(tmp_path)
     env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,

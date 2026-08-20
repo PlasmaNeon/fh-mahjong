@@ -10,7 +10,7 @@ import torch
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.global_ev import ActionGlobalEVNet, GlobalEVNet
 from fh_mahjong_ai.global_ev_diagnostics import score_paired_trace_global_ev
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 from fh_mahjong_ai.storage import load_checkpoint
 
 

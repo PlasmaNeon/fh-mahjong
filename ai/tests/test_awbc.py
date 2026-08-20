@@ -10,7 +10,7 @@ from fh_mahjong_ai.config import AdvantageWeightedBCConfig, EnvConfig, ModelConf
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.scripts.train_awbc import train_awbc
 from fh_mahjong_ai.storage import write_transitions_jsonl, write_transitions_npz_shards
-from fh_mahjong_ai.trainer import AdvantageWeightedBCTrainer
+from fh_mahjong_ai.offline_trainers import AdvantageWeightedBCTrainer
 from fh_mahjong_ai.types import Observation, Transition
 
 

@@ -9,7 +9,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.evaluate import evaluate_duplicate_seats_policy, parse_seed_windows
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import GuardedQPolicy
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import load_checkpoint, write_json_report
 
 

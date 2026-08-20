@@ -9,14 +9,14 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import EventEncoder, PolicyValueNet
-from fh_mahjong_ai.oracle import train_b2b, widen_event_gru
+from fh_mahjong_ai.train_b2b import train_b2b, widen_event_gru
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 from conftest import SMALL_MODEL
 
 _ENV39 = EnvConfig(bridge_kind="mock")
 
-# Reused from test_deep16_rezero.py: a tiny B2b architecture so anchor
+# Reused from test_b2b_growth.py: a tiny B2b architecture so anchor
 # checkpoints in this file build and load fast.
 
 
@@ -537,7 +537,7 @@ def test_event_output_dim_equal_hidden_collapses_to_identical_state_dict() -> No
 def test_model_config_args_has_both_event_hidden_and_output_dim_flags() -> None:
     import argparse
 
-    from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+    from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 
     parser = argparse.ArgumentParser()
     add_model_config_args(parser)
@@ -571,7 +571,7 @@ def test_train_b2b_cli_help_shows_both_event_dim_flags() -> None:
 
 
 def test_model_config_params_includes_event_hidden_and_output_dim() -> None:
-    from fh_mahjong_ai.scripts.model_config_args import model_config_params
+    from fh_mahjong_ai.model_config_args import model_config_params
 
     model_config = ModelConfig(event_window=8, event_hidden_dim=256, event_output_dim=128)
     params = model_config_params(model_config)

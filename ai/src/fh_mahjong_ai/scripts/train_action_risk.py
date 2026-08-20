@@ -22,7 +22,7 @@ from fh_mahjong_ai.risk_filter import (
     apply_risk_case_weights,
     load_risk_cases_from_paired_trace_reports,
 )
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import load_checkpoint, read_transition_arrays, save_checkpoint
 
 

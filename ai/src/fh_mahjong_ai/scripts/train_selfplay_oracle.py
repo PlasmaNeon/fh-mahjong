@@ -5,7 +5,7 @@ from pathlib import Path
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
 from fh_mahjong_ai.oracle import train_selfplay_oracle
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 
 
 def main() -> None:

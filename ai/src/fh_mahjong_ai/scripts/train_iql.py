@@ -13,7 +13,7 @@ from fh_mahjong_ai.config import DiscreteIQLConfig, EnvConfig, ModelConfig, Trai
 from fh_mahjong_ai.data import backfill_returns, backfill_steps_to_done, compute_steps_to_done
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.global_ev import GlobalEVNet
-from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+from fh_mahjong_ai.streaming_buffer import StreamingReplayBuffer
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.risk_filter import (
     RiskCase,
@@ -21,7 +21,7 @@ from fh_mahjong_ai.risk_filter import (
     apply_risk_case_weights,
     load_risk_cases_from_paired_trace_reports,
 )
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import (
     is_sharded_transition_dataset,
     load_checkpoint,
@@ -30,7 +30,7 @@ from fh_mahjong_ai.storage import (
     read_transitions,
     save_checkpoint,
 )
-from fh_mahjong_ai.trainer import DiscreteIQLMetrics, DiscreteIQLTrainer
+from fh_mahjong_ai.offline_trainers import DiscreteIQLMetrics, DiscreteIQLTrainer
 
 IQL_ARRAY_KEYS = (
     "seats",

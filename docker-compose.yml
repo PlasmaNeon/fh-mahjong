@@ -23,7 +23,7 @@ services:
   policy:
     build:
       context: .
-      dockerfile: ai/Dockerfile
+      dockerfile: ai/Dockerfile.compose
     container_name: fh_mahjong_policy
     command:
       - "--manifest"

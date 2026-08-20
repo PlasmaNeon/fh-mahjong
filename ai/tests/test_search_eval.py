@@ -144,7 +144,7 @@ class TestInvokeSeatPolicyFactory:
     Regression: `len(inspect.signature(factory).parameters)` counted DEFAULTED
     params, so the standard capture-by-default idiom
     ``lambda _seat, selected_margin=margin: GuardedQPolicy(..., min_q_margin=selected_margin, ...)``
-    (used by evaluate_guarded.py, evaluate_risk_guarded.py, evaluate_tail_constrained.py)
+    (used by evaluate_q_guarded.py, evaluate_risk_guarded.py, evaluate_tail_constrained.py)
     was misdetected as a 2-required-arg factory and called as
     ``factory(seat, bridge)``, silently binding the live bridge object into the
     captured default instead of the seat's margin.
@@ -202,7 +202,7 @@ class TestInvokeSeatPolicyFactory:
             _invoke_seat_policy_factory(factory, 1, "BRIDGE")
 
     def test_guarded_style_capture_by_default_lambda_constructs_with_right_margin(self):
-        # Integration-style: build the exact idiom evaluate_guarded.py:88 uses
+        # Integration-style: build the exact idiom evaluate_q_guarded.py:88 uses
         # and drive it through the shim (mock bridge, no real duplicate-seats
         # eval loop) to prove GuardedQPolicy ends up with the intended margin,
         # not the bridge object.

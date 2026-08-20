@@ -90,3 +90,66 @@ def save_checkpoint(
     path = tmp_path / name
     _save(path, model, cfg, model_config, step=step)
     return path
+
+
+# The 39-channel mock-bridge environment B2b anchors are built against. Using
+# the mock bridge means no Go shared library is loaded, so an anchor checkpoint
+# builds and loads in milliseconds. EnvConfig is a plain mutable dataclass and
+# this instance is shared suite-wide, so never mutate it — build your own with
+# EnvConfig(bridge_kind="mock") if a test needs to change a field.
+MOCK_ENV = EnvConfig(bridge_kind="mock")
+
+
+def b2b_model_config(**overrides) -> ModelConfig:
+    """The B2b event-model shape: the small architecture plus an event window,
+    a privileged critic, and the auxiliary heads. Overrides win."""
+    fields = dict(event_window=8, privileged_critic=True, aux_heads=True)
+    fields.update(overrides)
+    return small_model_config(**fields)
+
+
+def save_b2b_anchor(tmp_path: Path, model_config: ModelConfig, *,
+                    with_model_config_metadata: bool = True,
+                    model_config_metadata_override: dict | None = None) -> Path:
+    """Write a B2b anchor checkpoint, optionally with a missing or doctored
+    ``metadata["model_config"]`` block so loaders can be tested against it."""
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint as _save
+
+    model = PolicyValueNet(MOCK_ENV, model_config)
+    metadata = {}
+    if with_model_config_metadata:
+        metadata["model_config"] = model_config_metadata_override or model_config_metadata(model_config)
+    path = tmp_path / "anchor.pt"
+    _save(path, model, metadata=metadata)
+    return path
+
+
+def save_champion39(tmp_path: Path) -> tuple[EnvConfig, Path]:
+    """A freshly-initialised 39-channel champion checkpoint plus the env it was
+    built against — the warm-start a B2b run branches from."""
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import save_checkpoint as _save
+
+    env39 = EnvConfig(bridge_kind="mock")   # a fresh instance: callers may mutate it
+    model = PolicyValueNet(env39, small_model_config())
+    path = tmp_path / "champion.pt"
+    _save(path, model)
+    return env39, path
+
+
+def b2b_run_configs(tmp_path: Path, *, iterations: int, lr: float = 2e-5):
+    """The (env, model_config, champion_path, ppo_config) tuple a short B2b
+    training run needs: mock bridge, 16-step episodes, two matches an
+    iteration. Small enough to run in a test, real enough to exercise the loop.
+    """
+    from fh_mahjong_ai.ppo import PPOConfig
+
+    _, champion_path = save_champion39(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model_config = b2b_model_config()
+    config = PPOConfig(device="cpu", iterations=iterations, matches_per_iter=2, lr=lr,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    return env, model_config, champion_path, config

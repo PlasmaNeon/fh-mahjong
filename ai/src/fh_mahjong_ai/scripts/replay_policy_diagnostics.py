@@ -13,7 +13,7 @@ import torch
 from fh_mahjong_ai.action_catalog import action_family
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import SHARDED_TRANSITIONS_SCHEMA_VERSION, load_checkpoint, read_transition_arrays, write_single_shard_dataset
 
 REPLAY_KEYS = (

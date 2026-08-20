@@ -10,7 +10,7 @@ from torch import nn
 
 from .data import compute_steps_to_done
 from .evaluate import action_family, reward_summary
-from .trainer import discounted_terminal_returns
+from .offline_trainers import discounted_terminal_returns
 
 
 CALIBRATION_ARRAY_KEYS = (

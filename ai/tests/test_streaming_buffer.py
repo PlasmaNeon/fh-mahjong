@@ -43,7 +43,7 @@ def _make_shards(tmp_path: Path, n: int, name: str, start: int = 0) -> Path:
 
 
 def test_build_shard_index_counts_rows_across_dirs(tmp_path: Path):
-    from fh_mahjong_ai.streaming_data import build_shard_index
+    from fh_mahjong_ai.streaming_buffer import build_shard_index
 
     d1 = _make_shards(tmp_path, 10, "a", start=0)
     d2 = _make_shards(tmp_path, 6, "b", start=100)
@@ -54,7 +54,7 @@ def test_build_shard_index_counts_rows_across_dirs(tmp_path: Path):
 
 
 def test_iterable_dataset_yields_every_row_once_single_worker(tmp_path: Path):
-    from fh_mahjong_ai.streaming_data import TransitionIterableDataset
+    from fh_mahjong_ai.streaming_buffer import TransitionIterableDataset
 
     d = _make_shards(tmp_path, 10, "a", start=0)
     ds = TransitionIterableDataset([d], shuffle_buffer=3, seed=0)
@@ -63,7 +63,7 @@ def test_iterable_dataset_yields_every_row_once_single_worker(tmp_path: Path):
 
 
 def test_collate_builds_trainbatch(tmp_path: Path):
-    from fh_mahjong_ai.streaming_data import TransitionIterableDataset, collate_transitions
+    from fh_mahjong_ai.streaming_buffer import TransitionIterableDataset, collate_transitions
 
     d = _make_shards(tmp_path, 8, "a", start=0)
     ds = TransitionIterableDataset([d], shuffle_buffer=2, seed=0)
@@ -76,7 +76,7 @@ def test_collate_builds_trainbatch(tmp_path: Path):
 
 
 def test_streaming_replay_buffer_sample_contract_and_epoch_wrap(tmp_path: Path):
-    from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+    from fh_mahjong_ai.streaming_buffer import StreamingReplayBuffer
 
     d = _make_shards(tmp_path, 12, "a", start=0)
     buf = StreamingReplayBuffer([d], batch_size=4, shuffle_buffer=3, num_workers=0, seed=0)
@@ -93,7 +93,7 @@ def test_streaming_replay_buffer_sample_contract_and_epoch_wrap(tmp_path: Path):
 def test_streaming_equivalence_with_array_buffer_returns(tmp_path: Path):
     from fh_mahjong_ai.buffer import ArrayReplayBuffer
     from fh_mahjong_ai.storage import read_transition_arrays
-    from fh_mahjong_ai.streaming_data import StreamingReplayBuffer
+    from fh_mahjong_ai.streaming_buffer import StreamingReplayBuffer
 
     d = _make_shards(tmp_path, 8, "a", start=0)
     arrays = read_transition_arrays(d)
@@ -111,7 +111,7 @@ def test_streaming_equivalence_with_array_buffer_returns(tmp_path: Path):
 def test_iterable_dataset_rows_own_their_data_not_shard_views(tmp_path: Path):
     # Regression: rows must be copies, not views into the loaded shard array,
     # or buffered rows keep whole shards alive and a worker OOMs.
-    from fh_mahjong_ai.streaming_data import TransitionIterableDataset
+    from fh_mahjong_ai.streaming_buffer import TransitionIterableDataset
 
     d = _make_shards(tmp_path, 8, "a", start=0)
     ds = TransitionIterableDataset([d], shuffle_buffer=2, seed=0)

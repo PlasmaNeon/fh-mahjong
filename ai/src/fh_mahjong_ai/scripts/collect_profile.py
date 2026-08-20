@@ -38,7 +38,7 @@ import torch
 from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
 from ..memprobe import rss_snapshot, set_memory_probe
-from ..oracle import ParallelB2bCollector
+from ..train_b2b import ParallelB2bCollector
 from ..ppo import PPOConfig, cpu_state_snapshot
 from .collect_bench import (
     FullCycleSettings,
@@ -48,7 +48,7 @@ from .collect_bench import (
     _digest_batch,
     _run_full_cycle_update,
 )
-from .model_config_args import add_model_config_args, model_config_from_args
+from ..model_config_args import add_model_config_args, model_config_from_args
 
 
 def _field_accounting(batch) -> dict:
