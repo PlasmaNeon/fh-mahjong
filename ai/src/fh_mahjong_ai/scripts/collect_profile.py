@@ -48,7 +48,7 @@ from .collect_bench import (
     _digest_batch,
     _run_full_cycle_update,
 )
-from .model_config_args import add_model_config_args, model_config_from_args
+from ..model_config_args import add_model_config_args, model_config_from_args
 
 
 def _field_accounting(batch) -> dict:

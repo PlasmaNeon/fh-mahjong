@@ -16,7 +16,7 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.global_ev import concatenate_array_sets, episode_split_indices
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import load_checkpoint, read_transition_arrays, save_checkpoint
 
 

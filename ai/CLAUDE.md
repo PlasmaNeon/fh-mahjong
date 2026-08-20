@@ -158,7 +158,7 @@ Quick map of what is where:
 ### Observations and checkpoints
 - `EnvConfig` defaults match the real Go bridge: `39 x 42 x 1` planes, 58 scalars, 204 actions. B2b models consume 51 channels (39 public + 12 privileged) but **the policy path only ever reads the first 39** — the actor is information-legal by construction.
 - Legacy 42-scalar checkpoints are padded in `storage.load_checkpoint()` so old policy weights load while new Chongci match-context scalar weights start at zero.
-- A B2b checkpoint's `event_window` is **not recoverable from tensor shapes**. `infer_model_config` needs `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it. When adding a `ModelConfig` field, add it to `scripts/model_config_args.py`'s `model_config_params()` by hand.
+- A B2b checkpoint's `event_window` is **not recoverable from tensor shapes**. `infer_model_config` needs `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it. When adding a `ModelConfig` field, add it to `model_config_args.py`'s `model_config_params()` by hand.
 
 ### Datasets
 - Dataset generation writes a manifest next to each JSONL file or shard directory with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.

@@ -8,7 +8,7 @@ from pathlib import Path
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.global_ev import ActionGlobalEVNet, BRANCH_ACTION_EV_ARRAY_KEYS, BRANCH_ACTION_EV_OPTIONAL_ARRAY_KEYS
 from fh_mahjong_ai.global_ev_diagnostics import action_ev_branch_cf_calibration
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 from fh_mahjong_ai.storage import load_checkpoint, read_transition_arrays
 
 

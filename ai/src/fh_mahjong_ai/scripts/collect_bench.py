@@ -54,7 +54,7 @@ from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
 from ..oracle import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
 from ..ppo import PPOConfig, RolloutBatch, compute_gae, cpu_state_snapshot, ppo_update
-from .model_config_args import add_model_config_args, model_config_from_args
+from ..model_config_args import add_model_config_args, model_config_from_args
 
 
 def _build_model(env_config: EnvConfig, model_config, champion: Path, growth_blocks: int, device: str):

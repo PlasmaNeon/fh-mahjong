@@ -16,7 +16,7 @@ from fh_mahjong_ai.paired_trace import (
     deduplicate_trace_pairs,
     summarize_trace_pairs,
 )
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 from fh_mahjong_ai.storage import load_checkpoint
 
 

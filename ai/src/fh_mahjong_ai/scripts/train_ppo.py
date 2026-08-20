@@ -15,7 +15,7 @@ from fh_mahjong_ai.mlflow_tracking import (
     start_run,
 )
 from fh_mahjong_ai.ppo import PPOConfig, train_ppo
-from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
 
 _MLFLOW_METRIC_KEYS = (
     "policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction",
