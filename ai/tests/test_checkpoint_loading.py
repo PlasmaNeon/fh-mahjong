@@ -1,5 +1,5 @@
-"""Spec B2c Task 4: metadata-authoritative checkpoint loading (`infer_model_config`)
-and event-aware `CheckpointPolicy` serving."""
+"""Metadata-authoritative checkpoint loading (`infer_model_config`) and
+event-aware `CheckpointPolicy` serving."""
 from __future__ import annotations
 
 from dataclasses import replace

@@ -1,5 +1,5 @@
-"""Spec B2c Task 5: serve_policy event-contract validation, enriched /healthz,
-and a validated /reload that never swaps in an incompatible checkpoint."""
+"""serve_policy: event-contract validation, enriched /healthz, and a
+validated /reload that never swaps in an incompatible checkpoint."""
 from __future__ import annotations
 
 import hashlib

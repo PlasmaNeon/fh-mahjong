@@ -26,7 +26,7 @@ from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 from conftest import SMALL_MODEL
 
-# Reused from test_b2c_loading.py: a tiny B2b architecture + a 39ch mock-bridge
+# Reused from test_checkpoint_loading.py: a tiny B2b architecture + a 39ch mock-bridge
 # EnvConfig, so anchor checkpoints in this file build and load fast.
 _ENV39 = EnvConfig(bridge_kind="mock")
 
