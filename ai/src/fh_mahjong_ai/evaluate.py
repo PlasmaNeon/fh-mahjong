@@ -22,6 +22,41 @@ from .policies import TorchGreedyPolicy
 from .types import Transition
 
 
+def parse_seed_windows(
+    values: Sequence[str],
+    episodes: int,
+    start_seed: int | None = None,
+) -> list[int]:
+    """Expand ``--seed-window`` arguments into the explicit seed list to evaluate.
+
+    Each value is either ``START`` (meaning ``episodes`` seeds from START) or
+    ``START:COUNT``. Windows are concatenated in the order given.
+
+    Seed windows decide which seeds a promotion gate scores -- screening uses
+    910000+, confirmation 950000+ -- so this lives in one place. It was
+    previously copied into five CLIs, four identical and one subtly different.
+
+    ``start_seed`` supplies the default window when no ``values`` are given.
+    Passing ``None`` (the paired-trace behaviour) yields an empty list instead,
+    because that CLI requires explicit windows.
+    """
+    if not values:
+        if start_seed is None:
+            return []
+        return list(range(start_seed, start_seed + episodes))
+    seeds: list[int] = []
+    for value in values:
+        if ":" in value:
+            start_text, count_text = value.split(":", 1)
+            start = int(start_text)
+            count = int(count_text)
+        else:
+            start = int(value)
+            count = episodes
+        seeds.extend(range(start, start + count))
+    return seeds
+
+
 def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_rewards=None) -> np.ndarray:
     """Total per-seat reward summed over an episode's transitions, plus the
     pre-first-decision reset reward when provided. With dense per-step rewards

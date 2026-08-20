@@ -16,6 +16,7 @@ from fh_mahjong_ai.evaluate import (
     evaluate_duplicate_seats,
     evaluate_duplicate_seats_policy,
     evaluate_online,
+    parse_seed_windows,
 )
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
@@ -49,20 +50,6 @@ def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | 
     return None
 
 
-def parse_seed_windows(values: list[str], episodes: int, start_seed: int) -> list[int]:
-    if not values:
-        return list(range(start_seed, start_seed + episodes))
-    seeds: list[int] = []
-    for value in values:
-        if ":" in value:
-            start_text, count_text = value.split(":", 1)
-            start = int(start_text)
-            count = int(count_text)
-        else:
-            start = int(value)
-            count = episodes
-        seeds.extend(range(start, start + count))
-    return seeds
 
 
 def main() -> None:

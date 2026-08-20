@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.evaluate import evaluate_duplicate_seats_policy
+from fh_mahjong_ai.evaluate import evaluate_duplicate_seats_policy, parse_seed_windows
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import GuardedQPolicy
 from fh_mahjong_ai.scripts.model_config_args import add_model_config_args, model_config_from_args, model_config_params
@@ -27,20 +27,6 @@ def write_report(path: Path, report: dict[str, Any]) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def parse_seed_windows(values: list[str], episodes: int, start_seed: int) -> list[int]:
-    if not values:
-        return list(range(start_seed, start_seed + episodes))
-    seeds: list[int] = []
-    for value in values:
-        if ":" in value:
-            start_text, count_text = value.split(":", 1)
-            start = int(start_text)
-            count = int(count_text)
-        else:
-            start = int(value)
-            count = episodes
-        seeds.extend(range(start, start + count))
-    return seeds
 
 
 def main() -> None:
