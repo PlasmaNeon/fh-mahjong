@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from typing import NamedTuple
+
 import torch
 from torch import Tensor, nn
 
@@ -19,6 +21,71 @@ _GROWTH_MODULE_PREFIX = "growth."
 _GROWTH_ALPHA_RE = re.compile(r"^growth\.([^.]+)\.alpha$")
 
 
+class PlaneScalarEncoders(NamedTuple):
+    """The shared observation trunk, as loose modules rather than a sub-Module.
+
+    Returned unnested ON PURPOSE. Callers assign these to attributes with the
+    historical names (self.plane_stem, self.plane_blocks, ...), which keeps the
+    state_dict keys byte-identical. Wrapping them in a container Module would
+    prefix every key (trunk.plane_stem.*) and break every committed checkpoint,
+    including the deployed champion.
+    """
+
+    plane_stem: nn.Module
+    plane_blocks: nn.Module
+    plane_projection: nn.Module
+    plane_head: nn.Module
+    scalar_encoder: nn.Module
+    plane_projection_dim: int
+
+
+def build_plane_scalar_encoders(env_config: EnvConfig, model_config: ModelConfig) -> PlaneScalarEncoders:
+    """Build the plane/scalar observation trunk shared by every net in the stack.
+
+    PolicyValueNet, GlobalEVNet and ActionGlobalEVNet all consume the same
+    observation, so they all need the same stem -> residual blocks -> projection
+    -> plane head, plus the scalar MLP. This was copied verbatim into each.
+    """
+    channels, height, width = env_config.plane_shape
+
+    plane_stem = nn.Sequential(
+        nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
+        nn.GELU(),
+    )
+    plane_blocks = nn.Sequential(
+        *[
+            ResidualBlock(
+                model_config.channels,
+                channel_attention=model_config.channel_attention,
+                attention_ratio=model_config.channel_attention_ratio,
+            )
+            for _ in range(model_config.residual_blocks)
+        ]
+    )
+    if model_config.pool_planes:
+        plane_projection_dim = model_config.channels
+        plane_projection = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(start_dim=1),
+        )
+    else:
+        plane_projection_dim = model_config.channels * height * width
+        plane_projection = nn.Flatten(start_dim=1)
+    plane_head = nn.Sequential(
+        nn.Linear(plane_projection_dim, model_config.plane_feature_dim),
+        nn.GELU(),
+    )
+    scalar_encoder = nn.Sequential(
+        nn.Linear(env_config.scalar_features, model_config.scalar_hidden_dim),
+        nn.GELU(),
+        nn.Linear(model_config.scalar_hidden_dim, model_config.scalar_hidden_dim),
+        nn.GELU(),
+    )
+    return PlaneScalarEncoders(
+        plane_stem, plane_blocks, plane_projection, plane_head, scalar_encoder, plane_projection_dim
+    )
+
+
 class PolicyValueNet(nn.Module):
     """Masked-action policy/value network for Mahjong observations."""
 
@@ -26,39 +93,15 @@ class PolicyValueNet(nn.Module):
         super().__init__()
         channels, height, width = env_config.plane_shape
 
-        self.plane_stem = nn.Sequential(
-            nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
-            nn.GELU(),
-        )
-        self.plane_blocks = nn.Sequential(
-            *[
-                ResidualBlock(
-                    model_config.channels,
-                    channel_attention=model_config.channel_attention,
-                    attention_ratio=model_config.channel_attention_ratio,
-                )
-                for _ in range(model_config.residual_blocks)
-            ]
-        )
-        if model_config.pool_planes:
-            plane_projection_dim = model_config.channels
-            self.plane_projection = nn.Sequential(
-                nn.AdaptiveAvgPool2d((1, 1)),
-                nn.Flatten(start_dim=1),
-            )
-        else:
-            plane_projection_dim = model_config.channels * height * width
-            self.plane_projection = nn.Flatten(start_dim=1)
-        self.plane_head = nn.Sequential(
-            nn.Linear(plane_projection_dim, model_config.plane_feature_dim),
-            nn.GELU(),
-        )
-        self.scalar_encoder = nn.Sequential(
-            nn.Linear(env_config.scalar_features, model_config.scalar_hidden_dim),
-            nn.GELU(),
-            nn.Linear(model_config.scalar_hidden_dim, model_config.scalar_hidden_dim),
-            nn.GELU(),
-        )
+        # Assigned individually so the state_dict keys stay exactly as they were
+        # -- see build_plane_scalar_encoders.
+        encoders = build_plane_scalar_encoders(env_config, model_config)
+        self.plane_stem = encoders.plane_stem
+        self.plane_blocks = encoders.plane_blocks
+        self.plane_projection = encoders.plane_projection
+        self.plane_head = encoders.plane_head
+        self.scalar_encoder = encoders.scalar_encoder
+        plane_projection_dim = encoders.plane_projection_dim
         self.policy_channels = channels  # 39: the stem consumes exactly these
         self.model_config = model_config
 

@@ -152,3 +152,24 @@ def test_policy_value_net_supports_pooled_ablation() -> None:
     model = PolicyValueNet(EnvConfig(), ModelConfig(pool_planes=True))
 
     assert any(isinstance(module, nn.AdaptiveAvgPool2d) for module in model.modules())
+
+
+def test_state_dict_keys_are_unprefixed_after_trunk_extraction():
+    """The shared trunk must stay loose modules on the parent, not a sub-Module.
+
+    build_plane_scalar_encoders returns the modules for the caller to assign
+    under their historical names. If anyone ever wraps them in a container
+    Module, every key gains a prefix and EVERY committed checkpoint -- including
+    the deployed champion -- stops loading. This pins the shape.
+    """
+    from conftest import DEFAULT_ENV, small_model_config
+    from fh_mahjong_ai.model import PolicyValueNet
+
+    keys = set(PolicyValueNet(DEFAULT_ENV, small_model_config()).state_dict())
+    # Each trunk module keeps its own top-level key prefix.
+    for name in ("plane_stem", "plane_blocks", "plane_head", "scalar_encoder"):
+        assert any(k.startswith(f"{name}.") for k in keys), f"{name} lost its top-level key"
+    # ...and none of them got nested behind a container. (PolicyValueNet has a
+    # genuine `trunk` Sequential of its own, so only the container names the
+    # extraction could plausibly introduce are checked here.)
+    assert not any(k.startswith(("encoders.", "plane_scalar_encoders.")) for k in keys)
