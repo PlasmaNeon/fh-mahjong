@@ -1,0 +1,1578 @@
+"""B2b training: model surgery (ReZero block growth, event-GRU widening),
+rollout collection with hindsight labels, and the `train_b2b` PPO loop.
+
+Split out of `oracle.py`, whose docstring had said "Phase 1" for a thousand
+lines of this. The crash-resume machinery this loop drives lives in
+`train_state.py` and is called as `train_state.X` on purpose: one monkeypatch
+target then covers both this module's calls and train_state's internal ones."""
+from __future__ import annotations
+
+import logging
+import multiprocessing as mp
+import os
+import queue as _queue
+import random
+import shutil
+import traceback
+import uuid
+from dataclasses import replace
+from pathlib import Path
+from typing import Callable, Optional
+
+import numpy as np
+import torch
+
+from . import memprobe
+from . import train_state
+from .bridge import build_bridge, resolve_bridge_library_path
+from .config import EnvConfig, ModelConfig
+from .env import MahjongEnv
+from .model import (
+    PolicyValueNet,
+    _derive_growth_blocks,
+    _reconstruct_env_config,
+    _shape_inferred_fields,
+)
+from .parallel_rollouts import _split_counts
+from .ppo import (
+    RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
+    masked_policy_distribution, _seat_step_reward,
+    cpu_state_snapshot, _write_history_atomic,
+)
+from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
+
+logger = logging.getLogger(__name__)
+
+
+def _b2b_model_env_config(env_config: EnvConfig) -> EnvConfig:
+    """Derive the 39ch EnvConfig used to CONSTRUCT a B2b `PolicyValueNet`.
+
+    The privileged-critic branch (`_value_features` in model.py) assumes
+    `policy_channels == 39` so it can slice the trailing 12 oracle channels
+    (`planes[:, 39:51]`) out of a 51ch observation. Constructing the model
+    directly from an `oracle_observation=True` (51ch) EnvConfig would instead
+    set `policy_channels = 51`, which breaks that slice at the first privileged
+    forward pass. Rollout envs still run with `oracle_observation=True` (51ch
+    observations) — only the model's construction config differs."""
+    return EnvConfig(
+        action_space_size=env_config.action_space_size,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        match_mode=env_config.match_mode,
+    )
+
+
+def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
+                    champion_checkpoint: Path, device: str = "cpu") -> PolicyValueNet:
+    """Warm-start the B2b net from the 39ch champion. The plane stem is
+    UNCHANGED (39ch policy slice), so only two tensors need surgery:
+    trunk.0 (event columns zeroed => step-0 logits == champion) and
+    value_head.0 (privileged columns zeroed => step-0 values == champion).
+    `env_config` must be a 39ch (oracle_observation=False) config — callers
+    building a B2b net from an oracle env_config should first pass it through
+    `_b2b_model_env_config`."""
+    model = PolicyValueNet(env_config, model_config).to(device)
+    _, report = load_compatible_checkpoint(Path(champion_checkpoint), model)
+    payload = torch.load(Path(champion_checkpoint), map_location="cpu")
+    # FAIL CLOSED on architecture mismatch: every champion tensor must either
+    # load same-shape or be one of the two explicitly-widened tensors the
+    # surgery below repairs. Anything else (e.g. a residual-block count
+    # mismatch) would silently drop champion layers and break the step-0
+    # equivalence invariant.
+    surgical = {"trunk.0.weight", "value_head.0.weight"}
+    new_module_prefixes = ("event_encoder.", "privileged_encoder.",
+                           "belief_head.", "dealin_head.", "rank_head.")
+    bad_skipped = [k for k in report["skipped_keys"] if k not in surgical]
+    bad_missing = [k for k in report["missing_keys"]
+                   if k not in surgical and not k.startswith(new_module_prefixes)]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "champion checkpoint is architecturally incompatible with the B2b model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — check "
+            "--model-residual-blocks and width flags against the champion"
+        )
+    old_trunk_w = payload["model"]["trunk.0.weight"]      # [T, P+S]
+    old_value_w = payload["model"]["value_head.0.weight"]  # [V, T]
+    with torch.no_grad():
+        w = model.trunk[0].weight                          # [T, P+S(+E)]
+        w.zero_()
+        w[:, : old_trunk_w.shape[1]].copy_(old_trunk_w.to(w.device))
+        model.trunk[0].bias.copy_(payload["model"]["trunk.0.bias"].to(w.device))
+        if model_config.privileged_critic:
+            vw = model.value_head[0].weight                # [V, T+128]
+            vw.zero_()
+            vw[:, : old_value_w.shape[1]].copy_(old_value_w.to(vw.device))
+            model.value_head[0].bias.copy_(payload["model"]["value_head.0.bias"].to(vw.device))
+    model.eval()
+    return model
+
+
+def _assert_b2b_anchor_matches_live_env(fn_name: str, anchor_env_config: EnvConfig,
+                                        anchor_config: ModelConfig, env_config: EnvConfig) -> None:
+    """Shared env cross-check for the B2b warm-start surgeries (`grow_b2b_model`,
+    `widen_event_gru`): `env_config`, when given, must be the LIVE env config
+    that collection will actually run under. The model is otherwise
+    constructed purely from the anchor's own tensor shapes
+    (`_reconstruct_env_config`), which says nothing about whether those
+    shapes still match the live env — a stale anchor (older action-space
+    size, different scalar-feature count, or a different event-history
+    window) would silently train a model shaped to the wrong wire format,
+    with `encode()`'s zero-pad/truncate masking the drift instead of
+    failing. Passing `env_config` catches that up front."""
+    live_env_config = _b2b_model_env_config(env_config)
+    mismatches = []
+    if anchor_env_config.action_space_size != live_env_config.action_space_size:
+        mismatches.append(
+            "action_space_size (anchor was trained under "
+            f"{anchor_env_config.action_space_size}, live env provides "
+            f"{live_env_config.action_space_size})"
+        )
+    if anchor_env_config.scalar_features != live_env_config.scalar_features:
+        mismatches.append(
+            "scalar_features (anchor was trained under "
+            f"{anchor_env_config.scalar_features}, live env provides "
+            f"{live_env_config.scalar_features})"
+        )
+    anchor_channels, anchor_area, _ = anchor_env_config.plane_shape
+    live_channels, live_area, _ = live_env_config.plane_shape
+    if (anchor_channels, anchor_area) != (live_channels, live_area):
+        mismatches.append(
+            "plane_shape (anchor was trained under "
+            f"{anchor_env_config.plane_shape}, live env provides "
+            f"{live_env_config.plane_shape})"
+        )
+    if anchor_config.event_window != env_config.event_history_window:
+        mismatches.append(
+            "event_window (anchor was trained under "
+            f"{anchor_config.event_window}, live env provides "
+            f"{env_config.event_history_window})"
+        )
+    if mismatches:
+        raise RuntimeError(
+            f"{fn_name}: anchor checkpoint's construction shapes do not match "
+            "the live env_config collection will run under — " + "; ".join(mismatches)
+            + ". Refusing to silently train a model shaped to a stale anchor."
+        )
+
+
+def grow_b2b_model(anchor_checkpoint: Path, growth_blocks: int, device: str = "cpu",
+                   env_config: Optional[EnvConfig] = None) -> PolicyValueNet:
+    """Warm-start a wider B2b net by stacking `growth_blocks` ReZero residual
+    blocks (deep16-rezero) after a post-B2b anchor's existing plane trunk.
+    Unlike `build_b2b_model` (39ch -> B2b surgery), this performs NO surgery:
+    the anchor must already be a complete B2b checkpoint (event encoder,
+    privileged critic, aux heads as applicable), and every one of its tensors
+    must load into the grown net at identical shape — the new `growth.*`
+    blocks are the ONLY architectural delta, and they are identity at
+    alpha=0 (ReZeroResidualBlock), so step-0 outputs equal the anchor's
+    exactly.
+
+    `anchor_checkpoint`'s `metadata["model_config"]` is authoritative for the
+    anchor's full architecture (event_window is not recoverable from tensor
+    shapes alone, so an anchor without this key cannot be grown safely).
+    Growing an already-grown anchor (`growth_blocks > 0` in its own config)
+    is out of scope and rejected: this warm start does not attempt to
+    reconcile two different ReZero stacks.
+
+    `env_config`, when given, must be the LIVE env config that collection
+    will actually run under (i.e. what the caller passes to `train_b2b`).
+    The model is otherwise constructed purely from the anchor's own tensor
+    shapes (`_reconstruct_env_config`), which says nothing about whether
+    those shapes still match the live env — a stale anchor (older
+    action-space size, different scalar-feature count, or a different
+    event-history window) would silently train a model shaped to the wrong
+    wire format, with `encode()`'s zero-pad/truncate masking the drift
+    instead of failing. Passing `env_config` catches that up front. Callers
+    that omit it (e.g. tests exercising `grow_b2b_model` in isolation, with
+    no "live env" to check against) skip this cross-check."""
+    anchor_checkpoint = Path(anchor_checkpoint)
+    payload = torch.load(anchor_checkpoint, map_location="cpu")
+    metadata = payload.get("metadata") or {}
+    model_config_meta = metadata.get("model_config")
+    if not isinstance(model_config_meta, dict):
+        raise RuntimeError(
+            "anchor lacks complete model_config metadata — grow_b2b_model requires a "
+            "post-B2b checkpoint saved with metadata['model_config'] (event_window is not "
+            "recoverable from tensor shapes alone)"
+        )
+    anchor_config = ModelConfig(**model_config_meta)
+    # Adversarial round 13, medium finding: trust the STATE DICT, not the
+    # metadata's growth_blocks claim -- an anchor whose metadata lies about
+    # growth_blocks==0 while its tensors actually carry growth.*.alpha keys
+    # (nonzero alphas) would otherwise load those tensors into "growth_blocks=0"
+    # slots undetected, silently breaking the step-0 warm-start parity this
+    # function exists to guarantee. `_derive_growth_blocks` counts alpha keys
+    # directly off the state dict and fails closed on a malformed/tampered
+    # index set, so this check cannot be fooled by metadata alone.
+    #
+    # Adversarial round 18, medium finding: round 13's check above only
+    # covers an UNDER-claim (metadata says 0, state dict has real growth
+    # tensors). The inverse -- metadata OVER-claims growth_blocks>0 while the
+    # state dict carries NO growth.* keys at all (a stripped grown
+    # checkpoint) -- used to sail straight through, since the old guard only
+    # tested `derived_growth_blocks != 0`. Reuse the same shape (claim vs.
+    # state-dict-derived) that `infer_model_config`'s
+    # `_verify_metadata_matches_shapes` uses for every other ModelConfig
+    # field: the claim and the derivation must AGREE, and the only value
+    # this function is willing to grow from is 0/0. Any other combination --
+    # over-claim, under-claim, or a genuinely-already-grown anchor where both
+    # agree at a nonzero count -- raises, naming both values, since growing
+    # an already-grown (or inconsistently-labeled) net is out of scope.
+    derived_growth_blocks = _derive_growth_blocks(payload["model"])
+    if anchor_config.growth_blocks != 0 or derived_growth_blocks != 0:
+        raise RuntimeError(
+            "anchor checkpoint is not a valid growth_blocks=0 base for grow_b2b_model: "
+            f"metadata claims growth_blocks={anchor_config.growth_blocks}, but the state "
+            f"dict's derived growth block count is {derived_growth_blocks} (field: "
+            f"(claimed, shape_derived))=growth_blocks=({anchor_config.growth_blocks}, "
+            f"{derived_growth_blocks}); growing an already-grown net (or a checkpoint "
+            "whose metadata claim disagrees with its own tensors) is out of scope"
+        )
+    # Cross-check the metadata-claimed dims this warm start's construction
+    # depends on (`channels`, `residual_blocks`) against the anchor's actual
+    # tensor shapes, BEFORE any surgery -- the same claimed-vs-derived
+    # discipline as the growth_blocks check just above, applied to the other
+    # dims a wrong metadata claim could silently misattribute. Reuses
+    # `infer_model_config`'s own shape-inference helper (`_shape_inferred_fields`,
+    # which derives `channels` from the first plane-stem conv's weight shape
+    # and `residual_blocks` from the count of distinct `plane_blocks.{i}`
+    # indices) rather than re-deriving these formulas here.
+    shape_fields = _shape_inferred_fields(payload["model"])
+    dim_mismatches = {
+        field: (getattr(anchor_config, field), shape_fields[field])
+        for field in ("channels", "residual_blocks")
+        if getattr(anchor_config, field) != shape_fields[field]
+    }
+    if dim_mismatches:
+        raise RuntimeError(
+            "grow_b2b_model: anchor metadata's construction dims do not match its own "
+            f"tensor shapes (field: (claimed, shape_derived))={dim_mismatches} -- refusing "
+            "to grow a model built from a mismatched claim"
+        )
+    grown_config = replace(anchor_config, growth_blocks=growth_blocks)
+    anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
+    if env_config is not None:
+        _assert_b2b_anchor_matches_live_env("grow_b2b_model", anchor_env_config, anchor_config, env_config)
+    model = PolicyValueNet(anchor_env_config, grown_config).to(device)
+    _, report = load_compatible_checkpoint(anchor_checkpoint, model)
+    # FAIL CLOSED: every anchor tensor must load same-shape except the brand
+    # new `growth.*` keys (missing from the anchor by construction, since it
+    # predates this warm start). Anything else silently dropping an anchor
+    # layer would break the step-0 parity invariant.
+    bad_skipped = [k for k in report["skipped_keys"] if not k.startswith("growth.")]
+    bad_missing = [k for k in report["missing_keys"] if not k.startswith("growth.")]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "anchor checkpoint is architecturally incompatible with the grown model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — its "
+            "metadata['model_config'] does not match its own saved tensor shapes"
+        )
+    model.eval()
+    return model
+
+
+def widen_event_gru(anchor_checkpoint: Path, new_hidden_dim: int,
+                    env_config: Optional[EnvConfig] = None, device: str = "cpu") -> PolicyValueNet:
+    """Warm-start a wider event-GRU by identity-masked widening (gru-width
+    lap, spec §2). Unlike `grow_b2b_model` (which stacks brand-new ReZero
+    blocks that are identity at alpha=0), this WIDENS an existing recurrent
+    layer in place: the anchor's `event_hidden_dim` (H_old) grows to
+    `new_hidden_dim` (H_new > H_old), and a new `event_encoder.output_proj`
+    (`event_output_dim = H_old`) projects the widened H_new-dim GRU output
+    back down to the trunk's original H_old-dim interface, so every
+    downstream consumer (trunk, privileged value head) sees an unchanged
+    input width and step-0 outputs equal the anchor's exactly.
+
+    The anchor must be a complete post-B2b checkpoint (`metadata['model_config']`
+    present — event_window is not recoverable from tensor shapes alone) with
+    `event_window > 0` (an active event encoder to widen) and
+    `event_output_dim == 0` (dormant/un-widened: widening an already-widened
+    anchor, or one whose own state dict already carries `output_proj` keys
+    while its metadata claims otherwise, is out of scope and rejected — the
+    claim and the state dict must agree, mirroring `grow_b2b_model`'s
+    claimed-vs-derived discipline). `new_hidden_dim <= H_old` is rejected
+    (this warm start only widens). `env_config`, when given, is cross-checked
+    against the anchor's own construction shapes via the same helper
+    `grow_b2b_model` uses (`_assert_b2b_anchor_matches_live_env`).
+
+    Weight surgery (step-zero exactness is the invariant; the parity test is
+    the enforcement) — PyTorch GRU gate order is r, z, n; each gate's weight
+    block is `H` rows/cols wide:
+      - `embedding`, `side_proj`, and every non-`event_encoder.gru`/
+        `event_encoder.output_proj` tensor: copied verbatim (the surgical
+        keys below are the ONLY architectural delta; anything else silently
+        skipped/missing is a fail-closed error).
+      - `weight_ih_l0` ([3*H_new, E]): per gate g, rows
+        `[g*H_new : g*H_new+H_old]` (old units) copied from the anchor's
+        `[g*H_old : (g+1)*H_old]`; the remaining `H_new-H_old` rows per gate
+        (new units) keep their normal random init.
+      - `weight_hh_l0` ([3*H_new, H_new]): per gate g, rows
+        `[g*H_new : g*H_new+H_old]`, columns `[0:H_old]` (the [old, old]
+        block) copied from the anchor; the SAME rows, columns `[H_old:H_new]`
+        (old-gate-rows seeing new-hidden-cols) are ZEROED so old units never
+        see new-unit activations (the invariant this whole surgery hinges
+        on); the new-unit rows (any column) keep their normal random init.
+      - `bias_ih_l0` / `bias_hh_l0` ([3*H_new]): per gate g, entries
+        `[g*H_new : g*H_new+H_old]` copied; the remaining `H_new-H_old`
+        entries per gate keep their normal random init.
+      - `output_proj`: weight `[I_{H_old} | 0]` (identity over the old H_old
+        units, zero over the new H_new-H_old units — so `gathered @
+        weight.T` reproduces exactly the old units' hidden state), bias
+        zero.
+
+    Step-zero parity (binding, tested elsewhere): event features, policy
+    logits, value, Q, aux outputs, and greedy actions EXACTLY equal the
+    anchor's on random obs/event batches (`torch.equal`) — this is what
+    catches any surgery mistake, including a missed old<-new zero block."""
+    anchor_checkpoint = Path(anchor_checkpoint)
+    payload = torch.load(anchor_checkpoint, map_location="cpu")
+    metadata = payload.get("metadata") or {}
+    model_config_meta = metadata.get("model_config")
+    if not isinstance(model_config_meta, dict):
+        raise RuntimeError(
+            "anchor lacks complete model_config metadata — widen_event_gru requires a "
+            "post-B2b checkpoint saved with metadata['model_config'] (event_window is not "
+            "recoverable from tensor shapes alone)"
+        )
+    anchor_config = ModelConfig(**model_config_meta)
+    if anchor_config.event_window <= 0:
+        raise RuntimeError(
+            f"anchor has event_window={anchor_config.event_window} — widen_event_gru requires "
+            "an anchor with an active event encoder (event_window > 0) to widen"
+        )
+    # Trust the STATE DICT, not the metadata's event_output_dim claim (same
+    # discipline as grow_b2b_model's derived-growth-blocks cross-check): an
+    # anchor whose metadata lies about event_output_dim==0 while its tensors
+    # actually carry an event_encoder.output_proj.* key (already widened, or
+    # tampered) would otherwise be accepted as a fresh base, silently
+    # double-widening it.
+    derived_has_output_proj = "event_encoder.output_proj.weight" in payload["model"]
+    if anchor_config.event_output_dim != 0 or derived_has_output_proj:
+        raise RuntimeError(
+            "anchor checkpoint is not a valid event_output_dim=0 base for widen_event_gru: "
+            f"metadata claims event_output_dim={anchor_config.event_output_dim}, but the "
+            f"state dict {'has' if derived_has_output_proj else 'does not have'} an "
+            "event_encoder.output_proj.weight key; widening an already-widened (or "
+            "inconsistently-labeled) anchor is out of scope"
+        )
+    # Cross-check the metadata-claimed `event_hidden_dim`/`event_embed_dim`
+    # against the anchor's actual tensor shapes, BEFORE any surgery. The
+    # manual GRU slicing a few lines down uses `old_hidden_dim` (read
+    # straight off `anchor_config`, i.e. the metadata claim) to compute gate
+    # row boundaries into `event_encoder.gru.weight_ih_l0`/`weight_hh_l0` --
+    # those tensors are exempt from `load_compatible_checkpoint`'s
+    # same-shape fail-closed check below (they're the surgical keys this
+    # function is allowed to reshape), so a wrong `event_hidden_dim` claim
+    # would otherwise slide straight past that check and silently
+    # misattribute gate rows in the slicing instead of failing. Reuses
+    # `infer_model_config`'s own shape-inference helper
+    # (`_shape_inferred_fields`), which derives `event_hidden_dim` as
+    # `weight_ih_l0.shape[0] // 3` and `event_embed_dim` as
+    # `embedding.weight.shape[1]`.
+    shape_fields = _shape_inferred_fields(payload["model"])
+    dim_mismatches = {
+        field: (getattr(anchor_config, field), shape_fields[field])
+        for field in ("event_hidden_dim", "event_embed_dim")
+        if field in shape_fields and getattr(anchor_config, field) != shape_fields[field]
+    }
+    if dim_mismatches:
+        raise RuntimeError(
+            "widen_event_gru: anchor metadata's event dims do not match its own tensor "
+            f"shapes (field: (claimed, shape_derived))={dim_mismatches} -- refusing to "
+            "widen a GRU built from a mismatched claim"
+        )
+    old_hidden_dim = anchor_config.event_hidden_dim
+    if new_hidden_dim <= old_hidden_dim:
+        raise RuntimeError(
+            f"new_hidden_dim ({new_hidden_dim}) must be strictly greater than the anchor's "
+            f"event_hidden_dim ({old_hidden_dim}) — widen_event_gru only widens"
+        )
+    widened_config = replace(anchor_config, event_hidden_dim=new_hidden_dim,
+                             event_output_dim=old_hidden_dim)
+    anchor_env_config = _reconstruct_env_config(payload["model"], anchor_config)
+    if env_config is not None:
+        _assert_b2b_anchor_matches_live_env("widen_event_gru", anchor_env_config, anchor_config, env_config)
+    model = PolicyValueNet(anchor_env_config, widened_config).to(device)
+    _, report = load_compatible_checkpoint(anchor_checkpoint, model)
+    # FAIL CLOSED: every anchor tensor must load same-shape except the GRU's
+    # own widened tensors and the brand new output_proj — anything else
+    # silently dropping an anchor layer would break the step-0 parity
+    # invariant.
+    surgical_prefixes = ("event_encoder.gru.", "event_encoder.output_proj.")
+    bad_skipped = [k for k in report["skipped_keys"] if not k.startswith(surgical_prefixes)]
+    bad_missing = [k for k in report["missing_keys"] if not k.startswith(surgical_prefixes)]
+    if bad_skipped or bad_missing:
+        raise RuntimeError(
+            "anchor checkpoint is architecturally incompatible with the widened model "
+            f"config (skipped={bad_skipped[:6]}, missing={bad_missing[:6]}) — its "
+            "metadata['model_config'] does not match its own saved tensor shapes"
+        )
+    anchor_state = payload["model"]
+    with torch.no_grad():
+        gru = model.event_encoder.gru
+        h_old, h_new = old_hidden_dim, new_hidden_dim
+        old_weight_ih = anchor_state["event_encoder.gru.weight_ih_l0"]  # [3*h_old, E]
+        old_weight_hh = anchor_state["event_encoder.gru.weight_hh_l0"]  # [3*h_old, h_old]
+        old_bias_ih = anchor_state["event_encoder.gru.bias_ih_l0"]      # [3*h_old]
+        old_bias_hh = anchor_state["event_encoder.gru.bias_hh_l0"]      # [3*h_old]
+        for gate in range(3):
+            old_rows = slice(gate * h_old, (gate + 1) * h_old)
+            new_old_rows = slice(gate * h_new, gate * h_new + h_old)
+            gru.weight_ih_l0[new_old_rows, :].copy_(old_weight_ih[old_rows, :])
+            gru.bias_ih_l0[new_old_rows].copy_(old_bias_ih[old_rows])
+            gru.bias_hh_l0[new_old_rows].copy_(old_bias_hh[old_rows])
+            # weight_hh: [old rows, old cols] copied verbatim; [old rows, new
+            # cols] ZEROED (old units must never see new-unit activations, or
+            # step-zero drifts). [new rows, any col] keep their normal init —
+            # new-unit dynamics are free, since output_proj masks them out.
+            gru.weight_hh_l0[new_old_rows, :h_old].copy_(old_weight_hh[old_rows, :])
+            gru.weight_hh_l0[new_old_rows, h_old:].zero_()
+        proj = model.event_encoder.output_proj
+        assert proj is not None, "widened_config.event_output_dim == old_hidden_dim > 0"
+        proj.weight.zero_()
+        proj.weight[:, :h_old].copy_(torch.eye(h_old, dtype=proj.weight.dtype))
+        proj.bias.zero_()
+    model.eval()
+    return model
+
+
+def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[int, dict],
+                               final_scores: dict[int, float], bust_threshold: float,
+                               truncated: bool) -> tuple[np.ndarray, np.ndarray]:
+    """Pure hindsight-label assembler (Spec B2b).
+
+    `rows`: (seat, hand_id) tuples in EMISSION order (seat-contiguous blocks,
+    matching the collector's flat emission order). `hand_outcomes`: hand_id ->
+    decoded round-outcome dict (bridge's `_decode_round_outcome`); a hand with
+    no entry (e.g. the mock bridge, which never produces `round_outcome`)
+    contributes no deal-in signal. `final_scores`: seat -> final match score
+    for all 4 seats. Returns `(dealin float32[N], rank int64[N])`.
+
+    dealin[i] = 1.0 iff rows[i]'s hand closed as a non-draw `ACTION_RON` paid
+    by that row's own seat (`discarder_seat == seat`); deal-in labels survive
+    truncation (they are a fact about a hand that already closed).
+
+    rank: -1 for every row when `truncated` (no valid final standings, since
+    the match never reached a terminal state); otherwise each seat's 0-based
+    COMPETITION rank (the count of non-busted seats with strictly greater
+    score — tied scores SHARE a rank, matching the engine's standings; an
+    arbitrary tiebreak would teach one tied leader it finished second), and
+    4 for any seat whose score is <= `bust_threshold` (busted seats never
+    receive a numeric placement)."""
+    dealin = np.zeros(len(rows), dtype=np.float32)
+    for i, (seat, hand_id) in enumerate(rows):
+        outcome = hand_outcomes.get(hand_id)
+        if outcome is None:
+            continue
+        if (not outcome.get("is_draw", False)
+                and outcome.get("win_type_name") == "ACTION_RON"
+                and int(outcome.get("discarder_seat", -1)) == seat):
+            dealin[i] = 1.0
+
+    if truncated:
+        rank_by_seat = {seat: -1 for seat in final_scores}
+    else:
+        seats_sorted = sorted(final_scores)
+        non_busted = [s for s in seats_sorted if final_scores[s] > bust_threshold]
+        rank_by_seat = {
+            s: sum(1 for other in non_busted if final_scores[other] > final_scores[s])
+            for s in non_busted
+        }
+        for s in seats_sorted:
+            rank_by_seat.setdefault(s, 4)
+
+    rank = np.asarray([rank_by_seat.get(seat, -1) for seat, _ in rows], dtype=np.int64)
+    return dealin, rank
+
+
+def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
+                         config: PPOConfig, base_seed: int) -> RolloutBatch:
+    """Symmetric self-play PPO rollouts for Spec B2b: all four seats are the
+    SAME `model`, each seat's transitions recorded seat-contiguously (mirrors
+    `collect_selfplay_rollouts`). No feature-dropout (B2b's event/privileged
+    channels are always on). Each row additionally carries its event-history
+    (tail-padded to `model.model_config.event_window`) and, at match end, the
+    hindsight `dealin_labels`/`rank_labels` assembled by
+    `_assemble_hindsight_labels` from the `round_outcome` entries seen in
+    `StepResult.info` (a step whose info carries `round_outcome` closes the
+    CURRENT hand for all seats)."""
+    device = config.device
+    window = int(model.model_config.event_window)
+    cfg = EnvConfig(
+        action_space_size=env_config.action_space_size,
+        scalar_features=env_config.scalar_features,
+        bridge_kind=env_config.bridge_kind,
+        bridge_library_path=env_config.bridge_library_path,
+        learning_seats=(0, 1, 2, 3),
+        auto_play_heuristics=False,
+        max_steps_per_episode=config.max_steps_per_episode,
+        match_mode=config.match_mode,
+        chongci_starting_score=env_config.chongci_starting_score,
+        chongci_bust_threshold=env_config.chongci_bust_threshold,
+        chongci_max_hands=env_config.chongci_max_hands,
+        oracle_observation=True,
+        event_history_window=window,
+    )
+    bridge = build_bridge(cfg)
+    env = MahjongEnv(cfg, bridge=bridge)
+    model.eval()
+    # Label parameters read from `cfg` — the SAME config the bridge simulates
+    # under — so hindsight ranks can never diverge from the played match.
+    # UNITS: the Go env emits chongci rewards as score deltas / 1000
+    # (internal/rl/env.go) in float32. Labels are computed in EXACT integer
+    # points: the accumulated float net is scaled back by 1000 and rounded
+    # (float32 drift over a match is << 0.5 points), so exact-threshold
+    # busts and score ties cannot flip on rounding order.
+    chongci = config.match_mode == "chongci"
+    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
+    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
+    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
+    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
+    events_l, lengths_l, dealin_l, rank_l = [], [], [], []
+    truncated_matches = 0
+    completed_matches = 0
+    outcomes_seen = 0
+    try:
+        for m in range(config.matches_per_iter):
+            obs = env.reset(seed=base_seed + m)
+            torch.manual_seed(int(base_seed + m))
+            reset_result = env.last_reset_result
+            if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                continue
+            # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
+            # reset-time autoplay rewards and payouts landing before a seat's
+            # first decision) — the transition-crediting buffers below only
+            # credit seats that have already acted, which is correct for PPO
+            # telescoping but would corrupt final scores for rank labels.
+            match_net = np.zeros(4, dtype=np.float64)
+            if reset_result is not None:
+                rr = np.asarray(reset_result.rewards, dtype=np.float64)
+                match_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
+            seat_planes:   list[list] = [[], [], [], []]
+            seat_scalars:  list[list] = [[], [], [], []]
+            seat_masks:    list[list] = [[], [], [], []]
+            seat_actions:  list[list] = [[], [], [], []]
+            seat_logprobs: list[list] = [[], [], [], []]
+            seat_values:   list[list] = [[], [], [], []]
+            seat_rewards:  list[list] = [[], [], [], []]
+            seat_events:   list[list] = [[], [], [], []]
+            seat_lengths:  list[list] = [[], [], [], []]
+            seat_hand_ids: list[list] = [[], [], [], []]
+            hand_id = 0
+            hand_outcomes: dict[int, dict] = {}
+            step = None
+            while True:
+                seat = int(obs.seat)
+                planes_np = np.asarray(obs.planes, dtype=np.float32)
+                scalars_np = np.asarray(obs.scalars, dtype=np.float32)
+                mask_np = np.asarray(obs.action_mask, dtype=np.int8)
+                row_events = np.zeros(window, dtype=np.uint32)
+                ev = np.asarray(obs.event_history, dtype=np.uint32)
+                ev_len = min(int(ev.shape[0]), window)
+                if ev_len > 0:
+                    # TAIL of the history (newest events) — matches the
+                    # serving-side TorchGreedyPolicy convention. Unreachable
+                    # difference today (bridge window == model window) but the
+                    # conventions must not drift.
+                    row_events[:ev_len] = ev[-ev_len:]
+                planes = torch.from_numpy(planes_np).unsqueeze(0).to(device)
+                scalars = torch.from_numpy(scalars_np).unsqueeze(0).to(device)
+                amask = torch.from_numpy(mask_np).unsqueeze(0).to(device)
+                events_t = torch.from_numpy(row_events.astype(np.int64)).unsqueeze(0).to(device)
+                length_t = torch.tensor([ev_len], dtype=torch.int64, device=device)
+                with torch.no_grad():
+                    logits, value = model(planes, scalars, amask, events=events_t, event_lengths=length_t)
+                    logits = logits / max(config.sample_temperature, 1e-6)
+                    dist = masked_policy_distribution(logits)
+                    action = int(dist.sample()[0].item())
+                    logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                    val = float(value[0].item())
+                seat_planes[seat].append(planes_np)
+                seat_scalars[seat].append(scalars_np)
+                seat_masks[seat].append(mask_np)
+                seat_actions[seat].append(action)
+                seat_logprobs[seat].append(logprob)
+                seat_values[seat].append(val)
+                seat_rewards[seat].append(0.0)
+                seat_events[seat].append(row_events)
+                seat_lengths[seat].append(ev_len)
+                seat_hand_ids[seat].append(hand_id)
+                step = env.step(action)
+                sr = np.asarray(step.rewards, dtype=np.float64)
+                match_net[: min(4, sr.shape[-1])] += sr[: min(4, sr.shape[-1])]
+                for k in range(4):
+                    if seat_rewards[k]:
+                        seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
+                outcome = step.info.get("round_outcome")
+                if outcome:
+                    outcomes_seen += 1
+                if outcome:
+                    hand_outcomes[hand_id] = outcome
+                    hand_id += 1
+                if step.terminated or step.truncated:
+                    break
+                obs = step.observation
+            is_truncated = bool(step.truncated) if step is not None else False
+            if not is_truncated:
+                completed_matches += 1
+            if is_truncated:
+                truncated_matches += 1
+            final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
+            rows: list[tuple[int, int]] = []
+            for k in range(4):
+                rows.extend((k, hid) for hid in seat_hand_ids[k])
+            dealin_labels, rank_labels = _assemble_hindsight_labels(
+                rows, hand_outcomes, final_scores, bust_threshold=bust_threshold,
+                truncated=is_truncated)
+            offset = 0
+            for k in range(4):
+                n = len(seat_actions[k])
+                if n == 0:
+                    continue
+                planes_l.extend(seat_planes[k])
+                scalars_l.extend(seat_scalars[k])
+                mask_l.extend(seat_masks[k])
+                actions_l.extend(seat_actions[k])
+                logprobs_l.extend(seat_logprobs[k])
+                values_l.extend(seat_values[k])
+                rewards_l.extend(seat_rewards[k])
+                dones_l.extend([0.0] * (n - 1) + [1.0])
+                events_l.extend(seat_events[k])
+                lengths_l.extend(seat_lengths[k])
+                dealin_l.extend(dealin_labels[offset : offset + n].tolist())
+                rank_l.extend(rank_labels[offset : offset + n].tolist())
+                offset += n
+    finally:
+        close = getattr(bridge, "close", None)
+        if callable(close):
+            close()
+    if chongci and completed_matches > 0 and outcomes_seen == 0:
+        # A completed chongci match ALWAYS surfaces at least one round
+        # outcome on the step path (internal/rl/env.go attaches boundary and
+        # terminal outcomes). Zero outcomes across completed matches means
+        # the bridge library predates that fix — deal-in supervision would
+        # silently degenerate to all-negative labels for the whole run.
+        raise RuntimeError(
+            "no round outcomes surfaced across "
+            f"{completed_matches} completed chongci matches — the Go bridge library "
+            "predates chongci round-outcome delivery; rebuild it "
+            "(go build -buildmode=c-shared ./cmd/rlbridge)"
+        )
+    if not actions_l:
+        raise RuntimeError("collect_b2b_rollouts produced no decisions")
+    return RolloutBatch(
+        planes=np.stack(planes_l).astype(np.float32),
+        scalars=np.stack(scalars_l).astype(np.float32),
+        action_mask=np.stack(mask_l).astype(np.int8),
+        actions=np.asarray(actions_l, dtype=np.int64),
+        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
+        values=np.asarray(values_l, dtype=np.float32),
+        rewards=np.asarray(rewards_l, dtype=np.float32),
+        dones=np.asarray(dones_l, dtype=np.float32),
+        truncated_matches=truncated_matches,
+        events=np.stack(events_l).astype(np.uint32),
+        event_lengths=np.asarray(lengths_l, dtype=np.int32),
+        dealin_labels=np.asarray(dealin_l, dtype=np.float32),
+        rank_labels=np.asarray(rank_l, dtype=np.int64),
+    )
+
+
+def _b2b_worker_loop(env_config, model_config, ppo_config, task_q, result_q):
+    import torch as _torch
+
+    from .model import PolicyValueNet as _PVN
+
+    _torch.set_num_threads(1)
+    model = _PVN(_b2b_model_env_config(env_config), model_config)
+    while True:
+        task = task_q.get()
+        if task is None:
+            return
+        worker_id, state_dict, base_seed, matches = task
+        try:
+            model.load_state_dict(state_dict)
+            cfg = replace(ppo_config, matches_per_iter=matches, device="cpu")
+            batch = collect_b2b_rollouts(env_config, model, cfg, base_seed=base_seed)
+            result_q.put((worker_id, batch, None))
+            batch = None  # release our reference; the queue keeps the object alive until the feeder thread has serialized it, then all copies are freed
+        except Exception:  # noqa: BLE001 - report any worker failure to the parent
+            result_q.put((worker_id, None, traceback.format_exc()))
+
+
+class ParallelB2bCollector:
+    """Spawn-context worker pool for Spec B2b self-play rollouts, concatenated
+    into one RolloutBatch. Mirrors `ParallelSelfplayCollector` (seeding,
+    seed-block splitting, result-queue conventions) minus `drop_prob` — B2b has
+    no feature-dropout schedule.
+
+    `worker_target` (adversarial round 9, medium finding) overrides the
+    per-worker process entry point; defaults to `_b2b_worker_loop`, the
+    production path. This exists ONLY so tests (e.g. `test_collect_bench.py`'s
+    spawn-path perturbation regressions) can inject a test-only worker
+    function -- picklable by `multiprocessing`'s spawn context because it is
+    a plain module-level callable, not a closure -- instead of the previous
+    `FH_MAHJONG_TEST_B2B_PERTURB_FIELD` environment variable the production
+    worker used to read. That env var was a production-code hook: any
+    process (a CI runner, a shell profile, an inherited env from a parent
+    launcher) that happened to set it would silently corrupt real training
+    data, since spawned child processes inherit the parent's environment.
+    Production callers (`train_b2b`) never pass `worker_target`, so they are
+    unaffected."""
+
+    def __init__(self, env_config: EnvConfig, model_config: ModelConfig,
+                 ppo_config: PPOConfig, num_workers: int,
+                 worker_target: Optional[Callable] = None) -> None:
+        if num_workers < 1:
+            raise ValueError("num_workers must be >= 1")
+        self.env_config = env_config
+        self.model_config = model_config
+        self.ppo_config = ppo_config
+        self.num_workers = int(num_workers)
+        self._worker_target = worker_target if worker_target is not None else _b2b_worker_loop
+        self._ctx = mp.get_context("spawn")
+        self._task_q = None
+        self._result_q = None
+        self._procs = []
+
+    def start(self) -> None:
+        self._task_q = self._ctx.Queue()
+        self._result_q = self._ctx.Queue()
+        self._procs = []
+        for _ in range(self.num_workers):
+            p = self._ctx.Process(
+                target=self._worker_target,
+                args=(self.env_config, self.model_config, self.ppo_config,
+                      self._task_q, self._result_q),
+                daemon=True,
+            )
+            p.start()
+            self._procs.append(p)
+
+    def collect(self, state_dict, base_seed: int, matches_per_iter: int) -> RolloutBatch:
+        """Collect `matches_per_iter` matches, in bounded sequential dispatch
+        rounds of at most `ppo_config.collect_dispatch_chunk` matches each
+        (0 = one round, the legacy behavior). Chunking bounds per-worker
+        resident trajectory memory at ~chunk/num_workers matches — without it
+        every worker holds its ENTIRE matches/num_workers block before the
+        first result returns, which OOM'd the 31GB box at 960 matches
+        (data-scale-960 Amendment 2, 2026-08-12 consult). Chunks run over
+        contiguous seed blocks in ascending order and concatenate in that
+        order, so together with per-match seeding
+        (`torch.manual_seed(base_seed + m)` in `collect_b2b_rollouts`) the
+        result is bit-identical to a single dispatch — digest-pinned by
+        test_collect_bench's chunk-parity tests.
+
+        Amendment 5 (data-scale-960, 2026-08-15): the worker pool is closed
+        after the FINAL dispatch's results have been received and before any
+        remaining concatenation, then recreated on the next collect. The
+        Amendment 4 profile measured the persistent pool at ~18.4GiB (10
+        workers) held through the master's outer-concat transient — the two
+        together are what breached the host ceiling at 960 matches. Teardown
+        happens after every result is in hand, so seed coverage and canonical
+        row order are untouched; the error paths inside `_collect_dispatch`
+        already close the pool."""
+        if not self._procs:
+            self.start()
+        cap = int(getattr(self.ppo_config, "collect_dispatch_chunk", 0) or 0)
+        if cap <= 0 or cap >= matches_per_iter:
+            batch = self._collect_dispatch(state_dict, base_seed, matches_per_iter,
+                                           final_dispatch=True)
+            memprobe.probe("collector_return", rows=len(batch), chunks=1)
+            return batch
+        chunks = []
+        offset = 0
+        while offset < matches_per_iter:
+            count = min(cap, matches_per_iter - offset)
+            final = (offset + count) >= matches_per_iter
+            chunks.append(self._collect_dispatch(state_dict, int(base_seed + offset),
+                                                 count, final_dispatch=final))
+            memprobe.probe("chunk_collected", chunk_index=len(chunks) - 1,
+                           matches=int(count), rows=len(chunks[-1]))
+            offset += count
+        batch = concat_rollout_batches(chunks, consume=True)
+        memprobe.probe("collector_return", rows=len(batch), chunks=len(chunks))
+        return batch
+
+    def _collect_dispatch(self, state_dict, base_seed: int, matches_per_iter: int,
+                          final_dispatch: bool = False) -> RolloutBatch:
+        counts = _split_counts(matches_per_iter, self.num_workers)
+        offset = 0
+        dispatched = 0
+        for worker_id, count in enumerate(counts):
+            if count == 0:
+                continue
+            self._task_q.put((worker_id, state_dict, int(base_seed + offset), int(count)))
+            offset += count
+            dispatched += 1
+        results: dict = {}
+        received = 0
+        while received < dispatched:
+            try:
+                worker_id, batch, err = self._result_q.get(timeout=30.0)
+            except _queue.Empty:
+                if any(p.exitcode is not None for p in self._procs):
+                    self.close()
+                    raise RuntimeError("a B2b rollout worker exited unexpectedly during collect")
+                continue
+            if err is not None:
+                self.close()
+                raise RuntimeError(f"B2b rollout worker {worker_id} failed:\n{err}")
+            results[worker_id] = batch
+            received += 1
+        if final_dispatch:
+            # Amendment 5: all of this collect's results are in hand — free the
+            # pool's ~1.8GiB-per-worker runtime footprint before any further
+            # (memory-transient) assembly. The next collect() restarts it.
+            self.close()
+            memprobe.probe("pool_closed_before_concat", workers=self.num_workers)
+        ordered = [results[w] for w in sorted(results)]
+        dispatch_batch = concat_rollout_batches(ordered, consume=True)
+        memprobe.probe("dispatch_return", rows=len(dispatch_batch), workers=len(ordered))
+        return dispatch_batch
+
+    def close(self) -> None:
+        if not self._procs:
+            return
+        for _ in self._procs:
+            try:
+                self._task_q.put(None)
+            except Exception:  # noqa: BLE001
+                pass
+        for p in self._procs:
+            p.join(timeout=10)
+            if p.is_alive():
+                p.terminate()
+        self._procs = []
+
+
+def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpoint: Optional[Path],
+             checkpoint_dir: Path, config: PPOConfig, base_seed: int = 0,
+             growth_blocks: int = 0, widen_event_hidden: int = 0, train_state_every: int = 5,
+             resume_from_state: Optional[Path] = None,
+             force_history_reset: bool = False,
+             fresh_run_overwrite: bool = False,
+             allow_bridge_mismatch: bool = False,
+             accept_legacy_unpinned_state: bool = False) -> list[dict]:
+    """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
+    net from the 39ch champion, then run PPO with the aux losses folded in
+    automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
+    `batch.events`/`batch.dealin_labels`/`batch.rank_labels`). Mirrors
+    `train_selfplay_oracle` minus feature-dropout/ACH/the batched-pool path —
+    B2b has no dropout schedule and always trains PPO.
+
+    `widen_event_hidden > 0` (gru-width identity-masked warm start) routes
+    model construction through `widen_event_gru` instead: `champion_checkpoint`
+    must then be a complete post-B2b anchor with a dormant (unwidened) event
+    encoder (not the raw 39ch champion the `growth_blocks`/default surgery
+    paths expect), and `model_config` is superseded by the widened model's
+    own config (the anchor's saved architecture with `event_hidden_dim`
+    widened to `widen_event_hidden` and `event_output_dim` set to the
+    anchor's original width) so every downstream checkpoint save below
+    records the true architecture. Mutually exclusive with
+    `growth_blocks > 0` in the same run — both surgeries in one warm start
+    is out of scope; the caller (the CLI) rejects that combination before
+    this function is ever called.
+
+    `growth_blocks > 0` (deep16-rezero capacity growth) routes model
+    construction through `grow_b2b_model` instead: `champion_checkpoint` must
+    then be a complete post-B2b anchor (not the raw 39ch champion the
+    growth_blocks=0 surgery path expects), and `model_config` is superseded
+    by the grown model's own config (the anchor's saved architecture plus
+    `growth_blocks` ReZero blocks) so every downstream checkpoint save below
+    records the true architecture, including `growth_blocks`.
+
+    Resumable state (deep16-rezero capacity lap survives box restarts):
+    every `train_state_every` iterations, and always at completion, writes
+    `<checkpoint_dir>/train_state.pt` (model + optimizer + torch/cuda/numpy/
+    python RNG state + `next_iteration` + a `config_echo` of the three config
+    dataclasses, atomically). `resume_from_state`, when given, SKIPS the
+    champion/growth warm-start entirely — the model is built directly from
+    the CALLER-supplied `model_config` (which must therefore already be the
+    EFFECTIVE architecture the run trained under, i.e. for a growth_blocks>0
+    lap, the anchor's own config with `growth_blocks` folded in — exactly
+    what `config_echo["model_config"]` records) and its weights come from the
+    state file, not from `champion_checkpoint`/`growth_blocks`. The
+    caller-supplied `config`/`model_config`/`env_config` and `base_seed` are
+    validated against the state file (any drift raises `ValueError` naming
+    both values) before anything is restored, then training continues from
+    `next_iteration` through `config.iterations`, appending to the existing
+    `history.json` when it is valid. A missing or malformed history file is
+    reset with a warning; checkpoint recovery still proceeds.
+
+    A `next_iteration` already `> config.iterations` raises `ValueError`
+    instead of returning an empty history — resuming always intends more
+    training, so an exhausted target is an error, not a silent no-op
+    (adversarial round 3, Finding 2).
+
+    Every run (fresh or `--resume-from-state`) is tagged with a `run_id`
+    (a fresh `uuid4().hex` for new runs; the state file's own `run_id` when
+    resuming), persisted in both `train_state.pt["run_id"]` and
+    `history.json`'s `{"run_id": ..., "rows": [...]}` wrapper. A resume
+    requires `state.run_id == history.run_id` (mismatch raises, naming both)
+    so a `train_state.pt` from one run can never be pointed at an unrelated
+    run's `history.json`/checkpoints in the same directory. Legacy bare-list
+    `history.json` files (written before `run_id` existed) are accepted only
+    when the state file also predates `run_id` (both `None`); use
+    `read_b2b_history_rows(path)` to read rows back regardless of format
+    (adversarial round 3, Finding 1).
+
+    Every `iter_*.pt` checkpoint also carries `metadata["run_id"]`
+    (adversarial round 4, high finding). On EVERY resume (adversarial round
+    5, high finding: not just when history.json is missing or corrupt --
+    round 4's check ran only on that recovery path, so a resume with a
+    perfectly valid, matching history.json never inspected checkpoint_dir at
+    all), `_check_artifact_lineage_or_raise` validates every existing
+    `iter_*.pt` artifact's `run_id` against the resuming state's `run_id`
+    before proceeding -- a mismatch (or a legacy artifact with no `run_id`
+    while the state has one) raises instead of silently mixing lineages; an
+    empty checkpoint_dir passes through. `force_history_reset=True` (the
+    CLI's `--force-history-reset`; the name predates this generalization but
+    is kept to avoid a runbook-breaking rename -- see its `--help` text)
+    skips ONLY that artifact-lineage check, on both the recovery path and
+    this unconditional every-resume scan, never the base_seed/config_echo
+    checks above.
+
+    A resume also pins the Go simulator library itself, not merely the
+    bridge_kind/bridge_library_path *configuration* `config_echo` already
+    covers: `train_state.pt["bridge_sha256"]` records the sha256 of the
+    library `env_config` resolved to AT SAVE TIME (see
+    `_resolve_current_bridge_fingerprint`), and every resume recomputes it
+    from the CURRENT resolution and raises, naming both digests, on any
+    mismatch -- a rebuild of the .so at the same path leaves `config_echo`
+    byte-identical while silently mixing simulator versions across the
+    resume boundary (adversarial round 13, high finding). This is never
+    safe -- a different simulator changes the very rules the model was
+    trained under -- so `force_history_reset` does NOT cover it. The
+    dedicated, explicitly attribution-breaking override is
+    `allow_bridge_mismatch=True` (the CLI's `--allow-bridge-mismatch`,
+    named after `fh-mj-compare`'s own `--allow-bridge-mismatch`), which
+    proceeds anyway but logs a warning naming both digests. Mock-bridge runs
+    (`bridge_kind != "go"`) have no library to pin: both digests are
+    `None`, which compares equal and always passes.
+
+    Snapshot-first ordering (adversarial round 21, high finding): the
+    source-fingerprint-and-compare step described in the previous paragraph
+    is skipped ENTIRELY whenever this lineage's content-addressed bridge
+    snapshot (named by the SAVED digest) already exists in `checkpoint_dir`
+    -- the mutable source is not read, hashed, or even resolved in that
+    case. Rounds 13-20 always fingerprinted the source here first, so a
+    deleted or rebuilt source bricked resume (an unrecoverable raise, since
+    the source read/compare happened before the snapshot was ever
+    consulted) even though the pinned snapshot bytes sat completely intact
+    on disk -- `--allow-bridge-mismatch` could not help, because the
+    exception fired before that flag was ever checked. `_resolve_bridge_
+    snapshot_for_resume` (below) re-hashes the snapshot's OWN bytes against
+    the saved digest and raises if they were tampered with or corrupted --
+    the only failure mode an intact-looking snapshot can still have -- with
+    no override, since corrupted bytes cannot be un-corrupted. Only when the
+    snapshot is ABSENT does this fall back to the source-based recovery
+    described above (round 20's missing-snapshot rules, unchanged).
+
+    A Go-backed state saved with no digest at all (`bridge_sha256 is None`,
+    i.e. a legacy `train_state.pt` from before this pinning existed) fails
+    closed (adversarial round 19, high finding: round 16 accepted this
+    unconditionally and left the pin at `None` FOREVER, permanently
+    disabling drift detection for the rest of the run's life). Resuming it
+    now raises `ValueError` naming the remedy, `accept_legacy_unpinned_state
+    =True` (the CLI's `--accept-legacy-unpinned-state`), unless that flag is
+    given. WITH the flag, the resume proceeds and establishes a NEW
+    provenance boundary starting at this resume: the digest the library
+    CURRENTLY resolves to is pinned as this lineage's baseline from here
+    forward (recorded in every subsequent `train_state.pt`/`iter_*.pt`), a
+    warning is logged naming the new digest, and drift detection resumes
+    normally for the rest of the run. Iterations up to and including this
+    resume point have unverifiable simulator provenance (nothing was ever
+    pinned for them); only iterations from here forward are drift-protected
+    again. Mock-bridge states are never affected -- they never enter this
+    branch at all (`bridge_kind == "go"` is required).
+
+    A fresh (non-`resume_from_state`) call fails closed if `checkpoint_dir`
+    already contains ANY managed artifact -- `history.json`,
+    `train_state.pt`, or an `iter_*.pt` checkpoint (adversarial round 6,
+    high finding: without this, a mistaken fresh launch into a prior run's
+    directory silently overwrote its early checkpoints while leaving later
+    ones in place -- mixed lineage, and potentially days of lost progress).
+    The `ValueError` names what was found and points at the two legitimate
+    fixes: `resume_from_state` to continue that run, or a new/empty
+    `checkpoint_dir` for a truly fresh one. `fresh_run_overwrite=True` (the
+    CLI's `--fresh-run-overwrite`) is the explicit destructive override: it
+    deletes exactly those managed artifacts -- nothing else in the
+    directory -- logs what was removed, and then proceeds as a normal fresh
+    run. A brand-new or genuinely empty `checkpoint_dir` always proceeds
+    without asking (mkdir-if-absent, as before)."""
+    # Adversarial review round 2, Finding 2: the routing below is
+    # `widen_event_hidden > 0`, so any negative value (e.g. a fat-fingered
+    # `-256`) silently falls through to the DEFAULT build_b2b_model path
+    # instead of the requested widen_event_gru surgery. With the intended
+    # post-B2b anchor for that surgery, the fallback path can succeed
+    # outright (its shapes already match a B2b model), silently training the
+    # unwidened architecture for a multi-day run before anyone notices.
+    # Reject negative values outright; 0 remains the "disabled" sentinel and
+    # the upper bound mirrors ModelConfig.MAX_HIDDEN_DIM (the same ceiling
+    # event_hidden_dim itself is bounded by).
+    if widen_event_hidden < 0:
+        raise ValueError(
+            f"train_b2b: widen_event_hidden ({widen_event_hidden}) must not be "
+            "negative -- 0 disables the gru-width warm-start surgery; a negative "
+            "value would silently fall through to the default (unwidened) "
+            "build_b2b_model path instead of erroring"
+        )
+    if widen_event_hidden > ModelConfig.MAX_HIDDEN_DIM:
+        raise ValueError(
+            f"train_b2b: widen_event_hidden ({widen_event_hidden}) exceeds maximum "
+            f"{ModelConfig.MAX_HIDDEN_DIM}"
+        )
+    if growth_blocks > 0 and widen_event_hidden > 0:
+        raise ValueError(
+            f"train_b2b: growth_blocks ({growth_blocks}) and widen_event_hidden "
+            f"({widen_event_hidden}) cannot both be set in one run -- these are two "
+            "distinct warm-start surgeries (ReZero depth growth vs. event-GRU width "
+            "growth) and this function does not attempt to reconcile applying both to "
+            "the same anchor in a single call"
+        )
+    device = config.device
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = train_state._acquire_checkpoint_dir_lock(checkpoint_dir)
+    try:
+        state_payload = None
+        # Adversarial round 18, high finding: only ever set (non-None) by the
+        # fresh `--fresh-run-overwrite` path below, when it moved existing
+        # managed artifacts into a backup subdirectory instead of deleting
+        # them. `backup_cleared` starts True so a resume (or a fresh run into
+        # an empty directory, which never creates a backup) never attempts to
+        # clean up a backup that doesn't exist. `durability_trigger` picks
+        # which save this run's OWN first durable artifact is: `train_state.pt`
+        # when periodic state saves happen at all (`train_state_every > 0`),
+        # else the first `iter_*.pt` checkpoint (train_state_every == 0 means
+        # train_state.pt is never written for the whole run -- see
+        # `test_train_state_every_zero_still_blocks_publish_of_drifted_iteration`).
+        overwrite_backup_dir: Optional[Path] = None
+        backup_cleared = True
+        durability_trigger = "state" if train_state_every > 0 else "checkpoint"
+        if resume_from_state is not None:
+            # weights_only=False: the state includes numpy/python RNG state (plain
+            # tuples/arrays, not just tensors), which torch's default safe
+            # unpickler rejects. train_state.pt is our own trusted output.
+            # `_load_train_state_with_fallback` also covers the newest
+            # generation being unreadable by falling back to `.prev` (see its
+            # docstring; adversarial round 9, high finding).
+            state_payload = train_state._load_train_state_with_fallback(Path(resume_from_state))
+            saved_base_seed = state_payload.get("base_seed", train_state._RESUME_MISSING)
+            if saved_base_seed != base_seed:
+                raise ValueError(
+                    "--resume-from-state base_seed mismatch: "
+                    f"state file has {saved_base_seed!r}, requested base_seed is "
+                    f"{base_seed!r} — resuming with a different seed schedule is "
+                    "not supported (pass the base_seed the original run used)"
+                )
+            # Adversarial round 13, high finding: config_echo's env_config
+            # section only records the bridge_kind/bridge_library_path
+            # *configuration*, which stays byte-identical across a rebuild of
+            # the .so at the same path -- pin the ACTUAL simulator binary via
+            # its content digest instead, recomputed from the CURRENT
+            # resolution (never trusted from the state file, which is exactly
+            # what a rebuild-between-runs would stale-read).
+            saved_bridge_sha256 = state_payload.get("bridge_sha256")
+            # Adversarial round 16, high finding: a `train_state.pt` saved by
+            # a run from BEFORE the fingerprint-pinning fix existed (rounds
+            # 13-15) can legitimately have `bridge_sha256=None` even though
+            # `bridge_kind == "go"` -- it simply never recorded one. Treating
+            # that the same as the round-13 mismatch check below would raise
+            # "bridge library mismatch" (None vs a real current digest) and
+            # brick every pre-fix state file outright, which is exactly the
+            # kind of state-bricking `force_history_reset` was invented to
+            # avoid elsewhere in this function -- except this check does NOT
+            # accept `force_history_reset` (see its docstring), so there
+            # would be no override at all short of `--allow-bridge-mismatch`,
+            # which also (deliberately) logs a scarier "simulator changed
+            # mid-lineage" warning that doesn't fit this case. Instead: a
+            # `None` SAVED digest on a `bridge_kind == "go"` resume warns
+            # loudly and is treated as unpinned-legacy for the rest of THIS
+            # run -- no drift comparison is attempted (there is nothing to
+            # compare the current digest against), and periodic saves keep
+            # writing `bridge_sha256=None` rather than quietly re-pinning to
+            # whatever the library happens to hash to now.
+            legacy_unpinned_go_resume = env_config.bridge_kind == "go" and saved_bridge_sha256 is None
+            if legacy_unpinned_go_resume:
+                # Adversarial round 19, high finding: round 16's fix accepted
+                # this case unconditionally and kept the pin at `None` FOREVER
+                # (every subsequent `_save_train_state` for this lineage wrote
+                # `bridge_sha256=None` again), which permanently disabled
+                # drift detection for the rest of the run's life instead of
+                # merely tolerating the one pre-existing gap. Fail closed
+                # instead: a Go-backed resume whose state lacks a digest now
+                # raises unless the caller explicitly opts in via
+                # `--accept-legacy-unpinned-state`
+                # (`accept_legacy_unpinned_state=True`). Opting in does NOT
+                # keep the pin null -- it establishes a NEW provenance
+                # boundary starting at this resume: the digest the library
+                # CURRENTLY resolves to is pinned as of now (recorded in
+                # every subsequent `train_state.pt`/`iter_*.pt` going
+                # forward), so drift protection resumes for the rest of the
+                # run's life. Iterations up to and including this resume
+                # point have unverifiable simulator provenance (nothing was
+                # ever pinned for them); iterations from here forward are
+                # fully covered again.
+                if not accept_legacy_unpinned_state:
+                    raise ValueError(
+                        "--resume-from-state: this bridge_kind='go' train_state.pt "
+                        "has bridge_sha256=None -- a LEGACY state saved before "
+                        "bridge identity pinning existed. Resuming it silently "
+                        "would leave drift detection permanently disabled for the "
+                        "rest of this run's life. Pass "
+                        "--accept-legacy-unpinned-state to acknowledge this "
+                        "state's pre-boundary iterations have unverifiable "
+                        "simulator provenance and pin the CURRENT bridge digest "
+                        "as a new provenance boundary starting from this resume"
+                    )
+                current_bridge_path, current_bridge_sha256 = train_state._resolve_current_bridge_fingerprint(env_config)
+                logger.warning(
+                    "--accept-legacy-unpinned-state: resuming a bridge_kind='go' "
+                    "train_state.pt with bridge_sha256=None -- this is a LEGACY "
+                    "state saved before bridge identity pinning existed "
+                    "(adversarial round 16). Establishing a NEW provenance "
+                    "boundary starting now: the library currently resolves to "
+                    "%r (bridge_sha256=%r), which is pinned as this lineage's "
+                    "baseline from this resume forward. Iterations up to and "
+                    "including this resume point have unverifiable simulator "
+                    "provenance; only iterations from here forward are "
+                    "drift-protected.",
+                    current_bridge_path, current_bridge_sha256,
+                )
+                # Pin the CURRENT digest (not the missing saved one) -- unlike
+                # round 16, this lineage is no longer permanently unpinned.
+                saved_bridge_sha256 = current_bridge_sha256
+                state_payload["bridge_library_path"] = current_bridge_path
+            elif env_config.bridge_kind == "go" and train_state._bridge_snapshot_path(checkpoint_dir, saved_bridge_sha256).exists():
+                # Adversarial round 21, high finding: rounds 13-20 always
+                # fingerprinted the MUTABLE source here to compare it against
+                # `saved_bridge_sha256` -- even though `_resolve_bridge_snapshot_
+                # for_resume` below is perfectly capable of binding this run to
+                # the pinned content-addressed snapshot WITHOUT ever touching
+                # the source, when that snapshot is present. A deleted or
+                # rebuilt source (e.g. the .so was cleaned up, or rebuilt at the
+                # same path for unrelated reasons) made `_resolve_current_bridge_
+                # fingerprint` above raise or report a mismatch immediately --
+                # bricking resume (or requiring `--allow-bridge-mismatch`) even
+                # though the pinned bytes were sitting completely intact in
+                # `checkpoint_dir` and nothing about THIS lineage's provenance
+                # was actually in question.
+                #
+                # Fix: snapshot-first. When the snapshot named by the SAVED
+                # digest already exists, skip this whole source-fingerprint-
+                # and-compare step entirely -- the source is not read, and a
+                # deleted/rebuilt source cannot brick or even be observed by
+                # this resume. `_resolve_bridge_snapshot_for_resume` below
+                # re-hashes the snapshot's OWN bytes (never the source) and
+                # raises if those bytes were tampered with/corrupted, which is
+                # the only case that should still abort a resume with an
+                # intact-looking snapshot on disk. Only when the snapshot is
+                # ABSENT does control fall through to the elif-less path below
+                # (round 20's existing missing-snapshot recovery, which in turn
+                # falls back to the source -- see that function's docstring).
+                pass
+            else:
+                current_bridge_path, current_bridge_sha256 = train_state._resolve_current_bridge_fingerprint(env_config)
+                if current_bridge_sha256 != saved_bridge_sha256:
+                    if not allow_bridge_mismatch:
+                        raise ValueError(
+                            "--resume-from-state bridge library mismatch: state file was "
+                            f"saved under bridge_sha256={saved_bridge_sha256!r}, the "
+                            f"CURRENT bridge resolution ({current_bridge_path!r}) hashes "
+                            f"to bridge_sha256={current_bridge_sha256!r} -- the Go "
+                            "simulator was rebuilt (or otherwise changed) since this run "
+                            "started. Resuming under a different simulator binary is "
+                            "never safe -- --force-history-reset does NOT override this "
+                            "check. If you have deliberately confirmed the new binary is "
+                            "an acceptable, attribution-breaking substitution, pass "
+                            "--allow-bridge-mismatch to override"
+                        )
+                    logger.warning(
+                        "--allow-bridge-mismatch: resuming despite a bridge library "
+                        "mismatch (state file bridge_sha256=%r, current bridge_sha256=%r "
+                        "at %r) -- attribution across this resume boundary is no longer "
+                        "guaranteed",
+                        saved_bridge_sha256, current_bridge_sha256, current_bridge_path,
+                    )
+            # Adversarial round 14, high finding: the bridge identity this run
+            # threads into every _save_train_state call is pinned HERE, once,
+            # to the VALIDATED saved digest -- never the freshly-recomputed
+            # `current_bridge_sha256` above, even when --allow-bridge-mismatch
+            # let a mismatch through. Recomputing per-save (round 13's
+            # behavior) let a mid-run .so replacement quietly become the new
+            # baseline; pinning to the saved value keeps the ORIGINAL
+            # simulator identity as the one true baseline for this lineage.
+            # A legacy-unpinned resume (round 19; see above) already rewrote
+            # `saved_bridge_sha256`/`state_payload["bridge_library_path"]` to
+            # the CURRENT resolution above -- this is that new provenance
+            # boundary's baseline, not the (missing) original one.
+            pinned_bridge_sha256 = saved_bridge_sha256
+            pinned_bridge_path = state_payload.get("bridge_library_path")
+            # Adversarial round 20, high finding: rebind this resumed run to
+            # its content-addressed bridge snapshot the same way a fresh run
+            # does -- see `_resolve_bridge_snapshot_for_resume`'s docstring
+            # for the missing-snapshot/drifted-source recovery rules. Every
+            # collector/rollout call below uses `bridge_env_config`, never
+            # `env_config`, so the SOURCE path is never consulted again past
+            # this point.
+            if env_config.bridge_kind == "go":
+                snapshot_path, pinned_bridge_sha256 = train_state._resolve_bridge_snapshot_for_resume(
+                    env_config, checkpoint_dir, pinned_bridge_sha256, allow_bridge_mismatch)
+                train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
+                bridge_env_config = replace(env_config, bridge_library_path=snapshot_path)
+            else:
+                bridge_env_config = env_config
+            current_echo = train_state._train_b2b_config_echo(config, model_config, env_config)
+            train_state._validate_resume_config_echo(current_echo, state_payload["config_echo"])
+            model = PolicyValueNet(_b2b_model_env_config(env_config), model_config).to(device)
+            model.load_state_dict(state_payload["model"])
+            start_iteration = int(state_payload["next_iteration"])
+            # Adversarial round 12, high finding: a target lower than the one
+            # the state was saved under (but still above start_iteration, so
+            # the exhausted-target check below wouldn't catch it) must raise
+            # rather than silently truncating the run -- see
+            # _validate_resume_iterations_not_truncating's docstring.
+            saved_iterations = state_payload["config_echo"]["ppo_config"]["iterations"]
+            train_state._validate_resume_iterations_not_truncating(
+                config.iterations, saved_iterations, start_iteration)
+            # Adversarial round 3, Finding 2: an exhausted target is a silent
+            # no-op, not success -- the runbook's resume command always intends
+            # MORE training, so a state already past config.iterations must raise
+            # loudly instead of returning an empty history.
+            if start_iteration > config.iterations:
+                raise ValueError(
+                    f"state is at iteration {start_iteration - 1}; --iterations "
+                    f"{config.iterations} already satisfied — nothing to resume; "
+                    "raise --iterations or stop"
+                )
+            run_id = state_payload.get("run_id")
+            history_path = checkpoint_dir / "history.json"
+            history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
+                                           start_iteration,
+                                           force_history_reset=force_history_reset,
+                                           resume_from_state=Path(resume_from_state))
+            # Reconcile against a STALE state file: train_state.pt is only written
+            # every `train_state_every` iterations (plus at completion), but
+            # history.json is appended every iteration. Resuming from a state
+            # older than the last history rows (e.g. state saved at iter 5, then
+            # iters 6-7 ran and appended to history before the process died
+            # without reaching the next state-save at iter 10) must not keep
+            # those orphaned rows — the loop below re-runs and re-appends
+            # iterations >= start_iteration from scratch, so keep only rows
+            # strictly before start_iteration or they'd be duplicated.
+            # Re-running iteration N after restoring the exact model/optimizer/
+            # RNG state from before it is a deterministic replay of that
+            # iteration (same seed derivation from base_seed+iteration, same
+            # torch/numpy/python RNG state), so the per-iteration checkpoint
+            # `iter_{N:03d}.pt` files it overwrites are recomputed identically —
+            # safe to clobber by name, not a second distinct result.
+            history: list[dict] = [row for row in history if int(row["iteration"]) < start_iteration]
+            # Adversarial round 19, high finding: quarantine every live
+            # `iter_N.pt` with `N >= start_iteration` to `iter_N.pt.stale`
+            # BEFORE the loop below collects or publishes anything -- see
+            # `_quarantine_stale_future_checkpoints`'s docstring for why an
+            # old same-run_id checkpoint at/past the resume point is not
+            # trustworthy evidence of the trajectory this resume is about to
+            # replay. Immediately followed by durably persisting the
+            # already-truncated `history` (computed just above) so a crash
+            # in the gap before the loop's first iteration leaves on-disk
+            # state self-consistent: no live checkpoint or history row past
+            # `start_iteration - 1`.
+            pending_stale_checkpoints = train_state._quarantine_stale_future_checkpoints(
+                checkpoint_dir, start_iteration)
+            _write_history_atomic(history_path, {"run_id": run_id, "rows": history})
+        else:
+            existing_artifacts = train_state._find_fresh_run_managed_artifacts(checkpoint_dir)
+            if existing_artifacts and not fresh_run_overwrite:
+                names = ", ".join(p.name for p in existing_artifacts)
+                raise ValueError(
+                    f"checkpoint_dir {checkpoint_dir} already contains managed "
+                    f"training artifact(s) ({names}) but this is a fresh run "
+                    "(no --resume-from-state was given) -- launching here would "
+                    "silently reuse/overwrite a prior run's checkpoints, mixing "
+                    "lineages and risking lost progress. Either pass "
+                    "--resume-from-state pointed at this directory's "
+                    "train_state.pt to continue that run, use a new/empty "
+                    "checkpoint_dir for a truly fresh run, or pass "
+                    "--fresh-run-overwrite to delete exactly these managed "
+                    "artifacts and start fresh here"
+                )
+            # Adversarial round 18, high finding: --fresh-run-overwrite must be
+            # TRANSACTIONAL. The old implementation deleted the prior run's
+            # managed artifacts before doing anything else -- if champion/anchor
+            # validation, model construction, or bridge-fingerprint resolution
+            # then failed, checkpoint_dir was left destroyed with no
+            # replacement. Fix: validate everything that can fail FIRST, while
+            # the old artifacts are still untouched, and only once all of it
+            # succeeds move (never delete outright) the existing managed
+            # artifacts into a timestamped backup subdirectory. The backup is
+            # removed later, once this run's own first durable artifact is
+            # written (see the `overwrite_backup_dir`/`backup_cleared` handling
+            # in the training loop below) -- so a failure at ANY point up to
+            # and including early iterations of the new run still leaves the
+            # old run fully recoverable from the backup directory via a manual
+            # move.
+            if growth_blocks > 0:
+                model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
+                model_config = model.model_config
+            elif widen_event_hidden > 0:
+                model = widen_event_gru(champion_checkpoint, widen_event_hidden,
+                                        env_config=env_config, device=device)
+                model_config = model.model_config
+            else:
+                model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
+            # Adversarial round 14, high finding: pin the bridge identity for
+            # this fresh run ONCE, before any rollout collection, so every
+            # `_save_train_state` call below threads the SAME pinned digest
+            # rather than each recomputing (and thus potentially rebasing
+            # onto) whatever binary happens to be on disk at save time. Also
+            # part of round 18's transactional ordering: this can raise (e.g.
+            # a "go" bridge whose library is unreadable), so it too must run
+            # before any existing artifact is touched.
+            #
+            # Adversarial round 20, high finding: this used to pin just a
+            # digest of the SOURCE path, which every worker later re-resolved
+            # and `dlopen`ed independently -- an ABA swap-and-restore of that
+            # mutable path between this hash and a worker's later load defeats
+            # the pin entirely. The source bytes are read ONCE here (never
+            # re-read after this point); the actual snapshot COPY is deferred
+            # until after the `--fresh-run-overwrite` backup-move below (so a
+            # content-identical leftover snapshot from a PRIOR run in
+            # `existing_artifacts` gets moved into the backup, not confused
+            # with this run's own snapshot-to-be), and `bridge_env_config` --
+            # bound to that snapshot, never the source -- is what every
+            # collector/rollout call below actually uses.
+            if env_config.bridge_kind == "go":
+                pinned_bridge_path = str(resolve_bridge_library_path(env_config.bridge_library_path))
+                bridge_source_bytes, pinned_bridge_sha256 = train_state._read_and_hash_bridge_source(pinned_bridge_path)
+                train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
+            else:
+                pinned_bridge_path, pinned_bridge_sha256 = train_state._resolve_current_bridge_fingerprint(env_config)
+                bridge_source_bytes = None
+            if existing_artifacts:
+                names = ", ".join(p.name for p in existing_artifacts)
+                overwrite_backup_dir = checkpoint_dir / f".overwrite-backup-{uuid.uuid4().hex}"
+                overwrite_backup_dir.mkdir()
+                for artifact_path in existing_artifacts:
+                    # os.rename: same filesystem (both under checkpoint_dir), so
+                    # this is an atomic move, not a copy+delete -- there is no
+                    # window where the artifact exists in neither location.
+                    os.rename(str(artifact_path), str(overwrite_backup_dir / artifact_path.name))
+                backup_cleared = False
+                logger.warning(
+                    "--fresh-run-overwrite: moved %d prior managed artifact(s) from %s "
+                    "into backup %s before starting fresh: %s. This backup is kept "
+                    "until the new run writes its first durable checkpoint -- if the "
+                    "new run fails before then, the old run is fully recoverable: move "
+                    "these files back from %s into %s.",
+                    len(existing_artifacts), checkpoint_dir, overwrite_backup_dir, names,
+                    overwrite_backup_dir, checkpoint_dir,
+                )
+            if env_config.bridge_kind == "go":
+                snapshot_path = train_state._write_bridge_snapshot_if_needed(
+                    checkpoint_dir, pinned_bridge_sha256, bridge_source_bytes)
+                bridge_env_config = replace(env_config, bridge_library_path=snapshot_path)
+            else:
+                bridge_env_config = env_config
+            start_iteration = 1
+            history = []
+            run_id = uuid.uuid4().hex
+            # A fresh run never has anything to quarantine -- either the
+            # directory was empty/new, or `--fresh-run-overwrite` just moved
+            # every prior managed artifact (including any leftover `.stale`
+            # files -- see `_find_fresh_run_managed_artifacts`) into the
+            # backup subdirectory above.
+            pending_stale_checkpoints: list[Path] = []
+        # Belt-and-braces final check before the training loop starts -- see
+        # `_assert_bridge_pinned`'s docstring; both branches above already
+        # call it right after establishing `pinned_bridge_sha256`, so this
+        # should be unreachable in practice.
+        train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
+        train_state._write_lock_owner(lock_file, run_id=run_id)
+        model.train()
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        if state_payload is not None:
+            optimizer.load_state_dict(state_payload["optimizer"])
+            torch.set_rng_state(state_payload["torch_rng"])
+            if torch.cuda.is_available() and state_payload.get("cuda_rng") is not None:
+                torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
+            np.random.set_state(state_payload["numpy_rng"])
+            random.setstate(state_payload["python_rng"])
+        collector = None
+        if config.num_workers > 1:
+            # Adversarial round 20, high finding: threads the SNAPSHOT-bound
+            # env_config into every worker, never the mutable source path --
+            # see `bridge_env_config`'s construction above.
+            collector = ParallelB2bCollector(bridge_env_config, model_config, config, config.num_workers)
+            collector.start()
+        # Adversarial round 15, high finding: shared across every
+        # `_verify_bridge_unchanged` call this run so a persistently-allowed
+        # mismatch (`--allow-bridge-mismatch`) logs its warning ONCE for the
+        # whole run rather than once per check (2x per iteration).
+        bridge_drift_warned: dict = {"warned": False}
+        try:
+            for iteration in range(start_iteration, config.iterations + 1):
+                # Adversarial round 15, high finding: verify BEFORE collecting
+                # this iteration's rollouts -- round 14's check ran only
+                # inside `_save_train_state`, so with `train_state_every > 1`
+                # (or 0, which never checks at all) a drifted binary could
+                # collect, train, and publish several iterations' artifacts
+                # before the next periodic save finally caught it.
+                train_state._verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
+                                         allow_bridge_mismatch, bridge_drift_warned)
+                iter_seed = base_seed + iteration * config.matches_per_iter
+                if collector is not None:
+                    state = cpu_state_snapshot(model)
+                    batch = collector.collect(state, iter_seed, config.matches_per_iter)
+                else:
+                    batch = collect_b2b_rollouts(bridge_env_config, model, config, base_seed=iter_seed)
+                advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
+                                                  config.gamma, config.gae_lambda)
+                metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
+                metrics["iteration"] = iteration
+                metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
+                metrics["steps"] = len(batch)
+                # Aux-supervision telemetry: an all-zero deal-in rate across many
+                # iters is the corrupted-labels signature — watch it in history.json.
+                if batch.dealin_labels is not None:
+                    metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
+                if batch.rank_labels is not None:
+                    metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+                # Adversarial round 2, Finding 1: record growth-block ReZero alpha
+                # magnitudes so the runbook's null-interpretation rule ("alphas
+                # hugging 0 = protocol null signal") has telemetry to check
+                # against. Omitted (not 0.0) for growth-free runs -- see
+                # `_growth_alpha_mean_abs`'s docstring.
+                growth_alpha_mean_abs = train_state._growth_alpha_mean_abs(model)
+                if growth_alpha_mean_abs is not None:
+                    metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
+                metrics["truncated_matches"] = int(batch.truncated_matches)
+                matches_total = max(1, int(config.matches_per_iter))
+                truncation_rate = batch.truncated_matches / matches_total
+                metrics["truncation_rate"] = float(truncation_rate)
+                if truncation_rate > 0.02:
+                    # Truncated matches keep censored partial returns with done=1
+                    # (the champion recipe's semantics; truncations were ~0 at
+                    # max-steps 4000). A policy could exploit that by stalling
+                    # into the cap — a rising rate is that exploit's signature,
+                    # so the run halts loudly instead of optimizing it.
+                    raise RuntimeError(
+                        f"iter {iteration}: truncation rate {truncation_rate:.1%} exceeds 2% — "
+                        "a stalling policy can exploit censored truncation returns; "
+                        "investigate before continuing (raise max_steps_per_episode or "
+                        "inspect the policy)"
+                    )
+                # Amendment 8 (data-scale-960): drop the completed rollout and
+                # GAE arrays NOW — every batch-derived telemetry/truncation
+                # value above has been computed, and nothing below reads them.
+                # Without this, ~17GiB of iteration N's rollout stayed
+                # referenced through the WHOLE of iteration N+1's collection
+                # (loop locals rebind only after the next collect returns),
+                # which breached the 36GiB cgroup guard at iteration 2 of the
+                # 960-match lap while the restarted worker pool held another
+                # ~18GiB. Plain rebinding only: gc.collect()/allocator tuning
+                # are explicitly NOT authorized by the ruling. Lifetime pinned
+                # by test_b2b_training's weakref test.
+                del batch, advantages, returns
+                # Adversarial round 15, high finding: verify AGAIN here, after
+                # the (potentially long-running) rollout collection + PPO
+                # update but strictly BEFORE this iteration's `iter_N.pt`/
+                # history row is written -- a binary that drifted DURING this
+                # iteration's own collection/update must still block that
+                # iteration's artifacts from being published, not just the
+                # NEXT iteration's.
+                train_state._verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
+                                         allow_bridge_mismatch, bridge_drift_warned)
+                save_checkpoint(
+                    checkpoint_dir / f"iter_{iteration:03d}.pt", model,
+                    # Pins the trained horizon/architecture so fh-mj-evaluate can
+                    # refuse to run this checkpoint under a different effective
+                    # window (silent mis-evaluation guard). The "b2b" four-flag
+                    # block stays for older readers; "model_config" is the
+                    # complete ModelConfig so Spec B2c loaders (infer_model_config)
+                    # can reconstruct the architecture exactly instead of
+                    # re-deriving it from tensor shapes. "run_id" (adversarial
+                    # round 4, high finding) lets a `--resume-from-state` whose
+                    # history.json is missing/corrupt verify this checkpoint's
+                    # lineage against the resuming state file instead of
+                    # silently mixing unrelated runs' checkpoints together --
+                    # infer_model_config ignores unknown metadata keys, so this
+                    # is additive and doesn't affect loading.
+                    metadata={
+                        "b2b": {
+                            "event_window": int(model_config.event_window),
+                            "privileged_critic": bool(model_config.privileged_critic),
+                            "aux_heads": bool(model_config.aux_heads),
+                            "residual_blocks": int(model_config.residual_blocks),
+                        },
+                        "model_config": model_config_metadata(model_config),
+                        "run_id": run_id,
+                    })
+                # Adversarial round 19, high finding: this iteration's FRESH
+                # `iter_N.pt` just replaced whatever was quarantined at
+                # `_quarantine_stale_future_checkpoints` time -- drop that
+                # obsolete-trajectory `.stale` sibling now rather than
+                # leaving it to the end-of-run sweep below, so a concurrent
+                # directory listing never sees both the fresh checkpoint and
+                # its quarantined predecessor at once for longer than
+                # necessary.
+                stale_sibling = checkpoint_dir / f"iter_{iteration:03d}.pt{train_state._STALE_CHECKPOINT_SUFFIX}"
+                if stale_sibling in pending_stale_checkpoints:
+                    stale_sibling.unlink(missing_ok=True)
+                    pending_stale_checkpoints.remove(stale_sibling)
+                # Adversarial round 18, high finding: this iteration's
+                # `iter_*.pt` checkpoint just landed durably on disk. When
+                # train_state_every == 0 (train_state.pt is never written for
+                # this whole run), THIS is the new run's first durable
+                # artifact -- safe to drop the `--fresh-run-overwrite` backup
+                # of the old run's artifacts now that the new run has its own
+                # durable output.
+                if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "checkpoint":
+                    shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
+                    backup_cleared = True
+                history.append(metrics)
+                # Adversarial round 3, Finding 1: wrap history rows with the run's
+                # run_id so a `--resume-from-state` can bind history.json's
+                # lineage to the resuming train_state.pt (see _load_resume_history)
+                # instead of silently mixing unrelated runs. Use
+                # `read_b2b_history_rows` to read this file back.
+                _write_history_atomic(checkpoint_dir / "history.json", {"run_id": run_id, "rows": history})
+                print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
+                      f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
+                      f"mean_reward={metrics['mean_reward']:.4f}")
+                is_last_iteration = iteration == config.iterations
+                if train_state_every > 0 and (iteration % train_state_every == 0 or is_last_iteration):
+                    train_state._save_train_state(
+                        checkpoint_dir / "train_state.pt", model, optimizer,
+                        next_iteration=iteration + 1, config=config, model_config=model_config,
+                        env_config=env_config, base_seed=base_seed, run_id=run_id,
+                        pinned_bridge_sha256=pinned_bridge_sha256,
+                        pinned_bridge_path=pinned_bridge_path,
+                    )
+                    # Adversarial round 18, high finding: `train_state.pt` just
+                    # landed durably -- this is the new run's first durable
+                    # artifact when periodic state saves are enabled at all
+                    # (see `durability_trigger`). Drop the `--fresh-run-
+                    # overwrite` backup of the old run's artifacts now.
+                    if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "state":
+                        shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
+                        backup_cleared = True
+        finally:
+            if collector is not None:
+                collector.close()
+        # Adversarial round 19, high finding: sweep any `.stale` files still
+        # left over at successful run completion -- e.g. this resume's
+        # `--iterations` target stopped short of some iteration numbers that
+        # were quarantined at resume-start (`config.iterations` lower than
+        # the highest quarantined iteration), so the per-iteration deletion
+        # above never reached them. They are obsolete-trajectory checkpoints
+        # by definition (see `_quarantine_stale_future_checkpoints`) and this
+        # run is ending without ever regenerating them, so there is nothing
+        # left to wait for.
+        for stale_path in pending_stale_checkpoints:
+            stale_path.unlink(missing_ok=True)
+        return history
+    finally:
+        lock_file.close()

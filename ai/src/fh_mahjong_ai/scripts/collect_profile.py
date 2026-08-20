@@ -38,7 +38,7 @@ import torch
 from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
 from ..memprobe import rss_snapshot, set_memory_probe
-from ..oracle import ParallelB2bCollector
+from ..train_b2b import ParallelB2bCollector
 from ..ppo import PPOConfig, cpu_state_snapshot
 from .collect_bench import (
     FullCycleSettings,

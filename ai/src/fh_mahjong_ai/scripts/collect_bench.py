@@ -52,7 +52,7 @@ import torch
 
 from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
-from ..oracle import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
+from ..train_b2b import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
 from ..ppo import PPOConfig, RolloutBatch, compute_gae, cpu_state_snapshot, ppo_update
 from ..model_config_args import add_model_config_args, model_config_from_args
 

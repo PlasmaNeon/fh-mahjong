@@ -9,7 +9,7 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import EventEncoder, PolicyValueNet
-from fh_mahjong_ai.oracle import train_b2b, widen_event_gru
+from fh_mahjong_ai.train_b2b import train_b2b, widen_event_gru
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 from conftest import SMALL_MODEL

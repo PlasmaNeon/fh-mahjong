@@ -97,12 +97,13 @@ uv run --project ai python -m fh_mahjong_ai.scripts.build_counterfactual_risk_da
 Go c-shared lib  →  bridge.py / envpool.py  →  env.py       ← authoritative simulator
                         (ctypes, protobuf)      searchpool.py
                                 ↓
-   collectors: oracle.py (ParallelB2bCollector), parallel_rollouts.py,
+   collectors: train_b2b.py (ParallelB2bCollector), oracle.py, parallel_rollouts.py,
                batched_selfplay.py, offline_trainers.py
                                 ↓
    storage.py (sharded NPZ + manifest)  ↔  buffer.py / streaming_buffer.py
                                 ↓
-   trainers: offline_trainers.py (BC/AWBC/IQL/offline-Q), ppo.py, ach.py, oracle.py
+   trainers: offline_trainers.py (BC/AWBC/IQL/offline-Q), ppo.py, ach.py,
+             oracle.py, train_b2b.py (+ train_state.py for crash resume)
                                 ↓
    checkpoints  →  serving.py  →  scripts/serve_policy.py  →  Go bot seat
                         ↓
@@ -135,7 +136,7 @@ Quick map of what is where:
 | Contracts and configuration | `config.py`, `types.py`, `action_catalog.py`, `events.py` |
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
-| Training | `ppo.py`, `ach.py`, `oracle.py`, `offline_trainers.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
+| Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
 | Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
@@ -182,6 +183,21 @@ Quick map of what is where:
 - Keep BC regularization enabled on IQL. `--cql-weight` (Mortal-style conservative Q penalty over legal masked actions) stays an explicit ablation until duplicate-seat evaluation beats BC. Naive offline Q remains experimental for the same reason.
 - Record every non-default architecture flag (`--model-channels`, `--model-residual-blocks`, `--model-channel-attention`, `--model-growth-blocks`, `--model-event-*`) in MLflow and report outputs. `--partial-init-checkpoint` is for explicit ablations that add compatible layers.
 - MLflow tracking is opt-in via `--mlflow`; local storage defaults to `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both gitignored.
+
+### Patching across the training modules
+
+`train_b2b.py` calls `train_state.py`'s helpers as `train_state.X`, not through
+`from .train_state import X`. That is deliberate: a monkeypatch on
+`fh_mahjong_ai.train_state.X` then reaches **both** train_b2b's calls and
+train_state's own internal ones. With a symbol import it would reach neither
+reliably, and the test would pass while patching nothing.
+
+The general rule when patching a name that a module *imported* (`build_bridge`,
+`save_checkpoint`, `compute_gae`, `MahjongEnv`): patch it on the module that
+**calls** it, not the one that defines it. `collect_b2b_rollouts` calls
+`build_bridge`, so the target is `fh_mahjong_ai.train_b2b.build_bridge` — a
+patch on `fh_mahjong_ai.bridge.build_bridge` would not rebind the copy
+train_b2b already holds.
 
 ### Serving posture
 - **Production serves GREEDY** (no sampling flags; temperature 0 = argmax) since 2026-07-11. The exploitability probe showed the greedy champion is not exploitable by a trained best-response, and sampling produced visible per-move blunders in human games. Sweep history (2026-07, deep4 student): T≤0.7 top-k 3 discard-only was aggregate cost-free (paired vs anchor +0.29..+0.31, large_loss ≤0.127); T=1.0 degraded tail risk (large_loss 0.158). The `--sample-*` flags remain available for experiments.

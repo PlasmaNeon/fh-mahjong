@@ -20,11 +20,11 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.oracle import (
+from fh_mahjong_ai.train_b2b import train_b2b
+from fh_mahjong_ai.train_state import (
     _acquire_checkpoint_dir_lock,
     _find_fresh_run_managed_artifacts,
     read_b2b_history_rows,
-    train_b2b,
 )
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import save_checkpoint
@@ -35,12 +35,6 @@ from conftest import (
     save_b2b_anchor,
     save_champion39,
 )
-
-
-# --- Task 4: resumable training state ---
-
-
-
 
 
 def test_train_state_written_every_n_iterations_and_atomic(tmp_path) -> None:
@@ -157,7 +151,7 @@ def test_resume_from_state_raises_on_different_base_seed(tmp_path) -> None:
 # --- Adversarial round 13, high finding: resume pins the bridge library ---
 
 def test_resolve_current_bridge_fingerprint_mock_bridge_is_none() -> None:
-    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    from fh_mahjong_ai.train_state import _resolve_current_bridge_fingerprint
 
     env = EnvConfig(bridge_kind="mock")
     assert _resolve_current_bridge_fingerprint(env) == (None, None)
@@ -166,7 +160,7 @@ def test_resolve_current_bridge_fingerprint_mock_bridge_is_none() -> None:
 def test_resolve_current_bridge_fingerprint_changes_when_library_is_rebuilt(tmp_path) -> None:
     # The digest must track the ACTUAL bytes at the resolved path, so a
     # rebuild of the .so at the SAME path (config unchanged) is detectable.
-    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    from fh_mahjong_ai.train_state import _resolve_current_bridge_fingerprint
 
     lib_path = tmp_path / "libfh_mahjong_bridge.so"
     lib_path.write_bytes(b"go-bridge-binary-v1")
@@ -197,7 +191,7 @@ def test_resume_raises_on_bridge_library_rebuild(tmp_path, monkeypatch) -> None:
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
     )
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
@@ -207,7 +201,7 @@ def test_resume_raises_on_bridge_library_rebuild(tmp_path, monkeypatch) -> None:
     assert state["bridge_library_path"] == "/fake/libfh_mahjong_bridge.so"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
     )
     config_resumed = replace(config_first, iterations=2)
@@ -223,14 +217,14 @@ def test_resume_force_history_reset_does_not_override_bridge_mismatch(tmp_path, 
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
     )
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
     )
     config_resumed = replace(config_first, iterations=2)
@@ -245,7 +239,7 @@ def test_resume_proceeds_when_bridge_library_identical(tmp_path, monkeypatch) ->
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
     )
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
@@ -281,14 +275,14 @@ def test_resume_allow_bridge_mismatch_overrides_with_warning(tmp_path, monkeypat
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
     )
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-B"),
     )
     config_resumed = replace(config_first, iterations=2)
@@ -336,7 +330,7 @@ def test_periodic_save_raises_when_bridge_binary_is_swapped_mid_run(tmp_path, mo
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
     with pytest.raises(ValueError, match=r"bridge library drift"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -367,7 +361,7 @@ def test_periodic_save_digest_stable_across_saves_when_binary_unchanged(tmp_path
     digest = hashlib.sha256(b"go-bridge-stable").hexdigest()
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: (str(lib_path), hashlib.sha256(lib_path.read_bytes()).hexdigest()),
     )
 
@@ -397,7 +391,7 @@ def test_periodic_save_allow_bridge_mismatch_warns_and_keeps_pinned_digest(tmp_p
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
     with caplog.at_level(logging.WARNING):
         history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -450,17 +444,17 @@ def test_train_state_every_zero_still_blocks_publish_of_drifted_iteration(tmp_pa
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
-    from fh_mahjong_ai import oracle as oracle_module
-    real_collect = oracle_module.collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    real_collect = train_b2b_mod.collect_b2b_rollouts
     collection_calls = {"n": 0}
 
     def counting_collect(*args, **kwargs):
         collection_calls["n"] += 1
         return real_collect(*args, **kwargs)
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.collect_b2b_rollouts", counting_collect)
 
     with pytest.raises(ValueError, match=r"bridge library drift"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -497,7 +491,7 @@ def test_train_state_every_three_still_blocks_publish_of_drifted_iteration(tmp_p
             lib_path.write_bytes(b"go-bridge-v2-REBUILT")
         return str(lib_path), digest
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
     with pytest.raises(ValueError, match=r"bridge library drift"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -521,7 +515,7 @@ def test_resume_pre_collection_check_fires_before_any_collection(tmp_path, monke
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint",
+        "fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint",
         lambda env_config: ("/fake/libfh_mahjong_bridge.so", "sha-A"),
     )
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
@@ -538,17 +532,17 @@ def test_resume_pre_collection_check_fires_before_any_collection(tmp_path, monke
         # sees a drifted binary.
         return "/fake/libfh_mahjong_bridge.so", "sha-B"
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
-    from fh_mahjong_ai import oracle as oracle_module
-    real_collect = oracle_module.collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    real_collect = train_b2b_mod.collect_b2b_rollouts
     collection_calls = {"n": 0}
 
     def counting_collect(*args, **kwargs):
         collection_calls["n"] += 1
         return real_collect(*args, **kwargs)
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.collect_b2b_rollouts", counting_collect)
 
     config_resumed = replace(config_first, iterations=2)
     with pytest.raises(ValueError, match=r"bridge library drift"):
@@ -576,7 +570,7 @@ def test_allow_bridge_mismatch_downgrades_pre_and_post_checks_to_one_warning(tmp
         # binary that has already drifted away from the pinned value.
         return "/fake/libfh_mahjong_bridge.so", ("sha-pinned" if calls["n"] == 1 else "sha-drifted")
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle._resolve_current_bridge_fingerprint", fake_resolve)
+    monkeypatch.setattr("fh_mahjong_ai.train_state._resolve_current_bridge_fingerprint", fake_resolve)
 
     with caplog.at_level(logging.WARNING):
         history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -617,19 +611,17 @@ def test_resume_with_corrupt_history_succeeds_and_warns(tmp_path, caplog) -> Non
 
 def test_history_write_uses_atomic_replace_and_leaves_no_temp_file(
         tmp_path, monkeypatch) -> None:
-    import fh_mahjong_ai.oracle as oracle
-
     env, model_config, champion_path, config = b2b_run_configs(
         tmp_path, iterations=1)
     checkpoint_dir = tmp_path / "ckpt"
     replace_calls = []
-    real_replace = oracle.os.replace
+    real_replace = os.replace
 
     def recording_replace(src, dst):
         replace_calls.append((Path(src), Path(dst)))
         return real_replace(src, dst)
 
-    monkeypatch.setattr(oracle.os, "replace", recording_replace)
+    monkeypatch.setattr(os, "replace", recording_replace)
     train_b2b(env, model_config, champion_path, checkpoint_dir, config,
               base_seed=5, train_state_every=1)
 
@@ -746,16 +738,16 @@ def test_resume_growth_run_rejects_wrong_growth_blocks_then_succeeds_with_correc
 # ---------------------------------------------------------------------------
 
 def _config_echo_triple():
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     env = EnvConfig(bridge_kind="mock")
     model_config = ModelConfig()
     config = PPOConfig(device="cpu")
-    return oracle_module._train_b2b_config_echo(config, model_config, env)
+    return train_state_mod._train_b2b_config_echo(config, model_config, env)
 
 
 def test_resume_config_echo_missing_new_defaulted_field_proceeds(caplog) -> None:
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     assert current["model_config"]["event_output_dim"] == 0
@@ -763,7 +755,7 @@ def test_resume_config_echo_missing_new_defaulted_field_proceeds(caplog) -> None
     del saved["model_config"]["event_output_dim"]  # simulate a pre-upgrade echo
 
     with caplog.at_level(logging.INFO):
-        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
 
     assert any(
         "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
@@ -772,14 +764,14 @@ def test_resume_config_echo_missing_new_defaulted_field_proceeds(caplog) -> None
 
 
 def test_resume_config_echo_explicit_different_value_still_raises() -> None:
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     saved["model_config"]["event_output_dim"] = 4  # explicit, non-default, different value
 
     with pytest.raises(ValueError, match="event_output_dim"):
-        oracle_module._validate_resume_config_echo(current, saved)
+        train_state_mod._validate_resume_config_echo(current, saved)
 
 
 def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(caplog) -> None:
@@ -787,7 +779,7 @@ def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(
     # DIFFERENT defaulted field (growth_blocks, added for deep16-rezero) from
     # the saved echo must also proceed, standing in for whatever the NEXT new
     # defaulted field turns out to be.
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     assert current["model_config"]["growth_blocks"] == 0
@@ -795,7 +787,7 @@ def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(
     del saved["model_config"]["growth_blocks"]
 
     with caplog.at_level(logging.INFO):
-        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
 
     assert any(
         "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
@@ -816,37 +808,37 @@ def test_resume_config_echo_missing_field_generalizes_to_other_defaulted_fields(
 # ---------------------------------------------------------------------------
 
 def test_resume_config_echo_missing_ppo_gamma_raises_naming_it() -> None:
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     del saved["ppo_config"]["gamma"]
 
     with pytest.raises(ValueError, match="gamma"):
-        oracle_module._validate_resume_config_echo(current, saved)
+        train_state_mod._validate_resume_config_echo(current, saved)
 
 
 def test_resume_config_echo_missing_env_match_mode_raises_naming_it() -> None:
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     del saved["env_config"]["match_mode"]
 
     with pytest.raises(ValueError, match="match_mode"):
-        oracle_module._validate_resume_config_echo(current, saved)
+        train_state_mod._validate_resume_config_echo(current, saved)
 
 
 def test_resume_config_echo_missing_event_output_dim_still_proceeds_with_notice(caplog) -> None:
     # Unchanged behavior for a whitelisted legacy addition.
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     del saved["model_config"]["event_output_dim"]
 
     with caplog.at_level(logging.INFO):
-        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
 
     assert any(
         "model_config" in record.getMessage() and "event_output_dim" in record.getMessage()
@@ -856,14 +848,14 @@ def test_resume_config_echo_missing_event_output_dim_still_proceeds_with_notice(
 
 def test_resume_config_echo_missing_growth_blocks_still_proceeds_with_notice(caplog) -> None:
     # Unchanged behavior for the other whitelisted legacy addition.
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     del saved["model_config"]["growth_blocks"]
 
     with caplog.at_level(logging.INFO):
-        oracle_module._validate_resume_config_echo(current, saved)  # must not raise
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
 
     assert any(
         "model_config" in record.getMessage() and "growth_blocks" in record.getMessage()
@@ -874,14 +866,14 @@ def test_resume_config_echo_missing_growth_blocks_still_proceeds_with_notice(cap
 def test_resume_config_echo_missing_nonwhitelisted_model_field_raises() -> None:
     # channels is a real, established ModelConfig field -- NOT in the
     # whitelist -- so its absence must raise, not silently default-fill.
-    from fh_mahjong_ai import oracle as oracle_module
+    from fh_mahjong_ai import train_state as train_state_mod
 
     current = _config_echo_triple()
     saved = copy.deepcopy(current)
     del saved["model_config"]["channels"]
 
     with pytest.raises(ValueError, match="channels"):
-        oracle_module._validate_resume_config_echo(current, saved)
+        train_state_mod._validate_resume_config_echo(current, saved)
 
 
 # ---------------------------------------------------------------------------
@@ -2025,7 +2017,7 @@ def test_history_json_write_fsyncs_tmp_and_directory(tmp_path, monkeypatch) -> N
 # refusing to start. ---
 
 def test_resolve_current_bridge_fingerprint_go_missing_library_raises(tmp_path) -> None:
-    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    from fh_mahjong_ai.train_state import _resolve_current_bridge_fingerprint
 
     missing = tmp_path / "does-not-exist.so"
     env = EnvConfig(bridge_kind="go", bridge_library_path=str(missing))
@@ -2043,14 +2035,13 @@ def test_go_bridge_missing_library_aborts_before_any_collection(tmp_path, monkey
     env = replace(env, bridge_kind="go", bridge_library_path=str(missing))
     checkpoint_dir = tmp_path / "ckpt"
 
-    from fh_mahjong_ai import oracle as oracle_module
     collection_calls = {"n": 0}
 
     def counting_collect(*args, **kwargs):
         collection_calls["n"] += 1
         raise AssertionError("collection must never run")
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.collect_b2b_rollouts", counting_collect)
 
     with pytest.raises(OSError, match=re.escape(str(missing))):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config, base_seed=5)
@@ -2069,7 +2060,7 @@ def test_go_bridge_transient_read_failure_still_aborts_no_silent_recovery(tmp_pa
     lib_path.write_bytes(b"go-bridge-binary-v1")
     env = EnvConfig(bridge_kind="go", bridge_library_path=str(lib_path))
 
-    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    from fh_mahjong_ai.train_state import _resolve_current_bridge_fingerprint
 
     real_read_bytes = Path.read_bytes
     calls = {"n": 0}
@@ -2096,7 +2087,7 @@ def test_go_bridge_mock_config_unaffected_no_drift_checks(tmp_path) -> None:
     env, model_config, champion_path, config = b2b_run_configs(tmp_path, iterations=1)
     checkpoint_dir = tmp_path / "ckpt"
 
-    from fh_mahjong_ai.oracle import _resolve_current_bridge_fingerprint
+    from fh_mahjong_ai.train_state import _resolve_current_bridge_fingerprint
     assert _resolve_current_bridge_fingerprint(env) == (None, None)
 
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -2122,7 +2113,7 @@ def test_fresh_go_run_invariant_blocks_null_pinned_digest(tmp_path, monkeypatch)
     checkpoint_dir = tmp_path / "ckpt"
 
     monkeypatch.setattr(
-        "fh_mahjong_ai.oracle._read_and_hash_bridge_source",
+        "fh_mahjong_ai.train_state._read_and_hash_bridge_source",
         lambda source_path: (b"fake-bytes", None),
     )
 
@@ -2144,14 +2135,14 @@ def _legacy_go_state_setup(tmp_path: Path, monkeypatch):
     env = replace(env, bridge_kind="go", bridge_library_path=str(lib_path))
     checkpoint_dir = tmp_path / "ckpt"
 
-    from fh_mahjong_ai import oracle as oracle_module
-    real_collect = oracle_module.collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    real_collect = train_b2b_mod.collect_b2b_rollouts
 
     def collect_via_mock(env_config_arg, model, cfg, base_seed):
         return real_collect(replace(env_config_arg, bridge_kind="mock"), model, cfg,
                             base_seed=base_seed)
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", collect_via_mock)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.collect_b2b_rollouts", collect_via_mock)
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2281,8 +2272,8 @@ def test_resume_quarantines_stale_future_checkpoints_before_first_collection(
     (env, model_config, champion_path, config2, checkpoint_dir,
      state_path) = _build_iter_001_through_005_then_rewind_to_state_at_2(tmp_path, monkeypatch)
 
-    from fh_mahjong_ai import oracle as oracle_module
-    real_collect = oracle_module.collect_b2b_rollouts
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    real_collect = train_b2b_mod.collect_b2b_rollouts
     collection_calls = {"n": 0}
     observed: dict = {}
 
@@ -2300,7 +2291,7 @@ def test_resume_quarantines_stale_future_checkpoints_before_first_collection(
         collection_calls["n"] += 1
         return real_collect(*args, **kwargs)
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.collect_b2b_rollouts", counting_collect)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.collect_b2b_rollouts", counting_collect)
 
     config5 = replace(config2, iterations=5)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config5,
@@ -2351,7 +2342,7 @@ def test_lineage_scan_ignores_stale_quarantined_checkpoints(tmp_path) -> None:
     # `_quarantine_stale_future_checkpoints`) must never be inspected by the
     # artifact-lineage scanner -- it drops out of the `iter_*.pt` glob the
     # moment it is renamed, regardless of what run_id it carries.
-    from fh_mahjong_ai.oracle import _check_artifact_lineage_or_raise
+    from fh_mahjong_ai.train_state import _check_artifact_lineage_or_raise
 
     checkpoint_dir = tmp_path / "ckpt"
     checkpoint_dir.mkdir()
@@ -2444,7 +2435,7 @@ def test_fresh_run_snapshots_bridge_and_threads_snapshot_into_collection(tmp_pat
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config,
              base_seed=5, train_state_every=1)
@@ -2475,7 +2466,7 @@ def test_source_swap_mid_run_neither_aborts_nor_changes_snapshot_digest(tmp_path
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     real_save_checkpoint = save_checkpoint
     state = {"n": 0}
@@ -2489,7 +2480,7 @@ def test_source_swap_mid_run_neither_aborts_nor_changes_snapshot_digest(tmp_path
             # pre-collection drift check -- the swap happens truly mid-run.
             lib_path.write_bytes(b"go-bridge-binary-v2-SWAPPED")
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.save_checkpoint", swapping_save_checkpoint)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.save_checkpoint", swapping_save_checkpoint)
 
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config,
                         base_seed=5, train_state_every=1)
@@ -2509,7 +2500,7 @@ def test_mutated_snapshot_aborts_at_next_check(tmp_path, monkeypatch) -> None:
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     real_save_checkpoint = save_checkpoint
     state = {"n": 0}
@@ -2523,7 +2514,7 @@ def test_mutated_snapshot_aborts_at_next_check(tmp_path, monkeypatch) -> None:
             # legitimate ever does this, so it must abort the run.
             snapshot_path.write_bytes(b"TAMPERED")
 
-    monkeypatch.setattr("fh_mahjong_ai.oracle.save_checkpoint", tampering_save_checkpoint)
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.save_checkpoint", tampering_save_checkpoint)
 
     with pytest.raises(ValueError, match="bridge library drift detected mid-run"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config,
@@ -2539,7 +2530,7 @@ def test_bridge_snapshot_recreated_on_resume_when_missing_and_source_intact(tmp_
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2566,7 +2557,7 @@ def test_bridge_snapshot_missing_and_source_drifted_raises_without_override(tmp_
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2592,7 +2583,7 @@ def test_bridge_snapshot_missing_and_source_drifted_allow_mismatch_rebinds(tmp_p
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2646,7 +2637,7 @@ def test_resume_proceeds_bound_to_snapshot_when_source_deleted(tmp_path, monkeyp
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2674,7 +2665,7 @@ def test_resume_proceeds_bound_to_snapshot_when_source_rebuilt(tmp_path, monkeyp
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)
@@ -2706,7 +2697,7 @@ def test_resume_raises_when_snapshot_is_corrupted(tmp_path, monkeypatch) -> None
     checkpoint_dir = tmp_path / "ckpt"
 
     calls: list = []
-    monkeypatch.setattr("fh_mahjong_ai.oracle.build_bridge", _fake_build_bridge_factory(calls))
+    monkeypatch.setattr("fh_mahjong_ai.train_b2b.build_bridge", _fake_build_bridge_factory(calls))
 
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
              base_seed=5, train_state_every=1)

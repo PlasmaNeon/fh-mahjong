@@ -9,7 +9,7 @@ import pytest
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.oracle import _b2b_model_env_config, collect_b2b_rollouts
+from fh_mahjong_ai.train_b2b import _b2b_model_env_config, collect_b2b_rollouts
 from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
 from fh_mahjong_ai.scripts import collect_bench
 from fh_mahjong_ai.storage import save_checkpoint
@@ -185,7 +185,7 @@ def test_chunk_dispatch_covers_seed_blocks_in_order(monkeypatch):
     dispatch when the cap is 0 or >= the match count."""
     from dataclasses import replace as dc_replace
 
-    from fh_mahjong_ai.oracle import ParallelB2bCollector
+    from fh_mahjong_ai.train_b2b import ParallelB2bCollector
 
     env = EnvConfig(bridge_kind="mock")
     mcfg = ModelConfig(**SMALL_MODEL, event_window=8)
@@ -240,7 +240,7 @@ def test_chunk_dispatch_covers_seed_blocks_in_order(monkeypatch):
 def test_chunk_dispatch_propagates_later_chunk_failure(monkeypatch):
     from dataclasses import replace as dc_replace
 
-    from fh_mahjong_ai.oracle import ParallelB2bCollector
+    from fh_mahjong_ai.train_b2b import ParallelB2bCollector
 
     env = EnvConfig(bridge_kind="mock")
     mcfg = ModelConfig(**SMALL_MODEL, event_window=8)

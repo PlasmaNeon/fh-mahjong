@@ -11,7 +11,7 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet, ReZeroResidualBlock
-from fh_mahjong_ai.oracle import grow_b2b_model, train_b2b
+from fh_mahjong_ai.train_b2b import grow_b2b_model, train_b2b
 from fh_mahjong_ai.ppo import PPOConfig
 from fh_mahjong_ai.storage import load_checkpoint, model_config_metadata, save_checkpoint
 from conftest import MOCK_ENV, b2b_model_config, b2b_run_configs, save_b2b_anchor
@@ -358,7 +358,7 @@ def test_growth_alpha_mean_abs_reflects_alpha_values() -> None:
     # hugging 0 = protocol null signal") needs the actual alpha magnitudes in
     # telemetry, not just their existence. Unit-test the pure helper directly
     # so this doesn't depend on how much a PPO step happens to move alpha.
-    from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
+    from fh_mahjong_ai.train_state import _growth_alpha_mean_abs
 
     model_config = b2b_model_config(growth_blocks=2)
     model = PolicyValueNet(MOCK_ENV, model_config)
@@ -371,7 +371,7 @@ def test_growth_alpha_mean_abs_reflects_alpha_values() -> None:
 
 
 def test_growth_alpha_mean_abs_none_without_growth_blocks() -> None:
-    from fh_mahjong_ai.oracle import _growth_alpha_mean_abs
+    from fh_mahjong_ai.train_state import _growth_alpha_mean_abs
 
     model_config = b2b_model_config()  # growth_blocks=0 (default)
     model = PolicyValueNet(MOCK_ENV, model_config)
