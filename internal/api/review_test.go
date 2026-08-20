@@ -1,14 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
-	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 
 	"github.com/glebarez/sqlite"
 	"github.com/plasma/fh-mahjong/internal/storage"
@@ -393,4 +395,52 @@ func TestPostReviewBadPaipu(t *testing.T) {
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// doAuthedReviewRequest issues method/path against server with a fresh
+// authenticated session (cookie + CSRF header when required), mirroring
+// private_tables_test.go's doPrivateTableRequest for the review routes. Only
+// safe to call sequentially — concurrent tests must create ONE session with
+// authedReviewSession and reuse it via doAuthedReviewRequestWithSession, since
+// this creates a new test user/session per call (a race on the same user id
+// across goroutines).
+func doAuthedReviewRequest(t *testing.T, server *Server, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	cookie, csrf, _, _ := privateTableSession(t, server, privateTableAuthToken(t, 900, "reviewer"))
+	return doAuthedReviewRequestWithSession(t, server, method, path, cookie, csrf)
+}
+
+// authedReviewSession creates one authenticated test session, safe to share
+// across concurrent requests in the same test.
+func authedReviewSession(t *testing.T, server *Server, userID uint) (*http.Cookie, string) {
+	t.Helper()
+	cookie, csrf, _, _ := privateTableSession(t, server, privateTableAuthToken(t, userID, "reviewer"))
+	return cookie, csrf
+}
+
+func doAuthedReviewRequestWithSession(t *testing.T, server *Server, method, path string, cookie *http.Cookie, csrf string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.AddCookie(cookie)
+	if requiresCSRF(method) {
+		req.Header.Set(csrfHeaderName, csrf)
+	}
+	recorder := httptest.NewRecorder()
+	server.Router.ServeHTTP(recorder, req)
+	return recorder
+}
+
+// doAuthedReviewRequestWithCtx is doAuthedReviewRequestWithSession plus an
+// explicit request context, so a test can cancel one caller's wait without
+// affecting any other caller sharing the same singleflight key.
+func doAuthedReviewRequestWithCtx(t *testing.T, server *Server, method, path string, cookie *http.Cookie, csrf string, ctx context.Context) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil).WithContext(ctx)
+	req.AddCookie(cookie)
+	if requiresCSRF(method) {
+		req.Header.Set(csrfHeaderName, csrf)
+	}
+	recorder := httptest.NewRecorder()
+	server.Router.ServeHTTP(recorder, req)
+	return recorder
 }

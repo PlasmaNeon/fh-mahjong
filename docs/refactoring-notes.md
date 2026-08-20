@@ -218,3 +218,44 @@ as a parameter, so it is visible instead of hidden in look-alike functions:
   opponent's concealed hand is exactly what `state_redaction_test.go` guards. Left for its own PR.
 - **G12, a tile-notation parser for test hands** (~450 lines, the single largest item), and
   **G13/G14** (`engine/game.go`, `rules/fh.go`) which §10 of the design doc excludes.
+
+## 2026-08-16 — PR 4: Go renames
+
+Pure motion, per §7.2 of the design doc. Stacked on PR 3 (same files). Every rename is `git mv` +
+exact-path reference updates + the matching `CLAUDE.md` edit.
+
+| Was | Now | Why |
+|---|---|---|
+| `review_round21..25_test.go` (5 files) | `review_auth_test.go`, `review_build_concurrency_test.go`, `review_build_checkpoint_test.go`, `review_get_live_sha_test.go`, `review_ratelimit_test.go` | Named after the review *session* that produced them; they were four unrelated subjects spread across five sessions |
+| `api/matchmaker.go` | + `api/queue.go` | One file held the queue structure, matchmaking, the active-room registry and seat policy |
+| `InMemoryQueue.RPush/RPushUnique/LRange/LLen/LPopCount` | `Push/PushUnique/Items/Len/PopN` | Redis-list vocabulary on an in-process queue; Redis went in PR #129 and was never wired up |
+| `storage/db.go` | `models.go` + `migrate.go` | The file called `db.go` held every GORM model |
+| `bot/context.go` | `bot/policy.go` (+ `Policy` moved here from `heuristic.go`) | The package's core interface lived in the file named after one implementation |
+| `review/client.go`, `api/client.go` | `policy_client.go`, `ws_client.go` | Same word, two meanings, one package apart |
+| `review/context.go` | `chongci_context.go` | Collides with `context.Context` in a package that uses it |
+| `engine/rules.go` | `rule_engine.go` | Holds only `RuleEngine`; disambiguates from the `rules` package |
+| `bot/remote/identity.go` | `checkpoint_identity.go` | 14 lines about checkpoint identity under a name suggesting auth |
+| `cross_room_repro_test.go`, `seat_policy_leak_test.go`, `rl/kan_dup_repro_test.go`, `bot/shadow_round24_test.go` | `private_room_scope_test.go`, `seat_policy_lifecycle_test.go`, `rl/env_fuzz_test.go`, merged into `shadow_test.go` | "repro"/"leak"/session numbers name incidents, not invariants |
+| `cmd/cli` | `cmd/play` | An interactive terminal match, not a general CLI; its doc still advertised "offline hand evaluation" |
+
+### How the review-test regroup was verified
+
+The five files' 28 `Test` functions were **diffed by name** against the five new files: identical
+set, nothing lost or duplicated. The four cross-file helpers moved into `review_test.go` (already
+the shared helper home) rather than into a subject file, which would have stranded them for four
+other callers.
+
+### Two design-doc proposals rejected on the evidence
+
+- `rl_agent_test.go` and `warmup_admission_test.go` → the doc proposed `matchmaker_*_test.go`.
+  Reading them, both names already describe their subject. Left alone.
+- `rl/kan_dup_repro_test.go` → the doc guessed `wall_consumption_fuzz_test.go`. The test actually
+  fuzzes the **action-mask builder** for duplicate action ids, so it is `env_fuzz_test.go`, and its
+  test function is now `TestFuzzActionMaskHasNoDuplicateIDs` — an invariant, not a bug reproduction.
+
+### Deferred (endorsed, not done)
+
+Splitting `api/room.go` (1,258 lines), `api/server.go`, and `cmd/server/main.go` → `policy_wiring.go`.
+All real, all file surgery on the busiest files in the backend; they should not ride along with a
+rename PR. `cmd/rlpaipu` → `cmd/paipugen` and `cmd/rlsmoke` → `cmd/paipusmoke` were endorsed only
+weakly (low value, 9 refs including Makefile and runbooks) and are dropped.

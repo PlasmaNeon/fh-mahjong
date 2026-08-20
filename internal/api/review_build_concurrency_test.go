@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,7 +13,315 @@ import (
 	"github.com/plasma/fh-mahjong/internal/storage"
 )
 
-// --- Finding 1: review build lifecycle is bounded end-to-end --------------
+// blockingPolicyStub serves /evaluate (and optionally /healthz) but blocks
+// each /evaluate request on release until it is closed, letting tests hold a
+// build "in flight" to observe concurrency.
+type blockingPolicyStub struct {
+	release     chan struct{}
+	evalCount   int32
+	inFlight    int32
+	maxInFlight int32
+}
+
+func newBlockingPolicyStub(t *testing.T) (*httptest.Server, *blockingPolicyStub) {
+	t.Helper()
+	stub := &blockingPolicyStub{release: make(chan struct{})}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		case "/evaluate":
+			atomic.AddInt32(&stub.evalCount, 1)
+			n := atomic.AddInt32(&stub.inFlight, 1)
+			for {
+				old := atomic.LoadInt32(&stub.maxInFlight)
+				if n <= old || atomic.CompareAndSwapInt32(&stub.maxInFlight, old, n) {
+					break
+				}
+			}
+			<-stub.release
+			atomic.AddInt32(&stub.inFlight, -1)
+
+			var req struct {
+				Observations []map[string]any `json:"observations"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode: %v", err)
+				return
+			}
+			results := make([]map[string]any, len(req.Observations))
+			for i, o := range req.Observations {
+				mask := o["action_mask"].([]any)
+				probs := make([]float64, len(mask))
+				legal := 0
+				for _, m := range mask {
+					if m.(float64) == 1 {
+						legal++
+					}
+				}
+				for j, m := range mask {
+					if m.(float64) == 1 {
+						probs[j] = 1.0 / float64(legal)
+					}
+				}
+				results[i] = map[string]any{"probs": probs, "value": 0.25}
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"results": results, "checkpoint_path": "stub.pt", "checkpoint_step": 42,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return srv, stub
+}
+
+func TestPostReviewConcurrentSameMatchSharesOneBuild(t *testing.T) {
+	stub, ctrl := newBlockingPolicyStub(t)
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("review-fixture", reviewFixtureJSON(t))
+	cookie, csrf := authedReviewSession(t, server, 900)
+
+	var wg sync.WaitGroup
+	results := make([]*httptest.ResponseRecorder, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/review-fixture/review", cookie, csrf)
+		}(i)
+	}
+
+	// Wait for the leader to reach the stub, then release it once.
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&ctrl.evalCount) < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for stub to receive a request")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Give the follower request a moment to also arrive at singleflight.Do
+	// (it should NOT generate a second stub request).
+	time.Sleep(50 * time.Millisecond)
+	close(ctrl.release)
+
+	wg.Wait()
+
+	for i, rec := range results {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if got := atomic.LoadInt32(&ctrl.evalCount); got != 1 {
+		t.Fatalf("expected exactly 1 /evaluate call for 2 concurrent identical-match POSTs, got %d", got)
+	}
+
+	var count int64
+	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "review-fixture").Count(&count).Error; err != nil {
+		t.Fatalf("count MatchReview rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 cached MatchReview row, got %d", count)
+	}
+}
+
+func TestPostReviewBuildConcurrencyCapIsRespected(t *testing.T) {
+	stub, ctrl := newBlockingPolicyStub(t)
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	fixture := reviewFixtureJSON(t)
+	matchIDs := []string{"match-a", "match-b", "match-c"}
+	for _, id := range matchIDs {
+		server.StorePaipu(id, fixture)
+	}
+	cookie, csrf := authedReviewSession(t, server, 901)
+
+	var wg sync.WaitGroup
+	for _, id := range matchIDs {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			rec := doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+id+"/review", cookie, csrf)
+			if rec.Code != http.StatusOK {
+				t.Errorf("match %s: expected 200, got %d: %s", id, rec.Code, rec.Body.String())
+			}
+		}(id)
+	}
+
+	// Give all 3 goroutines a chance to reach the semaphore/stub.
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&ctrl.inFlight) < reviewBuildConcurrencyLimit {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for in-flight builds to reach the concurrency cap")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Settle a bit longer to let a would-be 3rd concurrent build show up if
+	// the cap were not enforced.
+	time.Sleep(100 * time.Millisecond)
+	if got := atomic.LoadInt32(&ctrl.inFlight); got > reviewBuildConcurrencyLimit {
+		t.Fatalf("expected at most %d in-flight builds, observed %d in-flight", reviewBuildConcurrencyLimit, got)
+	}
+
+	close(ctrl.release)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&ctrl.maxInFlight); got > reviewBuildConcurrencyLimit {
+		t.Fatalf("expected max observed in-flight builds <= %d, got %d", reviewBuildConcurrencyLimit, got)
+	}
+}
+
+// TestPostReviewBuildAdmissionRejectsExcessQueueWithRetryAfter pins round 22,
+// Finding 1a: once reviewBuildConcurrencyLimit builds are running AND
+// reviewBuildWaitQueueLimit more are already queued waiting for a slot, one
+// more DISTINCT-match build request is rejected immediately with 429 and a
+// Retry-After header, rather than growing the wait queue (or blocking)
+// unboundedly.
+func TestPostReviewBuildAdmissionRejectsExcessQueueWithRetryAfter(t *testing.T) {
+	stub, ctrl := newBlockingPolicyStub(t)
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	fixture := reviewFixtureJSON(t)
+
+	totalAdmitted := reviewBuildConcurrencyLimit + reviewBuildWaitQueueLimit
+	matchIDs := make([]string, totalAdmitted)
+	for i := range matchIDs {
+		matchIDs[i] = "admission-match-" + string(rune('a'+i))
+		server.StorePaipu(matchIDs[i], fixture)
+	}
+	cookie, csrf := authedReviewSession(t, server, 950)
+
+	var wg sync.WaitGroup
+	for _, id := range matchIDs {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			rec := doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+id+"/review", cookie, csrf)
+			if rec.Code != http.StatusOK {
+				t.Errorf("match %s: expected 200 (eventually admitted), got %d: %s", id, rec.Code, rec.Body.String())
+			}
+		}(id)
+	}
+
+	// Wait until every one of the totalAdmitted requests is either running
+	// (occupying a semaphore slot) or parked in the bounded wait queue.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		inFlight := atomic.LoadInt32(&ctrl.inFlight)
+		waiters := atomic.LoadInt32(&server.reviewBuildWaiters)
+		if inFlight >= reviewBuildConcurrencyLimit && waiters >= reviewBuildWaitQueueLimit {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for admission to fill: inFlight=%d waiters=%d", inFlight, waiters)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// One more DISTINCT match id, with capacity+queue both already full,
+	// must be rejected immediately — not queued, not blocked.
+	overflowID := "admission-match-overflow"
+	server.StorePaipu(overflowID, fixture)
+	rec := doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/"+overflowID+"/review", cookie, csrf)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 when admission queue is full, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ra := rec.Header().Get("Retry-After"); ra == "" {
+		t.Fatal("expected a Retry-After header on the 429 admission rejection")
+	}
+
+	close(ctrl.release)
+	wg.Wait()
+}
+
+// TestPostReviewCallerContextCancelDoesNotAbortSharedBuild pins round 22,
+// Finding 1b/1c: two requests for the same match/checkpoint/force-ness share
+// one in-flight build. If ONE caller's context is cancelled while waiting,
+// that caller gets back a fast 504 without the build being aborted — the
+// OTHER caller still gets its normal 200, and exactly one row is cached.
+func TestPostReviewCallerContextCancelDoesNotAbortSharedBuild(t *testing.T) {
+	stub, ctrl := newBlockingPolicyStub(t)
+	defer stub.Close()
+	t.Setenv("POLICY_SERVER_URL", stub.URL)
+
+	server := newReviewTestServer(t, true)
+	server.StorePaipu("cancel-fixture", reviewFixtureJSON(t))
+	cookie, csrf := authedReviewSession(t, server, 970)
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+
+	// Results cross goroutine boundaries only via these channels (never a
+	// plain shared variable polled from another goroutine) so the test
+	// itself stays race-free under -race.
+	resultA := make(chan *httptest.ResponseRecorder, 1)
+	resultB := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		resultA <- doAuthedReviewRequestWithCtx(t, server, http.MethodPost, "/api/v1/matches/cancel-fixture/review", cookie, csrf, cancelCtx)
+	}()
+	go func() {
+		resultB <- doAuthedReviewRequestWithSession(t, server, http.MethodPost, "/api/v1/matches/cancel-fixture/review", cookie, csrf)
+	}()
+
+	// Wait for the shared build to actually start (one /evaluate call),
+	// then cancel request A while it's still in flight.
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&ctrl.evalCount) < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the shared build to start")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+
+	// Request A's handler should observe the cancellation and return, while
+	// the build (still blocked on ctrl.release) has NOT been released yet —
+	// proving the build itself is unaffected.
+	var recA *httptest.ResponseRecorder
+	select {
+	case recA = <-resultA:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the cancelled caller to return")
+	}
+	if recA.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected 504 for the cancelled caller, got %d: %s", recA.Code, recA.Body.String())
+	}
+	if atomic.LoadInt32(&ctrl.inFlight) == 0 {
+		t.Fatal("expected the shared build to still be in flight after one waiter's context was cancelled")
+	}
+
+	close(ctrl.release)
+
+	var recB *httptest.ResponseRecorder
+	select {
+	case recB = <-resultB:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the still-waiting caller to return")
+	}
+
+	if recB.Code != http.StatusOK {
+		t.Fatalf("expected the still-waiting caller to get 200, got %d: %s", recB.Code, recB.Body.String())
+	}
+	if got := atomic.LoadInt32(&ctrl.evalCount); got != 1 {
+		t.Fatalf("expected exactly 1 /evaluate call (build shared, not duplicated), got %d", got)
+	}
+
+	var count int64
+	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "cancel-fixture").Count(&count).Error; err != nil {
+		t.Fatalf("count MatchReview rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 cached row, got %d", count)
+	}
+}
 
 // TestPostReviewBuildTotalTimeoutReleasesSlotAndUnwedges pins round 25,
 // Finding 1: a build that stalls beyond the (test-shortened)
@@ -157,8 +466,6 @@ func TestPostReviewQueuedWaiterTimesOutWith503(t *testing.T) {
 	close(ctrl.release)
 	wg.Wait()
 }
-
-// --- Finding 2: force dropped from the singleflight key; upsert persist ---
 
 // TestPostReviewForcedAndNonForcedSameIdentityCoalesceToOneBuild pins round
 // 25, Finding 2: a forced and a non-forced request for the SAME (match,

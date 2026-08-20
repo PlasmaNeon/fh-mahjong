@@ -22,5 +22,5 @@ This package holds the three things every tile-touching package used to re-imple
 ## Architecture Notes
 
 - **Do not re-inline `suit*100+value` or re-add a local `cloneTile`/`cloneAction`.** That duplication is exactly what this package exists to remove; the same note appears in `internal/bot/CLAUDE.md` and `internal/rules/shanten/CLAUDE.md`.
-- Imported by `cmd/cli`, `internal/api`, `internal/bot`, `internal/bot/remote`, `internal/review`, `internal/rl`, `internal/rules`, and `internal/rules/shanten`.
+- Imported by `cmd/play`, `internal/api`, `internal/bot`, `internal/bot/remote`, `internal/review`, `internal/rl`, `internal/rules`, and `internal/rules/shanten`.
 - The face key deliberately discards tile id. Tile id `0` is a real tile (the first 1s) and must never be used as a sentinel — see the root `CLAUDE.md`.
