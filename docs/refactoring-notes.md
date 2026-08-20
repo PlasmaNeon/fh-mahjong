@@ -301,3 +301,68 @@ Verified by capturing the key sets before and after (36 keys for `PolicyValueNet
 (~90), the checkpoint→net loader (~45), the diagnostics statistics helpers (~70), the
 `evaluate_duplicate_seats` near-copy (~135), the four spawn rollout pools (~210), the serving-test
 HTTP harness (~80), and A15 `tensorize` (the serving path — gate with `fh-mj-serving-parity`).
+
+## 2026-08-16 — PR 6: ai renames and splits
+
+Nine renames, two file splits. Pure motion: no behaviour changed, and both splits are proved
+line-for-line identical to what they replaced (see below).
+
+| Was | Is | Why |
+|---|---|---|
+| `oracle.py` (3,229 lines) | `oracle.py` + `train_b2b.py` + `train_state.py` | Its own docstring said "Phase 1" while 1,900 lines were B2b and crash-resume |
+| `test_deep16_rezero.py` (3,219 lines) | `test_b2b_growth.py` + `test_b2b_resume.py` | Named for a retired campaign; 34 growth tests vs 101 resume tests |
+| `trainer.py` | `offline_trainers.py` | ppo/ach/oracle are trainers too; this one owns the offline ones |
+| `streaming_data.py` | `streaming_buffer.py` | Collided with `data.py`/`storage.py`; it is a buffer |
+| `scripts/model_config_args.py` | `model_config_args.py` | Library plumbing imported by 23 sites, not a script |
+| `scripts/evaluate_guarded.py` | `scripts/evaluate_q_guarded.py` | Three `evaluate_*guarded*` scripts; only one said what it guards on |
+| `test_serve_policy_events.py` | `test_serve_policy.py` | Outgrew "events" — also covers /healthz and /reload |
+| `test_serving_evaluate.py` | `test_serve_policy_evaluate.py` | Tests the server, not `serving.py` |
+| `test_b2c_loading.py` | `test_checkpoint_loading.py` | "b2c" is a campaign label |
+| `test_oracle_phase2.py` | `test_selfplay_oracle.py` (absorbing `test_ach_cli.py`) | Ditto "phase2" |
+| `ai/Dockerfile` | `ai/Dockerfile.compose` | The unqualified name read as "the" image |
+| `checkpoints/deploy/b2b-anchor075…pt` | `checkpoints/anchors/…` | A training anchor in the directory that means "ships to production" |
+
+### The monkeypatch rule, and why `train_b2b` calls `train_state.X`
+
+Splitting a module moves definitions but **not** patch targets. `monkeypatch.setattr` rebinds a name
+in one module's namespace; a caller that did `from .train_state import X` holds its own reference and
+never sees the patch. So every one of the 32 patch strings had to be re-pointed at the *calling*
+module, by hand — `fh_mahjong_ai.train_b2b.build_bridge`, not `fh_mahjong_ai.bridge.build_bridge`.
+
+`_resolve_current_bridge_fingerprint` forced the design. It is defined in `train_state` and called
+from **both** modules, so a symbol import would have needed two patch targets and the tests would
+have silently half-patched. `train_b2b.py` therefore does `from . import train_state` and calls
+`train_state._resolve_current_bridge_fingerprint(...)`: one target, `fh_mahjong_ai.train_state.X`,
+covers both callers. 25 call sites carry that prefix, and the rule is written down in `ai/CLAUDE.md`.
+
+The failure mode is silent — a wrongly-pointed patch makes the test pass while testing nothing — so
+this is the one part of the PR no script was allowed to decide.
+
+### Proving a split is pure motion
+
+For both splits: strip the import block from each output file, concatenate the bodies back in the
+original order, and diff against the original body. `oracle.py` reassembled to 2,997 identical
+non-blank lines; `test_deep16_rezero.py` to 2,482. The `train_state.` qualification is undone at
+NAME-token positions (via `tokenize`, never a regex) before comparing — a plain regex would also
+strip the 20 prose mentions of the *file* `train_state.pt` in docstrings.
+
+The cut itself was chosen by measuring, not by eye: an AST pass showed the dependency between the
+three candidate modules is one-directional (`train_b2b` → `train_state`, 20 names, nothing back)
+and that `oracle` references neither. A cut with a cycle in it would have meant a different split.
+
+### Two traps
+
+- **A shared module-level name can be swept up by a "move the definitions" script.** `logger` was a
+  top-level assignment, so it landed in `state_names` and every `logger.info(...)` in the b2b half
+  briefly became `train_state.logger.info(...)`. Each module defines its own logger now; the
+  qualification count dropping from 28 to 25 is what surfaced it.
+- **BSD `sed` has no `\b`.** `sed -i '' 's/\boracle_mod\b/…/g'` silently matches nothing and reports
+  success. Word-boundary renames go through Python.
+
+### Deliberately left alone
+
+Dated plans and progress logs under `docs/superpowers/plans/`, `docs/superpowers/specs/`, and
+`docs/rl-papers/` keep the old module paths: they are records of what was true when written, and the
+repo already treats them that way (the June `core`→`engine` reorg left them untouched too). Only the
+three **live** runbooks with copy-paste import snippets were updated — deep16-rezero, gru-width, and
+data-scale-960.

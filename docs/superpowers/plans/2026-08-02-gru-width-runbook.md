@@ -38,7 +38,7 @@ import torch
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.oracle import _b2b_model_env_config, widen_event_gru
+from fh_mahjong_ai.train_b2b import _b2b_model_env_config, widen_event_gru
 from fh_mahjong_ai.storage import load_checkpoint
 
 ANCHOR = "/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt"
