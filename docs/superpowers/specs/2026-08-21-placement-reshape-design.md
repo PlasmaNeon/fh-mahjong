@@ -1,7 +1,7 @@
 # `placement-reshape` — asymmetric terminal placement utility on the champion recipe
 
-Status: **RATIFIED 2026-08-21** by Codex design consult (fresh thread, GPT-5.6-Sol
-medium effort; user settled the canonical-thread question by opening a fresh
+Status: **RATIFIED 2026-08-21, AMENDED 2026-08-22 (Amendment 1)** by Codex design consult (fresh thread, GPT-5.6-Sol
+medium effort, then a high-effort adversarial re-review against the code; user settled the canonical-thread question by opening a fresh
 thread for this experiment) and approved by the user the same day. Ruling:
 **"AUTHORIZED FOR SPECIFICATION AND STAGE 0 under Option A with k = 0.5; GRP and
 the legacy trainer are out of scope. Training remains unauthorized until the λ
@@ -13,8 +13,7 @@ NOT a reopened training ladder; the result returns to consultation.
 
 Worktree `placement-reshape`, branch `experiment/placement-reshape-10-5-1-n10`.
 Context handoff: `2026-08-21-placement-reshape-context.md`. Live progress record:
-`/Users/plasma/fh-mahjong/.claude/docs/placement-reshape-experiment.md` (main
-checkout, shared across worktrees).
+`worklog/rl-experiment/placement-reshape-experiment.md` (git-tracked).
 
 ## Motivation
 
@@ -80,14 +79,17 @@ seats, the bonus is applied to every seat, not one nominal learner.
   **`v = (0.8601670494, 0.3541864321, −0.0505980617, −1.1637554197)`**, RMS
   0.7453559925 (= canonical RMS). Registered to full precision; any rescaling of
   `v` is cancelled by inverse rescaling of λ, so `v` is fixed for auditability.
-- Placement is computed from **exact final scores** (integer points, same
-  rounding as `_assemble_hindsight_labels`), descending; **tied rank slots
+- Placement is computed from **exact final scores** (integer points, the
+  ×1000-and-round reconstruction at `train_b2b.py:621`, just before
+  `_assemble_hindsight_labels`), descending, **including busted seats**; **tied rank slots
   average their utilities** (so the per-match bonus sum is always zero). Never
   derived from `rank_labels` (class 4 = bust, not a 4th-place utility).
 - **λ = 0.5 · σ_R / σ_V**, frozen from the Stage-0 calibration collection:
-  over all 4 × 320 seat-match observations, `R` = accumulated dense match-net
-  reward (score/1000 units), `V` = `v(final_rank)` with averaged ties; σ with
-  `ddof=0`. The empirical terminal-bonus std is then exactly half the existing
+  over all 4 × 320 seat-match observations, `R` = the sum of dense rewards
+  actually credited to that seat's PPO trajectory (score/1000 units — NOT
+  `match_net`, which also contains reset-time rewards before the seat's first
+  decision; Amendment 1 item 2), `V` = `v(final_rank)` on the full
+  reset-inclusive final standings with averaged ties; σ with `ddof=0`. The empirical terminal-bonus std is then exactly half the existing
   match-net std. At this k the unique 4th-place bonus ≈ −0.78 σ_R.
   Rationale for rejecting k=1.0: rank is derived from score, so the two are
   strongly positively correlated; equal component stds would push the
@@ -136,9 +138,12 @@ candidate large-loss rate ≤ anchor075 + 0.015 (the historical canonical gate).
 4th-place share is computed at **match level from final scores**: ties allocate
 fractional occupancy; a truncated match counts as **full** 4th-place occupancy
 for the learning seat (the objective's terminal rank does not exist, and
-omitting it would censor). The 4th-share SEM at 1500×4 is expected ≈ 0.005–0.007,
-so the primary threshold demands a real effect of roughly −0.02; accepted
-knowingly as a strict test.
+omitting it would censor). The 4th-share SEM at 1500×4 is expected ≈ 0.005–0.007.
+The gate boundary is the registered −0.010 (at SEM 0.005 a −0.010 estimate
+clears CI upper < 0; at SEM 0.007 it needs ≈ −0.0137); a true effect of
+≈ −0.02 is what gives ~80% power at the high end of that SEM — accepted
+knowingly as a strict test. The pair is not a redundant double gate: it
+combines a minimum observed effect with evidence against zero.
 
 ### Stage 0 — prerequisites (no training)
 
@@ -192,8 +197,10 @@ before the scale gates run.
    and record `gamma` / `gae_lambda` actually used by `anchor075`'s lineage.
    Consult assumed the CLI defaults (γ=0.99, λ_GAE=0.95); the ds960 spec's
    "δ=1" is ambiguous and the γ=1 invariant in memory belongs to the legacy GRP
-   path. Whatever the archive says is frozen verbatim; if it is γ=1, the
-   Q1 decay arithmetic is moot but nothing else changes.
+   path. Whatever the archive says is frozen verbatim. If it is γ=1 the decay
+   becomes (1.0·λ_GAE)^d (≈0.599 @10, 0.077 @50, 0.0059 @100 at λ_GAE=0.95);
+   λ calibration is match-level and unaffected, and the return/MSE gates are
+   simply recomputed under the archived γ/λ_GAE — no threshold changes.
 6. **Wall-clock** from the Stage-0 collection; ballpark from ds960 at 320
    matches/iter ≈ 3× faster per iter than the 960 lap.
 
@@ -204,12 +211,12 @@ before the scale gates run.
 | Trainer | `fh-mj-train-b2b`, champion recipe frozen: warm start `anchor075` (restart-iter075), lr 2e-5, ppo_epochs 2, entropy 0, minibatch 256, 320 matches/iter, chongci, event window 128, residual_blocks 4, event_hidden 128, privileged critic on, aux heads on, `AUX_LOSS_WEIGHT` 0.1, normalized advantages, max-grad-norm unchanged, optimizer unchanged, γ / λ_GAE per Stage-0 item 5 |
 | Intervention | `--placement-bonus-values v --placement-bonus-lambda λ` (frozen) |
 | Iters | 150 |
-| Base seed | **650000**; training seeds 650000–698319 inclusive (no overlap with 100k–148k, 200k–248k, 400k–453k, 500k–644k, 700k–701k, 720k diag, 4M, 8M, or any eval window ≥ 870000) |
+| Base seed | **650000**; iterations 1–150 consume seeds **650320–698319** inclusive (650000–650319 unused; `iter_seed = base_seed + iteration × 320`, `train_b2b.py:1425`) (no overlap with 100k–148k, 200k–248k, 400k–453k, 500k–644k, 700k–701k, 720k diag, 4M, 8M, or any eval window ≥ 870000) |
 | Run dir | `/root/fh-mahjong-runs/placement-reshape/` (the ds960 dir is a read-only archive) |
 | Screenings | 25/50/75/100/125/150 vs regenerated `anchor075`, seeds 910000–910119, 120 paired seeds × 4 seats, `fh-mj-compare`; report canonical delta, 4th-share delta, large-loss delta, deal-in, asymmetric utility |
-| Kill rule | kill @100 iff **both** screens 75 and 100 have canonical mean-placement delta < −0.060 **and** 4th-place delta > −0.005 (i.e. losing on the canonical metric without buying tail safety) |
+| Kill rule | evaluated only at iteration 100: kill iff `(C₇₅ < −0.060 ∧ F₇₅ > −0.005) ∧ (C₁₀₀ < −0.060 ∧ F₁₀₀ > −0.005)` where C = canonical mean-placement delta, F = 4th-place-share delta (losing on the canonical metric without buying tail safety at both screens) |
 | Eligibility | milestone eligible iff 4th-place delta ≤ −0.005, canonical delta ≥ −0.050, large-loss delta ≤ +0.010, zero integrity/truncation failures |
-| Selection | lowest 4th-place delta among eligible; within 0.001 → higher canonical delta; then earlier milestone. No eligible milestone ⇒ NULL, no confirmation run |
+| Selection | among eligible milestones compute F_min; shortlist those with F ≤ F_min + 0.001; pick the highest canonical delta in the shortlist; tie → earliest milestone. No eligible milestone ⇒ NULL, no confirmation run |
 | Confirmation | selected milestone, seeds 1300000–1301499, 1500 paired seeds × 4 seats, back-to-back vs regenerated anchor075 |
 | Protocol | no optional stopping; no extension; no second confirmation; no auto-chaining — result returns to consult |
 
@@ -249,5 +256,79 @@ is deliberately placed at 100 with a two-screen requirement so a transient at
 
 ## Amendments
 
-(none yet — λ, σ_R, σ_V, γ/λ_GAE from the archive, and the Stage-0 gate
-results are recorded here when Stage 0 completes)
+### Amendment 1 (Codex re-review, GPT-5.6-Sol HIGH effort, 2026-08-22) — BLOCKING before Stage 0
+
+Ruling: **"STANDS WITH THE AMENDMENTS BELOW. Do not begin Stage 0 until the
+written specification incorporates the blocking amendments."** All registered
+numerical thresholds (λ rule, 1.35/1.50/2.00 scale gates, −0.010/−0.030/+0.005
+confirmation gates, kill rule, 150 iters, seed windows) **stand**. The defects
+were collector semantics, fail-closed ordering, evaluation plumbing, and one
+transcription error. Items 1, 11, 12 are applied inline above; the rest are
+Stage-0 requirements.
+
+1. **Seed range corrected** to 650320–698319 (iterations start at 1,
+   `train_b2b.py:1416`).
+2. **λ calibration definitions.** `R` = the sum of dense rewards actually
+   credited to the seat's PPO trajectory (`train_b2b.py:604` accumulation) —
+   NOT `match_net`, which includes reset-time / pre-first-decision rewards
+   (`:543`). `V` = `v(rank)` over the **full, reset-inclusive final standings**.
+   Require exactly 320 matches / 1280 seat-match records, finite nonzero σ_R and
+   σ_V (ddof=0), record `corr(R,V)`, freeze the collection digest. Scale-gate
+   definitions: RMS = sqrt(mean(return²)); p99 of |GAE return|; identical
+   anchor weights, batch, γ, λ_GAE on both branches.
+3. **Attach point.** After the integer final-score reconstruction
+   (`train_b2b.py:621`), add `λ·utility[seat]` to **each seat's own last
+   recorded row**, before flattening (`:629`) — never to the actor of the
+   match-ending env step (seats finish at different decision indices; the
+   collector already credits late payouts to each seat's most recent
+   transition, `:601`). `dones` unchanged: each seat block still ends with one
+   `done=1` (`:640`), and `compute_gae` (`ppo.py:264`) confines the bonus to
+   that seat's own sequence.
+4. **Fail closed, before GAE/update.** Today `compute_gae`/`ppo_update`
+   (`:1431`) run BEFORE the truncation check (`:1451`), and zero-decision seats
+   / reset-terminal matches are silently skipped (`:630`, `:540`). For this
+   lap any truncated, missing, malformed, reset-terminal, or non-four-seat
+   match must raise immediately after collection, before any optimizer
+   mutation. Invariants per match: 4 nonempty seat trajectories, 4 terminal
+   `done=1` rows, 4 utilities, bonus sum = 0 within 1e-6.
+5. **Busted seats and ties.** Utility ranks exact final integer scores
+   including busted seats (never `rank_labels`, which collapses everything
+   ≤ bust threshold to class 4, `:456`); tied seats — busted or not — average
+   the utilities of the slots they jointly occupy. Required test cases: two
+   distinct busted; two tied busted; three busted with a tie; all four tied.
+6. **Digest parity at positive λ** across sequential / parallel / chunked
+   dispatch, not only λ=0.
+7. **Match-level telemetry** (rank occupancy, ties, busts, bonus stats) is
+   not row-aligned: return it as a separate seed-keyed, digest-covered
+   structure — do not fold it into the row-aligned optional-field concat
+   (`ppo.py:206`).
+8. **Resume / provenance.** Add the new `PPOConfig` fields to the explicit
+   legacy-addition whitelist (`train_state.py:413`) so old anchor states
+   normalize; persist λ, the calibration digest, and an objective identifier in
+   checkpoint metadata (`train_b2b.py:1503` currently writes none).
+9. **Eval plumbing — the pipeline cannot yet enforce the registered tail
+   gates.** Add aligned per-episode and per-seed clustered arrays for
+   4th-share, asymmetric utility, and large-loss indicator; extend
+   `fh-mj-compare` (`compare_reports.py:197`, which today pairs only canonical
+   placement and copies aggregate large-loss rates) to pair them; **remove the
+   fail-open ragged-seat fallback** in `_clustered_report_fields`
+   (`evaluate.py:264`) — promotion reports must reject missing/ragged arrays;
+   reconcile float32 accumulated-score ranking (`evaluate.py:98`) with the
+   training-side integer reconstruction via one shared exact-standings helper
+   or proven byte-for-byte rank parity.
+10. **Deal-in** = all-hand `hand_stats.deal_in_rate` (`hand_stats.py:51`), not
+    `round_outcome_rates["deal_in"]` (terminal outcomes only, `evaluate.py:760`
+    vs `:786`). Incomplete hand-outcome data **fails** Stage 0 — not "fix or
+    document".
+11. γ=1 wording and 4th-share power wording corrected inline.
+12. Selection shortlist rule made transitive inline.
+
+Confirmed unchanged: full-4th occupancy for truncation (matches `min(v)` at
+`evaluate.py:747`); duplicate-seat clustering (per-seed mean over 4 rotations,
+CI over 1500 seed deltas, `evaluate.py:165`); privileged critic / aux heads
+need no special handling; the −0.010 + CI-upper<0 pair is coherent.
+
+**After these amendments Stage 0 is authorized under the existing numbers.
+Stage 1 training remains unauthorized until every amended Stage-0 gate passes.**
+λ, σ_R, σ_V, corr(R,V), the archived γ/λ_GAE, and the Stage-0 gate results are
+recorded here as Amendment 2 when Stage 0 completes.
