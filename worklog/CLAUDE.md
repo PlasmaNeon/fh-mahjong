@@ -50,3 +50,8 @@ unguessable; `docs/` was also mixing reference material with process records. Th
 experiment logs (`chongci-rl-experiment-progress.md`, `chongci-risk-target-design.md`,
 `data-scale-960-lap-status.md`) came from `docs/rl-papers/` and `docs/superpowers/status/`
 in the same move. `git log --follow` preserves history across the move.
+
+`rl-experiment/placement-reshape-experiment.md` came from `.claude/docs/`, an earlier
+convention for progress records. That directory is gitignored, so records kept there were
+invisible to the repo and absent from a fresh clone — this directory replaces it. Do not
+put progress records under `.claude/` again.
