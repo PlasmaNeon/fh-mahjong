@@ -77,8 +77,10 @@ Settled analysis from the closing discussion:
 - Pool wrapper drops `round_outcome` (long-standing trap; see scale-roadmap memory).
 - Use `uv run --project ai ...` for all Python; `go run ./cmd/server` package form.
 
-## Memory
+## Progress tracking
 
-Durable record: `project_placement_reshape_experiment.md` in the project memory
-(indexed in MEMORY.md). Update it at each major transition (spec ratified → running →
-verdict) rather than creating parallel records.
+Live progress record: `.claude/docs/placement-reshape-experiment.md` (in the main
+checkout `/Users/plasma/fh-mahjong/.claude/docs/`, shared across worktrees, NOT in
+auto-memory — user convention: project progress tracking lives under `.claude/docs`).
+Update it at each major transition (spec ratified -> running -> verdict) rather than
+creating parallel records.
