@@ -13,4 +13,4 @@
 - `Calc.tsx` is intentionally self-contained and shares no state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
 - Sends `POST /api/v1/calc`. A `GET` on that path returns 404 — the endpoint is POST-only.
 - Uses the utility classes from `theme/base.css` directly rather than composing typed primitives; it and `Shanten.tsx` are the deliberate "advanced consumer" exceptions for dense tool layouts.
-- UI spec: `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
+- UI spec: `worklog/specs/2026-05-15-shanten-calc-ledger-redesign.md`.

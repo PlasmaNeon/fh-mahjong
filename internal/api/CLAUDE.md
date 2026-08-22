@@ -67,7 +67,7 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
 - **cmd/server/main.go (consumer, not in this package)** — the `RL_AGENT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` family: `RL_AGENT_SHADOW_POLICY_URL` + `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128, capped at `rl.MaxEventHistoryWindow`) wrap the resolved RL primary in a `bot.ShadowPolicy` per RL seat; see `internal/bot/CLAUDE.md` for the wrapper itself.
 
 - **room_decisions.go** — Paipu v2 supervision-trace capture (spec:
-  `docs/superpowers/specs/2026-08-09-paipu-v2-provenance-design.md` §2-3). This
+  `worklog/specs/2026-08-09-paipu-v2-provenance-design.md` §2-3). This
   is the single choke point where every explicit decision passes AND
   provenance is known; the engine (`internal/engine/paipu.go`) stays
   provenance-blind and just stores the rows.

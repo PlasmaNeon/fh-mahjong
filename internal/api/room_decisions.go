@@ -10,7 +10,7 @@ import (
 )
 
 // This file captures the paipu v2 supervision trace (spec:
-// docs/superpowers/specs/2026-08-09-paipu-v2-provenance-design.md §2-3).
+// worklog/specs/2026-08-09-paipu-v2-provenance-design.md §2-3).
 // The room layer is the single choke point where every explicit decision
 // passes AND provenance is known; the engine stays provenance-blind.
 
