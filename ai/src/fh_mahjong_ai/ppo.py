@@ -154,6 +154,16 @@ class PPOConfig:
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None
     grp_placement_values: tuple = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)
+    # Placement-reshape experiment (spec 2026-08-21, Option A): additive
+    # terminal utility lambda * values[rank] on each seat's final recorded
+    # row in collect_b2b_rollouts. values=None disables it entirely (the
+    # champion recipe). When enabled, collection fails CLOSED on any match
+    # without a complete four-seat terminal standing. The calibration digest
+    # pins which Stage-0 collection produced lambda. All three are recipe
+    # fields: the resume echo rejects any change.
+    placement_bonus_values: Optional[tuple] = None
+    placement_bonus_lambda: float = 0.0
+    placement_bonus_calibration_digest: str = ""
     device: str = "cpu"
     objective: str = "ppo"       # "ppo" | "ach" (selects the policy update)
     ach_beta: float = 2.0        # hedge/logit trust-region threshold when objective="ach"
@@ -174,6 +184,10 @@ class RolloutBatch:
     event_lengths: np.ndarray | None = None   # [N] int32 true lengths
     dealin_labels: np.ndarray | None = None   # [N] float32 hindsight deal-in
     rank_labels: np.ndarray | None = None     # [N] int64 rank 0-3 / 4=bust / -1=masked
+    # Seed-keyed match-level telemetry (NOT row-aligned; one dict per match,
+    # in collection order). Carried separately from the row arrays so it can
+    # never misalign them; covered by the collect-bench digest.
+    match_telemetry: list | None = None
 
     def __len__(self) -> int:
         return int(self.actions.shape[0])
@@ -233,6 +247,13 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
             )
         else:
             fields[name] = None
+    present = [b.match_telemetry is not None for b in nonempty]
+    if all(present):
+        fields["match_telemetry"] = [t for b in nonempty for t in b.match_telemetry]
+    elif any(present):
+        raise ValueError("concat_rollout_batches: 'match_telemetry' is present in some batches but not others")
+    else:
+        fields["match_telemetry"] = None
     result = RolloutBatch(**fields, truncated_matches=truncated_matches)
     memprobe.probe("concat_done", rows=len(result), sources=len(nonempty))
     return result

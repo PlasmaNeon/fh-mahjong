@@ -181,3 +181,25 @@ def test_minibatch_device_transfer_keeps_global_advantage_normalization():
                                                minibatch_size=7,
                                                minibatch_device_transfer=True), lr=0.0)[0]
     assert host == base
+
+
+def test_concat_merges_match_telemetry_in_order():
+    a = _batch(3); b = _batch(2)
+    a.match_telemetry = [{"seed": 1}, {"seed": 2}]
+    b.match_telemetry = [{"seed": 3}]
+    out = concat_rollout_batches([a, b])
+    assert [t["seed"] for t in out.match_telemetry] == [1, 2, 3]
+
+
+def test_concat_rejects_mixed_telemetry_presence():
+    a = _batch(3); b = _batch(2)
+    a.match_telemetry = [{"seed": 1}]
+    with pytest.raises(ValueError, match="match_telemetry"):
+        concat_rollout_batches([a, b])
+
+
+def test_ppo_config_bonus_defaults_off():
+    cfg = PPOConfig()
+    assert cfg.placement_bonus_values is None
+    assert cfg.placement_bonus_lambda == 0.0
+    assert cfg.placement_bonus_calibration_digest == ""

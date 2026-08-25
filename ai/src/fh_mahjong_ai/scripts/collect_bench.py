@@ -115,7 +115,7 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
     `truncated_matches` is also included because `train_b2b` uses it for its
     fail-closed truncation-rate gate. No `RolloutBatch` field is excluded.
     """
-    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches"}
+    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches", "match_telemetry"}
     actual_fields = {field.name for field in fields(RolloutBatch)}
     if actual_fields != expected_fields:
         raise RuntimeError(
@@ -133,6 +133,10 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
             {"dtype": "int", "field": "truncated_matches", "shape": []},
             sort_keys=True, separators=(",", ":")).encode())
     h.update(int(batch.truncated_matches).to_bytes(8, "big", signed=True))
+    tel = batch.match_telemetry
+    payload = json.dumps({"field": "match_telemetry", "present": tel is not None,
+                          "value": tel}, sort_keys=True, separators=(",", ":")).encode()
+    _update_length_prefixed(h, payload)
     return h.hexdigest()
 
 
