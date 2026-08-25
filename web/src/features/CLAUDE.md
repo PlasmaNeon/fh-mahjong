@@ -32,4 +32,4 @@ Each folder has its own `CLAUDE.md` with per-file detail — open the one you ar
 - Live round-result payout adapters use explicit `Ready` / `Waiting` labels. Replay adapters leave readiness absent, and the shared overlay must not synthesize a status when none was provided.
 - The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - Tool pages (`calc/`, `shanten/`) are self-contained rules debuggers and share no state with gameplay pages.
-- See `../../table/CLAUDE.md` for the shared tabletop presenter, `../../theme/CLAUDE.md` for the design system, and `docs/superpowers/specs/2026-05-15-shanten-calc-ledger-redesign.md` for the calc/shanten UI spec.
+- See `../../table/CLAUDE.md` for the shared tabletop presenter, `../../theme/CLAUDE.md` for the design system, and `worklog/specs/2026-05-15-shanten-calc-ledger-redesign.md` for the calc/shanten UI spec.

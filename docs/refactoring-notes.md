@@ -40,7 +40,7 @@ Rule: page helpers must not re-implement tile parsing/formatting/sorting — ext
 ## 2026-08-16 — PR 1a: frontend de-duplication
 
 Second de-duplication pass, from
-`docs/superpowers/specs/2026-08-16-dedup-and-naming-refactor-design.md` §6.1.
+`worklog/specs/2026-08-16-dedup-and-naming-refactor-design.md` §6.1.
 Behaviour-preserving: no rendered output, copy, or API changed.
 
 New shared homes — pages must not re-implement these:
@@ -361,7 +361,7 @@ and that `oracle` references neither. A cut with a cycle in it would have meant 
 
 ### Deliberately left alone
 
-Dated plans and progress logs under `docs/superpowers/plans/`, `docs/superpowers/specs/`, and
+Dated plans and progress logs under `worklog/plans/`, `worklog/specs/`, and
 `docs/rl-papers/` keep the old module paths: they are records of what was true when written, and the
 repo already treats them that way (the June `core`→`engine` reorg left them untouched too). Only the
 three **live** runbooks with copy-paste import snippets were updated — deep16-rezero, gru-width, and

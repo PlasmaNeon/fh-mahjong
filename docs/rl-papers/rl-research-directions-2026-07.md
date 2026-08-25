@@ -121,7 +121,7 @@ already have (oracle labels); 4 is the evidence-backed algorithmic upgrade; 5
 converts spare inference compute into strength exactly where it matters —
 against humans.
 
-Related in-repo context: `docs/rl-papers/chongci-rl-experiment-progress.md`
+Related in-repo context: `worklog/rl-experiment/chongci-rl-experiment-progress.md`
 (campaign log through the deep4 iter_120 promotion),
-`docs/superpowers/specs/2026-07-02-batched-inference-actors-design.md`
+`worklog/specs/2026-07-02-batched-inference-actors-design.md`
 (experience-throughput enabler for all of the above).

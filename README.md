@@ -35,10 +35,12 @@ fh-mahjong/
 ├── cmd/            # Entry points: server, cli, wasm, rlbridge, rlpaipu, rlsmoke
 ├── web/            # React frontend (features/, table/, theme/, …)
 ├── ai/             # Python RL training pipeline
-└── docs/
-    └── rules/
-        ├── official-rules.md  # Raw Fenghua rule source
-        └── rules.md           # Rules + Go implementation design
+├── docs/           # Reference docs
+│   ├── rules/
+│   │   ├── official-rules.md  # Raw Fenghua rule source
+│   │   └── rules.md           # Rules + Go implementation design
+│   └── rl-papers/  # RL paper reports, study roadmap, implementation takeaways
+└── worklog/        # Process record: specs/, plans/, rl-experiment/
 ```
 
 > Per-directory `CLAUDE.md` files are the authoritative, up-to-date reference for

@@ -53,4 +53,4 @@ First ran clean against production 2026-08-12 (match `5ad64d61…`, 29 decisions
 
 - This talks to a live server; it is not part of `go test ./...` coverage of the engine. Treat a failure as "the deployed stack is not gate-clean", not "the code does not compile".
 - Sibling to `cmd/rlpaipu`, which generates a paipu fixture offline instead of verifying a live one.
-- Paipu-v2 background: `docs/superpowers/specs/2026-08-09-paipu-v2-provenance-design.md`.
+- Paipu-v2 background: `worklog/specs/2026-08-09-paipu-v2-provenance-design.md`.

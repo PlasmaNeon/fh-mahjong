@@ -2,7 +2,7 @@
 
 Every promotion or lever-verdict claim must come from this tool run on two
 reports produced on the SAME seed window (see the seed-window policy in
-docs/rl-papers/chongci-rl-experiment-progress.md).
+worklog/rl-experiment/chongci-rl-experiment-progress.md).
 """
 
 from __future__ import annotations

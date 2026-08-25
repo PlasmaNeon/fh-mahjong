@@ -53,9 +53,15 @@ fh-mahjong/
         ├── hooks/      Custom hooks (WASM loader, stage layout)
         ├── utils/      Tile utilities and the shared tile value-model
         └── proto/      Auto-generated JS/TS Protobuf bindings
+├── docs/           Reference documentation (Fenghua rules, RL paper reports, refactoring notes)
+└── worklog/        Process record — design specs, implementation plans, runbooks, experiment logs
 ```
 
 There is no `web/src/pages/` — route pages live inside `web/src/features/*` since the 2026-06-27 reorg.
+
+`docs/` vs `worklog/`: `docs/` describes the product (how the system and the rules work);
+`worklog/` records the process (why a change was made and in what order). Process records
+moved out of `docs/superpowers/` on 2026-08-21 — see `worklog/CLAUDE.md`.
 
 ## Key Files
 
