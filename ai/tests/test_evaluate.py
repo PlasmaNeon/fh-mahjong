@@ -925,6 +925,11 @@ def test_offline_agreement_rejects_event_models(tmp_path, capsys):
     with _pytest.raises(ValueError, match="event histories"):
         compute_action_agreement_from_batches(model, iter([]), device="cpu")
 
+    # allow_zero_events=True is the explicit BC opt-in: it bypasses the guard
+    # and returns the normal (empty-batches) result instead of raising.
+    result = compute_action_agreement_from_batches(model, iter([]), device="cpu", allow_zero_events=True)
+    assert result["total_transitions"] == 0
+
     with _pytest.raises(SystemExit):
         with _pytest.MonkeyPatch.context() as mp:
             mp.setattr("sys.argv", ["fh-mj-evaluate", "--checkpoint", "x.pt",

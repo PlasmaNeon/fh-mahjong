@@ -180,16 +180,13 @@ def train_bc(
                 "avg_policy_loss": epoch_policy_loss / steps_per_epoch,
                 "avg_value_loss": epoch_value_loss / steps_per_epoch,
             }
-            if validation_count and getattr(model, "wants_events", False):
-                # Offline datasets carry no event histories, and
-                # compute_action_agreement[_from_batches] refuses to
-                # silently evaluate an event-enabled model with zeroed
-                # event features (see evaluate.py). BC still trains the
-                # event encoder's dormant path (spec B2b/4.3); it just
-                # cannot be offline-validated here.
-                epoch_report["validation"] = None
-                print(f"--- epoch {epoch} avg_loss={avg_loss:.4f}  (validation skipped: event-enabled model)")
-            elif validation_count:
+            # BC trains event-enabled configs with events=None (zeroed event
+            # features, per spec B2b/4.3), so validating under that same
+            # zeroed condition is a faithful measure of what BC learned --
+            # NOT a valid metric for an event-trained (PPO) checkpoint. See
+            # compute_action_agreement_from_batches's docstring.
+            wants_events = bool(getattr(model, "wants_events", False))
+            if validation_count:
                 if validation_arrays is not None and validation_indices is not None:
                     validation_report = compute_action_agreement_from_batches(
                         model,
@@ -199,6 +196,7 @@ def train_bc(
                             validation_batch_size,
                         ),
                         device=device,
+                        allow_zero_events=wants_events,
                     )
                 else:
                     validation_report = compute_action_agreement(
@@ -206,8 +204,10 @@ def train_bc(
                         validation_transitions,
                         device=device,
                         batch_size=validation_batch_size,
+                        allow_zero_events=wants_events,
                     )
                 epoch_report["validation"] = validation_report
+                epoch_report["validation_events"] = "zeroed" if wants_events else "none"
                 print(
                     f"--- epoch {epoch} avg_loss={avg_loss:.4f}  "
                     f"val_top1={validation_report['agreement_rate']:.2%}  "
@@ -215,6 +215,7 @@ def train_bc(
                 )
             else:
                 epoch_report["validation"] = None
+                epoch_report["validation_events"] = None
                 print(f"--- epoch {epoch} avg_loss={avg_loss:.4f}")
 
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
