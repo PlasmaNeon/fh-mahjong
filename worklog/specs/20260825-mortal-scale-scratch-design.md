@@ -157,3 +157,32 @@ Nothing in `internal/`, the proto, or the Go bridge changes. Serving needs no co
 3. Runbook `worklog/plans/20260825-mortal-scale-scratch-runbook.md` + live status file
    `worklog/rl-experiment/mortal-scale-scratch-status.md` (created when the lap launches).
 4. Consult ruling recorded as Amendment 1 here before anything trains.
+
+## Amendment 1 (ratified 2026-08-25, Codex thread `01a0147d`) — supersedes §5 where they differ
+
+Measured B2b parameter counts: champion 96×4 k=3 = 2.74 M; control 96×4 k=1 = 2.28 M (0.83×); big 192×24 k=1 = 8.42 M (3.07×).
+
+1. **Authorization and hypothesis.** Authorize one sequential two-arm scratch BC→PPO experiment: control `96×4, kernel_width=1, 2.28M` followed conditionally by big `192×24, kernel_width=1, 8.42M`. Both use identical initialization, optimization, evaluation, and provenance procedures. `anchor075` remains the external comparator. This tests the combined **scratch + model-scale + proportional-data package**, not model size in isolation.
+
+2. **Control arm.** The control is mandatory: without it, failure could not distinguish an inadequate scratch recipe from failure of scale. Run it first. Its catastrophic kill rule is the same as the big arm. After its full budget, authorize the big arm only if the iteration-200 screening delta versus `anchor075` is `>=−0.0600`, telemetry is healthy, and all integrity gates passed. Failure stops before the big arm and returns to consultation; it is a recipe failure, not a scale null. Control results may not tune BC, learning rates, schedules, budgets, or big-arm configuration.
+
+3. **BC dataset and stopping.** Generate exactly **10,000 heuristic matches**, seeds `1,300,000–1,309,999`, and persist dataset/config/bridge digests. Split 90/10 by whole-match seed, never by transition; both arms use identical train/validation membership and shuffle seed. Use existing BC optimizer and batch defaults unchanged. Train at least 5 and at most 30 epochs; stop after 5 consecutive epochs without an absolute validation-cross-entropy improvement of `1e-4`, selecting the lowest-validation-loss checkpoint. Report validation cross-entropy and legal-action-masked top-1 accuracy under the actual zero-event condition. Non-finite loss, loader mismatch, or absent improvement is a prerequisite failure requiring consultation.
+
+4. **BC transfer gate.** Before PPO, prove exact step-zero equality between each BC checkpoint and its B2b initialization for legal-action logits, probabilities, greedy actions, and loaded tensor bytes under zeroed events. Record BC SHA, B2b initialization SHA/provenance, model configuration, and the exact loaded/unloaded key sets. Resume must preserve them.
+
+5. **PPO data and minibatches.** Floor the control at **320 matches/iteration with minibatch 256**; reducing it to 266 would weaken the recipe control merely because its 1-D kernel has fewer parameters. Run the big arm at **960 matches/iteration with minibatch 768**. Both therefore execute approximately equal optimizer steps per iteration while the big arm receives the pre-registered proportional-data treatment. Freeze `ppo_epochs=2`, `gamma=0.99`, entropy coefficient 0, chongci, chunk 320, workers 10, reward/auxiliary recipe, observation/action contracts, and bridge bytes.
+
+6. **Optimization schedule.** Reject both a critic-only warm-up and `lr=2e-5` for every parameter from step 1. Shared-trunk freezing would not cleanly train the event path, while the all-fine-tuning rate makes random-head undertraining a dominant alternative explanation. Use two Adam parameter groups: BC-loaded parameters at `2e-5` throughout; parameters absent from BC—event encoder, value/Q, privileged-critic, auxiliary and risk heads—at `2e-4` for iterations 1–25, then `2e-5` for iterations 26–200, retaining optimizer moments. No tuning follows control results.
+
+7. **Budget, screening, and kill.** Each arm has **200 iterations**, fixed before launch. Screen at `25/50/75/100/125/150/175/200` on one fixed fresh 120-seed duplicate-seat window. The sole early kill is at iteration 100 iff `delta100−delta75 <= 0` and `delta100 <−0.20`. This is a conservative catastrophic-futility rule; no later slope-based stopping or adaptive extension is allowed.
+
+8. **Seeds.** Reserve control training seeds `1,400,000–1,463,999`, big training seeds `1,500,000–1,691,999`, bench seeds `1,700,000–1,700,959`, screening seeds `1,710,000+`, and confirmation seeds `1,720,000+`. No reuse or overlap is permitted.
+
+9. **Evaluation and selection.** Select each arm’s best healthy registered milestone by screening delta, with an exact tie going to the later milestone. Confirm the selected big checkpoint versus regenerated `anchor075`, and secondarily versus the selected control, on the same fresh **1,500 paired seeds × 4 duplicate seats**. Each claim requires clustered CI95 lower bound `>0` and `large_loss_rate(candidate) <= comparator+0.015`. No second window, enlarged N, or reselection is allowed.
+
+10. **Interpretation.** Big-versus-anchor is the primary practical gate. Big-versus-control identifies superiority of the **larger-model/proportional-data package**, not architecture scale alone, because data volumes differ. “Scratch scale confirms” requires both primary and secondary gates. If control passes its recipe gate but big fails confirmation, close this exact scratch-scale package as null. If control fails, scale remains untested.
+
+11. **Infrastructure gate.** Before the big lap, run the full production collect+PPO bench at 960/768. Use Amendment 9’s gates: cgroup peak `<=38.00 GiB`, tree RSS `<=40.00 GiB`, CUDA allocated `<=20.00 GiB`, `memory.high=44GiB`, `memory.max=48GiB`, swap 0, and `oom.group=1`. Record throughput and projected wall time. Any breach, monitoring gap, OOM, or integrity failure stops and returns to consultation; do not shrink the model, data, workers, or budget silently.
+
+12. **Governance.** Infrastructure failures are not scientific nulls. Neither arm may be promoted or deployed automatically. Every terminal result returns to this consultation thread, with checkpoints, histories, dataset and bridge hashes, initialization provenance, guard telemetry, screening reports, and confirmation comparisons preserved.
+
