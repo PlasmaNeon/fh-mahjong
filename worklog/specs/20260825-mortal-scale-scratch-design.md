@@ -1,7 +1,7 @@
 # Mortal-scale from-scratch experiment — design
 
-**Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` · **Status:** DRAFT — awaiting
-user review, then the mandatory Codex consult (`01a0147d` thread) before any code lands or trains.
+**Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` · **Status:** code
+merged-pending (PR open); Codex consult on thread `01a0147d` required before any lap launches.
 
 ## 1. Question
 
@@ -71,9 +71,10 @@ end of its budget, the *recipe* is the problem — stop and consult before spend
 ### 4.2 `fh-mj-train-b2b --scratch [--init-from-bc <ckpt>]`
 - `--scratch` is mutually exclusive with `--champion`, `--model-growth-blocks`,
   `--widen-event-hidden`; `--resume-from-state` still wins over both.
-- Builds `PolicyValueNet(env, model_config)` with default PyTorch init (no surgery, no parity
-  check — there is no anchor to be parity with). Metadata pins the full `ModelConfig` exactly as
-  the warm-start path does, plus `init: "scratch"` and the BC checkpoint sha if given.
+- Builds `PolicyValueNet(env, model_config)` with default PyTorch init. With `--init-from-bc`,
+  the BC prefixes are copied and `trunk.0`'s event-input columns are zeroed so step-0 logits equal
+  the BC policy (the untrained GRU contributes nothing until PPO moves it); a parity test enforces
+  this. `metadata["init"]` is persisted in `train_state.pt` and survives resume.
 - `--init-from-bc`: strict-by-name load of the BC checkpoint's `plane_stem.*`, `plane_blocks.*`,
   `plane_head.*`, `scalar_encoder.*`, `trunk.*`, `policy_head.*`; every other module (event
   encoder, privileged critic, value/aux/risk heads, q_head) stays at random init. Any BC key that

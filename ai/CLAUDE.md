@@ -31,7 +31,7 @@ uv run --project ai <command>
 ### Train
 | Command | Purpose |
 |---|---|
-| `fh-mj-train-bc` | Behavior cloning (the offline warm-start) |
+| `fh-mj-train-bc` | Behavior cloning (the offline warm-start); accepts the shared `--model-*` flags including `--model-kernel-width`; event-enabled nets are validated with zeroed events (`allow_zero_events`), reported as `validation_events` — valid only for BC-stage checkpoints |
 | `fh-mj-train-awbc` | Advantage-weighted BC |
 | `fh-mj-train-iql` | Discrete IQL — the main offline RL trainer |
 | `fh-mj-train-offline-q` | Conservative offline Q (experimental) |
@@ -42,7 +42,7 @@ uv run --project ai <command>
 | `fh-mj-train-ppo` | Online self-play PPO vs a frozen anchor |
 | `fh-mj-train-oracle` | Phase-1 oracle (single-seat, perfect-information) |
 | `fh-mj-train-selfplay-oracle` | Phase-2 self-play feature-dropout oracle |
-| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads |
+| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs |
 
 ### Evaluate and gate
 | Command | Purpose |
@@ -122,6 +122,7 @@ labels, not separate code paths:
 - **deep16-rezero** — width growth by stacking dormant ReZero residual blocks.
 - **gru-width** — widening the event GRU in place via an identity-masked projection.
 - **data-scale-960** — the 960-match scaling work: dispatch chunking, memory profiling, minibatch device transfer.
+- **mortal-scale-scratch** — `ModelConfig.kernel_width` (1 = Mortal-style (3,1) convs), `fh-mj-train-bc --model-*`, and `fh-mj-train-b2b --scratch [--init-from-bc]` — BC → PPO from random init, no anchor.
 - **Spec B2c** — serving: metadata-authoritative architecture recovery and the event wire contract.
 
 ## Key Files
@@ -161,6 +162,7 @@ Quick map of what is where:
 - `EnvConfig` defaults match the real Go bridge: `39 x 42 x 1` planes, 58 scalars, 204 actions. B2b models consume 51 channels (39 public + 12 privileged) but **the policy path only ever reads the first 39** — the actor is information-legal by construction.
 - Legacy 42-scalar checkpoints are padded in `storage.load_checkpoint()` so old policy weights load while new Chongci match-context scalar weights start at zero.
 - A B2b checkpoint's `event_window` is **not recoverable from tensor shapes**. `infer_model_config` needs `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it. When adding a `ModelConfig` field, add it to `model_config_args.py`'s `model_config_params()` by hand.
+- `kernel_width` IS shape-inferred (`plane_stem.0.weight.shape[3]`); metadata that disagrees with it is rejected.
 
 ### Datasets
 - Dataset generation writes a manifest next to each JSONL file or shard directory with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.
@@ -183,7 +185,7 @@ Quick map of what is where:
 - IQL should not initialize `q_head` from BC policy logits — policy logits are action scores, not reward-scaled Q estimates. `--init-q-from-policy` is an explicit ablation only.
 - IQL uses `steps_to_done` to discount sparse terminal round payout as `gamma ** steps_to_done * terminal_reward`, matching the Mortal-style sparse-reward target shape.
 - Keep BC regularization enabled on IQL. `--cql-weight` (Mortal-style conservative Q penalty over legal masked actions) stays an explicit ablation until duplicate-seat evaluation beats BC. Naive offline Q remains experimental for the same reason.
-- Record every non-default architecture flag (`--model-channels`, `--model-residual-blocks`, `--model-channel-attention`, `--model-growth-blocks`, `--model-event-*`) in MLflow and report outputs. `--partial-init-checkpoint` is for explicit ablations that add compatible layers.
+- Record every non-default architecture flag (`--model-channels`, `--model-residual-blocks`, `--model-channel-attention`, `--model-growth-blocks`, `--model-event-*`, `--model-kernel-width`) in MLflow and report outputs. `--partial-init-checkpoint` is for explicit ablations that add compatible layers.
 - MLflow tracking is opt-in via `--mlflow`; local storage defaults to `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both gitignored.
 
 ### Patching across the training modules
