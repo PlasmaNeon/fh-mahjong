@@ -625,3 +625,76 @@ def test_cli_placement_bonus_args_roundtrip():
                                                         "placement_bonus_calibration_digest": ""}
     with pytest.raises(SystemExit):
         placement_bonus_kwargs(p.parse_args(["--placement-bonus-lambda", "0.5"]))  # lambda without values is an error
+
+
+def test_bonus_fails_closed_on_reset_terminal(monkeypatch):
+    # A four-seat terminal standing can arrive AT reset (e.g. a pre-play
+    # resolution) before any decision loop ever runs. With the bonus on this
+    # must fail closed like the other terminal-rank-missing paths; with the
+    # bonus off it stays today's silent-skip behavior — the collection still
+    # succeeds off a second, normal match.
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.types import Observation, StepResult
+
+    rng = np.random.default_rng(7)
+
+    def _obs(seat=0):
+        mask = np.zeros(204, dtype=np.int8)
+        mask[:4] = 1
+        return Observation(seat=seat, planes=rng.random((51, 42, 1), dtype=np.float32),
+                           scalars=rng.random(58, dtype=np.float32), action_mask=mask,
+                           event_history=np.asarray([0x140], dtype=np.uint32))
+
+    class _TerminatedResetEnv:
+        """The FIRST match's reset() itself reports a terminated four-seat
+        standing — no decision loop runs for it. The SECOND match is a
+        normal single-seat completed match, so the bonus-off case can prove
+        the reset-terminal match is silently skipped rather than the whole
+        collection failing outright."""
+
+        def __init__(self, cfg, bridge=None):
+            self.last_reset_result = None
+            self._match = 0
+            self._t = 0
+
+        def reset(self, seed=None):
+            self._match += 1
+            self._t = 0
+            terminated_at_reset = self._match == 1
+            self.last_reset_result = StepResult(
+                observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                terminated=terminated_at_reset, truncated=False, info={})
+            return _obs(0)
+
+        def step(self, action):
+            if self._match == 1:
+                raise AssertionError(
+                    "step() should never be called: match 1 ends at reset")
+            self._t += 1
+            terminated = self._t >= 4
+            info = ({"round_outcome": {"is_draw": True, "winner_seat": 0,
+                                       "win_type_name": "ACTION_UNKNOWN",
+                                       "discarder_seat": 0}} if terminated else {})
+            return StepResult(observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                              terminated=terminated, truncated=False, info=info)
+
+    monkeypatch.setattr(train_b2b_mod, "MahjongEnv", _TerminatedResetEnv)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", lambda cfg: None)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+
+    cfg_on = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
+                       match_mode="chongci", placement_bonus_values=PLACEMENT_RESHAPE_VALUES,
+                       placement_bonus_lambda=0.5)
+    with pytest.raises(RuntimeError, match="placement bonus.*reset"):
+        collect_b2b_rollouts(env, model, cfg_on, base_seed=0)
+
+    cfg_off = PPOConfig(device="cpu", matches_per_iter=2, max_steps_per_episode=16,
+                        match_mode="chongci")
+    batch = collect_b2b_rollouts(env, model, cfg_off, base_seed=0)
+    assert batch.match_telemetry is not None and len(batch.match_telemetry) == 1
+    assert int((batch.dones == 1).sum()) == 1

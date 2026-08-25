@@ -634,7 +634,10 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 if is_truncated:
                     raise RuntimeError(
                         f"placement bonus: match seed {base_seed + m} was truncated — no "
-                        "terminal rank exists; fail closed (spec Amendment 1 item 4)")
+                        "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
+                        "truncation under this objective is a protocol stop: raise "
+                        "max_steps_per_episode and/or investigate a stalling policy before "
+                        "retrying.")
                 empty = [k for k in range(4) if not seat_rewards[k]]
                 if empty:
                     raise RuntimeError(
