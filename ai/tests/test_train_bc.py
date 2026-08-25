@@ -120,3 +120,33 @@ def test_train_bc_respects_resume(tmp_path: Path) -> None:
         resume=True,
     )
     assert (ckpt_dir / "epoch_002.pt").exists()
+
+
+def test_train_bc_accepts_model_config_and_records_it(tmp_path: Path) -> None:
+    import torch
+    from fh_mahjong_ai.config import ModelConfig
+    from fh_mahjong_ai.model import infer_model_config
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    model_config = ModelConfig(channels=8, residual_blocks=2, kernel_width=1,
+                               event_window=8, privileged_critic=True, aux_heads=True)
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8,
+             device="cpu", model_config=model_config)
+    payload = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")
+    assert payload["metadata"]["model_config"]["kernel_width"] == 1
+    assert infer_model_config(payload["model"], payload["metadata"]) == model_config
+    assert "event_encoder.gru.weight_ih_l0" in payload["model"]
+
+
+def test_train_bc_default_model_config_is_unchanged(tmp_path: Path) -> None:
+    import torch
+    from fh_mahjong_ai.config import ModelConfig
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8, device="cpu")
+    payload = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")
+    assert payload["metadata"]["model_config"] == ModelConfig().__dict__

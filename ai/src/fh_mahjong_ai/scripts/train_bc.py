@@ -15,7 +15,8 @@ from fh_mahjong_ai.data import backfill_returns, split_train_validation
 from fh_mahjong_ai.evaluate import compute_action_agreement, compute_action_agreement_from_batches
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, model_config_metadata, read_transition_arrays, read_transitions, save_checkpoint
 from fh_mahjong_ai.offline_trainers import BehaviorCloningTrainer, TrainMetrics
 
 BC_ARRAY_KEYS = (
@@ -46,6 +47,7 @@ def train_bc(
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
     validation_batch_size: int = 4096,
+    model_config: Optional[ModelConfig] = None,
 ) -> List[TrainMetrics]:
     """Run BC training and return collected metrics."""
     torch.manual_seed(split_seed)
@@ -83,7 +85,8 @@ def train_bc(
         raise ValueError(f"no training transitions found in {data_path}")
 
     env_config = EnvConfig()
-    model_config = ModelConfig()
+    if model_config is None:
+        model_config = ModelConfig()
     model = PolicyValueNet(env_config, model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
@@ -118,6 +121,7 @@ def train_bc(
         "validation_batch_size": validation_batch_size,
         "learning_rate": learning_rate,
         "device": device,
+        "model_config": model_config_metadata(model_config),
         "epochs": [],
     }
 
@@ -146,6 +150,7 @@ def train_bc(
                     "total_transitions": total_transitions,
                     "train_transitions": train_count,
                     "validation_transitions": validation_count,
+                    **model_config_params(model_config),
                 }
             )
 
@@ -175,7 +180,16 @@ def train_bc(
                 "avg_policy_loss": epoch_policy_loss / steps_per_epoch,
                 "avg_value_loss": epoch_value_loss / steps_per_epoch,
             }
-            if validation_count:
+            if validation_count and getattr(model, "wants_events", False):
+                # Offline datasets carry no event histories, and
+                # compute_action_agreement[_from_batches] refuses to
+                # silently evaluate an event-enabled model with zeroed
+                # event features (see evaluate.py). BC still trains the
+                # event encoder's dormant path (spec B2b/4.3); it just
+                # cannot be offline-validated here.
+                epoch_report["validation"] = None
+                print(f"--- epoch {epoch} avg_loss={avg_loss:.4f}  (validation skipped: event-enabled model)")
+            elif validation_count:
                 if validation_arrays is not None and validation_indices is not None:
                     validation_report = compute_action_agreement_from_batches(
                         model,
@@ -208,6 +222,10 @@ def train_bc(
             save_checkpoint(
                 checkpoint_path,
                 model, optimizer, step=epoch,
+                metadata={
+                    "model_config": model_config_metadata(model_config),
+                    "method": "behavior_cloning",
+                },
             )
             epoch_report["checkpoint_path"] = str(checkpoint_path)
             report["epochs"].append(epoch_report)
@@ -299,6 +317,7 @@ def main() -> None:
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
+    add_model_config_args(parser)
     args = parser.parse_args()
 
     report_output = args.report_output or args.checkpoint_dir / "training_report.json"
@@ -320,6 +339,7 @@ def main() -> None:
         mlflow_experiment=args.mlflow_experiment,
         mlflow_run_name=args.mlflow_run_name,
         validation_batch_size=args.validation_batch_size,
+        model_config=model_config_from_args(args),
     )
     print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
     print(f"Report saved to {report_output}")
