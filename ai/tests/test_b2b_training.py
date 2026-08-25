@@ -710,3 +710,93 @@ def test_bonus_fails_closed_on_reset_terminal(monkeypatch):
     batch = collect_b2b_rollouts(env, model, cfg_off, base_seed=0)
     assert batch.match_telemetry is not None and len(batch.match_telemetry) == 1
     assert int((batch.dones == 1).sum()) == 1
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch: the random-init construction path (`--scratch`).
+# ---------------------------------------------------------------------------
+
+
+def _bc_checkpoint(tmp_path, model_config):
+    """A BC-stage checkpoint: full net, saved with model_config metadata (Task 2 format)."""
+    from fh_mahjong_ai.storage import model_config_metadata
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), model_config)
+    path = tmp_path / "bc.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(model_config)})
+    return model, path
+
+
+def test_build_scratch_model_is_random_init_with_full_config(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    a = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+    b = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+    assert a.model_config == cfg
+    assert tuple(a.state_dict()["plane_stem.0.weight"].shape[2:]) == (3, 1)
+    assert not torch.equal(a.trunk[0].weight, b.trunk[0].weight)  # no anchor, no parity
+
+
+def test_build_scratch_model_init_from_bc_loads_exactly_the_bc_prefixes(tmp_path):
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+    bc_sd, sd = bc_model.state_dict(), model.state_dict()
+    for key in sd:
+        if key.startswith(SCRATCH_BC_PREFIXES):
+            assert torch.equal(sd[key], bc_sd[key]), key
+    assert not torch.equal(sd["value_head.0.weight"], bc_sd["value_head.0.weight"])
+    assert not torch.equal(sd["event_encoder.gru.weight_ih_l0"], bc_sd["event_encoder.gru.weight_ih_l0"])
+
+
+def test_build_scratch_model_init_from_bc_rejects_shape_mismatch(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    bc_cfg = ModelConfig(**SMALL_MODEL, kernel_width=3, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, bc_cfg)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(RuntimeError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+
+def test_build_scratch_model_init_from_bc_rejects_missing_prefix(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    payload = torch.load(bc_path, map_location="cpu")
+    del payload["model"]["policy_head.weight"]
+    torch.save(payload, bc_path)
+    with pytest.raises(RuntimeError, match="policy_head.weight"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+
+def test_train_b2b_scratch_two_iters_mock_records_init(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    ckpt_dir = tmp_path / "run"
+    history = train_b2b(env, cfg, None, ckpt_dir, config, base_seed=3,
+                        scratch=True, init_from_bc=bc_path)
+    assert len(history) == 2
+    payload = torch.load(ckpt_dir / "iter_002.pt", map_location="cpu")
+    assert payload["metadata"]["init"]["kind"] == "scratch"
+    assert len(payload["metadata"]["init"]["bc_checkpoint_sha256"]) == 64
+    assert payload["metadata"]["model_config"]["kernel_width"] == 1
+
+
+def test_train_b2b_scratch_rejects_champion_and_surgeries(tmp_path):
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(ValueError, match="scratch"):
+        train_b2b(env, cfg, champion_path, tmp_path / "a", config, scratch=True)
+    with pytest.raises(ValueError, match="scratch"):
+        train_b2b(env, cfg, None, tmp_path / "b", config, scratch=True, growth_blocks=1)
+    with pytest.raises(ValueError, match="scratch"):
+        train_b2b(env, cfg, None, tmp_path / "c", config, scratch=False)  # no champion, no scratch

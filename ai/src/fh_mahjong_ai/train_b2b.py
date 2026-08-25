@@ -7,6 +7,7 @@ lines of this. The crash-resume machinery this loop drives lives in
 target then covers both this module's calls and train_state's internal ones."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import multiprocessing as mp
 import os
@@ -105,6 +106,47 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
             vw.zero_()
             vw[:, : old_value_w.shape[1]].copy_(old_value_w.to(vw.device))
             model.value_head[0].bias.copy_(payload["model"]["value_head.0.bias"].to(vw.device))
+    model.eval()
+    return model
+
+
+SCRATCH_BC_PREFIXES = ("plane_stem.", "plane_blocks.", "plane_head.",
+                       "scalar_encoder.", "trunk.", "policy_head.")
+
+
+def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device: str = "cpu",
+                        bc_checkpoint: Optional[Path] = None) -> PolicyValueNet:
+    """mortal-scale-scratch: a freshly initialised B2b net (no anchor, no
+    surgery, no step-0 parity). With `bc_checkpoint`, the BC-stage weights for
+    exactly `SCRATCH_BC_PREFIXES` are copied by name+shape; every other module
+    (event encoder, privileged critic, value/aux/risk/q heads) keeps its random
+    init. Any BC key under those prefixes that is absent from the model, or any
+    model key under those prefixes absent from the BC checkpoint, or any shape
+    mismatch, is a hard error -- a silent partial load is this lane's known
+    failure mode. `env_config` must be the 39ch config (see `_b2b_model_env_config`)."""
+    model = PolicyValueNet(env_config, model_config).to(device)
+    if bc_checkpoint is None:
+        model.eval()
+        return model
+    payload = torch.load(Path(bc_checkpoint), map_location="cpu")
+    bc_state = payload["model"]
+    target = model.state_dict()
+    wanted_model = {k for k in target if k.startswith(SCRATCH_BC_PREFIXES)}
+    wanted_bc = {k for k in bc_state if k.startswith(SCRATCH_BC_PREFIXES)}
+    missing = sorted(wanted_model - wanted_bc)
+    extra = sorted(wanted_bc - wanted_model)
+    mismatched = sorted(k for k in wanted_model & wanted_bc
+                        if tuple(bc_state[k].shape) != tuple(target[k].shape))
+    if missing or extra or mismatched:
+        raise RuntimeError(
+            "--init-from-bc: BC checkpoint does not match the scratch model on the "
+            f"loaded prefixes (missing={missing[:6]}, extra={extra[:6]}, "
+            f"shape_mismatch={mismatched[:6]}) -- the BC stage must be trained with the "
+            "same --model-* flags as this run"
+        )
+    with torch.no_grad():
+        for key in wanted_model:
+            target[key].copy_(bc_state[key].to(target[key].device))
     model.eval()
     return model
 
@@ -898,7 +940,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
              force_history_reset: bool = False,
              fresh_run_overwrite: bool = False,
              allow_bridge_mismatch: bool = False,
-             accept_legacy_unpinned_state: bool = False) -> list[dict]:
+             accept_legacy_unpinned_state: bool = False,
+             scratch: bool = False,
+             init_from_bc: Optional[Path] = None) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -926,6 +970,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     by the grown model's own config (the anchor's saved architecture plus
     `growth_blocks` ReZero blocks) so every downstream checkpoint save below
     records the true architecture, including `growth_blocks`.
+
+    `scratch=True` (mortal-scale-scratch) routes model construction through
+    `build_scratch_model` instead: there is NO anchor at all, so
+    `champion_checkpoint` must be `None` and neither warm-start surgery may
+    be requested (both combinations raise below) — the net is built purely
+    from the caller's `model_config`, at random init, with no step-0 parity
+    to preserve. `init_from_bc`, when given, additionally copies the BC
+    stage's plane trunk / scalar encoder / trunk / policy head in by exact
+    name+shape (`SCRATCH_BC_PREFIXES`); it requires `scratch=True`. Every
+    `iter_*.pt` records which of the two construction paths produced this
+    run under `metadata["init"]` (`{"kind": "scratch"|"champion",
+    "bc_checkpoint_sha256": ...}`) so a checkpoint's provenance is readable
+    without the launch command; a resume records `{"kind": "resumed", ...}`
+    when the state file it resumes predates that slot.
 
     Resumable state (deep16-rezero capacity lap survives box restarts):
     every `train_state_every` iterations, and always at completion, writes
@@ -1076,6 +1134,22 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             "growth) and this function does not attempt to reconcile applying both to "
             "the same anchor in a single call"
         )
+    # mortal-scale-scratch: the construction paths are mutually exclusive and
+    # exactly one must be selectable. `resume_from_state` wins over all of
+    # them -- it never constructs from these flags at all (the model comes
+    # from the state file), so a resume is deliberately exempt from every
+    # check here rather than being made to carry a redundant --scratch.
+    # These run BEFORE checkpoint_dir is touched (mkdir/lock/artifact scan)
+    # so a mis-flagged launch cannot leave a directory or a lock behind.
+    if resume_from_state is None:
+        if scratch and champion_checkpoint is not None:
+            raise ValueError("scratch=True cannot be combined with a champion checkpoint")
+        if scratch and (growth_blocks > 0 or widen_event_hidden > 0):
+            raise ValueError("scratch=True cannot be combined with growth_blocks/widen_event_hidden surgery")
+        if not scratch and champion_checkpoint is None:
+            raise ValueError("champion_checkpoint is required unless scratch=True or resume_from_state is given")
+        if init_from_bc is not None and not scratch:
+            raise ValueError("init_from_bc requires scratch=True")
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1293,6 +1367,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "raise --iterations or stop"
                 )
             run_id = state_payload.get("run_id")
+            # mortal-scale-scratch: a resume never re-runs construction, so it
+            # has no construction flags of its own to record. Carry the
+            # lineage's own `init` block forward when the state file happens
+            # to carry one; otherwise record "resumed" rather than guessing
+            # (this task deliberately does not extend the train-state schema,
+            # so states written before this exists have nothing to read).
+            init_meta = state_payload.get("init") or {"kind": "resumed", "bc_checkpoint_sha256": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
@@ -1366,6 +1447,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 model = widen_event_gru(champion_checkpoint, widen_event_hidden,
                                         env_config=env_config, device=device)
                 model_config = model.model_config
+            elif scratch:
+                model = build_scratch_model(_b2b_model_env_config(env_config), model_config, device,
+                                            bc_checkpoint=init_from_bc)
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
             # Adversarial round 14, high finding: pin the bridge identity for
@@ -1424,6 +1508,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
+            # mortal-scale-scratch: record which construction path built this
+            # run's weights, alongside the run_id that identifies the lineage.
+            # Hashed once here (not per iteration) so every `iter_*.pt` this
+            # run writes names the SAME BC checkpoint bytes even if the file
+            # at `init_from_bc` is later replaced mid-run.
+            init_meta = {
+                "kind": "scratch" if scratch else "champion",
+                "bc_checkpoint_sha256": (hashlib.sha256(Path(init_from_bc).read_bytes()).hexdigest()
+                                         if init_from_bc is not None else None),
+            }
             # A fresh run never has anything to quarantine -- either the
             # directory was empty/new, or `--fresh-run-overwrite` just moved
             # every prior managed artifact (including any leftover `.stale`
@@ -1576,6 +1670,11 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         },
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
+                        # mortal-scale-scratch: which construction path this
+                        # lineage came from, so a checkpoint's provenance is
+                        # readable off the file rather than only from the
+                        # launch command -- see `init_meta` above.
+                        "init": init_meta,
                         "objective": {
                             "placement_bonus_values": (list(config.placement_bonus_values)
                                                        if config.placement_bonus_values is not None else None),

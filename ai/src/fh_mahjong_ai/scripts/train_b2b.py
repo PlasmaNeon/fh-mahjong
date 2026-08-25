@@ -18,6 +18,14 @@ def main() -> None:
                    help="39ch champion checkpoint to warm-start from; required unless "
                         "--resume-from-state is given (the resume path builds the model from "
                         "the state file and never touches --champion)")
+    p.add_argument("--scratch", action="store_true", default=False,
+                   help="mortal-scale-scratch: build the B2b net from random init instead of "
+                        "warm-starting from --champion (mutually exclusive with --champion, "
+                        "--model-growth-blocks > 0 and --widen-event-hidden > 0)")
+    p.add_argument("--init-from-bc", type=Path, default=None,
+                   help="with --scratch: BC-stage checkpoint (fh-mj-train-bc, same --model-* "
+                        "flags) whose plane trunk / scalar encoder / trunk / policy head are "
+                        "copied in by exact name+shape; everything else stays random")
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--matches-per-iter", type=int, default=256)
@@ -148,8 +156,19 @@ def main() -> None:
     # torch's file_descriptor tensor-sharing (errno 24) — raise it up front so
     # a multi-day lap never depends on the launching shell's ulimit.
     raise_file_descriptor_limit()
-    if args.champion is None and args.resume_from_state is None:
-        p.error("--champion is required unless --resume-from-state is given")
+    # mortal-scale-scratch: exactly one construction path may be selected, and
+    # --resume-from-state wins over all of them (it builds the model from the
+    # state file and never reads these flags). train_b2b re-checks all of this
+    # itself -- this only turns it into a usage error instead of a traceback.
+    if args.resume_from_state is None:
+        if args.scratch and args.champion is not None:
+            p.error("--scratch and --champion are mutually exclusive")
+        if args.scratch and (args.model_growth_blocks > 0 or args.widen_event_hidden > 0):
+            p.error("--scratch cannot be combined with --model-growth-blocks or --widen-event-hidden")
+        if not args.scratch and args.champion is None:
+            p.error("--champion is required unless --scratch or --resume-from-state is given")
+        if args.init_from_bc is not None and not args.scratch:
+            p.error("--init-from-bc requires --scratch")
     if args.widen_event_hidden < 0:
         p.error(f"--widen-event-hidden must not be negative (got {args.widen_event_hidden}); "
                "0 disables the gru-width warm-start surgery")
@@ -197,7 +216,8 @@ def main() -> None:
              resume_from_state=args.resume_from_state, force_history_reset=args.force_history_reset,
              fresh_run_overwrite=args.fresh_run_overwrite,
              allow_bridge_mismatch=args.allow_bridge_mismatch,
-             accept_legacy_unpinned_state=args.accept_legacy_unpinned_state)
+             accept_legacy_unpinned_state=args.accept_legacy_unpinned_state,
+             scratch=args.scratch, init_from_bc=args.init_from_bc)
 
 
 if __name__ == "__main__":
