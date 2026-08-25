@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from fh_mahjong_ai.evaluate import (
+    _clustered_report_fields,
     _t_critical_975,
+    clustered_metric_stats,
     clustered_placement_stats,
 )
 
@@ -72,20 +74,49 @@ def test_degenerate_inputs():
     assert one["mean_placement_ci95_clustered"] == 0.0  # no df -> no interval
 
 
-def test_clustered_report_fields_from_seat_reports():
-    from fh_mahjong_ai.evaluate import _clustered_report_fields
+def _tail_report(placements, fourth_share=None, large_loss=None, training_utility=None):
+    n = len(placements)
+    return {
+        "per_episode_placements": placements,
+        "per_episode_fourth_share": fourth_share if fourth_share is not None else [0.0] * n,
+        "per_episode_large_loss": large_loss if large_loss is not None else [0.0] * n,
+        "per_episode_training_utility": training_utility if training_utility is not None else [0.0] * n,
+    }
 
+
+def test_clustered_report_fields_from_seat_reports():
     seat_reports = [
-        {"per_episode_placements": [1.0, -1.0]},
-        {"per_episode_placements": [1.0 / 3.0, -1.0 / 3.0]},
-        {"per_episode_placements": [-1.0 / 3.0, 1.0 / 3.0]},
-        {"per_episode_placements": [-1.0, 1.0]},
+        _tail_report([1.0, -1.0]),
+        _tail_report([1.0 / 3.0, -1.0 / 3.0]),
+        _tail_report([-1.0 / 3.0, 1.0 / 3.0]),
+        _tail_report([-1.0, 1.0]),
     ]
     fields = _clustered_report_fields(seat_reports)
     # Duplicate seats of one seed cover all four ranks -> per-seed mean 0.
     assert fields["per_seed_mean_placements"] == pytest.approx([0.0, 0.0])
     assert fields["mean_placement_ci95_clustered"] == pytest.approx(0.0)
+    assert "mean_fourth_share_ci95_clustered" in fields
+    assert "mean_large_loss_ci95_clustered" in fields
+    assert "mean_training_utility_ci95_clustered" in fields
 
-    # Ragged seat reports (defensive path) degrade to empty stats, not a crash.
-    ragged = _clustered_report_fields([{"per_episode_placements": [1.0]}, {"per_episode_placements": []}])
-    assert ragged["per_seed_mean_placements"] == []
+
+def test_clustered_metric_stats_generic_prefix():
+    s = clustered_metric_stats([[1, 0, 1], [0, 0, 1]], "fourth_share")
+    assert s["per_seed_mean_fourth_share"] == [0.5, 0.0, 1.0]
+    assert s["mean_fourth_share_clustered"] == pytest.approx(0.5)
+    assert s["num_seeds"] == 3
+
+
+def test_clustered_report_fields_reject_ragged_and_missing():
+    good = {"per_episode_placements": [0.0, 1.0], "per_episode_fourth_share": [0.0, 1.0],
+            "per_episode_large_loss": [0.0, 0.0], "per_episode_training_utility": [0.1, -0.1]}
+    ragged = {**good, "per_episode_placements": [0.0]}
+    with pytest.raises(ValueError, match="ragged|length"):
+        _clustered_report_fields([good, ragged])
+    missing = {k: v for k, v in good.items() if k != "per_episode_fourth_share"}
+    with pytest.raises(ValueError, match="per_episode_fourth_share"):
+        _clustered_report_fields([good, missing])
+    out = _clustered_report_fields([good, good])
+    assert out["per_seed_mean_fourth_share"] == [0.0, 1.0]
+    assert out["per_seed_mean_large_loss"] == [0.0, 0.0]
+    assert "mean_fourth_share_ci95_clustered" in out

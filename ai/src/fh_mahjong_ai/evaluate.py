@@ -163,31 +163,32 @@ def _t_critical_975(df: int) -> float:
     return float(z + g1 / df + g2 / df**2 + g3 / df**3)
 
 
-def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) -> Dict[str, Any]:
-    """Wall-seed-clustered placement statistics for duplicate-seat evals.
+def clustered_metric_stats(per_seat: Sequence[Sequence[float]], prefix: str) -> Dict[str, Any]:
+    """Wall-seed-clustered statistics for a per-episode metric, generalized
+    over ``clustered_placement_stats``.
 
-    ``per_seat_placements`` holds one sequence per rotated seat, each ordered
-    by the SHARED seed list. The wall seed is the independent sampling unit;
-    the seat rotations of one seed are correlated replicates, so the interval
-    is a t-interval over per-seed means, not over the flattened placements.
+    ``per_seat`` holds one sequence per rotated seat, each ordered by the
+    SHARED seed list. The wall seed is the independent sampling unit; the
+    seat rotations of one seed are correlated replicates, so the interval is
+    a t-interval over per-seed means, not over the flattened values.
     ``cluster_design_effect`` is the ratio of the clustered to the naive
     variance of the mean (>1 = positive within-seed correlation).
     """
     empty = {
-        "per_seed_mean_placements": [],
-        "mean_placement_clustered": 0.0,
-        "mean_placement_sem_clustered": 0.0,
-        "mean_placement_ci95_clustered": 0.0,
+        f"per_seed_mean_{prefix}": [],
+        f"mean_{prefix}_clustered": 0.0,
+        f"mean_{prefix}_sem_clustered": 0.0,
+        f"mean_{prefix}_ci95_clustered": 0.0,
         "cluster_design_effect": 0.0,
         "num_seeds": 0,
     }
-    rows = [list(map(float, seat)) for seat in per_seat_placements]
+    rows = [list(map(float, seat)) for seat in per_seat]
     if not rows:
         return empty
     lengths = {len(row) for row in rows}
     if len(lengths) != 1:
         raise ValueError(
-            f"per-seat placement lists must share one length (one entry per seed); got lengths {sorted(lengths)}"
+            f"per-seat {prefix} lists must share one length (one entry per seed); got lengths {sorted(lengths)}"
         )
     num_seeds = lengths.pop()
     if num_seeds == 0:
@@ -198,10 +199,10 @@ def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) ->
     mean = float(seed_means.mean())
     if num_seeds < 2:
         return {
-            "per_seed_mean_placements": [float(v) for v in seed_means],
-            "mean_placement_clustered": mean,
-            "mean_placement_sem_clustered": 0.0,
-            "mean_placement_ci95_clustered": 0.0,
+            f"per_seed_mean_{prefix}": [float(v) for v in seed_means],
+            f"mean_{prefix}_clustered": mean,
+            f"mean_{prefix}_sem_clustered": 0.0,
+            f"mean_{prefix}_ci95_clustered": 0.0,
             "cluster_design_effect": 0.0,
             "num_seeds": num_seeds,
         }
@@ -211,13 +212,26 @@ def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) ->
     naive_var_of_mean = float(np.var(flat, ddof=1) / flat.size) if flat.size > 1 else 0.0
     design_effect = (clustered_sem**2 / naive_var_of_mean) if naive_var_of_mean > 0 else 0.0
     return {
-        "per_seed_mean_placements": [float(v) for v in seed_means],
-        "mean_placement_clustered": mean,
-        "mean_placement_sem_clustered": clustered_sem,
-        "mean_placement_ci95_clustered": _t_critical_975(num_seeds - 1) * clustered_sem,
+        f"per_seed_mean_{prefix}": [float(v) for v in seed_means],
+        f"mean_{prefix}_clustered": mean,
+        f"mean_{prefix}_sem_clustered": clustered_sem,
+        f"mean_{prefix}_ci95_clustered": _t_critical_975(num_seeds - 1) * clustered_sem,
         "cluster_design_effect": design_effect,
         "num_seeds": num_seeds,
     }
+
+
+def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) -> Dict[str, Any]:
+    """Wall-seed-clustered placement statistics for duplicate-seat evals.
+
+    Thin wrapper over ``clustered_metric_stats(..., "placement")`` that
+    restores the original (pre-generalization) key names byte-for-byte —
+    including the plural ``per_seed_mean_placements`` — so existing reports
+    and ``fh-mj-compare`` keep working unchanged.
+    """
+    stats = clustered_metric_stats(per_seat_placements, "placement")
+    stats["per_seed_mean_placements"] = stats.pop("per_seed_mean_placement")
+    return stats
 
 
 def _snapshot_bridge_library(
@@ -262,25 +276,30 @@ def _bridge_library_digest(bridge_kind: str, bridge_library_path: Optional[str])
         return None
 
 
-def _clustered_report_fields(seat_reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """The three clustered fields added to duplicate-seat reports.
+_TAIL_ARRAYS = ("per_episode_placements", "per_episode_fourth_share",
+                "per_episode_large_loss", "per_episode_training_utility")
 
-    Falls back to empty stats (instead of raising) when seat reports are
-    ragged — a defensive path only; duplicate-seat runs always evaluate the
-    identical seed list on every seat.
-    """
-    per_seat = [
-        [float(p) for p in report.get("per_episode_placements", [])]
-        for report in seat_reports
-    ]
-    try:
-        stats = clustered_placement_stats(per_seat)
-    except ValueError:
-        stats = clustered_placement_stats([])
+
+def _clustered_report_fields(seat_reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Clustered placement AND tail fields for duplicate-seat reports. Fails
+    closed: ragged or missing per-episode arrays are a protocol error, never
+    empty stats (spec 2026-08-21 Amendment 1 item 9)."""
+    for key in _TAIL_ARRAYS:
+        for i, r in enumerate(seat_reports):
+            if not isinstance(r.get(key), list):
+                raise ValueError(f"seat report {i} lacks {key}; regenerate the report")
+    per = {key: [[float(x) for x in r[key]] for r in seat_reports] for key in _TAIL_ARRAYS}
+    placement = clustered_placement_stats(per["per_episode_placements"])   # raises on ragged
+    fourth = clustered_metric_stats(per["per_episode_fourth_share"], "fourth_share")
+    ll = clustered_metric_stats(per["per_episode_large_loss"], "large_loss")
+    util = clustered_metric_stats(per["per_episode_training_utility"], "training_utility")
     return {
-        "per_seed_mean_placements": stats["per_seed_mean_placements"],
-        "mean_placement_ci95_clustered": stats["mean_placement_ci95_clustered"],
-        "cluster_design_effect": stats["cluster_design_effect"],
+        "per_seed_mean_placements": placement["per_seed_mean_placements"],
+        "mean_placement_ci95_clustered": placement["mean_placement_ci95_clustered"],
+        "cluster_design_effect": placement["cluster_design_effect"],
+        **{k: v for k, v in fourth.items() if k != "num_seeds"},
+        **{k: v for k, v in ll.items() if k != "num_seeds"},
+        **{k: v for k, v in util.items() if k != "num_seeds"},
     }
 
 
@@ -1107,6 +1126,9 @@ def evaluate_duplicate_seats_policy(
         }
         for report in seat_reports
     }
+    agg_hand_stats = summarize_hand_stats(
+        [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
+        sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
     return {
         "match_mode": normalized_match_mode,
         "chongci_config": _chongci_report_config(
@@ -1151,6 +1173,11 @@ def evaluate_duplicate_seats_policy(
         "mean_placement_ci95": placements["ci95"],
         "placement_count": len(all_placements),
         **_clustered_report_fields(seat_reports),
+        "fourth_place_rate": float(np.mean([r["fourth_place_rate"] for r in seat_reports])) if seat_reports else 0.0,
+        "training_utility_mean": float(np.mean([r["training_utility_mean"] for r in seat_reports])) if seat_reports else 0.0,
+        "rank_parity_mismatches": int(sum(r.get("rank_parity_mismatches", 0) for r in seat_reports)),
+        "hand_stats": agg_hand_stats,
+        "deal_in_rate": agg_hand_stats["deal_in_rate"],
         "truncation_count": truncations,
         "truncation_rate": truncations / completed if completed else 0.0,
         "action_family_counts": dict(sorted(action_counts.items())),
@@ -1259,6 +1286,9 @@ def evaluate_duplicate_seats(
         }
         for report in seat_reports
     }
+    agg_hand_stats = summarize_hand_stats(
+        [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
+        sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
     return {
         "match_mode": normalized_match_mode,
         "chongci_config": _chongci_report_config(
@@ -1303,6 +1333,11 @@ def evaluate_duplicate_seats(
         "mean_placement_ci95": placements["ci95"],
         "placement_count": len(all_placements),
         **_clustered_report_fields(seat_reports),
+        "fourth_place_rate": float(np.mean([r["fourth_place_rate"] for r in seat_reports])) if seat_reports else 0.0,
+        "training_utility_mean": float(np.mean([r["training_utility_mean"] for r in seat_reports])) if seat_reports else 0.0,
+        "rank_parity_mismatches": int(sum(r.get("rank_parity_mismatches", 0) for r in seat_reports)),
+        "hand_stats": agg_hand_stats,
+        "deal_in_rate": agg_hand_stats["deal_in_rate"],
         "truncation_count": truncations,
         "truncation_rate": truncations / completed if completed else 0.0,
         "action_family_counts": dict(sorted(action_counts.items())),
