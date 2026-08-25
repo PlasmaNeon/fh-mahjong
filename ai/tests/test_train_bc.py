@@ -159,3 +159,48 @@ def test_train_bc_default_model_config_is_unchanged(tmp_path: Path) -> None:
     train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8, device="cpu")
     payload = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")
     assert payload["metadata"]["model_config"] == ModelConfig().__dict__
+
+
+def test_bc_checkpoint_initialises_a_scratch_b2b_run_with_matching_logits(tmp_path: Path) -> None:
+    """End-to-end across the two stages the scratch lap actually runs: a real
+    `fh-mj-train-bc` checkpoint, loaded by `fh-mj-train-b2b --init-from-bc`,
+    must reproduce the BC policy's logits at step 0.
+
+    The per-function unit tests build their BC checkpoint by hand from an
+    untrained `PolicyValueNet`; only this one proves the file `train_bc`
+    itself writes (its metadata block, its key names, its trained weights) is
+    what `build_scratch_model` accepts. The BC net is forwarded with
+    `events=None` (how BC trains); the scratch net gets a real event batch,
+    and parity holds because `trunk.0`'s event columns are zeroed.
+    """
+    import torch
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.storage import load_checkpoint
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    cfg = ModelConfig(channels=8, residual_blocks=2, kernel_width=1, event_window=8,
+                      privileged_critic=True, aux_heads=True)
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8,
+             device="cpu", model_config=cfg)
+    bc_path = ckpt_dir / "epoch_001.pt"
+
+    scratch = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+    bc_model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    load_checkpoint(bc_path, bc_model)
+    bc_model.eval()
+
+    rng = np.random.default_rng(19)
+    planes = torch.from_numpy(rng.random((4, 39, 42, 1), dtype=np.float32))
+    scalars = torch.from_numpy(rng.random((4, 58), dtype=np.float32))
+    mask = torch.ones((4, 204), dtype=torch.int8)
+    events = torch.from_numpy(rng.integers(0, 0x10000, size=(4, 8), dtype=np.uint32).astype(np.int64))
+    lengths = torch.full((4,), 8, dtype=torch.int64)
+
+    with torch.no_grad():
+        expected, _ = bc_model(planes, scalars, mask)  # BC's own forward: events=None
+        got, _ = scratch(planes, scalars, mask, events=events, event_lengths=lengths)
+    assert torch.allclose(expected, got, atol=1e-5)
