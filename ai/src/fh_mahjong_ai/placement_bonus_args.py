@@ -20,8 +20,15 @@ def placement_bonus_kwargs(args: argparse.Namespace) -> dict:
     lam = float(args.placement_bonus_lambda)
     if values is None and (lam != 0.0 or args.placement_bonus_calibration_digest):
         raise SystemExit("--placement-bonus-lambda/--placement-bonus-calibration-digest require --placement-bonus-values")
+    values_tuple = tuple(float(v) for v in values) if values is not None else None
+    if values_tuple is not None and abs(sum(values_tuple) / 4) > 1e-6:
+        raise SystemExit(
+            "--placement-bonus-values must be mean-centered (mean ~= 0): the training "
+            "bonus applies these values with mean-centered, semantics-free scaling, and a "
+            "non-centered vector would create a provenance mismatch between the config echo "
+            "and the effective reward")
     return {
-        "placement_bonus_values": tuple(float(v) for v in values) if values is not None else None,
+        "placement_bonus_values": values_tuple,
         "placement_bonus_lambda": lam,
         "placement_bonus_calibration_digest": str(args.placement_bonus_calibration_digest),
     }

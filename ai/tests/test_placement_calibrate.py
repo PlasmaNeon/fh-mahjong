@@ -5,19 +5,7 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.storage import save_checkpoint
 from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
 from fh_mahjong_ai.scripts.placement_calibrate import run_calibration
-
-# `tests` has no __init__.py so it is not importable as a package; the brief
-# permits copying the SMALL_MODEL dict literal instead of importing it from
-# tests.test_b2b_training. Keep in sync with ai/tests/conftest.py's SMALL_MODEL.
-SMALL_MODEL = dict(
-    channels=16,
-    residual_blocks=1,
-    plane_feature_dim=32,
-    scalar_hidden_dim=16,
-    trunk_hidden_dim=32,
-    value_hidden_dim=16,
-    q_hidden_dim=16,
-)
+from conftest import SMALL_MODEL
 
 
 def test_run_calibration_mock_classic(tmp_path):
@@ -33,6 +21,8 @@ def test_run_calibration_mock_classic(tmp_path):
                              collect_dispatch_chunk=0, k=0.5, gamma=0.99, gae_lambda=0.95,
                              device="cpu")
     assert report["calibration"]["num_matches"] == 2 and report["calibration"]["num_records"] == 8
-    assert report["gates"]["all_pass"] in (True, False)
+    assert report["calibration"]["lambda"] > 0
+    assert report["bonus_rms"] > 0
+    assert report["gates"]["rms_ratio"] != 1.0
     assert report["collection_digest"] and report["values"] == list(PLACEMENT_RESHAPE_VALUES)
     assert json.loads(out.read_text())["calibration"]["lambda"] == report["calibration"]["lambda"]

@@ -333,4 +333,4 @@ Stage 1 training remains unauthorized until every amended Stage-0 gate passes.**
 λ, σ_R, σ_V, corr(R,V), the archived γ/λ_GAE, and the Stage-0 gate results are
 recorded here as Amendment 2 when Stage 0 completes.
 
-**Stage 0 code landed** (Tasks 1–8, commits deb299e..5fd1f3a, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. λ, σ_R, σ_V, γ/λ_GAE and the gate measurements remain pending on the box (Amendment 2).
+**Stage 0 code landed** (Tasks 1–9, commits deb299e..992c241 and the final-review fix commit, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. λ, σ_R, σ_V, γ/λ_GAE and the gate measurements remain pending on the box (Amendment 2). Amendment 1 item 10's completeness check (aggregated `unknown_hands` == 0 and `rank_parity_mismatches` == 0 in eval reports) is an operator gate at Stage-0 calibration and confirmation time (plan Task 12 step 3), not mechanized in code.

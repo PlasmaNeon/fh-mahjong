@@ -15,7 +15,7 @@ from ..model_config_args import add_model_config_args, model_config_from_args
 from ..ppo import PPOConfig, compute_gae
 from ..placement_bonus import (PLACEMENT_RESHAPE_VALUES, apply_terminal_bonus, calibrate_lambda,
                                return_scale_gates, CALIBRATION_MATCHES)
-from ..train_b2b import ParallelB2bCollector, _b2b_model_env_config
+from ..train_b2b import ParallelB2bCollector
 from .collect_bench import _build_model, _digest_batch
 
 

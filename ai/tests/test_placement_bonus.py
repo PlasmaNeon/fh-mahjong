@@ -76,7 +76,7 @@ def _tel(seed, scores, rets):
     u = placement_utilities(scores)
     return {"seed": seed, "final_scores": scores, "trajectory_returns": rets,
             "utilities": u.tolist(), "bonus": [0.0]*4, "truncated": False,
-            "rank_occupancy": rank_occupancy(scores).tolist(), "tie_groups": 0, "busts": 0}
+            "rank_occupancy": rank_occupancy(scores).tolist(), "tied_seats_surplus": 0, "busts": 0}
 
 
 def test_calibrate_lambda_matches_closed_form():

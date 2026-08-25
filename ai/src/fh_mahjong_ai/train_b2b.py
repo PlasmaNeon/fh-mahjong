@@ -660,7 +660,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 "utilities": [float(u) for u in utilities],
                 "bonus": [float(b) for b in bonus],
                 "rank_occupancy": occ.tolist(),
-                "tie_groups": int(4 - len(set(int_scores))),
+                "tied_seats_surplus": int(4 - len(set(int_scores))),
                 "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
             })
             rows: list[tuple[int, int]] = []
@@ -1501,7 +1501,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     metrics["bonus_mean"] = float(bonus.mean())
                     metrics["bonus_rms"] = float(np.sqrt(np.mean(bonus**2)))
                     metrics["bonus_abs_p99"] = float(np.percentile(np.abs(bonus), 99))
-                    metrics["tie_groups_total"] = int(sum(t["tie_groups"] for t in batch.match_telemetry))
+                    metrics["tied_seats_surplus_total"] = int(sum(t["tied_seats_surplus"] for t in batch.match_telemetry))
                     metrics["busts_total"] = int(sum(t["busts"] for t in batch.match_telemetry))
                     # per-seat 4th-slot occupancy: seat-bias detector (self-play
                     # aggregate is mechanically ~0.25; only the SPREAD is informative)

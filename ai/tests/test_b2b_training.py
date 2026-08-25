@@ -540,7 +540,7 @@ def test_bonus_off_is_byte_identical_and_has_telemetry():
     assert np.array_equal(a.rewards, b.rewards)
     assert a.match_telemetry is not None and len(a.match_telemetry) == 2
     t = a.match_telemetry[0]
-    assert set(t) >= {"seed", "final_scores", "trajectory_returns", "utilities", "bonus", "tie_groups", "busts"}
+    assert set(t) >= {"seed", "final_scores", "trajectory_returns", "utilities", "bonus", "tied_seats_surplus", "busts"}
     assert t["seed"] == 4242 and np.allclose(t["bonus"], 0.0)
 
 
@@ -625,6 +625,18 @@ def test_cli_placement_bonus_args_roundtrip():
                                                         "placement_bonus_calibration_digest": ""}
     with pytest.raises(SystemExit):
         placement_bonus_kwargs(p.parse_args(["--placement-bonus-lambda", "0.5"]))  # lambda without values is an error
+
+
+def test_cli_placement_bonus_args_rejects_non_centered_values():
+    import argparse
+    from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
+    from fh_mahjong_ai.placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
+    p = argparse.ArgumentParser(); add_placement_bonus_args(p)
+    with pytest.raises(SystemExit):
+        placement_bonus_kwargs(p.parse_args(["--placement-bonus-values", "10", "5", "1", "-10"]))
+    # The registered centered vector (|mean| ~= 2.5e-11) must still be accepted.
+    a = p.parse_args(["--placement-bonus-values", *[str(v) for v in PLACEMENT_RESHAPE_VALUES]])
+    assert placement_bonus_kwargs(a)["placement_bonus_values"] == tuple(PLACEMENT_RESHAPE_VALUES)
 
 
 def test_bonus_fails_closed_on_reset_terminal(monkeypatch):
