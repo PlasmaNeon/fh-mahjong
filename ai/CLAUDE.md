@@ -172,7 +172,7 @@ Quick map of what is where:
 ### Promotion discipline
 - **`fh-mj-compare` is the required tool for any promotion or lever verdict.** Read the *clustered* CI (`mean_placement_ci95_clustered`), never the naive iid one — the four seat-rotations of a wall seed are correlated.
 - **Placement-reshape terminal bonus**: When training with `--placement-bonus-values` / `--placement-bonus-lambda`, evaluation adds per-episode 4th-place share, rank-share histogram, and asymmetric training utility to reports; `fh-mj-compare` emits `tail_metrics` (seed-clustered deltas for fourth_share / large_loss / training_utility) and `tail_gate` (registered thresholds −0.010 / −0.030 / +0.005, reported only); `significant` (canonical placement delta) remains the canonical promotion gate.
-- Screening uses `--start-seed 910000`; confirmation (the only runs that may back a promotion) uses `--start-seed 950000`. Seed window `870000+` is retired — it both selected checkpoints and scored later gates, so its numbers carry winner's-curse bias.
+- Screening uses `--start-seed 910000` (cheap, unlimited, never cited for promotion). Confirmation — the only runs that may back a promotion — uses a **fresh window no prior lap has spent**, 1500 seeds/side, pre-registered before launch. A window burns once and is then retired; reusing one carries winner's-curse bias. Spent so far: `870000+`, `950000+`, `990000+`, `1030000+`, `1070000+`, `1110000+`, `1150000+`, `1190000+`.
 - `fh-mj-benchmark` is a yardstick, not a gate. Never wire it into the selfplay loop or promotion path.
 - `fh-mj-serving-parity` is a hard gate and is vacuity-proof: zero decisions checked is a failure.
 - The selfplay loop never edits `best-checkpoints.json`; registry promotion is manual.
