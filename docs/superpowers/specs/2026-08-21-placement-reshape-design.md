@@ -332,3 +332,5 @@ need no special handling; the −0.010 + CI-upper<0 pair is coherent.
 Stage 1 training remains unauthorized until every amended Stage-0 gate passes.**
 λ, σ_R, σ_V, corr(R,V), the archived γ/λ_GAE, and the Stage-0 gate results are
 recorded here as Amendment 2 when Stage 0 completes.
+
+**Stage 0 code landed** (Tasks 1–8, commits deb299e..5fd1f3a, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. λ, σ_R, σ_V, γ/λ_GAE and the gate measurements remain pending on the box (Amendment 2).
