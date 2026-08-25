@@ -55,6 +55,7 @@ from ..fdlimit import raise_file_descriptor_limit
 from ..train_b2b import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
 from ..ppo import PPOConfig, RolloutBatch, compute_gae, cpu_state_snapshot, ppo_update
 from ..model_config_args import add_model_config_args, model_config_from_args
+from ..placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
 
 
 def _build_model(env_config: EnvConfig, model_config, champion: Path, growth_blocks: int, device: str):
@@ -115,7 +116,7 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
     `truncated_matches` is also included because `train_b2b` uses it for its
     fail-closed truncation-rate gate. No `RolloutBatch` field is excluded.
     """
-    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches"}
+    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches", "match_telemetry"}
     actual_fields = {field.name for field in fields(RolloutBatch)}
     if actual_fields != expected_fields:
         raise RuntimeError(
@@ -133,6 +134,10 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
             {"dtype": "int", "field": "truncated_matches", "shape": []},
             sort_keys=True, separators=(",", ":")).encode())
     h.update(int(batch.truncated_matches).to_bytes(8, "big", signed=True))
+    tel = batch.match_telemetry
+    payload = json.dumps({"field": "match_telemetry", "present": tel is not None,
+                          "value": tel}, sort_keys=True, separators=(",", ":")).encode()
+    _update_length_prefixed(h, payload)
     return h.hexdigest()
 
 
@@ -301,7 +306,7 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
              bridge_lib: Optional[str], device: str,
              max_steps_per_episode: Optional[int], event_window: int,
              worker_target=None, full_cycle: Optional[FullCycleSettings] = None,
-             dispatch_chunk: int = 0) -> dict:
+             dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None) -> dict:
     """Run the full worker-count benchmark. Returns
     `{worker_count: {"startup_seconds": float, "steady_seconds": float,
     "digest": str}, "all_digests_equal": bool}`. With `full_cycle` set, each
@@ -327,7 +332,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     # task, exactly as multi-worker `train_b2b` does.
     state_dict = cpu_state_snapshot(warm_started)
     ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
-                           device="cpu", collect_dispatch_chunk=int(dispatch_chunk))
+                           device="cpu", collect_dispatch_chunk=int(dispatch_chunk),
+                           **(placement_bonus or {}))
     results: dict[int, dict] = {}
     for w in workers:
         sampler: Optional[_PeakRssSampler] = None
@@ -477,6 +483,7 @@ def main() -> None:
                         "gauntleted; required at 960 on a 24GB card)")
     p.add_argument("--json", type=Path, default=None, help="write the full report as JSON")
     add_model_config_args(p)
+    add_placement_bonus_args(p)
     args = p.parse_args()
 
     # Multi-worker collection moves many shared tensors through spawn queues;
@@ -515,7 +522,8 @@ def main() -> None:
                        bridge_lib=args.bridge_lib, device=args.device,
                        max_steps_per_episode=args.max_steps_per_episode,
                        event_window=args.event_window, full_cycle=full_cycle,
-                       dispatch_chunk=args.dispatch_chunk)
+                       dispatch_chunk=args.dispatch_chunk,
+                       placement_bonus=placement_bonus_kwargs(args))
     results = report["results"]
     _print_table(results)
     if full_cycle is not None:

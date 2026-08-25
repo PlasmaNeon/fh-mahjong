@@ -501,3 +501,212 @@ def test_train_b2b_halts_on_truncation_rate(tmp_path, monkeypatch):
         train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
                                    aux_heads=True),
                   champion_path, tmp_path / "ckpt2", config, base_seed=9)
+
+
+from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES, placement_utilities
+
+
+_GO_ENV = dict(bridge_kind="go", event_history_window=8, oracle_observation=True,
+               # 4000 truncates a full 50-hand chongci match for this seed/model
+               # (verified empirically); 20000 completes both matches cleanly so
+               # the "on" test exercises the intended untruncated-terminal path.
+               max_steps_per_episode=20000)
+
+
+def _go_collect(lam, values, matches=2, seed=4242):
+    env = EnvConfig(**_GO_ENV)
+    # Fixed model-init seed so two calls with the same base_seed produce
+    # identical weights — collect_b2b_rollouts's per-match torch.manual_seed
+    # only controls action sampling, not the model constructed by the caller
+    # before collect_b2b_rollouts is ever invoked.
+    torch.manual_seed(0)
+    model = PolicyValueNet(EnvConfig(bridge_kind="go"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    cfg = PPOConfig(device="cpu", matches_per_iter=matches, max_steps_per_episode=20000,
+                    match_mode="chongci", placement_bonus_values=values,
+                    placement_bonus_lambda=lam)
+    return collect_b2b_rollouts(env, model, cfg, base_seed=seed)
+
+
+def _segments(batch):
+    """Row index of each done=1, i.e. each seat-block's last row, in order."""
+    return np.flatnonzero(batch.dones == 1.0)
+
+
+def test_bonus_off_is_byte_identical_and_has_telemetry():
+    a = _go_collect(0.0, None)
+    b = _go_collect(0.0, None)
+    assert np.array_equal(a.rewards, b.rewards)
+    assert a.match_telemetry is not None and len(a.match_telemetry) == 2
+    t = a.match_telemetry[0]
+    assert set(t) >= {"seed", "final_scores", "trajectory_returns", "utilities", "bonus", "tied_seats_surplus", "busts"}
+    assert t["seed"] == 4242 and np.allclose(t["bonus"], 0.0)
+
+
+def test_bonus_attaches_once_per_seat_on_own_last_row_and_sums_to_zero():
+    off = _go_collect(0.0, None)
+    on = _go_collect(0.7, PLACEMENT_RESHAPE_VALUES)
+    assert off.rewards.shape == on.rewards.shape
+    assert np.array_equal(off.dones, on.dones)
+    diff = on.rewards - off.rewards
+    ends = _segments(off)
+    # every non-terminal row untouched
+    mask = np.ones_like(diff, dtype=bool); mask[ends] = False
+    assert np.array_equal(diff[mask], np.zeros(mask.sum(), np.float32))
+    # terminal rows carry exactly lambda*utility, in seat order per match
+    expected = np.concatenate([0.7 * placement_utilities(t["final_scores"]) for t in on.match_telemetry])
+    assert np.allclose(diff[ends], expected.astype(np.float32), atol=1e-6)
+    for t in on.match_telemetry:
+        assert abs(sum(t["bonus"])) < 1e-6
+        assert np.allclose(t["bonus"], 0.7 * np.asarray(t["utilities"]))
+    # everything else byte-identical
+    for name in ("planes", "scalars", "action_mask", "actions", "old_logprobs", "values",
+                 "events", "event_lengths", "dealin_labels", "rank_labels"):
+        assert np.array_equal(getattr(off, name), getattr(on, name)), name
+
+
+def test_bonus_fails_closed_on_truncation():
+    env = EnvConfig(**{**_GO_ENV, "max_steps_per_episode": 8})
+    model = PolicyValueNet(EnvConfig(bridge_kind="go"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    cfg = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=8,
+                    match_mode="chongci", placement_bonus_values=PLACEMENT_RESHAPE_VALUES,
+                    placement_bonus_lambda=0.5)
+    with pytest.raises(RuntimeError, match="placement bonus.*truncat"):
+        collect_b2b_rollouts(env, model, cfg, base_seed=1)
+
+
+def test_bonus_fails_closed_on_zero_decision_seat_or_passes():
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=3)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    cfg = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=3,
+                    match_mode="classic", placement_bonus_values=PLACEMENT_RESHAPE_VALUES,
+                    placement_bonus_lambda=0.5)
+    try:
+        batch = collect_b2b_rollouts(env, model, cfg, base_seed=0)
+    except RuntimeError as e:
+        assert "placement bonus" in str(e)
+        return
+    assert int((batch.dones == 1).sum()) == 4
+
+
+def test_checkpoint_metadata_records_objective(tmp_path):
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
+                                         aux_heads=True),
+                        champion_path, tmp_path / "ckpt", config, base_seed=5)
+    payload = torch.load(tmp_path / "ckpt" / "iter_001.pt", map_location="cpu")
+    obj = payload["metadata"]["objective"]
+    assert obj == {"placement_bonus_values": None, "placement_bonus_lambda": 0.0,
+                   "placement_bonus_calibration_digest": ""}
+
+
+def test_cli_placement_bonus_args_roundtrip():
+    import argparse
+    from fh_mahjong_ai.placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
+    p = argparse.ArgumentParser(); add_placement_bonus_args(p)
+    a = p.parse_args(["--placement-bonus-values", "0.86", "0.35", "-0.05", "-1.16",
+                      "--placement-bonus-lambda", "0.42", "--placement-bonus-calibration-digest", "abc"])
+    assert placement_bonus_kwargs(a) == {"placement_bonus_values": (0.86, 0.35, -0.05, -1.16),
+                                         "placement_bonus_lambda": 0.42,
+                                         "placement_bonus_calibration_digest": "abc"}
+    assert placement_bonus_kwargs(p.parse_args([])) == {"placement_bonus_values": None,
+                                                        "placement_bonus_lambda": 0.0,
+                                                        "placement_bonus_calibration_digest": ""}
+    with pytest.raises(SystemExit):
+        placement_bonus_kwargs(p.parse_args(["--placement-bonus-lambda", "0.5"]))  # lambda without values is an error
+
+
+def test_cli_placement_bonus_args_rejects_non_centered_values():
+    import argparse
+    from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
+    from fh_mahjong_ai.placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
+    p = argparse.ArgumentParser(); add_placement_bonus_args(p)
+    with pytest.raises(SystemExit):
+        placement_bonus_kwargs(p.parse_args(["--placement-bonus-values", "10", "5", "1", "-10"]))
+    # The registered centered vector (|mean| ~= 2.5e-11) must still be accepted.
+    a = p.parse_args(["--placement-bonus-values", *[str(v) for v in PLACEMENT_RESHAPE_VALUES]])
+    assert placement_bonus_kwargs(a)["placement_bonus_values"] == tuple(PLACEMENT_RESHAPE_VALUES)
+
+
+def test_bonus_fails_closed_on_reset_terminal(monkeypatch):
+    # A four-seat terminal standing can arrive AT reset (e.g. a pre-play
+    # resolution) before any decision loop ever runs. With the bonus on this
+    # must fail closed like the other terminal-rank-missing paths; with the
+    # bonus off it stays today's silent-skip behavior — the collection still
+    # succeeds off a second, normal match.
+    from fh_mahjong_ai import train_b2b as train_b2b_mod
+    from fh_mahjong_ai.types import Observation, StepResult
+
+    rng = np.random.default_rng(7)
+
+    def _obs(seat=0):
+        mask = np.zeros(204, dtype=np.int8)
+        mask[:4] = 1
+        return Observation(seat=seat, planes=rng.random((51, 42, 1), dtype=np.float32),
+                           scalars=rng.random(58, dtype=np.float32), action_mask=mask,
+                           event_history=np.asarray([0x140], dtype=np.uint32))
+
+    class _TerminatedResetEnv:
+        """The FIRST match's reset() itself reports a terminated four-seat
+        standing — no decision loop runs for it. The SECOND match is a
+        normal single-seat completed match, so the bonus-off case can prove
+        the reset-terminal match is silently skipped rather than the whole
+        collection failing outright."""
+
+        def __init__(self, cfg, bridge=None):
+            self.last_reset_result = None
+            self._match = 0
+            self._t = 0
+
+        def reset(self, seed=None):
+            self._match += 1
+            self._t = 0
+            terminated_at_reset = self._match == 1
+            self.last_reset_result = StepResult(
+                observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                terminated=terminated_at_reset, truncated=False, info={})
+            return _obs(0)
+
+        def step(self, action):
+            if self._match == 1:
+                raise AssertionError(
+                    "step() should never be called: match 1 ends at reset")
+            self._t += 1
+            terminated = self._t >= 4
+            info = ({"round_outcome": {"is_draw": True, "winner_seat": 0,
+                                       "win_type_name": "ACTION_UNKNOWN",
+                                       "discarder_seat": 0}} if terminated else {})
+            return StepResult(observation=_obs(0), rewards=np.zeros(4, dtype=np.float32),
+                              terminated=terminated, truncated=False, info=info)
+
+    monkeypatch.setattr(train_b2b_mod, "MahjongEnv", _TerminatedResetEnv)
+    monkeypatch.setattr(train_b2b_mod, "build_bridge", lambda cfg: None)
+
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+
+    cfg_on = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=16,
+                       match_mode="chongci", placement_bonus_values=PLACEMENT_RESHAPE_VALUES,
+                       placement_bonus_lambda=0.5)
+    with pytest.raises(RuntimeError, match="placement bonus.*reset"):
+        collect_b2b_rollouts(env, model, cfg_on, base_seed=0)
+
+    cfg_off = PPOConfig(device="cpu", matches_per_iter=2, max_steps_per_episode=16,
+                        match_mode="chongci")
+    batch = collect_b2b_rollouts(env, model, cfg_off, base_seed=0)
+    assert batch.match_telemetry is not None and len(batch.match_telemetry) == 1
+    assert int((batch.dones == 1).sum()) == 1

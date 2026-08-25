@@ -50,6 +50,7 @@ uv run --project ai <command>
 | `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate |
 | `fh-mj-compare` | **Required for any promotion verdict** — seed-clustered paired diff |
 | `fh-mj-benchmark` | Tenhou-style stat sheet vs heuristic bots (yardstick, NOT a gate) |
+| `fh-mj-placement-calibrate` | Stage-0 λ calibration for terminal placement bonus; returns λ = 0.5·σ_R/σ_V on frozen 320-match anchor collection; fails closed on truncation and scale gates (RMS ≤1.35, |p99| ≤1.50, critic MSE ≤2.00); never adjusts λ |
 | `fh-mj-evaluate-risk-guarded` | Action-risk checkpoint as a guard around an anchor |
 | `fh-mj-reward-calibration` | Q/value calibration vs discounted terminal payout |
 
@@ -170,6 +171,7 @@ Quick map of what is where:
 
 ### Promotion discipline
 - **`fh-mj-compare` is the required tool for any promotion or lever verdict.** Read the *clustered* CI (`mean_placement_ci95_clustered`), never the naive iid one — the four seat-rotations of a wall seed are correlated.
+- **Placement-reshape terminal bonus**: When training with `--placement-bonus-values` / `--placement-bonus-lambda`, evaluation adds per-episode 4th-place share, rank-share histogram, and asymmetric training utility to reports; `fh-mj-compare` emits `tail_metrics` (seed-clustered deltas for fourth_share / large_loss / training_utility) and `tail_gate` (registered thresholds −0.010 / −0.030 / +0.005, reported only); `significant` (canonical placement delta) remains the canonical promotion gate.
 - Screening uses `--start-seed 910000`; confirmation (the only runs that may back a promotion) uses `--start-seed 950000`. Seed window `870000+` is retired — it both selected checkpoints and scored later gates, so its numbers carry winner's-curse bias.
 - `fh-mj-benchmark` is a yardstick, not a gate. Never wire it into the selfplay loop or promotion path.
 - `fh-mj-serving-parity` is a hard gate and is vacuity-proof: zero decisions checked is a failure.

@@ -462,3 +462,19 @@ def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
     assert "all_digests_equal: False" in combined
     assert "workers=[1]" in combined
     assert "workers=[2]" in combined
+
+
+def test_digest_covers_match_telemetry():
+    from fh_mahjong_ai.scripts.collect_bench import _digest_batch
+    from fh_mahjong_ai.ppo import RolloutBatch
+    import numpy as np
+    def mk(tel):
+        z = np.zeros((2, 1), dtype=np.float32)
+        return RolloutBatch(planes=z, scalars=z, action_mask=z.astype(np.int8),
+                            actions=np.zeros(2, dtype=np.int64), old_logprobs=z[:, 0],
+                            values=z[:, 0], rewards=z[:, 0], dones=np.array([0, 1], np.float32),
+                            match_telemetry=tel)
+    d0 = _digest_batch(0, 1, mk(None))
+    d1 = _digest_batch(0, 1, mk([{"seed": 0, "bonus": [0.1, 0, 0, -0.1]}]))
+    d2 = _digest_batch(0, 1, mk([{"seed": 0, "bonus": [0.2, 0, 0, -0.2]}]))
+    assert len({d0, d1, d2}) == 3

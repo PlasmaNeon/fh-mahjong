@@ -34,6 +34,7 @@ from .model import (
     _shape_inferred_fields,
 )
 from .parallel_rollouts import _split_counts
+from .placement_bonus import exact_final_scores, placement_utilities, rank_occupancy
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
     masked_policy_distribution, _seat_step_reward,
@@ -533,12 +534,20 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     truncated_matches = 0
     completed_matches = 0
     outcomes_seen = 0
+    bonus_values = config.placement_bonus_values
+    bonus_on = bonus_values is not None
+    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    match_telemetry: list[dict] = []
     try:
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
             torch.manual_seed(int(base_seed + m))
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                if bonus_on:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} ended at reset "
+                        "(no four-seat terminal standing) — fail closed")
                 continue
             # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
             # reset-time autoplay rewards and payouts landing before a seat's
@@ -619,6 +628,41 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             if is_truncated:
                 truncated_matches += 1
             final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
+            int_scores = exact_final_scores(match_net, starting_score)
+            assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
+            if bonus_on:
+                if is_truncated:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} was truncated — no "
+                        "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
+                        "truncation under this objective is a protocol stop: raise "
+                        "max_steps_per_episode and/or investigate a stalling policy before "
+                        "retrying.")
+                empty = [k for k in range(4) if not seat_rewards[k]]
+                if empty:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} has zero-decision "
+                        f"seat(s) {empty}; fail closed")
+            utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
+                else placement_utilities(int_scores)
+            bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
+            if bonus_on:
+                if abs(float(bonus.sum())) > 1e-6:
+                    raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
+                for k in range(4):
+                    seat_rewards[k][-1] += float(bonus[k])
+            occ = rank_occupancy(int_scores)
+            match_telemetry.append({
+                "seed": int(base_seed + m),
+                "truncated": bool(is_truncated),
+                "final_scores": [int(s) for s in int_scores],
+                "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
+                "utilities": [float(u) for u in utilities],
+                "bonus": [float(b) for b in bonus],
+                "rank_occupancy": occ.tolist(),
+                "tied_seats_surplus": int(4 - len(set(int_scores))),
+                "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
+            })
             rows: list[tuple[int, int]] = []
             for k in range(4):
                 rows.extend((k, hid) for hid in seat_hand_ids[k])
@@ -675,6 +719,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         event_lengths=np.asarray(lengths_l, dtype=np.int32),
         dealin_labels=np.asarray(dealin_l, dtype=np.float32),
         rank_labels=np.asarray(rank_l, dtype=np.int64),
+        match_telemetry=match_telemetry,
     )
 
 
@@ -1428,6 +1473,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
                     batch = collect_b2b_rollouts(bridge_env_config, model, config, base_seed=iter_seed)
+                if config.placement_bonus_values is not None:
+                    # Spec Amendment 1 item 4: the collector already raises on
+                    # an incomplete match, but never let a truncated batch
+                    # reach GAE/optimizer under this objective.
+                    if int(batch.truncated_matches) != 0:
+                        raise RuntimeError(
+                            f"iter {iteration}: {batch.truncated_matches} truncated match(es) "
+                            "with the placement bonus enabled — fail closed before update")
+                    if batch.match_telemetry is None or len(batch.match_telemetry) != config.matches_per_iter:
+                        raise RuntimeError(f"iter {iteration}: match telemetry missing or incomplete")
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
@@ -1440,6 +1495,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
                 if batch.rank_labels is not None:
                     metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+                if batch.match_telemetry:
+                    bonus = np.asarray([t["bonus"] for t in batch.match_telemetry], dtype=np.float64)
+                    occ = np.asarray([t["rank_occupancy"] for t in batch.match_telemetry], dtype=np.float64)
+                    metrics["bonus_mean"] = float(bonus.mean())
+                    metrics["bonus_rms"] = float(np.sqrt(np.mean(bonus**2)))
+                    metrics["bonus_abs_p99"] = float(np.percentile(np.abs(bonus), 99))
+                    metrics["tied_seats_surplus_total"] = int(sum(t["tied_seats_surplus"] for t in batch.match_telemetry))
+                    metrics["busts_total"] = int(sum(t["busts"] for t in batch.match_telemetry))
+                    # per-seat 4th-slot occupancy: seat-bias detector (self-play
+                    # aggregate is mechanically ~0.25; only the SPREAD is informative)
+                    for k in range(4):
+                        metrics[f"seat{k}_fourth_occupancy"] = float(occ[:, k, 3].mean())
                 # Adversarial round 2, Finding 1: record growth-block ReZero alpha
                 # magnitudes so the runbook's null-interpretation rule ("alphas
                 # hugging 0 = protocol null signal") has telemetry to check
@@ -1509,6 +1576,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         },
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
+                        "objective": {
+                            "placement_bonus_values": (list(config.placement_bonus_values)
+                                                       if config.placement_bonus_values is not None else None),
+                            "placement_bonus_lambda": float(config.placement_bonus_lambda),
+                            "placement_bonus_calibration_digest": str(config.placement_bonus_calibration_digest),
+                        },
                     })
                 # Adversarial round 19, high finding: this iteration's FRESH
                 # `iter_N.pt` just replaced whatever was quarantined at

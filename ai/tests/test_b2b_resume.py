@@ -2714,3 +2714,24 @@ def test_resume_raises_when_snapshot_is_corrupted(tmp_path, monkeypatch) -> None
     with pytest.raises(ValueError, match="corrupt"):
         train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
                  base_seed=5, resume_from_state=checkpoint_dir / "train_state.pt")
+
+
+def test_resume_rejects_changed_placement_bonus(tmp_path) -> None:
+    from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
+    env, model_config, champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+             base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    # The bonus fields are RECIPE, not operational: any change must be rejected.
+    changed = replace(config_first, iterations=4,
+                      placement_bonus_values=PLACEMENT_RESHAPE_VALUES, placement_bonus_lambda=0.3)
+    with pytest.raises(ValueError, match="placement_bonus"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, changed,
+                 base_seed=5, resume_from_state=state_path)
+
+
+def test_legacy_state_without_bonus_fields_normalizes() -> None:
+    from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
+    assert {"placement_bonus_values", "placement_bonus_lambda",
+            "placement_bonus_calibration_digest"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
