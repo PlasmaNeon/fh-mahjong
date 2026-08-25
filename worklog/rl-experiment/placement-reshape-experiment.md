@@ -1,8 +1,9 @@
 # Placement-reshape experiment — progress tracking
 
-**Status 2026-08-25: Stage 0 merged (PR #220). Training NOT authorized.** Next: λ
-calibration on the box, then a Codex consult. Update at each transition (spec ratified →
-Stage 0 → calibrated → running → verdict); do not start a parallel record.
+**Status 2026-08-25: Stage 0 COMPLETE — code merged (PR #220), box gates all green
+(spec Amendment 2), pre-Stage-1 consult RATIFIED launch as pre-registered.** Next: freeze
+the launch manifest, then Stage 1. Update at each transition (running → verdict); do not
+start a parallel record.
 
 - **Spec** → [`../specs/2026-08-21-placement-reshape-design.md`](../specs/2026-08-21-placement-reshape-design.md)
 - **Context** → [`../specs/2026-08-21-placement-reshape-context.md`](../specs/2026-08-21-placement-reshape-context.md)
@@ -59,10 +60,10 @@ catastrophic, 3rd nearly neutral. Predicted shift is strongly risk-averse defens
 fold early, avoid deal-in — possibly costing win rate against heuristics, since the
 aggressive champion already wins ~75% of matches.
 
-Only the **shape** of the vector matters: mean and scale are invisible to the gradient
-(advantage normalization divides scale out, the baseline absorbs the mean) and to eval
-significance (delta and CI scale together). A symmetric "protect-top-half" variant
-`(10, 5, −5, −10)` was discussed and not chosen.
+The vector's **shape** drives the policy gradient (advantage normalization divides scale
+out); scale is NOT invisible — the value loss regresses raw returns on the shared trunk —
+so it is controlled by the frozen λ calibration and the Stage-0 return-scale gates. A
+symmetric "protect-top-half" variant `(10, 5, −5, −10)` was discussed and not chosen.
 
 ## Stage 0 (merged, PR #220)
 
@@ -79,3 +80,13 @@ histogram and deal-in availability in `evaluate.py`, tail-metric eval gate keys.
 Comparator is anchor075. Run on the 4090 box in a fresh run directory — the ds960 archive
 at `/root/fh-mahjong-runs/data-scale-960/` is read-only. Trap: the generic Python pool
 wrapper drops `round_outcome`, so a naive pool switch silently corrupts aux training.
+
+## Stage 0 box measurements (2026-08-25) — all gates green
+
+Archived γ=0.99, λ_GAE=0.95 confirmed. λ = 0.8567442838065646 (k=0.5; σ_R 1.2772, σ_V
+0.7454, corr 0.8419; digest 6b3eda33…). Scale gates 1.1322 / 1.2007 / 1.3360 — PASS.
+Positive-λ digest parity PASS (4× 3e228283… vs no-bonus b9f89979…). Screening completeness
+PASS (parity 0, unknown_hands 0, deal-in ~0.102, seeds 910000–910119, zero truncations).
+Full numbers: spec Amendment 2. Box artifacts `/root/fh-mahjong-runs/placement-reshape/stage0/`.
+Pre-Stage-1 consult (GPT-5.6-Sol medium, resumed thread): **RATIFIED** — launch exactly as
+pre-registered; confirmation window 1300000–1301499 confirmed fresh vs the spent-window list.

@@ -349,7 +349,7 @@ plan Task 10): γ = 0.99, λ_GAE = 0.95 — the consult's assumption confirmed.
 
 | Quantity | Value |
 |---|---|
-| σ_R (per-seat trajectory-return RMS, 1280 records) | 1.2771589615131842 |
+| σ_R (per-seat trajectory-return RMS, population ddof=0, 1280 records) | 1.2771589615131842 |
 | σ_V (utility RMS; matches registered vector RMS exactly) | 0.745355986408624 |
 | corr(R, V) | 0.8419034213688973 |
 | **λ = 0.5·σ_R/σ_V (frozen)** | **0.8567442838065646** |
