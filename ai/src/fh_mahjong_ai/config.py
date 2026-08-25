@@ -161,8 +161,12 @@ class ModelConfig:
                 "builds no projection module, so a nonzero event_output_dim claims "
                 "a module that will never exist"
             )
-        if self.kernel_width not in (1, 3):
-            raise ValueError(f"kernel_width must be 1 or 3, got {self.kernel_width}")
+        # `isinstance(True, int)` is True and `True in (1, 3)` is True, so a
+        # bare membership test would accept `kernel_width=True` and build a
+        # width-1 conv from a boolean -- rejected here the same way
+        # `_validate_bounded_int` rejects bools for every other int field.
+        if isinstance(self.kernel_width, bool) or self.kernel_width not in (1, 3):
+            raise ValueError(f"kernel_width must be 1 or 3, got {self.kernel_width!r}")
 
     def _validate_bounded_int(self, field: str, *, minimum: int, maximum: int) -> None:
         value = getattr(self, field)

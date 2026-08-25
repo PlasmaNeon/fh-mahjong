@@ -8,6 +8,7 @@ target then covers both this module's calls and train_state's internal ones."""
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import multiprocessing as mp
 import os
@@ -140,7 +141,12 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
     tensors live under `growth.`, outside `SCRATCH_BC_PREFIXES`, so a BC load
     would leave them silently random -- exactly the partial load the strict
     prefix check above exists to prevent. `train_b2b`/the CLI reject
-    `--scratch` with the growth surgery upstream of this too."""
+    `--scratch` with the growth surgery upstream of this too.
+
+    The returned model carries `init_from_bc_sha256`: the sha256 of the BC
+    checkpoint's bytes as actually loaded (None without `bc_checkpoint`).
+    `train_b2b` records that digest in `metadata["init"]` rather than hashing
+    the path a second time."""
     if model_config.growth_blocks > 0:
         raise ValueError(
             f"build_scratch_model: growth_blocks ({model_config.growth_blocks}) must be 0 -- "
@@ -148,6 +154,10 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
             "SCRATCH_BC_PREFIXES, so an --init-from-bc load would leave them silently random"
         )
     model = PolicyValueNet(env_config, model_config).to(device)
+    # M4: `train_b2b` reads this instead of re-hashing the file itself, so the
+    # provenance digest and the loaded weights are guaranteed to come from the
+    # same bytes. None when this net is pure random init.
+    model.init_from_bc_sha256 = None
     if bc_checkpoint is None:
         model.eval()
         return model
@@ -160,7 +170,15 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
             "file) -- pass the fh-mj-train-bc checkpoint this run should start its plane "
             "trunk / scalar encoder / trunk / policy head from"
         )
-    payload = torch.load(bc_path, map_location="cpu")
+    # M4: read the file exactly ONCE. `train_b2b` needs both the weights and a
+    # sha256 of the bytes those weights came from; reopening the path for the
+    # hash would let an atomic replacement land in between, so the recorded
+    # digest would name bytes this run never loaded (the same reason
+    # `storage.load_checkpoint_from_bytes` exists). The digest rides back on
+    # the returned model as `init_from_bc_sha256`.
+    data = bc_path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
     bc_state = payload["model"]
     target = model.state_dict()
     wanted_model = {k for k in target if k.startswith(SCRATCH_BC_PREFIXES)}
@@ -173,8 +191,12 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
         raise RuntimeError(
             "--init-from-bc: BC checkpoint does not match the scratch model on the "
             f"loaded prefixes (missing={missing[:6]}, extra={extra[:6]}, "
-            f"shape_mismatch={mismatched[:6]}) -- the BC stage must be trained with the "
-            "same --model-* flags as this run"
+            f"shape_mismatch={mismatched[:6]}) -- the BC stage must be trained with "
+            "the model flags this run uses. fh-mj-train-bc's --model-event-window / "
+            "--model-privileged-critic / --model-aux-heads correspond to "
+            "fh-mj-train-b2b's --event-window / --privileged-critic / --aux-heads "
+            "(fh-mj-train-b2b IGNORES the --model-* forms of those three); every "
+            "other shared --model-* flag keeps the same name on both commands"
         )
     with torch.no_grad():
         for key in wanted_model:
@@ -188,6 +210,7 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
             # handled without a second source of truth.
             event_dim = model.event_encoder.output_dim
             model.trunk[0].weight[:, -event_dim:].zero_()
+    model.init_from_bc_sha256 = digest
     model.eval()
     return model
 
@@ -1022,13 +1045,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     name+shape (`SCRATCH_BC_PREFIXES`); it requires `scratch=True`. Every
     `iter_*.pt` records which of the two construction paths produced this
     run under `metadata["init"]` (`{"kind": "scratch"|"champion",
-    "bc_checkpoint_sha256": ...}`) so a checkpoint's provenance is readable
-    without the launch command. `train_state.pt` persists that same block, so
-    a resume carries the original provenance forward into every checkpoint it
-    goes on to write; only a LEGACY state predating that slot degrades to
-    `{"kind": "resumed", "bc_checkpoint_sha256": None}`. It is deliberately
-    not part of `config_echo` — a record of how the run started, not a config
-    the resume has to match.
+    "bc_checkpoint_sha256": ..., "bc_checkpoint_path": ...}`) so a checkpoint's
+    provenance is readable without the launch command. `train_state.pt`
+    persists that same block, so a resume carries the original provenance
+    forward into every checkpoint it goes on to write; only a LEGACY state
+    predating that slot degrades to `{"kind": "resumed",
+    "bc_checkpoint_sha256": None, "bc_checkpoint_path": None}`. It is
+    deliberately not part of `config_echo` — a record of how the run started,
+    not a config the resume has to match.
 
     Resumable state (deep16-rezero capacity lap survives box restarts):
     every `train_state_every` iterations, and always at completion, writes
@@ -1420,7 +1444,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # losing a long lap's provenance across a box restart. Only a
             # LEGACY state, written before that slot existed, has nothing to
             # read -- record "resumed" there rather than guessing at a kind.
-            init_meta = state_payload.get("init") or {"kind": "resumed", "bc_checkpoint_sha256": None}
+            init_meta = state_payload.get("init") or {
+                "kind": "resumed", "bc_checkpoint_sha256": None, "bc_checkpoint_path": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
@@ -1557,13 +1582,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             run_id = uuid.uuid4().hex
             # mortal-scale-scratch: record which construction path built this
             # run's weights, alongside the run_id that identifies the lineage.
-            # Hashed once here (not per iteration) so every `iter_*.pt` this
-            # run writes names the SAME BC checkpoint bytes even if the file
-            # at `init_from_bc` is later replaced mid-run.
+            # The digest comes from `build_scratch_model`, which hashed the
+            # exact bytes it loaded the weights from (M4) -- so every
+            # `iter_*.pt` this run writes names the BC checkpoint this model
+            # actually came from, even if the file at `init_from_bc` is later
+            # replaced mid-run. The path is kept alongside the digest because a
+            # bare hash cannot be resolved back to a file by hand.
             init_meta = {
                 "kind": "scratch" if scratch else "champion",
-                "bc_checkpoint_sha256": (hashlib.sha256(Path(init_from_bc).read_bytes()).hexdigest()
-                                         if init_from_bc is not None else None),
+                "bc_checkpoint_sha256": getattr(model, "init_from_bc_sha256", None),
+                "bc_checkpoint_path": str(init_from_bc) if init_from_bc is not None else None,
             }
             # A fresh run never has anything to quarantine -- either the
             # directory was empty/new, or `--fresh-run-overwrite` just moved

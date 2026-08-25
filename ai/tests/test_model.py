@@ -221,7 +221,9 @@ def test_kernel_width_growth_blocks_follow_config() -> None:
     assert tuple(model.state_dict()["growth.0.layers.0.weight"].shape[2:]) == (3, 1)
 
 
-@pytest.mark.parametrize("bad", [0, 2, 5])
+# `True` is an int in Python and `True in (1, 3)` is True, so a bare
+# membership test would build a width-1 conv out of a boolean.
+@pytest.mark.parametrize("bad", [0, 2, 5, True])
 def test_kernel_width_rejects_values_outside_one_and_three(bad: int) -> None:
     with pytest.raises(ValueError, match="kernel_width"):
         ModelConfig(**SMALL_MODEL, kernel_width=bad)

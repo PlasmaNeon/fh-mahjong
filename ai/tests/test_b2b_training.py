@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 import numpy as np
@@ -109,7 +110,9 @@ def test_train_b2b_two_iters_mock(tmp_path):
     # mortal-scale-scratch: the default (champion warm-start) construction path
     # records its own provenance too, not just --scratch runs.
     payload = torch.load(tmp_path / "ckpt" / "iter_002.pt", map_location="cpu")
-    assert payload["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
+    assert payload["metadata"]["init"] == {"kind": "champion",
+                                          "bc_checkpoint_sha256": None,
+                                          "bc_checkpoint_path": None}
 
 
 def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
@@ -858,6 +861,11 @@ def test_train_b2b_scratch_two_iters_mock_records_init(tmp_path):
     payload = torch.load(ckpt_dir / "iter_002.pt", map_location="cpu")
     assert payload["metadata"]["init"]["kind"] == "scratch"
     assert len(payload["metadata"]["init"]["bc_checkpoint_sha256"]) == 64
+    # M4: the digest names the exact bytes build_scratch_model loaded, and the
+    # path is recorded alongside it so a bare hash can be resolved back by hand.
+    assert payload["metadata"]["init"]["bc_checkpoint_sha256"] == \
+        hashlib.sha256(bc_path.read_bytes()).hexdigest()
+    assert payload["metadata"]["init"]["bc_checkpoint_path"] == str(bc_path)
     assert payload["metadata"]["model_config"]["kernel_width"] == 1
 
 
@@ -874,3 +882,13 @@ def test_train_b2b_scratch_rejects_champion_and_surgeries(tmp_path):
         train_b2b(env, cfg, None, tmp_path / "b", config, scratch=True, growth_blocks=1)
     with pytest.raises(ValueError, match="required unless scratch"):
         train_b2b(env, cfg, None, tmp_path / "c", config, scratch=False)  # no champion, no scratch
+    # Fix round 2, M6: the two remaining library-level guards. --init-from-bc
+    # without --scratch would otherwise be silently ignored on a champion
+    # warm-start, and --scratch + --widen-event-hidden reaches the SAME
+    # rejection as --model-growth-blocks (both surgeries need an anchor).
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    with pytest.raises(ValueError, match="init_from_bc requires"):
+        train_b2b(env, cfg, champion_path, tmp_path / "d", config, scratch=False,
+                  init_from_bc=bc_path)
+    with pytest.raises(ValueError, match="growth_blocks/widen_event_hidden"):
+        train_b2b(env, cfg, None, tmp_path / "e", config, scratch=True, widen_event_hidden=8)

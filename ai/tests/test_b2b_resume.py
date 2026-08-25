@@ -73,7 +73,8 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     assert state_before["next_iteration"] == 3
     # mortal-scale-scratch: train_state.pt persists the lineage's construction
     # provenance so a resume can carry it forward (see below).
-    assert state_before["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
+    assert state_before["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
+                                    "bc_checkpoint_path": None}
 
     config_resumed = replace(config_first, iterations=4)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
@@ -91,7 +92,8 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
         # file and keeps stamping the ORIGINAL provenance onto the checkpoints
         # it writes -- a lap that survives a box restart still says how it was
         # constructed instead of degrading to {"kind": "resumed"}.
-        assert saved["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
+        assert saved["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
+                                             "bc_checkpoint_path": None}
     # Resuming must not have re-run the champion warm-start: iter_001/002
     # checkpoints from the first run are untouched (same file, not rewritten).
     assert (checkpoint_dir / "iter_001.pt").exists()
