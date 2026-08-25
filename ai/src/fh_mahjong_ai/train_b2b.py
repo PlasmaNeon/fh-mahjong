@@ -34,6 +34,7 @@ from .model import (
     _shape_inferred_fields,
 )
 from .parallel_rollouts import _split_counts
+from .placement_bonus import exact_final_scores, placement_utilities, rank_occupancy
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
     masked_policy_distribution, _seat_step_reward,
@@ -533,12 +534,20 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     truncated_matches = 0
     completed_matches = 0
     outcomes_seen = 0
+    bonus_values = config.placement_bonus_values
+    bonus_on = bonus_values is not None
+    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    match_telemetry: list[dict] = []
     try:
         for m in range(config.matches_per_iter):
             obs = env.reset(seed=base_seed + m)
             torch.manual_seed(int(base_seed + m))
             reset_result = env.last_reset_result
             if reset_result is not None and (reset_result.terminated or reset_result.truncated):
+                if bonus_on:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} ended at reset "
+                        "(no four-seat terminal standing) — fail closed")
                 continue
             # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
             # reset-time autoplay rewards and payouts landing before a seat's
@@ -619,6 +628,38 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
             if is_truncated:
                 truncated_matches += 1
             final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
+            int_scores = exact_final_scores(match_net, starting_score)
+            assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
+            if bonus_on:
+                if is_truncated:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} was truncated — no "
+                        "terminal rank exists; fail closed (spec Amendment 1 item 4)")
+                empty = [k for k in range(4) if not seat_rewards[k]]
+                if empty:
+                    raise RuntimeError(
+                        f"placement bonus: match seed {base_seed + m} has zero-decision "
+                        f"seat(s) {empty}; fail closed")
+            utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
+                else placement_utilities(int_scores)
+            bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
+            if bonus_on:
+                if abs(float(bonus.sum())) > 1e-6:
+                    raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
+                for k in range(4):
+                    seat_rewards[k][-1] += float(bonus[k])
+            occ = rank_occupancy(int_scores)
+            match_telemetry.append({
+                "seed": int(base_seed + m),
+                "truncated": bool(is_truncated),
+                "final_scores": [int(s) for s in int_scores],
+                "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
+                "utilities": [float(u) for u in utilities],
+                "bonus": [float(b) for b in bonus],
+                "rank_occupancy": occ.tolist(),
+                "tie_groups": int(4 - len(set(int_scores))),
+                "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
+            })
             rows: list[tuple[int, int]] = []
             for k in range(4):
                 rows.extend((k, hid) for hid in seat_hand_ids[k])
@@ -675,6 +716,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         event_lengths=np.asarray(lengths_l, dtype=np.int32),
         dealin_labels=np.asarray(dealin_l, dtype=np.float32),
         rank_labels=np.asarray(rank_l, dtype=np.int64),
+        match_telemetry=match_telemetry,
     )
 
 
