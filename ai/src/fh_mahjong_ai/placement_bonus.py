@@ -67,3 +67,67 @@ def rank_occupancy(final_scores: Sequence[float]) -> np.ndarray:
             occ[seat, slot:j] = share
         slot = j
     return occ
+
+
+CALIBRATION_MATCHES = 320
+K_REGISTERED = 0.5
+GATE_RMS_MAX, GATE_P99_MAX, GATE_CRITIC_MSE_MAX = 1.35, 1.50, 2.00
+
+
+def calibrate_lambda(telemetry: Sequence[dict], values: Sequence[float] = PLACEMENT_RESHAPE_VALUES,
+                     k: float = K_REGISTERED, require_matches: int = CALIBRATION_MATCHES) -> dict:
+    """lambda = k * sigma_R / sigma_V over all seat-match records (ddof=0).
+    R = dense PPO-credited trajectory return (telemetry["trajectory_returns"]),
+    V = registered utility on the full final standings."""
+    if len(telemetry) != require_matches:
+        raise ValueError(f"calibration requires exactly {require_matches} matches (got {len(telemetry)}); "
+                         "spec registers 320")
+    if any(t.get("truncated") for t in telemetry):
+        raise ValueError("calibration collection contains a truncated match — fail closed")
+    R = np.asarray([t["trajectory_returns"] for t in telemetry], dtype=np.float64).ravel()
+    Vv = np.asarray([placement_utilities(t["final_scores"], values) for t in telemetry],
+                    dtype=np.float64).ravel()
+    sR, sV = float(R.std(ddof=0)), float(Vv.std(ddof=0))
+    if not (np.isfinite(sR) and np.isfinite(sV)) or sR == 0.0 or sV == 0.0:
+        raise ValueError(f"degenerate calibration: sigma_R={sR} sigma_V={sV}")
+    return {"lambda": float(k * sR / sV), "sigma_R": sR, "sigma_V": sV,
+            "corr_RV": float(np.corrcoef(R, Vv)[0, 1]), "k": float(k),
+            "num_matches": len(telemetry), "num_records": int(R.size)}
+
+
+def apply_terminal_bonus(rewards: np.ndarray, dones: np.ndarray, telemetry: Sequence[dict],
+                         values: Sequence[float], lam: float) -> np.ndarray:
+    """Return a copy of `rewards` with lam*utility added at every seat's last
+    row. Segments (done=1) come 4 per match in seat order 0..3, matches in
+    telemetry order — exactly collect_b2b_rollouts' layout."""
+    ends = np.flatnonzero(np.asarray(dones) == 1.0)
+    if ends.size != 4 * len(telemetry):
+        raise ValueError(f"{ends.size} done rows but {len(telemetry)} matches (expected 4 per match)")
+    out = np.array(rewards, dtype=np.float32, copy=True)
+    for i, t in enumerate(telemetry):
+        u = placement_utilities(t["final_scores"], values)
+        for k in range(4):
+            out[ends[4 * i + k]] += np.float32(lam * u[k])
+    return out
+
+
+def return_scale_gates(raw_returns: np.ndarray, shaped_returns: np.ndarray,
+                       values_pred: np.ndarray) -> dict:
+    raw = np.asarray(raw_returns, np.float64); shp = np.asarray(shaped_returns, np.float64)
+    pred = np.asarray(values_pred, np.float64)
+    rms = lambda x: float(np.sqrt(np.mean(x**2)))
+    p99 = lambda x: float(np.percentile(np.abs(x), 99))
+    mse = lambda x: float(np.mean((pred - x) ** 2))
+    finite = bool(np.isfinite(raw).all() and np.isfinite(shp).all())
+    g = {
+        "rms_ratio": rms(shp) / rms(raw), "p99_ratio": p99(shp) / p99(raw),
+        "critic_mse_ratio": mse(shp) / mse(raw), "finite": finite,
+        "raw_return_rms": rms(raw), "shaped_return_rms": rms(shp),
+        "raw_return_abs_p99": p99(raw), "shaped_return_abs_p99": p99(shp),
+        "raw_critic_mse": mse(raw), "shaped_critic_mse": mse(shp),
+    }
+    g["rms_pass"] = g["rms_ratio"] <= GATE_RMS_MAX
+    g["p99_pass"] = g["p99_ratio"] <= GATE_P99_MAX
+    g["critic_mse_pass"] = g["critic_mse_ratio"] <= GATE_CRITIC_MSE_MAX
+    g["all_pass"] = bool(finite and g["rms_pass"] and g["p99_pass"] and g["critic_mse_pass"])
+    return g

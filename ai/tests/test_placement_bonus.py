@@ -67,3 +67,50 @@ def test_rank_occupancy_all_tied():
 def test_utilities_reject_wrong_seat_count():
     with pytest.raises(ValueError):
         placement_utilities([1, 2, 3])
+
+
+from fh_mahjong_ai.placement_bonus import apply_terminal_bonus, calibrate_lambda, return_scale_gates
+
+
+def _tel(seed, scores, rets):
+    u = placement_utilities(scores)
+    return {"seed": seed, "final_scores": scores, "trajectory_returns": rets,
+            "utilities": u.tolist(), "bonus": [0.0]*4, "truncated": False,
+            "rank_occupancy": rank_occupancy(scores).tolist(), "tie_groups": 0, "busts": 0}
+
+
+def test_calibrate_lambda_matches_closed_form():
+    tel = [_tel(0, [3500, 3000, 2000, -500], [1.5, 1.0, 0.0, -2.5]),
+           _tel(1, [2100, 2000, 1900, 2000], [0.1, 0.0, -0.1, 0.0])]
+    out = calibrate_lambda(tel, V, k=0.5, require_matches=2)
+    R = np.asarray([t["trajectory_returns"] for t in tel]).ravel()
+    Vv = np.asarray([t["utilities"] for t in tel]).ravel()
+    assert out["lambda"] == pytest.approx(0.5 * R.std() / Vv.std())
+    assert out["corr_RV"] == pytest.approx(np.corrcoef(R, Vv)[0, 1])
+    assert out["num_records"] == 8
+
+
+def test_calibrate_lambda_requires_exact_match_count():
+    with pytest.raises(ValueError, match="320"):
+        calibrate_lambda([_tel(0, [1, 2, 3, 4], [0, 0, 0, 1])], V)
+
+
+def test_apply_terminal_bonus_hits_each_segment_end():
+    rewards = np.zeros(10, np.float32)
+    dones = np.zeros(10, np.float32); dones[[1, 4, 6, 9]] = 1.0   # 4 segments = 1 match
+    tel = [_tel(0, [3500, 3000, 2000, -500], [0, 0, 0, 0])]
+    out = apply_terminal_bonus(rewards, dones, tel, V, 2.0)
+    assert np.allclose(out[[1, 4, 6, 9]], 2.0 * np.asarray(V))
+    assert np.count_nonzero(out) == 4
+    with pytest.raises(ValueError):
+        apply_terminal_bonus(rewards, dones[:9], tel, V, 1.0)  # segment/telemetry mismatch
+
+
+def test_return_scale_gates():
+    raw = np.array([1.0, -1.0, 0.5, -0.5]); shaped = raw * 1.2; pred = np.zeros(4)
+    g = return_scale_gates(raw, shaped, pred)
+    assert g["rms_ratio"] == pytest.approx(1.2) and g["rms_pass"]
+    assert g["p99_ratio"] == pytest.approx(1.2) and g["p99_pass"]
+    assert g["critic_mse_ratio"] == pytest.approx(1.44) and g["critic_mse_pass"]
+    assert g["all_pass"]
+    assert not return_scale_gates(raw, raw * 1.5, pred)["all_pass"]

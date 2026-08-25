@@ -64,6 +64,7 @@ fh-mj-train-oracle = "fh_mahjong_ai.scripts.train_oracle:main"
 fh-mj-train-selfplay-oracle = "fh_mahjong_ai.scripts.train_selfplay_oracle:main"
 fh-mj-train-b2b = "fh_mahjong_ai.scripts.train_b2b:main"
 fh-mj-collect-bench = "fh_mahjong_ai.scripts.collect_bench:main"
+fh-mj-placement-calibrate = "fh_mahjong_ai.scripts.placement_calibrate:main"
 fh-mj-collect-profile = "fh_mahjong_ai.scripts.collect_profile:main"
 
 [tool.setuptools]
