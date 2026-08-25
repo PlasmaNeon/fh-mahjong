@@ -34,8 +34,9 @@ def parse_seed_windows(
     ``START:COUNT``. Windows are concatenated in the order given.
 
     Seed windows decide which seeds a promotion gate scores -- screening uses
-    910000+, confirmation 950000+ -- so this lives in one place. It was
-    previously copied into five CLIs, four identical and one subtly different.
+    910000+, confirmation a fresh window no prior lap has spent -- so this lives
+    in one place. It was previously copied into five CLIs, four identical and one
+    subtly different.
 
     ``start_seed`` supplies the default window when no ``values`` are given.
     Passing ``None`` (the paired-trace behaviour) yields an empty list instead,
