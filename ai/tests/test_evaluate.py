@@ -1077,3 +1077,20 @@ class HandStatsCollectionTest(unittest.TestCase):
         # Nothing anywhere.
         self.assertEqual(_episode_round_outcomes([], None), [])
         self.assertEqual(_episode_round_outcomes([_t({})], None), [])
+
+
+def test_seat_report_carries_tail_arrays():
+    from fh_mahjong_ai.evaluate import evaluate_online
+
+    model = PolicyValueNet(EnvConfig(), ModelConfig())
+    report = evaluate_online(model=model, episodes=3, seeds=[910000, 910001, 910002],
+                             bridge_kind="go", device="cpu", learning_seat=0, match_mode="chongci")
+    n = report["episodes"]
+    for key in ("per_episode_fourth_share", "per_episode_large_loss", "per_episode_training_utility"):
+        assert len(report[key]) == n
+    assert len(report["placement_rank_shares"]) == 4
+    assert abs(sum(report["placement_rank_shares"]) - 1.0) < 1e-9
+    assert 0.0 <= report["fourth_place_rate"] <= 1.0
+    assert report["rank_parity_mismatches"] == 0
+    assert report["fourth_place_rate"] == pytest.approx(np.mean(report["per_episode_fourth_share"]))
+    assert report["large_loss_rate"] == pytest.approx(np.mean(report["per_episode_large_loss"]))

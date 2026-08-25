@@ -69,6 +69,23 @@ def rank_occupancy(final_scores: Sequence[float]) -> np.ndarray:
     return occ
 
 
+def eval_episode_tail(net: np.ndarray, learning_seat: int, starting_score: float,
+                      truncated: bool, values: Sequence[float] = PLACEMENT_RESHAPE_VALUES) -> dict:
+    """Evaluator-side tail metrics for one episode. Truncation = full 4th-place
+    occupancy and the worst utility (the objective's terminal rank does not
+    exist; omitting it would censor). `parity_ok` checks that ranking the
+    float accumulated net agrees with ranking the exact integer standings."""
+    if truncated:
+        return {"fourth_share": 1.0, "utility": float(values[3]),
+                "occupancy": np.array([0.0, 0.0, 0.0, 1.0]), "parity_ok": True}
+    ints = exact_final_scores(net, starting_score)
+    occ = rank_occupancy(ints)
+    u = placement_utilities(ints, values)
+    float_occ = rank_occupancy(np.asarray(net, dtype=np.float64))
+    return {"fourth_share": float(occ[learning_seat, 3]), "utility": float(u[learning_seat]),
+            "occupancy": occ[learning_seat], "parity_ok": bool(np.allclose(occ, float_occ))}
+
+
 CALIBRATION_MATCHES = 320
 K_REGISTERED = 0.5
 GATE_RMS_MAX, GATE_P99_MAX, GATE_CRITIC_MSE_MAX = 1.35, 1.50, 2.00

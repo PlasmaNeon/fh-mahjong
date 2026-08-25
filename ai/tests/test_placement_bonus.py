@@ -114,3 +114,19 @@ def test_return_scale_gates():
     assert g["critic_mse_ratio"] == pytest.approx(1.44) and g["critic_mse_pass"]
     assert g["all_pass"]
     assert not return_scale_gates(raw, raw * 1.5, pred)["all_pass"]
+
+
+from fh_mahjong_ai.placement_bonus import eval_episode_tail
+
+
+def test_eval_episode_tail_truncation_is_full_fourth():
+    t = eval_episode_tail(np.array([1.0, 0, 0, -1.0]), 0, 2000.0, truncated=True)
+    assert t["fourth_share"] == 1.0 and t["utility"] == V[3]
+    assert np.allclose(t["occupancy"], [0, 0, 0, 1])
+
+
+def test_eval_episode_tail_ties_fractional():
+    t = eval_episode_tail(np.array([0.0, 0.0, 1.0, -1.0]), 0, 2000.0, truncated=False)
+    assert t["fourth_share"] == 0.0 and np.allclose(t["occupancy"], [0, 0.5, 0.5, 0])
+    assert t["utility"] == pytest.approx((V[1] + V[2]) / 2)
+    assert t["parity_ok"]

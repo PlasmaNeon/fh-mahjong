@@ -18,6 +18,7 @@ from .config import EnvConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .hand_stats import hand_record, summarize_hand_stats
+from .placement_bonus import eval_episode_tail
 from .policies import TorchGreedyPolicy
 from .types import Transition
 
@@ -715,6 +716,11 @@ def evaluate_policy_online(
 
     seat_rewards: List[float] = []
     seat_placements: list[float] = []
+    seat_fourth: list[float] = []
+    seat_large_loss: list[float] = []
+    seat_utility: list[float] = []
+    occupancy_sum = np.zeros(4)
+    rank_parity_mismatches = 0
     action_counts: Counter[str] = Counter()
     outcome_counts: Counter[str] = Counter()
     choice_source_counts: Counter[str] = Counter()
@@ -736,7 +742,7 @@ def evaluate_policy_online(
         truncated: bool = False,
         reset_rewards=None,
     ) -> None:
-        nonlocal wins, large_losses, truncations, unknown_hands
+        nonlocal wins, large_losses, truncations, unknown_hands, rank_parity_mismatches, occupancy_sum
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
         seat_rewards.append(reward)
         # A truncated (step-limit) episode has no final standings. Score it as the
@@ -752,6 +758,16 @@ def evaluate_policy_online(
                                           _EVAL_PLACEMENT_VALUES,
                                           reset_rewards=reset_rewards)
         seat_placements.append(placement)
+        net_vec = episode_reward_vector(episode, rewards, num_seats=4, reset_rewards=reset_rewards)
+        tail = eval_episode_tail(net_vec, learning_seat,
+                                 float(chongci_starting_score) if normalized_match_mode == "chongci" else 0.0,
+                                 truncated)
+        seat_fourth.append(tail["fourth_share"])
+        seat_utility.append(tail["utility"])
+        seat_large_loss.append(1.0 if reward <= resolved_large_loss_threshold else 0.0)
+        occupancy_sum += tail["occupancy"]
+        if not tail["parity_ok"]:
+            rank_parity_mismatches += 1
         if reward > 0:
             wins += 1
         if reward <= resolved_large_loss_threshold:
@@ -904,6 +920,13 @@ def evaluate_policy_online(
         # sample equals `episodes`; surfaced explicitly alongside the truncation rate
         # so any step-limit stalling is visible rather than silently censored.
         "placement_count": len(seat_placements),
+        "per_episode_fourth_share": seat_fourth,
+        "per_episode_large_loss": seat_large_loss,
+        "per_episode_training_utility": seat_utility,
+        "placement_rank_shares": (occupancy_sum / completed).tolist() if completed else [0.0] * 4,
+        "fourth_place_rate": float(np.mean(seat_fourth)) if seat_fourth else 0.0,
+        "training_utility_mean": float(np.mean(seat_utility)) if seat_utility else 0.0,
+        "rank_parity_mismatches": int(rank_parity_mismatches),
         "truncation_count": truncations,
         "truncation_rate": truncations / completed if completed else 0.0,
         "action_family_counts": dict(sorted(action_counts.items())),
