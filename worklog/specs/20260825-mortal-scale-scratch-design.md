@@ -1,7 +1,8 @@
 # Mortal-scale from-scratch experiment — design
 
 **Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` · **Status:** code
-merged-pending (PR open); Codex consult on thread `01a0147d` required before any lap launches.
+complete on branch; PR pending final review. Codex consult on thread `01a0147d` required
+before any lap launches.
 
 ## 1. Question
 

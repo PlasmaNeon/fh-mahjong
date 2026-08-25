@@ -31,7 +31,7 @@ uv run --project ai <command>
 ### Train
 | Command | Purpose |
 |---|---|
-| `fh-mj-train-bc` | Behavior cloning (the offline warm-start); accepts the shared `--model-*` flags including `--model-kernel-width`; event-enabled nets are validated with zeroed events (`allow_zero_events`), reported as `validation_events` — valid only for BC-stage checkpoints |
+| `fh-mj-train-bc` | Behavior cloning (the offline warm-start); accepts the shared `--model-*` flags including `--model-kernel-width` |
 | `fh-mj-train-awbc` | Advantage-weighted BC |
 | `fh-mj-train-iql` | Discrete IQL — the main offline RL trainer |
 | `fh-mj-train-offline-q` | Conservative offline Q (experimental) |
@@ -163,6 +163,7 @@ Quick map of what is where:
 - Legacy 42-scalar checkpoints are padded in `storage.load_checkpoint()` so old policy weights load while new Chongci match-context scalar weights start at zero.
 - A B2b checkpoint's `event_window` is **not recoverable from tensor shapes**. `infer_model_config` needs `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it. When adding a `ModelConfig` field, add it to `model_config_args.py`'s `model_config_params()` by hand.
 - `kernel_width` IS shape-inferred (`plane_stem.0.weight.shape[3]`); metadata that disagrees with it is rejected.
+- BC trains with `events=None`, so an event-enabled net's offline validation runs under `allow_zero_events` — real planes and scalars, a zero event vector. The per-epoch report's `validation_events` says which case ran: `"zeroed"` = an event-enabled net validated with zero event features, `"none"` = the net has no event encoder, `null` = no validation ran. A zeroed agreement number describes the BC stage only; it is not comparable to an event-fed B2b evaluation.
 
 ### Datasets
 - Dataset generation writes a manifest next to each JSONL file or shard directory with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.
