@@ -179,7 +179,7 @@ def clustered_metric_stats(per_seat: Sequence[Sequence[float]], prefix: str) -> 
         f"mean_{prefix}_clustered": 0.0,
         f"mean_{prefix}_sem_clustered": 0.0,
         f"mean_{prefix}_ci95_clustered": 0.0,
-        "cluster_design_effect": 0.0,
+        f"cluster_design_effect_{prefix}": 0.0,
         "num_seeds": 0,
     }
     rows = [list(map(float, seat)) for seat in per_seat]
@@ -203,7 +203,7 @@ def clustered_metric_stats(per_seat: Sequence[Sequence[float]], prefix: str) -> 
             f"mean_{prefix}_clustered": mean,
             f"mean_{prefix}_sem_clustered": 0.0,
             f"mean_{prefix}_ci95_clustered": 0.0,
-            "cluster_design_effect": 0.0,
+            f"cluster_design_effect_{prefix}": 0.0,
             "num_seeds": num_seeds,
         }
 
@@ -216,7 +216,7 @@ def clustered_metric_stats(per_seat: Sequence[Sequence[float]], prefix: str) -> 
         f"mean_{prefix}_clustered": mean,
         f"mean_{prefix}_sem_clustered": clustered_sem,
         f"mean_{prefix}_ci95_clustered": _t_critical_975(num_seeds - 1) * clustered_sem,
-        "cluster_design_effect": design_effect,
+        f"cluster_design_effect_{prefix}": design_effect,
         "num_seeds": num_seeds,
     }
 
@@ -226,11 +226,16 @@ def clustered_placement_stats(per_seat_placements: Sequence[Sequence[float]]) ->
 
     Thin wrapper over ``clustered_metric_stats(..., "placement")`` that
     restores the original (pre-generalization) key names byte-for-byte —
-    including the plural ``per_seed_mean_placements`` — so existing reports
-    and ``fh-mj-compare`` keep working unchanged.
+    including the plural ``per_seed_mean_placements`` and the unprefixed
+    ``cluster_design_effect`` (placement is the canonical, monitored design
+    effect; other metrics carry their design effect under
+    ``cluster_design_effect_<prefix>`` so it can never collide with this one
+    when reports merge multiple ``clustered_metric_stats`` outputs) — so
+    existing reports and ``fh-mj-compare`` keep working unchanged.
     """
     stats = clustered_metric_stats(per_seat_placements, "placement")
     stats["per_seed_mean_placements"] = stats.pop("per_seed_mean_placement")
+    stats["cluster_design_effect"] = stats.pop("cluster_design_effect_placement")
     return stats
 
 
