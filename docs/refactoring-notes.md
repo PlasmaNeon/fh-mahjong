@@ -30,7 +30,7 @@ callers index `counts[tileToIndex(t)]` WITHOUT a `>= 0` guard — so do NOT repl
 
 Owns the shared tile value-model (`TileValue`/`TileDraft`), `TILE_LIBRARY`, suit
 ordering, `formatTile`/`formatHand`, `parseHand`/`parseSingleTile`, and tile
-counting. `pages/calcHelpers.ts` and `pages/shantenHelpers.ts` are now thin
+counting. `features/calc/calcHelpers.ts` and `features/shanten/shantenHelpers.ts` are now thin
 adapters that preserve their exact public APIs and output strings (calc uses
 space-separated/per-tile formatting and collects all parse errors; shanten uses
 compact formatting and a single-error contract).

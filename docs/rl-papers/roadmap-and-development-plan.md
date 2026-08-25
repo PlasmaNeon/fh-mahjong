@@ -4,7 +4,11 @@ This roadmap is a self-contained study-and-build path for the Fenghua Mahjong AI
 
 The required learning path intentionally avoids video lectures. Classic papers and books still appear where they are the right source, but the default path favors maintained docs, written tutorials, and recent implementation references.
 
-The development direction is now Mortal-style first:
+> Stages 0-8 are the study path. Current state is in
+> [Where The Project Actually Is](#where-the-project-actually-is) and the running record in
+> [`worklog/rl-experiment/`](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
+
+The Mortal-style build order:
 
 1. simulator correctness
 2. heuristic trajectories
@@ -28,7 +32,7 @@ Use this loop when you want the code to drive the learning:
 5. Generate mixed self-play trajectories with frozen checkpoint opponents.
 6. Promote a checkpoint only after duplicate-seat evaluation improves against the heuristic baseline and frozen checkpoint pool.
 
-The current reward-learning trainer is intentionally conservative: discrete IQL trains Q, value, and policy heads from operation-level transitions, defaults to discounted terminal-return targets, and keeps behavior-cloning regularization so the policy does not drift too far from supported data. The older one-step offline Q trainer remains an ablation; it should not be the default until value calibration and duplicate-seat evaluation improve.
+This loop still runs end to end and is the bootstrap path. Discrete IQL — Q, value, and policy heads from operation-level transitions with behavior-cloning regularization — is the offline baseline. Champions come from on-policy PPO self-play; see below.
 
 ## Mortal-Style Development Target
 
@@ -66,35 +70,32 @@ Later policy:
 - Split the flat action space into decision-family heads if the flat head becomes a bottleneck.
 - Add Suphx-style oracle/global reward prediction as auxiliary training, not as the first serving path.
 
-## Current Chongci Reward-Learning Target
+## Where The Project Actually Is
 
-The current target is not another broad scalar risk penalty or same-state
-branch-label sweep. The active direction is:
+As of 2026-08-25. Update this section on any promotion or campaign change.
 
-```text
-full-match paired traces
--> first-divergence final reward deltas
--> visible pre-divergence trajectory context
--> holdout-only paired-trace preflight
--> duplicate-seat promotion gate only after holdout is non-negative
-```
+**Trainer.** On-policy PPO self-play, `fh-mj-train-b2b`. Dense per-hand Chongci score-delta
+reward (score/1000), `gamma=0.99`, `lr=2e-5`, entropy 0, 2 PPO epochs, 320 matches/iter,
+symmetric all-four self-play from a warm start.
 
-Use exact same-state branch-CF shards as auxiliary supervision and diagnostic
-coverage, not as the main promotion signal. The recent no-context paired-trace
-delta scorer improved full-trace diagnostics but failed every holdout-only
-preflight window, so future attempts must prove generalization on independent
-seed windows before any guarded serving or promotion gate.
+**Champion.** `chongci_b2b_anchor075_restart_iter075`
+(`ai/checkpoints/anchors/b2b-anchor075-restart-iter075.pt`). Line, each step confirmed on a
+fresh unspent window at 1500 paired seeds per side:
+`deep4 iter_275 -> B2b iter_075 (+0.0408) -> restart-iter075 (+0.0254)`.
 
-The current context extension appends visible, reward-free history scalars to
-first-divergence action-EV rows:
+**Promotion.** Pre-registered gate only: screenings on a shared window, a kill rule fixed
+before launch, one selection, one confirmation on a window no prior lap has spent. No
+optional stopping, no substitution after seeing results. Screening CIs (≈±0.07) cannot
+resolve +0.03-level effects, so confirmation is the step that finds a winner.
 
-- divergence step and decision index,
-- prefix action-family rates,
-- previous action-family one-hot,
-- visible scalar deltas from the first decision to the divergence.
+**Campaign closed 2026-08-06: local recipe saturation** — a statement about this recipe,
+not an architecture or RL ceiling. Four confirmations against restart-iter075 failed to
+clear it (restart r2 null, deep16-ReZero null, gru-width unconfirmed, data-scale-960 null).
+Training reopens only for new information, a genuinely different objective, or
+evidence-backed auxiliary changes.
 
-This keeps the deployed-information boundary intact while giving the scorer
-more trajectory context than a single first-divergence observation.
+Full record:
+[`worklog/rl-experiment/chongci-rl-experiment-progress.md`](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
 
 ## Stage 0: Working Vocabulary
 
@@ -176,7 +177,7 @@ Materials:
 - [imitation documentation: Behavioral Cloning](https://imitation.readthedocs.io/en/latest/algorithms/bc.html)
 - [imitation tutorial: Train BC on Demonstrations](https://imitation.readthedocs.io/en/latest/tutorials/1_train_bc.html)
 - [Minari documentation](https://minari.farama.org/main/)
-- Local plan: [Phase 3A BC Pipeline](../superpowers/plans/2026-03-26-phase3a-bc-pipeline.md)
+- Local plan: [Phase 3A BC Pipeline](../../worklog/plans/2026-03-26-phase3a-bc-pipeline.md)
 
 Learn:
 
@@ -242,15 +243,16 @@ Learn:
 Mahjong exercise:
 
 - Add dataset manifests: seed range, policy source, commit SHA, action count, and observation shape.
-- Run discrete IQL as the default operation-level Q/value learner.
+- Run discrete IQL as the operation-level Q/value learner for this stage.
 - Compare IQL checkpoints against behavior cloning and heuristic baselines on the same duplicate-seat seeds.
 - Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
 - Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
-- For paired first-divergence replay, require a stronger objective before spending full evaluation budget; sparse filtered replay and sparse-row oversampling did not improve the first Chongci risk-context candidates.
-- Treat large-loss auxiliary heads as an ablation, not a default promotion path; the first all-anchor shared-gradient run regressed the selected-window large-loss guardrail.
-- Do not spend more runs on simple large-loss auxiliary coefficient sweeps unless the risk estimate is used differently, for example as a critic-side guard or explicit calibration report.
-- Before using a risk head for serving, require calibration evidence: AUC above random, monotonic risk bands, and acceptable severity error. The first Chongci large-loss heads failed this check.
-- Next risk-learning design: keep the implemented 58-scalar visible Chongci context, but replace plain terminal large-loss labels with stronger supervision before trying guarded serving. The first no-history action-risk run failed (`large-loss AUC 0.4998`), the first 58-scalar rerun also failed (`large-loss AUC 0.5096`), and balanced risk-only training still failed ranking (`large-loss AUC 0.4990`).
+
+**A risk or auxiliary head is not usable until it is calibrated.** Require AUC above random,
+monotonic risk bands, and acceptable severity error before wiring it into serving or a
+promotion gate; coefficient sweeps do not substitute. Every Chongci large-loss head tried
+here ranked at chance (AUC 0.4998, 0.5096, 0.4990). Details:
+[`worklog/rl-experiment/20260825-chongci-iql-era-experiment-ledger.md`](../../worklog/rl-experiment/20260825-chongci-iql-era-experiment-ledger.md).
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -373,14 +375,16 @@ Mahjong exercise:
 
 ## Design Defaults
 
-- First objective: expected score from each operation.
-- First Chongci objective: final match net score.
-- First model: no-pooling residual CNN, not transformer.
-- First learning method: behavior cloning, not PPO.
-- First RL improvement: discrete IQL-style Q/value learning, not PPO.
-- First self-play method: mixed frozen checkpoint pool, not four latest-model clones.
-- First evaluation: duplicate fixed-seed arena, not raw random win rate.
-- First serving path: Python inference service, not Go-native model inference.
+- Objective: expected score from each operation.
+- Chongci training objective: dense per-hand score delta. Final match net score is the
+  evaluation metric, deliberately kept independent of the training reward.
+- Model: no-pooling residual CNN — 96 channels, 4 residual blocks, plus an event GRU — not
+  a transformer.
+- Bootstrap: behavior cloning.
+- RL: on-policy PPO self-play, symmetric all-four, from a warm start.
+- Evaluation: duplicate fixed-seed arena with pre-registered gates on fresh unspent
+  windows, not raw win rate.
+- Serving: Python inference service, not Go-native model inference.
 
 ## Acceptance Criteria
 

@@ -27,12 +27,14 @@ This directory stores paper summaries and implementation notes for the Fenghua M
 
 - [Implementation Takeaways](./implementation-takeaways.md)
 - [RL Learning Roadmap And Mahjong AI Development Plan](./roadmap-and-development-plan.md)
-- [Chongci RL Experiment Progress Note](./chongci-rl-experiment-progress.md)
+
+Our own experiment record lives in `worklog/`:
+[Chongci RL Experiment Progress Note](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
 
 ## Suggested Reading Order
 
 1. RL Learning Roadmap And Mahjong AI Development Plan
-2. Chongci RL Experiment Progress Note
+2. Chongci RL Experiment Progress Note (in `worklog/rl-experiment/`)
 3. Suphx
 4. Variational Oracle Guiding
 5. Offline RL Hands-On

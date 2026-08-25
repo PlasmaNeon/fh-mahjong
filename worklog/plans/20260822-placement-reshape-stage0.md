@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 via `uv run --project ai`, numpy, PyTorch, pytest; Go c-shared bridge (`go build -buildmode=c-shared -o build/libfh_mahjong_bridge.dylib ./cmd/rlbridge`) for integration tests.
 
-**Spec:** `docs/superpowers/specs/2026-08-21-placement-reshape-design.md` (read "Design", "Stage 0", and "Amendment 1" in full before starting any task).
+**Spec:** `../specs/2026-08-21-placement-reshape-design.md` (read "Design", "Stage 0", and "Amendment 1" in full before starting any task).
 
 ## Global Constraints
 
@@ -1341,7 +1341,7 @@ git commit -m "feat(compare): paired seed-clustered 4th-share/large-loss/utility
 
 **Files:**
 - Modify: `ai/CLAUDE.md` (tools table: add `fh-mj-placement-calibrate`; a short "Placement-reshape terminal bonus" note near the `fh-mj-compare` paragraph at line ~172 listing the new report keys and that `significant` remains canonical)
-- Modify: `docs/superpowers/specs/2026-08-21-placement-reshape-design.md` — no protocol change; add under Amendments: "Stage 0 code landed (commits …); λ pending box calibration."
+- Modify: `worklog/specs/2026-08-21-placement-reshape-design.md` — no protocol change; add under Amendments: "Stage 0 code landed (commits …); λ pending box calibration."
 
 - [ ] **Step 1: Update `ai/CLAUDE.md`** with the two additions above (keep the AGENTS.md symlink untouched).
 
@@ -1357,7 +1357,7 @@ Expected: all PASS, `gofmt` prints nothing.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add ai/CLAUDE.md docs/superpowers/specs/2026-08-21-placement-reshape-design.md
+git add ai/CLAUDE.md worklog/specs/2026-08-21-placement-reshape-design.md
 git commit -m "docs(ai): placement-reshape Stage 0 tooling and report keys"
 ```
 

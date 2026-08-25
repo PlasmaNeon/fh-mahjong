@@ -79,8 +79,8 @@ Settled analysis from the closing discussion:
 
 ## Progress tracking
 
-Live progress record: `.claude/docs/placement-reshape-experiment.md` (in the main
-checkout `/Users/plasma/fh-mahjong/.claude/docs/`, shared across worktrees, NOT in
-auto-memory — user convention: project progress tracking lives under `.claude/docs`).
-Update it at each major transition (spec ratified -> running -> verdict) rather than
-creating parallel records.
+Live progress record: `worklog/rl-experiment/placement-reshape-experiment.md`, tracked
+in the repo and shared across worktrees (it lived under `.claude/docs/` when this spec
+was written; that directory is gitignored, so the record moved into `worklog/` on
+2026-08-21). Update it at each major transition (spec ratified -> running -> verdict)
+rather than creating parallel records.
