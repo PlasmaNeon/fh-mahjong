@@ -1470,6 +1470,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
                     batch = collect_b2b_rollouts(bridge_env_config, model, config, base_seed=iter_seed)
+                if config.placement_bonus_values is not None:
+                    # Spec Amendment 1 item 4: the collector already raises on
+                    # an incomplete match, but never let a truncated batch
+                    # reach GAE/optimizer under this objective.
+                    if int(batch.truncated_matches) != 0:
+                        raise RuntimeError(
+                            f"iter {iteration}: {batch.truncated_matches} truncated match(es) "
+                            "with the placement bonus enabled — fail closed before update")
+                    if batch.match_telemetry is None or len(batch.match_telemetry) != config.matches_per_iter:
+                        raise RuntimeError(f"iter {iteration}: match telemetry missing or incomplete")
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
@@ -1482,6 +1492,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     metrics["dealin_positive_rate"] = float(np.mean(batch.dealin_labels))
                 if batch.rank_labels is not None:
                     metrics["rank_label_coverage"] = float(np.mean(batch.rank_labels >= 0))
+                if batch.match_telemetry:
+                    bonus = np.asarray([t["bonus"] for t in batch.match_telemetry], dtype=np.float64)
+                    occ = np.asarray([t["rank_occupancy"] for t in batch.match_telemetry], dtype=np.float64)
+                    metrics["bonus_mean"] = float(bonus.mean())
+                    metrics["bonus_rms"] = float(np.sqrt(np.mean(bonus**2)))
+                    metrics["bonus_abs_p99"] = float(np.percentile(np.abs(bonus), 99))
+                    metrics["tie_groups_total"] = int(sum(t["tie_groups"] for t in batch.match_telemetry))
+                    metrics["busts_total"] = int(sum(t["busts"] for t in batch.match_telemetry))
+                    # per-seat 4th-slot occupancy: seat-bias detector (self-play
+                    # aggregate is mechanically ~0.25; only the SPREAD is informative)
+                    for k in range(4):
+                        metrics[f"seat{k}_fourth_occupancy"] = float(occ[:, k, 3].mean())
                 # Adversarial round 2, Finding 1: record growth-block ReZero alpha
                 # magnitudes so the runbook's null-interpretation rule ("alphas
                 # hugging 0 = protocol null signal") has telemetry to check
@@ -1551,6 +1573,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         },
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
+                        "objective": {
+                            "placement_bonus_values": (list(config.placement_bonus_values)
+                                                       if config.placement_bonus_values is not None else None),
+                            "placement_bonus_lambda": float(config.placement_bonus_lambda),
+                            "placement_bonus_calibration_digest": str(config.placement_bonus_calibration_digest),
+                        },
                     })
                 # Adversarial round 19, high finding: this iteration's FRESH
                 # `iter_N.pt` just replaced whatever was quarantined at

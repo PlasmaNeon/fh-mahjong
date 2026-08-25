@@ -593,3 +593,35 @@ def test_bonus_fails_closed_on_zero_decision_seat_or_passes():
         assert "placement bonus" in str(e)
         return
     assert int((batch.dones == 1).sum()) == 4
+
+
+def test_checkpoint_metadata_records_objective(tmp_path):
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
+                                         aux_heads=True),
+                        champion_path, tmp_path / "ckpt", config, base_seed=5)
+    payload = torch.load(tmp_path / "ckpt" / "iter_001.pt", map_location="cpu")
+    obj = payload["metadata"]["objective"]
+    assert obj == {"placement_bonus_values": None, "placement_bonus_lambda": 0.0,
+                   "placement_bonus_calibration_digest": ""}
+
+
+def test_cli_placement_bonus_args_roundtrip():
+    import argparse
+    from fh_mahjong_ai.placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
+    p = argparse.ArgumentParser(); add_placement_bonus_args(p)
+    a = p.parse_args(["--placement-bonus-values", "0.86", "0.35", "-0.05", "-1.16",
+                      "--placement-bonus-lambda", "0.42", "--placement-bonus-calibration-digest", "abc"])
+    assert placement_bonus_kwargs(a) == {"placement_bonus_values": (0.86, 0.35, -0.05, -1.16),
+                                         "placement_bonus_lambda": 0.42,
+                                         "placement_bonus_calibration_digest": "abc"}
+    assert placement_bonus_kwargs(p.parse_args([])) == {"placement_bonus_values": None,
+                                                        "placement_bonus_lambda": 0.0,
+                                                        "placement_bonus_calibration_digest": ""}
+    with pytest.raises(SystemExit):
+        placement_bonus_kwargs(p.parse_args(["--placement-bonus-lambda", "0.5"]))  # lambda without values is an error

@@ -418,6 +418,9 @@ _LEGACY_ECHO_ADDITIONS = {
     "ppo_config": {
         "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2
         "minibatch_device_transfer",  # absent from every train_state.pt saved before data-scale-960 Amendment 5
+        "placement_bonus_values",             # absent before placement-reshape Stage 0 (2026-08-22)
+        "placement_bonus_lambda",             # idem
+        "placement_bonus_calibration_digest", # idem
     },
 }
 

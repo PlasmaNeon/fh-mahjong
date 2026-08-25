@@ -9,6 +9,7 @@ from fh_mahjong_ai.fdlimit import raise_file_descriptor_limit
 from fh_mahjong_ai.ppo import PPOConfig, default_num_workers
 from fh_mahjong_ai.train_b2b import train_b2b
 from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args
+from fh_mahjong_ai.placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
 
 
 def main() -> None:
@@ -141,6 +142,7 @@ def main() -> None:
                         "in checkpoint_dir -- if you meant to continue that run, use "
                         "--resume-from-state instead")
     add_model_config_args(p)
+    add_placement_bonus_args(p)
     args = p.parse_args()
     # Multi-worker collection exhausts WSL's default 1024-fd soft limit via
     # torch's file_descriptor tensor-sharing (errno 24) — raise it up front so
@@ -172,7 +174,8 @@ def main() -> None:
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
-                       minibatch_device_transfer=args.minibatch_device_transfer)
+                       minibatch_device_transfer=args.minibatch_device_transfer,
+                       **placement_bonus_kwargs(args))
     # Adversarial round 6, high finding: --event-window (this script's own
     # flag) is NOT --model-event-window (model_config_args's flag, default
     # 0) -- threading the effective window straight into
