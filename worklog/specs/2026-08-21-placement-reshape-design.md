@@ -331,6 +331,53 @@ need no special handling; the −0.010 + CI-upper<0 pair is coherent.
 **After these amendments Stage 0 is authorized under the existing numbers.
 Stage 1 training remains unauthorized until every amended Stage-0 gate passes.**
 λ, σ_R, σ_V, corr(R,V), the archived γ/λ_GAE, and the Stage-0 gate results are
-recorded here as Amendment 2 when Stage 0 completes.
+recorded in Amendment 2.
 
-**Stage 0 code landed** (Tasks 1–9, commits deb299e..992c241 and the final-review fix commit, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. λ, σ_R, σ_V, γ/λ_GAE and the gate measurements remain pending on the box (Amendment 2). Amendment 1 item 10's completeness check (aggregated `unknown_hands` == 0 and `rank_parity_mismatches` == 0 in eval reports) is an operator gate at Stage-0 calibration and confirmation time (plan Task 12 step 3), not mechanized in code.
+**Stage 0 code landed** (Tasks 1–9, commits deb299e..992c241 and the final-review fix commit, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. Box measurements are recorded in Amendment 2 — all gates green; Stage 0 is complete. Amendment 1 item 10's completeness check (aggregated `unknown_hands` == 0 and `rank_parity_mismatches` == 0 in eval reports) is an operator gate at Stage-0 calibration and confirmation time (plan Task 12 step 3), not mechanized in code.
+
+### Amendment 2 (Stage-0 box measurements, 2026-08-25) — Stage 0 COMPLETE
+
+All measurements on the 4090/WSL box against anchor075
+(`/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt`); artifacts in
+`/root/fh-mahjong-runs/placement-reshape/stage0/`.
+
+**Archived champion discounting** (ds960 archive `train_state.pt` `config_echo`,
+plan Task 10): γ = 0.99, λ_GAE = 0.95 — the consult's assumption confirmed.
+
+**λ calibration** (`fh-mj-placement-calibrate`, 320 matches, seeds
+720000–720319, bonus OFF, `calibration.json`):
+
+| Quantity | Value |
+|---|---|
+| σ_R (per-seat trajectory-return RMS, 1280 records) | 1.2771589615131842 |
+| σ_V (utility RMS; matches registered vector RMS exactly) | 0.745355986408624 |
+| corr(R, V) | 0.8419034213688973 |
+| **λ = 0.5·σ_R/σ_V (frozen)** | **0.8567442838065646** |
+| Collection digest | `6b3eda33b297a4c93f30849d5bebd16fe7c123e6daa8e19f4d8698f4833adea7` |
+| bonus_mean / bonus_rms / bonus_abs_p99 | ~0 (3.2e-18) / 0.6385794807565921 / 0.9970407995565881 |
+| 4th-place bonus / σ_R | −0.7806708746698107 |
+
+**Return-scale gates** (same frozen batch, bonus ON vs OFF) — ALL PASS:
+
+| Gate | Threshold | Measured |
+|---|---|---|
+| shaped/raw return RMS ratio | ≤ 1.35 | 1.1322245342811552 |
+| shaped/raw abs-p99 ratio | ≤ 1.50 | 1.200709048734831 |
+| frozen-critic MSE ratio | ≤ 2.00 | 1.3360246253746213 |
+
+**Digest parity at positive λ** (plan Task 12, 320 matches, seeds
+720320–720639, cuda): four bonus-ON digests identical across workers 1/10/20 +
+dispatch-chunk 320 and workers 10 + chunk 0 —
+`3e228283814cde07283c12a661f636c349b5e2e5440895cea63cfbb09f68878d`; bonus-OFF
+digest differs — `b9f89979e6092f2bfd39a20432099666baa59cbf22bbae3b5b19e05679adf9e0`.
+
+**Screening-evaluator completeness** (Amendment 1 item 10 operator gate;
+anchor075, duplicate seats, 120 seeds 910000–910119, chongci):
+anchor075
+self-eval via the duplicate-seat evaluator (`fh-mj-evaluate --duplicate-seats`,
+cuda, event window 128): `rank_parity_mismatches` = 0 and `unknown_hands` = 0 on
+all four seat reports and the aggregate; `deal_in_rate` populated (aggregate
+0.1022, per-seat 0.0971–0.1075); zero truncations. **PASS.**
+
+Stage-0 gates are all green. Stage 1 training remains unauthorized until the
+pre-Stage-1 consult ratifies this amendment.
