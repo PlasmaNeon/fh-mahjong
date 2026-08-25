@@ -117,18 +117,50 @@ SCRATCH_BC_PREFIXES = ("plane_stem.", "plane_blocks.", "plane_head.",
 def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device: str = "cpu",
                         bc_checkpoint: Optional[Path] = None) -> PolicyValueNet:
     """mortal-scale-scratch: a freshly initialised B2b net (no anchor, no
-    surgery, no step-0 parity). With `bc_checkpoint`, the BC-stage weights for
-    exactly `SCRATCH_BC_PREFIXES` are copied by name+shape; every other module
-    (event encoder, privileged critic, value/aux/risk/q heads) keeps its random
+    surgery). With `bc_checkpoint`, the BC-stage weights for exactly
+    `SCRATCH_BC_PREFIXES` are copied by name+shape; every other module (event
+    encoder, privileged critic, value/aux/risk/q heads) keeps its random
     init. Any BC key under those prefixes that is absent from the model, or any
     model key under those prefixes absent from the BC checkpoint, or any shape
     mismatch, is a hard error -- a silent partial load is this lane's known
-    failure mode. `env_config` must be the 39ch config (see `_b2b_model_env_config`)."""
+    failure mode. `env_config` must be the 39ch config (see `_b2b_model_env_config`).
+
+    step-0 policy == BC policy: the event columns are zeroed so the untrained
+    GRU contributes nothing until PPO moves them. BC trains with `events=None`,
+    which makes `encode` feed the trunk a ZERO event vector, so the trailing
+    `event_encoder.output_dim` columns of `trunk.0.weight` come out of the BC
+    stage exactly as randomly initialised -- never once touched by a gradient.
+    Copying them verbatim on top of this net's OWN brand-new event encoder
+    (whose outputs are not zero) would inject pure noise into step-0 logits and
+    silently make the run start somewhere other than the BC policy. Zeroing
+    them is the same trick `build_b2b_model` uses for its 39ch-champion warm
+    start, sized off the model's own encoder rather than a literal.
+
+    `model_config.growth_blocks > 0` is rejected outright: ReZero growth
+    tensors live under `growth.`, outside `SCRATCH_BC_PREFIXES`, so a BC load
+    would leave them silently random -- exactly the partial load the strict
+    prefix check above exists to prevent. `train_b2b`/the CLI reject
+    `--scratch` with the growth surgery upstream of this too."""
+    if model_config.growth_blocks > 0:
+        raise ValueError(
+            f"build_scratch_model: growth_blocks ({model_config.growth_blocks}) must be 0 -- "
+            "the scratch path has no anchor to grow, and `growth.` tensors fall outside "
+            "SCRATCH_BC_PREFIXES, so an --init-from-bc load would leave them silently random"
+        )
     model = PolicyValueNet(env_config, model_config).to(device)
     if bc_checkpoint is None:
         model.eval()
         return model
-    payload = torch.load(Path(bc_checkpoint), map_location="cpu")
+    bc_path = Path(bc_checkpoint)
+    # Checked before torch.load so a mistyped path is a clear, actionable error
+    # naming the flag, not a bare FileNotFoundError from deep inside torch.
+    if not bc_path.is_file():
+        raise FileNotFoundError(
+            f"--init-from-bc: BC checkpoint {bc_path} does not exist (or is not a regular "
+            "file) -- pass the fh-mj-train-bc checkpoint this run should start its plane "
+            "trunk / scalar encoder / trunk / policy head from"
+        )
+    payload = torch.load(bc_path, map_location="cpu")
     bc_state = payload["model"]
     target = model.state_dict()
     wanted_model = {k for k in target if k.startswith(SCRATCH_BC_PREFIXES)}
@@ -147,6 +179,15 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
     with torch.no_grad():
         for key in wanted_model:
             target[key].copy_(bc_state[key].to(target[key].device))
+        if model.wants_events:
+            # See the step-0 parity paragraph above. `event_encoder` exists
+            # exactly when `wants_events`, and `encode` appends its output
+            # LAST, so the event columns are the trailing `output_dim` of
+            # trunk.0's input -- sized off the encoder itself so an
+            # event_output_dim projection (the gru-width lap's shape) is
+            # handled without a second source of truth.
+            event_dim = model.event_encoder.output_dim
+            model.trunk[0].weight[:, -event_dim:].zero_()
     model.eval()
     return model
 
@@ -982,8 +1023,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     `iter_*.pt` records which of the two construction paths produced this
     run under `metadata["init"]` (`{"kind": "scratch"|"champion",
     "bc_checkpoint_sha256": ...}`) so a checkpoint's provenance is readable
-    without the launch command; a resume records `{"kind": "resumed", ...}`
-    when the state file it resumes predates that slot.
+    without the launch command. `train_state.pt` persists that same block, so
+    a resume carries the original provenance forward into every checkpoint it
+    goes on to write; only a LEGACY state predating that slot degrades to
+    `{"kind": "resumed", "bc_checkpoint_sha256": None}`. It is deliberately
+    not part of `config_echo` — a record of how the run started, not a config
+    the resume has to match.
 
     Resumable state (deep16-rezero capacity lap survives box restarts):
     every `train_state_every` iterations, and always at completion, writes
@@ -1368,11 +1413,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 )
             run_id = state_payload.get("run_id")
             # mortal-scale-scratch: a resume never re-runs construction, so it
-            # has no construction flags of its own to record. Carry the
-            # lineage's own `init` block forward when the state file happens
-            # to carry one; otherwise record "resumed" rather than guessing
-            # (this task deliberately does not extend the train-state schema,
-            # so states written before this exists have nothing to read).
+            # has no construction flags of its own to record -- it inherits
+            # the lineage's. `_save_train_state` persists the `init` block, so
+            # the checkpoints written after a resume keep saying "scratch"
+            # (with the same BC digest) rather than degrading to "resumed" and
+            # losing a long lap's provenance across a box restart. Only a
+            # LEGACY state, written before that slot existed, has nothing to
+            # read -- record "resumed" there rather than guessing at a kind.
             init_meta = state_payload.get("init") or {"kind": "resumed", "bc_checkpoint_sha256": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
@@ -1722,6 +1769,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         env_config=env_config, base_seed=base_seed, run_id=run_id,
                         pinned_bridge_sha256=pinned_bridge_sha256,
                         pinned_bridge_path=pinned_bridge_path,
+                        init=init_meta,
                     )
                     # Adversarial round 18, high finding: `train_state.pt` just
                     # landed durably -- this is the new run's first durable

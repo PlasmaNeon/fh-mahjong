@@ -946,7 +946,8 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
                       env_config: EnvConfig, base_seed: int, run_id: Optional[str],
-                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str]) -> None:
+                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str],
+                      init: Optional[dict] = None) -> None:
     # Adversarial round 14, high finding: round 13's fix recomputed the
     # bridge fingerprint HERE, on every save -- so a .so rebuilt mid-run
     # (same path, new bytes) silently became the new saved baseline on the
@@ -984,6 +985,16 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
         # current one; see the drift-detection block above.
         "bridge_sha256": pinned_bridge_sha256,
         "bridge_library_path": pinned_bridge_path,
+        # mortal-scale-scratch: the lineage's construction provenance
+        # (`{"kind": "scratch"|"champion", "bc_checkpoint_sha256": ...}`),
+        # threaded in from `train_b2b` so a `--resume-from-state` can carry it
+        # forward into the checkpoints it goes on to write instead of
+        # degrading them to `{"kind": "resumed"}`. Purely additive and
+        # deliberately NOT part of `_train_b2b_config_echo`: it is a record of
+        # how the run STARTED, not a config the resume must match, so it must
+        # never make a legacy state (which has no `init` at all) fail the
+        # resume mismatch check.
+        "init": init,
     }
     _atomic_torch_save(payload, path)
 

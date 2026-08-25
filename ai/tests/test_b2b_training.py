@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pytest
 import torch
@@ -104,6 +106,10 @@ def test_train_b2b_two_iters_mock(tmp_path):
     assert (tmp_path / "ckpt" / "iter_002.pt").exists()
     for key in ("belief_loss", "dealin_loss", "rank_loss"):
         assert key in history[0]
+    # mortal-scale-scratch: the default (champion warm-start) construction path
+    # records its own provenance too, not just --scratch runs.
+    payload = torch.load(tmp_path / "ckpt" / "iter_002.pt", map_location="cpu")
+    assert payload["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
 
 
 def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
@@ -742,11 +748,79 @@ def test_build_scratch_model_init_from_bc_loads_exactly_the_bc_prefixes(tmp_path
     bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
     model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
     bc_sd, sd = bc_model.state_dict(), model.state_dict()
+    event_dim = model.event_encoder.output_dim
     for key in sd:
-        if key.startswith(SCRATCH_BC_PREFIXES):
-            assert torch.equal(sd[key], bc_sd[key]), key
+        if not key.startswith(SCRATCH_BC_PREFIXES):
+            continue
+        if key == "trunk.0.weight":
+            # The one deliberate exception (fix round 1, I1): trunk.0's leading
+            # plane+scalar columns are BC's verbatim, but its trailing event
+            # columns are zeroed rather than copied -- BC never trained them
+            # (it runs with events=None) and this net's event encoder is new.
+            # See test_..._step0_logits_equal_bc_policy for why that matters.
+            assert torch.equal(sd[key][:, :-event_dim], bc_sd[key][:, :-event_dim]), key
+            assert torch.equal(sd[key][:, -event_dim:],
+                               torch.zeros_like(sd[key][:, -event_dim:])), key
+            continue
+        assert torch.equal(sd[key], bc_sd[key]), key
     assert not torch.equal(sd["value_head.0.weight"], bc_sd["value_head.0.weight"])
     assert not torch.equal(sd["event_encoder.gru.weight_ih_l0"], bc_sd["event_encoder.gru.weight_ih_l0"])
+
+
+def test_build_scratch_model_init_from_bc_step0_logits_equal_bc_policy(tmp_path):
+    """Fix round 1, I1: BC trains with `events=None`, which feeds the trunk a
+    ZERO event vector -- so trunk.0's trailing event columns reach us at BC's
+    untouched random init while THIS net's event encoder is brand new and
+    outputs nonzero features. Copying those columns verbatim would make step 0
+    noise, not the BC policy. They are zeroed on load, so identical
+    planes/scalars give identical logits with a live event encoder feeding
+    random events. Values are NOT asserted: the value head stays random."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    bc_model.eval()
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+    rng = np.random.default_rng(7)
+    planes = torch.from_numpy(rng.random((4, 39, 42, 1), dtype=np.float32))
+    scalars = torch.from_numpy(rng.random((4, 58), dtype=np.float32))
+    mask = torch.ones((4, 204), dtype=torch.int8)
+    events = torch.from_numpy(rng.integers(0, 0x10000, size=(4, 8), dtype=np.uint32).astype(np.int64))
+    lengths = torch.full((4,), 8, dtype=torch.int64)
+
+    with torch.no_grad():
+        ref, _ = bc_model(planes, scalars, mask)  # BC's own forward: events=None
+        got, _ = model(planes, scalars, mask, events=events, event_lengths=lengths)
+        event_features = model.event_encoder(events, lengths)
+    assert torch.allclose(ref, got, atol=1e-5)
+    # Parity comes from the zeroed COLUMNS, not from a dead encoder.
+    assert not torch.equal(event_features, torch.zeros_like(event_features))
+    assert torch.equal(model.trunk[0].weight[:, -model.event_encoder.output_dim:],
+                       torch.zeros_like(model.trunk[0].weight[:, -model.event_encoder.output_dim:]))
+
+
+def test_build_scratch_model_rejects_growth_blocks(tmp_path):
+    """Fix round 1, M1: `growth.` tensors are outside SCRATCH_BC_PREFIXES, so a
+    grown scratch net would take a silent partial load from --init-from-bc."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True,
+                      aux_heads=True, growth_blocks=2)
+    with pytest.raises(ValueError, match="growth_blocks"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+
+
+def test_build_scratch_model_init_from_bc_rejects_missing_file(tmp_path):
+    """Fix round 1, M5: a mistyped --init-from-bc names the flag and the path."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    missing = tmp_path / "not-a-checkpoint.pt"
+    with pytest.raises(FileNotFoundError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=missing)
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=missing)
+    # A directory is not a checkpoint either.
+    with pytest.raises(FileNotFoundError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=tmp_path)
 
 
 def test_build_scratch_model_init_from_bc_rejects_shape_mismatch(tmp_path):
@@ -794,9 +868,9 @@ def test_train_b2b_scratch_rejects_champion_and_surgeries(tmp_path):
     config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
                        ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
     cfg = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
-    with pytest.raises(ValueError, match="scratch"):
+    with pytest.raises(ValueError, match="combined with a champion"):
         train_b2b(env, cfg, champion_path, tmp_path / "a", config, scratch=True)
-    with pytest.raises(ValueError, match="scratch"):
+    with pytest.raises(ValueError, match="growth_blocks/widen_event_hidden"):
         train_b2b(env, cfg, None, tmp_path / "b", config, scratch=True, growth_blocks=1)
-    with pytest.raises(ValueError, match="scratch"):
+    with pytest.raises(ValueError, match="required unless scratch"):
         train_b2b(env, cfg, None, tmp_path / "c", config, scratch=False)  # no champion, no scratch

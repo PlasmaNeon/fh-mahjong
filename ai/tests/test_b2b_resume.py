@@ -71,6 +71,9 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     state_path = checkpoint_dir / "train_state.pt"
     state_before = torch.load(state_path, map_location="cpu", weights_only=False)
     assert state_before["next_iteration"] == 3
+    # mortal-scale-scratch: train_state.pt persists the lineage's construction
+    # provenance so a resume can carry it forward (see below).
+    assert state_before["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
 
     config_resumed = replace(config_first, iterations=4)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
@@ -84,6 +87,11 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     for i in (3, 4):
         saved = torch.load(checkpoint_dir / f"iter_{i:03d}.pt", map_location="cpu")
         assert saved["metadata"]["model_config"]["event_window"] == model_config.event_window
+        # mortal-scale-scratch: the resume reads `init` back out of the state
+        # file and keeps stamping the ORIGINAL provenance onto the checkpoints
+        # it writes -- a lap that survives a box restart still says how it was
+        # constructed instead of degrading to {"kind": "resumed"}.
+        assert saved["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None}
     # Resuming must not have re-run the champion warm-start: iter_001/002
     # checkpoints from the first run are untouched (same file, not rewritten).
     assert (checkpoint_dir / "iter_001.pt").exists()

@@ -21,11 +21,15 @@ def main() -> None:
     p.add_argument("--scratch", action="store_true", default=False,
                    help="mortal-scale-scratch: build the B2b net from random init instead of "
                         "warm-starting from --champion (mutually exclusive with --champion, "
-                        "--model-growth-blocks > 0 and --widen-event-hidden > 0)")
+                        "--model-growth-blocks > 0 and --widen-event-hidden > 0). Like "
+                        "--champion, this is ignored under --resume-from-state, which builds "
+                        "the model from the state file and never constructs from these flags")
     p.add_argument("--init-from-bc", type=Path, default=None,
                    help="with --scratch: BC-stage checkpoint (fh-mj-train-bc, same --model-* "
                         "flags) whose plane trunk / scalar encoder / trunk / policy head are "
-                        "copied in by exact name+shape; everything else stays random")
+                        "copied in by exact name+shape; everything else stays random, and "
+                        "trunk.0's event columns are zeroed so step-0 logits are the BC "
+                        "policy. Like --champion, ignored under --resume-from-state")
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--matches-per-iter", type=int, default=256)
