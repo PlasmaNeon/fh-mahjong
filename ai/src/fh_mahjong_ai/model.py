@@ -48,8 +48,10 @@ def build_plane_scalar_encoders(env_config: EnvConfig, model_config: ModelConfig
     """
     channels, height, width = env_config.plane_shape
 
+    kernel = (3, model_config.kernel_width)
+    padding = (1, model_config.kernel_width // 2)
     plane_stem = nn.Sequential(
-        nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
+        nn.Conv2d(channels, model_config.channels, kernel_size=kernel, padding=padding),
         nn.GELU(),
     )
     plane_blocks = nn.Sequential(
@@ -58,6 +60,7 @@ def build_plane_scalar_encoders(env_config: EnvConfig, model_config: ModelConfig
                 model_config.channels,
                 channel_attention=model_config.channel_attention,
                 attention_ratio=model_config.channel_attention_ratio,
+                kernel_width=model_config.kernel_width,
             )
             for _ in range(model_config.residual_blocks)
         ]
@@ -163,6 +166,7 @@ class PolicyValueNet(nn.Module):
                     model_config.channels,
                     channel_attention=model_config.channel_attention,
                     attention_ratio=model_config.channel_attention_ratio,
+                    kernel_width=model_config.kernel_width,
                 )
                 for _ in range(model_config.growth_blocks)
             ]
@@ -290,12 +294,15 @@ class ChannelAttention2d(nn.Module):
 class ResidualBlock(nn.Module):
     """Small no-pooling residual block for semantic tile planes."""
 
-    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16) -> None:
+    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16,
+                 kernel_width: int = 3) -> None:
         super().__init__()
+        kernel = (3, kernel_width)
+        padding = (1, kernel_width // 2)
         self.layers = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
         )
         self.channel_attention = ChannelAttention2d(channels, attention_ratio) if channel_attention else nn.Identity()
 
@@ -311,12 +318,15 @@ class ReZeroResidualBlock(nn.Module):
     so stacking these for capacity growth is dormant until training moves alpha.
     """
 
-    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16) -> None:
+    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16,
+                 kernel_width: int = 3) -> None:
         super().__init__()
+        kernel = (3, kernel_width)
+        padding = (1, kernel_width // 2)
         self.layers = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
         )
         self.channel_attention = ChannelAttention2d(channels, attention_ratio) if channel_attention else nn.Identity()
         self.alpha = nn.Parameter(torch.zeros(()))
@@ -487,6 +497,7 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
         dueling_q=dueling_q,
         privileged_critic="privileged_encoder.0.weight" in state_dict,
         aux_heads="belief_head.weight" in state_dict,
+        kernel_width=int(state_dict["plane_stem.0.weight"].shape[3]),
     )
     if "event_encoder.embedding.weight" in state_dict:
         fields["event_embed_dim"] = int(state_dict["event_encoder.embedding.weight"].shape[1])

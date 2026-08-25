@@ -752,3 +752,10 @@ def test_evaluate_report_config_includes_event_output_dim_and_event_hidden_dim(t
     params = model_config_params(model_config)
     assert params["model_event_output_dim"] == 8
     assert params["model_event_hidden_dim"] == 16
+
+
+def test_infer_model_config_rejects_kernel_width_metadata_mismatch() -> None:
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL, kernel_width=1))
+    lying = model_config_metadata(ModelConfig(**SMALL_MODEL, kernel_width=3))
+    with pytest.raises(RuntimeError, match="kernel_width"):
+        infer_model_config(model.state_dict(), {"model_config": lying})

@@ -64,6 +64,11 @@ class ModelConfig:
     aux_heads: bool = False
     # --- deep16-rezero capacity growth (default 0 => state_dict identical to today) ---
     growth_blocks: int = 0
+    # --- mortal-scale-scratch: conv kernel width over the 42x1 plane axis.
+    # 3 = the historical 3x3 kernel (default, state_dict-identical to today);
+    # 1 = a (3,1) 1-D kernel (Mortal-style; two-thirds fewer conv params on a
+    # width-1 plane, where a 3x3 kernel only ever multiplies padding).
+    kernel_width: int = 3
 
     # Round 20, Finding 1a: `infer_model_config` (model.py) takes
     # `metadata["model_config"]` from a checkpoint as authoritative and
@@ -156,6 +161,8 @@ class ModelConfig:
                 "builds no projection module, so a nonzero event_output_dim claims "
                 "a module that will never exist"
             )
+        if self.kernel_width not in (1, 3):
+            raise ValueError(f"kernel_width must be 1 or 3, got {self.kernel_width}")
 
     def _validate_bounded_int(self, field: str, *, minimum: int, maximum: int) -> None:
         value = getattr(self, field)
