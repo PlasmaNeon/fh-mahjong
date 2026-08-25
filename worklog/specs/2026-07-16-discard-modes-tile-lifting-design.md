@@ -8,8 +8,8 @@
 
 Discarding a tile is currently a single, unconfirmed click. On your turn, a
 hand tile is `interactive` and one click immediately sends `ACTION_DISCARD`
-([`web/src/table/Tile.tsx`](../../../web/src/table/Tile.tsx),
-[`web/src/features/game/Game.tsx`](../../../web/src/features/game/Game.tsx)
+([`web/src/table/Tile.tsx`](../../web/src/table/Tile.tsx),
+[`web/src/features/game/Game.tsx`](../../web/src/features/game/Game.tsx)
 `onDiscard`). A misclick discards the wrong tile with no recovery.
 
 Two related asks:

@@ -82,7 +82,7 @@ def episode_reward_vector(episode, fallback_rewards, num_seats: int = 4, reset_r
 # This metric is intentionally independent of trainer reward functions.
 # Modern Spec B2b trains on dense Chongci score deltas; reward-objective
 # experiments may add separately registered terminal utilities (see
-# docs/superpowers/specs/2026-08-21-placement-reshape-design.md). Do not
+# worklog/specs/2026-08-21-placement-reshape-design.md). Do not
 # synchronize this constant to any training reward configuration.
 # Step-limit truncations remain scored as canonical worst placement.
 _EVAL_PLACEMENT_VALUES = (1.0, 1.0 / 3.0, -1.0 / 3.0, -1.0)

@@ -26,7 +26,7 @@ tsumogiri → fly the discard from the drawn slot; tedashi → fly it from a ran
 concealed hand slot.
 
 The tedashi branch **also tries** to slide the drawn back into the hand
-([`tileFlightPlan.ts`](../../../web/src/table/tileFlightPlan.ts) lines ~156–176),
+([`tileFlightPlan.ts`](../../web/src/table/tileFlightPlan.ts) lines ~156–176),
 but that part is broken in production:
 
 - Production redaction (`redactedStateForSeat`) re-randomizes the tile-id
@@ -48,7 +48,7 @@ must be **positional (hand-slot based)**.
 
 - Opponent concealed hands render as identical `back.svg` backs, keyed by **hand
   slot index** (`slot-${index}`), so the row DOM is stable across the per-broadcast
-  id churn ([`ClosedHand.tsx`](../../../web/src/table/seat/ClosedHand.tsx) line ~118).
+  id churn ([`ClosedHand.tsx`](../../web/src/table/seat/ClosedHand.tsx) line ~118).
 - For a normal tedashi (a discard on the turn the opponent drew), the concealed
   rail has the **same tile count** before and after: before = `closedHand − drawn`
   (drawn split into its own slot); after = `closedHand` with the drawn merged and

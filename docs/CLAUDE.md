@@ -8,7 +8,7 @@
 - `docs/rules/` is the canonical Fenghua rules reference.
 - `docs/refactoring-notes.md` records where shared/de-duplicated logic now lives.
 - `docs/rl-papers/` stores RL paper read reports, follow-up reading, and implementation takeaways for the Mahjong AI roadmap.
-- `docs/rl-papers/roadmap-and-development-plan.md` is the durable study path and development plan tying the reports to repo work.
+- `docs/rl-papers/roadmap-and-development-plan.md` is the study path and development plan tying the reports to repo work. Its stages are the learning sequence; **"Where The Project Actually Is"** is the only section tracking current state.
 - `docs/rl-papers/rl-research-directions-2026-07.md` is a literature sweep on alternatives to pure self-play.
 - `docs/rl-papers/implementation-takeaways.md` records repo-specific RL design defaults, with Mortal-style operation-level Q/value learning as the primary path and Suphx-style oracle/global-reward ideas as later auxiliaries.
 
@@ -22,5 +22,5 @@ design note, and lap status files — moved to `worklog/rl-experiment/` on 2026-
 - Keep the original paper or project website near the top of each note.
 - Keep implementation notes grounded in this repo's architecture: Go simulator in `internal/engine/` and `internal/rl/`, Python training stack in `ai/`.
 - When documenting Python commands for the `ai/` package, use uv commands such as `uv sync --project ai --extra dev` and `uv run --project ai ...`; avoid non-uv package or environment commands.
-- When a Chongci checkpoint is promoted or rejected, update both `ai/checkpoints/best-checkpoints.json` and the progress note in `worklog/rl-experiment/` with the run directory, seed windows, MLflow run ids, and promotion/rejection rationale.
+- When a Chongci checkpoint is promoted or rejected, update all three of: `ai/checkpoints/best-checkpoints.json`; the progress note in `worklog/rl-experiment/` (run directory, seed windows, MLflow run ids, promotion/rejection rationale); and the "Where The Project Actually Is" section of `docs/rl-papers/roadmap-and-development-plan.md`.
 - For paired-trace notes, distinguish strict first-divergence counterfactuals from later aligned disagreements. Later disagreements can support risk calibration and data mining, but they are not promotion-gate proof by themselves.

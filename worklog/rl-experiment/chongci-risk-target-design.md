@@ -1,11 +1,12 @@
 # Chongci Risk Target And Input Design
 
-Status: richer visible inputs and balanced risk-only training implemented, but
-calibration is still rejected. The model/trainer support action-conditioned risk
-heads over the 204-action catalog. The old 50-scalar input run, the first
-58-scalar run, and the balanced positive/negative risk-only run all failed
-large-loss ranking (`AUC 0.4998`, `0.5096`, and `0.4990`). Guarded evaluation
-remains future work until the risk critic passes calibration.
+> **Abandoned direction, kept as a record of what was tried.** No risk critic ever passed
+> calibration: the 50-scalar run, the first 58-scalar run, and the balanced
+> positive/negative risk-only run all ranked large loss at chance (`AUC 0.4998`, `0.5096`,
+> `0.4990`). Current state:
+> [`chongci-rl-experiment-progress.md`](./chongci-rl-experiment-progress.md). Experiments
+> this design produced:
+> [`20260825-chongci-iql-era-experiment-ledger.md`](./20260825-chongci-iql-era-experiment-ledger.md).
 
 ## Problem
 
