@@ -398,3 +398,45 @@ def test_window_mismatch_allowed_with_flag():
 
     same = paired_comparison(make_report(seeds, means), make_report(seeds, means))
     assert same["window_check"] == "match"
+
+
+def make_tail_report(seeds, placements, fourth, ll, util, deal_in=0.12):
+    r = make_report(seeds, placements)
+    r["per_seed_mean_fourth_share"] = list(map(float, fourth))
+    r["per_seed_mean_large_loss"] = list(map(float, ll))
+    r["per_seed_mean_training_utility"] = list(map(float, util))
+    r["deal_in_rate"] = deal_in
+    r["rank_parity_mismatches"] = 0
+    return r
+
+
+def test_tail_metrics_paired_and_gated():
+    seeds = list(range(1300000, 1300040))
+    n = len(seeds)
+    a = make_tail_report(seeds, [0.0]*n, [0.20]*n, [0.04]*n, [0.1]*n)
+    b = make_tail_report(seeds, [0.0]*n, [0.25]*n, [0.05]*n, [0.0]*n)
+    # add tiny seed-varying noise so SEM is finite and nonzero
+    a["per_seed_mean_fourth_share"] = [0.20 + 0.001*((i % 3) - 1) for i in range(n)]
+    res = paired_comparison(a, b)
+    t = res["tail_metrics"]["fourth_share"]
+    assert t["mean_delta"] == pytest.approx(-0.05, abs=1e-3)
+    assert t["ci95_upper"] < 0
+    assert res["tail_metrics"]["large_loss"]["mean_delta"] == pytest.approx(-0.01)
+    assert res["deal_in_rate_a"] == 0.12
+    g = res["tail_gate"]
+    assert g["fourth_primary_pass"] and g["canonical_noninferiority_pass"] and g["large_loss_safety_pass"] and g["all_pass"]
+    assert res["significant"] is False  # canonical metric untouched
+
+
+def test_tail_metrics_missing_in_one_report_is_error():
+    seeds = list(range(10)); n = 10
+    a = make_tail_report(seeds, [0.0]*n, [0.2]*n, [0.0]*n, [0.0]*n)
+    b = make_report(seeds, [0.0]*n)
+    with pytest.raises(ValueError, match="tail"):
+        paired_comparison(a, b)
+
+
+def test_tail_metrics_absent_in_both_is_none():
+    seeds = list(range(10))
+    res = paired_comparison(make_report(seeds, [0.0]*10), make_report(seeds, [0.0]*10))
+    assert res["tail_metrics"] is None and res["tail_gate"] is None

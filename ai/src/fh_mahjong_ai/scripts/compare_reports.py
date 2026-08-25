@@ -143,6 +143,45 @@ def _check_comparable(
             )
 
 
+_TAIL_FIELDS = {
+    "fourth_share": "per_seed_mean_fourth_share",
+    "large_loss": "per_seed_mean_large_loss",
+    "training_utility": "per_seed_mean_training_utility",
+}
+# Spec 2026-08-21 confirmation gate (tail-primary). Reported only; never
+# feeds `significant`, which stays the canonical placement test.
+FOURTH_PRIMARY_MAX_DELTA = -0.010
+CANONICAL_NONINFERIORITY_CI_LOWER = -0.030
+LARGE_LOSS_SAFETY_CI_UPPER = 0.005
+
+
+def _paired_delta(a: np.ndarray, b: np.ndarray) -> Dict[str, Any]:
+    d = a - b; n = d.size
+    mean = float(d.mean())
+    sem = float(np.std(d, ddof=1) / np.sqrt(n)) if n > 1 else 0.0
+    ci = _t_critical_975(n - 1) * sem if n > 1 else 0.0
+    return {"mean_delta": mean, "delta_sem_clustered": sem, "delta_ci95_clustered": ci,
+            "ci95_lower": mean - ci, "ci95_upper": mean + ci,
+            "a": float(a.mean()), "b": float(b.mean())}
+
+
+def _tail_metrics(report_a, report_b, num_seeds):
+    have_a = all(isinstance(report_a.get(f), list) for f in _TAIL_FIELDS.values())
+    have_b = all(isinstance(report_b.get(f), list) for f in _TAIL_FIELDS.values())
+    if have_a != have_b:
+        raise ValueError("tail-metric arrays present in only one report — regenerate both reports "
+                         "with the tail-aware evaluator before a placement-reshape comparison")
+    if not have_a:
+        return None
+    out = {}
+    for name, field in _TAIL_FIELDS.items():
+        a = np.asarray(report_a[field], dtype=np.float64); b = np.asarray(report_b[field], dtype=np.float64)
+        if a.size != num_seeds or b.size != num_seeds:
+            raise ValueError(f"{field} length != seed count — ragged tail arrays (fail closed)")
+        out[name] = _paired_delta(a, b)
+    return out
+
+
 def _per_seed_means(report: Dict[str, Any], num_seeds: int) -> list[float]:
     """Per-seed mean placements: the report field when present, otherwise
     reconstructed from seat_reports (reports that predate the field)."""
@@ -207,6 +246,17 @@ def paired_comparison(
         sem = 0.0
         ci95 = 0.0
 
+    tail = _tail_metrics(report_a, report_b, num_seeds)
+    tail_gate = None
+    if tail is not None:
+        f, ll = tail["fourth_share"], tail["large_loss"]
+        tail_gate = {
+            "fourth_primary_pass": bool(f["mean_delta"] <= FOURTH_PRIMARY_MAX_DELTA and f["ci95_upper"] < 0.0),
+            "canonical_noninferiority_pass": bool(mean_delta - ci95 > CANONICAL_NONINFERIORITY_CI_LOWER),
+            "large_loss_safety_pass": bool(ll["ci95_upper"] <= LARGE_LOSS_SAFETY_CI_UPPER),
+        }
+        tail_gate["all_pass"] = all(tail_gate.values())
+
     return {
         "num_seeds": num_seeds,
         "per_seed_deltas": [float(d) for d in deltas],
@@ -228,6 +278,12 @@ def paired_comparison(
             if report_a.get("event_history_window") != report_b.get("event_history_window")
             else "match"
         ),
+        "tail_metrics": tail,
+        "tail_gate": tail_gate,
+        "deal_in_rate_a": report_a.get("deal_in_rate"),
+        "deal_in_rate_b": report_b.get("deal_in_rate"),
+        "rank_parity_mismatches_a": report_a.get("rank_parity_mismatches"),
+        "rank_parity_mismatches_b": report_b.get("rank_parity_mismatches"),
     }
 
 
@@ -247,6 +303,30 @@ def _format_text(result: Dict[str, Any], label_a: str, label_b: str) -> str:
         lines.append("  WARNING: simulator libraries differ — cross-simulator comparison, not a checkpoint gate")
     if result.get("window_check") == "mismatch-allowed":
         lines.append("  NOTE: event_history_window differs — the window is the intervention under test")
+    tail = result.get("tail_metrics")
+    if tail is None:
+        lines.append("  NOTE: no tail metrics — reports predate the tail-aware evaluator")
+    else:
+        f, ll, u = tail["fourth_share"], tail["large_loss"], tail["training_utility"]
+        lines.append(
+            f"  4th-share delta: {f['mean_delta']:+.4f} [{f['ci95_lower']:+.4f}, {f['ci95_upper']:+.4f}]"
+        )
+        lines.append(
+            f"  large-loss delta: {ll['mean_delta']:+.4f} [{ll['ci95_lower']:+.4f}, {ll['ci95_upper']:+.4f}]"
+        )
+        lines.append(
+            f"  training-utility delta: {u['mean_delta']:+.4f} [{u['ci95_lower']:+.4f}, {u['ci95_upper']:+.4f}]"
+        )
+        lines.append(
+            f"  deal-in rate A: {result.get('deal_in_rate_a')}   deal-in rate B: {result.get('deal_in_rate_b')}"
+        )
+        g = result["tail_gate"]
+        lines.append(
+            f"  tail gate: {'PASS' if g['all_pass'] else 'FAIL'} "
+            f"(primary {'pass' if g['fourth_primary_pass'] else 'fail'}, "
+            f"non-inferiority {'pass' if g['canonical_noninferiority_pass'] else 'fail'}, "
+            f"safety {'pass' if g['large_loss_safety_pass'] else 'fail'})"
+        )
     return "\n".join(lines)
 
 
