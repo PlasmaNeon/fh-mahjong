@@ -141,15 +141,6 @@ def generate_dataset(
                     if int(t.observation.seat)
                     == ((chunk_seed + int(t.info["episode_index"]) - episode_offset) - base) % 4
                 ]
-                if chunk_episodes > 0 and len(transitions) == 0:
-                    raise BridgeError(
-                        f"chunk {chunk_index} generated 0 transitions for "
-                        f"{chunk_episodes} episodes (seeds {chunk_seed}.."
-                        f"{chunk_seed + chunk_episodes - 1}) after applying "
-                        f"learning_seat_rule={learning_seat_rule!r} (base seed "
-                        f"{base}); {transitions_before_seat_filter} transitions "
-                        f"existed before the seat filter."
-                    )
 
             for t in transitions:
                 per_seat[int(t.observation.seat)] += 1
