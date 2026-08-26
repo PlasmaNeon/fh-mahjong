@@ -149,3 +149,56 @@ def test_generate_dataset_mock_can_write_npz_shards(tmp_path: Path) -> None:
     assert all(shard["transitions"] <= 2 for shard in manifest_payload["shards"])
     assert dataset_manifest["dataset"]["format"] == "npz_shards"
     assert dataset_manifest["dataset"]["shard_manifest_path"] == str(output / "manifest.json")
+
+
+def test_seed_mod_4_rule_keeps_exactly_one_seat_per_episode(tmp_path: Path) -> None:
+    out = tmp_path / "data.jsonl"
+    manifest = tmp_path / "manifest.json"
+    stats = generate_dataset(
+        episodes=8,
+        start_seed=1_300_000,
+        output_path=out,
+        manifest_path=manifest,
+        bridge_kind="mock",
+        output_format="jsonl",
+        learning_seat_rule="seed-mod-4",
+    )
+    transitions = read_transitions(out)
+    by_episode: dict[int, set[int]] = {}
+    for t in transitions:
+        by_episode.setdefault(int(t.info["episode_index"]), set()).add(int(t.observation.seat))
+    for ep, seats in by_episode.items():
+        assert seats == {ep % 4}, (ep, seats)  # seed = 1_300_000 + ep, base = 1_300_000
+    m = json.loads(manifest.read_text())
+    assert m["dataset"]["learning_seat_rule"] == "seed-mod-4"
+    assert m["dataset"]["seat_rule_base_seed"] == 1_300_000
+    assert sum(m["dataset"]["per_seat_transitions"].values()) == len(transitions) == stats["transitions"]
+    assert m["dataset"]["chunks"][0]["transitions_before_seat_filter"] >= m["dataset"]["chunks"][0]["transitions"]
+
+
+def test_default_rule_all_is_unchanged(tmp_path: Path) -> None:
+    out = tmp_path / "data.jsonl"
+    generate_dataset(
+        episodes=2,
+        start_seed=7,
+        output_path=out,
+        manifest_path=tmp_path / "m.json",
+        bridge_kind="mock",
+        output_format="jsonl",
+    )
+    m = json.loads((tmp_path / "m.json").read_text())
+    assert m["dataset"]["learning_seat_rule"] == "all"
+    assert "transitions_before_seat_filter" in m["dataset"]["chunks"][0]
+
+
+def test_unknown_seat_rule_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="learning_seat_rule"):
+        generate_dataset(
+            episodes=1,
+            start_seed=0,
+            output_path=tmp_path / "d.jsonl",
+            manifest_path=tmp_path / "m.json",
+            bridge_kind="mock",
+            output_format="jsonl",
+            learning_seat_rule="bogus",
+        )
