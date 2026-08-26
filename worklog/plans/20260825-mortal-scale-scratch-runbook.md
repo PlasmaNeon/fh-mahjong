@@ -30,7 +30,8 @@ telemetry, screening reports, and confirmation comparisons preserved.
 | Comparator | `/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt`, sha256 `ce9d867f803bb41acad30f1f4c137e82d7946ed2c4db769e265d0c9cd08f75d4` |
 
 Run-root layout: `bc-data/`, `bc-control/`, `bc-big/`, `bench/`, `control/ckpt`,
-`big/ckpt`, `screen/`, `confirm/`.
+`big/ckpt`, `screen/`, `confirm/`. Run-root layout also holds `bench/big-init.pt`,
+the digest-pinned bench checkpoint §4 exports before the big arm's bench.
 
 Frozen for both arms (Amendment 1 §5) — collection and update recipe, observation
 and action contracts, reward and auxiliary recipe, and the bridge bytes:
@@ -66,9 +67,6 @@ the parameter ratio would weaken the recipe control merely because its 1-D kerne
 has fewer parameters. Both arms therefore execute approximately equal optimizer
 steps per iteration while the big arm receives the pre-registered proportional-data
 treatment.
-
-Run-root layout also holds `bench/big-init.pt`, the digest-pinned bench
-checkpoint §4 exports before the big arm's bench.
 
 Seed reservations (Amendment 1 §8, dataset range narrowed by Amendment 2 §1) —
 no reuse, no overlap:
@@ -205,8 +203,15 @@ print({k: (v.shape, str(v.dtype)) for k, v in arrays.items()})
 EOF
 
 cat /sys/fs/cgroup/msscratch-loader/memory.peak
+grep -E '^(anon|file) ' /sys/fs/cgroup/msscratch-loader/memory.stat
 echo $$ > /sys/fs/cgroup/cgroup.procs
 ```
+
+Capture the `grep -E '^(anon|file) '` line immediately after reading `memory.peak`,
+before the shell moves back to the root cgroup — `memory.peak` includes page cache
+charged for shard reads, and with `memory.high=44G` nothing reclaims that cache
+below the 32.00 GiB gate. Record both `anon` and `file` in the status file
+alongside `memory.peak`.
 
 The 44/48 GiB containment is not the gate — it exists so a breach is contained
 instead of swapping; the go/no-go is the `memory.peak` value read after the load
@@ -218,9 +223,18 @@ returns to thread `01a0147d`.** Amendment 2 §3 makes no further sampling
 reduction, streaming rewrite, swap, or retry automatic, and Amendment 1 §12
 forbids shrinking the model, data, workers, or budget silently. Do not truncate
 the dataset, do not swap the match mode, and do not reduce the match count on
-this runbook's authority.
+this runbook's authority. The 32.00 GiB gate is judged on `memory.peak` as
+ratified, regardless of the `anon`/`file` split — but a breach where `anon` ≤
+30.00 GiB and `file` accounts for the excess over 32.00 GiB is reported to the
+consult as a page-cache artefact, not silently passed and not silently retried.
 
 ## 3. Stage 1b — BC per arm
+
+Each BC run below executes inside the same §4/§5 containment (cgroup-v2
+`memory.high=44GiB`, `memory.max=48GiB`, `memory.swap.max=0`, `memory.oom.group=1`,
+swap 0) with `cgroup_guard38.sh` armed exactly as §5 describes; the run's cgroup
+`memory.peak` is ≤ **38.00 GiB** and is recorded in the status file at the end of
+each BC run.
 
 Optimizer and batch defaults are frozen unchanged (`--batch-size 64`, `--lr 3e-4`):
 pass neither flag. Both arms use the same dataset, the same `--validation-fraction 0.1`
@@ -262,10 +276,16 @@ what the PPO stage initializes from.
 
 `best.pt` is refreshed as soon as a new lowest-CE epoch is checkpointed, so an
 interrupted BC run always leaves a current `best.pt` behind. `--resume` restarts
-patience and best-epoch tracking from the resumed epoch — it does not re-read the
-old run's `best.pt` or `report.json` — so after any resumed run, re-select
-`best.pt` by hand from the merged `report.json`'s `epochs` list before the PPO
-stage initializes from it.
+patience and best-epoch tracking from the resumed epoch, and `write_training_report`
+overwrites `--report-output` wholesale — the resumed run's `report.json` rebuilds
+`epochs` from empty, so there is no merged `report.json` to read `best.pt` from.
+Before resuming, archive the pre-resume `report.json` and `best.pt` (for example
+`report.pre-resume.json` and `best.pre-resume.pt`) into the same checkpoint
+directory. After the resumed run finishes, compare the two reports'
+per-epoch `validation.mean_cross_entropy` by hand across both `epochs` lists and
+select the checkpoint belonging to the overall lowest value — the pre-resume
+`best.pre-resume.pt` or the resumed run's `best.pt` — before the PPO stage
+initializes from it. Record which file won in the status file.
 
 Record per arm from `report.json`: `best_epoch`, `best_validation_cross_entropy`,
 `stopped_early`, `epochs_run`, and the best epoch's `validation.agreement_rate`
@@ -380,9 +400,11 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-collect-bench \
 initialization arrives as a file. `--champion big-init.pt` is an **identity
 load**: `build_b2b_model` loads every tensor same-shape and then re-copies its
 two surgical tensors (`trunk.0`, `value_head.0`) at their full width, so nothing
-is left zeroed and the benched net is the exported one exactly — same weights,
-same actions, same trajectory lengths, same rows, same memory envelope as the big
-lap's step zero. Its `bad_skipped`/`bad_missing` check fails closed, so an
+is left zeroed and the benched net matches the exported file's BC-loaded
+prefixes and zeroed event columns exactly — the file's randomly-initialised
+modules are not reproduced byte-for-byte (each process draws its own random
+init), but its actions, trajectory lengths, rows, and memory envelope match the
+big lap's step zero. Its `bad_skipped`/`bad_missing` check fails closed, so an
 architecture mismatch between the export flags and the bench flags raises instead
 of silently dropping layers.
 

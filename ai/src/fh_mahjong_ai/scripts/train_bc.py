@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, List, Optional
@@ -265,8 +267,12 @@ def train_bc(
                         # Refresh best.pt right after this epoch's checkpoint is
                         # saved so an interrupted run always leaves a current
                         # best.pt behind, not just a run that reaches the end
-                        # of the loop.
-                        shutil.copyfile(checkpoint_path, checkpoint_dir / "best.pt")
+                        # of the loop. Copy-then-rename so a reader never
+                        # observes a partially written best.pt.
+                        best_pt_dst = checkpoint_dir / "best.pt"
+                        best_pt_tmp = checkpoint_dir / "best.pt.tmp"
+                        shutil.copyfile(checkpoint_path, best_pt_tmp)
+                        os.replace(best_pt_tmp, best_pt_dst)
                 if val_ce < patience_ref - min_delta:
                     patience_ref, stale = float(val_ce), 0
                 else:
@@ -311,10 +317,15 @@ def train_bc(
         # best.pt is refreshed in-loop as soon as best_epoch changes (above);
         # this is a no-op guard for callers that mutate checkpoint_dir between
         # the last in-loop refresh and return (e.g. tests, `--resume` chains).
+        # filecmp.cmp(shallow=False) compares sizes first and only reads both
+        # files when sizes match, so the common (already-refreshed) case never
+        # pays for a full byte compare.
         best_checkpoint_path = checkpoint_dir / f"epoch_{best_epoch:03d}.pt"
         best_pt_path = checkpoint_dir / "best.pt"
-        if not (best_pt_path.exists() and best_pt_path.read_bytes() == best_checkpoint_path.read_bytes()):
-            shutil.copyfile(best_checkpoint_path, best_pt_path)
+        if not (best_pt_path.exists() and filecmp.cmp(best_pt_path, best_checkpoint_path, shallow=False)):
+            best_pt_tmp = checkpoint_dir / "best.pt.tmp"
+            shutil.copyfile(best_checkpoint_path, best_pt_tmp)
+            os.replace(best_pt_tmp, best_pt_path)
 
     return all_metrics
 

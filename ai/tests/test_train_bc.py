@@ -233,6 +233,7 @@ def test_train_bc_patience_stops_early_and_writes_best(tmp_path: Path, monkeypat
     assert report["best_epoch"] == 3
     assert (ckpt_dir / "best.pt").read_bytes() == (ckpt_dir / "epoch_003.pt").read_bytes()
     assert torch.load(ckpt_dir / "best.pt", map_location="cpu")["metadata"]["model_config"]
+    assert not (ckpt_dir / "best.pt.tmp").exists()
 
 
 def test_train_bc_min_epochs_blocks_early_stop(tmp_path: Path, monkeypatch) -> None:
