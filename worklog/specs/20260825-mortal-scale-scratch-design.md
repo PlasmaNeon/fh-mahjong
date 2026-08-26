@@ -186,3 +186,22 @@ Measured B2b parameter counts: champion 96×4 k=3 = 2.74 M; control 96×4 k=1 = 
 
 12. **Governance.** Infrastructure failures are not scientific nulls. Neither arm may be promoted or deployed automatically. Every terminal result returns to this consultation thread, with checkpoints, histories, dataset and bridge hashes, initialization provenance, guard telemetry, screening reports, and confirmation comparisons preserved.
 
+
+## Amendment 2 (ratified 2026-08-25, Codex thread `01a0147d`) — BC dataset feasibility and bench checkpoint
+
+Preflight measurement: one chongci heuristic match emits 2,079 transitions (all four seats); `fh-mj-train-bc` holds the dataset in host RAM at ≈7,018 B/transition, so Amendment 1 §3's 10,000 all-seat matches ≈ 136 GiB against a 52 GiB box. Ruling:
+
+1. **Disposition.** Amendment 1 §3’s 10,000-match/all-seat dataset is infeasible on this box. This is a prerequisite infrastructure finding, not a scientific result. Authorize deterministic single-seat generation with a reduced **8,000 matches**, seeds `1,300,000–1,307,999`; seeds `1,308,000–1,309,999` remain unused.
+
+2. **Sampling rule.** Retain exactly one learning seat per match, selected as `(match_seed − 1,300,000) mod 4`. Filtering occurs during generation, before dataset serialization; transition subsampling or post-load truncation is forbidden. This yields exactly 2,000 matches per seat and approximately **4.16M transitions**, still roughly 10× the upper lineage precedent while reducing within-match correlation.
+
+3. **Memory gate.** Before BC, record manifest transition count, per-seat counts, calculated resident bytes at 7,018 B/transition, shard bytes, dataset/config/bridge digests, and a loader-only measured cgroup peak. Require calculated array bytes `<=30.00 GiB` and loader-only cgroup peak `<=32.00 GiB`; BC training remains under cgroup `memory.peak <=38.00 GiB`. Any breach stops and returns to consultation—no further sampling reduction, streaming rewrite, swap, or retry is automatic.
+
+4. **Split and readout.** Preserve Amendment 1’s whole-match 90/10 split, shared membership/shuffle seed, batch 64, 5–30 epochs, patience 5, and best-validation-cross-entropy selection. The zero-event legal-action-masked top-1 accuracy remains the required Stage-1 readout, but report it both overall and separately for all four selected seats. It measures held-out imitation quality, not PPO strength or campaign success.
+
+5. **Big-arm bench.** The proposed raw `--champion bc-big/best.pt` bench is **not sufficient as written**: nonzero random event columns can alter actions, trajectory lengths, rows, and therefore memory. Authorize the existing bench path only with a digest-pinned bench checkpoint whose `trunk.0` event columns are zeroed exactly as `--init-from-bc`, and whose seeded legal-action logits, probabilities, and greedy actions pass the same step-zero equality gate. Shapes, parameter count, rollout size, minibatch transfer, optimizer-state allocation, and all Amendment 1 §11 memory/CUDA/containment gates remain unchanged.
+
+6. **Bench evidence.** At the single frozen worker count, `all_digests_equal` and `rows_and_labels_equal` are recorded but explicitly non-load-bearing. Load-bearing evidence is complete seed coverage, rollout digest, rows, expected optimizer-step arithmetic including the ragged tail, labels, truncation, telemetry, memory/CUDA peaks, and clean monitoring.
+
+7. **Governance.** All other Amendment 1 controls remain frozen. No BC or PPO execution begins until these amended dataset and bench prerequisites pass; every failure returns to consultation.
+
