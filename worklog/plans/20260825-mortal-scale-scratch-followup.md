@@ -463,3 +463,124 @@ Wire in: in the `elif scratch:` branch after `model = build_scratch_model(...)`:
 - **Spec coverage:** A1 §3 → Task 1 (patience, min/max epochs are runbook flags, best checkpoint, val CE + top-1); §4 → Task 3; §6 → Task 2 (values, moments retained); §5/§7/§8/§9/§11 → Task 4 runbook; §2 gate (−0.0600 control rule) → runbook step 6.
 - **Placeholders:** none; the generate-data flag check is an explicit instruction to read `--help` and paste, not a TBD.
 - **Type consistency:** `split_bc_parameter_groups` / `build_optimizer` / `apply_lr_schedule` / `verify_bc_transfer` named identically in tests and code; `head_lr`/`head_lr_iters` consistent across `PPOConfig`, CLI, tests; `mean_cross_entropy` key consistent between Task 1 tests and code.
+
+---
+
+## Amendment 2 tasks (added 2026-08-25 after the Amendment 2 ruling)
+
+Measured on this machine with the Go bridge (`fh-mj-generate-data --episodes 4 --start-seed 1300000`, chongci, 4000-step cap): 8,329 transitions / 4 matches ≈ 2,082 rows per match, seats ≈ 25 % each — the generator records **all four seats** regardless of `EnvConfig.learning_seats=(0,)`. BC resident cost is the 7 loaded arrays ≈ 7,018 B/row; on-disk shards are ≈ 14 KB/row.
+
+### Task 5: single-seat sampling rule in `fh-mj-generate-data`
+
+**Files:**
+- Modify: `ai/src/fh_mahjong_ai/scripts/generate_data.py` (`generate_dataset` signature ~line 30, chunk loop ~line 81–135, manifest ~line 140–166, `main()` argparse)
+- Test: `ai/tests/test_generate_data.py`
+
+**Interfaces:**
+- Produces: `generate_dataset(..., learning_seat_rule: str = "all", seat_rule_base_seed: Optional[int] = None)`; CLI `--learning-seat-rule {all,seed-mod-4}` (default `all` = today's behaviour) and `--seat-rule-base-seed` (default = `--start-seed`). With `seed-mod-4`, for episode seed `s` only transitions whose `observation.seat == (s - base) % 4` are kept, applied to each chunk's transition list **before** `write_transitions_jsonl` / `shard_writer.write_many`. Manifest gains `"learning_seat_rule"`, `"seat_rule_base_seed"`, `"per_seat_transitions": {"0": n0, ...}`, and per-chunk `"transitions_before_seat_filter"`.
+
+- [ ] **Step 1: Failing tests** (append to `ai/tests/test_generate_data.py`; follow that file's existing pattern for calling `generate_dataset` with the mock bridge — read its signature first and adapt keyword names):
+
+```python
+def test_seed_mod_4_rule_keeps_exactly_one_seat_per_episode(tmp_path):
+    out = tmp_path / "data.jsonl"
+    manifest = tmp_path / "manifest.json"
+    stats = generate_dataset(episodes=8, start_seed=1_300_000, output_path=out, manifest_path=manifest,
+                             bridge_kind="mock", output_format="jsonl",
+                             learning_seat_rule="seed-mod-4")
+    transitions = read_transitions(out)
+    by_episode = {}
+    for t in transitions:
+        by_episode.setdefault(t.info["episode_index"], set()).add(int(t.observation.seat))
+    for ep, seats in by_episode.items():
+        assert seats == {ep % 4}, (ep, seats)   # seed = 1_300_000 + ep, base = 1_300_000
+    m = json.loads(manifest.read_text())
+    assert m["dataset"]["learning_seat_rule"] == "seed-mod-4"
+    assert m["dataset"]["seat_rule_base_seed"] == 1_300_000
+    assert sum(m["dataset"]["per_seat_transitions"].values()) == len(transitions) == stats["transitions"]
+    assert m["dataset"]["chunks"][0]["transitions_before_seat_filter"] >= m["dataset"]["chunks"][0]["transitions"]
+
+
+def test_default_rule_all_is_unchanged(tmp_path):
+    out = tmp_path / "data.jsonl"
+    generate_dataset(episodes=2, start_seed=7, output_path=out, manifest_path=tmp_path / "m.json",
+                     bridge_kind="mock", output_format="jsonl")
+    m = json.loads((tmp_path / "m.json").read_text())
+    assert m["dataset"]["learning_seat_rule"] == "all"
+    assert "transitions_before_seat_filter" in m["dataset"]["chunks"][0]
+
+
+def test_unknown_seat_rule_rejected(tmp_path):
+    with pytest.raises(ValueError, match="learning_seat_rule"):
+        generate_dataset(episodes=1, start_seed=0, output_path=tmp_path / "d.jsonl", manifest_path=tmp_path / "m.json",
+                         bridge_kind="mock", output_format="jsonl", learning_seat_rule="bogus")
+```
+If the mock bridge only ever emits seat 0, the first test still holds for episodes with `ep % 4 == 0` and must yield **zero** rows for the others — assert exactly that instead (rows for ep%4≠0 absent), and note it in the report.
+
+- [ ] **Step 2: Run, expect failure** — `uv run --project ai pytest ai/tests/test_generate_data.py -q -p no:cacheprovider -k "seat_rule or rule_all"` → TypeError on `learning_seat_rule`.
+
+- [ ] **Step 3: Implement.** Module-level `SEAT_RULES = ("all", "seed-mod-4")`; validate at the top of `generate_dataset` (`ValueError` naming `learning_seat_rule`). In the chunk loop, after `transitions` is produced and before the emptiness check:
+
+```python
+            transitions_before = len(transitions)
+            if learning_seat_rule == "seed-mod-4":
+                base = start_seed if seat_rule_base_seed is None else seat_rule_base_seed
+                transitions = [
+                    t for t in transitions
+                    if int(t.observation.seat) == ((chunk_seed + int(t.info["episode_index"]) - episode_offset) - base) % 4
+                ]
+            for t in transitions:
+                per_seat[int(t.observation.seat)] += 1
+```
+with `per_seat = collections.Counter()` before the loop; record `"transitions_before_seat_filter": transitions_before` in each chunk stat and `learning_seat_rule`, `seat_rule_base_seed` (resolved base or None for `all`), `per_seat_transitions` (string keys, sorted) in the dataset manifest dict. The emptiness guard message mentions the seat rule when one is active. CLI: `--learning-seat-rule` with `choices=SEAT_RULES, default="all"`, `--seat-rule-base-seed` (int, default None); pass through. Confirm the mock path sets `t.info["episode_index"]` the same way the bridge path does (~line 202).
+
+- [ ] **Step 4: Run** the generate-data test file; then a real-bridge smoke: `uv run --project ai fh-mj-generate-data --episodes 4 --start-seed 1300000 --learning-seat-rule seed-mod-4 --output <scratchpad>/gen-seat --manifest-output <scratchpad>/gen-seat.json --format npz-shards --match-mode chongci --max-steps-per-episode 4000 --bridge-lib build/libfh_mahjong_bridge.dylib` and confirm the manifest shows ≈2,080 transitions total with per-seat counts each ≈ 520 (episode seeds 1300000..1300003 → seats 0,1,2,3). Paste the manifest `dataset` block into the report.
+
+- [ ] **Step 5: Commit** — `feat(ai): fh-mj-generate-data --learning-seat-rule seed-mod-4 (Amendment 2 §2)`.
+
+### Task 6: `fh-mj-export-scratch-init` and runbook/status update
+
+**Files:**
+- Create: `ai/src/fh_mahjong_ai/scripts/export_scratch_init.py`; register `fh-mj-export-scratch-init` in `ai/pyproject.toml` `[project.scripts]` beside the other `fh-mj-*` entries
+- Modify: `worklog/plans/20260825-mortal-scale-scratch-runbook.md`, `worklog/rl-experiment/20260825-mortal-scale-scratch-status.md`, `ai/CLAUDE.md` (CLI table rows), `ai/MODULES.md`
+- Test: `ai/tests/test_export_scratch_init.py` (new)
+
+**Interfaces:**
+- Produces: `export_scratch_init(bc: Path, out: Path, model_config: ModelConfig, device: str = "cpu") -> dict` (returns the transfer-gate record) and CLI `fh-mj-export-scratch-init --bc <best.pt> --out <init.pt> --event-window 128 [--model-* flags] [--privileged-critic/--no-privileged-critic] [--aux-heads/--no-aux-heads] [--device cpu]` mirroring `scripts/train_b2b.py`'s flag handling (`model_config_from_args(args, event_window=args.event_window)` then `replace(privileged_critic=..., aux_heads=...)`). Behaviour: `build_scratch_model(env39, cfg, device, bc_checkpoint=bc)` → `verify_bc_transfer(model, bc, env39)` → `save_checkpoint(out, model, metadata={"model_config": model_config_metadata(cfg), "init": {"kind": "scratch", "bc_checkpoint_sha256": model.init_from_bc_sha256, "bc_checkpoint_path": str(bc), "transfer_gate": record}, "purpose": "bench-init"})`; prints the record as JSON; gate failure propagates (non-zero exit). `env39` = the same 39-channel config `train_b2b` derives via `_b2b_model_env_config(EnvConfig(oracle_observation=True, event_history_window=event_window))`.
+
+- [ ] **Step 1: Failing test** `ai/tests/test_export_scratch_init.py`:
+
+```python
+import torch
+from fh_mahjong_ai.config import EnvConfig, ModelConfig
+from fh_mahjong_ai.model import PolicyValueNet, infer_model_config
+from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
+from fh_mahjong_ai.scripts.export_scratch_init import export_scratch_init
+from conftest import SMALL_MODEL
+
+
+def test_export_scratch_init_writes_gated_checkpoint(tmp_path):
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    env39 = EnvConfig(bridge_kind="mock")
+    bc = tmp_path / "best.pt"
+    save_checkpoint(bc, PolicyValueNet(env39, cfg), metadata={"model_config": model_config_metadata(cfg)})
+    out = tmp_path / "init.pt"
+    record = export_scratch_init(bc, out, cfg, device="cpu")
+    payload = torch.load(out, map_location="cpu")
+    assert payload["metadata"]["init"]["kind"] == "scratch"
+    assert payload["metadata"]["init"]["transfer_gate"]["greedy_match_rate"] == 1.0
+    assert payload["metadata"]["init"]["bc_checkpoint_sha256"] == record["bc_checkpoint_sha256"]
+    assert payload["metadata"]["purpose"] == "bench-init"
+    assert infer_model_config(payload["model"], payload["metadata"]) == cfg
+    ev_dim = PolicyValueNet(env39, cfg).event_encoder.output_dim
+    assert torch.count_nonzero(payload["model"]["trunk.0.weight"][:, -ev_dim:]) == 0
+```
+
+- [ ] **Step 2: Run, expect failure** — ImportError.
+
+- [ ] **Step 3: Implement** the script per the Interfaces block; add the `pyproject.toml` entry; `uv sync --project ai` so the entry point resolves; smoke `uv run --project ai fh-mj-export-scratch-init --help`.
+
+- [ ] **Step 4: Runbook + status + docs.** Runbook step 2 → **8,000 matches**, `--start-seed 1300000 --learning-seat-rule seed-mod-4` (seeds 1,300,000–1,307,999; 1,308,000–1,309,999 unused); Gate 2a → Amendment 2 §3 verbatim (manifest transitions, per-seat counts, resident bytes = rows × 7,018 B ≤ 30.00 GiB, loader-only cgroup `memory.peak` ≤ 32.00 GiB — give the exact loader-only one-liner using `read_transition_arrays(path, keys=BC_ARRAY_KEYS)` run under the cgroup); Stage-1 readout overall **and per seat** — add `per_seat_agreement` to the validation report if it is < 20 lines with a test, otherwise document a short snippet over `report.json` + the shard `seats` array; bench step → `fh-mj-export-scratch-init --bc bc-big/best.pt --out bench/big-init.pt --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --event-window 128` then `fh-mj-collect-bench --champion bench/big-init.pt …`, noting `build_b2b_model` additionally zeroes the value head's privileged columns (critic-only; actions/rows unaffected) and recording `big-init.pt`'s digest; §6: `all_digests_equal`/`rows_and_labels_equal` recorded, non-load-bearing. Status file: checklist gains "A2 dataset gate" and "bench-init export". `ai/CLAUDE.md`: CLI rows for `fh-mj-export-scratch-init` and `--learning-seat-rule`; `ai/MODULES.md`: one bullet each. No change narration.
+
+- [ ] **Step 5: Gates** — full AI suite, `gofmt -l .`, `go vet ./...`, `go test ./...`, `cd web && npx tsc && npx vitest run`.
+- [ ] **Step 6: Commit** — `feat(ai): fh-mj-export-scratch-init; Amendment 2 runbook`.
