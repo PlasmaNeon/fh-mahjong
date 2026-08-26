@@ -1031,8 +1031,14 @@ def test_verify_bc_transfer_fails_closed_on_perturbation(tmp_path):
     model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
     with torch.no_grad():
         model.policy_head.bias.add_(0.5)
-    with pytest.raises(RuntimeError, match="transfer gate"):
+    with pytest.raises(RuntimeError, match="transfer gate") as excinfo:
         verify_bc_transfer(model, bc_path, env39)
+    # Fix round 1: all four Amendment 1 §4 quantities are GATED, not merely
+    # recorded -- the probability diff is enforced alongside the logit diff and
+    # reported in the failure message.
+    message = str(excinfo.value)
+    assert float(re.search(r"max_abs_logit_diff=([0-9.e+-]+)", message).group(1)) > 0.0
+    assert float(re.search(r"max_abs_prob_diff=([0-9.e+-]+)", message).group(1)) > 0.0
 
 
 def test_train_b2b_init_metadata_carries_transfer_gate(tmp_path):
@@ -1065,3 +1071,39 @@ def test_verify_bc_transfer_fails_closed_on_unzeroed_event_columns(tmp_path):
         model.trunk[0].weight[:, -event_dim:].copy_(bc_columns)
     with pytest.raises(RuntimeError, match="transfer gate"):
         verify_bc_transfer(model, bc_path, env39)
+
+
+def test_verify_bc_transfer_fails_closed_when_the_bc_file_changed_after_load(tmp_path):
+    """Fix round 1: M4's single-read discipline, extended to the gate.
+    `build_scratch_model` records the sha256 of the bytes it actually loaded;
+    an atomic replacement of the mutable `--init-from-bc` path between that
+    read and this one would otherwise have the gate prove step-0 parity
+    against a checkpoint this run never loaded -- a passing gate for a
+    transfer that never happened."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    _, rewritten = _bc_checkpoint(tmp_path, cfg)  # same path, a DIFFERENT random net
+    assert rewritten == bc_path
+    assert hashlib.sha256(bc_path.read_bytes()).hexdigest() != model.init_from_bc_sha256
+    with pytest.raises(RuntimeError, match="digest mismatch") as excinfo:
+        verify_bc_transfer(model, bc_path, env39)
+    message = str(excinfo.value)
+    assert "transfer gate" in message and model.init_from_bc_sha256 in message
+
+
+def test_verify_bc_transfer_record_names_the_bc_digest(tmp_path):
+    """The record is self-contained evidence: it names the exact checkpoint
+    bytes the parity claim was proved against, so an audit off a written
+    `iter_*.pt` needs nothing but `metadata["init"]`."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    record = verify_bc_transfer(model, bc_path, env39)
+    assert record["bc_checkpoint_sha256"] == hashlib.sha256(bc_path.read_bytes()).hexdigest()
+    assert record["bc_checkpoint_sha256"] == model.init_from_bc_sha256
+    assert record["max_abs_prob_diff"] == 0.0

@@ -237,12 +237,37 @@ def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: E
     identical weights and identical inputs. Any nonzero diff is a real defect
     (a mis-copied tensor, an unzeroed column), never float noise.
 
+    The claim is scoped to the POLICY path: logits, probabilities and greedy
+    actions. Values and the auxiliary heads are deliberately not compared --
+    the privileged critic, the value/aux/risk/q heads and the event encoder
+    have no BC counterpart at all (they are the `unloaded_keys`), so there is
+    nothing there for step 0 to be equal to.
+
     The BC reference net is moved onto the model's own device before the probe:
     comparing a CPU forward against a CUDA forward would differ in the last
     ulp purely from kernel/reduction differences and would abort every GPU
     launch. Same device, same shapes, same kernels => the same reduction order
-    on both sides, which is what makes exact equality the right assertion."""
-    payload = torch.load(Path(bc_checkpoint), map_location="cpu")
+    on both sides, which is what makes exact equality the right assertion.
+
+    Single-read discipline (as in `build_scratch_model`, M4): the checkpoint
+    bytes are read ONCE here, hashed, and required to match the digest
+    `build_scratch_model` recorded on the model (`init_from_bc_sha256`). An
+    atomic replacement of the path between the two reads would otherwise have
+    this gate prove parity against bytes the model never loaded -- a passing
+    gate for a transfer that never happened. A mismatch is a gate failure."""
+    data = Path(bc_checkpoint).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    expected_digest = getattr(model, "init_from_bc_sha256", None)
+    if digest != expected_digest:
+        raise RuntimeError(
+            "--init-from-bc transfer gate FAILED: BC checkpoint digest mismatch -- "
+            f"{bc_checkpoint} now hashes to sha256 {digest}, but this model was built "
+            f"from sha256 {expected_digest}. The file changed between "
+            "`build_scratch_model`'s read and this gate (or the model was not built "
+            "from it at all), so the probe below would prove parity against bytes this "
+            "run never loaded"
+        )
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
     bc_config = infer_model_config(payload["model"], payload.get("metadata"))
     bc_model = PolicyValueNet(env_config, bc_config)
     bc_model.load_state_dict(payload["model"], strict=True)
@@ -272,6 +297,13 @@ def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: E
             continue
         if not torch.equal(got_t, ref_t):
             mismatched.append(key)
+    # The probe is NOT redundant with the tensor check above. That check proves
+    # the loaded tensors are BC's; this proves nothing ELSE reaches the policy
+    # output. A future module added to `encode`/`policy_head` -- another
+    # embedding, a second fusion input, an unloaded normalisation -- would pass
+    # the tensor check untouched (it is not under SCRATCH_BC_PREFIXES) while
+    # silently moving step-0 logits away from BC. Only a forward pass catches
+    # that class of change.
     gen = torch.Generator().manual_seed(probe_seed)
     channels, height, width = env_config.plane_shape
     planes = torch.rand((probe_batch, channels, height, width), generator=gen)
@@ -297,12 +329,19 @@ def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: E
     logit_diff = float((ref - got).abs()[legal].max().item())
     prob_diff = float((torch.softmax(ref, 1) - torch.softmax(got, 1)).abs().max().item())
     greedy = float((ref.argmax(1) == got.argmax(1)).float().mean().item())
-    record = {"probe_seed": probe_seed, "probe_batch": probe_batch, "max_abs_logit_diff": logit_diff,
+    record = {"probe_seed": probe_seed, "probe_batch": probe_batch,
+              "bc_checkpoint_sha256": digest, "max_abs_logit_diff": logit_diff,
               "max_abs_prob_diff": prob_diff, "greedy_match_rate": greedy,
               "loaded_keys": loaded, "unloaded_keys": unloaded, "loaded_tensors_identical": not mismatched}
-    if mismatched or logit_diff != 0.0 or greedy != 1.0:
+    # All four quantities are GATED, not merely recorded: the probability diff
+    # covers the full row (including the masked sentinels), so it also catches a
+    # divergence confined to actions the probe happened to mark illegal, which
+    # `logit_diff` -- taken under `legal` only -- cannot see.
+    if mismatched or logit_diff != 0.0 or prob_diff != 0.0 or greedy != 1.0:
         raise RuntimeError(f"--init-from-bc transfer gate FAILED: tensors_mismatched={mismatched[:6]}, "
-                           f"max_abs_logit_diff={logit_diff}, greedy_match_rate={greedy}")
+                           f"max_abs_logit_diff={logit_diff}, max_abs_prob_diff={prob_diff}, "
+                           f"greedy_match_rate={greedy}")
+    del bc_model, bc_sd, payload, data
     return record
 
 
