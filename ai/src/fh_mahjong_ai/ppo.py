@@ -148,6 +148,14 @@ class PPOConfig:
     # No async prefetch or double buffering — synchronous one-minibatch-at-a-
     # time transfer only, per the ruling.
     minibatch_device_transfer: bool = False
+    # mortal-scale-scratch Amendment 1 §6: two AdamW parameter groups for
+    # --scratch --init-from-bc runs. Parameters loaded from the BC stage
+    # (SCRATCH_BC_PREFIXES) train at `lr` throughout; every other parameter
+    # (event encoder, value/Q, privileged critic, aux and risk heads) trains at
+    # `head_lr` for iterations 1..head_lr_iters, then at `lr`. The optimizer is
+    # never rebuilt at the switch -- moments are retained. None = one group.
+    head_lr: Optional[float] = None
+    head_lr_iters: int = 0
     collector: str = "process"   # "process" (spawn workers) | "batched" (env pool + batched forward)
     pool_slots: int = 128        # concurrent env-pool slots for collector="batched"
     pool_max_size: int = 1

@@ -39,6 +39,16 @@ def main() -> None:
                         "core-bound and extra workers beyond the match count sit idle")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
+    p.add_argument("--head-lr", type=float, default=None,
+                   help="mortal-scale-scratch Amendment 1 §6: with --scratch --init-from-bc, "
+                        "the learning rate for every parameter NOT loaded from the BC stage "
+                        "(event encoder, value/Q, privileged critic, aux and risk heads) for "
+                        "the first --head-lr-iters iterations; the BC-loaded parameters stay "
+                        "at --lr throughout. Unset = a single parameter group at --lr")
+    p.add_argument("--head-lr-iters", type=int, default=0,
+                   help="with --head-lr: iterations 1..N run the non-BC parameters at "
+                        "--head-lr, after which they drop to --lr. The optimizer is never "
+                        "rebuilt at the switch, so Adam moments carry across it")
     p.add_argument("--entropy-coef", type=float, default=0.0)
     p.add_argument("--ppo-epochs", type=int, default=2)
     p.add_argument("--minibatch-size", type=int, default=256)
@@ -173,6 +183,10 @@ def main() -> None:
             p.error("--champion is required unless --scratch or --resume-from-state is given")
         if args.init_from_bc is not None and not args.scratch:
             p.error("--init-from-bc requires --scratch")
+        # Amendment 1 §6: the head group is "everything the BC stage did not
+        # supply", so it only exists relative to an --init-from-bc load.
+        if args.head_lr is not None and args.init_from_bc is None:
+            p.error("--head-lr requires --scratch --init-from-bc")
     if args.widen_event_hidden < 0:
         p.error(f"--widen-event-hidden must not be negative (got {args.widen_event_hidden}); "
                "0 disables the gru-width warm-start surgery")
@@ -191,7 +205,8 @@ def main() -> None:
                            match_mode=args.match_mode, max_steps_per_episode=args.max_steps_per_episode,
                            oracle_observation=True, event_history_window=args.event_window)
     config = PPOConfig(iterations=args.iterations, matches_per_iter=args.matches_per_iter,
-                       gamma=args.gamma, lr=args.lr, entropy_coef=args.entropy_coef,
+                       gamma=args.gamma, lr=args.lr, head_lr=args.head_lr,
+                       head_lr_iters=args.head_lr_iters, entropy_coef=args.entropy_coef,
                        ppo_epochs=args.ppo_epochs, minibatch_size=args.minibatch_size,
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,

@@ -23,6 +23,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import torch
+from torch import nn
 
 from . import memprobe
 from . import train_state
@@ -213,6 +214,35 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
     model.init_from_bc_sha256 = digest
     model.eval()
     return model
+
+
+def split_bc_parameter_groups(model: nn.Module) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
+    """Partition parameters by name into (loaded-from-BC, heads) using
+    SCRATCH_BC_PREFIXES. Pure function of parameter names, so a resumed run
+    rebuilds identical groups and optimizer.load_state_dict matches."""
+    bc, heads = [], []
+    for name, param in model.named_parameters():
+        (bc if name.startswith(SCRATCH_BC_PREFIXES) else heads).append(param)
+    return bc, heads
+
+
+def build_optimizer(model: nn.Module, config: PPOConfig) -> torch.optim.AdamW:
+    if config.head_lr is None:
+        return torch.optim.AdamW(model.parameters(), lr=config.lr)
+    bc, heads = split_bc_parameter_groups(model)
+    return torch.optim.AdamW([{"params": bc, "lr": config.lr, "name": "bc"},
+                              {"params": heads, "lr": config.head_lr, "name": "heads"}], lr=config.lr)
+
+
+def apply_lr_schedule(optimizer: torch.optim.AdamW, config: PPOConfig, iteration: int) -> dict[str, float]:
+    """Set each group's lr for `iteration` (1-based). Idempotent, so calling it
+    every iteration -- including the first after a resume -- is correct."""
+    if config.head_lr is None or len(optimizer.param_groups) == 1:
+        return {"lr_bc": config.lr, "lr_heads": config.lr}
+    heads_lr = config.head_lr if iteration <= config.head_lr_iters else config.lr
+    optimizer.param_groups[0]["lr"] = config.lr
+    optimizer.param_groups[1]["lr"] = heads_lr
+    return {"lr_bc": config.lr, "lr_heads": heads_lr}
 
 
 def _assert_b2b_anchor_matches_live_env(fn_name: str, anchor_env_config: EnvConfig,
@@ -1219,6 +1249,14 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             raise ValueError("champion_checkpoint is required unless scratch=True or resume_from_state is given")
         if init_from_bc is not None and not scratch:
             raise ValueError("init_from_bc requires scratch=True")
+        # Amendment 1 §6: the two lr groups are defined by which parameters the
+        # BC stage supplied (SCRATCH_BC_PREFIXES). Without a BC init there is
+        # no such split -- every parameter is random -- so a head_lr here would
+        # silently mean "train these arbitrary modules faster than those".
+        if config.head_lr is not None and init_from_bc is None:
+            raise ValueError(
+                "head_lr requires scratch=True with init_from_bc (groups are defined "
+                "relative to the BC-loaded prefixes)")
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1606,7 +1644,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
         train_state._write_lock_owner(lock_file, run_id=run_id)
         model.train()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        optimizer = build_optimizer(model, config)
         if state_payload is not None:
             optimizer.load_state_dict(state_payload["optimizer"])
             torch.set_rng_state(state_payload["torch_rng"])
@@ -1654,10 +1692,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         raise RuntimeError(f"iter {iteration}: match telemetry missing or incomplete")
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
+                # Amendment 1 §6: re-applied EVERY iteration, before the update
+                # that consumes it. Idempotent by construction, so the first
+                # iteration after a resume lands on this iteration's lr rather
+                # than inheriting whatever the restored optimizer state carried.
+                lrs = apply_lr_schedule(optimizer, config, iteration)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
                 metrics["iteration"] = iteration
                 metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
                 metrics["steps"] = len(batch)
+                metrics.update(lrs)
                 # Aux-supervision telemetry: an all-zero deal-in rate across many
                 # iters is the corrupted-labels signature — watch it in history.json.
                 if batch.dealin_labels is not None:

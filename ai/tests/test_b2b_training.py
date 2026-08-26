@@ -892,3 +892,70 @@ def test_train_b2b_scratch_rejects_champion_and_surgeries(tmp_path):
                   init_from_bc=bc_path)
     with pytest.raises(ValueError, match="growth_blocks/widen_event_hidden"):
         train_b2b(env, cfg, None, tmp_path / "e", config, scratch=True, widen_event_hidden=8)
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch Amendment 1 §6: two-group learning-rate schedule.
+# ---------------------------------------------------------------------------
+
+
+def test_split_bc_parameter_groups_partitions_all_parameters():
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, split_bc_parameter_groups
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    bc, heads = split_bc_parameter_groups(model)
+    assert len(bc) + len(heads) == len(list(model.parameters()))
+    names = dict(model.named_parameters())
+    bc_ids = {id(p) for p in bc}
+    for name, p in names.items():
+        assert (id(p) in bc_ids) == name.startswith(SCRATCH_BC_PREFIXES), name
+    assert any(n.startswith("event_encoder.") for n, p in names.items() if id(p) not in bc_ids)
+    assert any(n.startswith("value_head.") for n, p in names.items() if id(p) not in bc_ids)
+
+
+def test_lr_schedule_switches_after_head_lr_iters_and_keeps_moments():
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    config = PPOConfig(lr=2e-5, head_lr=2e-4, head_lr_iters=25)
+    opt = build_optimizer(model, config)
+    assert len(opt.param_groups) == 2
+    assert apply_lr_schedule(opt, config, 1) == {"lr_bc": 2e-5, "lr_heads": 2e-4}
+    assert apply_lr_schedule(opt, config, 25) == {"lr_bc": 2e-5, "lr_heads": 2e-4}
+    # take one step so moments exist, then switch
+    loss = sum(p.sum() for p in model.parameters())
+    loss.backward(); opt.step()
+    state_before = {k: v["exp_avg"].clone() for k, v in opt.state.items() if "exp_avg" in v}
+    assert apply_lr_schedule(opt, config, 26) == {"lr_bc": 2e-5, "lr_heads": 2e-5}
+    assert opt.param_groups[1]["lr"] == 2e-5
+    for k, v in opt.state.items():
+        assert torch.equal(v["exp_avg"], state_before[k])
+
+
+def test_build_optimizer_single_group_by_default():
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL))
+    opt = build_optimizer(model, PPOConfig(lr=3e-5))
+    assert len(opt.param_groups) == 1 and opt.param_groups[0]["lr"] == 3e-5
+    assert apply_lr_schedule(opt, PPOConfig(lr=3e-5), 7) == {"lr_bc": 3e-5, "lr_heads": 3e-5}
+
+
+def test_train_b2b_head_lr_requires_init_from_bc(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic", head_lr=2e-4, head_lr_iters=1)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(ValueError, match="head_lr"):
+        train_b2b(env, cfg, None, tmp_path / "run", config, scratch=True)
+
+
+def test_train_b2b_records_lr_telemetry_with_schedule(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=3, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic",
+                       lr=2e-5, head_lr=2e-4, head_lr_iters=2)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    history = train_b2b(env, cfg, None, tmp_path / "run", config, base_seed=5, scratch=True, init_from_bc=bc_path)
+    assert [h["lr_heads"] for h in history] == [2e-4, 2e-4, 2e-5]
+    assert all(h["lr_bc"] == 2e-5 for h in history)

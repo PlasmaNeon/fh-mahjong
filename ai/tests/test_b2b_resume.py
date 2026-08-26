@@ -2745,3 +2745,45 @@ def test_legacy_state_without_bonus_fields_normalizes() -> None:
     from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
     assert {"placement_bonus_values", "placement_bonus_lambda",
             "placement_bonus_calibration_digest"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+
+def _bc_checkpoint(tmp_path: Path, model_config: ModelConfig) -> Path:
+    """A BC-stage checkpoint for the `--scratch --init-from-bc` path."""
+    from fh_mahjong_ai.storage import model_config_metadata
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), model_config)
+    path = tmp_path / "bc.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(model_config)})
+    return path
+
+
+def test_resume_rebuilds_two_parameter_groups(tmp_path) -> None:
+    # mortal-scale-scratch Amendment 1 §6: group membership is a pure function
+    # of parameter names, so a resumed run rebuilds the SAME two AdamW groups
+    # and `optimizer.load_state_dict` matches (a group-count/size mismatch
+    # would raise inside load_state_dict, failing this run outright). The
+    # schedule is re-applied every iteration, so the first iteration after a
+    # resume lands on the post-switch lr rather than inheriting the saved one.
+    env, model_config, _champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
+    config_first = replace(config_first, head_lr=2e-4, head_lr_iters=2)
+    bc_path = _bc_checkpoint(tmp_path, model_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    first = train_b2b(env, model_config, None, checkpoint_dir, config_first,
+                      base_seed=5, train_state_every=1,
+                      scratch=True, init_from_bc=bc_path)
+    assert [row["lr_heads"] for row in first] == [2e-4, 2e-4]
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert len(state_before["optimizer"]["param_groups"]) == 2
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, None, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1,
+                        resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    assert [row["lr_heads"] for row in history if row["iteration"] >= 3] == [2e-5, 2e-5]
+    assert all(row["lr_bc"] == 2e-5 for row in history)
+    state_after = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert len(state_after["optimizer"]["param_groups"]) == 2
+    assert [g["lr"] for g in state_after["optimizer"]["param_groups"]] == [2e-5, 2e-5]
