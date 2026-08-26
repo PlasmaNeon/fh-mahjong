@@ -83,11 +83,20 @@ no reuse, no overlap:
 
 ## 1. Prerequisites and digests
 
+**Before anything else — the box is shared and the lane is GPU-serial.** Run
+`pgrep -af "fh-mj|fh_mahjong_ai"` and read every `worklog/rl-experiment/*status*.md`. If any
+lap, bench, or evaluation is running: do not `git pull`/`checkout`, do not rebuild the bridge,
+and do not start GPU work; a running lap pins the bridge digest and (for its evaluations) the
+checkout, and its drift check hashes its own snapshot, but a resume re-hashes the source path.
+CPU-only dataset generation may run alongside with that lap's owner's agreement, against the
+bridge already on disk — record that digest as this experiment's pin. Coordinate with the
+owning session before touching `/root/fh-mahjong` at all.
+
 ```
 ssh wsl
 cd /root/fh-mahjong
-git pull
-go build -buildmode=c-shared -o build/libfh_mahjong_bridge.so ./cmd/rlbridge
+git pull                     # only on an idle box (see above)
+go build -buildmode=c-shared -o build/libfh_mahjong_bridge.so ./cmd/rlbridge   # only on an idle box
 uv sync --project ai --extra dev
 sha256sum build/libfh_mahjong_bridge.so
 sha256sum /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt
