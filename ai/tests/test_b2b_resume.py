@@ -2787,3 +2787,36 @@ def test_resume_rebuilds_two_parameter_groups(tmp_path) -> None:
     state_after = torch.load(state_path, map_location="cpu", weights_only=False)
     assert len(state_after["optimizer"]["param_groups"]) == 2
     assert [g["lr"] for g in state_after["optimizer"]["param_groups"]] == [2e-5, 2e-5]
+
+
+def test_legacy_state_without_head_lr_fields_normalizes(caplog) -> None:
+    # `head_lr`/`head_lr_iters` (Amendment 1 §6) ship AFTER released
+    # train_state.pt files exist, so a pre-upgrade echo is silent about both.
+    # Without the whitelist entry `_validate_resume_config_echo` reads that
+    # silence as recipe drift and refuses to resume ANY in-flight run.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
+    assert {"head_lr", "head_lr_iters"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+    current = _config_echo_triple()
+    assert current["ppo_config"]["head_lr"] is None
+    assert current["ppo_config"]["head_lr_iters"] == 0
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["head_lr"]
+    del saved["ppo_config"]["head_lr_iters"]
+
+    with caplog.at_level(logging.INFO):
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
+    assert any("head_lr" in record.getMessage() for record in caplog.records)
+
+
+def test_resume_config_echo_explicit_different_head_lr_still_raises() -> None:
+    # The back-fill only covers SILENCE. A state file that explicitly recorded
+    # a different head_lr is real recipe drift and must still be rejected.
+    from fh_mahjong_ai import train_state as train_state_mod
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    saved["ppo_config"]["head_lr"] = 2e-4
+    with pytest.raises(ValueError, match="head_lr"):
+        train_state_mod._validate_resume_config_echo(current, saved)

@@ -421,6 +421,8 @@ _LEGACY_ECHO_ADDITIONS = {
         "placement_bonus_values",             # absent before placement-reshape Stage 0 (2026-08-22)
         "placement_bonus_lambda",             # idem
         "placement_bonus_calibration_digest", # idem
+        "head_lr",                            # absent before mortal-scale-scratch Amendment 1 §6 (2026-08-25)
+        "head_lr_iters",                      # idem
     },
 }
 
