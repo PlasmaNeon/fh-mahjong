@@ -23,19 +23,21 @@
 
 ## Current stage
 
-**NOT LAUNCHED — Amendment 2 ratified; BC data generation authorized ONLY with
-`--learning-seat-rule seed-mod-4` and 8,000 matches; Gate 2a (≤ 30.00 / 32.00 GiB) before
-any BC training.**
-
-Code for both stages is on `experiment/mortal-scale-scratch` (PR #223). Nothing has been
-generated, trained, benched, or evaluated on the box.
+**STAGE 2 RUNNING — BC dataset generation on the 4090 box** (pid 1404416, launched
+2026-08-26 ~04:45 UTC, `fh-mj-generate-data --episodes 8000 --start-seed 1300000
+--learning-seat-rule seed-mod-4`, log `/root/fh-mahjong-runs/mortal-scale-scratch/logs/gen-bc-data.log`).
+CPU-only, single process. Everything after it (Gate 2a loader test, BC training, bench, laps)
+is **queued behind the placement-reshape Stage-1 lap** that owns the GPU and the frozen
+`/root/fh-mahjong` checkout (session `placement-reshape-bc`; ~2 days incl. screens + confirmation).
+Standing conditions agreed with that session: no GPU work, no bridge rebuilds, no writes to
+`/root/fh-mahjong` (repo or `build/`), keep > 100 GB free.
 
 ## Stage checklist
 
 | # | Stage | Runbook | State | Evidence |
 |---|---|---|---|---|
-| 1 | Bridge build + `uv sync` + digests | §1 | not started | bridge sha256, anchor sha256, git commit |
-| 2 | BC dataset — 8,000 matches, seeds 1,300,000–1,307,999, `--learning-seat-rule seed-mod-4` | §2 | not started | dataset manifest digest, transition count, `per_seat_transitions` |
+| 1 | Bridge build + `uv sync` + digests | §1 | done (see event log) | bridge sha256 `66f7a061f6314715d4c0cb2524861161f97f8ebe1aa8609f730ac274adf76cd9` (the box's pinned binary, shared with placement-reshape; NOT rebuilt); anchor sha256 `ce9d867f…` ✓; checkout `9098aed` |
+| 2 | BC dataset — 8,000 matches, seeds 1,300,000–1,307,999, `--learning-seat-rule seed-mod-4` | §2 | RUNNING (pid 1404416) | dataset manifest digest, transition count, `per_seat_transitions` |
 | 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | not started | rows × 7,018 B, `memory.peak`, shard bytes, `free -g` |
 | 3 | BC control (96×4, k=1) | §3 | not started | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
 | 4 | BC big (192×24, k=1) | §3 | not started | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
@@ -103,4 +105,6 @@ Append only. `UTC timestamp — session-name — what happened.`
 
 - `2026-08-25` — mortal-scale-scratch — runbook, status file and follow-up flag docs written; nothing launched.
 - `2026-08-25` — mortal-scale-scratch — Amendment 2 ratified (thread `01a0147d`): 8,000 single-seat matches, dataset gates 30.00/32.00 GiB, bench through an exported scratch-init checkpoint. `fh-mj-generate-data --learning-seat-rule seed-mod-4` and `fh-mj-export-scratch-init` landed; runbook §0/§2/§3/§4 follow it.
+- `2026-08-26 ~04:15Z` — mortal-scale-scratch — PR #223 merged to main (`9098aed`). Runbook §1 run on the box: `git pull` (a740662 → 9098aed), bridge rebuilt, `uv sync`. **Collision:** a placement-reshape Stage-1 lap (session `placement-reshape-bc`, pinned bridge `66f7a061…`, checkout frozen at `a740662`) was already running; the rebuild changed the source-path bridge to `cf4df3f2…`. The running lap was unaffected (the drift check hashes the per-run snapshot), the peer session restored the pinned bytes over `build/libfh_mahjong_bridge.so` (rebuilt copy kept as `…so.rebuilt-9098aed`), and the checkout stays at `9098aed` pending that session's decision. A first generation attempt (pid 1394200, wrong bridge) was stopped and its partial `bc-data/` deleted.
+- `2026-08-26 ~04:45Z` — mortal-scale-scratch — Stage 2 launched with the peer session's OK against the pinned bridge `66f7a061…`; GPU stages queued behind placement-reshape.
 - `—` — (add next event here)
