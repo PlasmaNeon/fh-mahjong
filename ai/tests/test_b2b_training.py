@@ -959,3 +959,45 @@ def test_train_b2b_records_lr_telemetry_with_schedule(tmp_path):
     history = train_b2b(env, cfg, None, tmp_path / "run", config, base_seed=5, scratch=True, init_from_bc=bc_path)
     assert [h["lr_heads"] for h in history] == [2e-4, 2e-4, 2e-5]
     assert all(h["lr_bc"] == 2e-5 for h in history)
+
+
+def test_train_b2b_head_lr_and_head_lr_iters_must_be_paired(tmp_path):
+    # Fix round 1: each flag is inert without the other -- head_lr with the
+    # DEFAULT head_lr_iters=0 is a silent no-op (every iteration is already
+    # past the switch), and head_lr_iters without head_lr never reaches a
+    # second parameter group. Both are launch mistakes that would otherwise
+    # run a full lap under the wrong recipe while the telemetry looks fine.
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    base = dict(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    # head_lr with the default head_lr_iters=0
+    with pytest.raises(ValueError, match="head_lr_iters"):
+        train_b2b(env, cfg, None, tmp_path / "a", PPOConfig(**base, head_lr=2e-4),
+                  scratch=True, init_from_bc=bc_path)
+    # ...and with an explicitly negative one
+    with pytest.raises(ValueError, match="head_lr_iters"):
+        train_b2b(env, cfg, None, tmp_path / "b", PPOConfig(**base, head_lr=2e-4, head_lr_iters=-1),
+                  scratch=True, init_from_bc=bc_path)
+    # head_lr_iters without head_lr
+    with pytest.raises(ValueError, match="head_lr"):
+        train_b2b(env, cfg, None, tmp_path / "c", PPOConfig(**base, head_lr_iters=25),
+                  scratch=True, init_from_bc=bc_path)
+
+
+def test_lr_schedule_reconciles_a_two_group_optimizer_with_a_single_group_config():
+    # Fix round 1: the early return used to key off `config.head_lr is None`,
+    # so a TWO-group optimizer (e.g. one rebuilt for a restored state) paired
+    # with a single-group config returned {lr, lr} WITHOUT touching the
+    # optimizer -- leaving the heads group running at its head lr while the
+    # telemetry claimed `lr`. The group NAMES now decide, so the optimizer is
+    # always reconciled with what the return value reports.
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    opt = build_optimizer(model, PPOConfig(lr=2e-5, head_lr=2e-4, head_lr_iters=25))
+    assert [g["name"] for g in opt.param_groups] == ["bc", "heads"]
+    assert opt.param_groups[1]["lr"] == 2e-4
+    assert apply_lr_schedule(opt, PPOConfig(lr=2e-5), 1) == {"lr_bc": 2e-5, "lr_heads": 2e-5}
+    assert [g["lr"] for g in opt.param_groups] == [2e-5, 2e-5]

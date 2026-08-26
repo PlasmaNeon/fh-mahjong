@@ -236,12 +236,25 @@ def build_optimizer(model: nn.Module, config: PPOConfig) -> torch.optim.AdamW:
 
 def apply_lr_schedule(optimizer: torch.optim.AdamW, config: PPOConfig, iteration: int) -> dict[str, float]:
     """Set each group's lr for `iteration` (1-based). Idempotent, so calling it
-    every iteration -- including the first after a resume -- is correct."""
-    if config.head_lr is None or len(optimizer.param_groups) == 1:
+    every iteration -- including the first after a resume -- is correct.
+
+    Fix round 1: the groups are looked up by the `name` `build_optimizer`
+    stamped on them, and whether to schedule at all is decided by the
+    optimizer's own shape rather than by `config.head_lr`. Keying off the
+    config let a config/optimizer disagreement (a two-group optimizer under a
+    head_lr-less config) return early WITHOUT touching the optimizer, leaving
+    the heads group running at a head lr while the returned telemetry reported
+    `lr`. Now the returned dict always describes the lrs actually in force."""
+    groups = {group.get("name"): group for group in optimizer.param_groups}
+    if "bc" not in groups or "heads" not in groups:
+        # A single-group optimizer: every parameter is already at `config.lr`
+        # from construction, and there is no second group to schedule.
         return {"lr_bc": config.lr, "lr_heads": config.lr}
-    heads_lr = config.head_lr if iteration <= config.head_lr_iters else config.lr
-    optimizer.param_groups[0]["lr"] = config.lr
-    optimizer.param_groups[1]["lr"] = heads_lr
+    heads_lr = (config.head_lr
+                if config.head_lr is not None and iteration <= config.head_lr_iters
+                else config.lr)
+    groups["bc"]["lr"] = config.lr
+    groups["heads"]["lr"] = heads_lr
     return {"lr_bc": config.lr, "lr_heads": heads_lr}
 
 
@@ -1257,6 +1270,22 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             raise ValueError(
                 "head_lr requires scratch=True with init_from_bc (groups are defined "
                 "relative to the BC-loaded prefixes)")
+        # Fix round 1: each field is INERT without the other, and inertness is
+        # exactly what a mis-flagged launch cannot afford to discover after a
+        # full lap. head_lr with head_lr_iters=0 (the DEFAULT) schedules a warm
+        # phase of zero iterations -- every iteration is already past the
+        # switch -- so the run silently trains single-rate. head_lr_iters
+        # without head_lr never builds a second parameter group at all, so the
+        # number is silently ignored. Both raise instead.
+        if config.head_lr is not None and config.head_lr_iters < 1:
+            raise ValueError(
+                f"head_lr ({config.head_lr}) requires head_lr_iters >= 1 (got "
+                f"{config.head_lr_iters}) -- a warm phase of zero iterations means "
+                "head_lr is never applied and the run trains at a single rate")
+        if config.head_lr_iters > 0 and config.head_lr is None:
+            raise ValueError(
+                f"head_lr_iters ({config.head_lr_iters}) requires head_lr -- without it "
+                "there is only one parameter group and the iteration count is ignored")
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

@@ -187,6 +187,15 @@ def main() -> None:
         # supply", so it only exists relative to an --init-from-bc load.
         if args.head_lr is not None and args.init_from_bc is None:
             p.error("--head-lr requires --scratch --init-from-bc")
+        # Fix round 1: neither flag does anything without the other -- see the
+        # matching guards in train_b2b. Caught here so it is a usage error at
+        # launch rather than a lap that silently trained at a single rate.
+        if args.head_lr is not None and args.head_lr_iters < 1:
+            p.error(f"--head-lr requires --head-lr-iters >= 1 (got {args.head_lr_iters}); "
+                    "a zero-iteration warm phase never applies --head-lr")
+        if args.head_lr_iters > 0 and args.head_lr is None:
+            p.error(f"--head-lr-iters ({args.head_lr_iters}) requires --head-lr; "
+                    "without it there is only one parameter group")
     if args.widen_event_hidden < 0:
         p.error(f"--widen-event-hidden must not be negative (got {args.widen_event_hidden}); "
                "0 disables the gru-width warm-start surgery")
