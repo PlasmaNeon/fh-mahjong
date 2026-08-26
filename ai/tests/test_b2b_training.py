@@ -112,7 +112,8 @@ def test_train_b2b_two_iters_mock(tmp_path):
     payload = torch.load(tmp_path / "ckpt" / "iter_002.pt", map_location="cpu")
     assert payload["metadata"]["init"] == {"kind": "champion",
                                           "bc_checkpoint_sha256": None,
-                                          "bc_checkpoint_path": None}
+                                          "bc_checkpoint_path": None,
+                                          "transfer_gate": None}
 
 
 def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
@@ -1001,3 +1002,66 @@ def test_lr_schedule_reconciles_a_two_group_optimizer_with_a_single_group_config
     assert opt.param_groups[1]["lr"] == 2e-4
     assert apply_lr_schedule(opt, PPOConfig(lr=2e-5), 1) == {"lr_bc": 2e-5, "lr_heads": 2e-5}
     assert [g["lr"] for g in opt.param_groups] == [2e-5, 2e-5]
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch Amendment 1 §4: step-zero BC->B2b transfer gate.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_bc_transfer_passes_and_records(tmp_path):
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    record = verify_bc_transfer(model, bc_path, env39)
+    assert record["max_abs_logit_diff"] == 0.0 and record["greedy_match_rate"] == 1.0
+    assert record["loaded_tensors_identical"] is True
+    assert all(k.startswith(SCRATCH_BC_PREFIXES) for k in record["loaded_keys"])
+    assert any(k.startswith("event_encoder.") for k in record["unloaded_keys"])
+    assert set(record["loaded_keys"]) | set(record["unloaded_keys"]) == set(model.state_dict())
+
+
+def test_verify_bc_transfer_fails_closed_on_perturbation(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    with torch.no_grad():
+        model.policy_head.bias.add_(0.5)
+    with pytest.raises(RuntimeError, match="transfer gate"):
+        verify_bc_transfer(model, bc_path, env39)
+
+
+def test_train_b2b_init_metadata_carries_transfer_gate(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    train_b2b(env, cfg, None, tmp_path / "run", config, base_seed=3, scratch=True, init_from_bc=bc_path)
+    payload = torch.load(tmp_path / "run" / "iter_001.pt", map_location="cpu")
+    gate = payload["metadata"]["init"]["transfer_gate"]
+    assert gate["greedy_match_rate"] == 1.0 and gate["loaded_tensors_identical"] is True
+
+
+def test_verify_bc_transfer_fails_closed_on_unzeroed_event_columns(tmp_path):
+    """`trunk.0.weight` is the one loaded key that is NOT a verbatim copy --
+    `build_scratch_model` zeroes its trailing event columns -- so the gate
+    checks those columns separately from the byte-equality of everything else.
+    Restoring BC's untrained random values there (what a regression in the
+    zeroing would produce) must fail the gate, not slip through as "loaded"."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    event_dim = model.event_encoder.output_dim
+    bc_columns = bc_model.state_dict()["trunk.0.weight"][:, -event_dim:]
+    assert not torch.equal(bc_columns, torch.zeros_like(bc_columns))  # BC's are random, not zero
+    with torch.no_grad():
+        model.trunk[0].weight[:, -event_dim:].copy_(bc_columns)
+    with pytest.raises(RuntimeError, match="transfer gate"):
+        verify_bc_transfer(model, bc_path, env39)

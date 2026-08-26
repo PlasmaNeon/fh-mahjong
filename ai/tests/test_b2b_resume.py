@@ -74,7 +74,7 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     # mortal-scale-scratch: train_state.pt persists the lineage's construction
     # provenance so a resume can carry it forward (see below).
     assert state_before["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
-                                    "bc_checkpoint_path": None}
+                                    "bc_checkpoint_path": None, "transfer_gate": None}
 
     config_resumed = replace(config_first, iterations=4)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
@@ -93,7 +93,7 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
         # it writes -- a lap that survives a box restart still says how it was
         # constructed instead of degrading to {"kind": "resumed"}.
         assert saved["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
-                                             "bc_checkpoint_path": None}
+                                             "bc_checkpoint_path": None, "transfer_gate": None}
     # Resuming must not have re-run the champion warm-start: iter_001/002
     # checkpoints from the first run are untouched (same file, not rewritten).
     assert (checkpoint_dir / "iter_001.pt").exists()
@@ -2787,6 +2787,37 @@ def test_resume_rebuilds_two_parameter_groups(tmp_path) -> None:
     state_after = torch.load(state_path, map_location="cpu", weights_only=False)
     assert len(state_after["optimizer"]["param_groups"]) == 2
     assert [g["lr"] for g in state_after["optimizer"]["param_groups"]] == [2e-5, 2e-5]
+
+
+def test_resume_preserves_the_step_zero_transfer_gate_record(tmp_path) -> None:
+    # mortal-scale-scratch Amendment 1 §4: the transfer gate runs ONCE, at
+    # construction -- a resume never reconstructs the model, so it can never
+    # re-prove step-0 parity. The record therefore has to survive in
+    # `train_state.pt` and keep being stamped, unchanged, onto every
+    # checkpoint the resumed process writes; otherwise a lap that outlives a
+    # box restart loses the only evidence that it ever started at the BC
+    # policy at all.
+    env, model_config, _champion_path, config_first = b2b_run_configs(tmp_path, iterations=1)
+    bc_path = _bc_checkpoint(tmp_path, model_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, None, checkpoint_dir, config_first, base_seed=5,
+              train_state_every=1, scratch=True, init_from_bc=bc_path)
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    gate = state_before["init"]["transfer_gate"]
+    assert gate["max_abs_logit_diff"] == 0.0 and gate["greedy_match_rate"] == 1.0
+    assert gate["loaded_tensors_identical"] is True
+    first = torch.load(checkpoint_dir / "iter_001.pt", map_location="cpu")
+    assert first["metadata"]["init"]["transfer_gate"] == gate
+
+    train_b2b(env, model_config, None, checkpoint_dir, replace(config_first, iterations=2),
+              base_seed=5, train_state_every=1, resume_from_state=state_path)
+    resumed = torch.load(checkpoint_dir / "iter_002.pt", map_location="cpu")
+    assert resumed["metadata"]["init"]["kind"] == "scratch"
+    assert resumed["metadata"]["init"]["transfer_gate"] == gate
+    state_after = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state_after["init"]["transfer_gate"] == gate
 
 
 def test_legacy_state_without_head_lr_fields_normalizes(caplog) -> None:

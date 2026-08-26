@@ -32,6 +32,7 @@ from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
 from .model import (
     PolicyValueNet,
+    infer_model_config,
     _derive_growth_blocks,
     _reconstruct_env_config,
     _shape_inferred_fields,
@@ -214,6 +215,95 @@ def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device
     model.init_from_bc_sha256 = digest
     model.eval()
     return model
+
+
+def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: EnvConfig,
+                       probe_seed: int = 20260825, probe_batch: int = 64) -> dict:
+    """Amendment 1 §4: prove the scratch model IS the BC policy at step zero.
+
+    Rebuilds the BC net from the checkpoint, feeds both nets an identical
+    seeded synthetic probe (BC with events=None, scratch with random events),
+    and requires bit-equal masked logits, probabilities and greedy actions,
+    plus byte-identical tensors for every loaded key. Fail closed: any
+    difference raises, so a broken transfer aborts the launch before a single
+    rollout is collected rather than quietly training something that is not
+    the BC policy. The returned record rides into `metadata["init"]` as the
+    per-run evidence that the transfer held.
+
+    Bit-equality (not a tolerance) is the contract: BC runs with `events=None`,
+    which feeds its trunk an exactly-zero event vector, and this net's trunk
+    has exactly-zero event COLUMNS -- so on both sides the event term
+    contributes exact 0.0 into an otherwise identical dot product over
+    identical weights and identical inputs. Any nonzero diff is a real defect
+    (a mis-copied tensor, an unzeroed column), never float noise.
+
+    The BC reference net is moved onto the model's own device before the probe:
+    comparing a CPU forward against a CUDA forward would differ in the last
+    ulp purely from kernel/reduction differences and would abort every GPU
+    launch. Same device, same shapes, same kernels => the same reduction order
+    on both sides, which is what makes exact equality the right assertion."""
+    payload = torch.load(Path(bc_checkpoint), map_location="cpu")
+    bc_config = infer_model_config(payload["model"], payload.get("metadata"))
+    bc_model = PolicyValueNet(env_config, bc_config)
+    bc_model.load_state_dict(payload["model"], strict=True)
+    device = next(model.parameters()).device
+    bc_model = bc_model.to(device)
+    bc_model.eval()
+    model.eval()
+    sd = model.state_dict()
+    loaded = sorted(k for k in sd if k.startswith(SCRATCH_BC_PREFIXES))
+    unloaded = sorted(k for k in sd if not k.startswith(SCRATCH_BC_PREFIXES))
+    bc_sd = bc_model.state_dict()
+    # `trunk.0.weight` is the one loaded key that is deliberately NOT a verbatim
+    # copy: `build_scratch_model` zeroes its trailing event columns (BC never
+    # trained them, and this net's event encoder is brand new). Byte-equality is
+    # therefore asserted on the leading plane+scalar columns, and the trailing
+    # columns are required to be exactly zero -- the two halves of the same
+    # step-0 parity claim, both of which the probe below then exercises.
+    event_dim = model.event_encoder.output_dim if model.wants_events else 0
+    mismatched: list[str] = []
+    for key in loaded:
+        got_t, ref_t = sd[key].cpu(), bc_sd[key].cpu()
+        if event_dim and key == "trunk.0.weight":
+            if not torch.equal(got_t[:, :-event_dim], ref_t[:, :-event_dim]):
+                mismatched.append(key)
+            if not torch.equal(got_t[:, -event_dim:], torch.zeros_like(got_t[:, -event_dim:])):
+                mismatched.append("trunk.0.weight[event columns not zero]")
+            continue
+        if not torch.equal(got_t, ref_t):
+            mismatched.append(key)
+    gen = torch.Generator().manual_seed(probe_seed)
+    channels, height, width = env_config.plane_shape
+    planes = torch.rand((probe_batch, channels, height, width), generator=gen)
+    scalars = torch.rand((probe_batch, env_config.scalar_features), generator=gen)
+    mask = (torch.rand((probe_batch, env_config.action_space_size), generator=gen) > 0.3).to(torch.int8)
+    mask[:, 0] = 1  # at least one legal action per row
+    planes, scalars, mask = planes.to(device), scalars.to(device), mask.to(device)
+    with torch.no_grad():
+        ref, _ = bc_model(planes, scalars, mask)
+        if model.wants_events:
+            window = model.model_config.event_window
+            events = torch.randint(0, 0x10000, (probe_batch, window), generator=gen)
+            lengths = torch.full((probe_batch,), window, dtype=torch.int64)
+            got, _ = model(planes, scalars, mask, events=events.to(device),
+                           event_lengths=lengths.to(device))
+        else:
+            got, _ = model(planes, scalars, mask)
+    ref, got = ref.cpu(), got.cpu()
+    # Illegal actions are masked to `finfo.min` on BOTH sides, so a raw diff
+    # there is meaningless (it subtracts two identical sentinels); the claim
+    # under test is about the LEGAL action distribution.
+    legal = mask.cpu().bool()
+    logit_diff = float((ref - got).abs()[legal].max().item())
+    prob_diff = float((torch.softmax(ref, 1) - torch.softmax(got, 1)).abs().max().item())
+    greedy = float((ref.argmax(1) == got.argmax(1)).float().mean().item())
+    record = {"probe_seed": probe_seed, "probe_batch": probe_batch, "max_abs_logit_diff": logit_diff,
+              "max_abs_prob_diff": prob_diff, "greedy_match_rate": greedy,
+              "loaded_keys": loaded, "unloaded_keys": unloaded, "loaded_tensors_identical": not mismatched}
+    if mismatched or logit_diff != 0.0 or greedy != 1.0:
+        raise RuntimeError(f"--init-from-bc transfer gate FAILED: tensors_mismatched={mismatched[:6]}, "
+                           f"max_abs_logit_diff={logit_diff}, greedy_match_rate={greedy}")
+    return record
 
 
 def split_bc_parameter_groups(model: nn.Module) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
@@ -1512,7 +1602,8 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # LEGACY state, written before that slot existed, has nothing to
             # read -- record "resumed" there rather than guessing at a kind.
             init_meta = state_payload.get("init") or {
-                "kind": "resumed", "bc_checkpoint_sha256": None, "bc_checkpoint_path": None}
+                "kind": "resumed", "bc_checkpoint_sha256": None, "bc_checkpoint_path": None,
+                "transfer_gate": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
@@ -1579,6 +1670,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # and including early iterations of the new run still leaves the
             # old run fully recoverable from the backup directory via a manual
             # move.
+            # Amendment 1 §4: only the `--scratch --init-from-bc` construction
+            # below has a BC policy to be equal to; every other path leaves
+            # this None (there is nothing to prove, not a gate that passed).
+            transfer_gate = None
             if growth_blocks > 0:
                 model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
                 model_config = model.model_config
@@ -1589,6 +1684,15 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             elif scratch:
                 model = build_scratch_model(_b2b_model_env_config(env_config), model_config, device,
                                             bc_checkpoint=init_from_bc)
+                # Amendment 1 §4: prove step-0 == BC BEFORE anything is
+                # collected, trained or moved. This raises on any deviation,
+                # and it runs here -- inside construction, upstream of the
+                # `--fresh-run-overwrite` backup move below -- so a failed
+                # transfer aborts with the prior run's artifacts still in
+                # place, exactly like the other constructor-side raises.
+                if init_from_bc is not None:
+                    transfer_gate = verify_bc_transfer(model, init_from_bc,
+                                                       _b2b_model_env_config(env_config))
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
             # Adversarial round 14, high finding: pin the bridge identity for
@@ -1659,6 +1763,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 "kind": "scratch" if scratch else "champion",
                 "bc_checkpoint_sha256": getattr(model, "init_from_bc_sha256", None),
                 "bc_checkpoint_path": str(init_from_bc) if init_from_bc is not None else None,
+                # The step-0 transfer evidence (Amendment 1 §4): the probe's
+                # diffs plus the exact loaded/unloaded key sets, so a lap can
+                # be audited from any checkpoint it wrote. None on every path
+                # with no BC init. `_save_train_state` persists `init` whole,
+                # so a resume carries this forward unchanged.
+                "transfer_gate": transfer_gate,
             }
             # A fresh run never has anything to quarantine -- either the
             # directory was empty/new, or `--fresh-run-overwrite` just moved
