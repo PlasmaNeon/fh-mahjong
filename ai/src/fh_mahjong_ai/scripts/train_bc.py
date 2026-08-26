@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -48,6 +49,9 @@ def train_bc(
     mlflow_run_name: Optional[str] = None,
     validation_batch_size: int = 4096,
     model_config: Optional[ModelConfig] = None,
+    patience: Optional[int] = None,
+    min_delta: float = 1e-4,
+    min_epochs: int = 1,
 ) -> List[TrainMetrics]:
     """Run BC training and return collected metrics."""
     torch.manual_seed(split_seed)
@@ -83,6 +87,9 @@ def train_bc(
 
     if len(buf) == 0:
         raise ValueError(f"no training transitions found in {data_path}")
+
+    if patience is not None and validation_count == 0:
+        raise ValueError("--patience requires a validation split")
 
     env_config = EnvConfig()
     if model_config is None:
@@ -124,6 +131,12 @@ def train_bc(
         "model_config": model_config_metadata(model_config),
         "epochs": [],
     }
+
+    best_ce = float("inf")
+    best_epoch: Optional[int] = None
+    stale = 0
+    stopped_early = False
+    epochs_run = 0
 
     with start_run(
         enabled=mlflow_enabled,
@@ -231,6 +244,21 @@ def train_bc(
             epoch_report["checkpoint_path"] = str(checkpoint_path)
             report["epochs"].append(epoch_report)
 
+            epochs_run = epoch
+            val_ce = (epoch_report["validation"] or {}).get("mean_cross_entropy")
+            if val_ce is not None:
+                if val_ce < best_ce - min_delta:
+                    best_ce, best_epoch, stale = float(val_ce), epoch, 0
+                else:
+                    stale += 1
+                if patience is not None and epoch >= min_epochs and stale >= patience:
+                    stopped_early = True
+
+            report["stopped_early"] = stopped_early
+            report["epochs_run"] = epochs_run
+            report["best_epoch"] = best_epoch
+            report["best_validation_cross_entropy"] = best_ce if best_epoch is not None else None
+
             if report_path is not None:
                 write_training_report(report_path, report)
 
@@ -248,9 +276,20 @@ def train_bc(
                 )
                 log_artifact(checkpoint_path, artifact_path="checkpoints")
 
+            if stopped_early:
+                print(
+                    f"--- early stop at epoch {epoch}: no val CE improvement >= {min_delta} "
+                    f"for {patience} epochs (best epoch {best_epoch})"
+                )
+                break
+
         if mlflow_run is not None:
             log_artifact(report_path, artifact_path="reports")
             print(f"MLflow run: {mlflow_run.info.run_id}")
+
+    if patience is not None and best_epoch is not None:
+        best_checkpoint_path = checkpoint_dir / f"epoch_{best_epoch:03d}.pt"
+        shutil.copyfile(best_checkpoint_path, checkpoint_dir / "best.pt")
 
     return all_metrics
 
@@ -318,6 +357,12 @@ def main() -> None:
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
+    parser.add_argument("--patience", type=int, default=None,
+                         help="Stop after this many epochs without validation CE improvement")
+    parser.add_argument("--min-delta", type=float, default=1e-4,
+                         help="Minimum validation CE decrease to count as an improvement")
+    parser.add_argument("--min-epochs", type=int, default=1,
+                         help="Minimum epochs to run before early stopping can trigger")
     add_model_config_args(parser)
     args = parser.parse_args()
 
@@ -341,6 +386,9 @@ def main() -> None:
         mlflow_run_name=args.mlflow_run_name,
         validation_batch_size=args.validation_batch_size,
         model_config=model_config_from_args(args),
+        patience=args.patience,
+        min_delta=args.min_delta,
+        min_epochs=args.min_epochs,
     )
     print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
     print(f"Report saved to {report_output}")

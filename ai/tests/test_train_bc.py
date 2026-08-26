@@ -204,3 +204,63 @@ def test_bc_checkpoint_initialises_a_scratch_b2b_run_with_matching_logits(tmp_pa
         expected, _ = bc_model(planes, scalars, mask)  # BC's own forward: events=None
         got, _ = scratch(planes, scalars, mask, events=events, event_lengths=lengths)
     assert torch.allclose(expected, got, atol=1e-5)
+
+
+def test_train_bc_patience_stops_early_and_writes_best(tmp_path: Path, monkeypatch) -> None:
+    import torch
+    from fh_mahjong_ai.scripts import train_bc as train_bc_mod
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=40)
+    # Deterministic validation CE sequence: improves twice, then flat.
+    seq = iter([2.0, 1.5, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4, 1.4])
+    real = train_bc_mod.compute_action_agreement
+
+    def fake(model, transitions, **kw):
+        out = real(model, transitions, **kw)
+        out["mean_cross_entropy"] = next(seq)
+        return out
+
+    monkeypatch.setattr(train_bc_mod, "compute_action_agreement", fake)
+    report_path = tmp_path / "report.json"
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=10, batch_size=8, device="cpu",
+             patience=2, min_delta=1e-4, min_epochs=1, report_path=report_path)
+    report = json.loads(report_path.read_text())
+    assert report["stopped_early"] is True
+    assert report["epochs_run"] == 5          # best at 3; epochs 4 and 5 without improvement -> stop
+    assert report["best_epoch"] == 3
+    assert (ckpt_dir / "best.pt").read_bytes() == (ckpt_dir / "epoch_003.pt").read_bytes()
+    assert torch.load(ckpt_dir / "best.pt", map_location="cpu")["metadata"]["model_config"]
+
+
+def test_train_bc_min_epochs_blocks_early_stop(tmp_path: Path, monkeypatch) -> None:
+    from fh_mahjong_ai.scripts import train_bc as train_bc_mod
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=40)
+    real = train_bc_mod.compute_action_agreement
+
+    def fake(model, transitions, **kw):
+        out = real(model, transitions, **kw)
+        out["mean_cross_entropy"] = 1.0
+        return out
+
+    monkeypatch.setattr(train_bc_mod, "compute_action_agreement", fake)
+    report_path = tmp_path / "report.json"
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=6, batch_size=8, device="cpu",
+             patience=1, min_epochs=4, report_path=report_path)
+    report = json.loads(report_path.read_text())
+    assert report["epochs_run"] == 4 and report["best_epoch"] == 1
+
+
+def test_train_bc_without_patience_is_unchanged(tmp_path: Path) -> None:
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    report_path = tmp_path / "report.json"
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=2, batch_size=8, device="cpu",
+             report_path=report_path)
+    report = json.loads(report_path.read_text())
+    assert report["stopped_early"] is False and report["epochs_run"] == 2
+    assert not (ckpt_dir / "best.pt").exists()

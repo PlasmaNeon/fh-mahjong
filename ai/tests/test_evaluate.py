@@ -113,6 +113,13 @@ class TestActionAgreement:
         single = compute_action_agreement(model, transitions, device="cpu", batch_size=1)
         batched = compute_action_agreement(model, transitions, device="cpu", batch_size=8)
 
+        # mean_cross_entropy is a running float sum whose accumulation order
+        # differs between batch sizes (17x1 vs 3x8/1), so it can differ by
+        # float summation error; compare it with a tolerance and everything
+        # else exactly.
+        single_ce = single.pop("mean_cross_entropy")
+        batched_ce = batched.pop("mean_cross_entropy")
+        assert batched_ce == pytest.approx(single_ce, rel=1e-5)
         assert batched == single
 
 
@@ -1099,3 +1106,27 @@ def test_seat_report_carries_tail_arrays():
     assert report["rank_parity_mismatches"] == 0
     assert report["fourth_place_rate"] == pytest.approx(np.mean(report["per_episode_fourth_share"]))
     assert report["large_loss_rate"] == pytest.approx(np.mean(report["per_episode_large_loss"]))
+
+
+def test_offline_agreement_reports_mean_cross_entropy() -> None:
+    import numpy as np
+    import torch
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.evaluate import compute_action_agreement_from_batches
+    from fh_mahjong_ai.model import PolicyValueNet
+    from conftest import SMALL_MODEL
+
+    torch.manual_seed(0)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL))
+    rng = np.random.default_rng(1)
+    planes = rng.random((6, 39, 42, 1), dtype=np.float32)
+    scalars = rng.random((6, 58), dtype=np.float32)
+    mask = np.ones((6, 204), dtype=np.int8)
+    action_ids = rng.integers(0, 204, size=6)
+    batches = [{"planes": planes, "scalars": scalars, "action_mask": mask, "action_ids": action_ids}]
+    report = compute_action_agreement_from_batches(model, batches, device="cpu")
+    model.eval()
+    with torch.no_grad():
+        logits, _ = model(torch.from_numpy(planes), torch.from_numpy(scalars), torch.from_numpy(mask))
+        expected = torch.nn.functional.cross_entropy(logits, torch.from_numpy(action_ids)).item()
+    assert report["mean_cross_entropy"] == pytest.approx(expected, abs=1e-5)
