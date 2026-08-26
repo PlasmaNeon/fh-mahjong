@@ -9,6 +9,9 @@ def add_model_config_args(parser: argparse.ArgumentParser) -> None:
     defaults = ModelConfig()
     parser.add_argument("--model-channels", type=int, default=defaults.channels)
     parser.add_argument("--model-residual-blocks", type=int, default=defaults.residual_blocks)
+    parser.add_argument("--model-kernel-width", type=int, choices=(1, 3), default=defaults.kernel_width,
+                        help="conv kernel width over the plane axis: 3 = historical 3x3 "
+                             "(default), 1 = Mortal-style (3,1) 1-D kernels")
     parser.add_argument("--model-plane-feature-dim", type=int, default=defaults.plane_feature_dim)
     parser.add_argument("--model-scalar-hidden-dim", type=int, default=defaults.scalar_hidden_dim)
     parser.add_argument("--model-trunk-hidden-dim", type=int, default=defaults.trunk_hidden_dim)
@@ -54,6 +57,7 @@ def model_config_from_args(args: argparse.Namespace, *, event_window: int | None
     return ModelConfig(
         channels=args.model_channels,
         residual_blocks=args.model_residual_blocks,
+        kernel_width=args.model_kernel_width,
         plane_feature_dim=args.model_plane_feature_dim,
         scalar_hidden_dim=args.model_scalar_hidden_dim,
         trunk_hidden_dim=args.model_trunk_hidden_dim,
@@ -75,6 +79,7 @@ def model_config_params(model_config: ModelConfig) -> dict[str, object]:
     return {
         "model_channels": model_config.channels,
         "model_residual_blocks": model_config.residual_blocks,
+        "model_kernel_width": model_config.kernel_width,
         "model_plane_feature_dim": model_config.plane_feature_dim,
         "model_scalar_hidden_dim": model_config.scalar_hidden_dim,
         "model_trunk_hidden_dim": model_config.trunk_hidden_dim,

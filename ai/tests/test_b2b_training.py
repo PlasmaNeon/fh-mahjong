@@ -1,3 +1,6 @@
+import hashlib
+import re
+
 import numpy as np
 import pytest
 import torch
@@ -104,6 +107,13 @@ def test_train_b2b_two_iters_mock(tmp_path):
     assert (tmp_path / "ckpt" / "iter_002.pt").exists()
     for key in ("belief_loss", "dealin_loss", "rank_loss"):
         assert key in history[0]
+    # mortal-scale-scratch: the default (champion warm-start) construction path
+    # records its own provenance too, not just --scratch runs.
+    payload = torch.load(tmp_path / "ckpt" / "iter_002.pt", map_location="cpu")
+    assert payload["metadata"]["init"] == {"kind": "champion",
+                                          "bc_checkpoint_sha256": None,
+                                          "bc_checkpoint_path": None,
+                                          "transfer_gate": None}
 
 
 def test_iteration_rollout_released_before_next_collect(tmp_path, monkeypatch):
@@ -710,3 +720,390 @@ def test_bonus_fails_closed_on_reset_terminal(monkeypatch):
     batch = collect_b2b_rollouts(env, model, cfg_off, base_seed=0)
     assert batch.match_telemetry is not None and len(batch.match_telemetry) == 1
     assert int((batch.dones == 1).sum()) == 1
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch: the random-init construction path (`--scratch`).
+# ---------------------------------------------------------------------------
+
+
+def _bc_checkpoint(tmp_path, model_config):
+    """A BC-stage checkpoint: full net, saved with model_config metadata (Task 2 format)."""
+    from fh_mahjong_ai.storage import model_config_metadata
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), model_config)
+    path = tmp_path / "bc.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(model_config)})
+    return model, path
+
+
+def test_build_scratch_model_is_random_init_with_full_config(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    a = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+    b = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+    assert a.model_config == cfg
+    assert tuple(a.state_dict()["plane_stem.0.weight"].shape[2:]) == (3, 1)
+    assert not torch.equal(a.trunk[0].weight, b.trunk[0].weight)  # no anchor, no parity
+
+
+def test_build_scratch_model_init_from_bc_loads_exactly_the_bc_prefixes(tmp_path):
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+    bc_sd, sd = bc_model.state_dict(), model.state_dict()
+    event_dim = model.event_encoder.output_dim
+    for key in sd:
+        if not key.startswith(SCRATCH_BC_PREFIXES):
+            continue
+        if key == "trunk.0.weight":
+            # The one deliberate exception (fix round 1, I1): trunk.0's leading
+            # plane+scalar columns are BC's verbatim, but its trailing event
+            # columns are zeroed rather than copied -- BC never trained them
+            # (it runs with events=None) and this net's event encoder is new.
+            # See test_..._step0_logits_equal_bc_policy for why that matters.
+            assert torch.equal(sd[key][:, :-event_dim], bc_sd[key][:, :-event_dim]), key
+            assert torch.equal(sd[key][:, -event_dim:],
+                               torch.zeros_like(sd[key][:, -event_dim:])), key
+            continue
+        assert torch.equal(sd[key], bc_sd[key]), key
+    assert not torch.equal(sd["value_head.0.weight"], bc_sd["value_head.0.weight"])
+    assert not torch.equal(sd["event_encoder.gru.weight_ih_l0"], bc_sd["event_encoder.gru.weight_ih_l0"])
+
+
+def test_build_scratch_model_init_from_bc_step0_logits_equal_bc_policy(tmp_path):
+    """Fix round 1, I1: BC trains with `events=None`, which feeds the trunk a
+    ZERO event vector -- so trunk.0's trailing event columns reach us at BC's
+    untouched random init while THIS net's event encoder is brand new and
+    outputs nonzero features. Copying those columns verbatim would make step 0
+    noise, not the BC policy. They are zeroed on load, so identical
+    planes/scalars give identical logits with a live event encoder feeding
+    random events. Values are NOT asserted: the value head stays random."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    bc_model.eval()
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+    rng = np.random.default_rng(7)
+    planes = torch.from_numpy(rng.random((4, 39, 42, 1), dtype=np.float32))
+    scalars = torch.from_numpy(rng.random((4, 58), dtype=np.float32))
+    mask = torch.ones((4, 204), dtype=torch.int8)
+    events = torch.from_numpy(rng.integers(0, 0x10000, size=(4, 8), dtype=np.uint32).astype(np.int64))
+    lengths = torch.full((4,), 8, dtype=torch.int64)
+
+    with torch.no_grad():
+        ref, _ = bc_model(planes, scalars, mask)  # BC's own forward: events=None
+        got, _ = model(planes, scalars, mask, events=events, event_lengths=lengths)
+        event_features = model.event_encoder(events, lengths)
+    assert torch.allclose(ref, got, atol=1e-5)
+    # Parity comes from the zeroed COLUMNS, not from a dead encoder.
+    assert not torch.equal(event_features, torch.zeros_like(event_features))
+    assert torch.equal(model.trunk[0].weight[:, -model.event_encoder.output_dim:],
+                       torch.zeros_like(model.trunk[0].weight[:, -model.event_encoder.output_dim:]))
+
+
+def test_build_scratch_model_rejects_growth_blocks(tmp_path):
+    """Fix round 1, M1: `growth.` tensors are outside SCRATCH_BC_PREFIXES, so a
+    grown scratch net would take a silent partial load from --init-from-bc."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True,
+                      aux_heads=True, growth_blocks=2)
+    with pytest.raises(ValueError, match="growth_blocks"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg)
+
+
+def test_build_scratch_model_init_from_bc_rejects_missing_file(tmp_path):
+    """Fix round 1, M5: a mistyped --init-from-bc names the flag and the path."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    missing = tmp_path / "not-a-checkpoint.pt"
+    with pytest.raises(FileNotFoundError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=missing)
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=missing)
+    # A directory is not a checkpoint either.
+    with pytest.raises(FileNotFoundError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=tmp_path)
+
+
+def test_build_scratch_model_init_from_bc_rejects_shape_mismatch(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    bc_cfg = ModelConfig(**SMALL_MODEL, kernel_width=3, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, bc_cfg)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(RuntimeError, match="init-from-bc"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+
+def test_build_scratch_model_init_from_bc_rejects_missing_prefix(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    payload = torch.load(bc_path, map_location="cpu")
+    del payload["model"]["policy_head.weight"]
+    torch.save(payload, bc_path)
+    with pytest.raises(RuntimeError, match="policy_head.weight"):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+
+
+def test_train_b2b_scratch_two_iters_mock_records_init(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    ckpt_dir = tmp_path / "run"
+    history = train_b2b(env, cfg, None, ckpt_dir, config, base_seed=3,
+                        scratch=True, init_from_bc=bc_path)
+    assert len(history) == 2
+    payload = torch.load(ckpt_dir / "iter_002.pt", map_location="cpu")
+    assert payload["metadata"]["init"]["kind"] == "scratch"
+    assert len(payload["metadata"]["init"]["bc_checkpoint_sha256"]) == 64
+    # M4: the digest names the exact bytes build_scratch_model loaded, and the
+    # path is recorded alongside it so a bare hash can be resolved back by hand.
+    assert payload["metadata"]["init"]["bc_checkpoint_sha256"] == \
+        hashlib.sha256(bc_path.read_bytes()).hexdigest()
+    assert payload["metadata"]["init"]["bc_checkpoint_path"] == str(bc_path)
+    assert payload["metadata"]["model_config"]["kernel_width"] == 1
+
+
+def test_train_b2b_scratch_rejects_champion_and_surgeries(tmp_path):
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(ValueError, match="combined with a champion"):
+        train_b2b(env, cfg, champion_path, tmp_path / "a", config, scratch=True)
+    with pytest.raises(ValueError, match="growth_blocks/widen_event_hidden"):
+        train_b2b(env, cfg, None, tmp_path / "b", config, scratch=True, growth_blocks=1)
+    with pytest.raises(ValueError, match="required unless scratch"):
+        train_b2b(env, cfg, None, tmp_path / "c", config, scratch=False)  # no champion, no scratch
+    # Fix round 2, M6: the two remaining library-level guards. --init-from-bc
+    # without --scratch would otherwise be silently ignored on a champion
+    # warm-start, and --scratch + --widen-event-hidden reaches the SAME
+    # rejection as --model-growth-blocks (both surgeries need an anchor).
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    with pytest.raises(ValueError, match="init_from_bc requires"):
+        train_b2b(env, cfg, champion_path, tmp_path / "d", config, scratch=False,
+                  init_from_bc=bc_path)
+    with pytest.raises(ValueError, match="growth_blocks/widen_event_hidden"):
+        train_b2b(env, cfg, None, tmp_path / "e", config, scratch=True, widen_event_hidden=8)
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch Amendment 1 §6: two-group learning-rate schedule.
+# ---------------------------------------------------------------------------
+
+
+def test_split_bc_parameter_groups_partitions_all_parameters():
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, split_bc_parameter_groups
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    bc, heads = split_bc_parameter_groups(model)
+    assert len(bc) + len(heads) == len(list(model.parameters()))
+    names = dict(model.named_parameters())
+    bc_ids = {id(p) for p in bc}
+    for name, p in names.items():
+        assert (id(p) in bc_ids) == name.startswith(SCRATCH_BC_PREFIXES), name
+    assert any(n.startswith("event_encoder.") for n, p in names.items() if id(p) not in bc_ids)
+    assert any(n.startswith("value_head.") for n, p in names.items() if id(p) not in bc_ids)
+
+
+def test_lr_schedule_switches_after_head_lr_iters_and_keeps_moments():
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    config = PPOConfig(lr=2e-5, head_lr=2e-4, head_lr_iters=25)
+    opt = build_optimizer(model, config)
+    assert len(opt.param_groups) == 2
+    assert apply_lr_schedule(opt, config, 1) == {"lr_bc": 2e-5, "lr_heads": 2e-4}
+    assert apply_lr_schedule(opt, config, 25) == {"lr_bc": 2e-5, "lr_heads": 2e-4}
+    # take one step so moments exist, then switch
+    loss = sum(p.sum() for p in model.parameters())
+    loss.backward(); opt.step()
+    state_before = {k: v["exp_avg"].clone() for k, v in opt.state.items() if "exp_avg" in v}
+    assert apply_lr_schedule(opt, config, 26) == {"lr_bc": 2e-5, "lr_heads": 2e-5}
+    assert opt.param_groups[1]["lr"] == 2e-5
+    for k, v in opt.state.items():
+        assert torch.equal(v["exp_avg"], state_before[k])
+
+
+def test_build_optimizer_single_group_by_default():
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL))
+    opt = build_optimizer(model, PPOConfig(lr=3e-5))
+    assert len(opt.param_groups) == 1 and opt.param_groups[0]["lr"] == 3e-5
+    assert apply_lr_schedule(opt, PPOConfig(lr=3e-5), 7) == {"lr_bc": 3e-5, "lr_heads": 3e-5}
+
+
+def test_train_b2b_head_lr_requires_init_from_bc(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic", head_lr=2e-4, head_lr_iters=1)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    with pytest.raises(ValueError, match="head_lr"):
+        train_b2b(env, cfg, None, tmp_path / "run", config, scratch=True)
+
+
+def test_train_b2b_records_lr_telemetry_with_schedule(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=3, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic",
+                       lr=2e-5, head_lr=2e-4, head_lr_iters=2)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    history = train_b2b(env, cfg, None, tmp_path / "run", config, base_seed=5, scratch=True, init_from_bc=bc_path)
+    assert [h["lr_heads"] for h in history] == [2e-4, 2e-4, 2e-5]
+    assert all(h["lr_bc"] == 2e-5 for h in history)
+
+
+def test_train_b2b_head_lr_and_head_lr_iters_must_be_paired(tmp_path):
+    # Fix round 1: each flag is inert without the other -- head_lr with the
+    # DEFAULT head_lr_iters=0 is a silent no-op (every iteration is already
+    # past the switch), and head_lr_iters without head_lr never reaches a
+    # second parameter group. Both are launch mistakes that would otherwise
+    # run a full lap under the wrong recipe while the telemetry looks fine.
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    base = dict(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    # head_lr with the default head_lr_iters=0
+    with pytest.raises(ValueError, match="head_lr_iters"):
+        train_b2b(env, cfg, None, tmp_path / "a", PPOConfig(**base, head_lr=2e-4),
+                  scratch=True, init_from_bc=bc_path)
+    # ...and with an explicitly negative one
+    with pytest.raises(ValueError, match="head_lr_iters"):
+        train_b2b(env, cfg, None, tmp_path / "b", PPOConfig(**base, head_lr=2e-4, head_lr_iters=-1),
+                  scratch=True, init_from_bc=bc_path)
+    # head_lr_iters without head_lr
+    with pytest.raises(ValueError, match="head_lr"):
+        train_b2b(env, cfg, None, tmp_path / "c", PPOConfig(**base, head_lr_iters=25),
+                  scratch=True, init_from_bc=bc_path)
+
+
+def test_lr_schedule_reconciles_a_two_group_optimizer_with_a_single_group_config():
+    # Fix round 1: the early return used to key off `config.head_lr is None`,
+    # so a TWO-group optimizer (e.g. one rebuilt for a restored state) paired
+    # with a single-group config returned {lr, lr} WITHOUT touching the
+    # optimizer -- leaving the heads group running at its head lr while the
+    # telemetry claimed `lr`. The group NAMES now decide, so the optimizer is
+    # always reconciled with what the return value reports.
+    from fh_mahjong_ai.train_b2b import apply_lr_schedule, build_optimizer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    opt = build_optimizer(model, PPOConfig(lr=2e-5, head_lr=2e-4, head_lr_iters=25))
+    assert [g["name"] for g in opt.param_groups] == ["bc", "heads"]
+    assert opt.param_groups[1]["lr"] == 2e-4
+    assert apply_lr_schedule(opt, PPOConfig(lr=2e-5), 1) == {"lr_bc": 2e-5, "lr_heads": 2e-5}
+    assert [g["lr"] for g in opt.param_groups] == [2e-5, 2e-5]
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch Amendment 1 §4: step-zero BC->B2b transfer gate.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_bc_transfer_passes_and_records(tmp_path):
+    from fh_mahjong_ai.train_b2b import SCRATCH_BC_PREFIXES, build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    record = verify_bc_transfer(model, bc_path, env39)
+    assert record["max_abs_logit_diff"] == 0.0 and record["greedy_match_rate"] == 1.0
+    assert record["loaded_tensors_identical"] is True
+    assert all(k.startswith(SCRATCH_BC_PREFIXES) for k in record["loaded_keys"])
+    assert any(k.startswith("event_encoder.") for k in record["unloaded_keys"])
+    assert set(record["loaded_keys"]) | set(record["unloaded_keys"]) == set(model.state_dict())
+
+
+def test_verify_bc_transfer_fails_closed_on_perturbation(tmp_path):
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    with torch.no_grad():
+        model.policy_head.bias.add_(0.5)
+    with pytest.raises(RuntimeError, match="transfer gate") as excinfo:
+        verify_bc_transfer(model, bc_path, env39)
+    # Fix round 1: all four Amendment 1 §4 quantities are GATED, not merely
+    # recorded -- the probability diff is enforced alongside the logit diff and
+    # reported in the failure message.
+    message = str(excinfo.value)
+    assert float(re.search(r"max_abs_logit_diff=([0-9.e+-]+)", message).group(1)) > 0.0
+    assert float(re.search(r"max_abs_prob_diff=([0-9.e+-]+)", message).group(1)) > 0.0
+
+
+def test_train_b2b_init_metadata_carries_transfer_gate(tmp_path):
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True, max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=1, matches_per_iter=2, max_steps_per_episode=16,
+                       ppo_epochs=1, minibatch_size=8, num_workers=1, match_mode="classic")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    train_b2b(env, cfg, None, tmp_path / "run", config, base_seed=3, scratch=True, init_from_bc=bc_path)
+    payload = torch.load(tmp_path / "run" / "iter_001.pt", map_location="cpu")
+    gate = payload["metadata"]["init"]["transfer_gate"]
+    assert gate["greedy_match_rate"] == 1.0 and gate["loaded_tensors_identical"] is True
+
+
+def test_verify_bc_transfer_fails_closed_on_unzeroed_event_columns(tmp_path):
+    """`trunk.0.weight` is the one loaded key that is NOT a verbatim copy --
+    `build_scratch_model` zeroes its trailing event columns -- so the gate
+    checks those columns separately from the byte-equality of everything else.
+    Restoring BC's untrained random values there (what a regression in the
+    zeroing would produce) must fail the gate, not slip through as "loaded"."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    event_dim = model.event_encoder.output_dim
+    bc_columns = bc_model.state_dict()["trunk.0.weight"][:, -event_dim:]
+    assert not torch.equal(bc_columns, torch.zeros_like(bc_columns))  # BC's are random, not zero
+    with torch.no_grad():
+        model.trunk[0].weight[:, -event_dim:].copy_(bc_columns)
+    with pytest.raises(RuntimeError, match="transfer gate"):
+        verify_bc_transfer(model, bc_path, env39)
+
+
+def test_verify_bc_transfer_fails_closed_when_the_bc_file_changed_after_load(tmp_path):
+    """Fix round 1: M4's single-read discipline, extended to the gate.
+    `build_scratch_model` records the sha256 of the bytes it actually loaded;
+    an atomic replacement of the mutable `--init-from-bc` path between that
+    read and this one would otherwise have the gate prove step-0 parity
+    against a checkpoint this run never loaded -- a passing gate for a
+    transfer that never happened."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    _, rewritten = _bc_checkpoint(tmp_path, cfg)  # same path, a DIFFERENT random net
+    assert rewritten == bc_path
+    assert hashlib.sha256(bc_path.read_bytes()).hexdigest() != model.init_from_bc_sha256
+    with pytest.raises(RuntimeError, match="digest mismatch") as excinfo:
+        verify_bc_transfer(model, bc_path, env39)
+    message = str(excinfo.value)
+    assert "transfer gate" in message and model.init_from_bc_sha256 in message
+
+
+def test_verify_bc_transfer_record_names_the_bc_digest(tmp_path):
+    """The record is self-contained evidence: it names the exact checkpoint
+    bytes the parity claim was proved against, so an audit off a written
+    `iter_*.pt` needs nothing but `metadata["init"]`."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model, verify_bc_transfer
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8, privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    env39 = EnvConfig(bridge_kind="mock")
+    model = build_scratch_model(env39, cfg, bc_checkpoint=bc_path)
+    record = verify_bc_transfer(model, bc_path, env39)
+    assert record["bc_checkpoint_sha256"] == hashlib.sha256(bc_path.read_bytes()).hexdigest()
+    assert record["bc_checkpoint_sha256"] == model.init_from_bc_sha256
+    assert record["max_abs_prob_diff"] == 0.0

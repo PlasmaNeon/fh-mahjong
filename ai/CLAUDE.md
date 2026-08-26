@@ -20,7 +20,7 @@ uv run --project ai <command>
 ### Generate data
 | Command | Purpose |
 |---|---|
-| `fh-mj-generate-data` | Heuristic trajectories → JSONL or sharded NumPy + manifest |
+| `fh-mj-generate-data` | Heuristic trajectories → JSONL or sharded NumPy + manifest; `--learning-seat-rule seed-mod-4` keeps one seat per match |
 | `fh-mj-generate-selfplay` | Mixed self-play (checkpoint/random/heuristic seats) |
 | `fh-mj-convert-data` | JSONL → sharded NumPy replay storage |
 | `fh-mj-generate-branch-counterfactuals` | Exact same-state legal-discard branch labels |
@@ -31,7 +31,7 @@ uv run --project ai <command>
 ### Train
 | Command | Purpose |
 |---|---|
-| `fh-mj-train-bc` | Behavior cloning (the offline warm-start) |
+| `fh-mj-train-bc` | Behavior cloning (the offline warm-start); accepts the shared `--model-*` flags including `--model-kernel-width`; `--patience/--min-delta/--min-epochs` stop on validation cross-entropy and write `best.pt` |
 | `fh-mj-train-awbc` | Advantage-weighted BC |
 | `fh-mj-train-iql` | Discrete IQL — the main offline RL trainer |
 | `fh-mj-train-offline-q` | Conservative offline Q (experimental) |
@@ -42,7 +42,7 @@ uv run --project ai <command>
 | `fh-mj-train-ppo` | Online self-play PPO vs a frozen anchor |
 | `fh-mj-train-oracle` | Phase-1 oracle (single-seat, perfect-information) |
 | `fh-mj-train-selfplay-oracle` | Phase-2 self-play feature-dropout oracle |
-| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads |
+| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule |
 
 ### Evaluate and gate
 | Command | Purpose |
@@ -75,6 +75,7 @@ uv run --project ai <command>
 | `fh-mj-targeted-branch-cf-diagnostics` | Targeted branch proposal quality |
 | `fh-mj-global-ev-diagnostics` | Score paired divergences with a frozen global EV model |
 | `fh-mj-action-ev-branch-cf-calibration` | Action-EV checkpoint vs exact branch labels |
+| `fh-mj-export-scratch-init` | Write the step-zero `--scratch --init-from-bc` net as a gated checkpoint, for benching that initialization |
 | `fh-mj-collect-bench` | Worker-count benchmark; digest-gated exact-semantics proof |
 | `fh-mj-collect-profile` | Measurement-only memory profile of collect + update |
 | `fh-mj-selfplay-loop` | N CI-gated self-play iterations, resumable |
@@ -122,6 +123,7 @@ labels, not separate code paths:
 - **deep16-rezero** — width growth by stacking dormant ReZero residual blocks.
 - **gru-width** — widening the event GRU in place via an identity-masked projection.
 - **data-scale-960** — the 960-match scaling work: dispatch chunking, memory profiling, minibatch device transfer.
+- **mortal-scale-scratch** — `ModelConfig.kernel_width` (1 = Mortal-style (3,1) convs), `fh-mj-train-bc --model-*` with validation-cross-entropy early stopping, `fh-mj-generate-data --learning-seat-rule seed-mod-4`, `fh-mj-train-b2b --scratch [--init-from-bc]` with the two-group (`bc`/`heads`) lr schedule and the step-zero BC transfer gate, and `fh-mj-export-scratch-init` for benching that initialization — BC → PPO from random init, no anchor.
 - **Spec B2c** — serving: metadata-authoritative architecture recovery and the event wire contract.
 
 ## Key Files
@@ -161,6 +163,9 @@ Quick map of what is where:
 - `EnvConfig` defaults match the real Go bridge: `39 x 42 x 1` planes, 58 scalars, 204 actions. B2b models consume 51 channels (39 public + 12 privileged) but **the policy path only ever reads the first 39** — the actor is information-legal by construction.
 - Legacy 42-scalar checkpoints are padded in `storage.load_checkpoint()` so old policy weights load while new Chongci match-context scalar weights start at zero.
 - A B2b checkpoint's `event_window` is **not recoverable from tensor shapes**. `infer_model_config` needs `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it. When adding a `ModelConfig` field, add it to `model_config_args.py`'s `model_config_params()` by hand.
+- `kernel_width` IS shape-inferred (`plane_stem.0.weight.shape[3]`); metadata that disagrees with it is rejected.
+- BC trains with `events=None`, so an event-enabled net's offline validation runs under `allow_zero_events` — real planes and scalars, a zero event vector. The per-epoch report's `validation_events` says which case ran: `"zeroed"` = an event-enabled net validated with zero event features, `"none"` = the net has no event encoder, `null` = no validation ran. A zeroed agreement number describes the BC stage only; it is not comparable to an event-fed B2b evaluation.
+- Both agreement helpers report `mean_cross_entropy` — the legal-action-masked negative log-likelihood of the taken action — alongside `agreement_rate`. `fh-mj-train-bc --patience N` stops after N epochs without a `--min-delta` improvement in it (never before `--min-epochs`), records `stopped_early`, `epochs_run`, `best_epoch` and `best_validation_cross_entropy` in the report, and copies the lowest-CE epoch's checkpoint to `checkpoint_dir/best.pt`. `--patience` without a validation split is an error.
 
 ### Datasets
 - Dataset generation writes a manifest next to each JSONL file or shard directory with seed range, policy source, bridge kind, git commit, action-space size, and observation dimensions.
@@ -168,6 +173,7 @@ Quick map of what is where:
 - Prefer `--format npz-shards` for large generation runs (avoids a huge temporary JSONL); convert older JSONL with `fh-mj-convert-data`. Large Go-bridge exports should use chunked generation rather than one huge protobuf response (`--chunk-size` defaults to 1000).
 - BC and AWBC load only current-observation/action/return arrays to stay within WSL memory on 50k+ datasets; IQL/offline-Q need next-state arrays and may need transition limits.
 - New shards preserve `decision_indices` and `sample_weights` so paired-trace first-divergence cases map back into training rows; older shards without decision indices fall back to seed/seat/action matching.
+- `fh-mj-generate-data --learning-seat-rule seed-mod-4` keeps only seat `(episode_seed − base) % 4` per episode (`--seat-rule-base-seed`, default `--start-seed`) and drops the rest **before serialization**, so a match contributes ~1/4 the rows and within-match correlation drops. The manifest records `learning_seat_rule`, `seat_rule_base_seed`, `per_seat_transitions`, and per-chunk `transitions_before_seat_filter`. Default `all` is the historical every-seat behavior.
 
 ### Promotion discipline
 - **`fh-mj-compare` is the required tool for any promotion or lever verdict.** Read the *clustered* CI (`mean_placement_ci95_clustered`), never the naive iid one — the four seat-rotations of a wall seed are correlated.
@@ -183,7 +189,10 @@ Quick map of what is where:
 - IQL should not initialize `q_head` from BC policy logits — policy logits are action scores, not reward-scaled Q estimates. `--init-q-from-policy` is an explicit ablation only.
 - IQL uses `steps_to_done` to discount sparse terminal round payout as `gamma ** steps_to_done * terminal_reward`, matching the Mortal-style sparse-reward target shape.
 - Keep BC regularization enabled on IQL. `--cql-weight` (Mortal-style conservative Q penalty over legal masked actions) stays an explicit ablation until duplicate-seat evaluation beats BC. Naive offline Q remains experimental for the same reason.
-- Record every non-default architecture flag (`--model-channels`, `--model-residual-blocks`, `--model-channel-attention`, `--model-growth-blocks`, `--model-event-*`) in MLflow and report outputs. `--partial-init-checkpoint` is for explicit ablations that add compatible layers.
+- Record every non-default architecture flag (`--model-channels`, `--model-residual-blocks`, `--model-channel-attention`, `--model-growth-blocks`, `--model-event-*`, `--model-kernel-width`) in MLflow and report outputs. `--partial-init-checkpoint` is for explicit ablations that add compatible layers.
+- `fh-mj-train-b2b --head-lr L --head-lr-iters N` builds two AdamW groups: `bc` (the parameters under `SCRATCH_BC_PREFIXES`, i.e. what `--init-from-bc` loaded) at `--lr` for the whole run, and `heads` (event encoder, value/Q, privileged critic, aux and risk heads) at `L` for iterations 1..N and `--lr` afterwards. It is one optimizer throughout, so moments are retained across the switch, and `lr_bc`/`lr_heads` are written to `history.json` every iteration. The schedule is re-applied each iteration and keyed by group name, so a resume lands on the resumed iteration's rates. Both flags require `--scratch --init-from-bc`, and each without the other is an error.
+- `--init-from-bc` runs a step-zero transfer gate before any rollout: on a seeded 64-row probe the scratch net's legal-action logits, probabilities and greedy actions must equal the BC net's exactly (BC forwarded with `events=None`, scratch with random events), and every loaded tensor must be byte-equal — `trunk.0`'s leading columns equal to BC's, its trailing event columns exactly zero. The record (`loaded_keys`, `unloaded_keys`, `bc_checkpoint_sha256`, probe diffs) is stored as `metadata["init"]["transfer_gate"]` and survives resume; it is `None` for champion and legacy inits. Any deviation raises before the run moves a single artifact.
+- `fh-mj-export-scratch-init --bc BEST --out INIT` writes what `--scratch --init-from-bc` would construct at step zero (BC weights under `SCRATCH_BC_PREFIXES`, `trunk.0`'s event columns zeroed), runs the same transfer gate, and stores the record plus the BC digest under `metadata["init"]` with `metadata["purpose"] = "bench-init"`. It exists because `fh-mj-collect-bench` has no `--scratch`: `--champion BEST` would keep BC's untrained nonzero event columns and bench a different policy, while `--champion INIT` is an identity load of the lap's real step-zero net. Its `--event-window`/`--privileged-critic`/`--aux-heads` are `fh-mj-train-b2b`'s flags, not the `--model-*` forms.
 - MLflow tracking is opt-in via `--mlflow`; local storage defaults to `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both gitignored.
 
 ### Patching across the training modules

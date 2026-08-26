@@ -14,6 +14,7 @@ from fh_mahjong_ai.scripts.serve_policy import PolicyHolder, observation_from_js
 from fh_mahjong_ai.serving import CheckpointPolicy, run_bridge_serving_smoke
 from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
 from fh_mahjong_ai.types import Observation
+from conftest import SMALL_MODEL
 
 
 def _checkpoint(tmp_path: Path) -> Path:
@@ -497,6 +498,35 @@ def test_checkpoint_policy_loads_non_default_architecture(tmp_path: Path) -> Non
     save_checkpoint(checkpoint_path, model)
 
     policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+
+    channels, height, width = env_config.plane_shape
+    planes = torch.zeros((1, channels, height, width))
+    scalars = torch.zeros((1, env_config.scalar_features))
+    mask = torch.ones((1, env_config.action_space_size))
+    model.eval()
+    with torch.no_grad():
+        expected_logits, _ = model(planes, scalars, mask)
+        actual_logits, _ = policy.model(planes, scalars, mask)
+    assert torch.allclose(expected_logits, actual_logits, atol=1e-6)
+
+
+def test_checkpoint_policy_loads_kernel_width_one_architecture(tmp_path: Path) -> None:
+    """mortal-scale-scratch: the scratch arms train with (3, 1) convs, so
+    serving must reconstruct that trunk from a checkpoint. `kernel_width` is
+    shape-inferred off `plane_stem.0.weight.shape[3]`, and this is the only
+    place that proves the serving loader -- not just `infer_model_config` --
+    actually rebuilds the 1-D trunk rather than a 3x3 one."""
+    config = ModelConfig(**SMALL_MODEL, kernel_width=1)
+    env_config = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env_config, config)
+    checkpoint_path = tmp_path / "kernel1.pt"
+    save_checkpoint(checkpoint_path, model,
+                    metadata={"model_config": model_config_metadata(config)})
+
+    policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+
+    assert policy.model.model_config.kernel_width == 1
+    assert tuple(policy.model.state_dict()["plane_stem.0.weight"].shape[2:]) == (3, 1)
 
     channels, height, width = env_config.plane_shape
     planes = torch.zeros((1, channels, height, width))

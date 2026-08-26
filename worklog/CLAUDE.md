@@ -32,6 +32,7 @@ the code disagree, the code wins — these are point-in-time records, not live s
 | `chongci-risk-target-design.md` | Superseded design note from that era. |
 | `placement-reshape-experiment.md` | The one open experiment thread. |
 | `data-scale-960-lap-status.md` | Closed lap record. |
+| `20260825-mortal-scale-scratch-status.md` | Live status for the mortal-scale scratch experiment (Amendments 1–2 ratified; not launched). |
 
 ## Conventions
 

@@ -71,6 +71,10 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     state_path = checkpoint_dir / "train_state.pt"
     state_before = torch.load(state_path, map_location="cpu", weights_only=False)
     assert state_before["next_iteration"] == 3
+    # mortal-scale-scratch: train_state.pt persists the lineage's construction
+    # provenance so a resume can carry it forward (see below).
+    assert state_before["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
+                                    "bc_checkpoint_path": None, "transfer_gate": None}
 
     config_resumed = replace(config_first, iterations=4)
     history = train_b2b(env, model_config, champion_path, checkpoint_dir, config_resumed,
@@ -84,6 +88,12 @@ def test_resume_from_state_continues_iteration_count_and_history(tmp_path) -> No
     for i in (3, 4):
         saved = torch.load(checkpoint_dir / f"iter_{i:03d}.pt", map_location="cpu")
         assert saved["metadata"]["model_config"]["event_window"] == model_config.event_window
+        # mortal-scale-scratch: the resume reads `init` back out of the state
+        # file and keeps stamping the ORIGINAL provenance onto the checkpoints
+        # it writes -- a lap that survives a box restart still says how it was
+        # constructed instead of degrading to {"kind": "resumed"}.
+        assert saved["metadata"]["init"] == {"kind": "champion", "bc_checkpoint_sha256": None,
+                                             "bc_checkpoint_path": None, "transfer_gate": None}
     # Resuming must not have re-run the champion warm-start: iter_001/002
     # checkpoints from the first run are untouched (same file, not rewritten).
     assert (checkpoint_dir / "iter_001.pt").exists()
@@ -2735,3 +2745,109 @@ def test_legacy_state_without_bonus_fields_normalizes() -> None:
     from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
     assert {"placement_bonus_values", "placement_bonus_lambda",
             "placement_bonus_calibration_digest"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+
+def _bc_checkpoint(tmp_path: Path, model_config: ModelConfig) -> Path:
+    """A BC-stage checkpoint for the `--scratch --init-from-bc` path."""
+    from fh_mahjong_ai.storage import model_config_metadata
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), model_config)
+    path = tmp_path / "bc.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(model_config)})
+    return path
+
+
+def test_resume_rebuilds_two_parameter_groups(tmp_path) -> None:
+    # mortal-scale-scratch Amendment 1 §6: group membership is a pure function
+    # of parameter names, so a resumed run rebuilds the SAME two AdamW groups
+    # and `optimizer.load_state_dict` matches (a group-count/size mismatch
+    # would raise inside load_state_dict, failing this run outright). The
+    # schedule is re-applied every iteration, so the first iteration after a
+    # resume lands on the post-switch lr rather than inheriting the saved one.
+    env, model_config, _champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
+    config_first = replace(config_first, head_lr=2e-4, head_lr_iters=2)
+    bc_path = _bc_checkpoint(tmp_path, model_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    first = train_b2b(env, model_config, None, checkpoint_dir, config_first,
+                      base_seed=5, train_state_every=1,
+                      scratch=True, init_from_bc=bc_path)
+    assert [row["lr_heads"] for row in first] == [2e-4, 2e-4]
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert len(state_before["optimizer"]["param_groups"]) == 2
+
+    config_resumed = replace(config_first, iterations=4)
+    history = train_b2b(env, model_config, None, checkpoint_dir, config_resumed,
+                        base_seed=5, train_state_every=1,
+                        resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    assert [row["lr_heads"] for row in history if row["iteration"] >= 3] == [2e-5, 2e-5]
+    assert all(row["lr_bc"] == 2e-5 for row in history)
+    state_after = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert len(state_after["optimizer"]["param_groups"]) == 2
+    assert [g["lr"] for g in state_after["optimizer"]["param_groups"]] == [2e-5, 2e-5]
+
+
+def test_resume_preserves_the_step_zero_transfer_gate_record(tmp_path) -> None:
+    # mortal-scale-scratch Amendment 1 §4: the transfer gate runs ONCE, at
+    # construction -- a resume never reconstructs the model, so it can never
+    # re-prove step-0 parity. The record therefore has to survive in
+    # `train_state.pt` and keep being stamped, unchanged, onto every
+    # checkpoint the resumed process writes; otherwise a lap that outlives a
+    # box restart loses the only evidence that it ever started at the BC
+    # policy at all.
+    env, model_config, _champion_path, config_first = b2b_run_configs(tmp_path, iterations=1)
+    bc_path = _bc_checkpoint(tmp_path, model_config)
+    checkpoint_dir = tmp_path / "ckpt"
+
+    train_b2b(env, model_config, None, checkpoint_dir, config_first, base_seed=5,
+              train_state_every=1, scratch=True, init_from_bc=bc_path)
+    state_path = checkpoint_dir / "train_state.pt"
+    state_before = torch.load(state_path, map_location="cpu", weights_only=False)
+    gate = state_before["init"]["transfer_gate"]
+    assert gate["max_abs_logit_diff"] == 0.0 and gate["greedy_match_rate"] == 1.0
+    assert gate["loaded_tensors_identical"] is True
+    first = torch.load(checkpoint_dir / "iter_001.pt", map_location="cpu")
+    assert first["metadata"]["init"]["transfer_gate"] == gate
+
+    train_b2b(env, model_config, None, checkpoint_dir, replace(config_first, iterations=2),
+              base_seed=5, train_state_every=1, resume_from_state=state_path)
+    resumed = torch.load(checkpoint_dir / "iter_002.pt", map_location="cpu")
+    assert resumed["metadata"]["init"]["kind"] == "scratch"
+    assert resumed["metadata"]["init"]["transfer_gate"] == gate
+    state_after = torch.load(state_path, map_location="cpu", weights_only=False)
+    assert state_after["init"]["transfer_gate"] == gate
+
+
+def test_legacy_state_without_head_lr_fields_normalizes(caplog) -> None:
+    # `head_lr`/`head_lr_iters` (Amendment 1 §6) ship AFTER released
+    # train_state.pt files exist, so a pre-upgrade echo is silent about both.
+    # Without the whitelist entry `_validate_resume_config_echo` reads that
+    # silence as recipe drift and refuses to resume ANY in-flight run.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
+    assert {"head_lr", "head_lr_iters"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+    current = _config_echo_triple()
+    assert current["ppo_config"]["head_lr"] is None
+    assert current["ppo_config"]["head_lr_iters"] == 0
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["head_lr"]
+    del saved["ppo_config"]["head_lr_iters"]
+
+    with caplog.at_level(logging.INFO):
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
+    assert any("head_lr" in record.getMessage() for record in caplog.records)
+
+
+def test_resume_config_echo_explicit_different_head_lr_still_raises() -> None:
+    # The back-fill only covers SILENCE. A state file that explicitly recorded
+    # a different head_lr is real recipe drift and must still be rejected.
+    from fh_mahjong_ai import train_state as train_state_mod
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    saved["ppo_config"]["head_lr"] = 2e-4
+    with pytest.raises(ValueError, match="head_lr"):
+        train_state_mod._validate_resume_config_echo(current, saved)

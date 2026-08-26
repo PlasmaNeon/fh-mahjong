@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
-from fh_mahjong_ai.model import ChannelAttention2d, DuelingQHead, PolicyValueNet
+from fh_mahjong_ai.model import ChannelAttention2d, DuelingQHead, PolicyValueNet, infer_model_config
 from fh_mahjong_ai.storage import load_checkpoint
+from conftest import SMALL_MODEL
 
 
 def test_policy_value_net_default_preserves_tile_positions() -> None:
@@ -173,3 +175,55 @@ def test_state_dict_keys_are_unprefixed_after_trunk_extraction():
     # genuine `trunk` Sequential of its own, so only the container names the
     # extraction could plausibly introduce are checked here.)
     assert not any(k.startswith(("encoders.", "plane_scalar_encoders.")) for k in keys)
+
+
+def test_default_kernel_width_keeps_state_dict_shapes() -> None:
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL))
+    stem = model.state_dict()["plane_stem.0.weight"]
+    assert ModelConfig().kernel_width == 3
+    assert tuple(stem.shape[2:]) == (3, 3)
+    block = model.state_dict()["plane_blocks.0.layers.0.weight"]
+    assert tuple(block.shape[2:]) == (3, 3)
+
+
+def test_kernel_width_one_builds_1d_convs_and_forwards() -> None:
+    env = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=1))
+    sd = model.state_dict()
+    assert tuple(sd["plane_stem.0.weight"].shape[2:]) == (3, 1)
+    assert tuple(sd["plane_blocks.0.layers.0.weight"].shape[2:]) == (3, 1)
+    assert tuple(sd["plane_blocks.0.layers.2.weight"].shape[2:]) == (3, 1)
+    planes = torch.zeros(2, 39, 42, 1)
+    scalars = torch.zeros(2, 58)
+    mask = torch.ones(2, 204, dtype=torch.int8)
+    logits, value = model(planes, scalars, mask)
+    assert logits.shape == (2, 204) and value.shape == (2,)
+
+
+def test_kernel_width_one_has_one_third_conv_params() -> None:
+    env = EnvConfig(bridge_kind="mock")
+    wide = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=3))
+    narrow = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=1))
+    assert narrow.plane_blocks[0].layers[0].weight.numel() * 3 == wide.plane_blocks[0].layers[0].weight.numel()
+
+
+def test_kernel_width_is_shape_inferred() -> None:
+    env = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=1))
+    inferred = infer_model_config(model.state_dict())
+    assert inferred.kernel_width == 1
+    assert inferred == ModelConfig(**SMALL_MODEL, kernel_width=1)
+
+
+def test_kernel_width_growth_blocks_follow_config() -> None:
+    env = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=1, growth_blocks=1))
+    assert tuple(model.state_dict()["growth.0.layers.0.weight"].shape[2:]) == (3, 1)
+
+
+# `True` is an int in Python and `True in (1, 3)` is True, so a bare
+# membership test would build a width-1 conv out of a boolean.
+@pytest.mark.parametrize("bad", [0, 2, 5, True])
+def test_kernel_width_rejects_values_outside_one_and_three(bad: int) -> None:
+    with pytest.raises(ValueError, match="kernel_width"):
+        ModelConfig(**SMALL_MODEL, kernel_width=bad)

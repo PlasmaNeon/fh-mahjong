@@ -563,10 +563,15 @@ def compute_action_agreement(
     transitions: List[Transition],
     device: str = "cpu",
     batch_size: int = 1024,
+    allow_zero_events: bool = False,
 ) -> Dict[str, Any]:
     """Compute how often the model's argmax action matches the expert's action.
 
     Returns dict with aggregate and action-family agreement metrics.
+
+    `allow_zero_events` is forwarded to `compute_action_agreement_from_batches`
+    -- see that function's docstring for what it means and when it is (and is
+    not) a valid metric.
     """
     model.eval()
     exact_matches = 0
@@ -581,6 +586,7 @@ def compute_action_agreement(
             "total_transitions": 0,
             "action_family_counts": {},
             "family_agreement": {},
+            "mean_cross_entropy": 0.0,
         }
 
     batches = (
@@ -603,25 +609,51 @@ def compute_action_agreement(
         }
         for start in range(0, total, max(1, batch_size))
     )
-    return compute_action_agreement_from_batches(model, batches, device=device)
+    return compute_action_agreement_from_batches(
+        model, batches, device=device, allow_zero_events=allow_zero_events
+    )
 
 
 def compute_action_agreement_from_batches(
     model: nn.Module,
     batches: Iterator[dict[str, np.ndarray]],
     device: str = "cpu",
+    allow_zero_events: bool = False,
 ) -> Dict[str, Any]:
-    """Compute action agreement from pre-batched observation/action arrays."""
-    if getattr(model, "wants_events", False):
+    """Compute action agreement from pre-batched observation/action arrays.
+
+    By default this refuses to evaluate an event-enabled model (`model.wants_events`)
+    because offline datasets carry no event histories, and silently running the
+    model with zeroed event features would produce a misleading metric for a
+    checkpoint whose event encoder was actually trained on live event history
+    (e.g. Spec B2b PPO). Pass `allow_zero_events=True` to opt into that
+    zeroed-event forward pass anyway.
+
+    `allow_zero_events=True` is valid ONLY for a model whose event encoder was
+    itself trained with `events=None` (zeroed event features) throughout --
+    e.g. behavior cloning (BC), where `PolicyValueNet.encode` already
+    substitutes zeros when no events are supplied (spec B2b/4.3), so
+    evaluating under the same zeroed condition faithfully measures what BC
+    learned. It is NOT a valid accuracy metric for an event-trained (PPO)
+    checkpoint, whose event encoder expects real event history at inference
+    time -- passing True there would silently evaluate a materially different
+    (degraded) input distribution than the one the checkpoint was trained and
+    is meant to run under.
+    """
+    if getattr(model, "wants_events", False) and not allow_zero_events:
         raise ValueError(
             "offline action agreement cannot evaluate an event-enabled model: "
             "offline datasets carry no event histories (the model would silently "
-            "run with zeroed event features)"
+            "run with zeroed event features); pass allow_zero_events=True only if "
+            "this model's event encoder was itself trained with events=None "
+            "throughout (e.g. behavior cloning), never for an event-trained "
+            "(PPO) checkpoint"
         )
     model.eval()
     exact_matches = 0
     top3_matches = 0
     total = 0
+    nll_sum = 0.0
     families: dict[str, dict[str, int]] = {}
 
     with torch.inference_mode():
@@ -635,6 +667,12 @@ def compute_action_agreement_from_batches(
             mask = torch.from_numpy(np.asarray(batch["action_mask"], dtype=np.int8)).to(device)
 
             logits, _ = model(planes, scalars, mask)
+            log_probs = torch.log_softmax(logits.float(), dim=1)
+            nll_sum += float(
+                -log_probs[torch.arange(logits.shape[0]), torch.from_numpy(action_ids).to(logits.device)]
+                .sum()
+                .item()
+            )
             top_actions_tensor = torch.topk(logits, k=min(3, logits.shape[1]), dim=1).indices.cpu()
             top_actions = top_actions_tensor.numpy()
             predicted_actions = top_actions[:, 0]
@@ -661,6 +699,7 @@ def compute_action_agreement_from_batches(
             "total_transitions": 0,
             "action_family_counts": {},
             "family_agreement": {},
+            "mean_cross_entropy": 0.0,
         }
 
     family_agreement = {
@@ -681,6 +720,7 @@ def compute_action_agreement_from_batches(
             for family, counts in sorted(families.items())
         },
         "family_agreement": family_agreement,
+        "mean_cross_entropy": nll_sum / total,
     }
 
 

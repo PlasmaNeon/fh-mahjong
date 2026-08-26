@@ -7,6 +7,8 @@ lines of this. The crash-resume machinery this loop drives lives in
 target then covers both this module's calls and train_state's internal ones."""
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 import multiprocessing as mp
 import os
@@ -21,6 +23,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import torch
+from torch import nn
 
 from . import memprobe
 from . import train_state
@@ -29,6 +32,7 @@ from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
 from .model import (
     PolicyValueNet,
+    infer_model_config,
     _derive_growth_blocks,
     _reconstruct_env_config,
     _shape_inferred_fields,
@@ -107,6 +111,280 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
             model.value_head[0].bias.copy_(payload["model"]["value_head.0.bias"].to(vw.device))
     model.eval()
     return model
+
+
+SCRATCH_BC_PREFIXES = ("plane_stem.", "plane_blocks.", "plane_head.",
+                       "scalar_encoder.", "trunk.", "policy_head.")
+
+
+def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device: str = "cpu",
+                        bc_checkpoint: Optional[Path] = None) -> PolicyValueNet:
+    """mortal-scale-scratch: a freshly initialised B2b net (no anchor, no
+    surgery). With `bc_checkpoint`, the BC-stage weights for exactly
+    `SCRATCH_BC_PREFIXES` are copied by name+shape; every other module (event
+    encoder, privileged critic, value/aux/risk/q heads) keeps its random
+    init. Any BC key under those prefixes that is absent from the model, or any
+    model key under those prefixes absent from the BC checkpoint, or any shape
+    mismatch, is a hard error -- a silent partial load is this lane's known
+    failure mode. `env_config` must be the 39ch config (see `_b2b_model_env_config`).
+
+    step-0 policy == BC policy: the event columns are zeroed so the untrained
+    GRU contributes nothing until PPO moves them. BC trains with `events=None`,
+    which makes `encode` feed the trunk a ZERO event vector, so the trailing
+    `event_encoder.output_dim` columns of `trunk.0.weight` come out of the BC
+    stage exactly as randomly initialised -- never once touched by a gradient.
+    Copying them verbatim on top of this net's OWN brand-new event encoder
+    (whose outputs are not zero) would inject pure noise into step-0 logits and
+    silently make the run start somewhere other than the BC policy. Zeroing
+    them is the same trick `build_b2b_model` uses for its 39ch-champion warm
+    start, sized off the model's own encoder rather than a literal.
+
+    `model_config.growth_blocks > 0` is rejected outright: ReZero growth
+    tensors live under `growth.`, outside `SCRATCH_BC_PREFIXES`, so a BC load
+    would leave them silently random -- exactly the partial load the strict
+    prefix check above exists to prevent. `train_b2b`/the CLI reject
+    `--scratch` with the growth surgery upstream of this too.
+
+    The returned model carries `init_from_bc_sha256`: the sha256 of the BC
+    checkpoint's bytes as actually loaded (None without `bc_checkpoint`).
+    `train_b2b` records that digest in `metadata["init"]` rather than hashing
+    the path a second time."""
+    if model_config.growth_blocks > 0:
+        raise ValueError(
+            f"build_scratch_model: growth_blocks ({model_config.growth_blocks}) must be 0 -- "
+            "the scratch path has no anchor to grow, and `growth.` tensors fall outside "
+            "SCRATCH_BC_PREFIXES, so an --init-from-bc load would leave them silently random"
+        )
+    model = PolicyValueNet(env_config, model_config).to(device)
+    # M4: `train_b2b` reads this instead of re-hashing the file itself, so the
+    # provenance digest and the loaded weights are guaranteed to come from the
+    # same bytes. None when this net is pure random init.
+    model.init_from_bc_sha256 = None
+    if bc_checkpoint is None:
+        model.eval()
+        return model
+    bc_path = Path(bc_checkpoint)
+    # Checked before torch.load so a mistyped path is a clear, actionable error
+    # naming the flag, not a bare FileNotFoundError from deep inside torch.
+    if not bc_path.is_file():
+        raise FileNotFoundError(
+            f"--init-from-bc: BC checkpoint {bc_path} does not exist (or is not a regular "
+            "file) -- pass the fh-mj-train-bc checkpoint this run should start its plane "
+            "trunk / scalar encoder / trunk / policy head from"
+        )
+    # M4: read the file exactly ONCE. `train_b2b` needs both the weights and a
+    # sha256 of the bytes those weights came from; reopening the path for the
+    # hash would let an atomic replacement land in between, so the recorded
+    # digest would name bytes this run never loaded (the same reason
+    # `storage.load_checkpoint_from_bytes` exists). The digest rides back on
+    # the returned model as `init_from_bc_sha256`.
+    data = bc_path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
+    bc_state = payload["model"]
+    target = model.state_dict()
+    wanted_model = {k for k in target if k.startswith(SCRATCH_BC_PREFIXES)}
+    wanted_bc = {k for k in bc_state if k.startswith(SCRATCH_BC_PREFIXES)}
+    missing = sorted(wanted_model - wanted_bc)
+    extra = sorted(wanted_bc - wanted_model)
+    mismatched = sorted(k for k in wanted_model & wanted_bc
+                        if tuple(bc_state[k].shape) != tuple(target[k].shape))
+    if missing or extra or mismatched:
+        raise RuntimeError(
+            "--init-from-bc: BC checkpoint does not match the scratch model on the "
+            f"loaded prefixes (missing={missing[:6]}, extra={extra[:6]}, "
+            f"shape_mismatch={mismatched[:6]}) -- the BC stage must be trained with "
+            "the model flags this run uses. fh-mj-train-bc's --model-event-window / "
+            "--model-privileged-critic / --model-aux-heads correspond to "
+            "fh-mj-train-b2b's --event-window / --privileged-critic / --aux-heads "
+            "(fh-mj-train-b2b IGNORES the --model-* forms of those three); every "
+            "other shared --model-* flag keeps the same name on both commands"
+        )
+    with torch.no_grad():
+        for key in wanted_model:
+            target[key].copy_(bc_state[key].to(target[key].device))
+        if model.wants_events:
+            # See the step-0 parity paragraph above. `event_encoder` exists
+            # exactly when `wants_events`, and `encode` appends its output
+            # LAST, so the event columns are the trailing `output_dim` of
+            # trunk.0's input -- sized off the encoder itself so an
+            # event_output_dim projection (the gru-width lap's shape) is
+            # handled without a second source of truth.
+            event_dim = model.event_encoder.output_dim
+            model.trunk[0].weight[:, -event_dim:].zero_()
+    model.init_from_bc_sha256 = digest
+    model.eval()
+    return model
+
+
+def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: EnvConfig,
+                       probe_seed: int = 20260825, probe_batch: int = 64) -> dict:
+    """Amendment 1 §4: prove the scratch model IS the BC policy at step zero.
+
+    Rebuilds the BC net from the checkpoint, feeds both nets an identical
+    seeded synthetic probe (BC with events=None, scratch with random events),
+    and requires bit-equal masked logits, probabilities and greedy actions,
+    plus byte-identical tensors for every loaded key. Fail closed: any
+    difference raises, so a broken transfer aborts the launch before a single
+    rollout is collected rather than quietly training something that is not
+    the BC policy. The returned record rides into `metadata["init"]` as the
+    per-run evidence that the transfer held.
+
+    Bit-equality (not a tolerance) is the contract: BC runs with `events=None`,
+    which feeds its trunk an exactly-zero event vector, and this net's trunk
+    has exactly-zero event COLUMNS -- so on both sides the event term
+    contributes exact 0.0 into an otherwise identical dot product over
+    identical weights and identical inputs. Any nonzero diff is a real defect
+    (a mis-copied tensor, an unzeroed column), never float noise.
+
+    The claim is scoped to the POLICY path: logits, probabilities and greedy
+    actions. Values and the auxiliary heads are deliberately not compared --
+    the privileged critic, the value/aux/risk/q heads and the event encoder
+    have no BC counterpart at all (they are the `unloaded_keys`), so there is
+    nothing there for step 0 to be equal to.
+
+    The BC reference net is moved onto the model's own device before the probe:
+    comparing a CPU forward against a CUDA forward would differ in the last
+    ulp purely from kernel/reduction differences and would abort every GPU
+    launch. Same device, same shapes, same kernels => the same reduction order
+    on both sides, which is what makes exact equality the right assertion.
+
+    Single-read discipline (as in `build_scratch_model`, M4): the checkpoint
+    bytes are read ONCE here, hashed, and required to match the digest
+    `build_scratch_model` recorded on the model (`init_from_bc_sha256`). An
+    atomic replacement of the path between the two reads would otherwise have
+    this gate prove parity against bytes the model never loaded -- a passing
+    gate for a transfer that never happened. A mismatch is a gate failure."""
+    data = Path(bc_checkpoint).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    expected_digest = getattr(model, "init_from_bc_sha256", None)
+    if digest != expected_digest:
+        raise RuntimeError(
+            "--init-from-bc transfer gate FAILED: BC checkpoint digest mismatch -- "
+            f"{bc_checkpoint} now hashes to sha256 {digest}, but this model was built "
+            f"from sha256 {expected_digest}. The file changed between "
+            "`build_scratch_model`'s read and this gate (or the model was not built "
+            "from it at all), so the probe below would prove parity against bytes this "
+            "run never loaded"
+        )
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
+    bc_config = infer_model_config(payload["model"], payload.get("metadata"))
+    bc_model = PolicyValueNet(env_config, bc_config)
+    bc_model.load_state_dict(payload["model"], strict=True)
+    device = next(model.parameters()).device
+    bc_model = bc_model.to(device)
+    bc_model.eval()
+    model.eval()
+    sd = model.state_dict()
+    loaded = sorted(k for k in sd if k.startswith(SCRATCH_BC_PREFIXES))
+    unloaded = sorted(k for k in sd if not k.startswith(SCRATCH_BC_PREFIXES))
+    bc_sd = bc_model.state_dict()
+    # `trunk.0.weight` is the one loaded key that is deliberately NOT a verbatim
+    # copy: `build_scratch_model` zeroes its trailing event columns (BC never
+    # trained them, and this net's event encoder is brand new). Byte-equality is
+    # therefore asserted on the leading plane+scalar columns, and the trailing
+    # columns are required to be exactly zero -- the two halves of the same
+    # step-0 parity claim, both of which the probe below then exercises.
+    event_dim = model.event_encoder.output_dim if model.wants_events else 0
+    mismatched: list[str] = []
+    for key in loaded:
+        got_t, ref_t = sd[key].cpu(), bc_sd[key].cpu()
+        if event_dim and key == "trunk.0.weight":
+            if not torch.equal(got_t[:, :-event_dim], ref_t[:, :-event_dim]):
+                mismatched.append(key)
+            if not torch.equal(got_t[:, -event_dim:], torch.zeros_like(got_t[:, -event_dim:])):
+                mismatched.append("trunk.0.weight[event columns not zero]")
+            continue
+        if not torch.equal(got_t, ref_t):
+            mismatched.append(key)
+    # The probe is NOT redundant with the tensor check above. That check proves
+    # the loaded tensors are BC's; this proves nothing ELSE reaches the policy
+    # output. A future module added to `encode`/`policy_head` -- another
+    # embedding, a second fusion input, an unloaded normalisation -- would pass
+    # the tensor check untouched (it is not under SCRATCH_BC_PREFIXES) while
+    # silently moving step-0 logits away from BC. Only a forward pass catches
+    # that class of change.
+    gen = torch.Generator().manual_seed(probe_seed)
+    channels, height, width = env_config.plane_shape
+    planes = torch.rand((probe_batch, channels, height, width), generator=gen)
+    scalars = torch.rand((probe_batch, env_config.scalar_features), generator=gen)
+    mask = (torch.rand((probe_batch, env_config.action_space_size), generator=gen) > 0.3).to(torch.int8)
+    mask[:, 0] = 1  # at least one legal action per row
+    planes, scalars, mask = planes.to(device), scalars.to(device), mask.to(device)
+    with torch.no_grad():
+        ref, _ = bc_model(planes, scalars, mask)
+        if model.wants_events:
+            window = model.model_config.event_window
+            events = torch.randint(0, 0x10000, (probe_batch, window), generator=gen)
+            lengths = torch.full((probe_batch,), window, dtype=torch.int64)
+            got, _ = model(planes, scalars, mask, events=events.to(device),
+                           event_lengths=lengths.to(device))
+        else:
+            got, _ = model(planes, scalars, mask)
+    ref, got = ref.cpu(), got.cpu()
+    # Illegal actions are masked to `finfo.min` on BOTH sides, so a raw diff
+    # there is meaningless (it subtracts two identical sentinels); the claim
+    # under test is about the LEGAL action distribution.
+    legal = mask.cpu().bool()
+    logit_diff = float((ref - got).abs()[legal].max().item())
+    prob_diff = float((torch.softmax(ref, 1) - torch.softmax(got, 1)).abs().max().item())
+    greedy = float((ref.argmax(1) == got.argmax(1)).float().mean().item())
+    record = {"probe_seed": probe_seed, "probe_batch": probe_batch,
+              "bc_checkpoint_sha256": digest, "max_abs_logit_diff": logit_diff,
+              "max_abs_prob_diff": prob_diff, "greedy_match_rate": greedy,
+              "loaded_keys": loaded, "unloaded_keys": unloaded, "loaded_tensors_identical": not mismatched}
+    # All four quantities are GATED, not merely recorded: the probability diff
+    # covers the full row (including the masked sentinels), so it also catches a
+    # divergence confined to actions the probe happened to mark illegal, which
+    # `logit_diff` -- taken under `legal` only -- cannot see.
+    if mismatched or logit_diff != 0.0 or prob_diff != 0.0 or greedy != 1.0:
+        raise RuntimeError(f"--init-from-bc transfer gate FAILED: tensors_mismatched={mismatched[:6]}, "
+                           f"max_abs_logit_diff={logit_diff}, max_abs_prob_diff={prob_diff}, "
+                           f"greedy_match_rate={greedy}")
+    del bc_model, bc_sd, payload, data
+    return record
+
+
+def split_bc_parameter_groups(model: nn.Module) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
+    """Partition parameters by name into (loaded-from-BC, heads) using
+    SCRATCH_BC_PREFIXES. Pure function of parameter names, so a resumed run
+    rebuilds identical groups and optimizer.load_state_dict matches."""
+    bc, heads = [], []
+    for name, param in model.named_parameters():
+        (bc if name.startswith(SCRATCH_BC_PREFIXES) else heads).append(param)
+    return bc, heads
+
+
+def build_optimizer(model: nn.Module, config: PPOConfig) -> torch.optim.AdamW:
+    if config.head_lr is None:
+        return torch.optim.AdamW(model.parameters(), lr=config.lr)
+    bc, heads = split_bc_parameter_groups(model)
+    return torch.optim.AdamW([{"params": bc, "lr": config.lr, "name": "bc"},
+                              {"params": heads, "lr": config.head_lr, "name": "heads"}], lr=config.lr)
+
+
+def apply_lr_schedule(optimizer: torch.optim.AdamW, config: PPOConfig, iteration: int) -> dict[str, float]:
+    """Set each group's lr for `iteration` (1-based). Idempotent, so calling it
+    every iteration -- including the first after a resume -- is correct.
+
+    Invariant: the groups are looked up by the `name` `build_optimizer` stamped
+    on them, and whether to schedule at all is decided by the optimizer's own
+    shape rather than by `config.head_lr`. Keying off the config would let a
+    config/optimizer disagreement (a two-group optimizer under a head_lr-less
+    config) return early WITHOUT touching the optimizer, leaving the heads
+    group running at a head lr while the returned telemetry reported `lr`.
+    The returned dict always describes the lrs actually in force."""
+    groups = {group.get("name"): group for group in optimizer.param_groups}
+    if "bc" not in groups or "heads" not in groups:
+        # A single-group optimizer: every parameter is already at `config.lr`
+        # from construction, and there is no second group to schedule.
+        return {"lr_bc": config.lr, "lr_heads": config.lr}
+    heads_lr = (config.head_lr
+                if config.head_lr is not None and iteration <= config.head_lr_iters
+                else config.lr)
+    groups["bc"]["lr"] = config.lr
+    groups["heads"]["lr"] = heads_lr
+    return {"lr_bc": config.lr, "lr_heads": heads_lr}
 
 
 def _assert_b2b_anchor_matches_live_env(fn_name: str, anchor_env_config: EnvConfig,
@@ -898,7 +1176,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
              force_history_reset: bool = False,
              fresh_run_overwrite: bool = False,
              allow_bridge_mismatch: bool = False,
-             accept_legacy_unpinned_state: bool = False) -> list[dict]:
+             accept_legacy_unpinned_state: bool = False,
+             scratch: bool = False,
+             init_from_bc: Optional[Path] = None) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -926,6 +1206,25 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     by the grown model's own config (the anchor's saved architecture plus
     `growth_blocks` ReZero blocks) so every downstream checkpoint save below
     records the true architecture, including `growth_blocks`.
+
+    `scratch=True` (mortal-scale-scratch) routes model construction through
+    `build_scratch_model` instead: there is NO anchor at all, so
+    `champion_checkpoint` must be `None` and neither warm-start surgery may
+    be requested (both combinations raise below) — the net is built purely
+    from the caller's `model_config`, at random init, with no step-0 parity
+    to preserve. `init_from_bc`, when given, additionally copies the BC
+    stage's plane trunk / scalar encoder / trunk / policy head in by exact
+    name+shape (`SCRATCH_BC_PREFIXES`); it requires `scratch=True`. Every
+    `iter_*.pt` records which of the two construction paths produced this
+    run under `metadata["init"]` (`{"kind": "scratch"|"champion",
+    "bc_checkpoint_sha256": ..., "bc_checkpoint_path": ...}`) so a checkpoint's
+    provenance is readable without the launch command. `train_state.pt`
+    persists that same block, so a resume carries the original provenance
+    forward into every checkpoint it goes on to write; only a LEGACY state
+    predating that slot degrades to `{"kind": "resumed",
+    "bc_checkpoint_sha256": None, "bc_checkpoint_path": None}`. It is
+    deliberately not part of `config_echo` — a record of how the run started,
+    not a config the resume has to match.
 
     Resumable state (deep16-rezero capacity lap survives box restarts):
     every `train_state_every` iterations, and always at completion, writes
@@ -1076,6 +1375,46 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             "growth) and this function does not attempt to reconcile applying both to "
             "the same anchor in a single call"
         )
+    # mortal-scale-scratch: the construction paths are mutually exclusive and
+    # exactly one must be selectable. `resume_from_state` wins over all of
+    # them -- it never constructs from these flags at all (the model comes
+    # from the state file), so a resume is deliberately exempt from every
+    # check here rather than being made to carry a redundant --scratch.
+    # These run BEFORE checkpoint_dir is touched (mkdir/lock/artifact scan)
+    # so a mis-flagged launch cannot leave a directory or a lock behind.
+    if resume_from_state is None:
+        if scratch and champion_checkpoint is not None:
+            raise ValueError("scratch=True cannot be combined with a champion checkpoint")
+        if scratch and (growth_blocks > 0 or widen_event_hidden > 0):
+            raise ValueError("scratch=True cannot be combined with growth_blocks/widen_event_hidden surgery")
+        if not scratch and champion_checkpoint is None:
+            raise ValueError("champion_checkpoint is required unless scratch=True or resume_from_state is given")
+        if init_from_bc is not None and not scratch:
+            raise ValueError("init_from_bc requires scratch=True")
+        # Amendment 1 §6: the two lr groups are defined by which parameters the
+        # BC stage supplied (SCRATCH_BC_PREFIXES). Without a BC init there is
+        # no such split -- every parameter is random -- so a head_lr here would
+        # silently mean "train these arbitrary modules faster than those".
+        if config.head_lr is not None and init_from_bc is None:
+            raise ValueError(
+                "head_lr requires scratch=True with init_from_bc (groups are defined "
+                "relative to the BC-loaded prefixes)")
+        # Amendment 1 §6: each field is INERT without the other, and inertness is
+        # exactly what a mis-flagged launch cannot afford to discover after a
+        # full lap. head_lr with head_lr_iters=0 (the DEFAULT) schedules a warm
+        # phase of zero iterations -- every iteration is already past the
+        # switch -- so the run silently trains single-rate. head_lr_iters
+        # without head_lr never builds a second parameter group at all, so the
+        # number is silently ignored. Both raise instead.
+        if config.head_lr is not None and config.head_lr_iters < 1:
+            raise ValueError(
+                f"head_lr ({config.head_lr}) requires head_lr_iters >= 1 (got "
+                f"{config.head_lr_iters}) -- a warm phase of zero iterations means "
+                "head_lr is never applied and the run trains at a single rate")
+        if config.head_lr_iters > 0 and config.head_lr is None:
+            raise ValueError(
+                f"head_lr_iters ({config.head_lr_iters}) requires head_lr -- without it "
+                "there is only one parameter group and the iteration count is ignored")
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1293,6 +1632,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "raise --iterations or stop"
                 )
             run_id = state_payload.get("run_id")
+            # mortal-scale-scratch: a resume never re-runs construction, so it
+            # has no construction flags of its own to record -- it inherits
+            # the lineage's. `_save_train_state` persists the `init` block, so
+            # the checkpoints written after a resume keep saying "scratch"
+            # (with the same BC digest) rather than degrading to "resumed" and
+            # losing a long lap's provenance across a box restart. Only a
+            # LEGACY state, written before that slot existed, has nothing to
+            # read -- record "resumed" there rather than guessing at a kind.
+            init_meta = state_payload.get("init") or {
+                "kind": "resumed", "bc_checkpoint_sha256": None, "bc_checkpoint_path": None,
+                "transfer_gate": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
@@ -1359,6 +1709,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # and including early iterations of the new run still leaves the
             # old run fully recoverable from the backup directory via a manual
             # move.
+            # Amendment 1 §4: only the `--scratch --init-from-bc` construction
+            # below has a BC policy to be equal to; every other path leaves
+            # this None (there is nothing to prove, not a gate that passed).
+            transfer_gate = None
             if growth_blocks > 0:
                 model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
                 model_config = model.model_config
@@ -1366,6 +1720,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 model = widen_event_gru(champion_checkpoint, widen_event_hidden,
                                         env_config=env_config, device=device)
                 model_config = model.model_config
+            elif scratch:
+                model = build_scratch_model(_b2b_model_env_config(env_config), model_config, device,
+                                            bc_checkpoint=init_from_bc)
+                # Amendment 1 §4: prove step-0 == BC BEFORE anything is
+                # collected, trained or moved. This raises on any deviation,
+                # and it runs here -- inside construction, upstream of the
+                # `--fresh-run-overwrite` backup move below -- so a failed
+                # transfer aborts with the prior run's artifacts still in
+                # place, exactly like the other constructor-side raises.
+                if init_from_bc is not None:
+                    transfer_gate = verify_bc_transfer(model, init_from_bc,
+                                                       _b2b_model_env_config(env_config))
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
             # Adversarial round 14, high finding: pin the bridge identity for
@@ -1424,6 +1790,25 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
+            # mortal-scale-scratch: record which construction path built this
+            # run's weights, alongside the run_id that identifies the lineage.
+            # The digest comes from `build_scratch_model`, which hashed the
+            # exact bytes it loaded the weights from (M4) -- so every
+            # `iter_*.pt` this run writes names the BC checkpoint this model
+            # actually came from, even if the file at `init_from_bc` is later
+            # replaced mid-run. The path is kept alongside the digest because a
+            # bare hash cannot be resolved back to a file by hand.
+            init_meta = {
+                "kind": "scratch" if scratch else "champion",
+                "bc_checkpoint_sha256": getattr(model, "init_from_bc_sha256", None),
+                "bc_checkpoint_path": str(init_from_bc) if init_from_bc is not None else None,
+                # The step-0 transfer evidence (Amendment 1 §4): the probe's
+                # diffs plus the exact loaded/unloaded key sets, so a lap can
+                # be audited from any checkpoint it wrote. None on every path
+                # with no BC init. `_save_train_state` persists `init` whole,
+                # so a resume carries this forward unchanged.
+                "transfer_gate": transfer_gate,
+            }
             # A fresh run never has anything to quarantine -- either the
             # directory was empty/new, or `--fresh-run-overwrite` just moved
             # every prior managed artifact (including any leftover `.stale`
@@ -1437,7 +1822,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
         train_state._write_lock_owner(lock_file, run_id=run_id)
         model.train()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        optimizer = build_optimizer(model, config)
         if state_payload is not None:
             optimizer.load_state_dict(state_payload["optimizer"])
             torch.set_rng_state(state_payload["torch_rng"])
@@ -1485,10 +1870,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         raise RuntimeError(f"iter {iteration}: match telemetry missing or incomplete")
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
+                # Amendment 1 §6: re-applied EVERY iteration, before the update
+                # that consumes it. Idempotent by construction, so the first
+                # iteration after a resume lands on this iteration's lr rather
+                # than inheriting whatever the restored optimizer state carried.
+                lrs = apply_lr_schedule(optimizer, config, iteration)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
                 metrics["iteration"] = iteration
                 metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
                 metrics["steps"] = len(batch)
+                metrics.update(lrs)
                 # Aux-supervision telemetry: an all-zero deal-in rate across many
                 # iters is the corrupted-labels signature — watch it in history.json.
                 if batch.dealin_labels is not None:
@@ -1576,6 +1967,11 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         },
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
+                        # mortal-scale-scratch: which construction path this
+                        # lineage came from, so a checkpoint's provenance is
+                        # readable off the file rather than only from the
+                        # launch command -- see `init_meta` above.
+                        "init": init_meta,
                         "objective": {
                             "placement_bonus_values": (list(config.placement_bonus_values)
                                                        if config.placement_bonus_values is not None else None),
@@ -1623,6 +2019,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         env_config=env_config, base_seed=base_seed, run_id=run_id,
                         pinned_bridge_sha256=pinned_bridge_sha256,
                         pinned_bridge_path=pinned_bridge_path,
+                        init=init_meta,
                     )
                     # Adversarial round 18, high finding: `train_state.pt` just
                     # landed durably -- this is the new run's first durable

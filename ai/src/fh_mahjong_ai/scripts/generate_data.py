@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import subprocess
 import time
@@ -26,6 +27,11 @@ from fh_mahjong_ai.types import Transition
 # --episodes requests auto-chunk into bounded, safe payloads.
 DEFAULT_CHUNK_SIZE = 20
 
+# Supported --learning-seat-rule values. "all" preserves today's behaviour
+# (every seat's transitions are kept); "seed-mod-4" keeps exactly one seat
+# per episode, selected by (episode seed - base) % 4 (Amendment 2 §2).
+SEAT_RULES = ("all", "seed-mod-4")
+
 
 def generate_dataset(
     episodes: int,
@@ -43,12 +49,27 @@ def generate_dataset(
     chongci_starting_score: int = 2000,
     chongci_bust_threshold: int = 0,
     chongci_max_hands: int = 50,
+    learning_seat_rule: str = "all",
+    seat_rule_base_seed: Optional[int] = None,
 ) -> dict:
     """Generate heuristic trajectories and write to JSONL or NumPy shards.
 
     Returns a stats dict with keys: episodes, transitions, elapsed_seconds,
     output_path, and manifest_path.
+
+    ``learning_seat_rule`` controls which seats' transitions are kept in each
+    chunk, applied before serialization (Amendment 2 §2):
+      - "all" (default): keep every seat's transitions (today's behaviour).
+      - "seed-mod-4": keep exactly one seat per episode, the seat equal to
+        ``(episode_seed - base) % 4`` where ``base`` is ``seat_rule_base_seed``
+        (defaulting to ``start_seed``) and ``episode_seed`` is
+        ``chunk_seed + (episode_index - episode_offset)``.
     """
+    if learning_seat_rule not in SEAT_RULES:
+        raise ValueError(
+            f"unsupported learning_seat_rule: {learning_seat_rule!r} "
+            f"(expected one of {SEAT_RULES})"
+        )
     normalized_output_format = normalize_output_format(output_format)
     config = EnvConfig(
         bridge_kind=bridge_kind,
@@ -65,6 +86,10 @@ def generate_dataset(
     shard_writer: ShardedTransitionWriter | None = None
     chunk_stats: list[dict[str, Any]] = []
     total_transitions = 0
+    per_seat: collections.Counter[int] = collections.Counter()
+    resolved_seat_rule_base_seed = (
+        start_seed if seat_rule_base_seed is None else seat_rule_base_seed
+    ) if learning_seat_rule != "all" else None
     try:
         t0 = time.monotonic()
         effective_chunk_size = normalize_chunk_size(episodes, chunk_size)
@@ -107,6 +132,19 @@ def generate_dataset(
                     f"{effective_chunk_size})."
                 )
 
+            transitions_before_seat_filter = len(transitions)
+            if learning_seat_rule == "seed-mod-4":
+                base = resolved_seat_rule_base_seed
+                transitions = [
+                    t
+                    for t in transitions
+                    if int(t.observation.seat)
+                    == ((chunk_seed + int(t.info["episode_index"]) - episode_offset) - base) % 4
+                ]
+
+            for t in transitions:
+                per_seat[int(t.observation.seat)] += 1
+
             backfill_returns(transitions)
             if normalized_output_format == "jsonl":
                 write_transitions_jsonl(output_path, transitions, append=True)
@@ -124,6 +162,7 @@ def generate_dataset(
                     "end_seed": chunk_seed + chunk_episodes - 1 if chunk_episodes > 0 else chunk_seed,
                     "episode_index_offset": episode_offset,
                     "elapsed_seconds": round(chunk_elapsed, 2),
+                    "transitions_before_seat_filter": transitions_before_seat_filter,
                 }
             )
             print(
@@ -151,6 +190,9 @@ def generate_dataset(
         "chunks": chunk_stats,
         "shard_size": max(1, int(shard_size)),
         "compressed_shards": compressed_shards,
+        "learning_seat_rule": learning_seat_rule,
+        "seat_rule_base_seed": resolved_seat_rule_base_seed,
+        "per_seat_transitions": {str(seat): count for seat, count in sorted(per_seat.items())},
     }
     if shard_manifest is not None:
         stats["shards"] = shard_manifest["shards"]
@@ -247,6 +289,9 @@ def dataset_manifest(
             "compressed_shards": bool(stats["compressed_shards"]),
             "shards": stats.get("shards", []),
             "shard_manifest_path": stats.get("shard_manifest_path"),
+            "learning_seat_rule": stats["learning_seat_rule"],
+            "seat_rule_base_seed": stats["seat_rule_base_seed"],
+            "per_seat_transitions": stats["per_seat_transitions"],
         },
         "source": {
             "policy": policy_source,
@@ -330,6 +375,22 @@ def main() -> None:
             "(unsafe for large --episodes)."
         ),
     )
+    parser.add_argument(
+        "--learning-seat-rule",
+        choices=SEAT_RULES,
+        default="all",
+        help=(
+            "Which seats' transitions to keep before serialization. 'all' keeps "
+            "every seat (today's behaviour). 'seed-mod-4' keeps exactly one seat "
+            "per episode: (episode_seed - base) %% 4 (Amendment 2 §2)."
+        ),
+    )
+    parser.add_argument(
+        "--seat-rule-base-seed",
+        type=int,
+        default=None,
+        help="Base seed for --learning-seat-rule seed-mod-4 (default: --start-seed).",
+    )
     args = parser.parse_args()
 
     print(f"Generating {args.episodes} episodes starting at seed {args.start_seed}...")
@@ -349,6 +410,8 @@ def main() -> None:
         chongci_starting_score=args.chongci_starting_score,
         chongci_bust_threshold=args.chongci_bust_threshold,
         chongci_max_hands=args.chongci_max_hands,
+        learning_seat_rule=args.learning_seat_rule,
+        seat_rule_base_seed=args.seat_rule_base_seed,
     )
     print(f"Done: {stats['transitions']} transitions from {stats['episodes']} episodes in {stats['elapsed_seconds']}s")
     print(f"Saved to {args.output}")
