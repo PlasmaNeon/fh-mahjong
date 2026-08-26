@@ -1,8 +1,8 @@
 # Mortal-scale from-scratch experiment — design
 
-**Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` · **Status:** code
-complete on branch; PR pending final review. Codex consult on thread `01a0147d` required
-before any lap launches.
+**Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` ·
+**Status:** code complete incl. Amendment 1 items (PR #223); protocol ratified 2026-08-25;
+NOT LAUNCHED — see runbook + status file.
 
 ## 1. Question
 
@@ -155,7 +155,7 @@ Nothing in `internal/`, the proto, or the Go bridge changes. Serving needs no co
 1. This spec (reviewed) → implementation plan via `writing-plans`.
 2. PR: code changes §4 with tests, CI gates green, `ai/CLAUDE.md` updated.
 3. Runbook `worklog/plans/20260825-mortal-scale-scratch-runbook.md` + live status file
-   `worklog/rl-experiment/mortal-scale-scratch-status.md` (created when the lap launches).
+   `worklog/rl-experiment/20260825-mortal-scale-scratch-status.md`.
 4. Consult ruling recorded as Amendment 1 here before anything trains.
 
 ## Amendment 1 (ratified 2026-08-25, Codex thread `01a0147d`) — supersedes §5 where they differ
