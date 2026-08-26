@@ -88,6 +88,15 @@ Both gates required per claim: clustered CI95 lower bound > 0 AND
 | primary (practical gate) | big iter_??? | anchor075 | | | | |
 | secondary (package) | big iter_??? | control iter_??? | | | | |
 
+## Open notes for the consult thread
+
+- `trunk.0.weight`'s zeroed event-input columns belong to the BC-loaded group
+  (trained at `--lr`, e.g. 2e-5) while the event encoder trains at `--head-lr`
+  (e.g. 2e-4) for iterations 1–25: the read-in weights of the event path grow
+  from zero at the slow rate, not the fast one, for as long as they still live
+  inside `trunk.0.weight` rather than the event encoder proper. Ratify or amend
+  before interpreting the warm phase.
+
 ## Event log
 
 Append only. `UTC timestamp — session-name — what happened.`

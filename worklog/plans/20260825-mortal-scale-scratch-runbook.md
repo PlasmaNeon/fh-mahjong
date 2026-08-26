@@ -260,6 +260,13 @@ an absolute validation-cross-entropy improvement of 1e-4, and the lowest-CE epoc
 is byte-copied to `<checkpoint-dir>/best.pt` — that file, not the last epoch, is
 what the PPO stage initializes from.
 
+`best.pt` is refreshed as soon as a new lowest-CE epoch is checkpointed, so an
+interrupted BC run always leaves a current `best.pt` behind. `--resume` restarts
+patience and best-epoch tracking from the resumed epoch — it does not re-read the
+old run's `best.pt` or `report.json` — so after any resumed run, re-select
+`best.pt` by hand from the merged `report.json`'s `epochs` list before the PPO
+stage initializes from it.
+
 Record per arm from `report.json`: `best_epoch`, `best_validation_cross_entropy`,
 `stopped_early`, `epochs_run`, and the best epoch's `validation.agreement_rate`
 (legal-action-masked top-1) and `validation.mean_cross_entropy`. Every epoch's

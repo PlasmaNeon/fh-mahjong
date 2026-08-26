@@ -367,13 +367,13 @@ def apply_lr_schedule(optimizer: torch.optim.AdamW, config: PPOConfig, iteration
     """Set each group's lr for `iteration` (1-based). Idempotent, so calling it
     every iteration -- including the first after a resume -- is correct.
 
-    Fix round 1: the groups are looked up by the `name` `build_optimizer`
-    stamped on them, and whether to schedule at all is decided by the
-    optimizer's own shape rather than by `config.head_lr`. Keying off the
-    config let a config/optimizer disagreement (a two-group optimizer under a
-    head_lr-less config) return early WITHOUT touching the optimizer, leaving
-    the heads group running at a head lr while the returned telemetry reported
-    `lr`. Now the returned dict always describes the lrs actually in force."""
+    Invariant: the groups are looked up by the `name` `build_optimizer` stamped
+    on them, and whether to schedule at all is decided by the optimizer's own
+    shape rather than by `config.head_lr`. Keying off the config would let a
+    config/optimizer disagreement (a two-group optimizer under a head_lr-less
+    config) return early WITHOUT touching the optimizer, leaving the heads
+    group running at a head lr while the returned telemetry reported `lr`.
+    The returned dict always describes the lrs actually in force."""
     groups = {group.get("name"): group for group in optimizer.param_groups}
     if "bc" not in groups or "heads" not in groups:
         # A single-group optimizer: every parameter is already at `config.lr`
@@ -1399,7 +1399,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             raise ValueError(
                 "head_lr requires scratch=True with init_from_bc (groups are defined "
                 "relative to the BC-loaded prefixes)")
-        # Fix round 1: each field is INERT without the other, and inertness is
+        # Amendment 1 §6: each field is INERT without the other, and inertness is
         # exactly what a mis-flagged launch cannot afford to discover after a
         # full lap. head_lr with head_lr_iters=0 (the DEFAULT) schedules a warm
         # phase of zero iterations -- every iteration is already past the

@@ -54,6 +54,13 @@ def train_bc(
     min_epochs: int = 1,
 ) -> List[TrainMetrics]:
     """Run BC training and return collected metrics."""
+    if patience is not None and patience < 1:
+        raise ValueError("--patience must be >= 1")
+    if min_delta < 0:
+        raise ValueError("--min-delta must be >= 0")
+    if min_epochs < 1:
+        raise ValueError("--min-epochs must be >= 1")
+
     torch.manual_seed(split_seed)
     validation_arrays: Optional[dict[str, np.ndarray]] = None
     validation_indices: Optional[np.ndarray] = None
@@ -134,6 +141,7 @@ def train_bc(
 
     best_ce = float("inf")
     best_epoch: Optional[int] = None
+    patience_ref = float("inf")
     stale = 0
     stopped_early = False
     epochs_run = 0
@@ -247,8 +255,20 @@ def train_bc(
             epochs_run = epoch
             val_ce = (epoch_report["validation"] or {}).get("mean_cross_entropy")
             if val_ce is not None:
-                if val_ce < best_ce - min_delta:
-                    best_ce, best_epoch, stale = float(val_ce), epoch, 0
+                # Selection (best_epoch) is the literal argmin over validation CE.
+                # Stopping (stale/patience) is gated on a min_delta-significant
+                # improvement, tracked separately so a sub-min_delta improvement
+                # can still win selection without resetting the patience clock.
+                if val_ce < best_ce:
+                    best_ce, best_epoch = float(val_ce), epoch
+                    if patience is not None:
+                        # Refresh best.pt right after this epoch's checkpoint is
+                        # saved so an interrupted run always leaves a current
+                        # best.pt behind, not just a run that reaches the end
+                        # of the loop.
+                        shutil.copyfile(checkpoint_path, checkpoint_dir / "best.pt")
+                if val_ce < patience_ref - min_delta:
+                    patience_ref, stale = float(val_ce), 0
                 else:
                     stale += 1
                 if patience is not None and epoch >= min_epochs and stale >= patience:
@@ -288,8 +308,13 @@ def train_bc(
             print(f"MLflow run: {mlflow_run.info.run_id}")
 
     if patience is not None and best_epoch is not None:
+        # best.pt is refreshed in-loop as soon as best_epoch changes (above);
+        # this is a no-op guard for callers that mutate checkpoint_dir between
+        # the last in-loop refresh and return (e.g. tests, `--resume` chains).
         best_checkpoint_path = checkpoint_dir / f"epoch_{best_epoch:03d}.pt"
-        shutil.copyfile(best_checkpoint_path, checkpoint_dir / "best.pt")
+        best_pt_path = checkpoint_dir / "best.pt"
+        if not (best_pt_path.exists() and best_pt_path.read_bytes() == best_checkpoint_path.read_bytes()):
+            shutil.copyfile(best_checkpoint_path, best_pt_path)
 
     return all_metrics
 
@@ -365,6 +390,13 @@ def main() -> None:
                          help="Minimum epochs to run before early stopping can trigger")
     add_model_config_args(parser)
     args = parser.parse_args()
+
+    if args.patience is not None and args.patience < 1:
+        parser.error("--patience must be >= 1")
+    if args.min_delta < 0:
+        parser.error("--min-delta must be >= 0")
+    if args.min_epochs < 1:
+        parser.error("--min-epochs must be >= 1")
 
     report_output = args.report_output or args.checkpoint_dir / "training_report.json"
     print(f"Loading data from {args.data}...")

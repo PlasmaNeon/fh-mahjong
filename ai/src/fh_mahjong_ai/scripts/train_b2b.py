@@ -187,7 +187,7 @@ def main() -> None:
         # supply", so it only exists relative to an --init-from-bc load.
         if args.head_lr is not None and args.init_from_bc is None:
             p.error("--head-lr requires --scratch --init-from-bc")
-        # Fix round 1: neither flag does anything without the other -- see the
+        # Amendment 1 §6: neither flag does anything without the other -- see the
         # matching guards in train_b2b. Caught here so it is a usage error at
         # launch rather than a lap that silently trained at a single rate.
         if args.head_lr is not None and args.head_lr_iters < 1:

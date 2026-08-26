@@ -113,10 +113,10 @@ class TestActionAgreement:
         single = compute_action_agreement(model, transitions, device="cpu", batch_size=1)
         batched = compute_action_agreement(model, transitions, device="cpu", batch_size=8)
 
-        # mean_cross_entropy is a running float sum whose accumulation order
-        # differs between batch sizes (17x1 vs 3x8/1), so it can differ by
-        # float summation error; compare it with a tolerance and everything
-        # else exactly.
+        # GEMM reduction order differs between batch shapes (the accumulator
+        # is float64), so mean_cross_entropy can differ by float summation
+        # error between batch sizes (17x1 vs 3x8/1); compare it with a
+        # tolerance and everything else exactly.
         single_ce = single.pop("mean_cross_entropy")
         batched_ce = batched.pop("mean_cross_entropy")
         assert batched_ce == pytest.approx(single_ce, rel=1e-5)

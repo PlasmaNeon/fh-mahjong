@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from fh_mahjong_ai.scripts.train_bc import train_bc
 from fh_mahjong_ai.storage import read_transitions_jsonl, write_transitions_jsonl, write_transitions_npz_shards
@@ -264,3 +265,61 @@ def test_train_bc_without_patience_is_unchanged(tmp_path: Path) -> None:
     report = json.loads(report_path.read_text())
     assert report["stopped_early"] is False and report["epochs_run"] == 2
     assert not (ckpt_dir / "best.pt").exists()
+
+
+def test_train_bc_selection_and_patience_are_decoupled(tmp_path: Path, monkeypatch) -> None:
+    """Amendment 1 §3: `best_epoch` must be the literal argmin over validation
+    CE, even when the winning epoch's improvement is below `--min-delta` and so
+    does not reset the patience clock.
+
+    CE sequence [2.0, 1.5, 1.49995, 1.5, 1.5, ...], patience=2, min_delta=1e-4:
+      epoch 1: ce=2.0      -> best_ce=2.0 best_epoch=1;    patience_ref=2.0     stale=0
+      epoch 2: ce=1.5      -> best_ce=1.5 best_epoch=2;    patience_ref=1.5     stale=0  (1.5 < 2.0-1e-4)
+      epoch 3: ce=1.49995  -> best_ce=1.49995 best_epoch=3 (1.49995 < 1.5, selection wins);
+                               patience_ref stays 1.5, stale=1 (1.49995 is NOT < 1.5-1e-4=1.4999)
+      epoch 4: ce=1.5      -> best_ce unchanged (1.5 is not < 1.49995); patience_ref stays 1.5,
+                               stale=2 (1.5 is NOT < 1.4999) -> stale >= patience(2) -> stop
+    So best_epoch == 3 and epochs_run == 4. Under the old shared-counter logic,
+    epoch 3's sub-min_delta improvement could never win selection at all.
+    """
+    from fh_mahjong_ai.scripts import train_bc as train_bc_mod
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=40)
+    seq = iter([2.0, 1.5, 1.49995, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+    real = train_bc_mod.compute_action_agreement
+
+    def fake(model, transitions, **kw):
+        out = real(model, transitions, **kw)
+        out["mean_cross_entropy"] = next(seq)
+        return out
+
+    monkeypatch.setattr(train_bc_mod, "compute_action_agreement", fake)
+    report_path = tmp_path / "report.json"
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=10, batch_size=8, device="cpu",
+             patience=2, min_delta=1e-4, min_epochs=1, report_path=report_path)
+    report = json.loads(report_path.read_text())
+    assert report["stopped_early"] is True
+    assert report["best_epoch"] == 3
+    assert report["epochs_run"] == 4
+    assert report["best_validation_cross_entropy"] == pytest.approx(1.49995)
+    assert (ckpt_dir / "best.pt").read_bytes() == (ckpt_dir / "epoch_003.pt").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"patience": 0}, "patience"),
+        ({"patience": -1}, "patience"),
+        ({"min_delta": -1e-4}, "min-delta"),
+        ({"min_epochs": 0}, "min-epochs"),
+        ({"min_epochs": -1}, "min-epochs"),
+    ],
+)
+def test_train_bc_rejects_invalid_early_stopping_flags(tmp_path: Path, kwargs, message) -> None:
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    with pytest.raises(ValueError, match=message):
+        train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8, device="cpu", **kwargs)
