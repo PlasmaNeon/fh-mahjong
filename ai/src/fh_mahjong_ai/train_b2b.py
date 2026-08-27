@@ -1833,7 +1833,11 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         # Amendment 4 (mortal-scale-scratch): snapshot the event pathway HERE --
         # after a resume has restored the weights, before the first iteration --
         # so update norms are true from the first recorded iteration either way.
-        event_path = train_state.EventPathTelemetry(model)
+        # `expect_zero_init` only for a FRESH --init-from-bc lap: a resume and a
+        # champion warm start both legitimately carry a non-zero slice.
+        event_path = train_state.EventPathTelemetry(
+            model, expect_zero_init=(scratch and init_from_bc is not None and start_iteration == 1))
+        trunk_alpha = train_state.TrunkAlphaTelemetry(model)
         event_path_init = event_path.initial_metrics()
         if event_path_init is not None:
             logger.info("event-path init: %s", event_path_init)
@@ -1917,6 +1921,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 event_path_metrics = event_path.record(model, iteration)
                 if event_path_metrics is not None:
                     metrics.update(event_path_metrics)
+                trunk_alpha_metrics = trunk_alpha.record(model)
+                if trunk_alpha_metrics is not None:
+                    metrics.update(trunk_alpha_metrics)
                 metrics["truncated_matches"] = int(batch.truncated_matches)
                 matches_total = max(1, int(config.matches_per_iter))
                 truncation_rate = batch.truncated_matches / matches_total
@@ -2046,6 +2053,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "state":
                         shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
                         backup_cleared = True
+                # Amendment 4 integrity gate, LAST in the iteration: this
+                # iteration's history row, `iter_N.pt` and `train_state.pt` are
+                # all durable above, so the evidence survives the halt. Raising
+                # here stops the run before the next collection rather than
+                # letting a lap that is not measuring what the protocol thinks
+                # it is keep spending GPU hours.
+                event_path.raise_if_halted()
         finally:
             if collector is not None:
                 collector.close()

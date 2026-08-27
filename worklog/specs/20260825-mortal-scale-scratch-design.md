@@ -249,3 +249,23 @@ Preflight measurement: one chongci heuristic match emits 2,079 transitions (all 
 
 7. **Scope.** This amendment adds telemetry and fixes interpretation only. All Amendments 1–3 variables and gates remain frozen.
 
+
+## Stage 3 terminal ruling
+
+1. **Stage 3 passes.** Both canonical ReZero BC arms satisfy every Amendment 3 acceptance gate with clean containment. The plain-block failure remains diagnostic evidence; the ReZero checkpoints are the only admissible PPO initializations.
+
+2. **BC equality is not adverse evidence.** `0.9581` versus `0.9582` does not update the PPO scale hypothesis: both models reached the heuristic-policy imitation ceiling. It establishes unusually strong starting-policy parity and removes unequal BC quality as an alternative explanation for later PPO results. No registered prior, budget, or gate changes.
+
+3. **Alpha result is diagnostic only.** The big arm’s smaller, depth-concentrated alphas show that BC used little of its deep residual capacity; they neither justify shrinking/changing the model nor predict PPO failure. Carry alpha telemetry into both laps: per iteration record finite alpha count, absolute min/median/max, L2 norm, and per-iteration alpha-vector update norm. Full per-block values remain recoverable from checkpoints. These measurements are non-load-bearing and cannot change stopping or selection.
+
+4. **Amendment 4 must fail closed.** Warnings-only does **not** satisfy the ruling. “Cannot change stopping” applies to observed magnitudes and engagement interpretations; it does not override the explicit integrity gate. If any event-path value is non-finite, iteration-0 is not exactly zero, or the event slice is exactly unchanged across a completed iteration, write the history/checkpoint evidence and then halt before the next collection, returning to consultation. PR #233 must enforce and test that behavior before either lap.
+
+5. **Next steps confirmed with one ordering correction.** First merge the corrected PR #233, sync and pin that exact checkout on the box, then:
+
+   1. export `bc-big/best.pt` to the ReZero `big-init.pt` and record its SHA and transfer proof;
+   2. run the registered 960/768 bench under every Amendment 2 gate;
+   3. launch the 200-iteration control lap at 320/256;
+   4. apply the iteration-200 `>=−0.0600` control gate before authorizing the big lap.
+
+6. **No other amendment.** Dataset, BC checkpoints, PPO learning-rate groups, seeds, budgets, memory limits, screening/kill rules, confirmation gates, and no-optional-stopping governance remain frozen.
+

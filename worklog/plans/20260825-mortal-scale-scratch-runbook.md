@@ -585,9 +585,19 @@ flat or negative delta **only** when these numbers support it — a slice norm a
 `rms_ratio` still near zero, with small `event_slice_update_fro`. From iteration
 50 on it is not an excuse at all: persistent non-engagement is a property of the
 registered recipe, and is not grounds for extension, retuning, or a re-run. The
-readouts are diagnostic and cannot change stopping, selection, budget or learning
-rates. `event_slice_integrity_failure` (a completed iteration in which the slice
-did not move at all) or `event_path_nonfinite` returns to the consult thread.
+observed *magnitudes* cannot change stopping, selection, budget or learning rates.
+The *integrity gate* is separate and fails closed: a non-finite readout, an
+iteration-0 slice that is not exactly zero, or a slice that did not move at all
+across a completed iteration writes that iteration's history row, checkpoint and
+train_state, then halts the lap before the next collection and returns to the
+consult thread.
+
+**Trunk alphas (Stage 3 terminal ruling).** `history.json` also carries
+`trunk_alpha_{count,finite_count,abs_min,abs_median,abs_max,l2,update_l2}` for the
+main trunk's ReZero alphas, in both laps. Diagnostic only, no gate. BC left the big
+arm's 24 alphas an order of magnitude below the control's 4 (median 0.0049 vs
+0.0505), concentrated in the deepest blocks; whether PPO uses that depth is worth
+watching. Full per-block values stay recoverable from any checkpoint.
 
 **Kill rule (Amendment 1 §7).** The sole early kill is at iteration 100, and it
 applies to each arm: stop iff `delta100 − delta75 <= 0` **and** `delta100 < −0.20`.

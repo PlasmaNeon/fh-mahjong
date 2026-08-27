@@ -105,24 +105,26 @@ Both gates required per claim: clustered CI95 lower bound > 0 AND
 
 - (none)
 
-## Amendment 4 prerequisite — event-slice telemetry
+## Amendment 4 + Stage 3 ruling — lap telemetry prerequisite
 
 Amendment 4 ratifies the parameter groups unchanged (`trunk.0.weight`, zeroed event
 columns included, stays in the `bc` group at `2e-5`; `event_encoder.*` stays in `heads`
 at `2e-4` through iteration 25) and forbids attributing a flat iteration-25/50 delta to
-"the event head has not engaged" without telemetry. It requires, at init and after every
-iteration, for **both** arms: the event-column slice's Frobenius norm, RMS and max-abs;
-that slice's per-iteration Frobenius update norm; its per-element RMS ratio to the
-non-event columns of `trunk.0.weight`; and the event encoder's parameter norm and
-per-iteration update norm. Iteration-0 slice must be exactly zero; an exactly unchanged
-slice across a completed iteration is an integrity failure and returns to consultation.
-Diagnostic only — it cannot change stopping, selection, budget, or learning rates.
+"the event head has not engaged" without telemetry — inadmissible outright from
+iteration 50 on. The Stage 3 terminal ruling added main-trunk alpha readouts and
+corrected the integrity gate to fail closed.
 
-Implemented as `train_state.EventPathTelemetry`: `event_slice_{fro,rms,max_abs,update_fro,rms_ratio}`
-and `event_encoder_{param_norm,update_fro}` in every `history.json` row, iteration-0 snapshot in
-`metadata["event_path_init"]`. A frozen slice or a non-finite readout sets
-`event_slice_integrity_failure` / `event_path_nonfinite` and logs a warning — it never raises,
-because raising is the stopping behaviour the amendment rules out. Reading rule in runbook §7.
+Implemented in PR #233: `train_state.EventPathTelemetry` and `TrunkAlphaTelemetry` write
+`event_slice_{fro,rms,max_abs,update_fro,rms_ratio}`, `event_encoder_{param_norm,update_fro}`
+and `trunk_alpha_{count,finite_count,abs_min,abs_median,abs_max,l2,update_l2}` to every
+`history.json` row; the iteration-0 event snapshot goes to `metadata["event_path_init"]`.
+Observed magnitudes gate nothing. The integrity check does: a non-zero slice at iteration 0
+on a fresh `--init-from-bc` lap raises before the first collection, and a non-finite readout
+or an exactly-unchanged slice halts the lap **after** that iteration's history row,
+checkpoint and train_state are durable. Reading rule in runbook §7.
+
+**Ordering (ruling §5): merge PR #233, sync and pin that checkout on the box, and only then
+run §4 export → §4 bench → §5 control lap.**
 
 ## Event log
 
@@ -143,4 +145,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-27` — mortal-scale-scratch — Amendment 4 ratified (thread `01a0147d`): parameter groups stay as they are, no slice-specific lr; "the event head has not engaged" is not a default excuse for a flat iteration-25/50 delta and is inadmissible from iteration 50 on; event-slice + event-encoder telemetry is mandatory for both arms. Telemetry not yet implemented — blocks the §5 lap.
 - `2026-08-27 08:41Z` — mortal-scale-scratch — BC control (ReZero) PASSED the §3 gate: top-1 0.9582, CE 0.1230, 4/4 alphas non-zero. Chain launched BC big automatically.
 - `2026-08-27 10:20Z` — mortal-scale-scratch — BC big (ReZero) PASSED the §3 gate: top-1 0.9581 (control − 0.0001, limit 0.0050), CE 0.1248 (control + 0.0018, limit 0.0200), every seat ≥ 0.9580, 24/24 alphas non-zero. Amendment 3 is vindicated: the identical 24-block trunk that would not leave 44.7 % on plain blocks now matches a 4-block net. **Stage 3 complete; the chain stopped as designed.** Diagnostic worth carrying: 3.07× the parameters buys ~0.0000 on BC, and the big arm's alphas are an order of magnitude smaller than control's (median 0.0049 vs 0.0505) with the largest magnitudes in blocks 17–22 — the deep trunk is barely used at the BC ceiling, which is the heuristic itself. That says nothing yet about PPO.
+- `2026-08-27` — mortal-scale-scratch — Stage 3 terminal ruling returned (thread `01a0147d`): Stage 3 passes; BC parity is not adverse evidence and updates no prior (it removes unequal BC quality as an alternative explanation for later PPO results); the alpha spread is diagnostic only but main-trunk alpha telemetry now rides both laps. **Correction: Amendment 4's integrity gate must FAIL CLOSED** — my warnings-only reading was overruled, "cannot change stopping" governs magnitudes, not the gate. PR #233 updated accordingly. Ordering fixed: merge #233 → sync/pin the box → §4 export → §4 bench → §5 control lap.
 - `—` — (add next event here)

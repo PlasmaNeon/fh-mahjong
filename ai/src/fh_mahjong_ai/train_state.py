@@ -1036,12 +1036,17 @@ class EventPathTelemetry:
     not engaged yet" unless these numbers support it (and forbade the excuse
     outright from iteration 50 on). Hence: measure it, don't argue about it.
 
-    Non-load-bearing by ruling -- nothing here may change stopping, selection,
-    budget, or learning rates, so an integrity failure (a slice that did not
-    move at all across a completed iteration, or a non-finite readout) is
-    logged loudly and flagged in `history.json` for a human to take back to the
-    consult thread, never raised. Raising would be exactly the stopping
-    behaviour the amendment rules out.
+    Two different rules govern these numbers, and the distinction is the whole
+    point. The *magnitudes* are non-load-bearing: no observed norm, ratio, or
+    engagement reading may change stopping, selection, budget, or learning
+    rates. The *integrity gate* is separate and fails closed -- a non-finite
+    readout, an iteration-0 slice that is not exactly zero on a fresh
+    `--init-from-bc` lap, or a slice that did not move at all across a
+    completed iteration means the run is not measuring what the protocol
+    thinks it is. `train_b2b` persists that iteration's history row, checkpoint
+    and train_state first, then halts before the next collection and returns to
+    the consult thread. (The 2026-08-27 clarification of Amendment 4 clause 4:
+    "cannot change stopping" governs magnitudes, not this gate.)
 
     Snapshots the model at construction, so build this right after the model is
     created or restored: a resumed run then reports true update norms from its
@@ -1050,15 +1055,30 @@ class EventPathTelemetry:
     "omit rather than report a misleading 0.0" convention as
     `_growth_alpha_mean_abs`."""
 
-    def __init__(self, model: torch.nn.Module) -> None:
+    def __init__(self, model: torch.nn.Module, expect_zero_init: bool = False) -> None:
+        """`expect_zero_init` for a fresh `--init-from-bc` lap, whose step-zero
+        slice `build_scratch_model` zeroed. A non-zero slice there means the net
+        did NOT start at the BC policy, so it raises immediately -- before the
+        first collection, with nothing yet written to mislead a later reader.
+        False for a champion warm start and for every resume, whose slices are
+        legitimately non-zero."""
         encoder = getattr(model, "event_encoder", None)
         self.event_columns = int(encoder.output_dim) if encoder is not None else 0
         self.enabled = self.event_columns > 0
         self._prev_slice: Optional[torch.Tensor] = None
         self._prev_encoder: Optional[torch.Tensor] = None
-        if self.enabled:
-            self._prev_slice, _ = self._trunk_columns(model)
-            self._prev_encoder = self._encoder_vector(model)
+        self.halt_reason: Optional[str] = None
+        if not self.enabled:
+            return
+        self._prev_slice, _ = self._trunk_columns(model)
+        self._prev_encoder = self._encoder_vector(model)
+        initial_fro = float(torch.linalg.vector_norm(self._prev_slice).item())
+        if expect_zero_init and initial_fro != 0.0:
+            raise RuntimeError(
+                "Amendment 4 integrity gate: this run initialises from BC, so the event-input "
+                f"columns of trunk.0.weight must be exactly zero at iteration 0, but their "
+                f"Frobenius norm is {initial_fro!r}. The net did not start at the BC policy -- "
+                "halting before the first collection; return to the consult thread.")
 
     def _trunk_columns(self, model: torch.nn.Module) -> tuple[torch.Tensor, torch.Tensor]:
         """(event columns, non-event columns) of `trunk.0.weight`, detached on
@@ -1111,22 +1131,73 @@ class EventPathTelemetry:
             "event_encoder_param_norm": float(torch.linalg.vector_norm(encoder).item()),
             "event_encoder_update_fro": encoder_update_fro,
         }
+        reasons = []
         nonfinite = sorted(k for k, v in metrics.items() if not np.isfinite(v))
         if nonfinite:
             metrics["event_path_nonfinite"] = True
-            logger.warning(
-                "iter %d: event-path telemetry is not finite (%s) -- Amendment 4 integrity "
-                "failure, take this to the consult thread; the lap is NOT stopped by this "
-                "readout.", iteration, ", ".join(nonfinite))
+            reasons.append(f"non-finite readouts ({', '.join(nonfinite)})")
         if update_fro == 0.0:
             metrics["event_slice_integrity_failure"] = True
-            logger.warning(
-                "iter %d: the event-input columns of trunk.0.weight did not move at all "
-                "(update Frobenius norm exactly 0) -- Amendment 4 integrity failure, take "
-                "this to the consult thread; the lap is NOT stopped by this readout.",
-                iteration)
+            reasons.append("the event-input columns of trunk.0.weight did not move at all "
+                           "(update Frobenius norm exactly 0)")
+        if reasons:
+            self.halt_reason = (
+                f"iter {iteration}: Amendment 4 integrity gate -- " + "; ".join(reasons)
+                + ". This iteration's history row, checkpoint and train_state are written; "
+                  "the run halts before the next collection. Return to the consult thread.")
+            logger.error("%s", self.halt_reason)
         self._prev_slice = event
         self._prev_encoder = encoder
+        return metrics
+
+    def raise_if_halted(self) -> None:
+        """Called by `train_b2b` once this iteration's evidence is durable."""
+        if self.halt_reason is not None:
+            raise RuntimeError(self.halt_reason)
+
+
+class TrunkAlphaTelemetry:
+    """mortal-scale-scratch, Stage 3 terminal ruling (2026-08-27): per-iteration
+    ReZero alpha readouts for the MAIN trunk (`plane_blocks`), carried into both
+    laps.
+
+    BC left the big arm's 24 alphas an order of magnitude smaller than the
+    control's 4 (median 0.0049 vs 0.0505) and concentrated in the deepest
+    blocks -- imitation used little of that depth. Whether PPO does is one of
+    the things these laps are for, so the aggregate is recorded every iteration
+    and the full per-block vector stays recoverable from any checkpoint.
+
+    Diagnostic only, with no integrity gate: unlike the event path there is no
+    protocol invariant an alpha can violate. `None` for a plain-block trunk
+    (`trunk_rezero=False`), which has no alphas to report."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        self.enabled = any(hasattr(block, "alpha") for block in model.plane_blocks)
+        self._prev: Optional[torch.Tensor] = None
+        if self.enabled:
+            self._prev = self._vector(model)
+
+    @staticmethod
+    def _vector(model: torch.nn.Module) -> torch.Tensor:
+        return torch.stack([block.alpha.detach().to("cpu", torch.float64).reshape(-1)[0]
+                            for block in model.plane_blocks if hasattr(block, "alpha")])
+
+    def record(self, model: torch.nn.Module) -> Optional[dict]:
+        if not self.enabled:
+            return None
+        alphas = self._vector(model)
+        magnitudes = alphas.abs()
+        finite = magnitudes[torch.isfinite(magnitudes)]
+        metrics = {
+            "trunk_alpha_count": int(alphas.numel()),
+            "trunk_alpha_finite_count": int(finite.numel()),
+            "trunk_alpha_abs_min": float(finite.min().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_median": float(finite.median().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_max": float(finite.max().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_l2": float(torch.linalg.vector_norm(alphas).item()),
+            "trunk_alpha_update_l2": float(torch.linalg.vector_norm(alphas - self._prev).item()),
+        }
+        self._prev = alphas
         return metrics
 
 
