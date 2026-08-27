@@ -1,9 +1,10 @@
 # Placement-reshape experiment — progress tracking
 
-**Status 2026-08-25: Stage 0 COMPLETE — code merged (PR #220), box gates all green
-(spec Amendment 2), pre-Stage-1 consult RATIFIED launch as pre-registered.** Next: freeze
-the launch manifest, then Stage 1. Update at each transition (running → verdict); do not
-start a parallel record.
+**Status 2026-08-27: EXPERIMENT CONCLUDED — Stage 1 NULL.** 150/150 iters clean; no
+milestone met eligibility (none reduced 4th-place share); no confirmation run; window
+1300000–1301499 unspent. anchor075 remains champion. Numbers: spec "Stage 1 outcome".
+NULL ratified by the post-lap consult (2026-08-27); experiment CLOSED — reopening
+conditions in the spec's closure paragraph. Do not start a parallel record.
 
 - **Spec** → [`../specs/2026-08-21-placement-reshape-design.md`](../specs/2026-08-21-placement-reshape-design.md)
 - **Context** → [`../specs/2026-08-21-placement-reshape-context.md`](../specs/2026-08-21-placement-reshape-context.md)
