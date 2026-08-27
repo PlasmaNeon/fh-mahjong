@@ -1130,3 +1130,130 @@ def test_build_scratch_model_init_from_bc_transfers_rezero_alphas_and_rejects_tr
     plain_cfg = replace(cfg, trunk_rezero=False)
     with pytest.raises(RuntimeError):
         build_scratch_model(EnvConfig(bridge_kind="mock"), plain_cfg, bc_checkpoint=bc_path)
+
+
+# ---------------------------------------------------------------------------
+# mortal-scale-scratch Amendment 4: event-path telemetry.
+# ---------------------------------------------------------------------------
+
+
+def _event_model():
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8,
+                      privileged_critic=True, aux_heads=True)
+    return PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+
+
+def test_event_path_telemetry_is_none_without_an_event_encoder():
+    """Same convention as `_growth_alpha_mean_abs`: omit the keys rather than
+    report a misleading 0.0 for a model that has no event pathway at all."""
+    from fh_mahjong_ai.train_state import EventPathTelemetry
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=0)
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), cfg)
+    telemetry = EventPathTelemetry(model)
+    assert telemetry.enabled is False
+    assert telemetry.initial_metrics() is None
+    assert telemetry.record(model, 1) is None
+
+
+def test_event_path_telemetry_init_slice_is_exactly_zero_after_bc_transfer(tmp_path):
+    """Amendment 4: "The iteration-0 slice must be exactly zero" -- which is
+    only true because `build_scratch_model` zeroed those columns."""
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    from fh_mahjong_ai.train_state import EventPathTelemetry
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, event_window=8,
+                      privileged_critic=True, aux_heads=True)
+    _, bc_path = _bc_checkpoint(tmp_path, cfg)
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+    init = EventPathTelemetry(model).initial_metrics()
+    assert init["event_slice_fro"] == 0.0
+    assert init["event_slice_max_abs"] == 0.0
+    assert init["event_columns"] == model.event_encoder.output_dim
+    assert init["event_encoder_param_norm"] > 0.0  # the encoder itself is live
+
+
+def test_event_path_telemetry_measures_movement_and_flags_a_frozen_slice():
+    from fh_mahjong_ai.train_state import EventPathTelemetry
+    model = _event_model()
+    columns = model.event_encoder.output_dim
+    with torch.no_grad():
+        model.trunk[0].weight[:, -columns:].zero_()
+    telemetry = EventPathTelemetry(model)
+    assert telemetry.initial_metrics()["event_slice_fro"] == 0.0
+
+    # An iteration in which nothing moved: the integrity flag fires.
+    frozen = telemetry.record(model, 1)
+    assert frozen["event_slice_update_fro"] == 0.0
+    assert frozen["event_slice_integrity_failure"] is True
+    assert frozen["event_encoder_update_fro"] == 0.0
+
+    # An iteration in which the slice moved: no flag, and the norms report it.
+    with torch.no_grad():
+        model.trunk[0].weight[:, -columns:] += 0.5
+        next(iter(model.event_encoder.parameters())).add_(0.25)
+    moved = telemetry.record(model, 2)
+    assert "event_slice_integrity_failure" not in moved
+    assert "event_path_nonfinite" not in moved
+    expected = 0.5 * (model.trunk[0].weight.shape[0] * columns) ** 0.5
+    assert moved["event_slice_update_fro"] == pytest.approx(expected, rel=1e-6)
+    assert moved["event_slice_fro"] == pytest.approx(expected, rel=1e-6)
+    assert moved["event_slice_max_abs"] == pytest.approx(0.5, rel=1e-6)
+    assert moved["event_slice_rms"] == pytest.approx(0.5, rel=1e-6)
+    assert moved["event_encoder_update_fro"] > 0.0
+    # RMS ratio compares per-element magnitudes, so it is width-independent.
+    other_rms = model.trunk[0].weight[:, :-columns].detach().double().pow(2).mean().sqrt().item()
+    assert moved["event_slice_rms_ratio"] == pytest.approx(0.5 / other_rms, rel=1e-6)
+
+
+def test_event_path_telemetry_flags_non_finite_values_without_raising():
+    """Non-load-bearing by ruling: an integrity failure is flagged and logged,
+    never raised -- raising is the stopping behaviour Amendment 4 forbids."""
+    from fh_mahjong_ai.train_state import EventPathTelemetry
+    model = _event_model()
+    telemetry = EventPathTelemetry(model)
+    columns = model.event_encoder.output_dim
+    with torch.no_grad():
+        model.trunk[0].weight[0, -columns] = float("nan")
+    metrics = telemetry.record(model, 3)
+    assert metrics["event_path_nonfinite"] is True
+
+
+def test_event_path_telemetry_baseline_survives_a_restored_model():
+    """Constructed after the resume restores weights, so the first recorded
+    iteration reports a true update norm instead of a hole."""
+    from fh_mahjong_ai.train_state import EventPathTelemetry
+    model = _event_model()
+    columns = model.event_encoder.output_dim
+    with torch.no_grad():
+        model.trunk[0].weight[:, -columns:].fill_(2.0)
+    telemetry = EventPathTelemetry(model)  # a partly-trained model: NOT zero
+    assert telemetry.initial_metrics()["event_slice_fro"] > 0.0
+    with torch.no_grad():
+        model.trunk[0].weight[:, -columns:].fill_(2.5)
+    metrics = telemetry.record(model, 51)
+    expected = 0.5 * (model.trunk[0].weight.shape[0] * columns) ** 0.5
+    assert metrics["event_slice_update_fro"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_train_b2b_records_event_path_telemetry_every_iteration(tmp_path):
+    """Amendment 4 end-to-end: the keys land in history.json for every
+    iteration, and the iteration-0 snapshot lands in the checkpoint metadata."""
+    env39, champion_path = _champion(tmp_path)
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=16)
+    config = PPOConfig(device="cpu", iterations=2, matches_per_iter=2,
+                       max_steps_per_episode=16, ppo_epochs=1, minibatch_size=8,
+                       num_workers=1, match_mode="classic")
+    history = train_b2b(env, ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
+                                         aux_heads=True),
+                        champion_path, tmp_path / "ckpt", config, base_seed=5)
+    keys = ("event_slice_fro", "event_slice_rms", "event_slice_max_abs",
+            "event_slice_update_fro", "event_slice_rms_ratio",
+            "event_encoder_param_norm", "event_encoder_update_fro")
+    for row in history:
+        for key in keys:
+            assert key in row, key
+            assert np.isfinite(row[key]), key
+    payload = torch.load(tmp_path / "ckpt" / "iter_002.pt", map_location="cpu")
+    init = payload["metadata"]["event_path_init"]
+    assert set(init) == {"event_slice_fro", "event_slice_max_abs",
+                         "event_encoder_param_norm", "event_columns"}

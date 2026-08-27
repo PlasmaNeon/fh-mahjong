@@ -575,6 +575,20 @@ Big candidate at iteration XXX — the same two commands with
 `fh-mj-compare` is mandatory for every delta claim; the screening delta is its
 `mean_delta` (candidate minus anchor), read together with `delta_ci95_clustered`.
 
+**Event-path reading (Amendment 4).** `history.json` carries
+`event_slice_{fro,rms,max_abs,update_fro,rms_ratio}` and
+`event_encoder_{param_norm,update_fro}` for every iteration, and
+`metadata["event_path_init"]` carries the iteration-0 snapshot (whose
+`event_slice_fro` must be exactly 0.0 for a fresh `--init-from-bc` lap). Through
+iteration 25, "the event head has not engaged yet" is an admissible reading of a
+flat or negative delta **only** when these numbers support it — a slice norm and
+`rms_ratio` still near zero, with small `event_slice_update_fro`. From iteration
+50 on it is not an excuse at all: persistent non-engagement is a property of the
+registered recipe, and is not grounds for extension, retuning, or a re-run. The
+readouts are diagnostic and cannot change stopping, selection, budget or learning
+rates. `event_slice_integrity_failure` (a completed iteration in which the slice
+did not move at all) or `event_path_nonfinite` returns to the consult thread.
+
 **Kill rule (Amendment 1 §7).** The sole early kill is at iteration 100, and it
 applies to each arm: stop iff `delta100 − delta75 <= 0` **and** `delta100 < −0.20`.
 No other iteration triggers a kill, no later slope-based stopping, no adaptive

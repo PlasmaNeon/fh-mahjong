@@ -1021,6 +1021,115 @@ def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
     return float(sum(alphas) / len(alphas))
 
 
+class EventPathTelemetry:
+    """mortal-scale-scratch Amendment 4: per-iteration readouts of the event
+    pathway's read-in weights and of the event encoder itself.
+
+    `build_scratch_model` zeroes the trailing `event_encoder.output_dim`
+    columns of `trunk.0.weight` so a `--init-from-bc` run starts exactly at the
+    BC policy. Those columns are the ONLY thing connecting the event GRU to the
+    logits, and they sit inside `trunk.` -- so `split_bc_parameter_groups` puts
+    them in the slow `bc` group (`--lr`, 2e-5) while the encoder that feeds them
+    trains in the fast `heads` group (`--head-lr`, 2e-4) for iterations
+    1..`head_lr_iters`. Amendment 4 ratified that split unchanged and forbade
+    explaining a flat iteration-25/50 screening delta as "the event head has
+    not engaged yet" unless these numbers support it (and forbade the excuse
+    outright from iteration 50 on). Hence: measure it, don't argue about it.
+
+    Non-load-bearing by ruling -- nothing here may change stopping, selection,
+    budget, or learning rates, so an integrity failure (a slice that did not
+    move at all across a completed iteration, or a non-finite readout) is
+    logged loudly and flagged in `history.json` for a human to take back to the
+    consult thread, never raised. Raising would be exactly the stopping
+    behaviour the amendment rules out.
+
+    Snapshots the model at construction, so build this right after the model is
+    created or restored: a resumed run then reports true update norms from its
+    first iteration instead of a hole. Returns `None` from every method for a
+    model with no event encoder (`event_window == 0`), the same
+    "omit rather than report a misleading 0.0" convention as
+    `_growth_alpha_mean_abs`."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        encoder = getattr(model, "event_encoder", None)
+        self.event_columns = int(encoder.output_dim) if encoder is not None else 0
+        self.enabled = self.event_columns > 0
+        self._prev_slice: Optional[torch.Tensor] = None
+        self._prev_encoder: Optional[torch.Tensor] = None
+        if self.enabled:
+            self._prev_slice, _ = self._trunk_columns(model)
+            self._prev_encoder = self._encoder_vector(model)
+
+    def _trunk_columns(self, model: torch.nn.Module) -> tuple[torch.Tensor, torch.Tensor]:
+        """(event columns, non-event columns) of `trunk.0.weight`, detached on
+        the CPU in float64 so the norms below are exact regardless of the
+        training dtype/device."""
+        weight = model.trunk[0].weight.detach().to("cpu", torch.float64)
+        return weight[:, -self.event_columns:].clone(), weight[:, : -self.event_columns].clone()
+
+    def _encoder_vector(self, model: torch.nn.Module) -> torch.Tensor:
+        parts = [p.detach().to("cpu", torch.float64).reshape(-1)
+                 for p in model.event_encoder.parameters()]
+        return torch.cat(parts) if parts else torch.zeros(0, dtype=torch.float64)
+
+    def initial_metrics(self) -> Optional[dict]:
+        """The iteration-0 snapshot taken at construction. `event_slice_fro`
+        must be exactly 0.0 for a fresh `--init-from-bc` scratch run; it is
+        legitimately non-zero on a resume, which snapshots a partly trained
+        model."""
+        if not self.enabled:
+            return None
+        assert self._prev_slice is not None and self._prev_encoder is not None
+        return {
+            "event_slice_fro": float(torch.linalg.vector_norm(self._prev_slice).item()),
+            "event_slice_max_abs": float(self._prev_slice.abs().max().item()),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(self._prev_encoder).item()),
+            "event_columns": self.event_columns,
+        }
+
+    def record(self, model: torch.nn.Module, iteration: int) -> Optional[dict]:
+        """Measure the current model and advance the baseline. Call once per
+        completed iteration, after the optimizer step."""
+        if not self.enabled:
+            return None
+        event, other = self._trunk_columns(model)
+        encoder = self._encoder_vector(model)
+        slice_fro = float(torch.linalg.vector_norm(event).item())
+        update = event - self._prev_slice
+        update_fro = float(torch.linalg.vector_norm(update).item())
+        encoder_update_fro = float(torch.linalg.vector_norm(encoder - self._prev_encoder).item())
+        # Per-element RMS on both sides, so the ratio compares like with like
+        # even though the two column blocks have very different widths.
+        event_rms = float(event.pow(2).mean().sqrt().item())
+        other_rms = float(other.pow(2).mean().sqrt().item()) if other.numel() else 0.0
+        metrics = {
+            "event_slice_fro": slice_fro,
+            "event_slice_rms": event_rms,
+            "event_slice_max_abs": float(event.abs().max().item()),
+            "event_slice_update_fro": update_fro,
+            "event_slice_rms_ratio": (event_rms / other_rms) if other_rms > 0.0 else float("inf"),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(encoder).item()),
+            "event_encoder_update_fro": encoder_update_fro,
+        }
+        nonfinite = sorted(k for k, v in metrics.items() if not np.isfinite(v))
+        if nonfinite:
+            metrics["event_path_nonfinite"] = True
+            logger.warning(
+                "iter %d: event-path telemetry is not finite (%s) -- Amendment 4 integrity "
+                "failure, take this to the consult thread; the lap is NOT stopped by this "
+                "readout.", iteration, ", ".join(nonfinite))
+        if update_fro == 0.0:
+            metrics["event_slice_integrity_failure"] = True
+            logger.warning(
+                "iter %d: the event-input columns of trunk.0.weight did not move at all "
+                "(update Frobenius norm exactly 0) -- Amendment 4 integrity failure, take "
+                "this to the consult thread; the lap is NOT stopped by this readout.",
+                iteration)
+        self._prev_slice = event
+        self._prev_encoder = encoder
+        return metrics
+
+
 def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     """Files in `checkpoint_dir` that a previous `train_b2b` run would have
     written -- `history.json`, `train_state.pt`, and any `iter_*.pt`
