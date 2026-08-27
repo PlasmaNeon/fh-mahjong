@@ -122,14 +122,17 @@ B2b's extra outputs.
   consumes those logits, so trajectories are *not* slot-count-invariant. `pool_slots` is
   rejected-on-change on resume, alongside `collector`. Invariance across slot counts
   holds only in `per_row` mode, which is the mode G0.2 proves it in.
-- **The PPO minibatch permutation stream is untouched by either collector.**
-  `collect_b2b_rollouts` seeds the global torch RNG once per match, but
-  `ParallelB2bCollector` always spawns workers — at `num_workers=1` too — so that side
-  effect stays in the child. The batched collector runs in the master and consumes no
-  torch RNG: the model has no dropout and both collectors call `model.eval()`. Both arms
-  therefore leave `ppo_update`'s `torch.randperm` stream alone. A test that calls the
-  process collector in-process must save and restore the RNG state around it to
-  reproduce the spawn boundary.
+- **The PPO minibatch permutation stream.** `collect_b2b_rollouts` seeds the global
+  torch RNG once per match. At `num_workers > 1` — every real lap, since the default is
+  `min(default_num_workers(), matches_per_iter)` — it runs inside a spawned child
+  (`train_b2b.py`'s `elif config.num_workers > 1`), so that side effect never reaches
+  the master and both arms leave `ppo_update`'s `torch.randperm` stream alone. At
+  `num_workers == 1` the process collector runs in the master and does advance that
+  stream; a `num_workers=1` process lap and a batched lap therefore differ in the
+  permutation as well as in the sampling draw. The batched collector consumes no torch
+  RNG in either case: the model has no dropout and both collectors call `model.eval()`.
+  A test that calls the process collector in-process must save and restore the RNG state
+  around it to reproduce the spawn boundary.
 - Nothing else: observations, masks, rewards, events, labels, bonus, telemetry are the
   same functions of the same Go state.
 
