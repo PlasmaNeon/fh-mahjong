@@ -106,7 +106,7 @@ current bridge. Delta = `fh-mj-compare mean_delta` (candidate − anchor).
 
 | iteration | mean_delta | CI95 (clustered) | large_loss cand / anchor | telemetry healthy | notes |
 |---|---|---|---|---|---|
-| 25 | | | | | |
+| 25 | **−0.4250** | ±0.0743 (sig. YES) | 0.1479 / 0.0458 | yes | placement +0.0361 vs +0.4611; 4th-share Δ +0.1385, large-loss Δ +0.1021, training-utility Δ −0.3821; deal-in 0.0992 vs 0.1033; tail gate FAIL. No rule fires at 25 — §7: a scratch curve starting far below the anchor is not a kill |
 | 50 | | | | | |
 | 75 | | | | | |
 | 100 | | | | | kill iff `delta100 − delta75 ≤ 0` and `delta100 < −0.20` |
