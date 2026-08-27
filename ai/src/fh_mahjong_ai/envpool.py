@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Optional, Sequence
 
 import numpy as np
 
-from .bridge import BridgeError, FHBytesResult, build_bridge, resolve_bridge_library
+from .bridge import (BridgeError, CtypesGoBridge, FHBytesResult, build_bridge,
+                     resolve_bridge_library)
 from .config import EnvConfig
 from .generated.proto import game_pb2
+
+# The single-env bridge's round-outcome decoder, reused verbatim so a pool
+# payload and a `StepResult.info["round_outcome"]` payload are the same dict.
+# It reads no instance state, hence the bound `None` self.
+_decode_round_outcome = partial(CtypesGoBridge._decode_round_outcome, None)
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,17 @@ class SlotMeta:
     step_rewards: np.ndarray
     has_observation: bool
     error: str = ""
+    # Decoded RoundOutcome for the hand this step closed (nonterminal hand
+    # boundary, terminal step, or truncation-after-a-completed-hand); None
+    # when the proto field is unset. Same payload the single-env path puts in
+    # `StepResult.info["round_outcome"]` — hindsight labels key off it.
+    round_outcome: Optional[dict] = None
+
+
+def _step_result_outcome(result) -> Optional[dict]:
+    """`StepResult.info["round_outcome"]` if the bridge attached one."""
+    info = getattr(result, "info", None) if result is not None else None
+    return info.get("round_outcome") if info else None
 
 
 @dataclass(frozen=True)
@@ -83,18 +101,21 @@ class InProcessEnvPool:
                 rewards = np.asarray(result.rewards if result is not None else [], dtype=np.float32)
                 terminated = bool(result.terminated) if result is not None else False
                 truncated = bool(result.truncated) if result is not None else False
+                outcome = _step_result_outcome(result)
             elif command.action_id is not None:
                 result = bridge.step(int(command.action_id))
                 observation = result.observation
                 rewards = np.asarray(result.rewards, dtype=np.float32)
                 terminated, truncated = bool(result.terminated), bool(result.truncated)
+                outcome = _step_result_outcome(result)
             else:  # skip
                 metas.append(SlotMeta(slot, 0, False, False,
                                       np.zeros(0, np.float32), False))
                 continue
             has_obs = not (terminated or truncated)
             seat = int(observation.seat) if has_obs else 0
-            metas.append(SlotMeta(slot, seat, terminated, truncated, rewards, has_obs))
+            metas.append(SlotMeta(slot, seat, terminated, truncated, rewards, has_obs,
+                                  round_outcome=outcome))
             if has_obs:
                 obs_rows.append((
                     slot,
@@ -169,6 +190,8 @@ class GoEnvPool:
                 step_rewards=np.asarray(state.step_rewards, dtype=np.float32),
                 has_observation=bool(state.has_observation),
                 error=str(state.error),
+                round_outcome=(_decode_round_outcome(state.round_outcome)
+                               if state.HasField("round_outcome") else None),
             ))
             if state.has_observation:
                 live_slots.append(int(state.slot))
@@ -292,6 +315,9 @@ def make_selfplay_pool(env_config: EnvConfig, ppo_config, slots: int):
         auto_play_heuristics=False,
         max_steps_per_episode=ppo_config.max_steps_per_episode,
         match_mode=ppo_config.match_mode,
+        chongci_starting_score=env_config.chongci_starting_score,
+        chongci_bust_threshold=env_config.chongci_bust_threshold,
+        chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=env_config.oracle_observation,
         event_history_window=env_config.event_history_window,
     )
