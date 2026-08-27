@@ -3,7 +3,8 @@
 **Status 2026-08-27: EXPERIMENT CONCLUDED — Stage 1 NULL.** 150/150 iters clean; no
 milestone met eligibility (none reduced 4th-place share); no confirmation run; window
 1300000–1301499 unspent. anchor075 remains champion. Numbers: spec "Stage 1 outcome".
-Post-lap consult pending; do not start a parallel record.
+NULL ratified by the post-lap consult (2026-08-27); experiment CLOSED — reopening
+conditions in the spec's closure paragraph. Do not start a parallel record.
 
 - **Spec** → [`../specs/2026-08-21-placement-reshape-design.md`](../specs/2026-08-21-placement-reshape-design.md)
 - **Context** → [`../specs/2026-08-21-placement-reshape-context.md`](../specs/2026-08-21-placement-reshape-context.md)

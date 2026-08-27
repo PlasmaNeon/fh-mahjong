@@ -411,3 +411,24 @@ Screen provenance note: mid-lap the checkout was briefly at 9098aed (another
 session's pull); screen-25 was re-run at the pinned a740662 and matched
 byte-identically. All recorded screens are pinned-commit.
 
+**Consult ruling (GPT-5.6-Sol, 2026-08-27): RATIFIED — scientifically valid,
+protocol-defined NULL.** Scope of the claim: under the registered warm-started
+B2b recipe, additive asymmetric terminal placement utility at k=0.5, 320
+matches/iteration and 150 iterations failed to produce any checkpoint meeting
+the pre-registered minimum tail-improvement eligibility criterion — a selection
+NULL, not a CI proof of zero effect. The screens cannot distinguish
+insufficient credit assignment, destructive PPO drift, or a resistant local
+basin; no single explanation is to be selected retrospectively.
+
+**Closure:** `placement-reshape` is closed as a scoped NULL for the registered
+additive terminal-bonus formulation, vector, k=0.5, anchor075 warm start, B2b
+recipe, data scale and 150-iteration horizon. No rerun, extension, post-hoc
+confirmation, λ/k sweep, nearby placement-vector variant, or automatic
+cold-start replication is authorized. Reopening requires either (1) concrete
+new evidence that a protocol or implementation defect invalidated this lap, or
+(2) a materially different, independently motivated objective or
+credit-assignment/training formulation supplying genuinely new information —
+not a nearby coefficient, seed, horizon, or initialization sweep. Run artifacts
+(`/root/fh-mahjong-runs/placement-reshape/`) are archived read-only; the
+1300000–1301499 window is preserved unspent.
+
