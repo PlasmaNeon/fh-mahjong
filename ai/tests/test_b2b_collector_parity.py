@@ -645,12 +645,22 @@ def test_make_b2b_pool_binds_window_and_oracle():
 # GAE, the advantages GAE returns, the reported metrics, and the model AND
 # optimizer state after EACH iteration must all match. Greedy selection is
 # injected on both sides (sampling draws from different RNG streams by
-# design -- see the spec's "What changes semantically"), and the batched
-# side realigns the GLOBAL torch RNG after collecting: `collect_b2b_rollouts`
-# seeds it once per match as a side effect, and `ppo_update`'s minibatch
-# permutation reads it. That stream is not collector output, so this gate
-# compares the update under an identical permutation rather than treating
-# the side effect as semantics.
+# design -- see the spec's "What changes semantically").
+#
+# Neither collector perturbs the master process's torch RNG in a lap, so
+# `ppo_update`'s minibatch permutation (`torch.randperm`) sees the same
+# stream in both arms. `collect_b2b_rollouts` does call
+# `torch.manual_seed(base_seed + m)` once per match, but a lap runs it with
+# `num_workers > 1`, i.e. inside `ParallelB2bCollector`'s spawned children,
+# so that side effect stays in the child. The batched collector runs in the
+# master but consumes no torch RNG at all: the model has no dropout, both
+# collectors call `model.eval()`, and action selection here is argmax.
+#
+# This test drives `num_workers=1`, which would run the process collector in
+# the master and reseed it -- something production never does. `_greedy_process`
+# therefore saves and restores the RNG state around the call, which is the
+# honest emulation of the spawn boundary. The batched side compensates for
+# nothing.
 #
 # Per-iteration state is captured by wrapping `train_state._save_train_state`
 # (train_b2b calls it as `train_state.X`, so the patch reaches the call) with
@@ -676,17 +686,24 @@ def _parity_config(collector, **overrides):
 
 
 def _greedy_process(env_config, model, config, base_seed):
-    return collect_b2b_rollouts(env_config, model, config, base_seed=base_seed,
-                                action_selection="greedy")
+    """The process collector, run in-process but behind a save/restore of the
+    global torch RNG -- see the block comment above. In a lap this collector
+    runs in a spawned child, so its per-match `torch.manual_seed` cannot reach
+    the master's permutation stream; calling it here without the restore would
+    make the test compare a hybrid the trainer never runs."""
+    rng_state = torch.get_rng_state()
+    try:
+        return collect_b2b_rollouts(env_config, model, config, base_seed=base_seed,
+                                    action_selection="greedy")
+    finally:
+        torch.set_rng_state(rng_state)
 
 
 def _greedy_batched(inference_mode):
     def collect(env_config, model, config, base_seed, pool, **kwargs):
-        batch = collect_b2b_rollouts_batched(
+        return collect_b2b_rollouts_batched(
             env_config, model, config, base_seed=base_seed, pool=pool,
             inference_mode=inference_mode, action_selection="greedy", **kwargs)
-        torch.manual_seed(int(base_seed + config.matches_per_iter - 1))
-        return batch
     return collect
 
 
