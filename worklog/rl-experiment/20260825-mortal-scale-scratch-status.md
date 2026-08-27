@@ -23,17 +23,20 @@
 
 ## Current stage
 
-**STAGE 3 (ReZero) — Amendment 3 ratified 2026-08-27: both arms rebuild their trunk from
-`ReZeroResidualBlock` (`--model-trunk-rezero`); BC control and BC big are re-run under it
-with BC optimization frozen; acceptance gate in runbook §3.** The plain-trunk BC control
-(row 3, attempt 1) is diagnostic only and inadmissible for PPO; the plain-trunk big attempt
-(row 4, attempt 1) is preserved as failure evidence in `bc-big-plain/`. Per-arm ReZero runs
-write to `bc-control/` and `bc-big/` (plain control archived as `bc-control-plain/`).
-Box is otherwise free (placement-reshape closed as a registered NULL;
-`/root/fh-mahjong-runs/placement-reshape/` is a read-only archive). Next: BC big (§3),
-export + bench (§4), control lap (§5).
+**STAGE 3 (ReZero) — BC control attempt 2 RUNNING on the box** as
+`msscratch-bc-control.service` (launched 2026-08-27, checkout `af08333`, guard armed,
+44/48 GiB containment), writing `bc-control/` and `logs/bc-control.log`. It is the first
+run under Amendment 3 (`--model-trunk-rezero`, BC optimization frozen); on exit, run
+`perseat.py bc-control/best.pt` and apply the runbook §3 acceptance gate (top-1 ≥ 0.9400,
+CE ≤ 0.2000, ≥1 alpha finite and ≠ 0). The plain-trunk attempts are diagnostic /
+failure evidence only and inadmissible for PPO (`bc-control-plain/`, `bc-big-plain/`,
+with their logs and guard CSVs suffixed `-plain`). GPU lane otherwise free
+(placement-reshape closed as a registered NULL; `/root/fh-mahjong-runs/placement-reshape/`
+is a read-only archive). Next after the gate: BC big (§3), export + bench (§4),
+control lap (§5).
 
-Pinned for the rest of the experiment: checkout `7e5d623`, bridge
+Pinned for the rest of the experiment: checkout `7e5d623` (plus the Amendment 3 code at
+`af08333`; Go sources unchanged, bridge digest identical), bridge
 `a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` (built from `7e5d623`;
 the dataset was generated on the earlier bridge `66f7a061…` — same Go sources, docs-only
 commits between), anchor `ce9d867f…` (matches §0).
@@ -47,6 +50,8 @@ commits between), anchor `ce9d867f…` (matches §0).
 | 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | PASS 2026-08-26 | 4,051,446 × 7,018 B = 26.48 GiB (arrays 26.50 GiB); loader-only `memory.peak` 29,475,266,560 B = 27.45 GiB; `anon`/`file` were read after the loader exited (233,472 / 359,747,584 B — not informative); `free -g` 47 free / 50 total; log `logs/gate2a.log` |
 | 3 | BC control (96×4, k=1) — attempt 1, plain trunk (diagnostic only, inadmissible per Amendment 3 §3; archived as `bc-control-plain/`) | §3 | done 2026-08-26 | `best_epoch` 5, best val CE 0.13832, `stopped_early` true, `epochs_run` 10, all epochs `validation_events: zeroed`; best-epoch top-1 0.9556 (top-3 0.9942; discard 0.947, chii 0.969, pon 0.995, kan 0.973, pass 0.989, win 1.0); per seat 0/1/2/3 top-1 0.9555 / 0.9555 / 0.9560 / 0.9555 (n 103,988 / 96,965 / 97,277 / 109,209), recompute overall 0.9556 = report ✓; cgroup peak 31,261,163,520 B = 29.11 GiB, tree RSS peak 28.18 GiB; `best.pt` sha256 `8f5a227f354e2db20e3308f2c5bed219df8c7126ab0498213fdafa91fbb30cd7` |
 | 4 | BC big (192×24, k=1) — attempt 1, plain trunk (archived as `bc-big-plain/`) | §3 | FAILED — policy CE flat at 1.6–1.8 from step 200 through epoch 3; epoch 1/2 val top-1 44.13 % / 44.71 % (≈ majority-discard baseline); stopped by hand, guard `UNIT-EXITED` (cgroup peak 28.25 GiB); artifacts kept in `bc-big-plain/` | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
+| 3b | **BC control (96×4, k=1, `trunk_rezero`) — attempt 2, admissible** | §3 | running 2026-08-27 (`msscratch-bc-control`, → `bc-control/`) | `best_epoch`, val CE, top-1 overall + per seat, alpha min/median/max, `best.pt` sha256, guard verdict; gate top-1 ≥ 0.9400, CE ≤ 0.2000, ≥1 alpha ≠ 0 |
+| 4b | BC big (192×24, k=1, `trunk_rezero`) — attempt 2, admissible | §3 | not started (queued behind 3b — never overlap; both need the full dataset resident) | same, plus gate top-1 ≥ 0.9400 and ≥ control − 0.0050; CE ≤ 0.2000 and ≤ control + 0.0200; per seat ≥ 0.9300 |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | not started | `big-init.pt` sha256, transfer-gate record |
 | 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | not started | cgroup peak, tree RSS, CUDA peak, matches/s, projected wall time |
 | 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | not started | `history.json`, transfer-gate record, guard verdicts |
@@ -119,4 +124,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-26` — mortal-scale-scratch — BC control finished (early stop epoch 10, best 5, val top-1 0.9556, guard verdict `UNIT-EXITED`, no kill); per-seat readout run before BC big (both need the full dataset resident — never overlap them); BC big launched as `msscratch-bc-big`.
 - `2026-08-27` — mortal-scale-scratch — BC big (attempt 1) stopped at epoch 3: no learning (val top-1 44.7 %, policy CE ≈1.7 throughout). Prerequisite failure per runbook §3; consult opened on thread `01a0147d` (options: ReZero trunk flag / BC lr-warmup+clip / block normalization).
 - `2026-08-27` — mortal-scale-scratch — Amendment 3 ratified (thread `01a0147d`): `ModelConfig.trunk_rezero` / `--model-trunk-rezero`, both arms re-run BC under it, BC optimization frozen, acceptance gate (control top-1 ≥ 0.94, CE ≤ 0.20; big within 0.005 / 0.02 of control, per seat ≥ 0.93). Code + tests landed; plain-trunk runs archived as `bc-control-plain/` and `bc-big-plain/`.
+- `2026-08-27` — mortal-scale-scratch — box updated to `af08333` (Amendment 3 code; bridge unchanged at `a487bcb7…`), plain-trunk logs and guard CSVs suffixed `-plain`, BC control attempt 2 launched as `msscratch-bc-control` with `--model-trunk-rezero`. Early signal: policy CE 1.99 → ~0.70 within epoch 1 (the plain 24-block trunk never left 1.6–1.8), i.e. the ReZero trunk trains.
 - `—` — (add next event here)
