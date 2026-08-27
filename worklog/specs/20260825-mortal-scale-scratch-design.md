@@ -1,8 +1,8 @@
 # Mortal-scale from-scratch experiment — design
 
 **Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` ·
-**Status:** code complete incl. Amendment 1 items (PR #223); protocol ratified 2026-08-25;
-NOT LAUNCHED — see runbook + status file.
+**Status:** Amendments 1–3 ratified; dataset + Gate 2a done; BC re-running under `trunk_rezero` (Amendment 3) — see runbook + status file.
+
 
 ## 1. Question
 
@@ -204,4 +204,24 @@ Preflight measurement: one chongci heuristic match emits 2,079 transitions (all 
 6. **Bench evidence.** At the single frozen worker count, `all_digests_equal` and `rows_and_labels_equal` are recorded but explicitly non-load-bearing. Load-bearing evidence is complete seed coverage, rollout digest, rows, expected optimizer-step arithmetic including the ragged tail, labels, truncation, telemetry, memory/CUDA peaks, and clean monitoring.
 
 7. **Governance.** All other Amendment 1 controls remain frozen. No BC or PPO execution begins until these amended dataset and bench prerequisites pass; every failure returns to consultation.
+
+## Amendment 3 (ratified 2026-08-27, Codex thread `01a0147d`) — ReZero trunk for both arms
+
+**Ruling:** A is the only defensible repair; B (BC-only lower lr + clipping) is an unproven fallback and C (block normalization) is rejected. Lower LR and clipping may suppress symptoms without fixing the unstable 24-block forward path, leaving PPO exposed to the same architecture. ReZero directly addresses depth-at-initialization and already exists in the model family.
+
+
+
+1. **Disposition.** The plain-block big BC attempt is a registered prerequisite failure caused by the unnormalized, unscaled 24-block trunk; it is neither a scientific null nor evidence against model scale. Preserve its artifacts as immutable failure evidence.
+
+2. **Authorized repair.** Authorize `ModelConfig.trunk_rezero: bool = False`. When true, every main `plane_blocks` entry uses the existing `ReZeroResidualBlock`: `x + αF(x)`, scalar `α` initialized to zero, without the plain block’s trailing GELU. Default false must preserve all existing models byte-for-byte. Checkpoint inference must derive the setting from plane-block alpha keys; metadata, evaluation, serving, export, transfer provenance, and resume must agree or fail closed.
+
+3. **Control parity.** Both experimental arms must use `trunk_rezero=true`. Re-run the control BC from the same initial seed, dataset, split, and flags; its previous plain-block checkpoint is diagnostic only and is inadmissible for PPO. Using ReZero only for big would confound block type with width/depth and invalidate the secondary comparison. No PPO work has been spent, so no lap is discarded.
+
+4. **BC optimization.** Freeze BC optimization unchanged for both arms: AdamW, LR `3e-4`, weight decay `1e-4`, batch 64, no warm-up, no gradient clipping, and the registered 5–30 epoch/patience-5 rule. Do not combine the architectural repair with candidate B. If ReZero fails, stop and consult; lower LR, clipping, normalization, or another retry is not automatic.
+
+5. **Acceptance gate.** The canonical ReZero control must achieve zero-event validation top-1 `>=0.9400`, validation CE `<=0.2000`, finite telemetry, and at least one finite plane-block alpha changed exactly from zero. The ReZero big arm must achieve top-1 `>=0.9400` and no more than `0.0050` below the canonical control, validation CE `<=0.2000` and no more than `0.0200` above control, with every per-seat top-1 `>=0.9300`. Report per-action accuracy and the alpha min/median/max diagnostically. Failure of either gate stops before PPO as a recipe/optimization failure, not a scale null.
+
+6. **Downstream protocol.** Recompute and record exact ReZero parameter counts, but retain 320/256 control and 960/768 big allocations. The exported bench initialization, step-zero transfer gate, PPO checkpoints, and both laps must all carry `trunk_rezero=true`. Amendment 1’s PPO learning-rate groups, budgets, seeds, screenings, confirmation gates, and Amendment 2’s memory gates remain unchanged.
+
+7. **Implementation gate.** Before execution, require default-preservation, construction, checkpoint-inference, BC-transfer, export/evaluation/serving, and resume tests plus normal review and CI. Any mismatch returns to consultation.
 

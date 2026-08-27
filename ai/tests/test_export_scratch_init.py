@@ -114,3 +114,36 @@ def test_cli_writes_the_checkpoint_and_prints_the_transfer_record(tmp_path, monk
     # flag name), and --privileged-critic/--aux-heads default on, so the
     # exported architecture is the one the lap will build.
     assert infer_model_config(payload["model"], payload["metadata"]) == cfg
+
+
+def test_cli_trunk_rezero_flag_exports_a_rezero_init(tmp_path, monkeypatch, capsys):
+    """Amendment 3: the bench init must carry `trunk_rezero=True` (alpha keys
+    transferred from BC) and pass the step-zero transfer gate."""
+    env39 = EnvConfig(bridge_kind="mock")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, trunk_rezero=True, event_window=8,
+                      privileged_critic=True, aux_heads=True)
+    bc = _bc_checkpoint(tmp_path / "best.pt", cfg, env39)
+    out = tmp_path / "big-init.pt"
+    monkeypatch.setattr(sys, "argv", [
+        "fh-mj-export-scratch-init",
+        "--bc", str(bc),
+        "--out", str(out),
+        "--event-window", "8",
+        "--model-channels", "16",
+        "--model-residual-blocks", "1",
+        "--model-kernel-width", "1",
+        "--model-trunk-rezero",
+        "--model-plane-feature-dim", "32",
+        "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32",
+        "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+        "--device", "cpu",
+    ])
+    export_scratch_init_mod.main()
+    printed = json.loads(capsys.readouterr().out)
+    payload = torch.load(out, map_location="cpu")
+    assert printed["greedy_match_rate"] == 1.0
+    assert infer_model_config(payload["model"], payload["metadata"]) == cfg
+    assert payload["metadata"]["model_config"]["trunk_rezero"] is True
+    assert "plane_blocks.0.alpha" in payload["model"]

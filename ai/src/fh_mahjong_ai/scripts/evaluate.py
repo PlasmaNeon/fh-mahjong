@@ -197,6 +197,7 @@ def main() -> None:
                 ("aux_heads", bool(_b2b_meta.get("aux_heads", False)), bool(args.model_aux_heads)),
                 ("residual_blocks", int(_b2b_meta.get("residual_blocks", 0)), int(args.model_residual_blocks)),
                 ("growth_blocks", int(_full_model_meta.get("growth_blocks", 0)), int(args.model_growth_blocks)),
+                ("trunk_rezero", bool(_full_model_meta.get("trunk_rezero", False)), bool(args.model_trunk_rezero)),
             )
             for _name, _saved, _flag in _pinned:
                 if _saved != _flag:
