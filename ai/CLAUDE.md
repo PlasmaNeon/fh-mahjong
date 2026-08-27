@@ -198,6 +198,9 @@ Quick map of what is where:
 - `fh-mj-export-scratch-init --bc BEST --out INIT` writes what `--scratch --init-from-bc` would construct at step zero (BC weights under `SCRATCH_BC_PREFIXES`, `trunk.0`'s event columns zeroed), runs the same transfer gate, and stores the record plus the BC digest under `metadata["init"]` with `metadata["purpose"] = "bench-init"`. It exists because `fh-mj-collect-bench` has no `--scratch`: `--champion BEST` would keep BC's untrained nonzero event columns and bench a different policy, while `--champion INIT` is an identity load of the lap's real step-zero net. Its `--event-window`/`--privileged-critic`/`--aux-heads` are `fh-mj-train-b2b`'s flags, not the `--model-*` forms.
 - MLflow tracking is opt-in via `--mlflow`; local storage defaults to `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both gitignored.
 
+### Collector output is pinned
+- `ai/tests/test_b2b_collector_parity.py::test_process_collector_golden_digest` hashes every `RolloutBatch` field and `match_telemetry` of `collect_b2b_rollouts` against constants recorded before the batched-collector work. A failure means the process collector's bytes changed; fix the code, never the constants. Both collectors share `_B2bMatchState` / `_finalize_b2b_match` / `_check_chongci_outcomes` (`train_b2b.py`) and `ppo.masked_logprob`.
+
 ### Patching across the training modules
 
 `train_b2b.py` calls `train_state.py`'s helpers as `train_state.X`, not through
