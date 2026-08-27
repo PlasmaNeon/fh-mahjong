@@ -639,6 +639,35 @@ def test_make_b2b_pool_binds_window_and_oracle():
         pool.close()
 
 
+@pytest.mark.parametrize("env_override, config_override, message", [
+    (dict(chongci_bust_threshold=999), {}, "chongci_bust_threshold"),
+    (dict(chongci_starting_score=1234), {}, "chongci_starting_score"),
+    (dict(scalar_features=7), {}, "scalar_features"),
+    ({}, dict(max_steps_per_episode=99), "max_steps_per_episode"),
+    ({}, dict(match_mode="single"), "match_mode"),
+])
+def test_collector_rejects_a_pool_built_from_a_different_config(env_override, config_override,
+                                                               message):
+    """`env_config` is not decoration: everything downstream reads
+    `pool.env_config`, so a caller whose config disagrees with the pool's must
+    be told, not quietly collected under the pool's simulation."""
+    env = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True,
+                    chongci_bust_threshold=123, chongci_max_hands=5)
+    model = _stub_model()
+    cfg = PPOConfig(device="cpu", matches_per_iter=2, match_mode="chongci",
+                    max_steps_per_episode=77)
+    pool = make_b2b_pool(env, model, cfg, 2)
+    try:
+        from dataclasses import replace as dc_replace
+        with pytest.raises(RuntimeError, match=message):
+            collect_b2b_rollouts_batched(
+                dc_replace(env, **env_override), model,
+                dc_replace(cfg, **config_override) if config_override else cfg,
+                base_seed=1, pool=pool)
+    finally:
+        pool.close()
+
+
 # --- G0.6: two-iteration training parity ----------------------------------
 #
 # Same recipe, same seeds, both collectors: the batch a collector hands to
