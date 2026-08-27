@@ -2962,9 +2962,14 @@ def test_resume_from_state_raises_on_different_collector(tmp_path) -> None:
                   base_seed=5, resume_from_state=state_path)
 
 
-def test_resume_from_state_allows_different_pool_slots_with_notice(tmp_path, caplog) -> None:
-    # Within an already-batched lineage the slot count is semantics-neutral
-    # (per-match RNG, gate G0.2), so it is logged rather than rejected.
+def test_resume_from_state_raises_on_different_pool_slots(tmp_path) -> None:
+    # pool_slots is NOT the batched analogue of num_workers. A spawn worker
+    # always runs a batch-1 forward, so its count cannot move a float; the
+    # batched collector's production mode runs ONE forward over every pending
+    # row, so the slot count decides which rows share a batch, and
+    # sample_masked_action consumes those logits. Slot-count invariance holds
+    # only under inference_mode="per_row" (gate G0.2), which is not the mode a
+    # lap runs -- so the slot count is lineage, and rejected on change.
     env, model_config, champion_path, config_first = _batched_configs(
         tmp_path, iterations=2, pool_slots=3)
     checkpoint_dir = tmp_path / "ckpt"
@@ -2973,13 +2978,24 @@ def test_resume_from_state_allows_different_pool_slots_with_notice(tmp_path, cap
     state_path = checkpoint_dir / "train_state.pt"
 
     resumed = replace(config_first, iterations=4, pool_slots=7)
-    with caplog.at_level(logging.INFO):
-        history = train_b2b(env, model_config, champion_path, checkpoint_dir, resumed,
-                            base_seed=5, train_state_every=2, resume_from_state=state_path)
+    with pytest.raises(ValueError, match=r"pool_slots.*3.*7"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, resumed,
+                  base_seed=5, train_state_every=2, resume_from_state=state_path)
 
+
+def test_resume_from_state_accepts_the_same_pool_slots(tmp_path) -> None:
+    # The rejection above is on CHANGE, not on the field's presence: an
+    # unchanged batched lineage still resumes.
+    env, model_config, champion_path, config_first = _batched_configs(
+        tmp_path, iterations=2, pool_slots=3)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir,
+                        replace(config_first, iterations=4), base_seed=5,
+                        train_state_every=2,
+                        resume_from_state=checkpoint_dir / "train_state.pt")
     assert [row["iteration"] for row in history] == [1, 2, 3, 4]
-    assert any("pool_slots" in r.message and "slot-count-invariant" in r.message
-               for r in caplog.records)
 
 
 def test_legacy_state_without_collector_fields_reads_as_process(caplog) -> None:
@@ -2999,6 +3015,34 @@ def test_legacy_state_without_collector_fields_reads_as_process(caplog) -> None:
     with caplog.at_level(logging.INFO):
         train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
     assert any("collector" in record.getMessage() for record in caplog.records)
+
+
+def test_legacy_state_backfill_pins_literals_not_dataclass_defaults(monkeypatch) -> None:
+    # The back-fill must mean "this run used what existed then", not
+    # "whatever this build defaults to". If it read PPOConfig.collector, the
+    # day that default becomes "batched" every pre-merge train_state.pt would
+    # be silently reinterpreted as a batched lineage -- and a batched resume
+    # of a process run would be admitted instead of rejected.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.ppo import PPOConfig as PPOConfigCls
+
+    monkeypatch.setattr(PPOConfigCls.__dataclass_fields__["collector"], "default", "batched")
+    monkeypatch.setattr(PPOConfigCls.__dataclass_fields__["pool_slots"], "default", 999)
+    assert train_state_mod._dataclass_field_defaults(PPOConfigCls)["collector"] == "batched"
+
+    saved = _config_echo_triple()
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+    filled = train_state_mod._fill_legacy_echo_defaults(
+        "ppo_config", _config_echo_triple()["ppo_config"], saved["ppo_config"])
+    assert filled["collector"] == "process"
+    assert filled["pool_slots"] == 128
+
+    # ... and the resume it guards still fails closed.
+    current = _config_echo_triple()
+    current["ppo_config"]["collector"] = "batched"
+    with pytest.raises(ValueError, match="collector"):
+        train_state_mod._validate_resume_config_echo(current, saved)
 
 
 def test_legacy_state_silence_still_rejects_a_batched_resume() -> None:

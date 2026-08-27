@@ -48,7 +48,12 @@ def main() -> None:
     p.add_argument("--pool-slots", type=int, default=PPOConfig.pool_slots,
                    help="concurrent env-pool slots for --collector batched; the effective "
                         "count is min(--pool-slots, --matches-per-iter), so slots beyond "
-                        "the match count never activate")
+                        "the match count never activate. NOT an operational knob: the "
+                        "batched collector runs one forward per round over every pending "
+                        "row, so the slot count decides which rows share a batch and "
+                        "therefore which actions get sampled. It is part of the lineage "
+                        "and is rejected-on-change by --resume-from-state, like "
+                        "--collector")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--head-lr", type=float, default=None,
