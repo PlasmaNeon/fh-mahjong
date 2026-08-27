@@ -86,6 +86,19 @@ the same weights. Compare like with like.
 | 8 | Big lap — 200 iters, 960/768, base seed 1,500,000 | §8 | not started | `history.json`, transfer-gate record, guard verdicts |
 | 9 | Selection + confirmation (1500 × 4 seats, seed 1,720,000) | §9 | not started | primary + secondary `fh-mj-compare` |
 
+## Screening comparator (generated once, reused for every screening of both arms)
+
+`screen/anchor-screen-current-bridge.json`, sha256 `e077e6ef2c3c6732a843f9405d9a2e33b112add580a325b7de8c1b19be5c6235`,
+generated 2026-08-27 from `anchor075` (`ce9d867f…`) on the pinned bridge — the report's own
+`bridge_lib_sha256` reads `a487bcb7…` ✓. 480 episodes (120 seeds × 4 duplicate seats),
+`truncation_count` 0, `rank_parity_mismatches` 0. Anchor baseline: `mean_reward` 0.91078
+(CI95 0.11127), `mean_placement` 0.46111 (CI95 clustered 0.05408), `large_loss_rate`
+0.04583 at threshold −1.0, `fourth_place_rate` 0.0875, `deal_in_rate` 0.10335.
+
+Its `model_config` is correctly the anchor's own architecture — `kernel_width` 3,
+`trunk_rezero` false, 96×4 — not the arms'. The §7 anchor command deliberately omits
+`--model-kernel-width 1 --model-trunk-rezero`; passing them would build the wrong net.
+
 ## Screening — control arm
 
 Window: 120 duplicate seats, `--start-seed 1710000`, against `anchor075` regenerated on the
