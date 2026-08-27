@@ -2905,8 +2905,13 @@ def test_batched_collector_runs_the_pool_and_ignores_num_workers(tmp_path, caplo
 
     assert len(history) == 2
     # One pool, reused across both iterations; seeds advance by matches_per_iter.
-    assert seen == [(5 + 1 * 2, 3), (5 + 2 * 2, 3)]
+    # The pool ALLOCATES min(pool_slots, matches_per_iter) = min(3, 2) slots:
+    # a slot beyond the match count never receives a command. `pool_slots`
+    # itself stays 3 in the config echo and the resume contract.
+    assert seen == [(5 + 1 * 2, 2), (5 + 2 * 2, 2)]
+    assert config.pool_slots == 3
     assert any("num_workers=4 is ignored" in r.message for r in caplog.records)
+    assert any("pool_slots=3 requested, allocating 2" in r.message for r in caplog.records)
 
 
 def test_batched_collector_closes_the_pool_when_collection_raises(tmp_path) -> None:
@@ -2935,7 +2940,7 @@ def test_batched_collector_closes_the_pool_when_collection_raises(tmp_path) -> N
         with pytest.raises(RuntimeError, match="collection blew up"):
             train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config,
                       base_seed=5, train_state_every=0)
-    assert closed == [3]
+    assert closed == [2]  # allocated = min(pool_slots=3, matches_per_iter=2)
 
 
 def test_unknown_collector_fails_closed(tmp_path) -> None:
@@ -2948,7 +2953,8 @@ def test_unknown_collector_fails_closed(tmp_path) -> None:
 def test_resume_from_state_raises_on_different_collector(tmp_path) -> None:
     # Switching collectors changes the action-RNG mapping (global torch RNG
     # seeded per match vs a per-match numpy RNG), so it is recipe drift, not
-    # an operational knob like num_workers/pool_slots.
+    # an operational knob like num_workers. `pool_slots` is rejected on change
+    # too, for its own reason: see the slot-count invariance note there.
     env, model_config, champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
     checkpoint_dir = tmp_path / "ckpt"
     train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,

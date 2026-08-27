@@ -1943,9 +1943,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "collector=batched: num_workers=%d is ignored (collection runs in "
                     "this process against a %d-slot env pool)",
                     config.num_workers, config.pool_slots)
+            # Slots beyond `matches_per_iter` never receive a command -- every
+            # match is in flight from round 1 -- so allocating them would charge
+            # env construction and memory to slots that can never be used.
+            # `pool_slots` stays the REQUESTED value in the config echo and in
+            # the resume contract; the allocation is derived from it.
+            allocated = max(1, min(int(config.pool_slots), int(config.matches_per_iter)))
+            if allocated != config.pool_slots:
+                logger.info(
+                    "collector=batched: pool_slots=%d requested, allocating %d "
+                    "(matches_per_iter=%d bounds the slots that can hold a match)",
+                    config.pool_slots, allocated, config.matches_per_iter)
             # Same snapshot-bound env_config the process collectors get, so a
             # pooled lap can never reach the mutable source library path.
-            pool = make_b2b_pool(bridge_env_config, model, config, config.pool_slots)
+            pool = make_b2b_pool(bridge_env_config, model, config, allocated)
         elif config.num_workers > 1:
             # Adversarial round 20, high finding: threads the SNAPSHOT-bound
             # env_config into every worker, never the mutable source path --
