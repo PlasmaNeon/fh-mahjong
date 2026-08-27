@@ -172,3 +172,357 @@ def test_check_chongci_outcomes():
     _check_chongci_outcomes(True, 3, 1)
     with pytest.raises(RuntimeError, match="no round outcomes"):
         _check_chongci_outcomes(True, 3, 0)
+
+
+# ---------------------------------------------------------------------------
+# T3 gates G0.1-G0.4: collect_b2b_rollouts vs collect_b2b_rollouts_batched
+# ---------------------------------------------------------------------------
+#
+# Block: seeds 9000..9007, max_steps 4900, bust threshold 1000 — found
+# empirically: seed 9002 needs 4915 steps (the only truncated match) and
+# seed 9005 finishes 960/5080/1000/960 (three busts). Every other match
+# completes. Each 8-match run costs ~45 s on CPU, so runs are module-scoped.
+
+import fh_mahjong_ai.batched_b2b as batched_b2b_module  # noqa: E402
+import fh_mahjong_ai.train_b2b as train_b2b_module  # noqa: E402
+from fh_mahjong_ai.batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool  # noqa: E402
+from fh_mahjong_ai.types import Observation, StepResult  # noqa: E402
+
+BLOCK_BASE_SEED = 9000
+BLOCK_MATCHES = 8
+BLOCK_MAX_STEPS = 4900
+BLOCK_BUST_THRESHOLD = 1000
+BLOCK_TRUNCATED_SEED = 9002
+BLOCK_BUST_SEED = 9005
+FLOAT_TOL = dict(atol=1e-6, rtol=1e-5)
+
+
+def _block_env_and_model(**env_overrides):
+    env = EnvConfig(**{"bridge_kind": "go", "event_history_window": 8,
+                       "oracle_observation": True, "max_steps_per_episode": BLOCK_MAX_STEPS,
+                       "chongci_bust_threshold": BLOCK_BUST_THRESHOLD, **env_overrides})
+    torch.manual_seed(0)
+    model = PolicyValueNet(EnvConfig(bridge_kind="go"),
+                           ModelConfig(**SMALL_MODEL, event_window=8,
+                                       privileged_critic=True, aux_heads=True))
+    return env, model
+
+
+def _block_config(matches=BLOCK_MATCHES, **overrides):
+    return PPOConfig(**{"device": "cpu", "matches_per_iter": matches,
+                        "max_steps_per_episode": BLOCK_MAX_STEPS, "match_mode": "chongci",
+                        **overrides})
+
+
+def _capturing_finalizer(store: dict):
+    """Wrap _finalize_b2b_match to record each match's hand bookkeeping (G0.4)."""
+    def wrapped(ms, config, cfg, seed):
+        store[int(seed)] = {
+            "hand_ids": [list(h) for h in ms.seat_hand_ids],
+            "hand_outcomes": {int(k): v for k, v in ms.hand_outcomes.items()},
+            "hand_id": int(ms.hand_id),
+            "match_net": ms.match_net.copy(),
+        }
+        return _finalize_b2b_match(ms, config, cfg, seed)
+    return wrapped
+
+
+def _run_process(env, model, cfg, base_seed, action_selection="greedy", capture=None, **_):
+    with pytest.MonkeyPatch.context() as mp:
+        if capture is not None:
+            mp.setattr(train_b2b_module, "_finalize_b2b_match", _capturing_finalizer(capture))
+        return collect_b2b_rollouts(env, model, cfg, base_seed=base_seed,
+                                    action_selection=action_selection)
+
+
+def _run_batched(env, model, cfg, base_seed, action_selection="greedy", slots=3,
+                 inference_mode="per_row", capture=None):
+    pool = make_b2b_pool(env, model, cfg, slots)
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            if capture is not None:
+                mp.setattr(batched_b2b_module, "_finalize_b2b_match",
+                           _capturing_finalizer(capture))
+            return collect_b2b_rollouts_batched(
+                env, model, cfg, base_seed=base_seed, pool=pool,
+                inference_mode=inference_mode, action_selection=action_selection)
+    finally:
+        pool.close()
+
+
+COLLECTORS = [pytest.param(_run_process, id="process"),
+              pytest.param(_run_batched, id="batched")]
+
+
+def _digests(batch, base_seed=BLOCK_BASE_SEED, matches=BLOCK_MATCHES):
+    tel = hashlib.sha256(json.dumps(batch.match_telemetry, sort_keys=True).encode()).hexdigest()
+    return _digest_batch(base_seed, matches, batch), tel
+
+
+@pytest.fixture(scope="module")
+def block_process_greedy():
+    env, model = _block_env_and_model()
+    capture: dict = {}
+    batch = _run_process(env, model, _block_config(), BLOCK_BASE_SEED, capture=capture)
+    return batch, capture
+
+
+@pytest.fixture(scope="module")
+def block_batched_per_row_greedy():
+    env, model = _block_env_and_model()
+    capture: dict = {}
+    batch = _run_batched(env, model, _block_config(), BLOCK_BASE_SEED, slots=7,
+                         inference_mode="per_row", capture=capture)
+    return batch, capture
+
+
+@pytest.fixture(scope="module")
+def block_batched_mode_greedy():
+    env, model = _block_env_and_model()
+    return _run_batched(env, model, _block_config(), BLOCK_BASE_SEED, slots=7,
+                        inference_mode="batched")
+
+
+@pytest.fixture(scope="module")
+def sampled_digests_by_slots():
+    env, model = _block_env_and_model()
+    out = {}
+    for slots in (1, 7, 64):
+        batch = _run_batched(env, model, _block_config(), BLOCK_BASE_SEED, "sample",
+                             slots=slots, inference_mode="per_row")
+        assert len(batch.match_telemetry) == BLOCK_MATCHES
+        out[slots] = _digests(batch)
+    return out
+
+
+def test_block_has_truncated_and_bust_matches(block_process_greedy):
+    batch, _ = block_process_greedy
+    by_seed = {t["seed"]: t for t in batch.match_telemetry}
+    assert batch.truncated_matches == 1
+    assert by_seed[BLOCK_TRUNCATED_SEED]["truncated"] is True
+    assert by_seed[BLOCK_BUST_SEED]["busts"] >= 1
+    assert len(batch.match_telemetry) == BLOCK_MATCHES
+
+
+def test_g0_1_greedy_per_row_is_byte_identical(block_process_greedy,
+                                               block_batched_per_row_greedy):
+    process, _ = block_process_greedy
+    batched, _ = block_batched_per_row_greedy
+    assert _digests(batched) == _digests(process)
+    assert batched.match_telemetry == process.match_telemetry
+
+
+def test_g0_1b_greedy_batched_mode_numeric_parity(block_process_greedy,
+                                                  block_batched_mode_greedy):
+    process, _ = block_process_greedy
+    batched = block_batched_mode_greedy
+    for name in ("planes", "scalars", "action_mask", "actions", "rewards", "dones",
+                 "events", "event_lengths", "dealin_labels", "rank_labels"):
+        assert np.array_equal(getattr(batched, name), getattr(process, name)), name
+    assert batched.truncated_matches == process.truncated_matches
+    assert batched.match_telemetry == process.match_telemetry
+    assert np.allclose(batched.old_logprobs, process.old_logprobs, **FLOAT_TOL)
+    assert np.allclose(batched.values, process.values, **FLOAT_TOL)
+
+
+@pytest.mark.parametrize("slots", [7, 64])
+def test_g0_2_sampled_slot_count_invariance(sampled_digests_by_slots, slots):
+    assert sampled_digests_by_slots[slots] == sampled_digests_by_slots[1]
+
+
+def test_g0_2_effective_slots_is_capped_at_matches(caplog):
+    # 64-slot pool over a 2-match block: only 2 slots ever receive a command.
+    env, model = _block_env_and_model(max_steps_per_episode=GOLDEN_MAX_STEPS)
+    cfg = _block_config(matches=2, max_steps_per_episode=GOLDEN_MAX_STEPS)
+    pool = make_b2b_pool(env, model, cfg, 64)
+    seen_slots = set()
+    real_step = pool.step
+
+    def spy(commands):
+        seen_slots.update(c.slot for c in commands)
+        return real_step(commands)
+
+    pool.step = spy
+    try:
+        with caplog.at_level("INFO", logger="fh_mahjong_ai.batched_b2b"):
+            collect_b2b_rollouts_batched(env, model, cfg, base_seed=BLOCK_BASE_SEED, pool=pool)
+    finally:
+        pool.close()
+    assert seen_slots == {0, 1}
+    assert "effective_slots=2" in caplog.text
+
+
+# --- G0.3: placement-bonus fail-closed parity ------------------------------
+
+BONUS = dict(placement_bonus_values=PLACEMENT_RESHAPE_VALUES, placement_bonus_lambda=0.5)
+
+
+@pytest.mark.parametrize("runner", COLLECTORS)
+def test_g0_3_bonus_truncated_match_raises(runner):
+    env, model = _block_env_and_model()
+    cfg = _block_config(matches=1, **BONUS)
+    with pytest.raises(RuntimeError, match="placement bonus.*truncat"):
+        runner(env, model, cfg, BLOCK_TRUNCATED_SEED)
+
+
+@pytest.fixture(scope="module")
+def bonus_block_by_collector():
+    # Two completing matches with the bonus on, from each collector.
+    env, model = _block_env_and_model()
+    cfg = _block_config(matches=2, **BONUS)
+    return {"process": _run_process(env, model, cfg, BLOCK_BASE_SEED),
+            "batched": _run_batched(env, model, cfg, BLOCK_BASE_SEED, slots=2)}
+
+
+def test_g0_3_bonus_completing_block_sums_to_zero_and_matches(bonus_block_by_collector,
+                                                              block_process_greedy):
+    process = bonus_block_by_collector["process"]
+    batched = bonus_block_by_collector["batched"]
+    assert _digests(batched, matches=2) == _digests(process, matches=2)
+    plain, _ = block_process_greedy
+    plain_by_seed = {t["seed"]: t for t in plain.match_telemetry}
+    assert len(process.match_telemetry) == 2
+    for tel in process.match_telemetry:
+        assert abs(sum(tel["bonus"])) < 1e-6
+        assert any(b != 0.0 for b in tel["bonus"])
+        assert tel["trajectory_returns"] == pytest.approx(
+            plain_by_seed[tel["seed"]]["trajectory_returns"])
+        assert tel["final_scores"] == plain_by_seed[tel["seed"]]["final_scores"]
+
+
+# Scripted-bridge scenarios: the Go bridge cannot end a match at reset, and a
+# zero-decision seat needs a scripted match. The same factory is installed on
+# train_b2b (process collector) and envpool (InProcessEnvPool) so both
+# collectors play the identical script.
+
+STUB_ENV = EnvConfig(bridge_kind="mock", event_history_window=8, oracle_observation=True)
+
+
+class _ScriptedBridge:
+    def __init__(self, config, resets, step_results):
+        self.config = config
+        self._resets = dict(resets)          # seed -> StepResult
+        self._step_results = list(step_results)
+        self.last_reset_result = None
+
+    def reset(self, seed=None):
+        self.last_reset_result = self._resets[int(seed)]
+        return self.last_reset_result.observation
+
+    def step(self, action_id):
+        return self._step_results.pop(0)
+
+    def close(self):
+        pass
+
+
+def _stub_obs(seat=0):
+    mask = np.zeros(204, dtype=np.int8)
+    mask[1] = 1
+    return Observation(seat=seat, planes=np.zeros((51, 42, 1), dtype=np.float32),
+                       scalars=np.zeros(58, dtype=np.float32), action_mask=mask)
+
+
+def _stub_model():
+    torch.manual_seed(0)
+    return PolicyValueNet(EnvConfig(bridge_kind="mock"),
+                          ModelConfig(**SMALL_MODEL, event_window=8,
+                                      privileged_critic=True, aux_heads=True))
+
+
+def _install_scripted_bridge(monkeypatch, resets, step_results):
+    import fh_mahjong_ai.envpool as envpool_module
+
+    def factory(cfg):
+        return _ScriptedBridge(cfg, resets, list(step_results))
+    monkeypatch.setattr(train_b2b_module, "build_bridge", factory)
+    monkeypatch.setattr(envpool_module, "build_bridge", factory)
+
+
+def _reset_result(terminated, seat=0):
+    return StepResult(observation=_stub_obs(seat), rewards=np.zeros(4, np.float32),
+                      terminated=terminated)
+
+
+def _terminal_step(rewards=(0.0, 0.0, 0.0, 0.0)):
+    return StepResult(observation=_stub_obs(), rewards=np.asarray(rewards, np.float32),
+                      terminated=True, info={"round_outcome": {"is_draw": True}})
+
+
+@pytest.mark.parametrize("runner", COLLECTORS)
+def test_g0_3_bonus_zero_decision_seat_raises(runner, monkeypatch):
+    _install_scripted_bridge(monkeypatch, {1: _reset_result(False)}, [_terminal_step()])
+    cfg = PPOConfig(device="cpu", matches_per_iter=1, match_mode="chongci", **BONUS)
+    with pytest.raises(RuntimeError, match="zero-decision"):
+        runner(STUB_ENV, _stub_model(), cfg, 1, slots=1)
+
+
+@pytest.mark.parametrize("runner", COLLECTORS)
+def test_g0_3_bonus_reset_terminal_raises(runner, monkeypatch):
+    _install_scripted_bridge(monkeypatch, {1: _reset_result(True)}, [])
+    cfg = PPOConfig(device="cpu", matches_per_iter=1, match_mode="chongci", **BONUS)
+    with pytest.raises(RuntimeError, match="ended at reset"):
+        runner(STUB_ENV, _stub_model(), cfg, 1, slots=1)
+
+
+@pytest.mark.parametrize("runner", COLLECTORS)
+def test_reset_terminal_without_bonus_is_skipped(runner, monkeypatch):
+    # Seed 1 ends at reset (no rows, no telemetry); seed 2 plays one decision.
+    _install_scripted_bridge(monkeypatch, {1: _reset_result(True), 2: _reset_result(False)},
+                             [_terminal_step((0.1, -0.1, 0.0, 0.0))])
+    cfg = PPOConfig(device="cpu", matches_per_iter=2, match_mode="chongci")
+    batch = runner(STUB_ENV, _stub_model(), cfg, 1, slots=1)
+    assert len(batch) == 1
+    assert [t["seed"] for t in batch.match_telemetry] == [2]
+    assert batch.rewards.tolist() == pytest.approx([0.1])
+    assert batch.match_telemetry[0]["final_scores"] == [2100, 1900, 2000, 2000]
+
+
+# --- G0.4: ordered hand outcomes and hand_id assignment --------------------
+
+
+def test_g0_4_hand_outcomes_and_hand_ids_match_process(block_process_greedy,
+                                                       block_batched_per_row_greedy):
+    process, p_cap = block_process_greedy
+    batched, b_cap = block_batched_per_row_greedy
+    expected_seeds = list(range(BLOCK_BASE_SEED, BLOCK_BASE_SEED + BLOCK_MATCHES))
+    assert sorted(p_cap) == sorted(b_cap) == expected_seeds
+    for seed in expected_seeds:
+        p, b = p_cap[seed], b_cap[seed]
+        assert b["hand_id"] == p["hand_id"] >= 1, seed
+        assert list(p["hand_outcomes"]) == list(range(p["hand_id"]))
+        assert b["hand_outcomes"] == p["hand_outcomes"], seed   # ordered payloads
+        assert b["hand_ids"] == p["hand_ids"], seed             # per-seat hand_id per decision
+        assert np.array_equal(b["match_net"], p["match_net"]), seed
+        assert not any(hid >= p["hand_id"] for h in p["hand_ids"] for hid in h) or \
+            seed == BLOCK_TRUNCATED_SEED
+    assert np.array_equal(batched.dealin_labels, process.dealin_labels)
+    assert np.array_equal(batched.rank_labels, process.rank_labels)
+    assert (process.rank_labels == -1).sum() > 0  # the truncated match's rows
+    assert (process.rank_labels == 4).sum() > 0   # bust rank
+
+
+def test_make_b2b_pool_binds_window_and_oracle():
+    env = EnvConfig(bridge_kind="mock", event_history_window=3, oracle_observation=False,
+                    chongci_bust_threshold=123, chongci_max_hands=5)
+    model = _stub_model()
+    cfg = PPOConfig(device="cpu", matches_per_iter=2, match_mode="chongci",
+                    max_steps_per_episode=77)
+    pool = make_b2b_pool(env, model, cfg, 2)
+    try:
+        pc = pool.env_config
+        assert pc.event_history_window == 8 and pc.oracle_observation is True
+        assert pc.chongci_bust_threshold == 123 and pc.chongci_max_hands == 5
+        assert pc.max_steps_per_episode == 77 and pc.learning_seats == (0, 1, 2, 3)
+        pool.env_config = EnvConfig(bridge_kind="mock", event_history_window=4)
+        with pytest.raises(RuntimeError, match="event_history_window"):
+            collect_b2b_rollouts_batched(env, model, cfg, base_seed=1, pool=pool)
+        pool.env_config = pc
+        with pytest.raises(ValueError, match="inference_mode"):
+            collect_b2b_rollouts_batched(env, model, cfg, base_seed=1, pool=pool,
+                                         inference_mode="nope")
+        with pytest.raises(ValueError, match="action_selection"):
+            collect_b2b_rollouts_batched(env, model, cfg, base_seed=1, pool=pool,
+                                         action_selection="argmax")
+    finally:
+        pool.close()
