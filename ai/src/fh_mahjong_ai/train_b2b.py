@@ -933,7 +933,8 @@ def _check_chongci_outcomes(chongci: bool, completed: int, outcomes_seen: int) -
 
 def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                          config: PPOConfig, base_seed: int,
-                         action_selection: str = "sample") -> RolloutBatch:
+                         action_selection: str = "sample",
+                         diagnostics: Optional[dict] = None) -> RolloutBatch:
     """Symmetric self-play PPO rollouts for Spec B2b: all four seats are the
     SAME `model`, each seat's transitions recorded seat-contiguously (mirrors
     `collect_selfplay_rollouts`). No feature-dropout (B2b's event/privileged
@@ -946,9 +947,13 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     draws from the temperature-scaled masked policy with the global torch
     RNG seeded per match; `"greedy"` (parity tests only) takes the argmax of
     the masked logits. Either way the logprob is `ppo.masked_logprob` of the
-    chosen action."""
+    chosen action. `diagnostics` (parity tests / `fh-mj-collect-bench` only):
+    if the caller pre-creates `diagnostics["logits"]` as a list, every
+    decision's masked logits row is appended as `(match_seed, seat,
+    np.ndarray[A])` in decision order (gate G0.1b); output is unaffected."""
     if action_selection not in ("sample", "greedy"):
         raise ValueError(f"action_selection must be 'sample' or 'greedy', got {action_selection!r}")
+    logits_sink = diagnostics.get("logits") if diagnostics is not None else None
     device = config.device
     window = int(model.model_config.event_window)
     cfg = EnvConfig(
@@ -1024,6 +1029,9 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                         action = int(masked_policy_distribution(scaled).sample()[0].item())
                     logprob = masked_logprob(logits[0], config.sample_temperature, action)
                     val = float(value[0].item())
+                if logits_sink is not None:
+                    logits_sink.append((int(base_seed + m), seat,
+                                        logits[0].detach().cpu().numpy().copy()))
                 ms.seat_planes[seat].append(planes_np)
                 ms.seat_scalars[seat].append(scalars_np)
                 ms.seat_masks[seat].append(mask_np)

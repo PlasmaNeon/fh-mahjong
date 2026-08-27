@@ -19,7 +19,10 @@ from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
 from fh_mahjong_ai.ppo import PPOConfig, masked_logprob, masked_policy_distribution
-from fh_mahjong_ai.scripts.collect_bench import _digest_batch
+from fh_mahjong_ai.scripts.collect_bench import (
+    _digest_batch, compare_float_fields, emission_ordered_logits, float_gate_arrays,
+    float_gate_ceilings,
+)
 from fh_mahjong_ai.train_b2b import (
     _B2bMatchState, _check_chongci_outcomes, _finalize_b2b_match, collect_b2b_rollouts,
 )
@@ -195,6 +198,10 @@ BLOCK_BUST_THRESHOLD = 1000
 BLOCK_TRUNCATED_SEED = 9002
 BLOCK_BUST_SEED = 9005
 FLOAT_TOL = dict(atol=1e-6, rtol=1e-5)
+# Spec G0.1b hard ceilings (absolute max |delta| vs the per-row/process
+# reference on CPU): legal logits 5e-5, old_logprobs 5e-5, values 5e-6,
+# non-finite count 0. Registered constants; never widen them.
+G01B_CEILINGS = {"legal_logits": 5e-5, "old_logprobs": 5e-5, "values": 5e-6}
 
 
 def _block_env_and_model(**env_overrides):
@@ -227,16 +234,17 @@ def _capturing_finalizer(store: dict):
     return wrapped
 
 
-def _run_process(env, model, cfg, base_seed, action_selection="greedy", capture=None, **_):
+def _run_process(env, model, cfg, base_seed, action_selection="greedy", capture=None,
+                 diagnostics=None, **_):
     with pytest.MonkeyPatch.context() as mp:
         if capture is not None:
             mp.setattr(train_b2b_module, "_finalize_b2b_match", _capturing_finalizer(capture))
         return collect_b2b_rollouts(env, model, cfg, base_seed=base_seed,
-                                    action_selection=action_selection)
+                                    action_selection=action_selection, diagnostics=diagnostics)
 
 
 def _run_batched(env, model, cfg, base_seed, action_selection="greedy", slots=3,
-                 inference_mode="per_row", capture=None):
+                 inference_mode="per_row", capture=None, diagnostics=None):
     pool = make_b2b_pool(env, model, cfg, slots)
     try:
         with pytest.MonkeyPatch.context() as mp:
@@ -245,7 +253,8 @@ def _run_batched(env, model, cfg, base_seed, action_selection="greedy", slots=3,
                            _capturing_finalizer(capture))
             return collect_b2b_rollouts_batched(
                 env, model, cfg, base_seed=base_seed, pool=pool,
-                inference_mode=inference_mode, action_selection=action_selection)
+                inference_mode=inference_mode, action_selection=action_selection,
+                diagnostics=diagnostics)
     finally:
         pool.close()
 
@@ -261,10 +270,13 @@ def _digests(batch, base_seed=BLOCK_BASE_SEED, matches=BLOCK_MATCHES):
 
 @pytest.fixture(scope="module")
 def block_process_greedy():
+    """(batch, finalizer capture, emission-ordered masked logits [N, A])."""
     env, model = _block_env_and_model()
     capture: dict = {}
-    batch = _run_process(env, model, _block_config(), BLOCK_BASE_SEED, capture=capture)
-    return batch, capture
+    diag: dict = {"logits": []}
+    batch = _run_process(env, model, _block_config(), BLOCK_BASE_SEED, capture=capture,
+                         diagnostics=diag)
+    return batch, capture, emission_ordered_logits(diag["logits"], batch)
 
 
 @pytest.fixture(scope="module")
@@ -278,9 +290,12 @@ def block_batched_per_row_greedy():
 
 @pytest.fixture(scope="module")
 def block_batched_mode_greedy():
+    """(batch, emission-ordered masked logits [N, A])."""
     env, model = _block_env_and_model()
-    return _run_batched(env, model, _block_config(), BLOCK_BASE_SEED, slots=7,
-                        inference_mode="batched")
+    diag: dict = {"logits": []}
+    batch = _run_batched(env, model, _block_config(), BLOCK_BASE_SEED, slots=7,
+                         inference_mode="batched", diagnostics=diag)
+    return batch, emission_ordered_logits(diag["logits"], batch)
 
 
 @pytest.fixture(scope="module")
@@ -296,7 +311,7 @@ def sampled_digests_by_slots():
 
 
 def test_block_has_truncated_and_bust_matches(block_process_greedy):
-    batch, _ = block_process_greedy
+    batch, _, _ = block_process_greedy
     by_seed = {t["seed"]: t for t in batch.match_telemetry}
     assert batch.truncated_matches == 1
     assert by_seed[BLOCK_TRUNCATED_SEED]["truncated"] is True
@@ -306,7 +321,7 @@ def test_block_has_truncated_and_bust_matches(block_process_greedy):
 
 def test_g0_1_greedy_per_row_is_byte_identical(block_process_greedy,
                                                block_batched_per_row_greedy):
-    process, _ = block_process_greedy
+    process, _, _ = block_process_greedy
     batched, _ = block_batched_per_row_greedy
     assert _digests(batched) == _digests(process)
     assert batched.match_telemetry == process.match_telemetry
@@ -314,8 +329,8 @@ def test_g0_1_greedy_per_row_is_byte_identical(block_process_greedy,
 
 def test_g0_1b_greedy_batched_mode_numeric_parity(block_process_greedy,
                                                   block_batched_mode_greedy):
-    process, _ = block_process_greedy
-    batched = block_batched_mode_greedy
+    process, _, process_logits = block_process_greedy
+    batched, batched_logits = block_batched_mode_greedy
     for name in ("planes", "scalars", "action_mask", "actions", "rewards", "dones",
                  "events", "event_lengths", "dealin_labels", "rank_labels"):
         assert np.array_equal(getattr(batched, name), getattr(process, name)), name
@@ -323,6 +338,24 @@ def test_g0_1b_greedy_batched_mode_numeric_parity(block_process_greedy,
     assert batched.match_telemetry == process.match_telemetry
     assert np.allclose(batched.old_logprobs, process.old_logprobs, **FLOAT_TOL)
     assert np.allclose(batched.values, process.values, **FLOAT_TOL)
+    # Hard-bounded per-field gate (spec G0.1b): LEGAL logits, old_logprobs and
+    # values each against their own absolute ceiling; no non-finite values.
+    assert float_gate_ceilings("cpu") == G01B_CEILINGS
+    assert process_logits.shape == batched_logits.shape == (len(process), 204)
+    legal = process.action_mask.astype(bool)
+    assert np.all(np.isfinite(process_logits[legal])) and np.all(np.isfinite(batched_logits[legal]))
+    stats = compare_float_fields(float_gate_arrays(process, process_logits),
+                                 float_gate_arrays(batched, batched_logits), G01B_CEILINGS)
+    measured = {name: st["max_abs_diff"] for name, st in stats.items()}
+    print(f"G0.1b measured max |delta| (test net, CPU): {measured}")
+    for name, ceiling in G01B_CEILINGS.items():
+        st = stats[name]
+        assert st["element_count"] > 0, name
+        assert st["nonfinite_count"] == 0, name
+        assert st["max_abs_diff"] <= ceiling, (name, st)
+        assert st["beyond_ceiling"] == 0, name
+        assert st["passed"], name
+    assert stats["legal_logits"]["element_count"] == int(legal.sum())
 
 
 @pytest.mark.parametrize("slots", [7, 64])
@@ -379,7 +412,7 @@ def test_g0_3_bonus_completing_block_sums_to_zero_and_matches(bonus_block_by_col
     process = bonus_block_by_collector["process"]
     batched = bonus_block_by_collector["batched"]
     assert _digests(batched, matches=2) == _digests(process, matches=2)
-    plain, _ = block_process_greedy
+    plain, _, _ = block_process_greedy
     plain_by_seed = {t["seed"]: t for t in plain.match_telemetry}
     assert len(process.match_telemetry) == 2
     for tel in process.match_telemetry:
@@ -483,7 +516,7 @@ def test_reset_terminal_without_bonus_is_skipped(runner, monkeypatch):
 
 def test_g0_4_hand_outcomes_and_hand_ids_match_process(block_process_greedy,
                                                        block_batched_per_row_greedy):
-    process, p_cap = block_process_greedy
+    process, p_cap, _ = block_process_greedy
     batched, b_cap = block_batched_per_row_greedy
     expected_seeds = list(range(BLOCK_BASE_SEED, BLOCK_BASE_SEED + BLOCK_MATCHES))
     assert sorted(p_cap) == sorted(b_cap) == expected_seeds

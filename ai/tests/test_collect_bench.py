@@ -519,8 +519,9 @@ def test_batched_mode_is_semantically_slot_invariant(tmp_path):
     row stays byte-equal across slot counts; only old_logprobs/values move,
     and only at float32 rounding. `exact_invariance_expected` says so, and the
     semantic digest is what the gate then reads. The tiny test net also stays
-    inside the reported tolerance — the production net does not, which is why
-    that number is measurement rather than a gate."""
+    inside the legacy atol/rtol (diagnostic); the hard gate is `float_gate`:
+    per slot count, per field, against a per_row reference on the same seeds
+    (spec G0.1b)."""
     report = collect_bench.run_bench(**_batched_kwargs(tmp_path, [1, 3],
                                                        inference_mode="batched"))
     assert report["exact_invariance_expected"] is False
@@ -529,6 +530,168 @@ def test_batched_mode_is_semantically_slot_invariant(tmp_path):
     assert report["float_fields_within_tolerance"] is True
     assert report["float_allclose_violations"] == 0
     assert report["max_float_diff"] < 1e-5
+    gate = report["float_gate"]
+    assert gate["reference"] == "per_row"
+    assert gate["ceilings"] == {"legal_logits": 5e-5, "old_logprobs": 5e-5, "values": 5e-6}
+    assert gate["passed"] is True and gate["violations"] == []
+    assert sorted(gate["comparisons"]) == [1, 3]
+    for comp in gate["comparisons"].values():
+        assert comp["semantic_matches_reference"] is True
+        for name in ("legal_logits", "old_logprobs", "values"):
+            st = comp["fields"][name]
+            assert st["element_count"] > 0 and st["nonfinite_count"] == 0
+            assert st["max_abs_diff"] <= gate["ceilings"][name]
+            assert st["beyond_ceiling"] == 0 and st["passed"] is True
+            for key in ("p50", "p95", "p99", "p99_9", "mismatch_count", "beyond_legacy_tol"):
+                assert st[key] is not None
+
+
+def test_process_and_per_row_reports_carry_no_float_gate(tmp_path):
+    assert collect_bench.run_bench(**_bench_kwargs(tmp_path, [1]))["float_gate"] is None
+    report = collect_bench.run_bench(**_batched_kwargs(tmp_path, [1], inference_mode="per_row"))
+    assert report["float_gate"] is None
+
+
+def test_float_field_stats_reports_every_column_and_gates_on_the_ceiling():
+    ref = np.array([0.0, 1.0, -2.0, 3.0], dtype=np.float64)
+    st = collect_bench.float_field_stats(ref, ref + np.array([0.0, 2e-5, 0.0, 6e-5]), 5e-5)
+    assert st["element_count"] == 4 and st["nonfinite_count"] == 0
+    assert st["mismatch_count"] == 2
+    assert st["max_abs_diff"] == pytest.approx(6e-5)
+    assert st["beyond_legacy_tol"] == 2 and st["beyond_ceiling"] == 1
+    assert st["passed"] is False
+    assert st["p50"] <= st["p95"] <= st["p99"] <= st["p99_9"] <= st["max_abs_diff"]
+    ok = collect_bench.float_field_stats(ref, ref + 1e-5, 5e-5)
+    assert ok["passed"] is True and ok["beyond_ceiling"] == 0 and ok["beyond_legacy_tol"] == 1
+    nan = collect_bench.float_field_stats(ref, np.array([0.0, np.nan, -2.0, 3.0]), 5e-5)
+    assert nan["nonfinite_count"] == 1 and nan["passed"] is False
+    shape = collect_bench.float_field_stats(ref, ref[:3], 5e-5)
+    assert shape["shape_mismatch"] is True and shape["passed"] is False
+
+
+def test_float_gate_ceilings_are_per_device_and_only_tighten():
+    assert collect_bench.float_gate_ceilings("cpu") == {
+        "legal_logits": 5e-5, "old_logprobs": 5e-5, "values": 5e-6}
+    assert collect_bench.float_gate_ceilings("cuda:0") == {
+        "legal_logits": 1e-4, "old_logprobs": 1e-4, "values": 1e-5}
+    tightened = collect_bench.float_gate_ceilings("cuda", {"values": 2e-6})
+    assert tightened["values"] == 2e-6 and tightened["old_logprobs"] == 1e-4
+    with pytest.raises(ValueError, match="may not exceed its cap"):
+        collect_bench.float_gate_ceilings("cpu", {"values": 1e-5})
+    with pytest.raises(ValueError, match="unknown float-gate field"):
+        collect_bench.float_gate_ceilings("cpu", {"logprobs": 1e-6})
+
+
+def test_emission_ordered_logits_sorts_by_seed_and_seat_and_checks_alignment():
+    # Four emitted rows: seed 1 seat 0, seed 2 seat 0, seed 2 seat 1 (two
+    # decisions, in decision order). Mask width 3, one illegal column per row.
+    mask = np.array([[1, 1, 0], [0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=np.int8)
+    batch = replace(_minimal_batch(), action_mask=mask, actions=np.zeros(4, dtype=np.int64))
+    n, a = mask.shape
+    fmin = np.finfo(np.float32).min
+    rows = []
+    for i in range(n):
+        row = np.full(a, fmin, dtype=np.float32)
+        row[mask[i].astype(bool)] = float(i)
+        rows.append(row)
+    # Decision order interleaves matches; emission order is (seed, seat), stable.
+    sink = [(2, 0, rows[1]), (1, 0, rows[0]), (2, 1, rows[2]), (2, 1, rows[3])]
+    ordered = collect_bench.emission_ordered_logits(sink, batch)
+    assert [float(r[mask[i].astype(bool)][0]) for i, r in enumerate(ordered)] == list(range(n))
+    with pytest.raises(RuntimeError, match="rows"):
+        collect_bench.emission_ordered_logits(sink[:-1], batch)
+    bad = [(s, seat, np.zeros(a, dtype=np.float32)) for s, seat, _ in sink]
+    with pytest.raises(RuntimeError, match="misaligned"):
+        collect_bench.emission_ordered_logits(bad, batch)
+
+
+def _perturbing_batched_collect(delta: float, field: str = "old_logprobs"):
+    """Wrap the real batched collector so only the production (batched-mode)
+    collection is perturbed; the per_row reference stays untouched."""
+    real = collect_bench.collect_b2b_rollouts_batched
+
+    def collect(env_config, model, config, base_seed, pool, **kwargs):
+        batch = real(env_config, model, config, base_seed=base_seed, pool=pool, **kwargs)
+        if kwargs.get("inference_mode", "batched") == "batched":
+            values = np.array(getattr(batch, field), copy=True)
+            values[0] += delta
+            setattr(batch, field, values)
+        return batch
+    return collect
+
+
+def _batched_main_argv(champion, extra):
+    return [
+        "fh-mj-collect-bench", "--champion", str(champion),
+        "--collector", "batched", "--pool-slots", "1,3", "--inference-mode", "batched",
+        "--matches", "4", "--base-seed", "100", "--match-mode", "classic",
+        "--bridge-kind", "mock", "--device", "cpu", "--max-steps-per-episode", "16",
+        "--event-window", "8", "--model-channels", "16", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ] + extra
+
+
+def test_float_gate_perturbation_beyond_ceiling_exits_one_and_names_the_field(
+        tmp_path, monkeypatch, capsys):
+    champion = _champion(tmp_path)
+    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched",
+                        _perturbing_batched_collect(6e-5))
+    monkeypatch.setattr(sys, "argv", _batched_main_argv(champion, []))
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "FLOAT GATE VIOLATION" in out
+    assert "field=old_logprobs" in out
+    assert "field=values" not in out and "field=legal_logits" not in out
+    assert "float_gate_passed: False" in out
+    assert "semantic_digests_equal: True" in out
+
+
+def test_float_gate_perturbation_within_ceiling_passes(tmp_path, monkeypatch, capsys):
+    champion = _champion(tmp_path)
+    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched",
+                        _perturbing_batched_collect(2e-5))
+    out_json = tmp_path / "report.json"
+    monkeypatch.setattr(sys, "argv", _batched_main_argv(champion, ["--json", str(out_json)]))
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "FLOAT GATE VIOLATION" not in out
+    assert "float_gate_passed: True" in out
+    assert "old_logprobs: n=" in out and "values: n=" in out and "legal_logits: n=" in out
+    import json as json_mod
+    payload = json_mod.loads(out_json.read_text())
+    gate = payload["float_gate"]
+    assert gate["passed"] is True
+    for count in ("1", "3"):
+        st = gate["comparisons"][count]["fields"]["old_logprobs"]
+        assert st["max_abs_diff"] == pytest.approx(2e-5, rel=1e-2)
+        assert st["beyond_legacy_tol"] >= 1 and st["beyond_ceiling"] == 0
+
+
+def test_float_gate_tightened_ceiling_via_cli_catches_the_in_cap_perturbation(
+        tmp_path, monkeypatch, capsys):
+    champion = _champion(tmp_path)
+    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched",
+                        _perturbing_batched_collect(2e-5))
+    monkeypatch.setattr(sys, "argv", _batched_main_argv(
+        champion, ["--float-ceiling", "old_logprobs=1e-5"]))
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 1
+    assert "field=old_logprobs" in capsys.readouterr().out
+
+
+def test_float_ceiling_cli_rejects_widening_and_wrong_collector(tmp_path):
+    widened = _run_batched_cli(tmp_path, ["--pool-slots", "1", "--float-ceiling", "values=1e-3"])
+    assert widened.returncode == 2 and "may not exceed its cap" in widened.stderr
+    per_row = _run_batched_cli(tmp_path, ["--pool-slots", "1", "--inference-mode", "per_row",
+                                          "--float-ceiling", "values=1e-6"])
+    assert per_row.returncode == 2 and "--float-ceiling applies only" in per_row.stderr
 
 
 def test_float_delta_outside_tolerance_is_reported_not_gated(tmp_path, monkeypatch, capsys):
@@ -742,6 +905,8 @@ def test_batched_cli_exits_zero_and_prints_semantic_gate(tmp_path):
     assert "pool_slots" in result.stdout
     assert "semantic_digests_equal: True" in result.stdout
     assert "semantics_equal: True" in result.stdout
+    assert "float_gate (reference: per_row" in result.stdout
+    assert "float_gate_passed: True" in result.stdout
 
 
 def test_batched_cli_per_row_prints_exact_digest_gate(tmp_path):

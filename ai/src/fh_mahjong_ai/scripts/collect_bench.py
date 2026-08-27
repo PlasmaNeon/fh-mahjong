@@ -135,6 +135,130 @@ def _update_array_digest(h, name: str, value) -> None:
 _ROLLOUT_TOLERANT_FIELDS = ("old_logprobs", "values")
 _FLOAT_INVARIANCE_TOL = dict(atol=1e-6, rtol=1e-5)
 
+# Gate G0.1b: with `--collector batched --inference-mode batched` every slot
+# count's steady batch is compared FIELD BY FIELD against a `per_row`
+# reference collected on the same seeds from the same weights (per_row is
+# byte-identical to the process collector under greedy selection, G0.1, and
+# slot-count invariant). Absolute ceilings on max |delta| -- relative error is
+# unstable near 0 -- pre-registered per device class; a violation exits 1.
+# The legacy atol/rtol count is printed as a diagnostic only.
+_FLOAT_GATE_FIELDS = ("legal_logits", "old_logprobs", "values")
+_FLOAT_GATE_CEILINGS = {
+    "cpu": {"legal_logits": 5e-5, "old_logprobs": 5e-5, "values": 5e-6},
+    # Caps for the CUDA calibration procedure (spec G0.1b): an operational
+    # threshold may be set BELOW these via --float-ceiling, never above.
+    "cuda": {"legal_logits": 1e-4, "old_logprobs": 1e-4, "values": 1e-5},
+}
+_FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"))
+
+
+def float_gate_ceilings(device: str, overrides: Optional[dict] = None) -> dict:
+    """Per-field ceilings for `device` (cpu vs cuda caps). `overrides` may
+    only TIGHTEN a field below its cap."""
+    caps = dict(_FLOAT_GATE_CEILINGS["cuda" if str(device).startswith("cuda") else "cpu"])
+    for name, value in (overrides or {}).items():
+        if name not in caps:
+            raise ValueError(f"unknown float-gate field {name!r} (expected one of {_FLOAT_GATE_FIELDS})")
+        if float(value) > caps[name]:
+            raise ValueError(
+                f"float-gate ceiling for {name} may not exceed its cap: {value} > {caps[name]}")
+        caps[name] = float(value)
+    return caps
+
+
+def emission_ordered_logits(sink: list, batch) -> np.ndarray:
+    """Reorder a collector's `diagnostics["logits"]` sink (decision order,
+    `(match_seed, seat, row)`) into the batch's emission order: matches in seed
+    order, seats contiguous, decisions in order within a seat. A stable sort
+    on (seed, seat) gives exactly that. Alignment is checked against the
+    batch's mask: every illegal entry must carry the finfo.min mask value."""
+    order = sorted(range(len(sink)), key=lambda i: (int(sink[i][0]), int(sink[i][1])))
+    if len(order) != len(batch):
+        raise RuntimeError(f"logits sink has {len(order)} rows, batch has {len(batch)}")
+    if not order:
+        return np.zeros((0, int(batch.action_mask.shape[1])), dtype=np.float32)
+    logits = np.stack([np.asarray(sink[i][2], dtype=np.float32) for i in order])
+    illegal = np.asarray(batch.action_mask) == 0
+    if not np.all(logits[illegal] <= np.finfo(np.float32).min):
+        raise RuntimeError("logits sink is misaligned with the batch's action masks")
+    return logits
+
+
+def float_gate_arrays(batch, logits: np.ndarray) -> dict:
+    """The three gated arrays of one collection, float64 copies: legal
+    logits (mask==1 entries in emission order), old_logprobs, values."""
+    legal = np.asarray(batch.action_mask).astype(bool)
+    return {
+        "legal_logits": np.asarray(logits, dtype=np.float64)[legal].copy(),
+        "old_logprobs": np.asarray(batch.old_logprobs, dtype=np.float64).copy(),
+        "values": np.asarray(batch.values, dtype=np.float64).copy(),
+    }
+
+
+def float_field_stats(reference: np.ndarray, current: np.ndarray, ceiling: float) -> dict:
+    """Per-field comparison record for one (reference, candidate) pair."""
+    reference = np.asarray(reference, dtype=np.float64)
+    current = np.asarray(current, dtype=np.float64)
+    nonfinite = int((~np.isfinite(reference)).sum() + (~np.isfinite(current)).sum())
+    out = {"ceiling": float(ceiling), "element_count": int(current.size),
+           "reference_count": int(reference.size), "nonfinite_count": nonfinite,
+           "shape_mismatch": reference.shape != current.shape}
+    if out["shape_mismatch"]:
+        out.update(mismatch_count=None, max_abs_diff=None, beyond_legacy_tol=None,
+                   beyond_ceiling=None, passed=False,
+                   **{label: None for _, label in _FLOAT_GATE_PERCENTILES})
+        return out
+    diff = np.abs(reference - current)
+    finite = np.isfinite(diff)
+    d = diff[finite]
+    if d.size:
+        pct = {label: float(np.percentile(d, q)) for q, label in _FLOAT_GATE_PERCENTILES}
+        max_abs = float(d.max())
+    else:
+        pct = {label: 0.0 for _, label in _FLOAT_GATE_PERCENTILES}
+        max_abs = 0.0
+    legacy = _FLOAT_INVARIANCE_TOL["atol"] + _FLOAT_INVARIANCE_TOL["rtol"] * np.abs(current)
+    bad = int((~finite).sum())
+    out.update(mismatch_count=int((d > 0).sum()) + bad,
+               max_abs_diff=max_abs,
+               beyond_legacy_tol=int((d > legacy[finite]).sum()) + bad,
+               beyond_ceiling=int((d > ceiling).sum()) + bad,
+               **pct)
+    out["passed"] = nonfinite == 0 and out["beyond_ceiling"] == 0
+    return out
+
+
+def compare_float_fields(reference: dict, current: dict, ceilings: dict) -> dict:
+    return {name: float_field_stats(reference[name], current[name], ceilings[name])
+            for name in _FLOAT_GATE_FIELDS}
+
+
+def _format_float_stats(label: str, name: str, st: dict) -> str:
+    if st["shape_mismatch"]:
+        return (f"  {label} {name}: SHAPE MISMATCH reference={st['reference_count']} "
+                f"current={st['element_count']} FAIL")
+    return (f"  {label} {name}: n={st['element_count']} nonfinite={st['nonfinite_count']} "
+            f"mismatch={st['mismatch_count']} p50={st['p50']:.3e} p95={st['p95']:.3e} "
+            f"p99={st['p99']:.3e} p99.9={st['p99_9']:.3e} max={st['max_abs_diff']:.3e} "
+            f">legacy(atol={_FLOAT_INVARIANCE_TOL['atol']},rtol={_FLOAT_INVARIANCE_TOL['rtol']})="
+            f"{st['beyond_legacy_tol']} >ceiling({st['ceiling']:.1e})={st['beyond_ceiling']} "
+            f"{'PASS' if st['passed'] else 'FAIL'}")
+
+
+def _float_gate_violations(label: str, stats: dict) -> list[str]:
+    out = []
+    for name in _FLOAT_GATE_FIELDS:
+        st = stats[name]
+        if st["shape_mismatch"]:
+            out.append(f"{label} field={name}: shape mismatch against the per_row reference")
+            continue
+        if st["nonfinite_count"]:
+            out.append(f"{label} field={name}: {st['nonfinite_count']} non-finite element(s)")
+        if st["beyond_ceiling"]:
+            out.append(f"{label} field={name}: max_abs_diff={st['max_abs_diff']:.3e} > "
+                       f"ceiling {st['ceiling']:.1e} ({st['beyond_ceiling']} element(s))")
+    return out
+
 
 def _digest_batch(base_seed: int, matches: int, batch, exclude: tuple[str, ...] = ()) -> str:
     """Hash every `RolloutBatch` field plus each array's shape and dtype.
@@ -372,7 +496,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              worker_target=None, full_cycle: Optional[FullCycleSettings] = None,
              dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None,
              collector: str = "process", pool_slots: Optional[list[int]] = None,
-             inference_mode: str = "batched") -> dict:
+             inference_mode: str = "batched",
+             float_ceilings: Optional[dict] = None) -> dict:
     """Run the collector benchmark. Returns
     `{count: {"startup_seconds": float, "steady_seconds": float,
     "digest": str}, "all_digests_equal": bool}` where `count` is a worker
@@ -391,6 +516,14 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     `batched_b2b.collect_b2b_rollouts_batched` on `device`. `inference_mode`
     is forwarded to it: `"batched"` is the production shape, `"per_row"` the
     batch-composition-independent one.
+
+    With `collector="batched"` and `inference_mode="batched"` (production
+    shape) the report also carries `"float_gate"` (spec G0.1b): one `per_row`
+    reference collection on the same seeds and weights, then per slot count
+    and per field (`legal_logits`, `old_logprobs`, `values`) the comparison
+    stats and a pass/fail against absolute ceilings (`float_ceilings`
+    tightens `float_gate_ceilings(device)`); `"float_gate"["passed"]` gates
+    the exit code alongside the semantic digest.
 
     `worker_target`, when given, is forwarded to every `ParallelB2bCollector`
     this bench constructs (adversarial round 9, medium finding). It exists
@@ -428,6 +561,33 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     float_fields_within_tolerance = True
     float_allclose_violations = 0
     max_float_diff = 0.0
+    float_gate: Optional[dict] = None
+    gate_reference: Optional[dict] = None
+    if collector == "batched" and inference_mode == "batched":
+        ceilings = float_gate_ceilings(device, float_ceilings)
+        ref_pool = make_b2b_pool(env_config, warm_started, batched_config, int(counts[0]))
+        ref_start = time.perf_counter()
+        try:
+            ref_diag: dict = {"logits": []}
+            ref_batch = collect_b2b_rollouts_batched(
+                env_config, warm_started, batched_config, base_seed=base_seed, pool=ref_pool,
+                inference_mode="per_row", diagnostics=ref_diag)
+        finally:
+            ref_pool.close()
+        gate_reference = float_gate_arrays(
+            ref_batch, emission_ordered_logits(ref_diag["logits"], ref_batch))
+        float_gate = {
+            "reference": "per_row",
+            "reference_description": "collect_b2b_rollouts_batched(inference_mode='per_row') "
+                                     f"on the same seeds and weights, pool_slots={counts[0]}",
+            "reference_seconds": time.perf_counter() - ref_start,
+            "reference_semantic_digest": _semantic_digest_batch(base_seed, matches, ref_batch),
+            "ceilings": ceilings,
+            "comparisons": {},
+            "violations": [],
+            "passed": True,
+        }
+        del ref_batch, ref_diag
     for count in counts:
         sampler: Optional[_PeakRssSampler] = None
         if full_cycle is not None:
@@ -443,10 +603,12 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                 startup_seconds = time.perf_counter() - startup_start
                 if collect_on_cuda:
                     torch.cuda.reset_peak_memory_stats()
+                diagnostics: dict = {"logits": []} if float_gate is not None else {}
                 steady_start = time.perf_counter()
                 batch = collect_b2b_rollouts_batched(env_config, warm_started, batched_config,
                                                      base_seed=base_seed, pool=pool,
-                                                     inference_mode=inference_mode)
+                                                     inference_mode=inference_mode,
+                                                     diagnostics=diagnostics)
                 steady_seconds = time.perf_counter() - steady_start
             finally:
                 pool.close()
@@ -473,6 +635,23 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             "digest": _digest_batch(base_seed, matches, batch),
             "semantic_digest": _semantic_digest_batch(base_seed, matches, batch),
         }
+        if float_gate is not None:
+            assert gate_reference is not None
+            label = f"pool_slots={int(count)}"
+            stats = compare_float_fields(
+                gate_reference,
+                float_gate_arrays(batch, emission_ordered_logits(diagnostics["logits"], batch)),
+                float_gate["ceilings"])
+            semantic_ok = (results[count]["semantic_digest"]
+                           == float_gate["reference_semantic_digest"])
+            violations = _float_gate_violations(label, stats)
+            if not semantic_ok:
+                violations.append(f"{label}: semantic digest differs from the per_row reference")
+            float_gate["comparisons"][int(count)] = {
+                "fields": stats, "semantic_matches_reference": semantic_ok}
+            float_gate["violations"].extend(violations)
+            if violations:
+                float_gate["passed"] = False
         # Only the two 1-D float fields are retained across counts (a few MB
         # at any realistic match count) — never whole batches.
         floats = {name: np.asarray(getattr(batch, name), dtype=np.float64).copy()
@@ -528,7 +707,9 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              "model_config": effective_model_config,
              "collector": collector,
              "inference_mode": inference_mode if collector == "batched" else None,
-             "dispatch_chunk_matches": int(dispatch_chunk)}
+             "dispatch_chunk_matches": int(dispatch_chunk),
+             # Spec G0.1b hard gate (batched inference only); None otherwise.
+             "float_gate": float_gate}
     if full_cycle is not None:
         invariant_tuples = {
             tuple(r["full_cycle"][k] for k in _FULL_CYCLE_INVARIANT_KEYS)
@@ -604,6 +785,11 @@ def main() -> None:
                    help="--collector batched only: 'batched' (default) is the production "
                         "one-forward-per-round shape; 'per_row' forwards each row alone, "
                         "which is batch-composition-independent but far slower")
+    p.add_argument("--float-ceiling", action="append", default=[], metavar="FIELD=MAX",
+                   help="--collector batched --inference-mode batched only: tighten the "
+                        "G0.1b max|delta| ceiling for legal_logits, old_logprobs or values "
+                        "below its device cap (cpu: 5e-5/5e-5/5e-6, cuda: 1e-4/1e-4/1e-5); "
+                        "a value above the cap is rejected (the cap is never widened)")
     p.add_argument("--matches", type=int, default=320)
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--match-mode", choices=("classic", "chongci"), default="chongci")
@@ -694,6 +880,22 @@ def main() -> None:
     # be nonzero on the CLI (see model_config_from_args's docstring).
     model_config = model_config_from_args(args, event_window=args.event_window)
 
+    float_ceilings: dict = {}
+    for spec in args.float_ceiling:
+        if "=" not in spec:
+            p.error(f"--float-ceiling expects FIELD=MAX, got {spec!r}")
+        name, value = spec.split("=", 1)
+        try:
+            float_ceilings[name.strip()] = float(value)
+        except ValueError:
+            p.error(f"--float-ceiling {spec!r}: MAX must be a number")
+    if float_ceilings and not (args.collector == "batched" and args.inference_mode == "batched"):
+        p.error("--float-ceiling applies only to --collector batched --inference-mode batched")
+    try:
+        float_gate_ceilings(args.device, float_ceilings)
+    except ValueError as exc:
+        p.error(str(exc))
+
     full_cycle = None
     if args.full_cycle:
         full_cycle = FullCycleSettings(
@@ -713,7 +915,8 @@ def main() -> None:
                        dispatch_chunk=args.dispatch_chunk,
                        placement_bonus=placement_bonus_kwargs(args),
                        collector=args.collector, pool_slots=pool_slots,
-                       inference_mode=args.inference_mode)
+                       inference_mode=args.inference_mode,
+                       float_ceilings=float_ceilings)
     results = report["results"]
     label = "pool_slots" if args.collector == "batched" else "workers"
     _print_table(results, label)
@@ -745,6 +948,25 @@ def main() -> None:
         if not report["semantic_digests_equal"]:
             _print_groups("semantic_digest")
     ok = report["all_digests_equal"] if exact_expected else report["semantics_equal"]
+    float_gate = report.get("float_gate")
+    if float_gate is not None:
+        # Spec G0.1b: per field, per slot count, against the per_row
+        # reference on the same seeds. Never one collapsed maximum.
+        ceilings = float_gate["ceilings"]
+        print(f"float_gate (reference: {float_gate['reference']} -- "
+              f"{float_gate['reference_description']}; "
+              f"reference_seconds={float_gate['reference_seconds']:.3f}) ceilings: "
+              + " ".join(f"{k}={v:.1e}" for k, v in ceilings.items()))
+        for count in sorted(float_gate["comparisons"]):
+            comp = float_gate["comparisons"][count]
+            for name in _FLOAT_GATE_FIELDS:
+                print(_format_float_stats(f"pool_slots={count}", name, comp["fields"][name]))
+            print(f"  pool_slots={count} semantic_matches_reference: "
+                  f"{comp['semantic_matches_reference']}")
+        for line in float_gate["violations"]:
+            print(f"FLOAT GATE VIOLATION: {line}")
+        print(f"float_gate_passed: {float_gate['passed']}")
+        ok = ok and bool(float_gate["passed"])
     if full_cycle is not None:
         print(f"rows_and_labels_equal: {report['rows_and_labels_equal']}")
         ok = ok and report["rows_and_labels_equal"]
@@ -770,6 +992,11 @@ def main() -> None:
         payload["collector"] = args.collector
         payload["inference_mode"] = report["inference_mode"]
         payload["dispatch_chunk_matches"] = report["dispatch_chunk_matches"]
+        payload["float_gate"] = (
+            None if report.get("float_gate") is None else {
+                **report["float_gate"],
+                "comparisons": {str(k): v for k, v in report["float_gate"]["comparisons"].items()},
+            })
         if full_cycle is not None:
             payload["rows_and_labels_equal"] = report["rows_and_labels_equal"]
         args.json.write_text(json.dumps(payload, indent=2))

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from typing import Optional
 
 import numpy as np
 import torch
@@ -62,7 +63,13 @@ class _SlotMatch:
 def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  config: PPOConfig, base_seed: int, pool,
                                  inference_mode: str = "batched",
-                                 action_selection: str = "sample") -> RolloutBatch:
+                                 action_selection: str = "sample",
+                                 diagnostics: Optional[dict] = None) -> RolloutBatch:
+    """`diagnostics` (tests and `fh-mj-collect-bench` only) receives
+    `pool_slots` (allocated), `effective_slots`, `peak_live_slots` and
+    `rounds`; if the caller pre-creates `diagnostics["logits"]` as a list,
+    every decision's masked logits row is appended to it as
+    `(match_seed, seat, np.ndarray[A])` in decision order (gate G0.1b)."""
     if inference_mode not in ("batched", "per_row"):
         raise ValueError(f"unknown inference_mode: {inference_mode}")
     if action_selection not in ("sample", "greedy"):
@@ -81,6 +88,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     logger.info("batched B2b collector: pool_slots=%d matches=%d effective_slots=%d "
                 "inference_mode=%s", pool.slots, total, effective_slots, inference_mode)
     model.eval()
+    logits_sink = diagnostics.get("logits") if diagnostics is not None else None
+    peak_live_slots = 0
+    rounds = 0
 
     active: dict[int, _SlotMatch] = {}
     pending_action: dict[int, int] = {}
@@ -119,6 +129,8 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 f"env pool wedged: {len(active)} slots active, "
                 f"{total - emit_next} matches unemitted")
         result: PoolStepResult = pool.step(commands)
+        rounds += 1
+        peak_live_slots = max(peak_live_slots, len(active))
 
         pending_rows = []  # (slot, sm, seat, planes, scalars, mask, row_events, ev_len)
         for meta in result.slots:
@@ -212,6 +224,8 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                     logits_row.detach().cpu().numpy(), mask_np, temperature, sm.sample_rng)
             with torch.no_grad():
                 logprob = masked_logprob(logits_row, temperature, action)  # CPU tensor
+            if logits_sink is not None:
+                logits_sink.append((sm.seed, seat, logits_row.numpy().copy()))
             ms = sm.state
             ms.seat_planes[seat].append(planes_np)
             ms.seat_scalars[seat].append(scalars_np)
@@ -226,6 +240,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             pending_action[slot] = action
 
     _check_chongci_outcomes(chongci, completed_matches, outcomes_seen)
+    if diagnostics is not None:
+        diagnostics.update(pool_slots=int(pool.slots), effective_slots=effective_slots,
+                           peak_live_slots=peak_live_slots, rounds=rounds)
     if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts_batched produced no decisions")
     return RolloutBatch(
