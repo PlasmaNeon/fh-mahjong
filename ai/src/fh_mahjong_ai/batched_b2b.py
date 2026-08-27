@@ -192,14 +192,19 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             with torch.no_grad():
                 logits_t, values_t = model(planes_t, scalars_t, masks_t,
                                            events=events_t, event_lengths=lengths_t)
-            # ONE device->host transfer per round; every per-row op below
-            # (sampling, masked_logprob) then runs on CPU tensors. Per-row
+            # ONE device->host transfer per round: logits and values are
+            # concatenated on the device into a single [B, A+1] tensor and
+            # copied once, then sliced on the host. Every per-row op below
+            # (sampling, masked_logprob) runs on CPU tensors; per-row
             # `.item()`/log_prob on device tensors would be one CUDA sync per
-            # decision, which is exactly the batch-1 shape this collector exists
-            # to remove.
-            logits_cpu = logits_t.detach().cpu()
-            logits_rows = [logits_cpu[i] for i in range(len(pending_rows))]
-            values_rows = values_t.detach().reshape(-1).cpu().numpy().astype(np.float32).tolist()
+            # decision, which is exactly the batch-1 shape this collector
+            # exists to remove. Concatenation and slicing copy bytes, so the
+            # floats are the ones the forward produced.
+            n_rows = len(pending_rows)
+            host = torch.cat([logits_t.detach(), values_t.detach().reshape(n_rows, 1)],
+                             dim=1).cpu()
+            logits_rows = [host[i, :-1] for i in range(n_rows)]
+            values_rows = host[:, -1].numpy().astype(np.float32).tolist()
         else:  # per_row: batch-composition-independent floats
             logits_rows, values_rows = [], []
             for _, _, _, planes_np, scalars_np, mask_np, row_events, ev_len in pending_rows:
