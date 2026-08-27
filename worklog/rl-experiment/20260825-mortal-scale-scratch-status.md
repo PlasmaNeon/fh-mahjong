@@ -23,9 +23,10 @@
 
 ## Current stage
 
-**STAGE 3 RUNNING — BC control (96×4, k=1) on the box as systemd unit
-`msscratch-bc-control` (44/48 GiB containment, `cgroup_guard38.sh` armed), launched
-2026-08-26 UTC; log `/root/fh-mahjong-runs/mortal-scale-scratch/logs/bc-control.log`.**
+**STAGE 4 RUNNING — BC big (192×24, k=1) on the box as systemd unit
+`msscratch-bc-big` (44/48 GiB containment, `cgroup_guard38.sh` armed), launched
+2026-08-26 UTC; log `/root/fh-mahjong-runs/mortal-scale-scratch/logs/bc-big.log`.**
+BC control is done (row 3).
 Box is otherwise free (placement-reshape closed as a registered NULL;
 `/root/fh-mahjong-runs/placement-reshape/` is a read-only archive). Next: BC big (§3),
 export + bench (§4), control lap (§5).
@@ -42,8 +43,8 @@ commits between), anchor `ce9d867f…` (matches §0).
 | 1 | Bridge build + `uv sync` + digests | §1 | done 2026-08-26 | dataset bridge `66f7a061…` (box's binary at the time); training/eval bridge `a487bcb7…` rebuilt from checkout `7e5d623`; anchor sha256 `ce9d867f…` ✓ |
 | 2 | BC dataset — 8,000 matches, seeds 1,300,000–1,307,999, `--learning-seat-rule seed-mod-4` | §2 | done 2026-08-26 | manifest sha256 `2898960f…`; 4,051,446 transitions from 8,000 episodes (43,063 s); per seat 0/1/2/3 = 1,009,528 / 1,013,787 / 1,015,300 / 1,012,831; 82 shards, 1,033,621,603 B on disk |
 | 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | PASS 2026-08-26 | 4,051,446 × 7,018 B = 26.48 GiB (arrays 26.50 GiB); loader-only `memory.peak` 29,475,266,560 B = 27.45 GiB; `anon`/`file` were read after the loader exited (233,472 / 359,747,584 B — not informative); `free -g` 47 free / 50 total; log `logs/gate2a.log` |
-| 3 | BC control (96×4, k=1) | §3 | running — unit `msscratch-bc-control` | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
-| 4 | BC big (192×24, k=1) | §3 | not started | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
+| 3 | BC control (96×4, k=1) | §3 | done 2026-08-26 | `best_epoch` 5, best val CE 0.13832, `stopped_early` true, `epochs_run` 10, all epochs `validation_events: zeroed`; best-epoch top-1 0.9556 (top-3 0.9942; discard 0.947, chii 0.969, pon 0.995, kan 0.973, pass 0.989, win 1.0); per seat 0/1/2/3 top-1 0.9555 / 0.9555 / 0.9560 / 0.9555 (n 103,988 / 96,965 / 97,277 / 109,209), recompute overall 0.9556 = report ✓; cgroup peak 31,261,163,520 B = 29.11 GiB, tree RSS peak 28.18 GiB; `best.pt` sha256 `8f5a227f354e2db20e3308f2c5bed219df8c7126ab0498213fdafa91fbb30cd7` |
+| 4 | BC big (192×24, k=1) | §3 | running — unit `msscratch-bc-big` | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | not started | `big-init.pt` sha256, transfer-gate record |
 | 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | not started | cgroup peak, tree RSS, CUDA peak, matches/s, projected wall time |
 | 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | not started | `history.json`, transfer-gate record, guard verdicts |
@@ -113,4 +114,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-26 ~16:43Z` — mortal-scale-scratch — Stage 2 done (43,063 s): 4,051,446 transitions, manifest saved.
 - `2026-08-26` — placement-reshape-bc — box declared free (lap 150/150 clean, registered NULL, no confirmation run). `/root/fh-mahjong-runs/placement-reshape/` is a read-only archive; its reserved window 1,300,000–1,301,499 was never spent.
 - `2026-08-26` — mortal-scale-scratch — checkout → `main` `7e5d623`, bridge rebuilt (`a487bcb7…`), `uv sync`; Gate 2a PASS (26.48 / 27.45 GiB); BC control launched as `msscratch-bc-control`.
+- `2026-08-26` — mortal-scale-scratch — BC control finished (early stop epoch 10, best 5, val top-1 0.9556, guard verdict `UNIT-EXITED`, no kill); per-seat readout run before BC big (both need the full dataset resident — never overlap them); BC big launched as `msscratch-bc-big`.
 - `—` — (add next event here)
