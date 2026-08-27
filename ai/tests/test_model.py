@@ -227,3 +227,63 @@ def test_kernel_width_growth_blocks_follow_config() -> None:
 def test_kernel_width_rejects_values_outside_one_and_three(bad: int) -> None:
     with pytest.raises(ValueError, match="kernel_width"):
         ModelConfig(**SMALL_MODEL, kernel_width=bad)
+
+
+# --- mortal-scale-scratch Amendment 3: ReZero main trunk ---------------------
+
+def test_default_trunk_rezero_false_keeps_state_dict_identical() -> None:
+    from fh_mahjong_ai.model import ResidualBlock
+    assert ModelConfig().trunk_rezero is False
+    model = PolicyValueNet(EnvConfig(bridge_kind="mock"), ModelConfig(**SMALL_MODEL))
+    keys = set(model.state_dict())
+    assert not any(key.startswith("plane_blocks.") and key.endswith(".alpha") for key in keys)
+    assert isinstance(model.plane_blocks[0], ResidualBlock)
+
+
+def test_trunk_rezero_builds_rezero_blocks_that_start_as_identity() -> None:
+    from fh_mahjong_ai.model import ReZeroResidualBlock
+    env = EnvConfig(bridge_kind="mock")
+    cfg = ModelConfig(**dict(SMALL_MODEL, residual_blocks=3), kernel_width=1, trunk_rezero=True)
+    model = PolicyValueNet(env, cfg)
+    for block in model.plane_blocks:
+        assert isinstance(block, ReZeroResidualBlock)
+        assert block.alpha.item() == 0.0
+    sd = model.state_dict()
+    assert {f"plane_blocks.{i}.alpha" for i in range(3)} <= set(sd)
+    assert tuple(sd["plane_blocks.0.layers.0.weight"].shape[2:]) == (3, 1)
+    # alpha == 0 => the whole stack is the identity on the stem output.
+    x = torch.randn(2, cfg.channels, 42, 1)
+    assert torch.equal(model.plane_blocks(x), x)
+    planes = torch.zeros(2, 39, 42, 1)
+    scalars = torch.zeros(2, 58)
+    mask = torch.ones(2, 204, dtype=torch.int8)
+    logits, value = model(planes, scalars, mask)
+    assert logits.shape == (2, 204) and value.shape == (2,)
+
+
+def test_trunk_rezero_adds_exactly_one_scalar_per_block() -> None:
+    env = EnvConfig(bridge_kind="mock")
+    plain = PolicyValueNet(env, ModelConfig(**dict(SMALL_MODEL, residual_blocks=3)))
+    rezero = PolicyValueNet(env, ModelConfig(**dict(SMALL_MODEL, residual_blocks=3), trunk_rezero=True))
+
+    def count(m):
+        return sum(p.numel() for p in m.parameters())
+
+    assert count(rezero) == count(plain) + 3
+
+
+def test_trunk_rezero_is_shape_inferred_and_metadata_roundtrips() -> None:
+    from fh_mahjong_ai.storage import model_config_metadata
+    env = EnvConfig(bridge_kind="mock")
+    cfg = ModelConfig(**SMALL_MODEL, kernel_width=1, trunk_rezero=True)
+    model = PolicyValueNet(env, cfg)
+    assert infer_model_config(model.state_dict()) == cfg
+    assert infer_model_config(model.state_dict(), {"model_config": model_config_metadata(cfg)}) == cfg
+    plain = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, kernel_width=1))
+    assert infer_model_config(plain.state_dict()).trunk_rezero is False
+
+
+@pytest.mark.parametrize("bad", [0, 1, "true", None])
+def test_trunk_rezero_rejects_non_bool(bad) -> None:
+    with pytest.raises(ValueError, match="trunk_rezero"):
+        ModelConfig(**SMALL_MODEL, trunk_rezero=bad)

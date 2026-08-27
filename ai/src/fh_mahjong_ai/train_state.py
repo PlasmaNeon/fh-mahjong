@@ -414,6 +414,7 @@ _LEGACY_ECHO_ADDITIONS = {
     "model_config": {
         "growth_blocks",       # absent from every train_state.pt saved before deep16-rezero
         "event_output_dim",    # absent from every train_state.pt saved before gru-width
+        "trunk_rezero",        # absent before mortal-scale-scratch Amendment 3 (2026-08-27)
     },
     "ppo_config": {
         "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2

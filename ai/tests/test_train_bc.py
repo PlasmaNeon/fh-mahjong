@@ -324,3 +324,25 @@ def test_train_bc_rejects_invalid_early_stopping_flags(tmp_path: Path, kwargs, m
     _make_dataset(data_path, n=20)
     with pytest.raises(ValueError, match=message):
         train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8, device="cpu", **kwargs)
+
+
+def test_train_bc_trunk_rezero_metadata_and_alpha_moves(tmp_path):
+    """Amendment 3: BC under `trunk_rezero=True` records the flag in metadata
+    and actually trains the alphas away from zero."""
+    import torch
+    from fh_mahjong_ai.config import ModelConfig
+    from fh_mahjong_ai.model import infer_model_config
+
+    data_path = tmp_path / "data.jsonl"
+    ckpt_dir = tmp_path / "checkpoints"
+    _make_dataset(data_path, n=20)
+    model_config = ModelConfig(channels=8, residual_blocks=2, kernel_width=1, trunk_rezero=True,
+                               event_window=8, privileged_critic=True, aux_heads=True)
+    train_bc(data_path=data_path, checkpoint_dir=ckpt_dir, epochs=1, batch_size=8,
+             device="cpu", model_config=model_config, report_path=tmp_path / "report.json")
+    payload = torch.load(ckpt_dir / "epoch_001.pt", map_location="cpu")
+    assert payload["metadata"]["model_config"]["trunk_rezero"] is True
+    assert infer_model_config(payload["model"], payload["metadata"]) == model_config
+    alphas = [payload["model"][f"plane_blocks.{i}.alpha"] for i in range(2)]
+    assert all(bool(torch.isfinite(a)) for a in alphas)
+    assert any(float(a) != 0.0 for a in alphas)

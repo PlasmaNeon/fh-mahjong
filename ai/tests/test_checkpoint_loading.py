@@ -759,3 +759,18 @@ def test_infer_model_config_rejects_kernel_width_metadata_mismatch() -> None:
     lying = model_config_metadata(ModelConfig(**SMALL_MODEL, kernel_width=3))
     with pytest.raises(RuntimeError, match="kernel_width"):
         infer_model_config(model.state_dict(), {"model_config": lying})
+
+
+def test_infer_model_config_rejects_trunk_rezero_metadata_mismatch() -> None:
+    # mortal-scale-scratch Amendment 3: the trunk type is witnessed by
+    # `plane_blocks.0.alpha`; metadata that disagrees either way is rejected
+    # before any model is constructed.
+    env = EnvConfig(bridge_kind="mock")
+    rezero = PolicyValueNet(env, ModelConfig(**SMALL_MODEL, trunk_rezero=True))
+    lying_plain = model_config_metadata(ModelConfig(**SMALL_MODEL))
+    with pytest.raises(RuntimeError, match="trunk_rezero"):
+        infer_model_config(rezero.state_dict(), {"model_config": lying_plain})
+    plain = PolicyValueNet(env, ModelConfig(**SMALL_MODEL))
+    lying_rezero = model_config_metadata(ModelConfig(**SMALL_MODEL, trunk_rezero=True))
+    with pytest.raises(RuntimeError, match="trunk_rezero"):
+        infer_model_config(plain.state_dict(), {"model_config": lying_rezero})

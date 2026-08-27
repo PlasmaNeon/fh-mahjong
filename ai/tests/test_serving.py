@@ -651,3 +651,32 @@ def test_policy_holder_manifest_reload_preserves_sampling_and_seed(tmp_path: Pat
     assert policy.sample_top_k == 3
     assert policy.sample_action_family == "discard"
     assert policy.sample_seed == 7
+
+
+def test_checkpoint_policy_loads_trunk_rezero_architecture(tmp_path: Path) -> None:
+    """Amendment 3: serving must rebuild a ReZero main trunk (witnessed by
+    `plane_blocks.0.alpha`) and reproduce its logits exactly."""
+    config = ModelConfig(**SMALL_MODEL, kernel_width=1, trunk_rezero=True)
+    env_config = EnvConfig(bridge_kind="mock")
+    model = PolicyValueNet(env_config, config)
+    with torch.no_grad():
+        for block in model.plane_blocks:
+            block.alpha.fill_(0.5)  # a non-identity trunk, so parity is a real check
+    checkpoint_path = tmp_path / "rezero.pt"
+    save_checkpoint(checkpoint_path, model,
+                    metadata={"model_config": model_config_metadata(config)})
+
+    policy = CheckpointPolicy.from_checkpoint(checkpoint_path)
+
+    assert policy.model.model_config.trunk_rezero is True
+    assert float(policy.model.state_dict()["plane_blocks.0.alpha"]) == 0.5
+
+    channels, height, width = env_config.plane_shape
+    planes = torch.rand((1, channels, height, width))
+    scalars = torch.rand((1, env_config.scalar_features))
+    mask = torch.ones((1, env_config.action_space_size))
+    model.eval()
+    with torch.no_grad():
+        expected_logits, _ = model(planes, scalars, mask)
+        actual_logits, _ = policy.model(planes, scalars, mask)
+    assert torch.allclose(expected_logits, actual_logits, atol=1e-6)

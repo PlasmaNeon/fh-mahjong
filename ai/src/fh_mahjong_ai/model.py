@@ -54,9 +54,14 @@ def build_plane_scalar_encoders(env_config: EnvConfig, model_config: ModelConfig
         nn.Conv2d(channels, model_config.channels, kernel_size=kernel, padding=padding),
         nn.GELU(),
     )
+    # mortal-scale-scratch Amendment 3: a deep plain stack (gelu(x + F(x)),
+    # no normalization, no residual scaling) blows up at init past a handful
+    # of blocks; `trunk_rezero` swaps every main block for the ReZero form
+    # (identity at init), which carries one extra `alpha` scalar per block.
+    block_class = ReZeroResidualBlock if model_config.trunk_rezero else ResidualBlock
     plane_blocks = nn.Sequential(
         *[
-            ResidualBlock(
+            block_class(
                 model_config.channels,
                 channel_attention=model_config.channel_attention,
                 attention_ratio=model_config.channel_attention_ratio,
@@ -498,6 +503,11 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
         privileged_critic="privileged_encoder.0.weight" in state_dict,
         aux_heads="belief_head.weight" in state_dict,
         kernel_width=int(state_dict["plane_stem.0.weight"].shape[3]),
+        # Amendment 3: only a ReZeroResidualBlock carries an `alpha` scalar, so
+        # the first main block's alpha key is the trunk-type witness. A
+        # residual-free trunk (residual_blocks=0) has no block to witness and
+        # keeps the default (False).
+        trunk_rezero="plane_blocks.0.alpha" in state_dict,
     )
     if "event_encoder.embedding.weight" in state_dict:
         fields["event_embed_dim"] = int(state_dict["event_encoder.embedding.weight"].shape[1])

@@ -2851,3 +2851,20 @@ def test_resume_config_echo_explicit_different_head_lr_still_raises() -> None:
     saved["ppo_config"]["head_lr"] = 2e-4
     with pytest.raises(ValueError, match="head_lr"):
         train_state_mod._validate_resume_config_echo(current, saved)
+
+
+def test_resume_config_echo_missing_trunk_rezero_still_proceeds_with_notice(caplog) -> None:
+    # mortal-scale-scratch Amendment 3: whitelisted legacy addition.
+    from fh_mahjong_ai import train_state as train_state_mod
+
+    current = _config_echo_triple()
+    saved = copy.deepcopy(current)
+    del saved["model_config"]["trunk_rezero"]
+
+    with caplog.at_level(logging.INFO):
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
+
+    assert any(
+        "model_config" in record.getMessage() and "trunk_rezero" in record.getMessage()
+        for record in caplog.records
+    )

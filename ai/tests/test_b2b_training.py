@@ -1107,3 +1107,26 @@ def test_verify_bc_transfer_record_names_the_bc_digest(tmp_path):
     assert record["bc_checkpoint_sha256"] == hashlib.sha256(bc_path.read_bytes()).hexdigest()
     assert record["bc_checkpoint_sha256"] == model.init_from_bc_sha256
     assert record["max_abs_prob_diff"] == 0.0
+
+
+def test_build_scratch_model_init_from_bc_transfers_rezero_alphas_and_rejects_trunk_type_drift(tmp_path):
+    """Amendment 3: a ReZero-trunk BC checkpoint transfers its `alpha` scalars
+    verbatim (they live under the `plane_blocks.` prefix), and a plain-trunk
+    net cannot be seeded from it (trunk type is part of the architecture)."""
+    from dataclasses import replace
+    from fh_mahjong_ai.storage import model_config_metadata
+    from fh_mahjong_ai.train_b2b import build_scratch_model
+    cfg = ModelConfig(**dict(SMALL_MODEL, residual_blocks=2), kernel_width=1, trunk_rezero=True,
+                      event_window=8, privileged_critic=True, aux_heads=True)
+    bc_model, bc_path = _bc_checkpoint(tmp_path, cfg)
+    with torch.no_grad():
+        bc_model.plane_blocks[0].alpha.fill_(0.25)
+        bc_model.plane_blocks[1].alpha.fill_(-0.5)
+    save_checkpoint(bc_path, bc_model, metadata={"model_config": model_config_metadata(cfg)})
+    model = build_scratch_model(EnvConfig(bridge_kind="mock"), cfg, bc_checkpoint=bc_path)
+    assert model.plane_blocks[0].alpha.item() == 0.25
+    assert model.plane_blocks[1].alpha.item() == -0.5
+
+    plain_cfg = replace(cfg, trunk_rezero=False)
+    with pytest.raises(RuntimeError):
+        build_scratch_model(EnvConfig(bridge_kind="mock"), plain_cfg, bc_checkpoint=bc_path)

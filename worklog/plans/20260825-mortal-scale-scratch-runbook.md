@@ -10,8 +10,9 @@ two and none of them may be tuned mid-experiment.
 file, not this one, records what has actually run.
 
 Two arms, sequential on one GPU: **control** (96 ch × 4 blocks, `kernel_width=1`,
-2.28 M params) and then, only if the control passes its recipe gate, **big**
-(192 ch × 24 blocks, `kernel_width=1`, 8.42 M params). Both are BC → PPO from
+`trunk_rezero=true`, 2,279,926 params) and then, only if the control passes its recipe
+gate, **big** (192 ch × 24 blocks, `kernel_width=1`, `trunk_rezero=true`, 8,419,146
+params). Both trunks are ReZero (Amendment 3): a plain 24-block stack does not train. Both are BC → PPO from
 random init on one shared BC dataset. `anchor075` is the external comparator.
 Neither arm may be promoted or deployed; every terminal result — pass, null, or
 infrastructure failure — returns to thread `01a0147d` with checkpoints,
@@ -57,7 +58,8 @@ Per-arm:
 | `--model-channels` | 96 | 192 |
 | `--model-residual-blocks` | 4 | 24 |
 | `--model-kernel-width` | 1 | 1 |
-| params | 2.28 M (0.83× champion) | 8.42 M (3.07× champion) |
+| `--model-trunk-rezero` | yes | yes |
+| params | 2,279,926 (0.83× champion) | 8,419,146 (3.07× champion) |
 | `--matches-per-iter` | 320 | 960 |
 | `--minibatch-size` | 256 | 768 |
 | `--base-seed` | 1400000 | 1500000 |
@@ -245,8 +247,17 @@ swap 0) with `cgroup_guard38.sh` armed exactly as §5 describes; the run's cgrou
 `memory.peak` is ≤ **38.00 GiB** and is recorded in the status file at the end of
 each BC run.
 
-Optimizer and batch defaults are frozen unchanged (`--batch-size 64`, `--lr 3e-4`):
-pass neither flag. Both arms use the same dataset, the same `--validation-fraction 0.1`
+Optimizer and batch defaults are frozen unchanged (`--batch-size 64`, `--lr 3e-4`,
+AdamW wd 1e-4, no warm-up, no gradient clipping): pass neither flag. Both arms pass
+`--model-trunk-rezero` (Amendment 3); a plain-trunk BC checkpoint is inadmissible for PPO.
+
+**BC acceptance gate (Amendment 3 §5), before any export or PPO:** control — zero-event
+validation top-1 ≥ 0.9400, validation CE ≤ 0.2000, finite telemetry, at least one
+`plane_blocks.*.alpha` finite and ≠ 0. Big — top-1 ≥ 0.9400 and ≥ control − 0.0050,
+CE ≤ 0.2000 and ≤ control + 0.0200, every per-seat top-1 ≥ 0.9300. Record per-action
+accuracy and alpha min/median/max for both. A failed gate stops before PPO as a
+recipe/optimization failure and returns to thread `01a0147d`; a lower lr, clipping,
+normalization, or a retry is not automatic. Both arms use the same dataset, the same `--validation-fraction 0.1`
 and the same `--split-seed 1300000`, so train/validation membership and shuffle are
 identical across arms. The split is by whole-match episode index, never by transition.
 
@@ -258,7 +269,7 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-bc \
   --checkpoint-dir /root/fh-mahjong-runs/mortal-scale-scratch/bc-control \
   --epochs 30 --patience 5 --min-delta 1e-4 --min-epochs 5 \
   --validation-fraction 0.1 --split-seed 1300000 \
-  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 \
+  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 --model-trunk-rezero \
   --model-event-window 128 --model-privileged-critic --model-aux-heads \
   --report-output /root/fh-mahjong-runs/mortal-scale-scratch/bc-control/report.json \
   --device cuda
@@ -272,7 +283,7 @@ PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-bc \
   --checkpoint-dir /root/fh-mahjong-runs/mortal-scale-scratch/bc-big \
   --epochs 30 --patience 5 --min-delta 1e-4 --min-epochs 5 \
   --validation-fraction 0.1 --split-seed 1300000 \
-  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 \
+  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero \
   --model-event-window 128 --model-privileged-critic --model-aux-heads \
   --report-output /root/fh-mahjong-runs/mortal-scale-scratch/bc-big/report.json \
   --device cuda
@@ -377,7 +388,7 @@ mkdir -p /root/fh-mahjong-runs/mortal-scale-scratch/bench
 uv run --project ai fh-mj-export-scratch-init \
   --bc /root/fh-mahjong-runs/mortal-scale-scratch/bc-big/best.pt \
   --out /root/fh-mahjong-runs/mortal-scale-scratch/bench/big-init.pt \
-  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 \
+  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero \
   --event-window 128 --privileged-critic --aux-heads \
   | tee /root/fh-mahjong-runs/mortal-scale-scratch/bench/big-init-transfer-gate.json
 
@@ -392,7 +403,7 @@ the gate record in the status file before the bench runs.
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-collect-bench \
   --champion /root/fh-mahjong-runs/mortal-scale-scratch/bench/big-init.pt \
-  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 \
+  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero \
   --model-privileged-critic --model-aux-heads \
   --workers 10 \
   --matches 960 --base-seed 1700000 \
@@ -456,7 +467,7 @@ Guards armed first, as in the ds960 lap: `watchdog_lap.sh` (5 Hz tree RSS) and
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --scratch --init-from-bc /root/fh-mahjong-runs/mortal-scale-scratch/bc-control/best.pt \
-  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 \
+  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 --model-trunk-rezero \
   --event-window 128 --privileged-critic --aux-heads \
   --checkpoint-dir /root/fh-mahjong-runs/mortal-scale-scratch/control/ckpt \
   --base-seed 1400000 --iterations 200 \
@@ -545,7 +556,7 @@ Control candidate at iteration XXX:
 ```
 uv run --project ai fh-mj-evaluate \
   --checkpoint /root/fh-mahjong-runs/mortal-scale-scratch/control/ckpt/iter_XXX.pt \
-  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 \
+  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 --model-trunk-rezero \
   --model-event-window 128 \
   --model-privileged-critic --model-aux-heads \
   --event-history-window 128 --duplicate-seats --online-episodes 120 \
@@ -558,7 +569,7 @@ uv run --project ai fh-mj-compare \
 ```
 
 Big candidate at iteration XXX — the same two commands with
-`--model-channels 192 --model-residual-blocks 24 --model-kernel-width 1`, the
+`--model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero`, the
 `big/ckpt` path and `screen/big-XXX.json`.
 
 `fh-mj-compare` is mandatory for every delta claim; the screening delta is its
@@ -583,7 +594,7 @@ Only after §4's bench passes and §7's control recipe gate passes.
 ```
 PYTHONUNBUFFERED=1 uv run --project ai fh-mj-train-b2b \
   --scratch --init-from-bc /root/fh-mahjong-runs/mortal-scale-scratch/bc-big/best.pt \
-  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 \
+  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero \
   --event-window 128 --privileged-critic --aux-heads \
   --checkpoint-dir /root/fh-mahjong-runs/mortal-scale-scratch/big/ckpt \
   --base-seed 1500000 --iterations 200 \
@@ -614,7 +625,7 @@ regenerated `anchor075`, and the selected control checkpoint:
 ```
 uv run --project ai fh-mj-evaluate \
   --checkpoint /root/fh-mahjong-runs/mortal-scale-scratch/big/ckpt/iter_<sel>.pt \
-  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 \
+  --model-channels 192 --model-residual-blocks 24 --model-kernel-width 1 --model-trunk-rezero \
   --model-event-window 128 \
   --model-privileged-critic --model-aux-heads \
   --event-history-window 128 --duplicate-seats --online-episodes 1500 \
@@ -632,7 +643,7 @@ uv run --project ai fh-mj-evaluate \
 
 uv run --project ai fh-mj-evaluate \
   --checkpoint /root/fh-mahjong-runs/mortal-scale-scratch/control/ckpt/iter_<sel>.pt \
-  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 \
+  --model-channels 96 --model-residual-blocks 4 --model-kernel-width 1 --model-trunk-rezero \
   --model-event-window 128 \
   --model-privileged-critic --model-aux-heads \
   --event-history-window 128 --duplicate-seats --online-episodes 1500 \
