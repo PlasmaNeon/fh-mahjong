@@ -3,7 +3,11 @@
 Status: **RATIFIED 2026-08-26 — AUTHORIZED WITH AMENDMENTS** by Codex design consult
 (fresh thread, GPT-5.6-Sol, high effort). Ruling: **Stage-0 implementation only; training
 use, default selection, and G1–G3 execution remain unauthorized until the gates pass.**
-Amendments 1–8 are folded in below.
+Amendments 1–8 are folded in below. **Post-Stage-0 consult 2026-08-27 (fresh thread,
+GPT-5.6-Sol, high): CONDITIONALLY RATIFIED.** Merge with `collector=process` is
+authorized once the hard-bounded numeric gate (G0.1b), the per-iteration G0.6, and a
+full-suite rerun at final HEAD pass. G1–G3, training use and the default switch stay
+unauthorized. PR #232.
 
 Worktree `batched-b2b-collector`, branch `experiment/batched-b2b-collector`.
 
@@ -84,9 +88,11 @@ B2b's extra outputs.
      NumPy float64 log-softmax — the rollout digest hashes `old_logprobs` byte-for-byte.
      Value from the same forward.
    - flush completed matches in seed order.
-   `inference_mode="per_row"` keeps the CPU exactness path. `effective_slots =
-   min(pool_slots, matches_per_iter)` is enforced and logged — slots beyond the match
-   count never activate, so a larger `pool_slots` is not a stress test.
+   `inference_mode="per_row"` keeps the CPU exactness path. Three slot counts are
+   distinct and all three are reported: **requested** (`pool_slots`), **allocated**
+   (what `GoEnvPool` constructs — `min(pool_slots, matches_per_iter)`; the trainer and
+   bench never allocate surplus envs) and **effective-live** (slots that held a match
+   during the round). A larger `pool_slots` than the match count is not a stress test.
 
 4. **Config / CLI** — `PPOConfig.collector` and `pool_slots` already exist. Honour
    them in `train_b2b`'s collector selection (l.1449): `"batched"` builds
@@ -118,8 +124,12 @@ B2b's extra outputs.
 This collector must never be enabled in, or used to resume, the placement-reshape
 lineage (`experiment/placement-reshape-10-5-1-n10`, seeds 650320–698319). Its frozen
 seeds, collector, action-RNG mapping, bridge snapshot, and checkpoints stay untouched.
-The resume rejection in change 4 enforces this mechanically. Making the pool the B2b
-default requires a new post-lap authorization.
+The resume rejection in change 4 mechanically prevents a collector change on an
+existing `train_state.pt`; a *fresh* run under that lineage's name is governance, not
+code — there is no lineage identifier to enforce it. A legacy echo without a
+`collector` key reads as the literal `"process"`, never the dataclass default, so a
+later default switch cannot reinterpret old states. Making the pool the B2b default
+requires a new post-lap authorization.
 
 ### Out of scope
 
@@ -145,11 +155,27 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
    `collect_b2b_rollouts` and `collect_b2b_rollouts_batched`. Exactness is possible
    only because logprobs come from the shared Torch helper.
 1b. **Production-batched numeric parity (CPU).** Same setup with
-   `inference_mode="batched"`: discrete/semantic fields (actions, masks, events,
-   lengths, labels, dones, rewards, telemetry) **exact**; legal logits, values, and
-   logprobs within `atol=1e-6, rtol=1e-5` (a CPU probe measured 3e-8 max abs diff for
-   batched vs single-row conv/GRU). A separate CUDA tolerance is registered at G1 from
-   the first box measurement, not guessed here.
+   `inference_mode="batched"`. The *semantic digest* (every `RolloutBatch` field except
+   `old_logprobs`/`values`, plus `truncated_matches` and telemetry) is **byte-exact**;
+   excluding the two float fields from the hash does not waive their gate. Registered
+   hard ceilings on the excluded floats, absolute (relative error is unstable near 0),
+   measured at **production width** (anchor075, 96ch × 4 blocks, GRU) as well as on
+   the test net, and compared **per field** — never one collapsed maximum:
+   - non-finite logits / logprobs / values: 0
+   - legal logits: max |Δ| ≤ 5e-5 (selected-action logprob alone is insufficient)
+   - `old_logprobs`: max |Δ| ≤ 5e-5
+   - `values`: max |Δ| ≤ 5e-6
+   Report per field and comparison: element count, non-finite count, mismatch count,
+   p50/p95/p99/p99.9/max |Δ|, and the count beyond both the legacy `atol=1e-6,
+   rtol=1e-5` (diagnostic only) and the hard ceiling. Measured 2026-08-26 on CPU:
+   logprobs max 2.7e-5, values 1.8e-6. The pytest gate uses the test net; the
+   `fh-mj-collect-bench` gate enforces the same ceilings at production width and
+   **exits non-zero** on any violation.
+   **CUDA is gated, not merely documented.** Pre-registered before any CUDA number is
+   seen: hard ceilings legal logits and logprobs 1e-4, values 1e-5. Procedure: a fixed
+   three-repeat greedy calibration block sets each operational threshold to 2 × the
+   calibration maximum, capped by the ceiling; validation runs on a disjoint fixed seed
+   block. Exceeding the cap stops the work; the cap is never widened afterwards.
 2. **Slot-count invariance.** Same digest for `pool_slots ∈ {1, 7, 64}` under sampling
    (per-match RNG makes this exact, as `batched_selfplay` already proves).
 3. **Placement-bonus fail-closed parity.** The truncated-match, zero-decision-seat, and
@@ -161,29 +187,41 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
 5. **Ragged GRU.** Batched vs per-row forward parity at event lengths `{0, 1, W−1, W}`
    with poisoned padding values: tail selection at `length−1`, zero-length rows produce
    the zero-history output, numeric parity within the 1b tolerance.
-6. **Training parity.** Two-iteration CPU run, process collector vs pool collector
-   (per-row, greedy): GAE inputs, advantages, and post-update model state
-   **byte-equal**. Then the same with `inference_mode="batched"` within the 1b
-   tolerance on parameters.
+6. **Training parity.** Two-iteration CPU run from the same model, optimizer, seed
+   schedule and minibatch generator, process collector vs pool collector (per-row,
+   greedy): rollout, GAE inputs, advantages, returns, reported metrics, and the model
+   **and optimizer** state **after each iteration** byte-equal. Then the same with
+   `inference_mode="batched"`: rollout floats within the 1b ceilings; registered
+   update tolerance max |Δ| ≤ 1e-5 on every parameter and on every optimizer moment
+   after each iteration.
 
 ### G1 — Throughput and memory (box, after the current lap)
 
-`fh-mj-collect-bench --collector batched --pool-slots {128,256,320} --device cuda
---matches 320 --full-cycle` vs the frozen `--workers 10` baseline, same seeds, **≥ 3
-consecutive full cycles** on one persistent pool (report per-cycle RSS, cgroup peak,
-and allocator retention — the iteration-boundary retention failures of ds960 are the
-reason). Record `matches/s`, peak aggregate RSS, and CUDA peak **measured separately
-for collection and for the PPO update** (`collect_bench.py` currently resets CUDA peak
-stats before PPO, erasing the collector's peak — fix that first). Any slot count >
-`matches_per_iter` is meaningless; a 1024-slot stress test needs ≥ 1024 matches.
-Registered expectation: **≥ 10× collection throughput** at some slot count with
-aggregate RSS ≤ 20 GiB and CUDA peak ≤ 20 GB. Pick the **smallest** slot count within
-10 % of the best — the ds960 rule that speed alone never justifies a resource count
-stands.
+Arms: process control `--workers 10`; batched candidates `--pool-slots {128,256,320}`.
+Exactly 320 matches per measured cycle. Each arm runs one excluded warmup, then
+**three genuine consecutive collect → PPO cycles on one persistent pool and one
+persistent model/optimizer** — the trainer's lifetime, not a fresh deep-copy per
+cycle — over three fixed consecutive seed blocks. All candidates run to completion;
+no early stopping, no dropping a slow candidate. Throughput uses sampled production
+inference; numeric parity is a separate greedy CUDA calibration/validation run per
+G0.1b.
 
-Batched-vs-per-row logits on CUDA are allowed to differ at float tolerance (documented,
-not gated — the policy is sampled, and serving parity is a separate hard gate that
-already covers the CUDA forward).
+Register before launch: commit, anchor SHA, bridge SHA, model shape and event window,
+PyTorch/CUDA/cuDNN versions, TF32 and determinism settings, GPU identity, memory
+limit.
+
+Record per cycle: collection time and `matches/s`, update time, transition rows,
+truncations, RSS, cgroup peak, and CUDA allocated **and reserved** peaks measured
+**separately for collection and for the PPO update**; requested / allocated /
+effective-live slot counts; allocator retention across cycles (the iteration-boundary
+retention failures of ds960 are the reason for three cycles).
+
+Acceptance: **≥ 10× the process arm's collection throughput** for some candidate,
+aggregate RSS ≤ 20 GiB, CUDA peak ≤ 20 GB. Pick the **smallest** slot count within
+10 % of the best — speed alone never justifies a resource count.
+
+The Mac CPU bench (2026-08-26: 32 matches, 209 s at 8 slots, 231 s at 32, no process
+baseline) is diagnostic only and has no bearing on this gate.
 
 ### G2 — Distributional sanity (box, screening window `910000+`)
 
