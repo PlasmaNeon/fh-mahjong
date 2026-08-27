@@ -23,23 +23,26 @@
 
 ## Current stage
 
-**STAGE 2 RUNNING — BC dataset generation on the 4090 box** (pid 1404416, launched
-2026-08-26 ~04:45 UTC, `fh-mj-generate-data --episodes 8000 --start-seed 1300000
---learning-seat-rule seed-mod-4`, log `/root/fh-mahjong-runs/mortal-scale-scratch/logs/gen-bc-data.log`).
-CPU-only, single process. Everything after it (Gate 2a loader test, BC training, bench, laps)
-is **queued behind the placement-reshape Stage-1 lap** that owns the GPU and the frozen
-`/root/fh-mahjong` checkout (session `placement-reshape-bc`; ~2 days incl. screens + confirmation).
-Standing conditions agreed with that session: no GPU work, no bridge rebuilds, no writes to
-`/root/fh-mahjong` (repo or `build/`), keep > 100 GB free.
+**STAGE 3 RUNNING — BC control (96×4, k=1) on the box as systemd unit
+`msscratch-bc-control` (44/48 GiB containment, `cgroup_guard38.sh` armed), launched
+2026-08-26 UTC; log `/root/fh-mahjong-runs/mortal-scale-scratch/logs/bc-control.log`.**
+Box is otherwise free (placement-reshape closed as a registered NULL;
+`/root/fh-mahjong-runs/placement-reshape/` is a read-only archive). Next: BC big (§3),
+export + bench (§4), control lap (§5).
+
+Pinned for the rest of the experiment: checkout `7e5d623`, bridge
+`a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` (built from `7e5d623`;
+the dataset was generated on the earlier bridge `66f7a061…` — same Go sources, docs-only
+commits between), anchor `ce9d867f…` (matches §0).
 
 ## Stage checklist
 
 | # | Stage | Runbook | State | Evidence |
 |---|---|---|---|---|
-| 1 | Bridge build + `uv sync` + digests | §1 | done (see event log) | bridge sha256 `66f7a061f6314715d4c0cb2524861161f97f8ebe1aa8609f730ac274adf76cd9` (the box's pinned binary, shared with placement-reshape; NOT rebuilt); anchor sha256 `ce9d867f…` ✓; checkout `9098aed` |
-| 2 | BC dataset — 8,000 matches, seeds 1,300,000–1,307,999, `--learning-seat-rule seed-mod-4` | §2 | RUNNING (pid 1404416) | dataset manifest digest, transition count, `per_seat_transitions` |
-| 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | not started | rows × 7,018 B, `memory.peak`, shard bytes, `free -g` |
-| 3 | BC control (96×4, k=1) | §3 | not started | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
+| 1 | Bridge build + `uv sync` + digests | §1 | done 2026-08-26 | dataset bridge `66f7a061…` (box's binary at the time); training/eval bridge `a487bcb7…` rebuilt from checkout `7e5d623`; anchor sha256 `ce9d867f…` ✓ |
+| 2 | BC dataset — 8,000 matches, seeds 1,300,000–1,307,999, `--learning-seat-rule seed-mod-4` | §2 | done 2026-08-26 | manifest sha256 `2898960f…`; 4,051,446 transitions from 8,000 episodes (43,063 s); per seat 0/1/2/3 = 1,009,528 / 1,013,787 / 1,015,300 / 1,012,831; 82 shards, 1,033,621,603 B on disk |
+| 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | PASS 2026-08-26 | 4,051,446 × 7,018 B = 26.48 GiB (arrays 26.50 GiB); loader-only `memory.peak` 29,475,266,560 B = 27.45 GiB; `anon`/`file` were read after the loader exited (233,472 / 359,747,584 B — not informative); `free -g` 47 free / 50 total; log `logs/gate2a.log` |
+| 3 | BC control (96×4, k=1) | §3 | running — unit `msscratch-bc-control` | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
 | 4 | BC big (192×24, k=1) | §3 | not started | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | not started | `big-init.pt` sha256, transfer-gate record |
 | 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | not started | cgroup peak, tree RSS, CUDA peak, matches/s, projected wall time |
@@ -107,4 +110,7 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-25` — mortal-scale-scratch — Amendment 2 ratified (thread `01a0147d`): 8,000 single-seat matches, dataset gates 30.00/32.00 GiB, bench through an exported scratch-init checkpoint. `fh-mj-generate-data --learning-seat-rule seed-mod-4` and `fh-mj-export-scratch-init` landed; runbook §0/§2/§3/§4 follow it.
 - `2026-08-26 ~04:15Z` — mortal-scale-scratch — PR #223 merged to main (`9098aed`). Runbook §1 run on the box: `git pull` (a740662 → 9098aed), bridge rebuilt, `uv sync`. **Collision:** a placement-reshape Stage-1 lap (session `placement-reshape-bc`, pinned bridge `66f7a061…`, checkout frozen at `a740662`) was already running; the rebuild changed the source-path bridge to `cf4df3f2…`. The running lap was unaffected (the drift check hashes the per-run snapshot), the peer session restored the pinned bytes over `build/libfh_mahjong_bridge.so` (rebuilt copy kept as `…so.rebuilt-9098aed`), and the checkout stays at `9098aed` pending that session's decision. A first generation attempt (pid 1394200, wrong bridge) was stopped and its partial `bc-data/` deleted.
 - `2026-08-26 ~04:45Z` — mortal-scale-scratch — Stage 2 launched with the peer session's OK against the pinned bridge `66f7a061…`; GPU stages queued behind placement-reshape.
+- `2026-08-26 ~16:43Z` — mortal-scale-scratch — Stage 2 done (43,063 s): 4,051,446 transitions, manifest saved.
+- `2026-08-26` — placement-reshape-bc — box declared free (lap 150/150 clean, registered NULL, no confirmation run). `/root/fh-mahjong-runs/placement-reshape/` is a read-only archive; its reserved window 1,300,000–1,301,499 was never spent.
+- `2026-08-26` — mortal-scale-scratch — checkout → `main` `7e5d623`, bridge rebuilt (`a487bcb7…`), `uv sync`; Gate 2a PASS (26.48 / 27.45 GiB); BC control launched as `msscratch-bc-control`.
 - `—` — (add next event here)
