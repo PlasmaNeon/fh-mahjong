@@ -564,16 +564,23 @@ def test_make_b2b_pool_binds_window_and_oracle():
 # --- G0.6: two-iteration training parity ----------------------------------
 #
 # Same recipe, same seeds, both collectors: the batch a collector hands to
-# GAE, the advantages GAE returns, and the weights the run saves must all
-# match. Greedy selection is injected on both sides (sampling draws from
-# different RNG streams by design -- see the spec's "What changes
-# semantically"), and the batched side realigns the GLOBAL torch RNG after
-# collecting: `collect_b2b_rollouts` seeds it once per match as a side
-# effect, and `ppo_update`'s minibatch permutation reads it. That stream is
-# not collector output, so this gate compares the update under an identical
-# permutation rather than treating the side effect as semantics.
+# GAE, the advantages GAE returns, the reported metrics, and the model AND
+# optimizer state after EACH iteration must all match. Greedy selection is
+# injected on both sides (sampling draws from different RNG streams by
+# design -- see the spec's "What changes semantically"), and the batched
+# side realigns the GLOBAL torch RNG after collecting: `collect_b2b_rollouts`
+# seeds it once per match as a side effect, and `ppo_update`'s minibatch
+# permutation reads it. That stream is not collector output, so this gate
+# compares the update under an identical permutation rather than treating
+# the side effect as semantics.
+#
+# Per-iteration state is captured by wrapping `train_state._save_train_state`
+# (train_b2b calls it as `train_state.X`, so the patch reaches the call) with
+# `train_state_every=1`: the wrapper clones the live model and optimizer
+# state_dicts before delegating to the real save.
 
 import fh_mahjong_ai.train_b2b as train_b2b_wiring  # noqa: E402
+import fh_mahjong_ai.train_state as train_state_module  # noqa: E402
 from fh_mahjong_ai.train_b2b import train_b2b  # noqa: E402
 
 from conftest import b2b_model_config, save_champion39  # noqa: E402
@@ -599,10 +606,38 @@ def _greedy_batched(inference_mode):
     def collect(env_config, model, config, base_seed, pool, **kwargs):
         batch = collect_b2b_rollouts_batched(
             env_config, model, config, base_seed=base_seed, pool=pool,
-            inference_mode=inference_mode, action_selection="greedy")
+            inference_mode=inference_mode, action_selection="greedy", **kwargs)
         torch.manual_seed(int(base_seed + config.matches_per_iter - 1))
         return batch
     return collect
+
+
+def _clone_tensors(state_dict: dict) -> dict:
+    return {k: v.detach().cpu().clone() for k, v in state_dict.items()}
+
+
+def _clone_optimizer(optimizer) -> dict:
+    """Optimizer state_dict with every tensor (moments, step counters) cloned
+    to CPU; param_groups copied minus the parameter index lists."""
+    sd = optimizer.state_dict()
+    state = {}
+    for idx, entry in sd["state"].items():
+        state[idx] = {k: (v.detach().cpu().clone() if torch.is_tensor(v) else v)
+                      for k, v in entry.items()}
+    groups = [{k: v for k, v in g.items() if k != "params"} for g in sd["param_groups"]]
+    return {"state": state, "param_groups": groups}
+
+
+def _optimizer_tensors(opt_state: dict) -> dict:
+    """Flat name -> tensor over every optimizer moment and step counter."""
+    out = {}
+    for idx, entry in opt_state["state"].items():
+        for k, v in entry.items():
+            if torch.is_tensor(v):
+                out[f"state.{idx}.{k}"] = v
+    return out
+
+
 
 
 @pytest.fixture(scope="module")
@@ -615,11 +650,17 @@ def parity_champion(tmp_path_factory):
 
 
 def _run_training_parity(tmp_path, champion, collector, inference_mode="per_row"):
-    """One two-iteration run; returns (final state_dict, GAE call records)."""
+    """One two-iteration run. Returns a dict: `final` (saved iter_002 model
+    state), `gae` (per-iteration GAE inputs/outputs), `batches` (the rollout
+    each iteration collected), `states` (per-iteration (model, optimizer)
+    state clones captured at save time), `history` (reported metrics)."""
     env = EnvConfig(bridge_kind="go", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=GOLDEN_MAX_STEPS, match_mode="chongci")
     gae_calls: list[tuple] = []
+    batches: list = []
+    states: list[tuple[dict, dict]] = []
     real_compute_gae = train_b2b_wiring.compute_gae
+    real_save = train_state_module._save_train_state
 
     def recording_gae(rewards, values, dones, gamma, gae_lambda):
         advantages, returns = real_compute_gae(rewards, values, dones, gamma, gae_lambda)
@@ -627,19 +668,37 @@ def _run_training_parity(tmp_path, champion, collector, inference_mode="per_row"
                           advantages.copy(), returns.copy()))
         return advantages, returns
 
+    def capturing_save(path, model, optimizer, *args, **kwargs):
+        states.append((_clone_tensors(model.state_dict()), _clone_optimizer(optimizer)))
+        return real_save(path, model, optimizer, *args, **kwargs)
+
+    def recording_process(env_config, model, config, base_seed):
+        batch = _greedy_process(env_config, model, config, base_seed)
+        batches.append(batch)
+        return batch
+
+    greedy_batched = _greedy_batched(inference_mode)
+
+    def recording_batched(env_config, model, config, base_seed, pool, **kwargs):
+        batch = greedy_batched(env_config, model, config, base_seed, pool, **kwargs)
+        batches.append(batch)
+        return batch
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(train_b2b_wiring, "compute_gae", recording_gae)
-        mp.setattr(train_b2b_wiring, "collect_b2b_rollouts", _greedy_process)
-        mp.setattr(batched_b2b_module, "collect_b2b_rollouts_batched",
-                   _greedy_batched(inference_mode))
+        mp.setattr(train_state_module, "_save_train_state", capturing_save)
+        mp.setattr(train_b2b_wiring, "collect_b2b_rollouts", recording_process)
+        mp.setattr(batched_b2b_module, "collect_b2b_rollouts_batched", recording_batched)
         torch.manual_seed(0)   # deterministic warm-start surgery
-        train_b2b(env, b2b_model_config(), champion, tmp_path / "ckpt",
-                  _parity_config(collector), base_seed=PARITY_BASE_SEED,
-                  train_state_every=0)
+        history = train_b2b(env, b2b_model_config(), champion, tmp_path / "ckpt",
+                            _parity_config(collector), base_seed=PARITY_BASE_SEED,
+                            train_state_every=1)
     final = torch.load(tmp_path / "ckpt" / f"iter_{PARITY_ITERATIONS:03d}.pt",
                        map_location="cpu")["model"]
-    assert len(gae_calls) == PARITY_ITERATIONS
-    return final, gae_calls
+    assert len(gae_calls) == len(batches) == len(states) == len(history) == PARITY_ITERATIONS
+    assert all(any(k.startswith("state.") for k in _optimizer_tensors(o)) for _, o in states)
+    return {"final": final, "gae": gae_calls, "batches": batches, "states": states,
+            "history": history}
 
 
 @pytest.fixture(scope="module")
@@ -660,31 +719,98 @@ def training_parity_batched_mode(tmp_path_factory, parity_champion):
                                 parity_champion, "batched", inference_mode="batched")
 
 
+G06_UPDATE_TOL = 1e-5   # registered: max |delta| per parameter and per optimizer moment
+
+
+def _assert_metrics(process_history, batched_history, exact: bool):
+    for i, (p, b) in enumerate(zip(process_history, batched_history)):
+        assert p.keys() == b.keys(), f"iteration {i + 1}"
+        for key in p:
+            if exact or isinstance(p[key], (int, bool, str)) or p[key] is None:
+                assert p[key] == b[key], f"iteration {i + 1}: {key}"
+            else:
+                assert abs(float(p[key]) - float(b[key])) <= G06_UPDATE_TOL, \
+                    f"iteration {i + 1}: {key} {p[key]} vs {b[key]}"
+
+
 def test_g0_6_training_parity_per_row_is_byte_equal(training_parity_process,
                                                     training_parity_batched_per_row):
-    process_state, process_gae = training_parity_process
-    batched_state, batched_gae = training_parity_batched_per_row
-    for i, (p, b) in enumerate(zip(process_gae, batched_gae)):
+    process, batched = training_parity_process, training_parity_batched_per_row
+    for i, (p, b) in enumerate(zip(process["gae"], batched["gae"])):
         for name, pa, ba in zip(("rewards", "values", "dones", "advantages", "returns"), p, b):
             assert np.array_equal(pa, ba), f"iteration {i + 1}: {name}"
-    assert process_state.keys() == batched_state.keys()
-    for key, tensor in process_state.items():
-        assert torch.equal(tensor, batched_state[key]), key
+    for i, (pb, bb) in enumerate(zip(process["batches"], batched["batches"])):
+        assert _digests(pb, PARITY_BASE_SEED, PARITY_MATCHES) == \
+            _digests(bb, PARITY_BASE_SEED, PARITY_MATCHES), f"iteration {i + 1}: rollout"
+    # Model AND optimizer state after EACH iteration, every tensor byte-equal.
+    for i, ((pm, po), (bm, bo)) in enumerate(zip(process["states"], batched["states"])):
+        assert pm.keys() == bm.keys(), f"iteration {i + 1}"
+        for key, tensor in pm.items():
+            assert torch.equal(tensor, bm[key]), f"iteration {i + 1}: model {key}"
+        pt, bt = _optimizer_tensors(po), _optimizer_tensors(bo)
+        assert pt.keys() == bt.keys() and pt, f"iteration {i + 1}"
+        for key, tensor in pt.items():
+            assert torch.equal(tensor, bt[key]), f"iteration {i + 1}: optimizer {key}"
+        assert po["param_groups"] == bo["param_groups"], f"iteration {i + 1}"
+    _assert_metrics(process["history"], batched["history"], exact=True)
+    assert process["final"].keys() == batched["final"].keys()
+    for key, tensor in process["final"].items():
+        assert torch.equal(tensor, batched["final"][key]), key
     # The run must actually have trained: iteration 2's weights differ from
     # iteration 1's inputs, so byte-equality above is not vacuous.
-    assert not np.array_equal(process_gae[0][3], process_gae[1][3])
+    assert not np.array_equal(process["gae"][0][3], process["gae"][1][3])
+    (m1, o1), (m2, o2) = process["states"]
+    assert any(not torch.equal(m1[k], m2[k]) for k in m1)
+    assert any(not torch.equal(_optimizer_tensors(o1)[k], _optimizer_tensors(o2)[k])
+               for k in _optimizer_tensors(o1))
 
 
 def test_g0_6_training_parity_batched_mode_within_tolerance(training_parity_process,
                                                             training_parity_batched_mode):
-    process_state, process_gae = training_parity_process
-    batched_state, batched_gae = training_parity_batched_mode
-    for i, (p, b) in enumerate(zip(process_gae, batched_gae)):
+    process, batched = training_parity_process, training_parity_batched_mode
+    for i, (p, b) in enumerate(zip(process["gae"], batched["gae"])):
         # Rewards and dones are discrete facts about the match; only the
         # value estimates (and hence advantages/returns) may move.
         assert np.array_equal(p[0], b[0]), f"iteration {i + 1}: rewards"
         assert np.array_equal(p[2], b[2]), f"iteration {i + 1}: dones"
         for name, pa, ba in zip(("values", "advantages", "returns"), p[1:2] + p[3:], b[1:2] + b[3:]):
             assert np.allclose(pa, ba, atol=1e-5), f"iteration {i + 1}: {name}"
-    for key, tensor in process_state.items():
-        assert torch.allclose(tensor, batched_state[key], atol=1e-5), key
+    # Rollout floats per iteration within the G0.1b ceilings; every other
+    # field exact.
+    for i, (pb, bb) in enumerate(zip(process["batches"], batched["batches"])):
+        for name in ("planes", "scalars", "action_mask", "actions", "rewards", "dones",
+                     "events", "event_lengths", "dealin_labels", "rank_labels"):
+            assert np.array_equal(getattr(pb, name), getattr(bb, name)), f"iteration {i + 1}: {name}"
+        assert pb.match_telemetry == bb.match_telemetry, f"iteration {i + 1}"
+        for name in ("old_logprobs", "values"):
+            diff = np.abs(getattr(pb, name).astype(np.float64) - getattr(bb, name).astype(np.float64))
+            assert np.all(np.isfinite(getattr(bb, name))), f"iteration {i + 1}: {name}"
+            assert diff.max() <= G01B_CEILINGS[name], f"iteration {i + 1}: {name} {diff.max()}"
+    # Model AND optimizer state after EACH iteration within the registered
+    # update tolerance, per parameter and per moment.
+    for i, ((pm, po), (bm, bo)) in enumerate(zip(process["states"], batched["states"])):
+        assert pm.keys() == bm.keys(), f"iteration {i + 1}"
+        worst_model = worst_opt = 0.0
+        for key, tensor in pm.items():
+            assert tensor.shape == bm[key].shape, f"iteration {i + 1}: model {key}"
+            if tensor.is_floating_point():
+                delta = float((tensor - bm[key]).abs().max()) if tensor.numel() else 0.0
+                worst_model = max(worst_model, delta)
+                assert delta <= G06_UPDATE_TOL, f"iteration {i + 1}: model {key} max|delta|={delta}"
+            else:
+                assert torch.equal(tensor, bm[key]), f"iteration {i + 1}: model {key}"
+        pt, bt = _optimizer_tensors(po), _optimizer_tensors(bo)
+        assert pt.keys() == bt.keys() and pt, f"iteration {i + 1}"
+        for key, tensor in pt.items():
+            if tensor.is_floating_point():
+                delta = float((tensor - bt[key]).abs().max()) if tensor.numel() else 0.0
+                worst_opt = max(worst_opt, delta)
+                assert delta <= G06_UPDATE_TOL, f"iteration {i + 1}: optimizer {key} max|delta|={delta}"
+            else:
+                assert torch.equal(tensor, bt[key]), f"iteration {i + 1}: optimizer {key}"
+        assert po["param_groups"] == bo["param_groups"], f"iteration {i + 1}"
+        print(f"G0.6 batched-mode iteration {i + 1}: max|delta| model={worst_model:.3e} "
+              f"optimizer={worst_opt:.3e}")
+    _assert_metrics(process["history"], batched["history"], exact=False)
+    for key, tensor in process["final"].items():
+        assert torch.allclose(tensor, batched["final"][key], atol=G06_UPDATE_TOL), key
