@@ -1,9 +1,23 @@
 """Collector parity gates for the batched-b2b-collector work (spec G0).
 
-`test_process_collector_golden_digest` pins `collect_b2b_rollouts` output
-(every RolloutBatch field + match_telemetry) to hashes recorded from `main`
-before any refactor. If it fails, the process collector's output changed —
-that is a bug, never a reason to update the constants.
+The three `test_process_collector_golden_digest*` tests (gate G0.0) pin
+`collect_b2b_rollouts` output — every RolloutBatch field plus
+match_telemetry — to hashes recorded from `origin/main`'s PRE-REFACTOR
+collector. If one fails, the process collector's output changed; that is a
+bug in the refactor, never a reason to update a constant.
+
+Three configurations, because the refactor moved the placement-bonus block
+and the hindsight-label branches into the shared `_finalize_b2b_match`, and
+the cross-collector gates below cannot pin moved code — both collectors call
+it, so comparing them to each other is circular:
+
+  A  bonus off, every match completing        (the default path)
+  B  bonus ON                                 (fail-closed checks,
+                                               placement_utilities, the
+                                               bonus.sum() check, the
+                                               trajectory_returns minus-bonus)
+  C  truncations and a bust                   (`rank == -1` and `rank == 4`
+                                               in _assemble_hindsight_labels)
 """
 
 from __future__ import annotations
@@ -35,10 +49,36 @@ GOLDEN_MAX_STEPS = 20000
 GOLDEN_BATCH_DIGEST = "b422b1d389f56b4a30ed5dac5789075555ce6174cb9f24dc412b55e478f7c1e0"
 GOLDEN_TELEMETRY_SHA256 = "a757d5ec33e5c3f2c512c7d96fdb1b094c4cfd0537babfa8ddcadd1e3136dbd9"
 
+# Golden B: the same env, model and seed block as A with the placement bonus
+# ON. Values are the ratified PLACEMENT_RESHAPE_VALUES; lambda is 0.5 — the
+# placement-reshape lap calibrated lambda per run rather than registering one
+# number, and this golden only has to exercise the moved block, not replicate
+# that lap. Any non-degenerate lambda would do; 0.5 matches the G0.3 fixtures
+# below.
+GOLDEN_B_BONUS = dict(placement_bonus_values=PLACEMENT_RESHAPE_VALUES,
+                      placement_bonus_lambda=0.5)
+GOLDEN_B_BATCH_DIGEST = "9cde62befbc55d2e8610ade402b3cce3e34485b9c1b77a5c2329dab21745c920"
+GOLDEN_B_TELEMETRY_SHA256 = "d4cb57fd1f230329522cebe9012286afe29d4fe6da1f6338eccfcf5b18d8c732"
 
-def _golden_env_and_model():
-    env = EnvConfig(bridge_kind="go", event_history_window=8, oracle_observation=True,
-                    max_steps_per_episode=GOLDEN_MAX_STEPS)
+# Golden C: seeds 9000..9007 at max_steps 4900, bonus off. The bust threshold
+# is 1500, not the 1000 the G0.1 block below uses: under SAMPLED selection (the
+# only mode origin/main's collector has — greedy was added by this branch) the
+# 1000-threshold block busts nobody, so it would leave `rank == 4` unpinned.
+# At 1500 the block truncates 5 matches and busts one seat in 9007, so both
+# label branches are covered.
+GOLDEN_C_BASE_SEED = 9000
+GOLDEN_C_MATCHES = 8
+GOLDEN_C_MAX_STEPS = 4900
+GOLDEN_C_BUST_THRESHOLD = 1500
+GOLDEN_C_TRUNCATED = 5
+GOLDEN_C_BATCH_DIGEST = "9914565ce67e3deaa260e09aedb58010d1d34d980934048f8cc2b38d3efd4251"
+GOLDEN_C_TELEMETRY_SHA256 = "3dcd404a3ff8ad47c52d82454d18eab0d7487cdc15345ba7a8952701186b0a3f"
+
+
+def _golden_env_and_model(**env_overrides):
+    env = EnvConfig(**{"bridge_kind": "go", "event_history_window": 8,
+                       "oracle_observation": True,
+                       "max_steps_per_episode": GOLDEN_MAX_STEPS, **env_overrides})
     torch.manual_seed(0)
     model = PolicyValueNet(EnvConfig(bridge_kind="go"),
                            ModelConfig(**SMALL_MODEL, event_window=8,
@@ -46,9 +86,9 @@ def _golden_env_and_model():
     return env, model
 
 
-def golden_digests(batch) -> tuple[str, str]:
+def golden_digests(batch, base_seed=GOLDEN_BASE_SEED, matches=GOLDEN_MATCHES) -> tuple[str, str]:
     tel = hashlib.sha256(json.dumps(batch.match_telemetry, sort_keys=True).encode()).hexdigest()
-    return _digest_batch(GOLDEN_BASE_SEED, GOLDEN_MATCHES, batch), tel
+    return _digest_batch(base_seed, matches, batch), tel
 
 
 def test_process_collector_golden_digest():
@@ -57,6 +97,44 @@ def test_process_collector_golden_digest():
                     max_steps_per_episode=GOLDEN_MAX_STEPS, match_mode="chongci")
     batch = collect_b2b_rollouts(env, model, cfg, base_seed=GOLDEN_BASE_SEED)
     assert golden_digests(batch) == (GOLDEN_BATCH_DIGEST, GOLDEN_TELEMETRY_SHA256)
+
+
+def test_process_collector_golden_digest_with_placement_bonus():
+    """Golden B. The frozen lineage runs the placement bonus ON, and the whole
+    bonus block moved into `_finalize_b2b_match` — unpinned by anything else
+    here, since both collectors call the moved code."""
+    env, model = _golden_env_and_model()
+    cfg = PPOConfig(device="cpu", matches_per_iter=GOLDEN_MATCHES,
+                    max_steps_per_episode=GOLDEN_MAX_STEPS, match_mode="chongci",
+                    **GOLDEN_B_BONUS)
+    batch = collect_b2b_rollouts(env, model, cfg, base_seed=GOLDEN_BASE_SEED)
+    assert golden_digests(batch) == (GOLDEN_B_BATCH_DIGEST, GOLDEN_B_TELEMETRY_SHA256)
+    # Not vacuous: the bonus really was applied, and it moved the byte stream.
+    assert batch.truncated_matches == 0
+    assert len(batch.match_telemetry) == GOLDEN_MATCHES
+    for tel in batch.match_telemetry:
+        assert any(b != 0.0 for b in tel["bonus"])
+        assert abs(sum(tel["bonus"])) < 1e-6
+    assert golden_digests(batch)[0] != GOLDEN_BATCH_DIGEST
+
+
+def test_process_collector_golden_digest_with_truncation_and_busts():
+    """Golden C: pins the `rank == -1` (truncated) and `rank == 4` (busted)
+    branches of `_assemble_hindsight_labels`, which moved into the shared
+    finalizer with everything else."""
+    env, model = _golden_env_and_model(max_steps_per_episode=GOLDEN_C_MAX_STEPS,
+                                       chongci_bust_threshold=GOLDEN_C_BUST_THRESHOLD)
+    cfg = PPOConfig(device="cpu", matches_per_iter=GOLDEN_C_MATCHES,
+                    max_steps_per_episode=GOLDEN_C_MAX_STEPS, match_mode="chongci")
+    batch = collect_b2b_rollouts(env, model, cfg, base_seed=GOLDEN_C_BASE_SEED)
+    assert golden_digests(batch, GOLDEN_C_BASE_SEED, GOLDEN_C_MATCHES) == \
+        (GOLDEN_C_BATCH_DIGEST, GOLDEN_C_TELEMETRY_SHA256)
+    # Not vacuous: both label branches are actually exercised.
+    assert batch.truncated_matches == GOLDEN_C_TRUNCATED
+    assert int((batch.rank_labels == -1).sum()) > 0
+    assert int((batch.rank_labels == 4).sum()) > 0
+    assert sum(t["busts"] for t in batch.match_telemetry) > 0
+    assert float(batch.dealin_labels.sum()) > 0.0
 
 
 # ---------------------------------------------------------------------------
