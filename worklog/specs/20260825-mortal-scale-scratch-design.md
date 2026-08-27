@@ -225,3 +225,27 @@ Preflight measurement: one chongci heuristic match emits 2,079 transitions (all 
 
 7. **Implementation gate.** Before execution, require default-preservation, construction, checkpoint-inference, BC-transfer, export/evaluation/serving, and resume tests plus normal review and CI. Any mismatch returns to consultation.
 
+
+## Amendment 4 (ratified 2026-08-27, thread 01a0147d) — event-path warm-phase interpretation
+
+1. **Parameter groups ratified unchanged.** Keep `trunk.0.weight`, including its zeroed event-input columns, in the BC-loaded group at `2e-5`; keep `event_encoder.*` in the heads group at `2e-4` through iteration 25. Apply this identically to both arms.
+
+2. **No slice-specific fast LR.** Splitting `trunk.0.weight` would change checkpoint structure, optimizer state, transfer provenance, and inference plumbing for a speculative benefit. Gradient multiplication is not reliably equivalent to a learning-rate multiplier under AdamW. Moving the entire trunk to `2e-4` risks destroying the transferred BC policy. Neither is authorized.
+
+3. **Mechanistic reading.** At the first optimizer step, the zero read-in makes the event encoder’s gradient zero, while the read-in slice itself can receive a gradient. Once that slice moves, encoder gradients begin. Because each iteration contains thousands of optimizer steps, the 10× LR difference alone does not establish dormancy through iteration 25.
+
+4. **No default excuse.** A flat or negative iteration-25/50 screening delta must **not** be attributed by default to “the event head has not engaged.” Through iteration 25, delayed engagement is an admissible mechanistic diagnosis only when supported by the mandatory telemetry below. At iteration 50 and later it ceases to be an excuse: persistent non-engagement is then a property or failure of the registered recipe, not grounds for extension, retuning, or rerun.
+
+5. **Mandatory telemetry for both arms.** Record at initialization and after every iteration:
+
+   - event-column slice Frobenius norm, RMS, and max-absolute value;
+   - per-iteration Frobenius update norm of that slice;
+   - its per-element RMS ratio to the non-event columns of `trunk.0.weight`;
+   - event-encoder parameter norm and per-iteration update norm.
+
+   All values must be finite. The iteration-0 slice must be exactly zero. These are diagnostic, non-load-bearing readouts: they cannot change stopping, selection, budget, or learning rates. An exactly unchanged event slice across a completed iteration is an integrity failure and returns to consultation.
+
+6. **Confirmation unchanged.** Event-path engagement does not modify either confirmation claim or gate. A final null with a weak event path remains a null for this exact scratch/ReZero/optimization package; a confirm still requires the pre-registered primary and secondary CI and tail-risk gates.
+
+7. **Scope.** This amendment adds telemetry and fixes interpretation only. All Amendments 1–3 variables and gates remain frozen.
+

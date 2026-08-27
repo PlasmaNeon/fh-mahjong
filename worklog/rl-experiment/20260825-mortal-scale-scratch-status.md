@@ -103,12 +103,23 @@ Both gates required per claim: clustered CI95 lower bound > 0 AND
 
 ## Open notes for the consult thread
 
-- `trunk.0.weight`'s zeroed event-input columns belong to the BC-loaded group
-  (trained at `--lr`, e.g. 2e-5) while the event encoder trains at `--head-lr`
-  (e.g. 2e-4) for iterations 1–25: the read-in weights of the event path grow
-  from zero at the slow rate, not the fast one, for as long as they still live
-  inside `trunk.0.weight` rather than the event encoder proper. Ratify or amend
-  before interpreting the warm phase.
+- (none)
+
+## Amendment 4 prerequisite — event-slice telemetry
+
+Amendment 4 ratifies the parameter groups unchanged (`trunk.0.weight`, zeroed event
+columns included, stays in the `bc` group at `2e-5`; `event_encoder.*` stays in `heads`
+at `2e-4` through iteration 25) and forbids attributing a flat iteration-25/50 delta to
+"the event head has not engaged" without telemetry. It requires, at init and after every
+iteration, for **both** arms: the event-column slice's Frobenius norm, RMS and max-abs;
+that slice's per-iteration Frobenius update norm; its per-element RMS ratio to the
+non-event columns of `trunk.0.weight`; and the event encoder's parameter norm and
+per-iteration update norm. Iteration-0 slice must be exactly zero; an exactly unchanged
+slice across a completed iteration is an integrity failure and returns to consultation.
+Diagnostic only — it cannot change stopping, selection, budget, or learning rates.
+
+**This telemetry does not exist yet.** It must land (code + tests + CI) before the §5
+control lap starts.
 
 ## Event log
 
@@ -125,4 +136,6 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-27` — mortal-scale-scratch — BC big (attempt 1) stopped at epoch 3: no learning (val top-1 44.7 %, policy CE ≈1.7 throughout). Prerequisite failure per runbook §3; consult opened on thread `01a0147d` (options: ReZero trunk flag / BC lr-warmup+clip / block normalization).
 - `2026-08-27` — mortal-scale-scratch — Amendment 3 ratified (thread `01a0147d`): `ModelConfig.trunk_rezero` / `--model-trunk-rezero`, both arms re-run BC under it, BC optimization frozen, acceptance gate (control top-1 ≥ 0.94, CE ≤ 0.20; big within 0.005 / 0.02 of control, per seat ≥ 0.93). Code + tests landed; plain-trunk runs archived as `bc-control-plain/` and `bc-big-plain/`.
 - `2026-08-27` — mortal-scale-scratch — box updated to `af08333` (Amendment 3 code; bridge unchanged at `a487bcb7…`), plain-trunk logs and guard CSVs suffixed `-plain`, BC control attempt 2 launched as `msscratch-bc-control` with `--model-trunk-rezero`. Early signal: policy CE 1.99 → ~0.70 within epoch 1 (the plain 24-block trunk never left 1.6–1.8), i.e. the ReZero trunk trains.
+- `2026-08-27` — mortal-scale-scratch — box chain armed as `msscratch-chain.service`: waits for BC control, runs the alpha + per-seat readouts, evaluates the Amendment 3 §5 control gate, and launches BC big **only** on PASS (fail-closed on any unparsed or out-of-range value; verdicts in `logs/chain-verdict.txt`). It stops after the big readout — export, bench and both PPO laps stay manual.
+- `2026-08-27` — mortal-scale-scratch — Amendment 4 ratified (thread `01a0147d`): parameter groups stay as they are, no slice-specific lr; "the event head has not engaged" is not a default excuse for a flat iteration-25/50 delta and is inadmissible from iteration 50 on; event-slice + event-encoder telemetry is mandatory for both arms. Telemetry not yet implemented — blocks the §5 lap.
 - `—` — (add next event here)
