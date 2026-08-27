@@ -23,24 +23,50 @@
 
 ## Current stage
 
-**STAGE 4 — the 960/768 preflight bench is RUNNING** as `msscratch-bench.service`
-(launched 2026-08-27, guard armed, 44/48 GiB containment), log `logs/bench.log`,
-report `bench/preflight-960-mb768.json`. Go/no-go gates in runbook §4: cgroup peak
-≤ 38.00 GiB, tree RSS ≤ 40.00 GiB, CUDA peak ≤ 20.00 GiB, truncation ≈ 0, complete
-seed coverage of 1,700,000–1,700,959, and the ragged-tail step arithmetic. On PASS the
-§5 control lap follows (200 iters, 320/256, base seed 1,400,000).
+**STAGE 5 — the control lap is RUNNING** as `msscratch-control.service` (launched
+2026-08-27 10:43 PDT; 96×4, 200 iterations, 320/256, base seed 1,400,000; both guards
+armed — `cgroup_guard38.sh` and a retargeted `watchdog_lap.sh`; 44/48 GiB containment).
+Log `logs/control-lap.log`, checkpoints `control/ckpt/`. Iteration 1 took 468 s
+including startup, so the lap projects to **≈ 26 hours**. Screen at iterations
+25/50/75/100/125/150/175/200 per §7; the only early kill is at 100.
 
-Stage 3 is closed: both ReZero BC arms passed every Amendment 3 gate, and the
-Amendment 4 + trunk-alpha telemetry is merged (PR #233) and live on the box, so both
-laps will carry it. The plain-trunk attempts stay archived as diagnostic / failure
-evidence and are inadmissible for PPO (`bc-control-plain/`, `bc-big-plain/`, logs and
-guard CSVs suffixed `-plain`).
+Stage 4 passed: the export's transfer gate was exact and the 960/768 bench cleared all
+six go/no-go gates. **The big lap projects to ≈ 9.4 days** (0.29888 matches/s, 838.9 s
+update → 67.5 min/iteration); no wall-time ceiling was ever registered, so this is
+recorded, not a breach — but it belongs in the consult before the big lap is authorized.
+
+Stage 3 is closed: both ReZero BC arms passed every Amendment 3 gate. The plain-trunk
+attempts stay archived as diagnostic / failure evidence and are inadmissible for PPO
+(`bc-control-plain/`, `bc-big-plain/`, logs and guard CSVs suffixed `-plain`).
 
 Pinned for the rest of the experiment: box checkout `8ad2688` (`main`), bridge
 `a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` — unchanged across
 every commit since it was built from `7e5d623`, as none of them touched Go; the dataset
 was generated on the earlier bridge `66f7a061…` (same Go sources). Anchor `ce9d867f…`
 (matches §0). Bench init `bench/big-init.pt` sha256 `4948963d…`.
+
+## Reading the event-path telemetry
+
+Iteration 1 of the control lap, the first live exercise of Amendment 4:
+
+| key | iter 1 | reading |
+|---|---|---|
+| `event_slice_fro` | 0.31679 | started at exactly 0.0 (the `expect_zero_init` gate passed) |
+| `event_slice_update_fro` | 0.31679 | identical to the norm — the whole of it was gained in one iteration |
+| `event_slice_rms_ratio` | 0.01242 | still ~1.2 % of the non-event columns per element |
+| `event_encoder_update_fro` | 8.0166 | against a param norm of 254.03 |
+| `trunk_alpha_update_l2` | 0.00087 | alphas essentially still at their BC values |
+
+**The event read-in is not dormant.** It left zero in the first iteration despite sitting
+in the 2e-5 group, which is what Amendment 4 clause 3 predicted: an iteration is thousands
+of optimizer steps, so the 10× lr gap alone never established dormancy. `rms_ratio` is the
+number to watch at 25/50 — it says how much of the trunk's input the event path actually
+accounts for, not merely that it is non-zero.
+
+**Median convention:** `trunk_alpha_abs_median` uses `torch.median`, which returns the
+lower middle element for an even count. The BC-stage `alphas.py` readout averages the two
+middle elements. For the control's 4 alphas that reads 0.0409 here and 0.0505 there off
+the same weights. Compare like with like.
 
 ## Stage checklist
 
@@ -54,8 +80,8 @@ was generated on the earlier bridge `66f7a061…` (same Go sources). Anchor `ce9
 | 3b | **BC control (96×4, k=1, `trunk_rezero`) — attempt 2, canonical** | §3 | **PASS 2026-08-27** | `best_epoch` 4, best val CE 0.122959, `stopped_early` true, `epochs_run` 9; zeroed-event val top-1 **0.9582** (top-3 0.9950), per seat 0/1/2/3 = 0.9584 / 0.9581 / 0.9587 / 0.9578, readout CE 0.1230; per family discard 0.9499, chii 0.9646, pon 0.9922, kan 0.9693, pass 0.9947, win 1.0, haitei 1.0 (n=12); alphas 4/4 finite and non-zero, \|α\| min/median/max 0.0289 / 0.0505 / 0.0871; guard `UNIT-EXITED`, cgroup peak 30,781,386,752 B = 28.67 GiB, tree RSS peak 28.17 GiB; `best.pt` sha256 `ccc8fd5172ea810d3d29f88473444cd6553b97e5fd4ae234706272dbb7a043aa` |
 | 4b | **BC big (192×24, k=1, `trunk_rezero`) — attempt 2, canonical** | §3 | **PASS 2026-08-27** | `best_epoch` 3, best val CE 0.124828, `stopped_early` true, `epochs_run` 8; zeroed-event val top-1 **0.9581** (top-3 0.9951), per seat 0/1/2/3 = 0.9580 / 0.9580 / 0.9582 / 0.9581, readout CE 0.1248; per family discard 0.9494, chii 0.9703, pon 0.9902, kan 0.9519, pass 0.9956, win 1.0, haitei 1.0 (n=12); alphas 24/24 finite and non-zero, \|α\| min/median/max 3.24e-05 / 0.00492 / 0.02962; guard `UNIT-EXITED`, cgroup peak 30,792,699,904 B = 28.68 GiB, tree RSS peak 28.17 GiB; `best.pt` sha256 `3d95743b60646cd977c83a69691c9348a886e70535a08da8774cae8fd3ee1e17` |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | **done 2026-08-27** | `big-init.pt` sha256 `4948963deea8cbf72a38e8ec53464ab18c5d1be9e74d7cc0efc93a75c6798cea`; transfer gate exact — `max_abs_logit_diff` 0.0, `max_abs_prob_diff` 0.0, `greedy_match_rate` 1.0, `loaded_tensors_identical` true, 132 loaded / 37 unloaded keys, probe seed 20260825 × 64 rows; `bc_checkpoint_sha256` `3d95743b…` = `bc-big/best.pt` ✓; record in `bench/big-init-transfer-gate.json` |
-| 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | running 2026-08-27 (`msscratch-bench`) | cgroup peak, tree RSS, CUDA peak, matches/s, projected wall time |
-| 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | not started | `history.json`, transfer-gate record, guard verdicts |
+| 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | **PASS 2026-08-27 — all six go/no-go gates** | (1) unit `Result=success`, guard `UNIT-EXITED`, no kill, no CUDA OOM; (2) cgroup `memory.peak` 37,718,990,848 B = **35.13 GiB** ≤ 38.00 (margin 2.87); (3) tree RSS peak 40,526,745,600 B = **37.74 GiB** ≤ 40.00 (margin 2.26; report's `host_peak_rss_bytes` 37.75 GiB agrees); (4) CUDA allocated **6.47 GiB** ≤ 20.00, reserved 7.49 GiB; (5) `truncated_matches` 0 / rate 0.0, `dealin_positive_rate` 0.0931 > 0, `rank_label_coverage` 1.0; (6) seeds 1,700,000–1,700,959 complete by construction (`env.reset(seed=base_seed + m)`, m = 0..959, and coverage 1.0 means every match reached a terminal result), rollout digest `980106e6…`, rows 1,966,232, **optimizer_steps 5,122 = 2 × ceil(1,966,232 / 768) = 2 × 2,561 exactly** (ragged tail correct), no monitoring gaps. `all_digests_equal` / `rows_and_labels_equal` true but non-load-bearing at one worker count. Throughput `matches_per_second` 0.29888, `update_seconds` 838.90 → **4,050.9 s/iteration (67.5 min); 200 iterations ≈ 810,180 s ≈ 9.4 days** for the big lap |
+| 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | running 2026-08-27 (`msscratch-control`) | iter 1 healthy: `lr_bc` 2e-05, `lr_heads` 2e-04 ✓, rows 653,728, `optimizer_steps` 5,108 = 2 × ceil(653,728 / 256) = 2 × 2,554 exactly ✓, `truncation_rate` 0.0, `dealin_positive_rate` 0.0922, `rank_label_coverage` 1.0; Amendment 4 telemetry live and the init gate passed (see above). 468 s/iter → ≈ 26 h |
 | 7 | Control recipe gate (iter-200 delta ≥ −0.0600) | §7 | not started | `fh-mj-compare` at iter 200 |
 | 8 | Big lap — 200 iters, 960/768, base seed 1,500,000 | §8 | not started | `history.json`, transfer-gate record, guard verdicts |
 | 9 | Selection + confirmation (1500 × 4 seats, seed 1,720,000) | §9 | not started | primary + secondary `fh-mj-compare` |
@@ -148,4 +174,6 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-27 10:20Z` — mortal-scale-scratch — BC big (ReZero) PASSED the §3 gate: top-1 0.9581 (control − 0.0001, limit 0.0050), CE 0.1248 (control + 0.0018, limit 0.0200), every seat ≥ 0.9580, 24/24 alphas non-zero. Amendment 3 is vindicated: the identical 24-block trunk that would not leave 44.7 % on plain blocks now matches a 4-block net. **Stage 3 complete; the chain stopped as designed.** Diagnostic worth carrying: 3.07× the parameters buys ~0.0000 on BC, and the big arm's alphas are an order of magnitude smaller than control's (median 0.0049 vs 0.0505) with the largest magnitudes in blocks 17–22 — the deep trunk is barely used at the BC ceiling, which is the heuristic itself. That says nothing yet about PPO.
 - `2026-08-27` — mortal-scale-scratch — Stage 3 terminal ruling returned (thread `01a0147d`): Stage 3 passes; BC parity is not adverse evidence and updates no prior (it removes unequal BC quality as an alternative explanation for later PPO results); the alpha spread is diagnostic only but main-trunk alpha telemetry now rides both laps. **Correction: Amendment 4's integrity gate must FAIL CLOSED** — my warnings-only reading was overruled, "cannot change stopping" governs magnitudes, not the gate. PR #233 updated accordingly. Ordering fixed: merge #233 → sync/pin the box → §4 export → §4 bench → §5 control lap.
 - `2026-08-27` — mortal-scale-scratch — PR #233 merged (`8ad2688`); box synced to it, `uv sync` clean, bridge digest unchanged (`a487bcb7…`, no Go in the diff). §4 export done — `big-init.pt` `4948963d…`, transfer gate exact (0.0 / 0.0 / 1.0, tensors identical). Bench 960/768 launched as `msscratch-bench`.
+- `2026-08-27` — mortal-scale-scratch — §4 bench PASS on all six gates (cgroup 35.13 / tree 37.74 / CUDA 6.47 GiB; truncation 0; `optimizer_steps` 5,122 = 2 × ceil(1,966,232 / 768) exactly). Throughput projects the **big lap at ≈ 9.4 days** — recorded, not a breach (no ceiling was registered), but it goes to the consult before the big lap is authorized.
+- `2026-08-27 10:43 PDT` — mortal-scale-scratch — §5 control lap launched (`msscratch-control`, both guards armed). `watchdog_lap.sh` had to be retargeted first: it hardcodes `UNIT=ds960-lap` and a `RUNS_DIR` inside the read-only data-scale-960 archive, so arming it as shipped would have watched the wrong unit and written into that archive. Iteration 1 healthy; Amendment 4's `expect_zero_init` gate passed against a real BC transfer and the event slice left zero immediately (`event_slice_fro` = `event_slice_update_fro` = 0.3168, `rms_ratio` 0.0124).
 - `—` — (add next event here)
