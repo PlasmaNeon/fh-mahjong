@@ -47,6 +47,44 @@ def make_b2b_pool(env_config: EnvConfig, model: PolicyValueNet, config: PPOConfi
     return pool
 
 
+# EnvConfig fields `make_selfplay_pool` copies verbatim from the caller's
+# config. `oracle_observation` and `event_history_window` are deliberately
+# absent: `make_b2b_pool` OVERRIDES both (oracle on, window bound to the
+# model's), and each has its own dedicated check.
+_POOL_PASSTHROUGH_FIELDS = (
+    "action_space_size", "plane_shape", "scalar_features", "bridge_kind",
+    "bridge_library_path", "chongci_starting_score", "chongci_bust_threshold",
+    "chongci_max_hands",
+)
+
+
+def _assert_pool_matches_caller(cfg: EnvConfig, env_config: EnvConfig, config: PPOConfig) -> None:
+    """Fail closed when the pool was built from a different EnvConfig than the
+    caller passed in. Everything downstream reads `pool.env_config`, so a
+    disagreement would silently collect under one simulation while the caller
+    (telemetry, labels, resume echo) believes another."""
+    for name in _POOL_PASSTHROUGH_FIELDS:
+        pool_value, caller_value = getattr(cfg, name), getattr(env_config, name)
+        if pool_value != caller_value:
+            raise RuntimeError(
+                f"env pool was built from a different EnvConfig: {name} is "
+                f"{pool_value!r} on the pool, {caller_value!r} on the config passed to "
+                "collect_b2b_rollouts_batched (build the pool with make_b2b_pool from "
+                "the SAME env_config)")
+    if tuple(cfg.learning_seats) != (0, 1, 2, 3):
+        raise RuntimeError(
+            f"B2b pool must learn all four seats, got learning_seats={cfg.learning_seats!r}")
+    if cfg.auto_play_heuristics:
+        raise RuntimeError("B2b pool must not auto-play heuristic seats")
+    if int(cfg.max_steps_per_episode) != int(config.max_steps_per_episode):
+        raise RuntimeError(
+            f"pool max_steps_per_episode {cfg.max_steps_per_episode} != PPOConfig "
+            f"{config.max_steps_per_episode}")
+    if cfg.match_mode != config.match_mode:
+        raise RuntimeError(
+            f"pool match_mode {cfg.match_mode!r} != PPOConfig {config.match_mode!r}")
+
+
 class _SlotMatch:
     """One in-flight match on a pool slot."""
 
@@ -65,7 +103,11 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  inference_mode: str = "batched",
                                  action_selection: str = "sample",
                                  diagnostics: Optional[dict] = None) -> RolloutBatch:
-    """`diagnostics` (tests and `fh-mj-collect-bench` only) receives
+    """`env_config` is the caller's view of the simulation; the pool's own
+    `pool.env_config` is what actually runs, and the two are asserted
+    compatible up front (`_assert_pool_matches_caller`).
+
+    `diagnostics` (tests and `fh-mj-collect-bench` only) receives
     `pool_slots` (allocated), `effective_slots`, `peak_live_slots` and
     `rounds`; if the caller pre-creates `diagnostics["logits"]` as a list,
     every decision's masked logits row is appended to it as
@@ -79,6 +121,12 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     if int(cfg.event_history_window) != window:
         raise RuntimeError(
             f"pool event_history_window {cfg.event_history_window} != model event_window {window}")
+    if not cfg.oracle_observation:
+        raise RuntimeError("B2b pool must use oracle_observation=True")
+    # `env_config` is otherwise unused -- every read below goes through
+    # `pool.env_config` -- so without this it would be possible to pass a
+    # config that disagrees with the pool's and never find out.
+    _assert_pool_matches_caller(cfg, env_config, config)
     total = int(config.matches_per_iter)
     device = config.device
     temperature = config.sample_temperature
@@ -200,6 +248,11 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             # decision, which is exactly the batch-1 shape this collector
             # exists to remove. Concatenation and slicing copy bytes, so the
             # floats are the ones the forward produced.
+            #
+            # The cat REQUIRES logits and values to share a dtype: enabling
+            # AMP on this forward (values fp32, logits fp16, or vice versa)
+            # would make torch.cat raise, or promote and change the bytes.
+            # Split the transfer before adding AMP here.
             n_rows = len(pending_rows)
             host = torch.cat([logits_t.detach(), values_t.detach().reshape(n_rows, 1)],
                              dim=1).cpu()
