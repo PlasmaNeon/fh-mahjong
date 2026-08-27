@@ -381,3 +381,33 @@ all four seat reports and the aggregate; `deal_in_rate` populated (aggregate
 
 Stage-0 gates are all green. Stage 1 training remains unauthorized until the
 pre-Stage-1 consult ratifies this amendment.
+
+### Stage 1 outcome (2026-08-27) — NULL, no eligible milestone
+
+Lap ran 2026-08-26 01:39Z → 2026-08-27 03:55Z on the 4090 box, 150/150
+iterations, TRAIN-EXIT rc=0, zero truncations / fail-closed aborts; frozen
+manifest `stage1-launch-manifest.json` (commit a740662, bridge 66f7a061…,
+λ = 0.8567442838065646, digest 6b3eda33…). Screens vs anchor075 @910000–910119
+(F = 4th-share delta, C = canonical delta, LL = large-loss delta):
+
+| iter | F | C | LL | significant (C) |
+|---|---|---|---|---|
+| 25 | +0.0021 | +0.0069 | +0.0021 | no |
+| 50 | +0.0500 | −0.0958 | +0.0083 | yes |
+| 75 | +0.0125 | −0.0181 | 0.0000 | no |
+| 100 | +0.0146 | −0.0486 | +0.0063 | no |
+| 125 | +0.0188 | −0.0306 | −0.0104 | no |
+| 150 | +0.0063 | −0.0403 | −0.0063 | no |
+
+Kill rule at 100: not triggered (C₇₅ = −0.018 > −0.060). Eligibility (F ≤ −0.005
+∧ C ≥ −0.050 ∧ LL ≤ +0.010): **no milestone qualifies** — none reduced 4th-place
+share. Per the selection rule: **NULL — no confirmation run**; the reserved
+window 1300000–1301499 was never inspected and remains fresh. anchor075 remains
+champion. The asymmetric terminal bonus, at the calibrated λ, did not produce
+tail-safer play within 150 iterations; the transient at iter 50 moved in the
+wrong direction on both axes. Result returned to consult per protocol.
+
+Screen provenance note: mid-lap the checkout was briefly at 9098aed (another
+session's pull); screen-25 was re-run at the pinned a740662 and matched
+byte-identically. All recorded screens are pinned-commit.
+
