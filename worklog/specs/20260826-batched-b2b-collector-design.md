@@ -7,7 +7,8 @@ Amendments 1–8 are folded in below. **Post-Stage-0 consult 2026-08-27 (fresh t
 GPT-5.6-Sol, high): CONDITIONALLY RATIFIED.** Merge with `collector=process` is
 authorized once the hard-bounded numeric gate (G0.1b), the per-iteration G0.6, and a
 full-suite rerun at final HEAD pass. G1–G3, training use and the default switch stay
-unauthorized. PR #232.
+unauthorized. PR #232. **Second-round consult 2026-08-27 (fresh thread, Opus 5,
+read-only): RATIFIED WITH AMENDMENTS** — four merge-blockers, folded in below.
 
 Worktree `batched-b2b-collector`, branch `experiment/batched-b2b-collector`.
 
@@ -116,6 +117,19 @@ B2b's extra outputs.
   sampling are therefore a different draw from the same policy distribution — the same
   class of change as a different `base_seed`. Bit-identity between collectors is only
   provable in greedy mode; the gates below are built around that.
+- **Slot count is part of the lineage.** Under `inference_mode="batched"` the logits a
+  row sees depend on which other rows shared its forward, and `sample_masked_action`
+  consumes those logits, so trajectories are *not* slot-count-invariant. `pool_slots` is
+  rejected-on-change on resume, alongside `collector`. Invariance across slot counts
+  holds only in `per_row` mode, which is the mode G0.2 proves it in.
+- **The PPO minibatch permutation stream is untouched by either collector.**
+  `collect_b2b_rollouts` seeds the global torch RNG once per match, but
+  `ParallelB2bCollector` always spawns workers — at `num_workers=1` too — so that side
+  effect stays in the child. The batched collector runs in the master and consumes no
+  torch RNG: the model has no dropout and both collectors call `model.eval()`. Both arms
+  therefore leave `ppo_update`'s `torch.randperm` stream alone. A test that calls the
+  process collector in-process must save and restore the RNG state around it to
+  reproduce the spawn boundary.
 - Nothing else: observations, masks, rewards, events, labels, bonus, telemetry are the
   same functions of the same Go state.
 
@@ -146,6 +160,20 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
 
 ### G0 — Exactness (Mac, CPU, `pytest`)
 
+0. **Process-collector invariant guard.** Golden `RolloutBatch` + `match_telemetry`
+   digests recorded from `origin/main`'s pre-refactor `collect_b2b_rollouts` and
+   asserted against HEAD. Three configurations, because the refactor moved the
+   placement-bonus block and the hindsight-label branches into the shared finalizer and
+   a cross-collector comparison cannot pin them — both collectors call the same moved
+   code:
+   - bonus off, all matches completing;
+   - **bonus on** (`placement_bonus_values` + `placement_bonus_lambda`), covering the
+     truncation and zero-decision-seat raises, `placement_utilities`, the `bonus.sum()`
+     check and the `trajectory_returns` handling;
+   - a seed block containing a truncation and busts, covering the `rank == -1` and
+     `rank == 4` branches of `_assemble_hindsight_labels`.
+   A mismatch is a regression in the refactor. The constants are never adjusted to make
+   the test pass.
 1. **Transport/orchestration identity (greedy, per-row).** With argmax action
    selection injected into both collectors, `inference_mode="per_row"`, Go bridge, same
    seed block (≥ 32 chongci matches incl. at least one truncated and one bust): the
@@ -161,16 +189,34 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
    hard ceilings on the excluded floats, absolute (relative error is unstable near 0),
    measured at **production width** (anchor075, 96ch × 4 blocks, GRU) as well as on
    the test net, and compared **per field** — never one collapsed maximum:
+   Each bound is **two-part**: a quantile and a cap. Max |Δ| alone is an extreme-value
+   statistic — it grows with row count and with trunk width and depth — so a single-max
+   ceiling would be breached by measurement scale rather than by a defect, and this spec
+   forbids widening a ceiling after the fact. At production width (anchor075, 32
+   matches, 65 077 rows) the observed legal-logit max is 3.96e-5; G1 runs roughly ten
+   times the rows per cycle.
    - non-finite logits / logprobs / values: 0
-   - legal logits: max |Δ| ≤ 5e-5 (selected-action logprob alone is insufficient)
-   - `old_logprobs`: max |Δ| ≤ 5e-5
-   - `values`: max |Δ| ≤ 5e-6
+   - legal logits: p99.9 |Δ| ≤ 1e-5 **and** max |Δ| ≤ 2e-4 (selected-action logprob
+     alone is insufficient)
+   - `old_logprobs`: p99.9 |Δ| ≤ 1e-5 **and** max |Δ| ≤ 2e-4
+   - `values`: p99.9 |Δ| ≤ 1e-6 **and** max |Δ| ≤ 2e-5
+   Both parts must hold; a violation of either fails the gate. Registered against a
+   production-width CPU run at the G1 row count, executed **before** merge.
    Report per field and comparison: element count, non-finite count, mismatch count,
    p50/p95/p99/p99.9/max |Δ|, and the count beyond both the legacy `atol=1e-6,
    rtol=1e-5` (diagnostic only) and the hard ceiling. Measured 2026-08-26 on CPU:
    logprobs max 2.7e-5, values 1.8e-6. The pytest gate uses the test net; the
    `fh-mj-collect-bench` gate enforces the same ceilings at production width and
    **exits non-zero** on any violation.
+   **The float gate runs greedy.** Under sampling a ~4e-5 logit perturbation flips an
+   action with probability ~|Δp| per decision; one flip diverges the match, the row
+   counts stop matching and the comparison degenerates into `shape_mismatch`. At G1 row
+   counts that is a structural coin-flip, not a signal. The float-gate reference and
+   every candidate collection feeding it therefore use `action_selection="greedy"`; the
+   sampled sweep is a separate throughput-only run whose semantic digests are not
+   compared across slot counts. The process collector has no greedy path, so the greedy
+   reference is the `per_row` batched run — which G0.1 proves byte-identical to the
+   process collector.
    **CUDA is gated, not merely documented.** Pre-registered before any CUDA number is
    seen: hard ceilings legal logits and logprobs 1e-4, values 1e-5. Procedure: a fixed
    three-repeat greedy calibration block sets each operational threshold to 2 × the
@@ -197,7 +243,14 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
 
 ### G1 — Throughput and memory (box, after the current lap)
 
-Arms: process control `--workers 10`; batched candidates `--pool-slots {128,256,320}`.
+Arms: process control `--workers 10`; batched candidates
+`--pool-slots {32, 64, 128, 256, 320}`. The sweep must reach well below 320: at
+`slots == matches` every match starts in round 1 and the pool never refills, so the
+per-round batch decays monotonically from 320 rows to 1 over a chongci match-length
+distribution that is heavily right-skewed (in the parity block one seed needs 4915
+decisions against a ~300-decision median). 320 is a candidate for the *worst* arm, not
+the best, and a sweep that only samples the top of the range cannot tell a design miss
+from a scheduling artefact.
 Exactly 320 matches per measured cycle. Each arm runs one excluded warmup, then
 **three genuine consecutive collect → PPO cycles on one persistent pool and one
 persistent model/optimizer** — the trainer's lifetime, not a fresh deep-copy per
@@ -210,15 +263,34 @@ Register before launch: commit, anchor SHA, bridge SHA, model shape and event wi
 PyTorch/CUDA/cuDNN versions, TF32 and determinism settings, GPU identity, memory
 limit.
 
-Record per cycle: collection time and `matches/s`, update time, transition rows,
+Record per cycle: mean / median / p10 **rows per forward**, total rounds and a
+batch-size histogram — without these a missed target is uninterpretable;
+collection time and `matches/s`, update time, transition rows,
 truncations, RSS, cgroup peak, and CUDA allocated **and reserved** peaks measured
 **separately for collection and for the PPO update**; requested / allocated /
 effective-live slot counts; allocator retention across cycles (the iteration-boundary
 retention failures of ds960 are the reason for three cycles).
 
-Acceptance: **≥ 10× the process arm's collection throughput** for some candidate,
-aggregate RSS ≤ 20 GiB, CUDA peak ≤ 20 GB. Pick the **smallest** slot count within
-10 % of the best — speed alone never justifies a resource count.
+The control is interleaved with the candidates rather than run as one block before
+them, on the same box, seeds, bridge SHA and match count, sampled. The comparison is
+**collection wall time only**, excluding pool construction, the warmup cycle, and the
+greedy float-gate reference collection — that reference is a batch-1 `per_row` pass
+costing roughly a whole process arm, and folding it inline would be charged to the
+batched candidate.
+
+Host memory is its own risk here, not a formality: the pool holds every in-flight
+match's planes at once, and the seed-order flush head-of-line blocks, so one long match
+pins the rows of every later match that already finished. At 320 slots that is close to
+all 320 matches resident simultaneously — a retention profile the 10-worker arm never
+has. Report host RSS peak per slot count.
+
+Acceptance: **≥ 10× the process arm's collection throughput** on the **median** of the
+three steady cycles, not the best, for some candidate; aggregate RSS ≤ 20 GiB, CUDA peak
+≤ 20 GB. Pick the **smallest** slot count within 10 % of the best — speed alone never
+justifies a resource count. A candidate whose mean rows-per-forward falls below 16 is
+not a valid test of the design; report it as such rather than counting it as a miss. A
+genuine miss means profiling the Python round loop first — Go is 2.5 ms per match, so
+the time is in the loop, not the simulator — before any redesign is proposed.
 
 The Mac CPU bench (2026-08-26: 32 matches, 209 s at 8 slots, 231 s at 32, no process
 baseline) is diagnostic only and has no bearing on this gate.
