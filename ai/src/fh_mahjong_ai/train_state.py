@@ -1021,6 +1021,186 @@ def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
     return float(sum(alphas) / len(alphas))
 
 
+class EventPathTelemetry:
+    """mortal-scale-scratch Amendment 4: per-iteration readouts of the event
+    pathway's read-in weights and of the event encoder itself.
+
+    `build_scratch_model` zeroes the trailing `event_encoder.output_dim`
+    columns of `trunk.0.weight` so a `--init-from-bc` run starts exactly at the
+    BC policy. Those columns are the ONLY thing connecting the event GRU to the
+    logits, and they sit inside `trunk.` -- so `split_bc_parameter_groups` puts
+    them in the slow `bc` group (`--lr`, 2e-5) while the encoder that feeds them
+    trains in the fast `heads` group (`--head-lr`, 2e-4) for iterations
+    1..`head_lr_iters`. Amendment 4 ratified that split unchanged and forbade
+    explaining a flat iteration-25/50 screening delta as "the event head has
+    not engaged yet" unless these numbers support it (and forbade the excuse
+    outright from iteration 50 on). Hence: measure it, don't argue about it.
+
+    Two different rules govern these numbers, and the distinction is the whole
+    point. The *magnitudes* are non-load-bearing: no observed norm, ratio, or
+    engagement reading may change stopping, selection, budget, or learning
+    rates. The *integrity gate* is separate and fails closed -- a non-finite
+    readout, an iteration-0 slice that is not exactly zero on a fresh
+    `--init-from-bc` lap, or a slice that did not move at all across a
+    completed iteration means the run is not measuring what the protocol
+    thinks it is. `train_b2b` persists that iteration's history row, checkpoint
+    and train_state first, then halts before the next collection and returns to
+    the consult thread. (The 2026-08-27 clarification of Amendment 4 clause 4:
+    "cannot change stopping" governs magnitudes, not this gate.)
+
+    Snapshots the model at construction, so build this right after the model is
+    created or restored: a resumed run then reports true update norms from its
+    first iteration instead of a hole. Returns `None` from every method for a
+    model with no event encoder (`event_window == 0`), the same
+    "omit rather than report a misleading 0.0" convention as
+    `_growth_alpha_mean_abs`."""
+
+    def __init__(self, model: torch.nn.Module, expect_zero_init: bool = False) -> None:
+        """`expect_zero_init` for a fresh `--init-from-bc` lap, whose step-zero
+        slice `build_scratch_model` zeroed. A non-zero slice there means the net
+        did NOT start at the BC policy, so it raises immediately -- before the
+        first collection, with nothing yet written to mislead a later reader.
+        False for a champion warm start and for every resume, whose slices are
+        legitimately non-zero."""
+        encoder = getattr(model, "event_encoder", None)
+        self.event_columns = int(encoder.output_dim) if encoder is not None else 0
+        self.enabled = self.event_columns > 0
+        self._prev_slice: Optional[torch.Tensor] = None
+        self._prev_encoder: Optional[torch.Tensor] = None
+        self.halt_reason: Optional[str] = None
+        if not self.enabled:
+            return
+        self._prev_slice, _ = self._trunk_columns(model)
+        self._prev_encoder = self._encoder_vector(model)
+        initial_fro = float(torch.linalg.vector_norm(self._prev_slice).item())
+        if expect_zero_init and initial_fro != 0.0:
+            raise RuntimeError(
+                "Amendment 4 integrity gate: this run initialises from BC, so the event-input "
+                f"columns of trunk.0.weight must be exactly zero at iteration 0, but their "
+                f"Frobenius norm is {initial_fro!r}. The net did not start at the BC policy -- "
+                "halting before the first collection; return to the consult thread.")
+
+    def _trunk_columns(self, model: torch.nn.Module) -> tuple[torch.Tensor, torch.Tensor]:
+        """(event columns, non-event columns) of `trunk.0.weight`, detached on
+        the CPU in float64 so the norms below are exact regardless of the
+        training dtype/device."""
+        weight = model.trunk[0].weight.detach().to("cpu", torch.float64)
+        return weight[:, -self.event_columns:].clone(), weight[:, : -self.event_columns].clone()
+
+    def _encoder_vector(self, model: torch.nn.Module) -> torch.Tensor:
+        parts = [p.detach().to("cpu", torch.float64).reshape(-1)
+                 for p in model.event_encoder.parameters()]
+        return torch.cat(parts) if parts else torch.zeros(0, dtype=torch.float64)
+
+    def initial_metrics(self) -> Optional[dict]:
+        """The iteration-0 snapshot taken at construction. `event_slice_fro`
+        must be exactly 0.0 for a fresh `--init-from-bc` scratch run; it is
+        legitimately non-zero on a resume, which snapshots a partly trained
+        model."""
+        if not self.enabled:
+            return None
+        assert self._prev_slice is not None and self._prev_encoder is not None
+        return {
+            "event_slice_fro": float(torch.linalg.vector_norm(self._prev_slice).item()),
+            "event_slice_max_abs": float(self._prev_slice.abs().max().item()),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(self._prev_encoder).item()),
+            "event_columns": self.event_columns,
+        }
+
+    def record(self, model: torch.nn.Module, iteration: int) -> Optional[dict]:
+        """Measure the current model and advance the baseline. Call once per
+        completed iteration, after the optimizer step."""
+        if not self.enabled:
+            return None
+        event, other = self._trunk_columns(model)
+        encoder = self._encoder_vector(model)
+        slice_fro = float(torch.linalg.vector_norm(event).item())
+        update = event - self._prev_slice
+        update_fro = float(torch.linalg.vector_norm(update).item())
+        encoder_update_fro = float(torch.linalg.vector_norm(encoder - self._prev_encoder).item())
+        # Per-element RMS on both sides, so the ratio compares like with like
+        # even though the two column blocks have very different widths.
+        event_rms = float(event.pow(2).mean().sqrt().item())
+        other_rms = float(other.pow(2).mean().sqrt().item()) if other.numel() else 0.0
+        metrics = {
+            "event_slice_fro": slice_fro,
+            "event_slice_rms": event_rms,
+            "event_slice_max_abs": float(event.abs().max().item()),
+            "event_slice_update_fro": update_fro,
+            "event_slice_rms_ratio": (event_rms / other_rms) if other_rms > 0.0 else float("inf"),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(encoder).item()),
+            "event_encoder_update_fro": encoder_update_fro,
+        }
+        reasons = []
+        nonfinite = sorted(k for k, v in metrics.items() if not np.isfinite(v))
+        if nonfinite:
+            metrics["event_path_nonfinite"] = True
+            reasons.append(f"non-finite readouts ({', '.join(nonfinite)})")
+        if update_fro == 0.0:
+            metrics["event_slice_integrity_failure"] = True
+            reasons.append("the event-input columns of trunk.0.weight did not move at all "
+                           "(update Frobenius norm exactly 0)")
+        if reasons:
+            self.halt_reason = (
+                f"iter {iteration}: Amendment 4 integrity gate -- " + "; ".join(reasons)
+                + ". This iteration's history row, checkpoint and train_state are written; "
+                  "the run halts before the next collection. Return to the consult thread.")
+            logger.error("%s", self.halt_reason)
+        self._prev_slice = event
+        self._prev_encoder = encoder
+        return metrics
+
+    def raise_if_halted(self) -> None:
+        """Called by `train_b2b` once this iteration's evidence is durable."""
+        if self.halt_reason is not None:
+            raise RuntimeError(self.halt_reason)
+
+
+class TrunkAlphaTelemetry:
+    """mortal-scale-scratch, Stage 3 terminal ruling (2026-08-27): per-iteration
+    ReZero alpha readouts for the MAIN trunk (`plane_blocks`), carried into both
+    laps.
+
+    BC left the big arm's 24 alphas an order of magnitude smaller than the
+    control's 4 (median 0.0049 vs 0.0505) and concentrated in the deepest
+    blocks -- imitation used little of that depth. Whether PPO does is one of
+    the things these laps are for, so the aggregate is recorded every iteration
+    and the full per-block vector stays recoverable from any checkpoint.
+
+    Diagnostic only, with no integrity gate: unlike the event path there is no
+    protocol invariant an alpha can violate. `None` for a plain-block trunk
+    (`trunk_rezero=False`), which has no alphas to report."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        self.enabled = any(hasattr(block, "alpha") for block in model.plane_blocks)
+        self._prev: Optional[torch.Tensor] = None
+        if self.enabled:
+            self._prev = self._vector(model)
+
+    @staticmethod
+    def _vector(model: torch.nn.Module) -> torch.Tensor:
+        return torch.stack([block.alpha.detach().to("cpu", torch.float64).reshape(-1)[0]
+                            for block in model.plane_blocks if hasattr(block, "alpha")])
+
+    def record(self, model: torch.nn.Module) -> Optional[dict]:
+        if not self.enabled:
+            return None
+        alphas = self._vector(model)
+        magnitudes = alphas.abs()
+        finite = magnitudes[torch.isfinite(magnitudes)]
+        metrics = {
+            "trunk_alpha_count": int(alphas.numel()),
+            "trunk_alpha_finite_count": int(finite.numel()),
+            "trunk_alpha_abs_min": float(finite.min().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_median": float(finite.median().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_max": float(finite.max().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_l2": float(torch.linalg.vector_norm(alphas).item()),
+            "trunk_alpha_update_l2": float(torch.linalg.vector_norm(alphas - self._prev).item()),
+        }
+        self._prev = alphas
+        return metrics
+
+
 def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:
     """Files in `checkpoint_dir` that a previous `train_b2b` run would have
     written -- `history.json`, `train_state.pt`, and any `iter_*.pt`

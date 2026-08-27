@@ -1830,6 +1830,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
             np.random.set_state(state_payload["numpy_rng"])
             random.setstate(state_payload["python_rng"])
+        # Amendment 4 (mortal-scale-scratch): snapshot the event pathway HERE --
+        # after a resume has restored the weights, before the first iteration --
+        # so update norms are true from the first recorded iteration either way.
+        # `expect_zero_init` only for a FRESH --init-from-bc lap: a resume and a
+        # champion warm start both legitimately carry a non-zero slice.
+        event_path = train_state.EventPathTelemetry(
+            model, expect_zero_init=(scratch and init_from_bc is not None and start_iteration == 1))
+        trunk_alpha = train_state.TrunkAlphaTelemetry(model)
+        event_path_init = event_path.initial_metrics()
+        if event_path_init is not None:
+            logger.info("event-path init: %s", event_path_init)
         collector = None
         if config.num_workers > 1:
             # Adversarial round 20, high finding: threads the SNAPSHOT-bound
@@ -1906,6 +1917,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 growth_alpha_mean_abs = train_state._growth_alpha_mean_abs(model)
                 if growth_alpha_mean_abs is not None:
                     metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
+                # Amendment 4: diagnostic only -- these keys never gate anything.
+                event_path_metrics = event_path.record(model, iteration)
+                if event_path_metrics is not None:
+                    metrics.update(event_path_metrics)
+                trunk_alpha_metrics = trunk_alpha.record(model)
+                if trunk_alpha_metrics is not None:
+                    metrics.update(trunk_alpha_metrics)
                 metrics["truncated_matches"] = int(batch.truncated_matches)
                 matches_total = max(1, int(config.matches_per_iter))
                 truncation_rate = batch.truncated_matches / matches_total
@@ -1972,6 +1990,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         # readable off the file rather than only from the
                         # launch command -- see `init_meta` above.
                         "init": init_meta,
+                        # Amendment 4: the iteration-0 event-path snapshot, so
+                        # "the slice started at exactly zero" is auditable off
+                        # any checkpoint rather than only from the run's log.
+                        # Omitted for a model with no event encoder.
+                        **({"event_path_init": event_path_init}
+                           if event_path_init is not None else {}),
                         "objective": {
                             "placement_bonus_values": (list(config.placement_bonus_values)
                                                        if config.placement_bonus_values is not None else None),
@@ -2029,6 +2053,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "state":
                         shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
                         backup_cleared = True
+                # Amendment 4 integrity gate, LAST in the iteration: this
+                # iteration's history row, `iter_N.pt` and `train_state.pt` are
+                # all durable above, so the evidence survives the halt. Raising
+                # here stops the run before the next collection rather than
+                # letting a lap that is not measuring what the protocol thinks
+                # it is keep spending GPU hours.
+                event_path.raise_if_halted()
         finally:
             if collector is not None:
                 collector.close()

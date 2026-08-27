@@ -23,17 +23,20 @@
 
 ## Current stage
 
-**STAGE 3 (ReZero) — Amendment 3 ratified 2026-08-27: both arms rebuild their trunk from
-`ReZeroResidualBlock` (`--model-trunk-rezero`); BC control and BC big are re-run under it
-with BC optimization frozen; acceptance gate in runbook §3.** The plain-trunk BC control
-(row 3, attempt 1) is diagnostic only and inadmissible for PPO; the plain-trunk big attempt
-(row 4, attempt 1) is preserved as failure evidence in `bc-big-plain/`. Per-arm ReZero runs
-write to `bc-control/` and `bc-big/` (plain control archived as `bc-control-plain/`).
-Box is otherwise free (placement-reshape closed as a registered NULL;
-`/root/fh-mahjong-runs/placement-reshape/` is a read-only archive). Next: BC big (§3),
-export + bench (§4), control lap (§5).
+**STAGE 3 (ReZero) COMPLETE — both BC arms trained and both acceptance gates PASSED
+(2026-08-27).** Control 96×4 and big 192×24, identical recipe, `--model-trunk-rezero`,
+BC optimization frozen. Next: §4 `fh-mj-export-scratch-init` from `bc-big/best.pt`, then
+the 960/768 bench, then the §5 control lap. **The §5 lap is blocked on the Amendment 4
+event-path telemetry reaching the box** (see below). GPU lane otherwise free
+(placement-reshape closed as a registered NULL; `/root/fh-mahjong-runs/placement-reshape/`
+is a read-only archive).
 
-Pinned for the rest of the experiment: checkout `7e5d623`, bridge
+The plain-trunk attempts stay archived as diagnostic / failure evidence and are
+inadmissible for PPO (`bc-control-plain/`, `bc-big-plain/`, logs and guard CSVs
+suffixed `-plain`).
+
+Pinned for the rest of the experiment: checkout `7e5d623` (plus the Amendment 3 code at
+`af08333`; Go sources unchanged, bridge digest identical), bridge
 `a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` (built from `7e5d623`;
 the dataset was generated on the earlier bridge `66f7a061…` — same Go sources, docs-only
 commits between), anchor `ce9d867f…` (matches §0).
@@ -47,6 +50,8 @@ commits between), anchor `ce9d867f…` (matches §0).
 | 2a | A2 dataset gate — calculated resident ≤ 30.00 GiB, loader-only cgroup peak ≤ 32.00 GiB | §2 | PASS 2026-08-26 | 4,051,446 × 7,018 B = 26.48 GiB (arrays 26.50 GiB); loader-only `memory.peak` 29,475,266,560 B = 27.45 GiB; `anon`/`file` were read after the loader exited (233,472 / 359,747,584 B — not informative); `free -g` 47 free / 50 total; log `logs/gate2a.log` |
 | 3 | BC control (96×4, k=1) — attempt 1, plain trunk (diagnostic only, inadmissible per Amendment 3 §3; archived as `bc-control-plain/`) | §3 | done 2026-08-26 | `best_epoch` 5, best val CE 0.13832, `stopped_early` true, `epochs_run` 10, all epochs `validation_events: zeroed`; best-epoch top-1 0.9556 (top-3 0.9942; discard 0.947, chii 0.969, pon 0.995, kan 0.973, pass 0.989, win 1.0); per seat 0/1/2/3 top-1 0.9555 / 0.9555 / 0.9560 / 0.9555 (n 103,988 / 96,965 / 97,277 / 109,209), recompute overall 0.9556 = report ✓; cgroup peak 31,261,163,520 B = 29.11 GiB, tree RSS peak 28.18 GiB; `best.pt` sha256 `8f5a227f354e2db20e3308f2c5bed219df8c7126ab0498213fdafa91fbb30cd7` |
 | 4 | BC big (192×24, k=1) — attempt 1, plain trunk (archived as `bc-big-plain/`) | §3 | FAILED — policy CE flat at 1.6–1.8 from step 200 through epoch 3; epoch 1/2 val top-1 44.13 % / 44.71 % (≈ majority-discard baseline); stopped by hand, guard `UNIT-EXITED` (cgroup peak 28.25 GiB); artifacts kept in `bc-big-plain/` | `best_epoch`, val CE, top-1 (zeroed events) overall + per seat, `best.pt` sha256 |
+| 3b | **BC control (96×4, k=1, `trunk_rezero`) — attempt 2, canonical** | §3 | **PASS 2026-08-27** | `best_epoch` 4, best val CE 0.122959, `stopped_early` true, `epochs_run` 9; zeroed-event val top-1 **0.9582** (top-3 0.9950), per seat 0/1/2/3 = 0.9584 / 0.9581 / 0.9587 / 0.9578, readout CE 0.1230; per family discard 0.9499, chii 0.9646, pon 0.9922, kan 0.9693, pass 0.9947, win 1.0, haitei 1.0 (n=12); alphas 4/4 finite and non-zero, \|α\| min/median/max 0.0289 / 0.0505 / 0.0871; guard `UNIT-EXITED`, cgroup peak 30,781,386,752 B = 28.67 GiB, tree RSS peak 28.17 GiB; `best.pt` sha256 `ccc8fd5172ea810d3d29f88473444cd6553b97e5fd4ae234706272dbb7a043aa` |
+| 4b | **BC big (192×24, k=1, `trunk_rezero`) — attempt 2, canonical** | §3 | **PASS 2026-08-27** | `best_epoch` 3, best val CE 0.124828, `stopped_early` true, `epochs_run` 8; zeroed-event val top-1 **0.9581** (top-3 0.9951), per seat 0/1/2/3 = 0.9580 / 0.9580 / 0.9582 / 0.9581, readout CE 0.1248; per family discard 0.9494, chii 0.9703, pon 0.9902, kan 0.9519, pass 0.9956, win 1.0, haitei 1.0 (n=12); alphas 24/24 finite and non-zero, \|α\| min/median/max 3.24e-05 / 0.00492 / 0.02962; guard `UNIT-EXITED`, cgroup peak 30,792,699,904 B = 28.68 GiB, tree RSS peak 28.17 GiB; `best.pt` sha256 `3d95743b60646cd977c83a69691c9348a886e70535a08da8774cae8fd3ee1e17` |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | not started | `big-init.pt` sha256, transfer-gate record |
 | 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | not started | cgroup peak, tree RSS, CUDA peak, matches/s, projected wall time |
 | 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | not started | `history.json`, transfer-gate record, guard verdicts |
@@ -98,12 +103,28 @@ Both gates required per claim: clustered CI95 lower bound > 0 AND
 
 ## Open notes for the consult thread
 
-- `trunk.0.weight`'s zeroed event-input columns belong to the BC-loaded group
-  (trained at `--lr`, e.g. 2e-5) while the event encoder trains at `--head-lr`
-  (e.g. 2e-4) for iterations 1–25: the read-in weights of the event path grow
-  from zero at the slow rate, not the fast one, for as long as they still live
-  inside `trunk.0.weight` rather than the event encoder proper. Ratify or amend
-  before interpreting the warm phase.
+- (none)
+
+## Amendment 4 + Stage 3 ruling — lap telemetry prerequisite
+
+Amendment 4 ratifies the parameter groups unchanged (`trunk.0.weight`, zeroed event
+columns included, stays in the `bc` group at `2e-5`; `event_encoder.*` stays in `heads`
+at `2e-4` through iteration 25) and forbids attributing a flat iteration-25/50 delta to
+"the event head has not engaged" without telemetry — inadmissible outright from
+iteration 50 on. The Stage 3 terminal ruling added main-trunk alpha readouts and
+corrected the integrity gate to fail closed.
+
+Implemented in PR #233: `train_state.EventPathTelemetry` and `TrunkAlphaTelemetry` write
+`event_slice_{fro,rms,max_abs,update_fro,rms_ratio}`, `event_encoder_{param_norm,update_fro}`
+and `trunk_alpha_{count,finite_count,abs_min,abs_median,abs_max,l2,update_l2}` to every
+`history.json` row; the iteration-0 event snapshot goes to `metadata["event_path_init"]`.
+Observed magnitudes gate nothing. The integrity check does: a non-zero slice at iteration 0
+on a fresh `--init-from-bc` lap raises before the first collection, and a non-finite readout
+or an exactly-unchanged slice halts the lap **after** that iteration's history row,
+checkpoint and train_state are durable. Reading rule in runbook §7.
+
+**Ordering (ruling §5): merge PR #233, sync and pin that checkout on the box, and only then
+run §4 export → §4 bench → §5 control lap.**
 
 ## Event log
 
@@ -119,4 +140,10 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-08-26` — mortal-scale-scratch — BC control finished (early stop epoch 10, best 5, val top-1 0.9556, guard verdict `UNIT-EXITED`, no kill); per-seat readout run before BC big (both need the full dataset resident — never overlap them); BC big launched as `msscratch-bc-big`.
 - `2026-08-27` — mortal-scale-scratch — BC big (attempt 1) stopped at epoch 3: no learning (val top-1 44.7 %, policy CE ≈1.7 throughout). Prerequisite failure per runbook §3; consult opened on thread `01a0147d` (options: ReZero trunk flag / BC lr-warmup+clip / block normalization).
 - `2026-08-27` — mortal-scale-scratch — Amendment 3 ratified (thread `01a0147d`): `ModelConfig.trunk_rezero` / `--model-trunk-rezero`, both arms re-run BC under it, BC optimization frozen, acceptance gate (control top-1 ≥ 0.94, CE ≤ 0.20; big within 0.005 / 0.02 of control, per seat ≥ 0.93). Code + tests landed; plain-trunk runs archived as `bc-control-plain/` and `bc-big-plain/`.
+- `2026-08-27` — mortal-scale-scratch — box updated to `af08333` (Amendment 3 code; bridge unchanged at `a487bcb7…`), plain-trunk logs and guard CSVs suffixed `-plain`, BC control attempt 2 launched as `msscratch-bc-control` with `--model-trunk-rezero`. Early signal: policy CE 1.99 → ~0.70 within epoch 1 (the plain 24-block trunk never left 1.6–1.8), i.e. the ReZero trunk trains.
+- `2026-08-27` — mortal-scale-scratch — box chain armed as `msscratch-chain.service`: waits for BC control, runs the alpha + per-seat readouts, evaluates the Amendment 3 §5 control gate, and launches BC big **only** on PASS (fail-closed on any unparsed or out-of-range value; verdicts in `logs/chain-verdict.txt`). It stops after the big readout — export, bench and both PPO laps stay manual.
+- `2026-08-27` — mortal-scale-scratch — Amendment 4 ratified (thread `01a0147d`): parameter groups stay as they are, no slice-specific lr; "the event head has not engaged" is not a default excuse for a flat iteration-25/50 delta and is inadmissible from iteration 50 on; event-slice + event-encoder telemetry is mandatory for both arms. Telemetry not yet implemented — blocks the §5 lap.
+- `2026-08-27 08:41Z` — mortal-scale-scratch — BC control (ReZero) PASSED the §3 gate: top-1 0.9582, CE 0.1230, 4/4 alphas non-zero. Chain launched BC big automatically.
+- `2026-08-27 10:20Z` — mortal-scale-scratch — BC big (ReZero) PASSED the §3 gate: top-1 0.9581 (control − 0.0001, limit 0.0050), CE 0.1248 (control + 0.0018, limit 0.0200), every seat ≥ 0.9580, 24/24 alphas non-zero. Amendment 3 is vindicated: the identical 24-block trunk that would not leave 44.7 % on plain blocks now matches a 4-block net. **Stage 3 complete; the chain stopped as designed.** Diagnostic worth carrying: 3.07× the parameters buys ~0.0000 on BC, and the big arm's alphas are an order of magnitude smaller than control's (median 0.0049 vs 0.0505) with the largest magnitudes in blocks 17–22 — the deep trunk is barely used at the BC ceiling, which is the heuristic itself. That says nothing yet about PPO.
+- `2026-08-27` — mortal-scale-scratch — Stage 3 terminal ruling returned (thread `01a0147d`): Stage 3 passes; BC parity is not adverse evidence and updates no prior (it removes unequal BC quality as an alternative explanation for later PPO results); the alpha spread is diagnostic only but main-trunk alpha telemetry now rides both laps. **Correction: Amendment 4's integrity gate must FAIL CLOSED** — my warnings-only reading was overruled, "cannot change stopping" governs magnitudes, not the gate. PR #233 updated accordingly. Ordering fixed: merge #233 → sync/pin the box → §4 export → §4 bench → §5 control lap.
 - `—` — (add next event here)
