@@ -180,8 +180,14 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             with torch.no_grad():
                 logits_t, values_t = model(planes_t, scalars_t, masks_t,
                                            events=events_t, event_lengths=lengths_t)
-            logits_rows = [logits_t[i] for i in range(len(pending_rows))]
-            values_rows = [float(values_t.reshape(-1)[i].item()) for i in range(len(pending_rows))]
+            # ONE device->host transfer per round; every per-row op below
+            # (sampling, masked_logprob) then runs on CPU tensors. Per-row
+            # `.item()`/log_prob on device tensors would be one CUDA sync per
+            # decision, which is exactly the batch-1 shape this collector exists
+            # to remove.
+            logits_cpu = logits_t.detach().cpu()
+            logits_rows = [logits_cpu[i] for i in range(len(pending_rows))]
+            values_rows = values_t.detach().reshape(-1).cpu().numpy().astype(np.float32).tolist()
         else:  # per_row: batch-composition-independent floats
             logits_rows, values_rows = [], []
             for _, _, _, planes_np, scalars_np, mask_np, row_events, ev_len in pending_rows:
@@ -193,7 +199,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                         events=torch.from_numpy(row_events.astype(np.int64)).unsqueeze(0).to(device),
                         event_lengths=torch.tensor([ev_len], dtype=torch.int64, device=device),
                     )
-                logits_rows.append(logits_1[0])
+                logits_rows.append(logits_1[0].detach().cpu())
                 values_rows.append(float(value_1.reshape(-1)[0].item()))
 
         for i, (slot, sm, seat, planes_np, scalars_np, mask_np, row_events, ev_len) \
@@ -205,7 +211,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 action, _ = sample_masked_action(
                     logits_row.detach().cpu().numpy(), mask_np, temperature, sm.sample_rng)
             with torch.no_grad():
-                logprob = masked_logprob(logits_row, temperature, action)
+                logprob = masked_logprob(logits_row, temperature, action)  # CPU tensor
             ms = sm.state
             ms.seat_planes[seat].append(planes_np)
             ms.seat_scalars[seat].append(scalars_np)
