@@ -1,4 +1,4 @@
-"""fh-mj-collect-bench: exact-semantics worker-count benchmark for B2b rollout
+"""fh-mj-collect-bench: exact-semantics collector benchmark for B2b rollout
 collection.
 
 Before scaling `--num-workers` up for a real, multi-day `train_b2b` lap
@@ -31,7 +31,15 @@ throughput, aux label coverage, truncation, KL, and clip fraction — plus an
 explicit rows/labels worker-count-invariance check on top of the digest gate.
 `ppo_update` moves the ENTIRE rollout onto the update device, so this is the
 memory-honest preflight for raising matches_per_iter (collection-only numbers
-under-measure both host RAM and CUDA peak).
+under-measure both host RAM and CUDA peak). CUDA peaks are reported
+separately for collection and for the update: the collection peak is
+snapshotted before the update's `reset_peak_memory_stats()` erases it.
+
+`--collector batched` benches the pool collector
+(`batched_b2b.collect_b2b_rollouts_batched`) instead: one process, one
+persistent `--pool-slots` env pool reused for the warmup and steady rounds,
+one batched forward per round on `--device`. The invariance question is then
+slot count rather than worker count, and `--pool-slots` replaces `--workers`.
 """
 from __future__ import annotations
 
@@ -43,13 +51,14 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import torch
 
+from ..batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool
 from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
 from ..train_b2b import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
@@ -109,12 +118,31 @@ def _update_array_digest(h, name: str, value) -> None:
     _update_length_prefixed(h, np.ascontiguousarray(array).tobytes())
 
 
-def _digest_batch(base_seed: int, matches: int, batch) -> str:
+# The two fields a batched forward may round differently depending on which
+# other rows share its batch. `_semantic_digest_batch` omits them so slot-count
+# invariance is gated EXACTLY on everything a reordering or bookkeeping bug
+# would touch; these two are measured and reported instead.
+#
+# Their spread is architecture-dependent, which is why it is reported and not
+# gated here. Measured on CPU, chongci, the anchor075 net (96ch / 4 blocks /
+# event GRU): 32 matches over 8-slot vs 32-slot pools (65077 rows) differ by
+# up to 3.96e-5, with 754 of 130154 elements outside atol=1e-6/rtol=1e-5; on
+# a 6-match probe `old_logprobs` was max 1.4e-5 (p50 0, p99 1.9e-6) and
+# `values` max 1.4e-6. `--inference-mode per_row` is bit-identical across slot
+# counts on the same net (max abs diff exactly 0), so this is batch-
+# composition rounding, not orchestration. The tiny test net stays inside the
+# tolerance, which is what the G0.1b pytest gate pins.
+_ROLLOUT_TOLERANT_FIELDS = ("old_logprobs", "values")
+_FLOAT_INVARIANCE_TOL = dict(atol=1e-6, rtol=1e-5)
+
+
+def _digest_batch(base_seed: int, matches: int, batch, exclude: tuple[str, ...] = ()) -> str:
     """Hash every `RolloutBatch` field plus each array's shape and dtype.
 
     All twelve array fields are consumed by PPO/GAE/auxiliary training.
     `truncated_matches` is also included because `train_b2b` uses it for its
-    fail-closed truncation-rate gate. No `RolloutBatch` field is excluded.
+    fail-closed truncation-rate gate. No `RolloutBatch` field is excluded
+    unless `exclude` names it (see `_semantic_digest_batch`).
     """
     expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches", "match_telemetry"}
     actual_fields = {field.name for field in fields(RolloutBatch)}
@@ -122,12 +150,17 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
         raise RuntimeError(
             "collect-bench digest field list is stale: "
             f"expected {sorted(actual_fields)}, covers {sorted(expected_fields)}")
+    header = {"base_seed": int(base_seed), "matches": int(matches)}
+    # Only stamped when something IS excluded, so the full digest keeps the
+    # byte stream its recorded golden values were taken over.
+    if exclude:
+        header["excluded"] = sorted(exclude)
     h = hashlib.sha256()
     _update_length_prefixed(
-        h, json.dumps(
-            {"base_seed": int(base_seed), "matches": int(matches)},
-            sort_keys=True, separators=(",", ":")).encode())
+        h, json.dumps(header, sort_keys=True, separators=(",", ":")).encode())
     for name in _ROLLOUT_DIGEST_ARRAY_FIELDS:
+        if name in exclude:
+            continue
         _update_array_digest(h, name, getattr(batch, name))
     _update_length_prefixed(
         h, json.dumps(
@@ -139,6 +172,28 @@ def _digest_batch(base_seed: int, matches: int, batch) -> str:
                           "value": tel}, sort_keys=True, separators=(",", ":")).encode()
     _update_length_prefixed(h, payload)
     return h.hexdigest()
+
+
+def _semantic_digest_batch(base_seed: int, matches: int, batch) -> str:
+    """`_digest_batch` over everything except the two float fields a batched
+    forward may round by batch composition. Equal semantic digests mean the
+    two runs collected the same decisions, rewards, events, labels and
+    telemetry, in the same order."""
+    return _digest_batch(base_seed, matches, batch, exclude=_ROLLOUT_TOLERANT_FIELDS)
+
+
+def _float_field_diff(reference: dict, current: dict) -> Optional[float]:
+    """Max absolute difference across `_ROLLOUT_TOLERANT_FIELDS` between two
+    runs, or None when their shapes disagree (a semantic difference, which
+    the semantic digest reports on its own)."""
+    worst = 0.0
+    for name in _ROLLOUT_TOLERANT_FIELDS:
+        a, b = reference[name], current[name]
+        if a.shape != b.shape:
+            return None
+        if a.size:
+            worst = max(worst, float(np.abs(a - b).max()))
+    return worst
 
 
 @dataclass
@@ -249,6 +304,15 @@ class _PeakRssSampler:
         return (self_rss + child_rss) * scale, "getrusage-lifetime-approx"
 
 
+def _cuda_peaks(active: bool) -> tuple[Optional[int], Optional[int]]:
+    """(allocated, reserved) CUDA peak bytes since the last reset, or
+    (None, None) when this phase did not run on CUDA."""
+    if not active:
+        return None, None
+    torch.cuda.synchronize()
+    return int(torch.cuda.max_memory_allocated()), int(torch.cuda.max_memory_reserved())
+
+
 def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: float,
                           settings: FullCycleSettings, match_mode: str,
                           max_steps_per_episode: Optional[int]) -> dict:
@@ -278,6 +342,8 @@ def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: fl
     model = copy.deepcopy(warm_started).to(settings.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=settings.lr)
     if use_cuda:
+        # The caller has already snapshotted the COLLECTION peak (see
+        # `run_bench`); this reset scopes the numbers below to the update.
         torch.cuda.reset_peak_memory_stats()
     torch.manual_seed(settings.update_seed)
     update_start = time.perf_counter()
@@ -287,10 +353,7 @@ def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: fl
     if use_cuda:
         torch.cuda.synchronize()
     fc["update_seconds"] = time.perf_counter() - update_start
-    fc["cuda_peak_allocated_bytes"] = (
-        int(torch.cuda.max_memory_allocated()) if use_cuda else None)
-    fc["cuda_peak_reserved_bytes"] = (
-        int(torch.cuda.max_memory_reserved()) if use_cuda else None)
+    fc["cuda_peak_allocated_bytes"], fc["cuda_peak_reserved_bytes"] = _cuda_peaks(use_cuda)
     fc.update(metrics)
     return fc
 
@@ -301,20 +364,33 @@ _FULL_CYCLE_INVARIANT_KEYS = (
 )
 
 
-def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list[int],
+def run_bench(*, champion: Path, model_config, growth_blocks: int,
+             workers: Optional[list[int]] = None,
              matches: int, base_seed: int, match_mode: str, bridge_kind: str,
              bridge_lib: Optional[str], device: str,
              max_steps_per_episode: Optional[int], event_window: int,
              worker_target=None, full_cycle: Optional[FullCycleSettings] = None,
-             dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None) -> dict:
-    """Run the full worker-count benchmark. Returns
-    `{worker_count: {"startup_seconds": float, "steady_seconds": float,
-    "digest": str}, "all_digests_equal": bool}`. With `full_cycle` set, each
-    worker-count entry additionally carries a `"full_cycle"` dict (see
+             dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None,
+             collector: str = "process", pool_slots: Optional[list[int]] = None,
+             inference_mode: str = "batched") -> dict:
+    """Run the collector benchmark. Returns
+    `{count: {"startup_seconds": float, "steady_seconds": float,
+    "digest": str}, "all_digests_equal": bool}` where `count` is a worker
+    count (`collector="process"`, from `workers`) or an env-pool slot count
+    (`collector="batched"`, from `pool_slots`). With `full_cycle` set, each
+    entry additionally carries a `"full_cycle"` dict (see
     `_run_full_cycle_update` plus `host_peak_rss_bytes`/`host_peak_rss_method`
-    covering the whole collect+update phase) and the report carries
+    covering the whole collect+update phase, the collection-phase CUDA peaks,
+    and `collector`/`pool_slots`/`effective_slots`) and the report carries
     `"rows_and_labels_equal"`: True iff transition rows, truncations, and aux
-    label coverage are identical across all worker counts.
+    label coverage are identical across all counts.
+
+    `collector="batched"` builds ONE persistent pool per slot count and reuses
+    it for the warmup and steady rounds (mirroring the process path's
+    persistent workers), collecting through
+    `batched_b2b.collect_b2b_rollouts_batched` on `device`. `inference_mode`
+    is forwarded to it: `"batched"` is the production shape, `"per_row"` the
+    batch-composition-independent one.
 
     `worker_target`, when given, is forwarded to every `ParallelB2bCollector`
     this bench constructs (adversarial round 9, medium finding). It exists
@@ -323,6 +399,13 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     perturbation in one worker's output still flips the digest) -- the CLI
     never sets it, and production benchmarking always uses the real
     `_b2b_worker_loop`."""
+    if collector not in ("process", "batched"):
+        raise ValueError(f"unknown collector: {collector!r}")
+    counts = list(pool_slots or []) if collector == "batched" else list(workers or [])
+    if not counts:
+        raise ValueError("--pool-slots must name at least one slot count"
+                         if collector == "batched"
+                         else "--workers must name at least one worker count")
     env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
                            match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            oracle_observation=True, event_history_window=event_window)
@@ -334,31 +417,81 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            device="cpu", collect_dispatch_chunk=int(dispatch_chunk),
                            **(placement_bonus or {}))
+    # The batched collector runs in THIS process on `device` (the whole point
+    # of the pool), unlike the spawn workers, which are hardcoded to CPU.
+    batched_config = replace(ppo_config, device=device, matches_per_iter=int(matches),
+                             collector="batched")
+    collect_on_cuda = (collector == "batched" and device.startswith("cuda")
+                       and torch.cuda.is_available())
     results: dict[int, dict] = {}
-    for w in workers:
+    reference_floats: Optional[dict] = None
+    float_fields_within_tolerance = True
+    float_allclose_violations = 0
+    max_float_diff = 0.0
+    for count in counts:
         sampler: Optional[_PeakRssSampler] = None
         if full_cycle is not None:
             sampler = _PeakRssSampler()
             sampler.start()
         startup_start = time.perf_counter()
-        collector = ParallelB2bCollector(
-            env_config, effective_model_config, ppo_config, w,
-            worker_target=worker_target)
-        try:
-            collector.start()
-            collector.collect(state_dict, base_seed, matches)
-            startup_seconds = time.perf_counter() - startup_start
+        if collector == "batched":
+            pool = make_b2b_pool(env_config, warm_started, batched_config, int(count))
+            try:
+                collect_b2b_rollouts_batched(env_config, warm_started, batched_config,
+                                             base_seed=base_seed, pool=pool,
+                                             inference_mode=inference_mode)
+                startup_seconds = time.perf_counter() - startup_start
+                if collect_on_cuda:
+                    torch.cuda.reset_peak_memory_stats()
+                steady_start = time.perf_counter()
+                batch = collect_b2b_rollouts_batched(env_config, warm_started, batched_config,
+                                                     base_seed=base_seed, pool=pool,
+                                                     inference_mode=inference_mode)
+                steady_seconds = time.perf_counter() - steady_start
+            finally:
+                pool.close()
+        else:
+            spawn_collector = ParallelB2bCollector(
+                env_config, effective_model_config, ppo_config, count,
+                worker_target=worker_target)
+            try:
+                spawn_collector.start()
+                spawn_collector.collect(state_dict, base_seed, matches)
+                startup_seconds = time.perf_counter() - startup_start
 
-            steady_start = time.perf_counter()
-            batch = collector.collect(state_dict, base_seed, matches)
-            steady_seconds = time.perf_counter() - steady_start
-        finally:
-            collector.close()
-        results[w] = {
+                steady_start = time.perf_counter()
+                batch = spawn_collector.collect(state_dict, base_seed, matches)
+                steady_seconds = time.perf_counter() - steady_start
+            finally:
+                spawn_collector.close()
+        # Snapshotted HERE, before `_run_full_cycle_update`'s
+        # `reset_peak_memory_stats()` erases the collection phase's peak.
+        collect_alloc, collect_reserved = _cuda_peaks(collect_on_cuda)
+        results[count] = {
             "startup_seconds": startup_seconds,
             "steady_seconds": steady_seconds,
             "digest": _digest_batch(base_seed, matches, batch),
+            "semantic_digest": _semantic_digest_batch(base_seed, matches, batch),
         }
+        # Only the two 1-D float fields are retained across counts (a few MB
+        # at any realistic match count) — never whole batches.
+        floats = {name: np.asarray(getattr(batch, name), dtype=np.float64).copy()
+                  for name in _ROLLOUT_TOLERANT_FIELDS}
+        if reference_floats is None:
+            reference_floats = floats
+        else:
+            diff = _float_field_diff(reference_floats, floats)
+            if diff is None:
+                float_fields_within_tolerance = False
+            else:
+                max_float_diff = max(max_float_diff, diff)
+                for name in _ROLLOUT_TOLERANT_FIELDS:
+                    a, b = reference_floats[name], floats[name]
+                    outside = np.abs(a - b) > (_FLOAT_INVARIANCE_TOL["atol"]
+                                               + _FLOAT_INVARIANCE_TOL["rtol"] * np.abs(b))
+                    if outside.any():
+                        float_fields_within_tolerance = False
+                        float_allclose_violations += int(outside.sum())
         if full_cycle is not None:
             fc = _run_full_cycle_update(
                 warm_started, batch, matches, steady_seconds, full_cycle,
@@ -367,10 +500,34 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
             peak, method = sampler.stop()
             fc["host_peak_rss_bytes"] = peak
             fc["host_peak_rss_method"] = method
-            results[w]["full_cycle"] = fc
+            fc["cuda_peak_collect_allocated_bytes"] = collect_alloc
+            fc["cuda_peak_collect_reserved_bytes"] = collect_reserved
+            fc["collector"] = collector
+            fc["pool_slots"] = int(count) if collector == "batched" else None
+            # Slots beyond the match count never receive a command, so this is
+            # the number the throughput and memory figures actually describe.
+            fc["effective_slots"] = (min(int(count), int(matches))
+                                     if collector == "batched" else None)
+            results[count]["full_cycle"] = fc
     digests = {r["digest"] for r in results.values()}
+    semantic_digests = {r["semantic_digest"] for r in results.values()}
     report = {"results": results, "all_digests_equal": len(digests) <= 1,
+             "semantic_digests_equal": len(semantic_digests) <= 1,
+             # Reported, never gated: see `_ROLLOUT_TOLERANT_FIELDS`. The
+             # exactness claim this bench enforces is the semantic digest.
+             "float_fields_within_tolerance": float_fields_within_tolerance,
+             "float_allclose_violations": float_allclose_violations,
+             "semantics_equal": len(semantic_digests) <= 1,
+             "max_float_diff": max_float_diff,
+             # A batched forward's float output depends on which rows share
+             # its batch, so byte-equality across slot counts is expected only
+             # in per_row mode (and for the CPU spawn workers, which are
+             # always per-row). Everything else stays exactly equal.
+             "exact_invariance_expected": not (collector == "batched"
+                                               and inference_mode == "batched"),
              "model_config": effective_model_config,
+             "collector": collector,
+             "inference_mode": inference_mode if collector == "batched" else None,
              "dispatch_chunk_matches": int(dispatch_chunk)}
     if full_cycle is not None:
         invariant_tuples = {
@@ -381,12 +538,12 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int, workers: list
     return report
 
 
-def _print_table(results: dict[int, dict]) -> None:
-    print(f"{'workers':>8}  {'startup_s':>10}  {'steady_s':>10}  digest")
+def _print_table(results: dict[int, dict], label: str = "workers") -> None:
+    print(f"{label:>10}  {'startup_s':>10}  {'steady_s':>10}  digest")
     for w in sorted(results):
         r = results[w]
         print(
-            f"{w:>8}  {r['startup_seconds']:>10.3f}  "
+            f"{w:>10}  {r['startup_seconds']:>10.3f}  "
             f"{r['steady_seconds']:>10.3f}  {r['digest']}")
 
 
@@ -394,12 +551,12 @@ def _fmt_gib(value) -> str:
     return "-" if value is None else f"{value / (1024 ** 3):.2f}"
 
 
-def _print_full_cycle_table(results: dict[int, dict]) -> None:
+def _print_full_cycle_table(results: dict[int, dict], label: str = "workers") -> None:
     print()
-    print(f"{'workers':>8}  {'rows':>8}  {'optimizer_steps':>15}  {'matches/s':>9}  "
-          f"{'update_s':>8}  {'approx_kl':>9}  {'clip_frac':>9}  "
+    print(f"{label:>10}  {'eff_slots':>9}  {'rows':>8}  {'optimizer_steps':>15}  "
+          f"{'matches/s':>9}  {'update_s':>8}  {'approx_kl':>9}  {'clip_frac':>9}  "
           f"{'dealin+':>7}  {'rank_cov':>8}  {'trunc':>5}  "
-          f"{'rss_gib':>8}  {'cuda_alloc_gib':>14}  {'cuda_resv_gib':>13}")
+          f"{'rss_gib':>8}  {'cuda_col_gib':>12}  {'cuda_alloc_gib':>14}  {'cuda_resv_gib':>13}")
     for w in sorted(results):
         fc = results[w]["full_cycle"]
 
@@ -407,21 +564,23 @@ def _print_full_cycle_table(results: dict[int, dict]) -> None:
             return "-" if value is None else format(value, spec)
 
         print(
-            f"{w:>8}  {fc['transition_rows']:>8}  {fc['optimizer_steps']:>15}  "
+            f"{w:>10}  {_opt(fc.get('effective_slots'), '>9d')}  "
+            f"{fc['transition_rows']:>8}  {fc['optimizer_steps']:>15}  "
             f"{fc['matches_per_second']:>9.3f}  {fc['update_seconds']:>8.3f}  "
             f"{fc['approx_kl']:>9.5f}  {fc['clip_fraction']:>9.5f}  "
             f"{_opt(fc['dealin_positive_rate'], '>7.4f')}  "
             f"{_opt(fc['rank_label_coverage'], '>8.4f')}  "
             f"{fc['truncated_matches']:>5}  "
             f"{_fmt_gib(fc['host_peak_rss_bytes']):>8}  "
+            f"{_fmt_gib(fc.get('cuda_peak_collect_allocated_bytes')):>12}  "
             f"{_fmt_gib(fc['cuda_peak_allocated_bytes']):>14}  "
             f"{_fmt_gib(fc['cuda_peak_reserved_bytes']):>13}")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Exact-semantics worker-count benchmark for B2b rollout collection "
-                    "(gates --num-workers choices for a train_b2b lap)")
+        description="Exact-semantics collector benchmark for B2b rollout collection "
+                    "(gates --num-workers / --pool-slots choices for a train_b2b lap)")
     p.add_argument("--champion", type=Path, required=True,
                    help="checkpoint to warm-start from; a raw 39ch champion unless "
                         "--model-growth-blocks > 0, in which case a complete post-B2b anchor")
@@ -429,8 +588,22 @@ def main() -> None:
                    help="deep16-rezero capacity growth: stack this many ReZero residual "
                         "blocks onto --champion; 0 = disabled (default), champion is warm-"
                         "started via the 39ch->B2b surgery path instead")
-    p.add_argument("--workers", type=str, required=True,
-                   help="comma-separated worker counts to benchmark, e.g. 5,10,20")
+    p.add_argument("--workers", type=str, default=None,
+                   help="comma-separated worker counts to benchmark, e.g. 5,10,20 "
+                        "(--collector process; required there)")
+    p.add_argument("--collector", choices=("process", "batched"), default="process",
+                   help="which collector to bench: 'process' (default) fans matches out "
+                        "across spawn workers (--workers); 'batched' drives one env pool "
+                        "in this process with a batched forward per round (--pool-slots)")
+    p.add_argument("--pool-slots", type=str, default=None,
+                   help="comma-separated env-pool slot counts to benchmark with "
+                        "--collector batched, e.g. 128,256,320. A slot count above "
+                        "--matches is meaningless: only min(slots, matches) slots ever "
+                        "activate (reported as effective_slots)")
+    p.add_argument("--inference-mode", choices=("batched", "per_row"), default="batched",
+                   help="--collector batched only: 'batched' (default) is the production "
+                        "one-forward-per-round shape; 'per_row' forwards each row alone, "
+                        "which is batch-composition-independent but far slower")
     p.add_argument("--matches", type=int, default=320)
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--match-mode", choices=("classic", "chongci"), default="chongci")
@@ -438,11 +611,12 @@ def main() -> None:
     p.add_argument("--bridge-kind", choices=("go", "mock"), default="go")
     p.add_argument("--bridge-lib", type=str, default=None)
     p.add_argument("--device", type=str, default="cpu",
-                   help="device to warm-start the model on before snapshotting to CPU for "
-                        "collection; collection itself is always CPU-bound (this bench only "
-                        "covers the multi-worker production path, which hardcodes CPU per "
-                        "worker — it does NOT cover train_b2b's num_workers<=1 direct path, "
-                        "which collects at this config's device, e.g. GPU)")
+                   help="device to warm-start the model on. With --collector process it is "
+                        "only the warm-start device: collection is CPU-bound there (the "
+                        "spawn workers hardcode CPU), and that path does NOT cover "
+                        "train_b2b's num_workers<=1 direct path, which collects at its "
+                        "config's device. With --collector batched this IS the collection "
+                        "device — every round's batched forward runs on it")
     p.add_argument("--event-window", type=int, default=128)
     p.add_argument("--dispatch-chunk", type=int, default=0,
                    help="max matches per sequential dispatch round in the collector "
@@ -494,9 +668,23 @@ def main() -> None:
     raise_file_descriptor_limit()
     torch.multiprocessing.set_sharing_strategy("file_system")
 
-    workers = [int(w.strip()) for w in args.workers.split(",") if w.strip()]
-    if not workers:
-        p.error("--workers must name at least one worker count")
+    def _counts(raw):
+        return [int(v.strip()) for v in raw.split(",") if v.strip()] if raw else []
+
+    workers = _counts(args.workers)
+    pool_slots = _counts(args.pool_slots)
+    if args.collector == "batched":
+        if not pool_slots:
+            p.error("--collector batched requires --pool-slots (e.g. --pool-slots 128,256)")
+        if any(s < 1 for s in pool_slots):
+            p.error("--pool-slots values must be >= 1")
+        if workers:
+            p.error("--workers has no meaning with --collector batched; use --pool-slots")
+    else:
+        if not workers:
+            p.error("--workers must name at least one worker count")
+        if pool_slots:
+            p.error("--pool-slots requires --collector batched")
 
     # Adversarial round 6, high finding (train_b2b.py): --event-window (this
     # script's own flag) is NOT --model-event-window (model_config_args's
@@ -523,22 +711,40 @@ def main() -> None:
                        max_steps_per_episode=args.max_steps_per_episode,
                        event_window=args.event_window, full_cycle=full_cycle,
                        dispatch_chunk=args.dispatch_chunk,
-                       placement_bonus=placement_bonus_kwargs(args))
+                       placement_bonus=placement_bonus_kwargs(args),
+                       collector=args.collector, pool_slots=pool_slots,
+                       inference_mode=args.inference_mode)
     results = report["results"]
-    _print_table(results)
+    label = "pool_slots" if args.collector == "batched" else "workers"
+    _print_table(results, label)
     if full_cycle is not None:
-        _print_full_cycle_table(results)
-    if report["all_digests_equal"]:
-        print("all_digests_equal: True")
-    else:
-        digest_groups: dict[str, list[int]] = {}
+        _print_full_cycle_table(results, label)
+    def _print_groups(key: str) -> None:
+        groups: dict[str, list[int]] = {}
         for w, r in results.items():
-            digest_groups.setdefault(r["digest"], []).append(w)
-        print("all_digests_equal: False")
-        print("differing worker counts (grouped by matching digest):")
-        for digest, ws in digest_groups.items():
-            print(f"  {digest}: workers={sorted(ws)}")
-    ok = report["all_digests_equal"]
+            groups.setdefault(r[key], []).append(w)
+        print(f"differing {label} (grouped by matching {key}):")
+        for digest, ws in groups.items():
+            print(f"  {digest}: {label}={sorted(ws)}")
+
+    exact_expected = report["exact_invariance_expected"]
+    print(f"all_digests_equal: {report['all_digests_equal']}")
+    if not report["all_digests_equal"] and exact_expected:
+        _print_groups("digest")
+    if not exact_expected:
+        # Production batched inference: floats move with batch composition by
+        # design and by an architecture-dependent amount, so the GATE is the
+        # semantic digest (every discrete field, reward, label and telemetry
+        # row) and the float spread below is measurement, not a pass/fail.
+        print(f"semantic_digests_equal: {report['semantic_digests_equal']}")
+        print(f"float_delta (reported, not gated): max_abs_diff="
+              f"{report['max_float_diff']:.3e}, elements outside "
+              f"atol={_FLOAT_INVARIANCE_TOL['atol']}/rtol={_FLOAT_INVARIANCE_TOL['rtol']}: "
+              f"{report['float_allclose_violations']}")
+        print(f"semantics_equal: {report['semantics_equal']}")
+        if not report["semantic_digests_equal"]:
+            _print_groups("semantic_digest")
+    ok = report["all_digests_equal"] if exact_expected else report["semantics_equal"]
     if full_cycle is not None:
         print(f"rows_and_labels_equal: {report['rows_and_labels_equal']}")
         ok = ok and report["rows_and_labels_equal"]
@@ -549,11 +755,20 @@ def main() -> None:
                 "startup_seconds": r["startup_seconds"],
                 "steady_seconds": r["steady_seconds"],
                 "digest": r["digest"],
+                "semantic_digest": r["semantic_digest"],
                 **({"full_cycle": r["full_cycle"]} if "full_cycle" in r else {}),
             }
             for w, r in results.items()
         }
         payload["all_digests_equal"] = report["all_digests_equal"]
+        payload["semantic_digests_equal"] = report["semantic_digests_equal"]
+        payload["float_fields_within_tolerance"] = report["float_fields_within_tolerance"]
+        payload["float_allclose_violations"] = report["float_allclose_violations"]
+        payload["semantics_equal"] = report["semantics_equal"]
+        payload["max_float_diff"] = report["max_float_diff"]
+        payload["exact_invariance_expected"] = report["exact_invariance_expected"]
+        payload["collector"] = args.collector
+        payload["inference_mode"] = report["inference_mode"]
         payload["dispatch_chunk_matches"] = report["dispatch_chunk_matches"]
         if full_cycle is not None:
             payload["rows_and_labels_equal"] = report["rows_and_labels_equal"]

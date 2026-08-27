@@ -2868,3 +2868,148 @@ def test_resume_config_echo_missing_trunk_rezero_still_proceeds_with_notice(capl
         "model_config" in record.getMessage() and "trunk_rezero" in record.getMessage()
         for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# batched-b2b-collector: collector selection, pool lifecycle, resume echo
+# ---------------------------------------------------------------------------
+
+
+def _batched_configs(tmp_path, *, iterations, pool_slots=3, **overrides):
+    env, model_config, champion_path, config = b2b_run_configs(tmp_path, iterations=iterations)
+    return env, model_config, champion_path, replace(
+        config, collector="batched", pool_slots=pool_slots, **overrides)
+
+
+def test_batched_collector_runs_the_pool_and_ignores_num_workers(tmp_path, caplog) -> None:
+    env, model_config, champion_path, config = _batched_configs(
+        tmp_path, iterations=2, num_workers=4)
+    seen = []
+    import fh_mahjong_ai.batched_b2b as batched_b2b_mod
+    real_collect = batched_b2b_mod.collect_b2b_rollouts_batched
+
+    def spy(env_config, model, cfg, base_seed, pool, **kwargs):
+        seen.append((base_seed, pool.slots))
+        return real_collect(env_config, model, cfg, base_seed=base_seed, pool=pool, **kwargs)
+
+    def no_workers(*args, **kwargs):
+        pytest.fail("the batched collector must not spawn workers")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(batched_b2b_mod, "collect_b2b_rollouts_batched", spy)
+        # No ParallelB2bCollector may be constructed on this path.
+        mp.setattr("fh_mahjong_ai.train_b2b.ParallelB2bCollector", no_workers)
+        with caplog.at_level(logging.INFO):
+            history = train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config,
+                                base_seed=5, train_state_every=0)
+
+    assert len(history) == 2
+    # One pool, reused across both iterations; seeds advance by matches_per_iter.
+    assert seen == [(5 + 1 * 2, 3), (5 + 2 * 2, 3)]
+    assert any("num_workers=4 is ignored" in r.message for r in caplog.records)
+
+
+def test_batched_collector_closes_the_pool_when_collection_raises(tmp_path) -> None:
+    env, model_config, champion_path, config = _batched_configs(tmp_path, iterations=2)
+    closed = []
+    import fh_mahjong_ai.batched_b2b as batched_b2b_mod
+    real_make_pool = batched_b2b_mod.make_b2b_pool
+
+    def spy_make_pool(env_config, model, cfg, slots):
+        pool = real_make_pool(env_config, model, cfg, slots)
+        real_close = pool.close
+
+        def closing():
+            closed.append(slots)
+            return real_close()
+
+        pool.close = closing
+        return pool
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("collection blew up")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(batched_b2b_mod, "make_b2b_pool", spy_make_pool)
+        mp.setattr(batched_b2b_mod, "collect_b2b_rollouts_batched", boom)
+        with pytest.raises(RuntimeError, match="collection blew up"):
+            train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config,
+                      base_seed=5, train_state_every=0)
+    assert closed == [3]
+
+
+def test_unknown_collector_fails_closed(tmp_path) -> None:
+    env, model_config, champion_path, config = b2b_run_configs(tmp_path, iterations=1)
+    with pytest.raises(ValueError, match="unknown PPOConfig.collector"):
+        train_b2b(env, model_config, champion_path, tmp_path / "ckpt",
+                  replace(config, collector="threads"), base_seed=5, train_state_every=0)
+
+
+def test_resume_from_state_raises_on_different_collector(tmp_path) -> None:
+    # Switching collectors changes the action-RNG mapping (global torch RNG
+    # seeded per match vs a per-match numpy RNG), so it is recipe drift, not
+    # an operational knob like num_workers/pool_slots.
+    env, model_config, champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    assert config_first.collector == "process"
+
+    switched = replace(config_first, iterations=4, collector="batched", pool_slots=3)
+    with pytest.raises(ValueError, match=r"collector.*'process'.*'batched'"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, switched,
+                  base_seed=5, resume_from_state=state_path)
+
+
+def test_resume_from_state_allows_different_pool_slots_with_notice(tmp_path, caplog) -> None:
+    # Within an already-batched lineage the slot count is semantics-neutral
+    # (per-match RNG, gate G0.2), so it is logged rather than rejected.
+    env, model_config, champion_path, config_first = _batched_configs(
+        tmp_path, iterations=2, pool_slots=3)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    resumed = replace(config_first, iterations=4, pool_slots=7)
+    with caplog.at_level(logging.INFO):
+        history = train_b2b(env, model_config, champion_path, checkpoint_dir, resumed,
+                            base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+    assert any("pool_slots" in r.message and "slot-count-invariant" in r.message
+               for r in caplog.records)
+
+
+def test_legacy_state_without_collector_fields_reads_as_process(caplog) -> None:
+    # A train_state.pt saved before these fields existed is silent about both;
+    # that silence must read as the process collector at the default slot
+    # count, which is exactly what those runs were.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
+    assert {"collector", "pool_slots"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+    current = _config_echo_triple()
+    assert current["ppo_config"]["collector"] == "process"
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+
+    with caplog.at_level(logging.INFO):
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
+    assert any("collector" in record.getMessage() for record in caplog.records)
+
+
+def test_legacy_state_silence_still_rejects_a_batched_resume() -> None:
+    # The back-fill is not a way into a legacy lineage with the new collector:
+    # filled-in "process" vs a requested "batched" is still a mismatch.
+    from fh_mahjong_ai import train_state as train_state_mod
+
+    saved = _config_echo_triple()
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+    current = _config_echo_triple()
+    current["ppo_config"]["collector"] = "batched"
+    with pytest.raises(ValueError, match="collector"):
+        train_state_mod._validate_resume_config_echo(current, saved)

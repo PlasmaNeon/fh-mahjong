@@ -42,7 +42,7 @@ uv run --project ai <command>
 | `fh-mj-train-ppo` | Online self-play PPO vs a frozen anchor |
 | `fh-mj-train-oracle` | Phase-1 oracle (single-seat, perfect-information) |
 | `fh-mj-train-selfplay-oracle` | Phase-2 self-play feature-dropout oracle |
-| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule |
+| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule; `--collector batched --pool-slots N` for env-pool collection |
 
 ### Evaluate and gate
 | Command | Purpose |
@@ -76,7 +76,7 @@ uv run --project ai <command>
 | `fh-mj-global-ev-diagnostics` | Score paired divergences with a frozen global EV model |
 | `fh-mj-action-ev-branch-cf-calibration` | Action-EV checkpoint vs exact branch labels |
 | `fh-mj-export-scratch-init` | Write the step-zero `--scratch --init-from-bc` net as a gated checkpoint, for benching that initialization |
-| `fh-mj-collect-bench` | Worker-count benchmark; digest-gated exact-semantics proof |
+| `fh-mj-collect-bench` | Worker-count (`--workers`) or pool-slot (`--collector batched --pool-slots`) benchmark; digest-gated exact-semantics proof |
 | `fh-mj-collect-profile` | Measurement-only memory profile of collect + update |
 | `fh-mj-selfplay-loop` | N CI-gated self-play iterations, resumable |
 | `fh-mj-pipeline` | generate → train → evaluate in one command |
@@ -99,8 +99,8 @@ uv run --project ai python -m fh_mahjong_ai.scripts.build_counterfactual_risk_da
 Go c-shared lib  →  bridge.py / envpool.py  →  env.py       ← authoritative simulator
                         (ctypes, protobuf)      searchpool.py
                                 ↓
-   collectors: train_b2b.py (ParallelB2bCollector), oracle.py, parallel_rollouts.py,
-               batched_selfplay.py, offline_trainers.py
+   collectors: train_b2b.py (ParallelB2bCollector), batched_b2b.py (env pool),
+               oracle.py, parallel_rollouts.py, batched_selfplay.py, offline_trainers.py
                                 ↓
    storage.py (sharded NPZ + manifest)  ↔  buffer.py / streaming_buffer.py
                                 ↓
@@ -125,6 +125,7 @@ labels, not separate code paths:
 - **data-scale-960** — the 960-match scaling work: dispatch chunking, memory profiling, minibatch device transfer.
 - **mortal-scale-scratch** — `ModelConfig.kernel_width` (1 = Mortal-style (3,1) convs), `ModelConfig.trunk_rezero` (every main `plane_blocks` entry is a `ReZeroResidualBlock`; required for deep trunks — a plain 24-block stack does not train), `fh-mj-train-bc --model-*` with validation-cross-entropy early stopping, `fh-mj-generate-data --learning-seat-rule seed-mod-4`, `fh-mj-train-b2b --scratch [--init-from-bc]` with the two-group (`bc`/`heads`) lr schedule and the step-zero BC transfer gate, and `fh-mj-export-scratch-init` for benching that initialization — BC → PPO from random init, no anchor.
 - **Spec B2c** — serving: metadata-authoritative architecture recovery and the event wire contract.
+- **batched-b2b-collector** — `batched_b2b.py` plus `PPOConfig.collector`/`pool_slots`: B2b rollouts collected through one env pool with a single batched forward per round instead of spawn workers doing one forward per decision.
 
 ## Key Files
 
@@ -139,7 +140,7 @@ Quick map of what is where:
 | Contracts and configuration | `config.py`, `types.py`, `action_catalog.py`, `events.py` |
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
-| Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
+| Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `batched_b2b.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
 | Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
@@ -200,6 +201,9 @@ Quick map of what is where:
 
 ### Collector output is pinned
 - `ai/tests/test_b2b_collector_parity.py::test_process_collector_golden_digest` hashes every `RolloutBatch` field and `match_telemetry` of `collect_b2b_rollouts` against constants recorded before the batched-collector work. A failure means the process collector's bytes changed; fix the code, never the constants. Both collectors share `_B2bMatchState` / `_finalize_b2b_match` / `_check_chongci_outcomes` (`train_b2b.py`) and `ppo.masked_logprob`.
+- **The batched collector must never be enabled in, or used to resume, the placement-reshape lineage** (`experiment/placement-reshape-10-5-1-n10`, seeds 650320–698319). `collector` is rejected-on-change by `--resume-from-state` (it changes the action-RNG mapping); `pool_slots`, like `num_workers`, is logged and allowed. Making `batched` the B2b default needs a new post-lap authorization.
+- The two collectors are bit-identical only under greedy selection with `inference_mode="per_row"` (gate G0.1). Under sampling they draw from different RNG streams — the same class of change as a different `base_seed` — and in production `inference_mode="batched"` `old_logprobs`/`values` move with batch composition at float32 rounding while every discrete field stays exact.
+- **The batched-forward float spread scales with architecture; do not carry the tiny-net number over.** G0.1b's `atol=1e-6, rtol=1e-5` is measured on the test net. On CPU with the anchor075 net (96ch/4 blocks), 8-slot vs 32-slot pools over 32 matches differ by up to 3.96e-5 (754 of 130154 elements outside that tolerance) — while `per_row` on the same net is bit-identical across slot counts. `fh-mj-collect-bench --collector batched` therefore gates on the semantic digest (every field except those two) and only *reports* the float spread.
 
 ### Patching across the training modules
 

@@ -1916,7 +1916,29 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         if event_path_init is not None:
             logger.info("event-path init: %s", event_path_init)
         collector = None
-        if config.num_workers > 1:
+        pool = None
+        if config.collector not in ("process", "batched"):
+            # Fail closed: an unrecognized value must never quietly fall back
+            # to the process collector and misattribute a whole lap.
+            raise ValueError(
+                f"unknown PPOConfig.collector {config.collector!r} "
+                "(expected 'process' or 'batched')")
+        if config.collector == "batched":
+            # batched-b2b-collector spec change 4. The pool replaces the spawn
+            # workers entirely: one process, `pool_slots` concurrent envs, one
+            # batched forward per round on `config.device`. Imported here, not
+            # at module scope, because `batched_b2b` imports this module's
+            # shared match state and finalizer.
+            from .batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool
+            if config.num_workers > 1:
+                logger.info(
+                    "collector=batched: num_workers=%d is ignored (collection runs in "
+                    "this process against a %d-slot env pool)",
+                    config.num_workers, config.pool_slots)
+            # Same snapshot-bound env_config the process collectors get, so a
+            # pooled lap can never reach the mutable source library path.
+            pool = make_b2b_pool(bridge_env_config, model, config, config.pool_slots)
+        elif config.num_workers > 1:
             # Adversarial round 20, high finding: threads the SNAPSHOT-bound
             # env_config into every worker, never the mutable source path --
             # see `bridge_env_config`'s construction above.
@@ -1938,7 +1960,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 train_state._verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
                                          allow_bridge_mismatch, bridge_drift_warned)
                 iter_seed = base_seed + iteration * config.matches_per_iter
-                if collector is not None:
+                if pool is not None:
+                    batch = collect_b2b_rollouts_batched(
+                        bridge_env_config, model, config, base_seed=iter_seed, pool=pool)
+                elif collector is not None:
                     state = cpu_state_snapshot(model)
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
@@ -2137,6 +2162,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         finally:
             if collector is not None:
                 collector.close()
+            if pool is not None:
+                # Every pool slot holds a live Go env; an exception mid-
+                # collection must not leak them for the rest of the process.
+                pool.close()
         # Adversarial round 19, high finding: sweep any `.stale` files still
         # left over at successful run completion -- e.g. this resume's
         # `--iterations` target stopped short of some iteration numbers that

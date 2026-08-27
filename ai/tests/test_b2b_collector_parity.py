@@ -526,3 +526,132 @@ def test_make_b2b_pool_binds_window_and_oracle():
                                          action_selection="argmax")
     finally:
         pool.close()
+
+
+# --- G0.6: two-iteration training parity ----------------------------------
+#
+# Same recipe, same seeds, both collectors: the batch a collector hands to
+# GAE, the advantages GAE returns, and the weights the run saves must all
+# match. Greedy selection is injected on both sides (sampling draws from
+# different RNG streams by design -- see the spec's "What changes
+# semantically"), and the batched side realigns the GLOBAL torch RNG after
+# collecting: `collect_b2b_rollouts` seeds it once per match as a side
+# effect, and `ppo_update`'s minibatch permutation reads it. That stream is
+# not collector output, so this gate compares the update under an identical
+# permutation rather than treating the side effect as semantics.
+
+import fh_mahjong_ai.train_b2b as train_b2b_wiring  # noqa: E402
+from fh_mahjong_ai.train_b2b import train_b2b  # noqa: E402
+
+from conftest import b2b_model_config, save_champion39  # noqa: E402
+
+PARITY_ITERATIONS = 2
+PARITY_MATCHES = 3
+PARITY_BASE_SEED = 9100
+
+
+def _parity_config(collector, **overrides):
+    return PPOConfig(device="cpu", iterations=PARITY_ITERATIONS,
+                     matches_per_iter=PARITY_MATCHES, ppo_epochs=1, minibatch_size=64,
+                     max_steps_per_episode=GOLDEN_MAX_STEPS, match_mode="chongci",
+                     num_workers=1, collector=collector, pool_slots=2, **overrides)
+
+
+def _greedy_process(env_config, model, config, base_seed):
+    return collect_b2b_rollouts(env_config, model, config, base_seed=base_seed,
+                                action_selection="greedy")
+
+
+def _greedy_batched(inference_mode):
+    def collect(env_config, model, config, base_seed, pool, **kwargs):
+        batch = collect_b2b_rollouts_batched(
+            env_config, model, config, base_seed=base_seed, pool=pool,
+            inference_mode=inference_mode, action_selection="greedy")
+        torch.manual_seed(int(base_seed + config.matches_per_iter - 1))
+        return batch
+    return collect
+
+
+@pytest.fixture(scope="module")
+def parity_champion(tmp_path_factory):
+    """ONE 39ch champion shared by every G0.6 run: a per-run champion would be
+    a different random net, so the runs could never match."""
+    torch.manual_seed(0)
+    _, champion = save_champion39(tmp_path_factory.mktemp("g06_champion"))
+    return champion
+
+
+def _run_training_parity(tmp_path, champion, collector, inference_mode="per_row"):
+    """One two-iteration run; returns (final state_dict, GAE call records)."""
+    env = EnvConfig(bridge_kind="go", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=GOLDEN_MAX_STEPS, match_mode="chongci")
+    gae_calls: list[tuple] = []
+    real_compute_gae = train_b2b_wiring.compute_gae
+
+    def recording_gae(rewards, values, dones, gamma, gae_lambda):
+        advantages, returns = real_compute_gae(rewards, values, dones, gamma, gae_lambda)
+        gae_calls.append((rewards.copy(), values.copy(), dones.copy(),
+                          advantages.copy(), returns.copy()))
+        return advantages, returns
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(train_b2b_wiring, "compute_gae", recording_gae)
+        mp.setattr(train_b2b_wiring, "collect_b2b_rollouts", _greedy_process)
+        mp.setattr(batched_b2b_module, "collect_b2b_rollouts_batched",
+                   _greedy_batched(inference_mode))
+        torch.manual_seed(0)   # deterministic warm-start surgery
+        train_b2b(env, b2b_model_config(), champion, tmp_path / "ckpt",
+                  _parity_config(collector), base_seed=PARITY_BASE_SEED,
+                  train_state_every=0)
+    final = torch.load(tmp_path / "ckpt" / f"iter_{PARITY_ITERATIONS:03d}.pt",
+                       map_location="cpu")["model"]
+    assert len(gae_calls) == PARITY_ITERATIONS
+    return final, gae_calls
+
+
+@pytest.fixture(scope="module")
+def training_parity_process(tmp_path_factory, parity_champion):
+    return _run_training_parity(tmp_path_factory.mktemp("g06_process"),
+                                parity_champion, "process")
+
+
+@pytest.fixture(scope="module")
+def training_parity_batched_per_row(tmp_path_factory, parity_champion):
+    return _run_training_parity(tmp_path_factory.mktemp("g06_per_row"),
+                                parity_champion, "batched", inference_mode="per_row")
+
+
+@pytest.fixture(scope="module")
+def training_parity_batched_mode(tmp_path_factory, parity_champion):
+    return _run_training_parity(tmp_path_factory.mktemp("g06_batched"),
+                                parity_champion, "batched", inference_mode="batched")
+
+
+def test_g0_6_training_parity_per_row_is_byte_equal(training_parity_process,
+                                                    training_parity_batched_per_row):
+    process_state, process_gae = training_parity_process
+    batched_state, batched_gae = training_parity_batched_per_row
+    for i, (p, b) in enumerate(zip(process_gae, batched_gae)):
+        for name, pa, ba in zip(("rewards", "values", "dones", "advantages", "returns"), p, b):
+            assert np.array_equal(pa, ba), f"iteration {i + 1}: {name}"
+    assert process_state.keys() == batched_state.keys()
+    for key, tensor in process_state.items():
+        assert torch.equal(tensor, batched_state[key]), key
+    # The run must actually have trained: iteration 2's weights differ from
+    # iteration 1's inputs, so byte-equality above is not vacuous.
+    assert not np.array_equal(process_gae[0][3], process_gae[1][3])
+
+
+def test_g0_6_training_parity_batched_mode_within_tolerance(training_parity_process,
+                                                            training_parity_batched_mode):
+    process_state, process_gae = training_parity_process
+    batched_state, batched_gae = training_parity_batched_mode
+    for i, (p, b) in enumerate(zip(process_gae, batched_gae)):
+        # Rewards and dones are discrete facts about the match; only the
+        # value estimates (and hence advantages/returns) may move.
+        assert np.array_equal(p[0], b[0]), f"iteration {i + 1}: rewards"
+        assert np.array_equal(p[2], b[2]), f"iteration {i + 1}: dones"
+        for name, pa, ba in zip(("values", "advantages", "returns"), p[1:2] + p[3:], b[1:2] + b[3:]):
+            assert np.allclose(pa, ba, atol=1e-5), f"iteration {i + 1}: {name}"
+    for key, tensor in process_state.items():
+        assert torch.allclose(tensor, batched_state[key], atol=1e-5), key

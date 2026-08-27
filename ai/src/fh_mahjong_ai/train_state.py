@@ -354,27 +354,49 @@ _RESUME_IGNORED_FIELDS = {
     ("ppo_config", "iterations"),
 }
 
-# "num_workers" changes are logged rather than rejected: it only controls how
-# collection work is sharded across worker processes, not the recipe itself.
-# Per-match seeding makes trajectories worker-count-invariant -- proven by
-# fh-mj-collect-bench's digest equality across 5/10/20 workers, which is that
-# tool's entire purpose. So resuming a run at a different worker count (e.g.
-# dropping from 20 to 10 to fit a smaller box after an OOM) is a legitimate
-# operational adjustment, not a silent recipe drift, and must not block
+# Resource-shaped fields are logged rather than rejected: they control how
+# collection work is sharded across processes or slots, not the recipe
+# itself, so resuming at a different count (e.g. dropping from 20 workers to
+# 10 to fit a smaller box after an OOM) is a legitimate operational
+# adjustment, not a silent recipe drift, and must not block
 # --resume-from-state the way every other field does.
+#
+# Maps each logged-not-rejected field to the reason it is safe to change on
+# resume; the reason goes into the notice so a lap's log says WHY it was
+# allowed through. `collector` is deliberately absent: switching collectors
+# changes the action-RNG mapping (the process collector samples from the
+# global torch RNG seeded per match, the batched one from a per-match numpy
+# RNG), so it is rejected like any other recipe field.
 _RESUME_LOGGED_FIELDS = {
-    ("ppo_config", "num_workers"),
+    ("ppo_config", "num_workers"):
+        "worker count is semantics-neutral for collection (per-match seeding "
+        "makes trajectories worker-count-invariant, proven by "
+        "fh-mj-collect-bench's digest equality across 5/10/20 workers)",
     # Same category as num_workers: collect_dispatch_chunk only bounds how
     # many matches are in flight per dispatch round, and chunk-parity digest
     # tests prove trajectories are chunk-invariant. Lowering it on resume
     # after an OOM is a legitimate operational adjustment, not recipe drift.
-    ("ppo_config", "collect_dispatch_chunk"),
+    ("ppo_config", "collect_dispatch_chunk"):
+        "dispatch chunking only bounds how many matches are in flight per "
+        "round; trajectories are chunk-invariant (fh-mj-collect-bench "
+        "--dispatch-chunk digest equality)",
     # Amendment 5: minibatch_device_transfer changes only WHERE rollout
     # tensors live between optimizer steps (host vs update device), not any
     # value, permutation, or update — bit-parity pinned by test_ppo's
     # path-equivalence tests and the on-box gauntlet. Toggling it on resume
     # (e.g. to fit a card) is operational, not recipe drift.
-    ("ppo_config", "minibatch_device_transfer"),
+    ("ppo_config", "minibatch_device_transfer"):
+        "minibatch device transfer changes only where rollout tensors live "
+        "between optimizer steps, not any value, permutation, or update",
+    # batched-b2b-collector spec change 4: pool_slots is the batched
+    # collector's analogue of num_workers -- it bounds how many matches are
+    # in flight, and per-match numpy RNGs make trajectories slot-count-
+    # invariant (G0.2). Logged only WITHIN an already-batched lineage: the
+    # `collector` field itself is rejected-on-change, so a resume can never
+    # arrive here having also switched collectors.
+    ("ppo_config", "pool_slots"):
+        "env-pool slot count is semantics-neutral for collection (per-match "
+        "RNG makes trajectories slot-count-invariant, gate G0.2)",
 }
 
 # Adversarial round 1 (high): a new field with a dataclass default (e.g.
@@ -424,6 +446,11 @@ _LEGACY_ECHO_ADDITIONS = {
         "placement_bonus_calibration_digest", # idem
         "head_lr",                            # absent before mortal-scale-scratch Amendment 1 §6 (2026-08-25)
         "head_lr_iters",                      # idem
+        # absent from every train_state.pt saved before batched-b2b-collector
+        # (2026-08-26); a legacy echo therefore reads as collector="process"
+        # with the default slot count, which is exactly what those runs were.
+        "collector",
+        "pool_slots",
     },
 }
 
@@ -480,9 +507,10 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     was saved under. Resuming under a different recipe (a changed lr, event
     window, ...) silently corrupts the run (e.g. an optimizer whose momentum
     was tuned for a different lr), so any drift is an error, not a warning —
-    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and
-    `ppo_config.num_workers` (see `_RESUME_LOGGED_FIELDS`), which is logged
-    instead of raised."""
+    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and the
+    resource-shaped fields in `_RESUME_LOGGED_FIELDS` (num_workers,
+    collect_dispatch_chunk, minibatch_device_transfer, pool_slots), which are
+    logged with their reason instead of raised."""
     for section in ("ppo_config", "model_config", "env_config"):
         current_section = current[section]
         saved_section = _fill_legacy_echo_defaults(section, current_section, saved[section])
@@ -496,12 +524,9 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
                 if (section, key) in _RESUME_LOGGED_FIELDS:
                     logger.info(
                         "--resume-from-state: %s.%s changed (state file has %r, "
-                        "currently-supplied config has %r) -- proceeding: "
-                        "worker count is semantics-neutral for collection "
-                        "(per-match seeding makes trajectories worker-count-"
-                        "invariant, proven by fh-mj-collect-bench's digest "
-                        "equality across 5/10/20 workers)",
+                        "currently-supplied config has %r) -- proceeding: %s",
                         section, key, saved_value, current_value,
+                        _RESUME_LOGGED_FIELDS[(section, key)],
                     )
                     continue
                 raise ValueError(

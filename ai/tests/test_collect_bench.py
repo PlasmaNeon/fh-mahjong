@@ -426,10 +426,19 @@ def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
     champion = _champion(tmp_path)
     fake_report = {
         "results": {
-            1: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "aaa"},
-            2: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "bbb"},
+            1: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "aaa",
+                "semantic_digest": "aaa-sem"},
+            2: {"startup_seconds": 0.0, "steady_seconds": 0.0, "digest": "bbb",
+                "semantic_digest": "bbb-sem"},
         },
         "all_digests_equal": False,
+        "semantic_digests_equal": False,
+        "float_fields_within_tolerance": True,
+        "semantics_equal": False,
+        "max_float_diff": 0.0,
+        "exact_invariance_expected": True,
+        "inference_mode": None,
+        "collector": "process",
         "model_config": ModelConfig(**SMALL_MODEL, event_window=8),
     }
     monkeypatch.setattr(collect_bench, "run_bench", lambda **kwargs: fake_report)
@@ -478,3 +487,291 @@ def test_digest_covers_match_telemetry():
     d1 = _digest_batch(0, 1, mk([{"seed": 0, "bonus": [0.1, 0, 0, -0.1]}]))
     d2 = _digest_batch(0, 1, mk([{"seed": 0, "bonus": [0.2, 0, 0, -0.2]}]))
     assert len({d0, d1, d2}) == 3
+
+
+# ---------------------------------------------------------------------------
+# batched-b2b-collector: --collector batched
+# ---------------------------------------------------------------------------
+
+
+def _batched_kwargs(tmp_path, slots, **overrides):
+    kwargs = _bench_kwargs(tmp_path, None)
+    kwargs.update(collector="batched", pool_slots=slots, **overrides)
+    return kwargs
+
+
+def test_batched_collector_digest_is_slot_count_invariant(tmp_path):
+    """Per-row inference removes batch composition from the floats, so the
+    FULL digest must be byte-equal across slot counts (G0.2's property, run
+    through the bench's own machinery)."""
+    report = collect_bench.run_bench(**_batched_kwargs(tmp_path, [1, 3],
+                                                       inference_mode="per_row"))
+    assert report["all_digests_equal"] is True
+    assert report["semantics_equal"] is True
+    assert report["exact_invariance_expected"] is True
+    assert report["collector"] == "batched"
+    assert report["inference_mode"] == "per_row"
+    assert sorted(report["results"]) == [1, 3]
+
+
+def test_batched_mode_is_semantically_slot_invariant(tmp_path):
+    """Production inference: every discrete field, reward, label and telemetry
+    row stays byte-equal across slot counts; only old_logprobs/values move,
+    and only at float32 rounding. `exact_invariance_expected` says so, and the
+    semantic digest is what the gate then reads. The tiny test net also stays
+    inside the reported tolerance — the production net does not, which is why
+    that number is measurement rather than a gate."""
+    report = collect_bench.run_bench(**_batched_kwargs(tmp_path, [1, 3],
+                                                       inference_mode="batched"))
+    assert report["exact_invariance_expected"] is False
+    assert report["semantic_digests_equal"] is True
+    assert report["semantics_equal"] is True
+    assert report["float_fields_within_tolerance"] is True
+    assert report["float_allclose_violations"] == 0
+    assert report["max_float_diff"] < 1e-5
+
+
+def test_float_delta_outside_tolerance_is_reported_not_gated(tmp_path, monkeypatch, capsys):
+    """A float spread beyond atol/rtol must be printed and must NOT fail the
+    run: batched-forward rounding scales with architecture (the anchor075 net
+    exceeds it on CPU), while a real orchestration bug moves the semantic
+    digest, which still gates."""
+    champion = _champion(tmp_path)
+    fake_report = {
+        "results": {
+            8: {"startup_seconds": 0.0, "steady_seconds": 0.0,
+                "digest": "aaa", "semantic_digest": "same"},
+            32: {"startup_seconds": 0.0, "steady_seconds": 0.0,
+                 "digest": "bbb", "semantic_digest": "same"},
+        },
+        "all_digests_equal": False,
+        "semantic_digests_equal": True,
+        "float_fields_within_tolerance": False,
+        "float_allclose_violations": 6,
+        "semantics_equal": True,
+        "max_float_diff": 3.958e-05,
+        "exact_invariance_expected": False,
+        "collector": "batched",
+        "inference_mode": "batched",
+        "model_config": ModelConfig(**SMALL_MODEL, event_window=8),
+    }
+    monkeypatch.setattr(collect_bench, "run_bench", lambda **kwargs: fake_report)
+    monkeypatch.setattr(sys, "argv", [
+        "fh-mj-collect-bench", "--champion", str(champion),
+        "--collector", "batched", "--pool-slots", "8,32",
+        "--matches", "32", "--bridge-kind", "mock", "--event-window", "8",
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "all_digests_equal: False" in out
+    assert "semantic_digests_equal: True" in out
+    assert "float_delta (reported, not gated)" in out
+    assert "3.958e-05" in out and "6" in out
+    assert "semantics_equal: True" in out
+
+
+def test_differing_semantic_digest_still_fails_the_batched_run(tmp_path, monkeypatch, capsys):
+    champion = _champion(tmp_path)
+    fake_report = {
+        "results": {
+            8: {"startup_seconds": 0.0, "steady_seconds": 0.0,
+                "digest": "aaa", "semantic_digest": "sem-a"},
+            32: {"startup_seconds": 0.0, "steady_seconds": 0.0,
+                 "digest": "bbb", "semantic_digest": "sem-b"},
+        },
+        "all_digests_equal": False,
+        "semantic_digests_equal": False,
+        "float_fields_within_tolerance": True,
+        "float_allclose_violations": 0,
+        "semantics_equal": False,
+        "max_float_diff": 0.0,
+        "exact_invariance_expected": False,
+        "collector": "batched",
+        "inference_mode": "batched",
+        "model_config": ModelConfig(**SMALL_MODEL, event_window=8),
+    }
+    monkeypatch.setattr(collect_bench, "run_bench", lambda **kwargs: fake_report)
+    monkeypatch.setattr(sys, "argv", [
+        "fh-mj-collect-bench", "--champion", str(champion),
+        "--collector", "batched", "--pool-slots", "8,32",
+        "--matches", "32", "--bridge-kind", "mock", "--event-window", "8",
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "semantics_equal: False" in out
+    assert "pool_slots=[8]" in out and "pool_slots=[32]" in out
+
+
+def test_semantic_digest_ignores_only_the_two_float_fields():
+    batch = _minimal_batch()
+    full = collect_bench._digest_batch(100, 1, batch)
+    semantic = collect_bench._semantic_digest_batch(100, 1, batch)
+    assert full != semantic
+
+    perturbed = _minimal_batch()
+    perturbed.old_logprobs = perturbed.old_logprobs + 1.0
+    assert collect_bench._digest_batch(100, 1, perturbed) != full
+    assert collect_bench._semantic_digest_batch(100, 1, perturbed) == semantic
+
+    perturbed = _minimal_batch()
+    perturbed.actions = perturbed.actions + 1
+    assert collect_bench._semantic_digest_batch(100, 1, perturbed) != semantic
+
+    perturbed = _minimal_batch()
+    perturbed.rewards = perturbed.rewards + 1.0
+    assert collect_bench._semantic_digest_batch(100, 1, perturbed) != semantic
+
+
+def test_batched_bench_reuses_one_pool_for_warmup_and_steady(tmp_path, monkeypatch):
+    """One persistent pool per slot count, two collections through it, closed
+    exactly once — the batched analogue of the persistent-collector check."""
+    events = []
+    real_make_pool = collect_bench.make_b2b_pool
+    real_collect = collect_bench.collect_b2b_rollouts_batched
+
+    def spy_make_pool(env_config, model, config, slots):
+        pool = real_make_pool(env_config, model, config, slots)
+        events.append(("make_pool", slots))
+        real_close = pool.close
+        pool.close = lambda: (events.append(("close", slots)), real_close())[1]
+        return pool
+
+    def spy_collect(env_config, model, config, base_seed, pool, **kwargs):
+        events.append(("collect", base_seed, config.matches_per_iter, pool.slots))
+        return real_collect(env_config, model, config, base_seed=base_seed, pool=pool, **kwargs)
+
+    monkeypatch.setattr(collect_bench, "make_b2b_pool", spy_make_pool)
+    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched", spy_collect)
+    collect_bench.run_bench(**_batched_kwargs(tmp_path, [2], inference_mode="per_row"))
+    assert events == [
+        ("make_pool", 2),
+        ("collect", 100, 4, 2),
+        ("collect", 100, 4, 2),
+        ("close", 2),
+    ]
+
+
+def test_batched_bench_closes_the_pool_when_collection_raises(tmp_path, monkeypatch):
+    closed = []
+    real_make_pool = collect_bench.make_b2b_pool
+
+    def spy_make_pool(env_config, model, config, slots):
+        pool = real_make_pool(env_config, model, config, slots)
+        real_close = pool.close
+        pool.close = lambda: (closed.append(slots), real_close())[1]
+        return pool
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("collection blew up")
+
+    monkeypatch.setattr(collect_bench, "make_b2b_pool", spy_make_pool)
+    monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched", boom)
+    with pytest.raises(RuntimeError, match="collection blew up"):
+        collect_bench.run_bench(**_batched_kwargs(tmp_path, [2]))
+    assert closed == [2]
+
+
+def test_batched_full_cycle_reports_collector_slots_and_collection_cuda_peak(tmp_path):
+    report = collect_bench.run_bench(**_batched_kwargs(tmp_path, [2, 8],
+                                                       inference_mode="per_row"),
+                                     full_cycle=_full_cycle_settings())
+    assert report["all_digests_equal"] is True
+    assert report["rows_and_labels_equal"] is True
+    for slots, fc in ((2, report["results"][2]["full_cycle"]),
+                      (8, report["results"][8]["full_cycle"])):
+        assert fc["collector"] == "batched"
+        assert fc["pool_slots"] == slots
+        # matches=4, so an 8-slot pool only ever activates 4 slots.
+        assert fc["effective_slots"] == min(slots, 4)
+        assert fc["host_peak_rss_bytes"] > 0
+        # CPU collection and CPU update: no CUDA numbers on either phase.
+        assert fc["cuda_peak_collect_allocated_bytes"] is None
+        assert fc["cuda_peak_collect_reserved_bytes"] is None
+        assert fc["cuda_peak_allocated_bytes"] is None
+
+
+def test_process_full_cycle_reports_no_pool_fields(tmp_path):
+    report = collect_bench.run_bench(**_bench_kwargs(tmp_path, [1]),
+                                     full_cycle=_full_cycle_settings())
+    fc = report["results"][1]["full_cycle"]
+    assert fc["collector"] == "process"
+    assert fc["pool_slots"] is None and fc["effective_slots"] is None
+    assert report["inference_mode"] is None
+
+
+def test_run_bench_rejects_missing_and_unknown_counts(tmp_path):
+    with pytest.raises(ValueError, match="pool-slots"):
+        collect_bench.run_bench(**_batched_kwargs(tmp_path, []))
+    with pytest.raises(ValueError, match="workers"):
+        collect_bench.run_bench(**_bench_kwargs(tmp_path, []))
+    with pytest.raises(ValueError, match="unknown collector"):
+        collect_bench.run_bench(**_bench_kwargs(tmp_path, [1]), collector="threads")
+
+
+def _run_batched_cli(tmp_path, extra_args):
+    champion = _champion(tmp_path)
+    args = [
+        sys.executable, "-m", "fh_mahjong_ai.scripts.collect_bench",
+        "--champion", str(champion),
+        "--collector", "batched",
+        "--matches", "4",
+        "--base-seed", "100",
+        "--match-mode", "classic",
+        "--bridge-kind", "mock",
+        "--device", "cpu",
+        "--max-steps-per-episode", "16",
+        "--event-window", "8",
+        "--model-channels", "16",
+        "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32",
+        "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32",
+        "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ] + extra_args
+    return subprocess.run(args, capture_output=True, text=True)
+
+
+def test_batched_cli_exits_zero_and_prints_semantic_gate(tmp_path):
+    result = _run_batched_cli(tmp_path, ["--pool-slots", "1,3"])
+    assert result.returncode == 0, result.stderr
+    assert "pool_slots" in result.stdout
+    assert "semantic_digests_equal: True" in result.stdout
+    assert "semantics_equal: True" in result.stdout
+
+
+def test_batched_cli_per_row_prints_exact_digest_gate(tmp_path):
+    result = _run_batched_cli(tmp_path, ["--pool-slots", "1,3",
+                                         "--inference-mode", "per_row"])
+    assert result.returncode == 0, result.stderr
+    assert "all_digests_equal: True" in result.stdout
+    assert "semantics_equal" not in result.stdout  # exact gate, not the tolerant one
+
+
+def test_batched_cli_full_cycle_prints_effective_slots(tmp_path):
+    result = _run_batched_cli(tmp_path, [
+        "--pool-slots", "8", "--full-cycle", "--minibatch-size", "8",
+        "--ppo-epochs", "1", "--ppo-device", "cpu",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert "eff_slots" in result.stdout
+    assert "rows_and_labels_equal: True" in result.stdout
+
+
+def test_cli_rejects_mismatched_collector_and_count_flags(tmp_path):
+    missing = _run_batched_cli(tmp_path, [])
+    assert missing.returncode == 2
+    assert "--pool-slots" in missing.stderr
+
+    champion = _champion(tmp_path)
+    crossed = subprocess.run([
+        sys.executable, "-m", "fh_mahjong_ai.scripts.collect_bench",
+        "--champion", str(champion), "--workers", "1", "--pool-slots", "4",
+        "--matches", "4", "--bridge-kind", "mock", "--event-window", "8",
+    ], capture_output=True, text=True)
+    assert crossed.returncode == 2
+    assert "--collector batched" in crossed.stderr
