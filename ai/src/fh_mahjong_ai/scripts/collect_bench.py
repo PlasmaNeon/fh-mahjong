@@ -20,26 +20,39 @@ spawn-time model construction, state-dict transfer, queues, seed-block
 splitting, result ordering, worker reuse, and lifecycle cleanup while keeping
 the model weights and match seeds fixed.
 
-`--full-cycle` (data-scale-960 Stage 0 preflight) extends each worker-count
-phase into a complete training iteration: after the steady collection round it
-runs GAE + one real `ppo_update` on a fresh copy of the warm-started model
-(fresh optimizer, fixed `--update-seed`, so the update is identical across
-worker counts given a digest-equal batch), and measures what the spec's
-go/no-go needs — host peak RSS across the whole collect+update phase, CUDA
-peak allocation/reservation, transition rows, optimizer steps, collection
-throughput, aux label coverage, truncation, KL, and clip fraction — plus an
-explicit rows/labels worker-count-invariance check on top of the digest gate.
+`--full-cycle` models the trainer's LIFETIME, not one iteration: after the
+excluded warmup collection each count runs three consecutive collect + GAE +
+`ppo_update` cycles over three consecutive seed blocks, against ONE persistent
+model and optimizer (the process arm re-snapshots the updated model for each
+cycle exactly as `train_b2b` does). Allocator retention and optimizer-state
+growth across the iteration boundary are what those three cycles exist to
+measure — a fresh deep copy per cycle would measure neither. Per cycle it
+reports host peak RSS, CUDA allocated AND reserved peaks split between
+collection and update, transition rows, optimizer steps, collection
+throughput, aux label coverage, truncation, KL, and clip fraction, plus an
+explicit rows/labels count-invariance check on top of the digest gate.
 `ppo_update` moves the ENTIRE rollout onto the update device, so this is the
 memory-honest preflight for raising matches_per_iter (collection-only numbers
-under-measure both host RAM and CUDA peak). CUDA peaks are reported
-separately for collection and for the update: the collection peak is
+under-measure both host RAM and CUDA peak). The collection CUDA peak is
 snapshotted before the update's `reset_peak_memory_stats()` erases it.
 
 `--collector batched` benches the pool collector
 (`batched_b2b.collect_b2b_rollouts_batched`) instead: one process, one
-persistent `--pool-slots` env pool reused for the warmup and steady rounds,
-one batched forward per round on `--device`. The invariance question is then
-slot count rather than worker count, and `--pool-slots` replaces `--workers`.
+persistent env pool reused for the warmup, every measured cycle and the float
+gate, one batched forward per round on `--device`. `--pool-slots` replaces
+`--workers`, and the three slot numbers stay distinct: requested (the flag),
+allocated (`min(requested, --matches)`, what the pool constructs) and
+effective-live (slots that held a match during a round).
+
+Under `--inference-mode batched` the timed sweep is SAMPLED production
+inference and is throughput-only: one float32 rounding difference can flip an
+action and diverge a match, so digests are not compared across slot counts.
+The exactness gate there is `float_gate` (spec G0.1b), which runs GREEDY —
+a `per_row` greedy reference plus one greedy candidate per slot count,
+compared per field against two-part (p99.9 and max) absolute ceilings, with
+the greedy semantic digest required to match byte for byte. `--calibrate`
+runs the spec's fixed three-repeat greedy block and prints the
+`--float-ceiling` flags for a validation run on a disjoint seed block.
 """
 from __future__ import annotations
 
@@ -136,33 +149,76 @@ _ROLLOUT_TOLERANT_FIELDS = ("old_logprobs", "values")
 _FLOAT_INVARIANCE_TOL = dict(atol=1e-6, rtol=1e-5)
 
 # Gate G0.1b: with `--collector batched --inference-mode batched` every slot
-# count's steady batch is compared FIELD BY FIELD against a `per_row`
-# reference collected on the same seeds from the same weights (per_row is
-# byte-identical to the process collector under greedy selection, G0.1, and
-# slot-count invariant). Absolute ceilings on max |delta| -- relative error is
-# unstable near 0 -- pre-registered per device class; a violation exits 1.
+# count is collected GREEDILY and compared FIELD BY FIELD against a greedy
+# `per_row` reference collected on the same seeds from the same weights.
+#
+# The gate runs greedy, never sampled. Under sampling a ~4e-5 logit
+# perturbation flips an action with probability ~|delta p| per decision; one
+# flip diverges the rest of that match, the row counts stop matching and the
+# comparison degenerates into `shape_mismatch`. At the G1 row count (~650k
+# rows per cycle) that is a structural coin flip, not a signal.
+#
+# The reference is the `per_row` batched run, not the process collector:
+# `ParallelB2bCollector` has no greedy path at all, and G0.1
+# (`test_b2b_collector_parity.py`) proves greedy `per_row` byte-identical to
+# `collect_b2b_rollouts`. The process collector is therefore covered by
+# transitivity, not skipped.
+#
+# Each ceiling is TWO-PART -- a quantile and a cap -- because max |delta| is an
+# extreme-value statistic that grows with row count and with trunk width and
+# depth, so a single-max ceiling would be breached by measurement scale rather
+# than by a defect. Both parts must hold; the spec forbids widening either
+# after the fact. Absolute, not relative: relative error is unstable near 0.
 # The legacy atol/rtol count is printed as a diagnostic only.
 _FLOAT_GATE_FIELDS = ("legal_logits", "old_logprobs", "values")
+_FLOAT_GATE_PARTS = ("p99_9", "max")
 _FLOAT_GATE_CEILINGS = {
-    "cpu": {"legal_logits": 5e-5, "old_logprobs": 5e-5, "values": 5e-6},
-    # Caps for the CUDA calibration procedure (spec G0.1b): an operational
-    # threshold may be set BELOW these via --float-ceiling, never above.
-    "cuda": {"legal_logits": 1e-4, "old_logprobs": 1e-4, "values": 1e-5},
+    "cpu": {
+        "legal_logits": {"p99_9": 1e-5, "max": 2e-4},
+        "old_logprobs": {"p99_9": 1e-5, "max": 2e-4},
+        "values": {"p99_9": 1e-6, "max": 2e-5},
+    },
+    # CUDA caps for the calibration procedure (spec G0.1b), pre-registered
+    # before any CUDA number was seen: one number per field (logits and
+    # logprobs 1e-4, values 1e-5), applied as the cap on BOTH parts. The
+    # operational threshold comes from `--calibrate` (2x the three-repeat
+    # calibration statistic, capped here) and is always far tighter on the
+    # quantile part; `--float-ceiling` may set a threshold BELOW these, never
+    # above.
+    "cuda": {
+        "legal_logits": {"p99_9": 1e-4, "max": 1e-4},
+        "old_logprobs": {"p99_9": 1e-4, "max": 1e-4},
+        "values": {"p99_9": 1e-5, "max": 1e-5},
+    },
 }
 _FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"))
 
+GATE_REFERENCE_NOTE = (
+    "the greedy per_row batched run is the reference because ParallelB2bCollector has "
+    "no greedy path; G0.1 (test_b2b_collector_parity.py) proves greedy per_row "
+    "byte-identical to collect_b2b_rollouts, so the process collector is covered by "
+    "transitivity and was NOT skipped")
+
 
 def float_gate_ceilings(device: str, overrides: Optional[dict] = None) -> dict:
-    """Per-field ceilings for `device` (cpu vs cuda caps). `overrides` may
-    only TIGHTEN a field below its cap."""
-    caps = dict(_FLOAT_GATE_CEILINGS["cuda" if str(device).startswith("cuda") else "cpu"])
-    for name, value in (overrides or {}).items():
+    """Two-part per-field ceilings for `device` (cpu vs cuda caps), shaped
+    `{field: {"p99_9": float, "max": float}}`. `overrides` has the same shape
+    and may only TIGHTEN a part below its cap."""
+    caps = {name: dict(parts) for name, parts
+            in _FLOAT_GATE_CEILINGS["cuda" if str(device).startswith("cuda") else "cpu"].items()}
+    for name, parts in (overrides or {}).items():
         if name not in caps:
             raise ValueError(f"unknown float-gate field {name!r} (expected one of {_FLOAT_GATE_FIELDS})")
-        if float(value) > caps[name]:
-            raise ValueError(
-                f"float-gate ceiling for {name} may not exceed its cap: {value} > {caps[name]}")
-        caps[name] = float(value)
+        for part, value in parts.items():
+            if part not in _FLOAT_GATE_PARTS:
+                raise ValueError(
+                    f"unknown float-gate ceiling part {part!r} for {name} "
+                    f"(expected one of {_FLOAT_GATE_PARTS})")
+            if float(value) > caps[name][part]:
+                raise ValueError(
+                    f"float-gate ceiling for {name}.{part} may not exceed its cap: "
+                    f"{value} > {caps[name][part]}")
+            caps[name][part] = float(value)
     return caps
 
 
@@ -195,17 +251,22 @@ def float_gate_arrays(batch, logits: np.ndarray) -> dict:
     }
 
 
-def float_field_stats(reference: np.ndarray, current: np.ndarray, ceiling: float) -> dict:
-    """Per-field comparison record for one (reference, candidate) pair."""
+def float_field_stats(reference: np.ndarray, current: np.ndarray, ceiling: dict) -> dict:
+    """Per-field comparison record for one (reference, candidate) pair.
+
+    `ceiling` is the two-part bound `{"p99_9": float, "max": float}`. BOTH
+    parts gate: `passed` requires zero non-finite elements, zero elements
+    beyond the max cap, and a p99.9 |delta| within the quantile bound."""
     reference = np.asarray(reference, dtype=np.float64)
     current = np.asarray(current, dtype=np.float64)
     nonfinite = int((~np.isfinite(reference)).sum() + (~np.isfinite(current)).sum())
-    out = {"ceiling": float(ceiling), "element_count": int(current.size),
+    ceiling = {part: float(ceiling[part]) for part in _FLOAT_GATE_PARTS}
+    out = {"ceiling": ceiling, "element_count": int(current.size),
            "reference_count": int(reference.size), "nonfinite_count": nonfinite,
            "shape_mismatch": reference.shape != current.shape}
     if out["shape_mismatch"]:
         out.update(mismatch_count=None, max_abs_diff=None, beyond_legacy_tol=None,
-                   beyond_ceiling=None, passed=False,
+                   beyond_ceiling=None, p99_9_within_ceiling=False, passed=False,
                    **{label: None for _, label in _FLOAT_GATE_PERCENTILES})
         return out
     diff = np.abs(reference - current)
@@ -222,9 +283,11 @@ def float_field_stats(reference: np.ndarray, current: np.ndarray, ceiling: float
     out.update(mismatch_count=int((d > 0).sum()) + bad,
                max_abs_diff=max_abs,
                beyond_legacy_tol=int((d > legacy[finite]).sum()) + bad,
-               beyond_ceiling=int((d > ceiling).sum()) + bad,
+               beyond_ceiling=int((d > ceiling["max"]).sum()) + bad,
                **pct)
-    out["passed"] = nonfinite == 0 and out["beyond_ceiling"] == 0
+    out["p99_9_within_ceiling"] = bool(pct["p99_9"] <= ceiling["p99_9"])
+    out["passed"] = (nonfinite == 0 and out["beyond_ceiling"] == 0
+                     and out["p99_9_within_ceiling"])
     return out
 
 
@@ -233,31 +296,117 @@ def compare_float_fields(reference: dict, current: dict, ceilings: dict) -> dict
             for name in _FLOAT_GATE_FIELDS}
 
 
+_STAT_MAX_KEYS = ("element_count", "reference_count", "nonfinite_count", "mismatch_count",
+                  "beyond_legacy_tol", "beyond_ceiling", "max_abs_diff",
+                  "p50", "p95", "p99", "p99_9")
+
+
+def worst_over_repeats(per_repeat: list[dict], ceilings: dict) -> dict:
+    """Per field, the WORST value each statistic takes across repeats.
+
+    This is the "calibration maximum" of spec G0.1b's CUDA procedure (three
+    greedy repeats), and for the ordinary one-repeat gate it is that repeat's
+    record unchanged. `passed` is the conjunction, so any failing repeat fails
+    the field."""
+    if not per_repeat:
+        raise ValueError("worst_over_repeats needs at least one repeat")
+    out: dict = {}
+    for name in _FLOAT_GATE_FIELDS:
+        stats = [rep[name] for rep in per_repeat]
+        if any(st["shape_mismatch"] for st in stats):
+            worst = dict(stats[0])
+            worst.update(shape_mismatch=True, passed=False, p99_9_within_ceiling=False,
+                         mismatch_count=None, max_abs_diff=None, beyond_legacy_tol=None,
+                         beyond_ceiling=None,
+                         **{label: None for _, label in _FLOAT_GATE_PERCENTILES})
+            out[name] = worst
+            continue
+        worst = {"ceiling": {part: float(ceilings[name][part]) for part in _FLOAT_GATE_PARTS},
+                 "shape_mismatch": False,
+                 "passed": all(st["passed"] for st in stats),
+                 "p99_9_within_ceiling": all(st["p99_9_within_ceiling"] for st in stats)}
+        for key in _STAT_MAX_KEYS:
+            worst[key] = max(st[key] for st in stats)
+        out[name] = worst
+    return out
+
+
 def _format_float_stats(label: str, name: str, st: dict) -> str:
     if st["shape_mismatch"]:
         return (f"  {label} {name}: SHAPE MISMATCH reference={st['reference_count']} "
                 f"current={st['element_count']} FAIL")
+    ceiling = st["ceiling"]
     return (f"  {label} {name}: n={st['element_count']} nonfinite={st['nonfinite_count']} "
             f"mismatch={st['mismatch_count']} p50={st['p50']:.3e} p95={st['p95']:.3e} "
             f"p99={st['p99']:.3e} p99.9={st['p99_9']:.3e} max={st['max_abs_diff']:.3e} "
             f">legacy(atol={_FLOAT_INVARIANCE_TOL['atol']},rtol={_FLOAT_INVARIANCE_TOL['rtol']})="
-            f"{st['beyond_legacy_tol']} >ceiling({st['ceiling']:.1e})={st['beyond_ceiling']} "
+            f"{st['beyond_legacy_tol']} "
+            f"ceiling(p99.9={ceiling['p99_9']:.1e},max={ceiling['max']:.1e}) "
+            f">max_ceiling={st['beyond_ceiling']} "
+            f"p99.9_ok={st['p99_9_within_ceiling']} "
             f"{'PASS' if st['passed'] else 'FAIL'}")
 
 
 def _float_gate_violations(label: str, stats: dict) -> list[str]:
+    """Every way a field can fail its two-part bound. Both parts are checked;
+    passing one never excuses the other."""
     out = []
     for name in _FLOAT_GATE_FIELDS:
         st = stats[name]
         if st["shape_mismatch"]:
-            out.append(f"{label} field={name}: shape mismatch against the per_row reference")
+            out.append(f"{label} field={name}: shape mismatch against the greedy per_row "
+                       "reference (row counts diverged)")
             continue
         if st["nonfinite_count"]:
             out.append(f"{label} field={name}: {st['nonfinite_count']} non-finite element(s)")
         if st["beyond_ceiling"]:
             out.append(f"{label} field={name}: max_abs_diff={st['max_abs_diff']:.3e} > "
-                       f"ceiling {st['ceiling']:.1e} ({st['beyond_ceiling']} element(s))")
+                       f"max ceiling {st['ceiling']['max']:.1e} "
+                       f"({st['beyond_ceiling']} element(s))")
+        if not st["p99_9_within_ceiling"]:
+            out.append(f"{label} field={name}: p99.9={st['p99_9']:.3e} > "
+                       f"p99.9 ceiling {st['ceiling']['p99_9']:.1e}")
     return out
+
+
+def calibration_thresholds(fields: dict, ceilings: dict) -> tuple[dict, list[str]]:
+    """Operational two-part thresholds from a calibration block: 2x the
+    calibration statistic per part, capped by the registered ceiling
+    (spec G0.1b's CUDA procedure). A calibration statistic ABOVE its registered
+    cap stops the work — the cap is never widened afterwards, so that case is
+    returned as a violation rather than absorbed."""
+    thresholds: dict = {}
+    violations: list[str] = []
+    for name in _FLOAT_GATE_FIELDS:
+        st = fields[name]
+        thresholds[name] = {}
+        if st["shape_mismatch"]:
+            violations.append(f"calibration field={name}: shape mismatch — no threshold derivable")
+            continue
+        if st["nonfinite_count"]:
+            violations.append(
+                f"calibration field={name}: {st['nonfinite_count']} non-finite element(s)")
+        for part in _FLOAT_GATE_PARTS:
+            observed = float(st["max_abs_diff"] if part == "max" else st[part])
+            cap = float(ceilings[name][part])
+            if observed > cap:
+                violations.append(
+                    f"calibration {name}.{part}={observed:.3e} exceeds the registered cap "
+                    f"{cap:.1e} — stop; the cap is never widened")
+            thresholds[name][part] = min(2.0 * observed, cap)
+    return thresholds, violations
+
+
+def format_ceiling_flags(thresholds: dict) -> list[str]:
+    """The `--float-ceiling` flags that feed `thresholds` straight back into a
+    validation run, so nobody hand-derives them."""
+    flags = []
+    for name in _FLOAT_GATE_FIELDS:
+        for part in _FLOAT_GATE_PARTS:
+            value = thresholds.get(name, {}).get(part)
+            if value is not None:
+                flags.append(f"--float-ceiling {name}.{part}={value:.6e}")
+    return flags
 
 
 def _digest_batch(base_seed: int, matches: int, batch, exclude: tuple[str, ...] = ()) -> str:
@@ -318,6 +467,98 @@ def _float_field_diff(reference: dict, current: dict) -> Optional[float]:
         if a.size:
             worst = max(worst, float(np.abs(a - b).max()))
     return worst
+
+
+def allocated_slots(requested: int, matches: int) -> int:
+    """The slot count the pool actually CONSTRUCTS: `min(requested, matches)`.
+
+    Three slot numbers are distinct and all three are reported (spec change 3):
+    **requested** (`--pool-slots`), **allocated** (this — slots beyond the match
+    count never receive a command, so allocating them would charge memory and
+    env construction to a candidate that can never use them) and
+    **effective-live** (`peak_live_slots`: slots that actually held a match
+    during a round). At `allocated == matches` the pool never refills, so the
+    per-round batch decays monotonically toward 1 and the arm's rows-per-forward
+    distribution — not its slot count — is what makes its throughput
+    interpretable."""
+    return max(1, min(int(requested), int(matches)))
+
+
+class _ForwardBatchRecorder:
+    """Rows per forward: the batch dimension of every top-level `model(...)`
+    call inside a phase (spec G1 wants mean / median / p10 rows per forward, a
+    batch-size histogram and the round count — without them a missed throughput
+    target cannot be told from a scheduling artefact).
+
+    A forward PRE-hook that returns `None` cannot alter the forward's inputs or
+    its numerics; it only reads `planes.shape[0]`. Constructing it with
+    `model=None` makes it a no-op, which is what the process collector needs:
+    its forwards happen inside spawn workers (one batch-1 forward per decision,
+    by construction) and are not observable from the master process."""
+
+    def __init__(self, model=None):
+        self._model = model
+        self.sizes: list[int] = []
+        self._handle = None
+
+    def _hook(self, module, args, kwargs):
+        planes = args[0] if args else kwargs.get("planes")
+        if planes is not None:
+            self.sizes.append(int(planes.shape[0]))
+        return None
+
+    def __enter__(self):
+        if self._model is not None:
+            self._handle = self._model.register_forward_pre_hook(self._hook, with_kwargs=True)
+        return self
+
+    def __exit__(self, *exc_info):
+        if self._handle is not None:
+            self._handle.remove()
+            self._handle = None
+        return False
+
+
+_BATCH_HISTOGRAM_EDGES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
+
+
+def batch_size_histogram(sizes) -> list[dict]:
+    """Power-of-two buckets over the per-forward row counts, ascending, up to
+    the largest observed size. The last edge's bucket is open-ended."""
+    if not sizes:
+        return []
+    peak = max(int(s) for s in sizes)
+    buckets = []
+    for i, low in enumerate(_BATCH_HISTOGRAM_EDGES):
+        high = (_BATCH_HISTOGRAM_EDGES[i + 1] - 1
+                if i + 1 < len(_BATCH_HISTOGRAM_EDGES) else None)
+        if low > peak:
+            break
+        label = f"{low}" if high == low else (f"{low}-{high}" if high is not None else f"{low}+")
+        count = sum(1 for s in sizes
+                    if int(s) >= low and (high is None or int(s) <= high))
+        buckets.append({"low": low, "high": high, "label": label, "count": count})
+    return buckets
+
+
+def forward_shape_stats(sizes, pool_rounds=None) -> dict:
+    """Rows-per-forward summary for one collection (spec G1)."""
+    if not sizes:
+        return {"observable": False, "forwards": None, "rows_total": None,
+                "rows_per_forward_mean": None, "rows_per_forward_median": None,
+                "rows_per_forward_p10": None, "rows_per_forward_min": None,
+                "rows_per_forward_max": None, "pool_rounds": pool_rounds,
+                "batch_size_histogram": [],
+                "note": "process collector: one batch-1 forward per decision inside each "
+                        "spawn worker, not observable from the master process"}
+    arr = np.asarray(sizes, dtype=np.float64)
+    return {"observable": True, "forwards": int(arr.size), "rows_total": int(arr.sum()),
+            "rows_per_forward_mean": float(arr.mean()),
+            "rows_per_forward_median": float(np.median(arr)),
+            "rows_per_forward_p10": float(np.percentile(arr, 10)),
+            "rows_per_forward_min": int(arr.min()), "rows_per_forward_max": int(arr.max()),
+            "pool_rounds": pool_rounds,
+            "batch_size_histogram": batch_size_histogram(sizes)}
 
 
 @dataclass
@@ -437,17 +678,22 @@ def _cuda_peaks(active: bool) -> tuple[Optional[int], Optional[int]]:
     return int(torch.cuda.max_memory_allocated()), int(torch.cuda.max_memory_reserved())
 
 
-def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: float,
+def _run_full_cycle_update(model, optimizer, batch, matches: int, collect_seconds: float,
                           settings: FullCycleSettings, match_mode: str,
                           max_steps_per_episode: Optional[int]) -> dict:
-    """One real training update on `batch`, measured. Uses a fresh deep copy
-    of the warm-started model and a fresh optimizer each call so every worker
-    count's update starts from identical weights; with `update_seed` fixed and
-    a digest-equal batch, the update telemetry must then be worker-count
-    invariant (a second, independent invariance signal on top of the digest)."""
+    """One real training update on `batch`, measured, against the caller's
+    PERSISTENT model and optimizer.
+
+    Persistence is the point (spec G1): the trainer keeps one model and one
+    optimizer for its whole lifetime, so a fresh deep copy per cycle would
+    measure neither the optimizer-state growth nor the allocator retention the
+    gate exists to observe. Every benchmarked count still starts from an
+    identical deep copy of the warm-started model, and `update_seed` is set
+    before each update, so a digest-equal collection still yields a
+    count-invariant update."""
     fc: dict = {
         "transition_rows": int(len(batch)),
-        "matches_per_second": float(matches) / steady_seconds if steady_seconds > 0 else 0.0,
+        "matches_per_second": float(matches) / collect_seconds if collect_seconds > 0 else 0.0,
         "truncated_matches": int(batch.truncated_matches),
         "truncation_rate": float(batch.truncated_matches) / max(1, matches),
         "dealin_positive_rate": (float(np.mean(batch.dealin_labels))
@@ -463,11 +709,9 @@ def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: fl
         minibatch_device_transfer=settings.minibatch_device_transfer,
     )
     use_cuda = settings.device.startswith("cuda") and torch.cuda.is_available()
-    model = copy.deepcopy(warm_started).to(settings.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=settings.lr)
     if use_cuda:
         # The caller has already snapshotted the COLLECTION peak (see
-        # `run_bench`); this reset scopes the numbers below to the update.
+        # `_run_one_cycle`); this reset scopes the numbers below to the update.
         torch.cuda.reset_peak_memory_stats()
     torch.manual_seed(settings.update_seed)
     update_start = time.perf_counter()
@@ -477,7 +721,8 @@ def _run_full_cycle_update(warm_started, batch, matches: int, steady_seconds: fl
     if use_cuda:
         torch.cuda.synchronize()
     fc["update_seconds"] = time.perf_counter() - update_start
-    fc["cuda_peak_allocated_bytes"], fc["cuda_peak_reserved_bytes"] = _cuda_peaks(use_cuda)
+    (fc["cuda_peak_update_allocated_bytes"],
+     fc["cuda_peak_update_reserved_bytes"]) = _cuda_peaks(use_cuda)
     fc.update(metrics)
     return fc
 
@@ -486,6 +731,21 @@ _FULL_CYCLE_INVARIANT_KEYS = (
     "transition_rows", "truncated_matches",
     "dealin_positive_rate", "rank_label_coverage",
 )
+
+
+# Spec G1: each arm runs ONE excluded warmup collection, then three genuine
+# consecutive collect -> PPO cycles on one persistent pool (or one persistent
+# spawn collector) and one persistent model/optimizer, over three fixed
+# consecutive seed blocks -- the trainer's lifetime, not a fresh deep copy per
+# cycle. Allocator retention and optimizer-state growth across the iteration
+# boundary are what the count of three exists to measure (the ds960 lap's
+# retention failures were iteration-boundary failures).
+_FULL_CYCLE_CYCLES = 3
+
+# Spec G0.1b's CUDA procedure: a FIXED three-repeat greedy calibration block.
+# On CPU the repeats are identical by construction; on CUDA they measure the
+# run-to-run spread that the operational threshold has to cover.
+_CALIBRATION_REPEATS = 3
 
 
 def run_bench(*, champion: Path, model_config, growth_blocks: int,
@@ -497,33 +757,51 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None,
              collector: str = "process", pool_slots: Optional[list[int]] = None,
              inference_mode: str = "batched",
-             float_ceilings: Optional[dict] = None) -> dict:
+             float_ceilings: Optional[dict] = None,
+             calibrate: bool = False) -> dict:
     """Run the collector benchmark. Returns
     `{count: {"startup_seconds": float, "steady_seconds": float,
-    "digest": str}, "all_digests_equal": bool}` where `count` is a worker
-    count (`collector="process"`, from `workers`) or an env-pool slot count
-    (`collector="batched"`, from `pool_slots`). With `full_cycle` set, each
-    entry additionally carries a `"full_cycle"` dict (see
-    `_run_full_cycle_update` plus `host_peak_rss_bytes`/`host_peak_rss_method`
-    covering the whole collect+update phase, the collection-phase CUDA peaks,
-    and `collector`/`pool_slots`/`effective_slots`) and the report carries
-    `"rows_and_labels_equal"`: True iff transition rows, truncations, and aux
-    label coverage are identical across all counts.
+    "digest": str, ...}, "all_digests_equal": bool}` where `count` is a worker
+    count (`collector="process"`, from `workers`) or the REQUESTED env-pool
+    slot count (`collector="batched"`, from `pool_slots`).
+
+    Slot accounting (spec change 3) is three separate numbers, all reported:
+    `requested_slots` (the `--pool-slots` value and the dict key),
+    `allocated_slots` (`allocated_slots(requested, matches)` -- what the pool
+    actually constructs) and `peak_live_slots` (slots that held a match during
+    a round). `forward_shapes` carries spec G1's rows-per-forward summary:
+    mean / median / p10, min / max, the pool's round count and a batch-size
+    histogram, recorded by a forward PRE-hook that cannot alter numerics.
+
+    With `full_cycle` set, each count runs one excluded warmup collection and
+    then `_FULL_CYCLE_CYCLES` consecutive collect + `ppo_update` cycles against
+    ONE persistent model and optimizer, over consecutive seed blocks
+    (`base_seed + cycle * matches`, mirroring `train_b2b`'s `iter_seed`), and
+    the process arm re-snapshots the updated model for each cycle exactly as
+    the trainer does. Per-cycle metrics live in `full_cycle["cycles"]`;
+    `full_cycle`'s top level carries the phase-wide host RSS peak and the slot
+    accounting. `"rows_and_labels_equal"` is True iff transition rows,
+    truncations and aux label coverage are identical across all counts, for
+    every cycle.
 
     `collector="batched"` builds ONE persistent pool per slot count and reuses
-    it for the warmup and steady rounds (mirroring the process path's
-    persistent workers), collecting through
+    it for the warmup, every measured cycle and the float gate (mirroring the
+    process path's persistent workers), collecting through
     `batched_b2b.collect_b2b_rollouts_batched` on `device`. `inference_mode`
     is forwarded to it: `"batched"` is the production shape, `"per_row"` the
     batch-composition-independent one.
 
-    With `collector="batched"` and `inference_mode="batched"` (production
-    shape) the report also carries `"float_gate"` (spec G0.1b): one `per_row`
-    reference collection on the same seeds and weights, then per slot count
-    and per field (`legal_logits`, `old_logprobs`, `values`) the comparison
-    stats and a pass/fail against absolute ceilings (`float_ceilings`
-    tightens `float_gate_ceilings(device)`); `"float_gate"["passed"]` gates
-    the exit code alongside the semantic digest.
+    With `collector="batched"` and `inference_mode="batched"` the report also
+    carries `"float_gate"` (spec G0.1b). THE FLOAT GATE RUNS GREEDY: its
+    reference is one `per_row` GREEDY collection, and every candidate feeding
+    `compare_float_fields` is a separate GREEDY collection on the same seeds
+    and the same (warm-started, never updated) weights. The timed sweep stays
+    sampled -- that is production inference -- and is therefore throughput
+    only: its digests are not compared across slot counts, because one
+    rounding-induced action flip diverges a match and the row counts stop
+    matching. `calibrate=True` runs `_CALIBRATION_REPEATS` greedy repeats per
+    slot count and derives operational `--float-ceiling` flags from the worst
+    observed statistic.
 
     `worker_target`, when given, is forwarded to every `ParallelB2bCollector`
     this bench constructs (adversarial round 9, medium finding). It exists
@@ -539,6 +817,17 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
         raise ValueError("--pool-slots must name at least one slot count"
                          if collector == "batched"
                          else "--workers must name at least one worker count")
+    if calibrate and not (collector == "batched" and inference_mode == "batched"):
+        raise ValueError("--calibrate applies only to --collector batched "
+                         "--inference-mode batched (it calibrates the G0.1b float gate)")
+    if (full_cycle is not None and collector == "batched"
+            and str(full_cycle.device) != str(device)):
+        # One persistent model spans collection and update here, and
+        # `ppo_update` assumes the model already sits on `config.device`.
+        raise ValueError(
+            "--full-cycle with --collector batched keeps ONE persistent model across "
+            f"collection and the update, so the update device ({full_cycle.device!r}) "
+            f"must equal the collection device ({device!r})")
     env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
                            match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
                            oracle_observation=True, event_history_window=event_window)
@@ -563,95 +852,192 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     max_float_diff = 0.0
     float_gate: Optional[dict] = None
     gate_reference: Optional[dict] = None
+    ceilings: Optional[dict] = None
+    gate_repeats = _CALIBRATION_REPEATS if calibrate else 1
+    calibration_records: list[dict] = []
     if collector == "batched" and inference_mode == "batched":
         ceilings = float_gate_ceilings(device, float_ceilings)
-        ref_pool = make_b2b_pool(env_config, warm_started, batched_config, int(counts[0]))
+        ref_slots = allocated_slots(counts[0], matches)
+        ref_pool = make_b2b_pool(env_config, warm_started, batched_config, ref_slots)
         ref_start = time.perf_counter()
         try:
             ref_diag: dict = {"logits": []}
             ref_batch = collect_b2b_rollouts_batched(
                 env_config, warm_started, batched_config, base_seed=base_seed, pool=ref_pool,
-                inference_mode="per_row", diagnostics=ref_diag)
+                inference_mode="per_row", action_selection="greedy", diagnostics=ref_diag)
         finally:
             ref_pool.close()
         gate_reference = float_gate_arrays(
             ref_batch, emission_ordered_logits(ref_diag["logits"], ref_batch))
         float_gate = {
             "reference": "per_row",
-            "reference_description": "collect_b2b_rollouts_batched(inference_mode='per_row') "
-                                     f"on the same seeds and weights, pool_slots={counts[0]}",
+            "action_selection": "greedy",
+            "reference_description": "collect_b2b_rollouts_batched(inference_mode='per_row', "
+                                     "action_selection='greedy') on the same seeds and "
+                                     f"weights, pool_slots={ref_slots}",
+            "reference_note": GATE_REFERENCE_NOTE,
             "reference_seconds": time.perf_counter() - ref_start,
+            "reference_rows": int(len(ref_batch)),
             "reference_semantic_digest": _semantic_digest_batch(base_seed, matches, ref_batch),
             "ceilings": ceilings,
+            "repeats": gate_repeats,
+            "calibrate": bool(calibrate),
             "comparisons": {},
             "violations": [],
             "passed": True,
         }
         del ref_batch, ref_diag
     for count in counts:
-        sampler: Optional[_PeakRssSampler] = None
+        requested = int(count)
+        alloc = allocated_slots(requested, matches) if collector == "batched" else None
+        phase_sampler: Optional[_PeakRssSampler] = None
         if full_cycle is not None:
-            sampler = _PeakRssSampler()
-            sampler.start()
+            phase_sampler = _PeakRssSampler()
+            phase_sampler.start()
+        # Persistent for this count's whole phase, as the trainer is for its
+        # whole lifetime. Each count starts from an identical deep copy of the
+        # warm-started model, so a digest-equal collection still yields a
+        # count-invariant update.
+        cycle_model = optimizer = None
+        if full_cycle is not None:
+            cycle_model = copy.deepcopy(warm_started).to(full_cycle.device)
+            optimizer = torch.optim.AdamW(cycle_model.parameters(), lr=full_cycle.lr)
+        # The batched collector collects with the model it will then update;
+        # the process collector's workers load a CPU snapshot of it.
+        collect_model = cycle_model if (collector == "batched" and cycle_model is not None) \
+            else warm_started
+        snapshot = state_dict
+        pool = spawn_collector = None
         startup_start = time.perf_counter()
         if collector == "batched":
-            pool = make_b2b_pool(env_config, warm_started, batched_config, int(count))
-            try:
-                collect_b2b_rollouts_batched(env_config, warm_started, batched_config,
-                                             base_seed=base_seed, pool=pool,
-                                             inference_mode=inference_mode)
-                startup_seconds = time.perf_counter() - startup_start
-                if collect_on_cuda:
-                    torch.cuda.reset_peak_memory_stats()
-                diagnostics: dict = {"logits": []} if float_gate is not None else {}
-                steady_start = time.perf_counter()
-                batch = collect_b2b_rollouts_batched(env_config, warm_started, batched_config,
-                                                     base_seed=base_seed, pool=pool,
-                                                     inference_mode=inference_mode,
-                                                     diagnostics=diagnostics)
-                steady_seconds = time.perf_counter() - steady_start
-            finally:
-                pool.close()
+            pool = make_b2b_pool(env_config, warm_started, batched_config, alloc)
         else:
             spawn_collector = ParallelB2bCollector(
-                env_config, effective_model_config, ppo_config, count,
+                env_config, effective_model_config, ppo_config, requested,
                 worker_target=worker_target)
-            try:
-                spawn_collector.start()
-                spawn_collector.collect(state_dict, base_seed, matches)
-                startup_seconds = time.perf_counter() - startup_start
 
-                steady_start = time.perf_counter()
-                batch = spawn_collector.collect(state_dict, base_seed, matches)
-                steady_seconds = time.perf_counter() - steady_start
-            finally:
+        def _collect(seed: int, record_shapes: bool = False):
+            """One collection through this count's persistent collector.
+            Returns (batch, diagnostics, per-forward row counts)."""
+            if collector == "batched":
+                diag: dict = {}
+                with _ForwardBatchRecorder(collect_model if record_shapes else None) as rec:
+                    b = collect_b2b_rollouts_batched(
+                        env_config, collect_model, batched_config, base_seed=seed,
+                        pool=pool, inference_mode=inference_mode, diagnostics=diag)
+                return b, diag, rec.sizes
+            return spawn_collector.collect(snapshot, seed, matches), {}, []
+
+        try:
+            if spawn_collector is not None:
+                spawn_collector.start()
+            # Warmup: startup timing only, never a measured cycle.
+            _collect(base_seed)
+            startup_seconds = time.perf_counter() - startup_start
+
+            cycles: list[dict] = []
+            for cycle_index in range(_FULL_CYCLE_CYCLES if full_cycle is not None else 1):
+                cycle_seed = int(base_seed + cycle_index * int(matches))
+                cycle_sampler: Optional[_PeakRssSampler] = None
+                if full_cycle is not None:
+                    cycle_sampler = _PeakRssSampler()
+                    cycle_sampler.start()
+                if collect_on_cuda:
+                    torch.cuda.reset_peak_memory_stats()
+                collect_start = time.perf_counter()
+                batch, diag, sizes = _collect(cycle_seed, record_shapes=True)
+                collect_seconds = time.perf_counter() - collect_start
+                # Snapshotted HERE, before `_run_full_cycle_update`'s
+                # `reset_peak_memory_stats()` erases the collection phase's peak.
+                collect_alloc, collect_reserved = _cuda_peaks(collect_on_cuda)
+                record = {
+                    "cycle": cycle_index,
+                    "base_seed": cycle_seed,
+                    "collect_seconds": collect_seconds,
+                    "digest": _digest_batch(cycle_seed, matches, batch),
+                    "semantic_digest": _semantic_digest_batch(cycle_seed, matches, batch),
+                    "peak_live_slots": diag.get("peak_live_slots"),
+                    "forward_shapes": forward_shape_stats(sizes, diag.get("rounds")),
+                }
+                if full_cycle is not None:
+                    assert cycle_model is not None and optimizer is not None
+                    record.update(_run_full_cycle_update(
+                        cycle_model, optimizer, batch, matches, collect_seconds,
+                        full_cycle, match_mode, max_steps_per_episode))
+                    record["cuda_peak_collect_allocated_bytes"] = collect_alloc
+                    record["cuda_peak_collect_reserved_bytes"] = collect_reserved
+                    assert cycle_sampler is not None
+                    (record["host_peak_rss_bytes"],
+                     record["host_peak_rss_method"]) = cycle_sampler.stop()
+                    # The trainer re-snapshots the UPDATED model for the next
+                    # iteration's workers (`train_b2b`'s collect branch); the
+                    # batched arm needs no snapshot -- it collects with the
+                    # very object the update just mutated.
+                    if collector == "process":
+                        snapshot = cpu_state_snapshot(cycle_model)
+                cycles.append(record)
+                if cycle_index == 0:
+                    first_batch = batch
+                else:
+                    del batch
+
+            # The gate's candidate is a SEPARATE greedy collection, on the
+            # untouched warm-started weights and the same seed block as the
+            # greedy reference. It is deliberately outside every timed
+            # section: at batch-1 (`per_row`) the reference alone costs about
+            # a whole process arm, and folding either into the sweep would
+            # charge it to the batched candidate (spec G1).
+            per_repeat: list[dict] = []
+            semantic_ok = True
+            if float_gate is not None:
+                for _ in range(gate_repeats):
+                    gate_diag: dict = {"logits": []}
+                    gate_batch = collect_b2b_rollouts_batched(
+                        env_config, warm_started, batched_config, base_seed=base_seed,
+                        pool=pool, inference_mode="batched", action_selection="greedy",
+                        diagnostics=gate_diag)
+                    per_repeat.append(compare_float_fields(
+                        gate_reference,
+                        float_gate_arrays(
+                            gate_batch,
+                            emission_ordered_logits(gate_diag["logits"], gate_batch)),
+                        ceilings))
+                    semantic_ok = semantic_ok and (
+                        _semantic_digest_batch(base_seed, matches, gate_batch)
+                        == float_gate["reference_semantic_digest"])
+                    del gate_batch, gate_diag
+        finally:
+            if pool is not None:
+                pool.close()
+            if spawn_collector is not None:
                 spawn_collector.close()
-        # Snapshotted HERE, before `_run_full_cycle_update`'s
-        # `reset_peak_memory_stats()` erases the collection phase's peak.
-        collect_alloc, collect_reserved = _cuda_peaks(collect_on_cuda)
-        results[count] = {
+
+        batch = first_batch
+        results[requested] = {
             "startup_seconds": startup_seconds,
-            "steady_seconds": steady_seconds,
-            "digest": _digest_batch(base_seed, matches, batch),
-            "semantic_digest": _semantic_digest_batch(base_seed, matches, batch),
+            "steady_seconds": cycles[0]["collect_seconds"],
+            "digest": cycles[0]["digest"],
+            "semantic_digest": cycles[0]["semantic_digest"],
+            "requested_slots": requested if collector == "batched" else None,
+            "allocated_slots": alloc,
+            "peak_live_slots": cycles[0]["peak_live_slots"],
+            "forward_shapes": cycles[0]["forward_shapes"],
         }
         if float_gate is not None:
-            assert gate_reference is not None
-            label = f"pool_slots={int(count)}"
-            stats = compare_float_fields(
-                gate_reference,
-                float_gate_arrays(batch, emission_ordered_logits(diagnostics["logits"], batch)),
-                float_gate["ceilings"])
-            semantic_ok = (results[count]["semantic_digest"]
-                           == float_gate["reference_semantic_digest"])
-            violations = _float_gate_violations(label, stats)
+            label = f"pool_slots={requested}"
+            worst = worst_over_repeats(per_repeat, ceilings)
+            violations = _float_gate_violations(label, worst)
             if not semantic_ok:
-                violations.append(f"{label}: semantic digest differs from the per_row reference")
-            float_gate["comparisons"][int(count)] = {
-                "fields": stats, "semantic_matches_reference": semantic_ok}
+                violations.append(
+                    f"{label}: greedy semantic digest differs from the greedy per_row "
+                    "reference")
+            float_gate["comparisons"][requested] = {
+                "fields": worst, "repeats": len(per_repeat),
+                "semantic_matches_reference": semantic_ok}
             float_gate["violations"].extend(violations)
             if violations:
                 float_gate["passed"] = False
+            calibration_records.extend(per_repeat)
         # Only the two 1-D float fields are retained across counts (a few MB
         # at any realistic match count) — never whole batches.
         floats = {name: np.asarray(getattr(batch, name), dtype=np.float64).copy()
@@ -672,38 +1058,55 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                         float_fields_within_tolerance = False
                         float_allclose_violations += int(outside.sum())
         if full_cycle is not None:
-            fc = _run_full_cycle_update(
-                warm_started, batch, matches, steady_seconds, full_cycle,
-                match_mode, max_steps_per_episode)
-            assert sampler is not None
-            peak, method = sampler.stop()
-            fc["host_peak_rss_bytes"] = peak
-            fc["host_peak_rss_method"] = method
-            fc["cuda_peak_collect_allocated_bytes"] = collect_alloc
-            fc["cuda_peak_collect_reserved_bytes"] = collect_reserved
-            fc["collector"] = collector
-            fc["pool_slots"] = int(count) if collector == "batched" else None
-            # Slots beyond the match count never receive a command, so this is
-            # the number the throughput and memory figures actually describe.
-            fc["effective_slots"] = (min(int(count), int(matches))
-                                     if collector == "batched" else None)
-            results[count]["full_cycle"] = fc
+            assert phase_sampler is not None
+            peak, method = phase_sampler.stop()
+            results[requested]["full_cycle"] = {
+                "collector": collector,
+                "cycles": cycles,
+                "cycle_count": len(cycles),
+                "host_peak_rss_bytes": peak,
+                "host_peak_rss_method": method,
+                # Requested / allocated / effective-live, never collapsed into
+                # one "slots" number (spec change 3).
+                "requested_slots": requested if collector == "batched" else None,
+                "allocated_slots": alloc,
+                "peak_live_slots": max((c["peak_live_slots"] or 0) for c in cycles)
+                                   if collector == "batched" else None,
+            }
+        del batch, first_batch, floats
+    if float_gate is not None and calibrate:
+        worst_all = worst_over_repeats(calibration_records, ceilings)
+        thresholds, cal_violations = calibration_thresholds(worst_all, ceilings)
+        float_gate["calibration"] = {
+            "repeats_per_slot_count": gate_repeats,
+            "slot_counts": [int(c) for c in counts],
+            "worst": worst_all,
+            "thresholds": thresholds,
+            "ceiling_flags": format_ceiling_flags(thresholds),
+            "violations": cal_violations,
+        }
+        float_gate["violations"].extend(cal_violations)
+        if cal_violations:
+            float_gate["passed"] = False
     digests = {r["digest"] for r in results.values()}
     semantic_digests = {r["semantic_digest"] for r in results.values()}
+    # Under production batched inference the sweep is SAMPLED, so a float32
+    # rounding difference can flip one action and diverge the rest of that
+    # match: neither the full digest nor the semantic digest is comparable
+    # across slot counts, and neither gates. The gate in that mode is the
+    # greedy `float_gate` above, whose per-field bounds AND whose
+    # `semantic_matches_reference` are exact.
+    exact_expected = not (collector == "batched" and inference_mode == "batched")
     report = {"results": results, "all_digests_equal": len(digests) <= 1,
              "semantic_digests_equal": len(semantic_digests) <= 1,
-             # Reported, never gated: see `_ROLLOUT_TOLERANT_FIELDS`. The
-             # exactness claim this bench enforces is the semantic digest.
+             # Reported, never gated: see `_ROLLOUT_TOLERANT_FIELDS`.
              "float_fields_within_tolerance": float_fields_within_tolerance,
              "float_allclose_violations": float_allclose_violations,
              "semantics_equal": len(semantic_digests) <= 1,
              "max_float_diff": max_float_diff,
-             # A batched forward's float output depends on which rows share
-             # its batch, so byte-equality across slot counts is expected only
-             # in per_row mode (and for the CPU spawn workers, which are
-             # always per-row). Everything else stays exactly equal.
-             "exact_invariance_expected": not (collector == "batched"
-                                               and inference_mode == "batched"),
+             "exact_invariance_expected": exact_expected,
+             "sweep_action_selection": "sample",
+             "cross_count_gate": "digest" if exact_expected else "float_gate",
              "model_config": effective_model_config,
              "collector": collector,
              "inference_mode": inference_mode if collector == "batched" else None,
@@ -712,20 +1115,60 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              "float_gate": float_gate}
     if full_cycle is not None:
         invariant_tuples = {
-            tuple(r["full_cycle"][k] for k in _FULL_CYCLE_INVARIANT_KEYS)
+            tuple(cycle[key]
+                  for cycle in r["full_cycle"]["cycles"]
+                  for key in _FULL_CYCLE_INVARIANT_KEYS)
             for r in results.values()
         }
         report["rows_and_labels_equal"] = len(invariant_tuples) <= 1
+        cycle_digests = {tuple(c["digest"] for c in r["full_cycle"]["cycles"])
+                         for r in results.values()}
+        # Reported, not gated: cycles after the first collect with weights the
+        # update produced, and a CUDA update is not bit-reproducible.
+        report["cycle_digests_equal"] = len(cycle_digests) <= 1
     return report
+def _opt(value, spec: str) -> str:
+    """`format(value, spec)`, or a column-width dash when the value does not
+    apply to this collector (slot counts on the process arm, CUDA peaks on a
+    CPU phase). Padding the dash keeps the table's columns aligned."""
+    if value is not None:
+        return format(value, spec)
+    width = spec.lstrip("<>^=+- ").split(".")[0]
+    return format("-", f">{width}") if width.isdigit() else "-"
 
 
 def _print_table(results: dict[int, dict], label: str = "workers") -> None:
-    print(f"{label:>10}  {'startup_s':>10}  {'steady_s':>10}  digest")
+    print(f"{label:>10}  {'alloc':>6}  {'live':>5}  {'startup_s':>10}  {'steady_s':>10}  "
+          f"{'fwd_rows_mean':>13}  digest")
     for w in sorted(results):
         r = results[w]
+        shapes = r.get("forward_shapes") or {}
         print(
-            f"{w:>10}  {r['startup_seconds']:>10.3f}  "
-            f"{r['steady_seconds']:>10.3f}  {r['digest']}")
+            f"{w:>10}  {_opt(r.get('allocated_slots'), '>6d')}  "
+            f"{_opt(r.get('peak_live_slots'), '>5d')}  "
+            f"{r['startup_seconds']:>10.3f}  {r['steady_seconds']:>10.3f}  "
+            f"{_opt(shapes.get('rows_per_forward_mean'), '>13.2f')}  {r['digest']}")
+
+
+def _print_forward_shapes(results: dict[int, dict], label: str = "workers") -> None:
+    """Spec G1's rows-per-forward block. Without it a missed throughput target
+    cannot be told from a scheduling artefact, and an arm whose mean rows per
+    forward fell below 16 was never a valid test of the design."""
+    print()
+    print("rows per forward (spec G1):")
+    for w in sorted(results):
+        shapes = results[w].get("forward_shapes") or {}
+        if not shapes.get("observable"):
+            print(f"  {label}={w}: not observable — {shapes.get('note', 'no forwards recorded')}")
+            continue
+        print(f"  {label}={w}: forwards={shapes['forwards']} rounds={_opt(shapes['pool_rounds'], 'd')} "
+              f"rows_total={shapes['rows_total']} mean={shapes['rows_per_forward_mean']:.2f} "
+              f"median={shapes['rows_per_forward_median']:.1f} "
+              f"p10={shapes['rows_per_forward_p10']:.1f} "
+              f"min={shapes['rows_per_forward_min']} max={shapes['rows_per_forward_max']}")
+        buckets = " ".join(f"{b['label']}:{b['count']}"
+                           for b in shapes.get("batch_size_histogram", []))
+        print(f"    histogram {buckets}")
 
 
 def _fmt_gib(value) -> str:
@@ -733,29 +1176,37 @@ def _fmt_gib(value) -> str:
 
 
 def _print_full_cycle_table(results: dict[int, dict], label: str = "workers") -> None:
+    """One row per (count, cycle). Per-cycle, never only an aggregate: the
+    three cycles exist to expose allocator retention and optimizer-state
+    growth across the iteration boundary, which an average hides."""
     print()
-    print(f"{label:>10}  {'eff_slots':>9}  {'rows':>8}  {'optimizer_steps':>15}  "
-          f"{'matches/s':>9}  {'update_s':>8}  {'approx_kl':>9}  {'clip_frac':>9}  "
-          f"{'dealin+':>7}  {'rank_cov':>8}  {'trunc':>5}  "
-          f"{'rss_gib':>8}  {'cuda_col_gib':>12}  {'cuda_alloc_gib':>14}  {'cuda_resv_gib':>13}")
+    print(f"{label:>10}  {'req':>5}  {'alloc':>5}  {'live':>5}  {'cyc':>3}  {'seed':>9}  "
+          f"{'rows':>8}  {'opt_steps':>9}  {'collect_s':>9}  {'matches/s':>9}  "
+          f"{'update_s':>8}  {'approx_kl':>9}  {'clip_frac':>9}  {'dealin+':>7}  "
+          f"{'rank_cov':>8}  {'trunc':>5}  {'rss_gib':>7}  {'col_alloc':>9}  "
+          f"{'col_resv':>8}  {'upd_alloc':>9}  {'upd_resv':>8}")
     for w in sorted(results):
         fc = results[w]["full_cycle"]
-
-        def _opt(value, spec):
-            return "-" if value is None else format(value, spec)
-
-        print(
-            f"{w:>10}  {_opt(fc.get('effective_slots'), '>9d')}  "
-            f"{fc['transition_rows']:>8}  {fc['optimizer_steps']:>15}  "
-            f"{fc['matches_per_second']:>9.3f}  {fc['update_seconds']:>8.3f}  "
-            f"{fc['approx_kl']:>9.5f}  {fc['clip_fraction']:>9.5f}  "
-            f"{_opt(fc['dealin_positive_rate'], '>7.4f')}  "
-            f"{_opt(fc['rank_label_coverage'], '>8.4f')}  "
-            f"{fc['truncated_matches']:>5}  "
-            f"{_fmt_gib(fc['host_peak_rss_bytes']):>8}  "
-            f"{_fmt_gib(fc.get('cuda_peak_collect_allocated_bytes')):>12}  "
-            f"{_fmt_gib(fc['cuda_peak_allocated_bytes']):>14}  "
-            f"{_fmt_gib(fc['cuda_peak_reserved_bytes']):>13}")
+        for cyc in fc["cycles"]:
+            print(
+                f"{w:>10}  {_opt(fc.get('requested_slots'), '>5d')}  "
+                f"{_opt(fc.get('allocated_slots'), '>5d')}  "
+                f"{_opt(cyc.get('peak_live_slots'), '>5d')}  "
+                f"{cyc['cycle']:>3}  {cyc['base_seed']:>9}  "
+                f"{cyc['transition_rows']:>8}  {cyc['optimizer_steps']:>9}  "
+                f"{cyc['collect_seconds']:>9.3f}  {cyc['matches_per_second']:>9.3f}  "
+                f"{cyc['update_seconds']:>8.3f}  {cyc['approx_kl']:>9.5f}  "
+                f"{cyc['clip_fraction']:>9.5f}  "
+                f"{_opt(cyc['dealin_positive_rate'], '>7.4f')}  "
+                f"{_opt(cyc['rank_label_coverage'], '>8.4f')}  "
+                f"{cyc['truncated_matches']:>5}  "
+                f"{_fmt_gib(cyc['host_peak_rss_bytes']):>7}  "
+                f"{_fmt_gib(cyc['cuda_peak_collect_allocated_bytes']):>9}  "
+                f"{_fmt_gib(cyc['cuda_peak_collect_reserved_bytes']):>8}  "
+                f"{_fmt_gib(cyc['cuda_peak_update_allocated_bytes']):>9}  "
+                f"{_fmt_gib(cyc['cuda_peak_update_reserved_bytes']):>8}")
+        print(f"{'':>10}  phase host RSS peak: {_fmt_gib(fc['host_peak_rss_bytes'])} GiB "
+              f"({fc['host_peak_rss_method']})")
 
 
 def main() -> None:
@@ -777,19 +1228,28 @@ def main() -> None:
                         "across spawn workers (--workers); 'batched' drives one env pool "
                         "in this process with a batched forward per round (--pool-slots)")
     p.add_argument("--pool-slots", type=str, default=None,
-                   help="comma-separated env-pool slot counts to benchmark with "
-                        "--collector batched, e.g. 128,256,320. A slot count above "
-                        "--matches is meaningless: only min(slots, matches) slots ever "
-                        "activate (reported as effective_slots)")
+                   help="comma-separated REQUESTED env-pool slot counts to benchmark with "
+                        "--collector batched, e.g. 128,256,320. The pool allocates only "
+                        "min(slots, --matches) of them (reported as allocated_slots); the "
+                        "slots that actually held a match are reported as peak_live_slots")
     p.add_argument("--inference-mode", choices=("batched", "per_row"), default="batched",
                    help="--collector batched only: 'batched' (default) is the production "
                         "one-forward-per-round shape; 'per_row' forwards each row alone, "
                         "which is batch-composition-independent but far slower")
-    p.add_argument("--float-ceiling", action="append", default=[], metavar="FIELD=MAX",
-                   help="--collector batched --inference-mode batched only: tighten the "
-                        "G0.1b max|delta| ceiling for legal_logits, old_logprobs or values "
-                        "below its device cap (cpu: 5e-5/5e-5/5e-6, cuda: 1e-4/1e-4/1e-5); "
-                        "a value above the cap is rejected (the cap is never widened)")
+    p.add_argument("--float-ceiling", action="append", default=[], metavar="FIELD.PART=VALUE",
+                   help="--collector batched --inference-mode batched only: tighten one part "
+                        "of the G0.1b two-part ceiling below its device cap, e.g. "
+                        "--float-ceiling values.p99_9=5e-7. FIELD is legal_logits, "
+                        "old_logprobs or values; PART is p99_9 or max; a value above the cap "
+                        "is rejected (the cap is never widened). --calibrate prints the exact "
+                        "flags to pass here")
+    p.add_argument("--calibrate", action="store_true",
+                   help="--collector batched --inference-mode batched only: run the fixed "
+                        "three-repeat greedy calibration block (spec G0.1b) and print the "
+                        "--float-ceiling flags for a validation run on a DISJOINT seed "
+                        "block. Operational threshold = 2x the worst observed statistic per "
+                        "part, capped by the registered ceiling; an observed value above its "
+                        "cap fails the run instead of widening the cap")
     p.add_argument("--matches", type=int, default=320)
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--match-mode", choices=("classic", "chongci"), default="chongci")
@@ -810,11 +1270,13 @@ def main() -> None:
                         "trajectory memory at ~chunk/workers matches; 0 = single dispatch "
                         "(legacy). data-scale-960 Amendment 2 freezes 320 for that lap")
     p.add_argument("--full-cycle", action="store_true",
-                   help="after each worker count's steady collection, run GAE + one real "
-                        "ppo_update on a fresh model copy and measure the FULL iteration: "
-                        "host peak RSS, CUDA peak allocation, transition rows, optimizer "
-                        "steps, throughput, label coverage, truncation, KL, clip fraction "
-                        "(data-scale-960 Stage 0 preflight)")
+                   help="model the trainer's lifetime: one excluded warmup collection, then "
+                        "three consecutive collect + ppo_update cycles on ONE persistent "
+                        "pool/collector and ONE persistent model and optimizer, over three "
+                        "consecutive seed blocks. Reports per cycle: host peak RSS, CUDA "
+                        "allocated AND reserved peaks split between collection and update, "
+                        "transition rows, optimizer steps, throughput, label coverage, "
+                        "truncation, KL, clip fraction")
     fc_defaults = FullCycleSettings()
     p.add_argument("--minibatch-size", type=int, default=fc_defaults.minibatch_size,
                    help="PPO minibatch size for the --full-cycle update")
@@ -825,13 +1287,14 @@ def main() -> None:
     p.add_argument("--gae-lambda", type=float, default=fc_defaults.gae_lambda,
                    help="GAE lambda for the --full-cycle update")
     p.add_argument("--lr", type=float, default=fc_defaults.lr,
-                   help="learning rate for the --full-cycle update's fresh optimizer")
+                   help="learning rate for the --full-cycle update's persistent optimizer")
     p.add_argument("--entropy-coef", type=float, default=fc_defaults.entropy_coef,
                    help="entropy coefficient for the --full-cycle update")
     p.add_argument("--ppo-device", type=str, default=fc_defaults.device,
                    help="device the --full-cycle update runs on (the real lap uses cuda; "
                         "ppo_update moves the whole rollout there, so this is where the "
-                        "CUDA peak-memory question is answered)")
+                        "CUDA peak-memory question is answered). With --collector batched "
+                        "it must equal --device: one persistent model spans both phases")
     p.add_argument("--update-seed", type=int, default=fc_defaults.update_seed,
                    help="torch seed set before every --full-cycle update so the minibatch "
                         "permutation — and hence the whole update — is identical across "
@@ -880,17 +1343,26 @@ def main() -> None:
     # be nonzero on the CLI (see model_config_from_args's docstring).
     model_config = model_config_from_args(args, event_window=args.event_window)
 
+    # FIELD.PART=VALUE: a ceiling has two parts and a bare FIELD=VALUE would
+    # silently pick one of them.
     float_ceilings: dict = {}
     for spec in args.float_ceiling:
         if "=" not in spec:
-            p.error(f"--float-ceiling expects FIELD=MAX, got {spec!r}")
-        name, value = spec.split("=", 1)
+            p.error(f"--float-ceiling expects FIELD.PART=VALUE, got {spec!r}")
+        key, value = spec.split("=", 1)
+        if "." not in key:
+            p.error(f"--float-ceiling expects FIELD.PART=VALUE with PART one of "
+                    f"{'/'.join(_FLOAT_GATE_PARTS)}, got {spec!r}")
+        name, part = key.rsplit(".", 1)
         try:
-            float_ceilings[name.strip()] = float(value)
+            float_ceilings.setdefault(name.strip(), {})[part.strip()] = float(value)
         except ValueError:
-            p.error(f"--float-ceiling {spec!r}: MAX must be a number")
-    if float_ceilings and not (args.collector == "batched" and args.inference_mode == "batched"):
+            p.error(f"--float-ceiling {spec!r}: VALUE must be a number")
+    batched_float_mode = args.collector == "batched" and args.inference_mode == "batched"
+    if float_ceilings and not batched_float_mode:
         p.error("--float-ceiling applies only to --collector batched --inference-mode batched")
+    if args.calibrate and not batched_float_mode:
+        p.error("--calibrate applies only to --collector batched --inference-mode batched")
     try:
         float_gate_ceilings(args.device, float_ceilings)
     except ValueError as exc:
@@ -916,12 +1388,14 @@ def main() -> None:
                        placement_bonus=placement_bonus_kwargs(args),
                        collector=args.collector, pool_slots=pool_slots,
                        inference_mode=args.inference_mode,
-                       float_ceilings=float_ceilings)
+                       float_ceilings=float_ceilings, calibrate=args.calibrate)
     results = report["results"]
     label = "pool_slots" if args.collector == "batched" else "workers"
     _print_table(results, label)
+    _print_forward_shapes(results, label)
     if full_cycle is not None:
         _print_full_cycle_table(results, label)
+
     def _print_groups(key: str) -> None:
         groups: dict[str, list[int]] = {}
         for w, r in results.items():
@@ -935,11 +1409,14 @@ def main() -> None:
     if not report["all_digests_equal"] and exact_expected:
         _print_groups("digest")
     if not exact_expected:
-        # Production batched inference: floats move with batch composition by
-        # design and by an architecture-dependent amount, so the GATE is the
-        # semantic digest (every discrete field, reward, label and telemetry
-        # row) and the float spread below is measurement, not a pass/fail.
-        print(f"semantic_digests_equal: {report['semantic_digests_equal']}")
+        # Production batched inference, SAMPLED: a float32 rounding difference
+        # can flip one action and diverge the rest of that match, so neither
+        # digest is comparable across slot counts. This sweep is throughput
+        # only; the gate is the greedy float_gate below.
+        print("sweep_action_selection: sample (throughput only — digests are NOT "
+              "compared across slot counts; the gate is the greedy float_gate)")
+        print(f"semantic_digests_equal (reported, not gated): "
+              f"{report['semantic_digests_equal']}")
         print(f"float_delta (reported, not gated): max_abs_diff="
               f"{report['max_float_diff']:.3e}, elements outside "
               f"atol={_FLOAT_INVARIANCE_TOL['atol']}/rtol={_FLOAT_INVARIANCE_TOL['rtol']}: "
@@ -947,29 +1424,46 @@ def main() -> None:
         print(f"semantics_equal: {report['semantics_equal']}")
         if not report["semantic_digests_equal"]:
             _print_groups("semantic_digest")
-    ok = report["all_digests_equal"] if exact_expected else report["semantics_equal"]
+    ok = report["all_digests_equal"] if exact_expected else True
     float_gate = report.get("float_gate")
     if float_gate is not None:
-        # Spec G0.1b: per field, per slot count, against the per_row
-        # reference on the same seeds. Never one collapsed maximum.
+        # Spec G0.1b: per field, per slot count, GREEDY, against the greedy
+        # per_row reference on the same seeds. Never one collapsed maximum,
+        # and never sampled.
         ceilings = float_gate["ceilings"]
-        print(f"float_gate (reference: {float_gate['reference']} -- "
+        print(f"float_gate (reference: {float_gate['reference']}, "
+              f"action_selection={float_gate['action_selection']} -- "
               f"{float_gate['reference_description']}; "
               f"reference_seconds={float_gate['reference_seconds']:.3f}) ceilings: "
-              + " ".join(f"{k}={v:.1e}" for k, v in ceilings.items()))
+              + " ".join(f"{k}=(p99.9 {v['p99_9']:.1e}, max {v['max']:.1e})"
+                         for k, v in ceilings.items()))
+        print(f"  NOTE: {float_gate['reference_note']}")
         for count in sorted(float_gate["comparisons"]):
             comp = float_gate["comparisons"][count]
             for name in _FLOAT_GATE_FIELDS:
                 print(_format_float_stats(f"pool_slots={count}", name, comp["fields"][name]))
-            print(f"  pool_slots={count} semantic_matches_reference: "
-                  f"{comp['semantic_matches_reference']}")
+            print(f"  pool_slots={count} repeats={comp['repeats']} "
+                  f"semantic_matches_reference: {comp['semantic_matches_reference']}")
+        calibration = float_gate.get("calibration")
+        if calibration is not None:
+            print(f"float_gate calibration ({calibration['repeats_per_slot_count']} greedy "
+                  f"repeats per slot count, worst over all repeats and slot counts; "
+                  f"operational threshold = 2x observed, capped by the registered ceiling):")
+            for name in _FLOAT_GATE_FIELDS:
+                print(_format_float_stats("calibration", name, calibration["worst"][name]))
+            print("  pass these into a VALIDATION run on a disjoint seed block:")
+            print("    " + " ".join(calibration["ceiling_flags"]))
         for line in float_gate["violations"]:
             print(f"FLOAT GATE VIOLATION: {line}")
         print(f"float_gate_passed: {float_gate['passed']}")
         ok = ok and bool(float_gate["passed"])
     if full_cycle is not None:
         print(f"rows_and_labels_equal: {report['rows_and_labels_equal']}")
-        ok = ok and report["rows_and_labels_equal"]
+        print(f"cycle_digests_equal (reported): {report['cycle_digests_equal']}")
+        # Sampled batched sweeps may legitimately diverge across slot counts,
+        # so rows/labels gate only where exactness is expected.
+        if exact_expected:
+            ok = ok and report["rows_and_labels_equal"]
 
     if args.json is not None:
         payload = {
@@ -978,6 +1472,10 @@ def main() -> None:
                 "steady_seconds": r["steady_seconds"],
                 "digest": r["digest"],
                 "semantic_digest": r["semantic_digest"],
+                "requested_slots": r.get("requested_slots"),
+                "allocated_slots": r.get("allocated_slots"),
+                "peak_live_slots": r.get("peak_live_slots"),
+                "forward_shapes": r.get("forward_shapes"),
                 **({"full_cycle": r["full_cycle"]} if "full_cycle" in r else {}),
             }
             for w, r in results.items()
@@ -989,6 +1487,8 @@ def main() -> None:
         payload["semantics_equal"] = report["semantics_equal"]
         payload["max_float_diff"] = report["max_float_diff"]
         payload["exact_invariance_expected"] = report["exact_invariance_expected"]
+        payload["sweep_action_selection"] = report["sweep_action_selection"]
+        payload["cross_count_gate"] = report["cross_count_gate"]
         payload["collector"] = args.collector
         payload["inference_mode"] = report["inference_mode"]
         payload["dispatch_chunk_matches"] = report["dispatch_chunk_matches"]
@@ -999,6 +1499,7 @@ def main() -> None:
             })
         if full_cycle is not None:
             payload["rows_and_labels_equal"] = report["rows_and_labels_equal"]
+            payload["cycle_digests_equal"] = report["cycle_digests_equal"]
         args.json.write_text(json.dumps(payload, indent=2))
 
     sys.exit(0 if ok else 1)
