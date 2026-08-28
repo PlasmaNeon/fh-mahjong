@@ -107,7 +107,7 @@ current bridge. Delta = `fh-mj-compare mean_delta` (candidate − anchor).
 | iteration | mean_delta | CI95 (clustered) | large_loss cand / anchor | telemetry healthy | notes |
 |---|---|---|---|---|---|
 | 25 | **−0.4250** | ±0.0743 (sig. YES) | 0.1479 / 0.0458 | yes | placement +0.0361 vs +0.4611; 4th-share Δ +0.1385, large-loss Δ +0.1021, training-utility Δ −0.3821; deal-in 0.0992 vs 0.1033; tail gate FAIL. No rule fires at 25 — §7: a scratch curve starting far below the anchor is not a kill |
-| 50 | | | | | |
+| 50 | **−0.3708** | ±0.0687 (sig. YES) | 0.1313 / 0.0458 | yes | placement +0.0903; 4th-share Δ +0.1083, large-loss Δ +0.0854, training-utility Δ −0.3264; tail gate FAIL. Improvement 25→50 = **+0.0542 per 25 iters**, every secondary moving the right way. Reaching the §7 gate (−0.0600) from here needs +0.3108 over 150 iters = **+0.0518 per 25**, i.e. ~96 % of the current rate sustained with almost no decay |
 | 75 | | | | | |
 | 100 | | | | | kill iff `delta100 − delta75 ≤ 0` and `delta100 < −0.20` |
 | 125 | | | | | |
