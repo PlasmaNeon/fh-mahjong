@@ -57,6 +57,7 @@ runs the spec's fixed three-repeat greedy block and prints the
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import hashlib
 import json
@@ -72,10 +73,11 @@ import numpy as np
 import torch
 
 from ..batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool
+from ..batched_selfplay import sample_masked_action
 from ..config import EnvConfig
 from ..fdlimit import raise_file_descriptor_limit
 from ..train_b2b import ParallelB2bCollector, _b2b_model_env_config, build_b2b_model, grow_b2b_model
-from ..ppo import PPOConfig, RolloutBatch, compute_gae, cpu_state_snapshot, ppo_update
+from ..ppo import PPOConfig, RolloutBatch, compute_gae, cpu_state_snapshot, masked_logprob, ppo_update
 from ..model_config_args import add_model_config_args, model_config_from_args
 from ..placement_bonus_args import add_placement_bonus_args, placement_bonus_kwargs
 
@@ -181,9 +183,17 @@ _FLOAT_GATE_PARTS = ("p99_9", "max")
 #     old_logprobs  p50 0        p95 3.34e-6  p99 6.93e-6  p99.9 1.24e-5  max 2.19e-5
 #     values        p50 6.71e-8  p95 2.38e-7  p99 4.02e-7  p99.9 7.85e-7  max 2.27e-6
 # Ceilings sit at 2x or more of the observed statistic, with more headroom on
-# the max part than on the quantile: max grows with row count while p99.9 does
-# not. 4.2x the rows moved the observed legal-logit max from 3.96e-5 to
-# 6.58e-5, so G1's ~20x projects to roughly 1.3e-4.
+# the max part than on the quantile: max is an extreme-value statistic and
+# grows with row count, while p99.9 is stable across blocks.
+#
+# The growth is measured, not modelled, and holds only over the range measured:
+# across two blocks differing in row count alone, 4.2x the rows moved the
+# observed legal-logit max from 3.96e-5 to 6.58e-5 (1.66x). Extrapolating that
+# ratio to G1's row count is NOT supported -- the max of a sample grows roughly
+# with the log of the sample size for a fixed tail, so a per-doubling rate read
+# off one pair of blocks is an artefact of that pair. The `max` caps are set
+# with room for that growth; if a G1 run breaches one, the finding is
+# "re-register from a G1-width measurement", never "widen the cap".
 _FLOAT_GATE_CEILINGS = {
     "cpu": {
         "legal_logits": {"p99_9": 1e-4, "max": 5e-4},
@@ -209,6 +219,127 @@ _FLOAT_GATE_CEILINGS = {
     },
 }
 _FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"))
+
+# WHY THE GATE MUST RUN IN fp32.
+#
+# Every number in `_FLOAT_GATE_CEILINGS` was measured in fp32, and the CUDA
+# entries are 2x that fp32 CPU registration. The ceilings therefore encode an
+# **fp32 noise floor** -- the spread a batched fp32 forward has against a
+# per-row fp32 forward -- and nothing else.
+#
+# torch defaults cuDNN convolutions AND the cuDNN RNN to TF32
+# (`cudnn.conv.fp32_precision == cudnn.rnn.fp32_precision == "tf32"`, i.e. the
+# legacy `cudnn.allow_tf32 = True`). On a 4090 that silently runs every trunk
+# convolution and the event GRU with a 10-bit mantissa (~1e-3 relative) while
+# the Linear heads stay fp32, and the batch-1-vs-batch-N delta then lands
+# orders above an fp32 floor. Under G0.1b's rule that a cap is never widened
+# after the fact, that is a GUARANTEED FALSE STOP: the gate would fail on the
+# backend's precision mode, not on a defect, and there would be no legitimate
+# way to clear it.
+#
+# A TF32 measurement is not a violation of these ceilings. It is a DIFFERENT
+# REGIME, and gating it would need its own registration from its own
+# measurement -- never a widened fp32 cap.
+#
+# `cudnn.benchmark` is pinned False for the same class of reason: autotuning
+# picks a convolution algorithm from run-to-run timing, so the same weights and
+# the same inputs can go through different kernels -- and hence different
+# summation orders -- between the reference collection and a candidate.
+#
+# ONE API FAMILY, NEVER BOTH. torch exposes TF32 twice: the legacy booleans
+# (`cudnn.allow_tf32`, `cuda.matmul.allow_tf32`, `set_float32_matmul_precision`)
+# and the per-operator strings (`cudnn.conv.fp32_precision`,
+# `cudnn.rnn.fp32_precision`, `cuda.matmul.fp32_precision`). Setting through one
+# family and then READING through the other raises -- `cudnn.allow_tf32` throws
+# outright once conv and rnn disagree. A gate that pinned with the legacy
+# setters would therefore crash any process whose caller had used
+# `set_float32_matmul_precision`, mid-gate, on the box. So: the new API where it
+# exists, the legacy one only on a torch too old to have it, and every read of
+# the other family guarded.
+#
+# Pinned ONLY around the greedy gate collections, restored in a `finally`: the
+# throughput sweep must run in whatever precision the production lap will run
+# in, and a library has no business leaking a global backend setting into its
+# caller's process.
+_PRECISION_API_NEW = (hasattr(torch.backends.cudnn, "conv")
+                      and hasattr(torch.backends.cudnn.conv, "fp32_precision")
+                      and hasattr(torch.backends.cudnn, "rnn")
+                      and hasattr(torch.backends.cuda.matmul, "fp32_precision"))
+# "ieee" is fp32 proper; "tf32" is the 10-bit-mantissa mode. ("none" -- the
+# stock value of `matmul.fp32_precision` -- means "defer to the global
+# `float32_matmul_precision`", which is why it is restored rather than
+# normalised.)
+_PINNED_GATE_PRECISION = (
+    {"cudnn_conv_fp32_precision": "ieee",
+     "cudnn_rnn_fp32_precision": "ieee",
+     "cuda_matmul_fp32_precision": "ieee",
+     "cudnn_benchmark": False}
+    if _PRECISION_API_NEW else
+    {"cudnn_allow_tf32": False,
+     "cuda_matmul_allow_tf32": False,
+     "cudnn_benchmark": False})
+
+
+def _float32_matmul_precision() -> str:
+    """`torch.get_float32_matmul_precision()`, or a marker. Reading it is a
+    LEGACY-family read and raises outright once the new per-operator API has
+    been used to set anything -- which the gate itself does -- so it is
+    recorded for context and never allowed to abort a run."""
+    try:
+        return str(torch.get_float32_matmul_precision())
+    except RuntimeError:
+        return "unavailable (per-operator fp32_precision API in use)"
+
+
+def precision_settings() -> dict:
+    """The backend precision flags the G0.1b gate pins, as they stand right
+    now. Recorded into the report because spec G1 requires the TF32 and
+    determinism settings to be registered, and because a ceiling only means
+    something alongside the precision regime it was measured in."""
+    if _PRECISION_API_NEW:
+        return {
+            "api": "fp32_precision",
+            "cudnn_conv_fp32_precision": str(torch.backends.cudnn.conv.fp32_precision),
+            "cudnn_rnn_fp32_precision": str(torch.backends.cudnn.rnn.fp32_precision),
+            "cuda_matmul_fp32_precision": str(torch.backends.cuda.matmul.fp32_precision),
+            "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
+            "float32_matmul_precision": _float32_matmul_precision(),
+        }
+    return {
+        "api": "allow_tf32",
+        "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+        "cuda_matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+        "cudnn_benchmark": bool(torch.backends.cudnn.benchmark),
+        "float32_matmul_precision": _float32_matmul_precision(),
+    }
+
+
+def _apply_precision(settings: dict) -> None:
+    """Write back exactly the keys `precision_settings()` produced, through the
+    same API family they were read with."""
+    torch.backends.cudnn.benchmark = settings["cudnn_benchmark"]
+    if _PRECISION_API_NEW:
+        torch.backends.cudnn.conv.fp32_precision = settings["cudnn_conv_fp32_precision"]
+        torch.backends.cudnn.rnn.fp32_precision = settings["cudnn_rnn_fp32_precision"]
+        torch.backends.cuda.matmul.fp32_precision = settings["cuda_matmul_fp32_precision"]
+        return
+    torch.backends.cudnn.allow_tf32 = settings["cudnn_allow_tf32"]
+    torch.backends.cuda.matmul.allow_tf32 = settings["cuda_matmul_allow_tf32"]
+
+
+@contextlib.contextmanager
+def fp32_gate_precision():
+    """Pin fp32 for a greedy float-gate collection and restore afterwards.
+
+    Yields the settings in force INSIDE the block (what the gate actually ran
+    under), which is what goes into the report."""
+    previous = precision_settings()
+    _apply_precision({**previous, **_PINNED_GATE_PRECISION})
+    try:
+        yield precision_settings()
+    finally:
+        _apply_precision(previous)
+
 
 GATE_REFERENCE_NOTE = (
     "the greedy per_row batched run is the reference because ParallelB2bCollector has "
@@ -484,6 +615,64 @@ def _float_field_diff(reference: dict, current: dict) -> Optional[float]:
         if a.size:
             worst = max(worst, float(np.abs(a - b).max()))
     return worst
+
+
+def match_attribution_violations(label: str, batch, diagnostics: dict,
+                                 base_seed: int, matches: int) -> list[str]:
+    """Per-match row attribution checks for ONE batched collection.
+
+    These close a real hole in the sampled sweep. Sampling under
+    `inference_mode="batched"` is gated by nothing today: G0.2 proves per-match
+    RNG independence in `per_row` only, and the sampled sweep deliberately does
+    not compare digests across slot counts (one rounding-induced action flip
+    diverges a match), so "rows attributed to the wrong match" would be
+    invisible. The three checks below are exact, cost nothing, and hold under
+    sampling:
+
+      * every match in the seed block produced exactly one telemetry row;
+      * the telemetry seeds ARE the seed block, once each;
+      * the per-match decision counts sum to the batch's row count, in the same
+        order as the telemetry (so rows, labels and telemetry all agree on
+        which match a row belongs to).
+
+    A match that ends at reset emits neither rows nor telemetry, so it makes
+    the first two fail. That is deliberate: at G1 scale a reset-terminal match
+    is an anomaly worth stopping for, not a case to absorb — `skipped_matches`
+    is named in the message so the reader can tell the two apart immediately.
+    """
+    out: list[str] = []
+    match_rows = diagnostics.get("match_rows")
+    if match_rows is None:
+        return [f"{label}: the collector reported no per-match row attribution "
+                "(diagnostics['match_rows'] is missing)"]
+    telemetry = batch.match_telemetry
+    if telemetry is None:
+        return [f"{label}: batch carries no match_telemetry"]
+    matches = int(matches)
+    skipped = diagnostics.get("skipped_matches")
+    expected = set(range(int(base_seed), int(base_seed) + matches))
+    seeds = [int(row["seed"]) for row in telemetry]
+    if len(telemetry) != matches:
+        out.append(f"{label}: match_telemetry has {len(telemetry)} entries, expected "
+                   f"{matches} (matches that ended at reset: {skipped})")
+    if len(set(seeds)) != len(seeds):
+        out.append(f"{label}: match_telemetry contains duplicate seeds")
+    if set(seeds) != expected:
+        missing = sorted(expected - set(seeds))[:8]
+        unexpected = sorted(set(seeds) - expected)[:8]
+        out.append(f"{label}: telemetry seeds are not the seed block "
+                   f"[{int(base_seed)}, {int(base_seed) + matches}) — missing {missing}, "
+                   f"unexpected {unexpected} (first 8 of each; matches that ended at "
+                   f"reset: {skipped})")
+    row_seeds = [int(seed) for seed, _ in match_rows]
+    if row_seeds != seeds:
+        out.append(f"{label}: per-match row attribution is not aligned with "
+                   "match_telemetry (different seeds, or a different order)")
+    attributed = sum(int(n) for _, n in match_rows)
+    if attributed != len(batch):
+        out.append(f"{label}: per-match decision counts sum to {attributed}, but the "
+                   f"batch has {len(batch)} rows")
+    return out
 
 
 def allocated_slots(requested: int, matches: int) -> int:
@@ -765,6 +954,153 @@ _FULL_CYCLE_CYCLES = 3
 _CALIBRATION_REPEATS = 3
 
 
+def _bench_context(*, champion: Path, model_config, growth_blocks: int,
+                   match_mode: str, bridge_kind: str, bridge_lib: Optional[str],
+                   device: str, max_steps_per_episode: Optional[int],
+                   event_window: int, dispatch_chunk: int,
+                   placement_bonus: Optional[dict]):
+    """The env config, warm-started model and PPO config shared by the bench
+    sweep and the preflight. One builder, so a preflight can never measure a
+    different recipe from the sweep it is deciding."""
+    env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
+                           match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
+                           oracle_observation=True, event_history_window=event_window)
+    warm_started, effective_model_config = _build_model(
+        env_config, model_config, champion, growth_blocks, device)
+    ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
+                           device="cpu", collect_dispatch_chunk=int(dispatch_chunk),
+                           **(placement_bonus or {}))
+    return env_config, warm_started, effective_model_config, ppo_config
+
+
+_PREFLIGHT_R_ROWS = 2000
+
+
+def measure_per_decision_python(batch, temperature: float = 1.0,
+                                rows: int = _PREFLIGHT_R_ROWS) -> dict:
+    """`R`: seconds of UN-BATCHED per-decision Python per decision.
+
+    This is the remnant batching does not remove. Every decision pays one
+    `sample_masked_action` and one `masked_logprob` no matter how many rows
+    shared the forward, so `R` is a hard floor under the batched collector's
+    per-decision cost -- and 10x throughput is arithmetically impossible unless
+    the process arm's per-decision cost `C_p` is at least `10R`.
+
+    Measured against REAL action masks from `batch`, because the sampling cost
+    tracks the legal-action count and a synthetic mask would get that
+    distribution wrong. The logits are synthetic: `masked_logprob` walks the
+    full [A] row and `sample_masked_action` walks the legal subset regardless
+    of the VALUES, so only the mask shape is load-bearing here."""
+    masks = np.asarray(batch.action_mask)
+    n = min(int(rows), masks.shape[0])
+    step = max(1, masks.shape[0] // n)
+    sampled = masks[::step][:n]
+    gen = torch.Generator().manual_seed(0)
+    logit_rows, mask_rows, action_rows = [], [], []
+    for i in range(sampled.shape[0]):
+        legal = np.flatnonzero(sampled[i] > 0)
+        if legal.size == 0:
+            continue
+        row = torch.randn(masks.shape[1], generator=gen).masked_fill(
+            torch.from_numpy(sampled[i] <= 0), torch.finfo(torch.float32).min)
+        logit_rows.append(row)
+        mask_rows.append(sampled[i])
+        action_rows.append(int(legal[0]))
+    n = len(mask_rows)
+    if n == 0:
+        raise RuntimeError("no rows with legal actions to measure R against")
+    rng = np.random.default_rng(0)
+
+    masked_logprob(logit_rows[0], temperature, action_rows[0])          # warm
+    start = time.perf_counter()
+    for i in range(n):
+        masked_logprob(logit_rows[i], temperature, action_rows[i])
+    logprob_seconds = (time.perf_counter() - start) / n
+
+    sample_masked_action(logit_rows[0].numpy(), mask_rows[0], temperature, rng)
+    start = time.perf_counter()
+    for i in range(n):
+        sample_masked_action(logit_rows[i].numpy(), mask_rows[i], temperature, rng)
+    sample_seconds = (time.perf_counter() - start) / n
+
+    return {
+        "rows_measured": n,
+        "masked_logprob_seconds": logprob_seconds,
+        "sample_masked_action_seconds": sample_seconds,
+        "per_decision_seconds": logprob_seconds + sample_seconds,
+        "note": ("un-batched per-decision Python (R). Batching does not remove it, "
+                 "so a 10x target needs the process arm's per-decision cost to be "
+                 "at least 10R."),
+    }
+
+
+def run_preflight(*, champion: Path, model_config, growth_blocks: int,
+                  matches: int, base_seed: int, match_mode: str, bridge_kind: str,
+                  bridge_lib: Optional[str], device: str,
+                  max_steps_per_episode: Optional[int], event_window: int,
+                  dispatch_chunk: int = 0, placement_bonus: Optional[dict] = None,
+                  workers: int = 10, target_speedup: float = 10.0,
+                  worker_target=None) -> dict:
+    """Spec G1's preflight: is the throughput target arithmetically reachable
+    at this match count, BEFORE the GPU sweep is booked?
+
+    One process-arm collection gives `C_p = collect_seconds / rows`, the
+    per-decision cost the batched arm must beat by `target_speedup`. `R` (see
+    `measure_per_decision_python`) survives batching untouched, so the target
+    needs `C_p >= target_speedup * R`. `budget_fraction_consumed =
+    target_speedup * R / C_p` is how much of the speedup budget the remnant
+    eats before the pool, the forward or anything else is counted; at 1.0 the
+    target is unreachable however fast the rest becomes.
+
+    A verdict of infeasible is a reason not to book the sweep IN THIS SHAPE --
+    raising matches per iteration does not move `C_p` at all (it is
+    per-decision), so the only lever is the remnant itself, and that is a
+    Stage-0 change, not a G1 tune."""
+    env_config, warm_started, effective_model_config, ppo_config = _bench_context(
+        champion=champion, model_config=model_config, growth_blocks=growth_blocks,
+        match_mode=match_mode, bridge_kind=bridge_kind, bridge_lib=bridge_lib,
+        device=device, max_steps_per_episode=max_steps_per_episode,
+        event_window=event_window, dispatch_chunk=dispatch_chunk,
+        placement_bonus=placement_bonus)
+    state_dict = cpu_state_snapshot(warm_started)
+    collector = ParallelB2bCollector(env_config, effective_model_config, ppo_config,
+                                     int(workers), worker_target=worker_target)
+    try:
+        collector.start()
+        start = time.perf_counter()
+        batch = collector.collect(state_dict, base_seed, matches)
+        collect_seconds = time.perf_counter() - start
+    finally:
+        collector.close()
+
+    rows = int(len(batch))
+    control_per_decision = collect_seconds / rows
+    remnant = measure_per_decision_python(batch)
+    required = float(target_speedup) * remnant["per_decision_seconds"]
+    fraction = required / control_per_decision if control_per_decision > 0 else float("inf")
+    return {
+        "mode": "preflight",
+        "workers": int(workers),
+        "matches": int(matches),
+        "base_seed": int(base_seed),
+        "device": device,
+        "control_collect_seconds": collect_seconds,
+        "control_rows": rows,
+        "control_per_decision_seconds": control_per_decision,
+        "remnant": remnant,
+        "target_speedup": float(target_speedup),
+        "required_control_per_decision_seconds": required,
+        "budget_fraction_consumed": fraction,
+        "feasible": bool(control_per_decision >= required),
+        "precision": precision_settings(),
+        "verdict_note": (
+            "feasible=False means the target is out of reach at this match count no "
+            "matter how fast the pool and the forward become: the un-batched "
+            "per-decision remnant alone exceeds the budget. Do not book the sweep in "
+            "this shape."),
+    }
+
+
 def run_bench(*, champion: Path, model_config, growth_blocks: int,
              workers: Optional[list[int]] = None,
              matches: int, base_seed: int, match_mode: str, bridge_kind: str,
@@ -775,12 +1111,17 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              collector: str = "process", pool_slots: Optional[list[int]] = None,
              inference_mode: str = "batched",
              float_ceilings: Optional[dict] = None,
-             calibrate: bool = False) -> dict:
+             calibrate: bool = False,
+             skip_float_gate: bool = False) -> dict:
     """Run the collector benchmark. Returns
     `{count: {"startup_seconds": float, "steady_seconds": float,
-    "digest": str, ...}, "all_digests_equal": bool}` where `count` is a worker
-    count (`collector="process"`, from `workers`) or the REQUESTED env-pool
-    slot count (`collector="batched"`, from `pool_slots`).
+    "steady_seconds_median": float, "digest": str, ...},
+    "all_digests_equal": bool}` where `count` is a worker count
+    (`collector="process"`, from `workers`) or the REQUESTED env-pool slot
+    count (`collector="batched"`, from `pool_slots`).
+
+    `steady_seconds` is cycle 0 only; `steady_seconds_median` is the median
+    over `cycle_collect_seconds`, and is the number spec G1 accepts on.
 
     Slot accounting (spec change 3) is three separate numbers, all reported:
     `requested_slots` (the `--pool-slots` value and the dict key),
@@ -818,7 +1159,19 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     rounding-induced action flip diverges a match and the row counts stop
     matching. `calibrate=True` runs `_CALIBRATION_REPEATS` greedy repeats per
     slot count and derives operational `--float-ceiling` flags from the worst
-    observed statistic.
+    observed statistic. The gate collections — and only they — run with the
+    backend precision flags pinned fp32 (`fp32_gate_precision`), restored
+    afterwards; the settings they ran under are reported as
+    `float_gate["precision"]`.
+
+    `skip_float_gate=True` runs the sweep with NO gate. G1 interleaves the
+    process control with the batched candidates and this function benches one
+    collector per invocation, so an un-skippable gate would re-pay its batch-1
+    `per_row` reference — roughly a whole process arm — on each of ~10
+    invocations. The gate runs once, in its own invocation; the throughput
+    invocations skip it. A skipped report says so explicitly: `float_gate`
+    carries `skipped=True` and `passed=None`, never True, and never absence —
+    a reader must never mistake "not run" for "passed".
 
     `worker_target`, when given, is forwarded to every `ParallelB2bCollector`
     this bench constructs (adversarial round 9, medium finding). It exists
@@ -837,6 +1190,13 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     if calibrate and not (collector == "batched" and inference_mode == "batched"):
         raise ValueError("--calibrate applies only to --collector batched "
                          "--inference-mode batched (it calibrates the G0.1b float gate)")
+    if skip_float_gate and not (collector == "batched" and inference_mode == "batched"):
+        raise ValueError("--skip-float-gate applies only to --collector batched "
+                         "--inference-mode batched (no G0.1b float gate runs otherwise, "
+                         "so there is nothing to skip)")
+    if skip_float_gate and calibrate:
+        raise ValueError("--skip-float-gate and --calibrate contradict each other: "
+                         "calibration IS a run of the float gate")
     if (full_cycle is not None and collector == "batched"
             and str(full_cycle.device) != str(device)):
         # One persistent model spans collection and update here, and
@@ -845,17 +1205,16 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             "--full-cycle with --collector batched keeps ONE persistent model across "
             f"collection and the update, so the update device ({full_cycle.device!r}) "
             f"must equal the collection device ({device!r})")
-    env_config = EnvConfig(bridge_kind=bridge_kind, bridge_library_path=bridge_lib,
-                           match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
-                           oracle_observation=True, event_history_window=event_window)
-    warm_started, effective_model_config = _build_model(env_config, model_config, champion, growth_blocks, device)
+    env_config, warm_started, effective_model_config, ppo_config = _bench_context(
+        champion=champion, model_config=model_config, growth_blocks=growth_blocks,
+        match_mode=match_mode, bridge_kind=bridge_kind, bridge_lib=bridge_lib,
+        device=device, max_steps_per_episode=max_steps_per_episode,
+        event_window=event_window, dispatch_chunk=dispatch_chunk,
+        placement_bonus=placement_bonus)
     # The persistent production collector constructs each worker model under
     # spawn and loads this detached CPU state snapshot for every collection
     # task, exactly as multi-worker `train_b2b` does.
     state_dict = cpu_state_snapshot(warm_started)
-    ppo_config = PPOConfig(match_mode=match_mode, max_steps_per_episode=max_steps_per_episode,
-                           device="cpu", collect_dispatch_chunk=int(dispatch_chunk),
-                           **(placement_bonus or {}))
     # The batched collector runs in THIS process on `device` (the whole point
     # of the pool), unlike the spawn workers, which are hardcoded to CPU.
     batched_config = replace(ppo_config, device=device, matches_per_iter=int(matches),
@@ -872,21 +1231,53 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     ceilings: Optional[dict] = None
     gate_repeats = _CALIBRATION_REPEATS if calibrate else 1
     calibration_records: list[dict] = []
-    if collector == "batched" and inference_mode == "batched":
+    attribution_violations: list[str] = []
+    # Counted, and reported, so a green `match_attribution_ok` can never be
+    # vacuous: on the process arm nothing is checked and the count says 0; on
+    # the batched arm a 0 would mean the check silently did not run.
+    attribution_checks = 0
+    run_float_gate = (collector == "batched" and inference_mode == "batched"
+                      and not skip_float_gate)
+    if collector == "batched" and inference_mode == "batched" and skip_float_gate:
+        # NOT an omission: an explicit "not run" record, so no reader and no
+        # downstream tool can read a throughput invocation as having cleared
+        # G0.1b. `passed` is None — neither True nor False — and the CLI's
+        # exit code ignores it.
+        float_gate = {
+            "skipped": True,
+            "status": "SKIPPED — NOT RUN, NOT PASSED",
+            "passed": None,
+            "reason": ("--skip-float-gate: the G0.1b numeric gate was not run in this "
+                       "invocation. G1 interleaves the control with the candidates, and "
+                       "the gate's greedy per_row reference is a batch-1 pass costing "
+                       "roughly a whole process arm, so the gate runs ONCE in its own "
+                       "invocation and the throughput invocations skip it. This report "
+                       "says nothing whatever about numeric parity."),
+            "ceilings": float_gate_ceilings(device, float_ceilings),
+            "precision": None,
+            "comparisons": {},
+            "violations": [],
+        }
+    if run_float_gate:
         ceilings = float_gate_ceilings(device, float_ceilings)
         ref_slots = allocated_slots(counts[0], matches)
         ref_pool = make_b2b_pool(env_config, warm_started, batched_config, ref_slots)
+        ambient_precision = precision_settings()
         ref_start = time.perf_counter()
         try:
-            ref_diag: dict = {"logits": []}
-            ref_batch = collect_b2b_rollouts_batched(
-                env_config, warm_started, batched_config, base_seed=base_seed, pool=ref_pool,
-                inference_mode="per_row", action_selection="greedy", diagnostics=ref_diag)
+            # fp32 for the gate and nothing else; restored before the sweep.
+            with fp32_gate_precision() as gate_precision:
+                ref_diag: dict = {"logits": []}
+                ref_batch = collect_b2b_rollouts_batched(
+                    env_config, warm_started, batched_config, base_seed=base_seed,
+                    pool=ref_pool, inference_mode="per_row", action_selection="greedy",
+                    diagnostics=ref_diag)
         finally:
             ref_pool.close()
         gate_reference = float_gate_arrays(
             ref_batch, emission_ordered_logits(ref_diag["logits"], ref_batch))
         float_gate = {
+            "skipped": False,
             "reference": "per_row",
             "action_selection": "greedy",
             "reference_description": "collect_b2b_rollouts_batched(inference_mode='per_row', "
@@ -897,6 +1288,21 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             "reference_rows": int(len(ref_batch)),
             "reference_semantic_digest": _semantic_digest_batch(base_seed, matches, ref_batch),
             "ceilings": ceilings,
+            # Spec G1 requires TF32 and determinism settings to be registered,
+            # and G0.1b's ceilings only mean something in the regime they were
+            # measured in. `precision` is what the gate ACTUALLY ran under
+            # (pinned fp32); `ambient_precision` is what the process had before
+            # and gets back afterwards — on a stock 4090 that is
+            # cudnn_allow_tf32=True, which is exactly the trap.
+            "precision": gate_precision,
+            "ambient_precision": ambient_precision,
+            "precision_note": (
+                "the gate pins fp32 for the cuDNN convolutions, the cuDNN RNN (the "
+                "event GRU) and matmul, plus cudnn.benchmark=False, and restores the "
+                "ambient settings afterwards. Stock torch runs conv AND rnn in TF32. "
+                "The registered ceilings encode an fp32 noise floor, so a TF32 "
+                "measurement is a different regime needing its own registration — "
+                "never a widened cap."),
             "repeats": gate_repeats,
             "calibrate": bool(calibrate),
             "comparisons": {},
@@ -975,7 +1381,17 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                     "semantic_digest": _semantic_digest_batch(cycle_seed, matches, batch),
                     "peak_live_slots": diag.get("peak_live_slots"),
                     "forward_shapes": forward_shape_stats(sizes, diag.get("rounds")),
+                    # Spec G1's phase split (pool FFI / forward / per-row
+                    # Python). A mid-range result is uninterpretable without
+                    # it, and the "tunable vs falsified" verdict reads off it.
+                    "timers": diag.get("timers"),
+                    "skipped_matches": diag.get("skipped_matches"),
                 }
+                if collector == "batched":
+                    attribution_checks += 1
+                    attribution_violations.extend(match_attribution_violations(
+                        f"pool_slots={requested} cycle={cycle_index}",
+                        batch, diag, cycle_seed, matches))
                 if full_cycle is not None:
                     assert cycle_model is not None and optimizer is not None
                     record.update(_run_full_cycle_update(
@@ -1006,23 +1422,27 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             # charge it to the batched candidate (spec G1).
             per_repeat: list[dict] = []
             semantic_ok = True
-            if float_gate is not None:
-                for _ in range(gate_repeats):
-                    gate_diag: dict = {"logits": []}
-                    gate_batch = collect_b2b_rollouts_batched(
-                        env_config, warm_started, batched_config, base_seed=base_seed,
-                        pool=pool, inference_mode="batched", action_selection="greedy",
-                        diagnostics=gate_diag)
-                    per_repeat.append(compare_float_fields(
-                        gate_reference,
-                        float_gate_arrays(
-                            gate_batch,
-                            emission_ordered_logits(gate_diag["logits"], gate_batch)),
-                        ceilings))
-                    semantic_ok = semantic_ok and (
-                        _semantic_digest_batch(base_seed, matches, gate_batch)
-                        == float_gate["reference_semantic_digest"])
-                    del gate_batch, gate_diag
+            if run_float_gate:
+                # fp32 pinned for the candidate collections too: the reference
+                # ran fp32, so a candidate under the ambient (TF32-by-default)
+                # settings would be comparing two regimes.
+                with fp32_gate_precision():
+                    for _ in range(gate_repeats):
+                        gate_diag: dict = {"logits": []}
+                        gate_batch = collect_b2b_rollouts_batched(
+                            env_config, warm_started, batched_config, base_seed=base_seed,
+                            pool=pool, inference_mode="batched", action_selection="greedy",
+                            diagnostics=gate_diag)
+                        per_repeat.append(compare_float_fields(
+                            gate_reference,
+                            float_gate_arrays(
+                                gate_batch,
+                                emission_ordered_logits(gate_diag["logits"], gate_batch)),
+                            ceilings))
+                        semantic_ok = semantic_ok and (
+                            _semantic_digest_batch(base_seed, matches, gate_batch)
+                            == float_gate["reference_semantic_digest"])
+                        del gate_batch, gate_diag
         finally:
             if pool is not None:
                 pool.close()
@@ -1030,9 +1450,19 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                 spawn_collector.close()
 
         batch = first_batch
+        # `steady_seconds` is CYCLE 0 alone. Spec G1 accepts on the MEDIAN of
+        # the three steady cycles, so the median is carried beside it under its
+        # own name rather than left to be recomputed from the per-cycle table
+        # -- reading cycle 0 as the acceptance number is the easy mistake, and
+        # cycle 0 is the one cycle that runs against a freshly warmed allocator
+        # and an un-updated model.
+        cycle_seconds = [c["collect_seconds"] for c in cycles]
         results[requested] = {
             "startup_seconds": startup_seconds,
             "steady_seconds": cycles[0]["collect_seconds"],
+            "cycle_collect_seconds": cycle_seconds,
+            "steady_seconds_median": float(np.median(cycle_seconds)),
+            "cycles_measured": len(cycle_seconds),
             "digest": cycles[0]["digest"],
             "semantic_digest": cycles[0]["semantic_digest"],
             "requested_slots": requested if collector == "batched" else None,
@@ -1040,7 +1470,7 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             "peak_live_slots": cycles[0]["peak_live_slots"],
             "forward_shapes": cycles[0]["forward_shapes"],
         }
-        if float_gate is not None:
+        if run_float_gate:
             label = f"pool_slots={requested}"
             worst = worst_over_repeats(per_repeat, ceilings)
             violations = _float_gate_violations(label, worst)
@@ -1115,6 +1545,12 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     # `semantic_matches_reference` are exact.
     exact_expected = not (collector == "batched" and inference_mode == "batched")
     report = {"results": results, "all_digests_equal": len(digests) <= 1,
+             # Exact under sampling, and the only check that can catch a row
+             # credited to the wrong match once digests stop being comparable
+             # across slot counts. Gated, not merely reported.
+             "match_attribution_ok": not attribution_violations,
+             "match_attribution_violations": attribution_violations,
+             "match_attribution_checks": attribution_checks,
              "semantic_digests_equal": len(semantic_digests) <= 1,
              # Reported, never gated: see `_ROLLOUT_TOLERANT_FIELDS`.
              "float_fields_within_tolerance": float_fields_within_tolerance,
@@ -1129,7 +1565,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
              "inference_mode": inference_mode if collector == "batched" else None,
              "dispatch_chunk_matches": int(dispatch_chunk),
              # Spec G0.1b hard gate (batched inference only); None otherwise.
-             "float_gate": float_gate}
+             "float_gate": float_gate,
+             "float_gate_skipped": bool(skip_float_gate)}
     if full_cycle is not None:
         invariant_tuples = {
             tuple(cycle[key]
@@ -1155,8 +1592,12 @@ def _opt(value, spec: str) -> str:
 
 
 def _print_table(results: dict[int, dict], label: str = "workers") -> None:
-    print(f"{label:>10}  {'alloc':>6}  {'live':>5}  {'startup_s':>10}  {'steady_s':>10}  "
-          f"{'fwd_rows_mean':>13}  digest")
+    """`cyc0_s` and `median_s` are named apart deliberately: spec G1 accepts on
+    the MEDIAN of the steady cycles, and a table whose only timing column was
+    cycle 0 invites reading the wrong number as the result. With one measured
+    cycle (no --full-cycle) the two columns are equal by construction."""
+    print(f"{label:>10}  {'alloc':>6}  {'live':>5}  {'startup_s':>10}  {'cyc0_s':>10}  "
+          f"{'median_s':>10}  {'cyc':>3}  {'fwd_rows_mean':>13}  digest")
     for w in sorted(results):
         r = results[w]
         shapes = r.get("forward_shapes") or {}
@@ -1164,7 +1605,35 @@ def _print_table(results: dict[int, dict], label: str = "workers") -> None:
             f"{w:>10}  {_opt(r.get('allocated_slots'), '>6d')}  "
             f"{_opt(r.get('peak_live_slots'), '>5d')}  "
             f"{r['startup_seconds']:>10.3f}  {r['steady_seconds']:>10.3f}  "
+            f"{_opt(r.get('steady_seconds_median'), '>10.3f')}  "
+            f"{_opt(r.get('cycles_measured'), '>3d')}  "
             f"{_opt(shapes.get('rows_per_forward_mean'), '>13.2f')}  {r['digest']}")
+    print("  (cyc0_s = cycle 0; median_s = median of the measured cycles -- "
+          "spec G1 accepts on median_s)")
+
+
+def _print_preflight(report: dict) -> None:
+    """Spec G1's booking decision, printed as the arithmetic it is."""
+    remnant = report["remnant"]
+    us = 1e6
+    print("preflight (spec G1): is the throughput target arithmetically reachable?")
+    print(f"  control: {report['workers']} process workers, {report['matches']} matches, "
+          f"{report['control_rows']} rows in {report['control_collect_seconds']:.3f}s")
+    print(f"  C_p (process per-decision)       "
+          f"{report['control_per_decision_seconds'] * us:9.1f} us")
+    print(f"  R   (un-batched Python remnant)  "
+          f"{remnant['per_decision_seconds'] * us:9.1f} us "
+          f"(masked_logprob {remnant['masked_logprob_seconds'] * us:.1f} + "
+          f"sample_masked_action {remnant['sample_masked_action_seconds'] * us:.1f}, "
+          f"over {remnant['rows_measured']} real masks)")
+    print(f"  need C_p >= {report['target_speedup']:.0f}R = "
+          f"{report['required_control_per_decision_seconds'] * us:.1f} us")
+    print(f"  budget consumed by the remnant alone: "
+          f"{report['budget_fraction_consumed'] * 100:.1f}%")
+    print(f"  precision: {report['precision']}")
+    print(f"preflight_feasible: {report['feasible']}")
+    if not report["feasible"]:
+        print(f"  {report['verdict_note']}")
 
 
 def _print_forward_shapes(results: dict[int, dict], label: str = "workers") -> None:
@@ -1267,6 +1736,22 @@ def main() -> None:
                         "block. Operational threshold = 2x the worst observed statistic per "
                         "part, capped by the registered ceiling; an observed value above its "
                         "cap fails the run instead of widening the cap")
+    p.add_argument("--skip-float-gate", action="store_true",
+                   help="run the throughput sweep with NO G0.1b float gate. G1 "
+                        "interleaves the process control with ~10 batched candidate "
+                        "invocations and the gate's batch-1 per_row reference costs "
+                        "roughly a whole process arm, so the gate runs ONCE in its own "
+                        "invocation. A skipped report says so: float_gate_passed is "
+                        "None, never True, and the exit code does not read it as a pass")
+    p.add_argument("--preflight", action="store_true",
+                   help="spec G1's booking decision, no GPU sweep: run ONE process-arm "
+                        "collection for C_p (per-decision cost), measure R (the "
+                        "un-batched per-decision Python that batching does not remove), "
+                        "and report whether C_p >= --target-speedup x R. Exits 1 when "
+                        "the target is arithmetically out of reach at this match count")
+    p.add_argument("--target-speedup", type=float, default=10.0,
+                   help="throughput multiple the preflight tests for feasibility "
+                        "(default 10, spec G1's acceptance)")
     p.add_argument("--matches", type=int, default=320)
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--match-mode", choices=("classic", "chongci"), default="chongci")
@@ -1339,7 +1824,23 @@ def main() -> None:
 
     workers = _counts(args.workers)
     pool_slots = _counts(args.pool_slots)
-    if args.collector == "batched":
+    if args.preflight:
+        # The preflight measures the PROCESS control's per-decision cost and
+        # the per-decision Python remnant. It runs no pool, no gate and no
+        # update, so every flag that configures those is a mistake here rather
+        # than a no-op.
+        if pool_slots:
+            p.error("--preflight measures the process control (C_p); --pool-slots "
+                    "has no meaning there")
+        if len(workers) > 1:
+            p.error("--preflight takes a single --workers value (the control's "
+                    "worker count)")
+        if args.calibrate or args.skip_float_gate:
+            p.error("--preflight runs no float gate, so --calibrate / "
+                    "--skip-float-gate do not apply")
+        if args.full_cycle:
+            p.error("--preflight runs no PPO update; drop --full-cycle")
+    elif args.collector == "batched":
         if not pool_slots:
             p.error("--collector batched requires --pool-slots (e.g. --pool-slots 128,256)")
         if any(s < 1 for s in pool_slots):
@@ -1351,6 +1852,13 @@ def main() -> None:
             p.error("--workers must name at least one worker count")
         if pool_slots:
             p.error("--pool-slots requires --collector batched")
+    if args.skip_float_gate and args.calibrate:
+        p.error("--skip-float-gate and --calibrate contradict each other: "
+                "calibration IS a run of the float gate")
+    if args.skip_float_gate and not (args.collector == "batched"
+                                     and args.inference_mode == "batched"):
+        p.error("--skip-float-gate applies only to --collector batched "
+                "--inference-mode batched (no float gate runs otherwise)")
 
     # Adversarial round 6, high finding (train_b2b.py): --event-window (this
     # script's own flag) is NOT --model-event-window (model_config_args's
@@ -1385,6 +1893,23 @@ def main() -> None:
     except ValueError as exc:
         p.error(str(exc))
 
+    if args.preflight:
+        preflight = run_preflight(
+            champion=args.champion, model_config=model_config,
+            growth_blocks=args.model_growth_blocks, matches=args.matches,
+            base_seed=args.base_seed, match_mode=args.match_mode,
+            bridge_kind=args.bridge_kind, bridge_lib=args.bridge_lib,
+            device=args.device, max_steps_per_episode=args.max_steps_per_episode,
+            event_window=args.event_window, dispatch_chunk=args.dispatch_chunk,
+            placement_bonus=placement_bonus_kwargs(args),
+            workers=workers[0] if workers else 10,
+            target_speedup=args.target_speedup)
+        _print_preflight(preflight)
+        if args.json is not None:
+            args.json.write_text(json.dumps(preflight, indent=2))
+        # Exit 1 on infeasible: this is a gate verdict, not a report.
+        sys.exit(0 if preflight["feasible"] else 1)
+
     full_cycle = None
     if args.full_cycle:
         full_cycle = FullCycleSettings(
@@ -1405,7 +1930,8 @@ def main() -> None:
                        placement_bonus=placement_bonus_kwargs(args),
                        collector=args.collector, pool_slots=pool_slots,
                        inference_mode=args.inference_mode,
-                       float_ceilings=float_ceilings, calibrate=args.calibrate)
+                       float_ceilings=float_ceilings, calibrate=args.calibrate,
+                       skip_float_gate=args.skip_float_gate)
     results = report["results"]
     label = "pool_slots" if args.collector == "batched" else "workers"
     _print_table(results, label)
@@ -1442,8 +1968,31 @@ def main() -> None:
         if not report["semantic_digests_equal"]:
             _print_groups("semantic_digest")
     ok = report["all_digests_equal"] if exact_expected else True
+    # Exact even under sampling (see `match_attribution_violations`), so it
+    # gates in both modes.
+    checks = report["match_attribution_checks"]
+    print(f"match_attribution_ok: {report['match_attribution_ok']} "
+          f"(collections checked: {checks}"
+          + ("; the process collector exposes no per-match attribution, so this "
+             "arm is NOT covered)" if args.collector == "process" else ")"))
+    for line in report["match_attribution_violations"]:
+        print(f"MATCH ATTRIBUTION VIOLATION: {line}")
+    ok = ok and report["match_attribution_ok"]
+    if args.collector == "batched" and checks == 0:
+        # A pass with nothing checked is the failure mode this counter exists
+        # to catch, so it fails rather than prints.
+        print("MATCH ATTRIBUTION VIOLATION: batched sweep checked 0 collections")
+        ok = False
     float_gate = report.get("float_gate")
-    if float_gate is not None:
+    if float_gate is not None and float_gate.get("skipped"):
+        # NOT folded into `ok`. A skipped gate is not a failure -- this
+        # invocation was a throughput measurement -- but it is emphatically not
+        # a pass either, and `float_gate_passed` prints as None so no reader
+        # and no log scrape can turn it into one.
+        print(f"float_gate: {float_gate['status']}")
+        print(f"  {float_gate['reason']}")
+        print("float_gate_passed: None (NOT RUN -- this is not a pass)")
+    elif float_gate is not None:
         # Spec G0.1b: per field, per slot count, GREEDY, against the greedy
         # per_row reference on the same seeds. Never one collapsed maximum,
         # and never sampled.
@@ -1487,6 +2036,9 @@ def main() -> None:
             str(w): {
                 "startup_seconds": r["startup_seconds"],
                 "steady_seconds": r["steady_seconds"],
+                "steady_seconds_median": r.get("steady_seconds_median"),
+                "cycle_collect_seconds": r.get("cycle_collect_seconds"),
+                "cycles_measured": r.get("cycles_measured"),
                 "digest": r["digest"],
                 "semantic_digest": r["semantic_digest"],
                 "requested_slots": r.get("requested_slots"),
@@ -1498,6 +2050,10 @@ def main() -> None:
             for w, r in results.items()
         }
         payload["all_digests_equal"] = report["all_digests_equal"]
+        payload["match_attribution_ok"] = report["match_attribution_ok"]
+        payload["match_attribution_violations"] = report["match_attribution_violations"]
+        payload["match_attribution_checks"] = report["match_attribution_checks"]
+        payload["float_gate_skipped"] = report["float_gate_skipped"]
         payload["semantic_digests_equal"] = report["semantic_digests_equal"]
         payload["float_fields_within_tolerance"] = report["float_fields_within_tolerance"]
         payload["float_allclose_violations"] = report["float_allclose_violations"]
