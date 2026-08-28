@@ -8,7 +8,9 @@ GPT-5.6-Sol, high): CONDITIONALLY RATIFIED.** Merge with `collector=process` is
 authorized once the hard-bounded numeric gate (G0.1b), the per-iteration G0.6, and a
 full-suite rerun at final HEAD pass. G1–G3, training use and the default switch stay
 unauthorized. PR #232. **Second-round consult 2026-08-27 (fresh thread, Opus 5,
-read-only): RATIFIED WITH AMENDMENTS** — four merge-blockers, folded in below.
+read-only): RATIFIED WITH AMENDMENTS** — four merge-blockers, folded in below. Merged
+as `a28a6cc`. **G0-results consult 2026-08-28 (fresh thread, Opus 5, read-only):
+AUTHORIZED FOR G1 WITH AMENDMENTS**, folded into G1 below.
 
 Worktree `batched-b2b-collector`, branch `experiment/batched-b2b-collector`.
 
@@ -308,18 +310,60 @@ costing roughly a whole process arm, and folding it inline would be charged to t
 batched candidate.
 
 Host memory is its own risk here, not a formality: the pool holds every in-flight
-match's planes at once, and the seed-order flush head-of-line blocks, so one long match
-pins the rows of every later match that already finished. At 320 slots that is close to
-all 320 matches resident simultaneously — a retention profile the 10-worker arm never
-has. Report host RSS peak per slot count.
+match's planes at once, and the seed-order flush head-of-line blocks. One long match at a
+low seed index pins the rows of every later match that has already finished — and that
+happens at **every** slot count, not only the high ones, so near-all matches can be
+resident at 32 slots too. Report host RSS peak per slot count, but do not read a flat RSS
+curve as "no retention problem": flatness is what head-of-line blocking predicts.
+
+**Pre-registered shape prediction.** At `slots == matches` the pool never refills, so
+the round count is floored by the *longest* match's decision count (~4915 in the parity
+block against a ~300-decision median) and mean rows-per-forward lands near
+`total_rows / longest_match`, i.e. of order 30 — not 320. At `slots ≪ matches` the pool
+refills and the batch pins near `slots`, with rounds ≈ `total_rows / slots`. The predicted
+winner is therefore the **largest slot count that still refills**, and 320 is a candidate
+for the worst arm. If the observed batch-size histogram contradicts this, the scheduling
+model is wrong and no arm is a valid test of the design — stop and re-derive rather than
+reading off a winner.
+
+**Preflight before the sweep is booked** (`fh-mj-collect-bench --preflight`, ~2 min, no
+GPU sweep): measure `R` = per-decision un-batched Python (`ppo.masked_logprob` +
+`sample_masked_action`), run one process-arm cycle, compute `C_p = collect_seconds /
+transition_rows`. `R` is ~50 µs/decision on the Mac (36.4 + 13.7), and batching does not
+remove it, so **≥ 10× requires `C_p ≥ 10R`**. Against the ds960 profile (19 min collection
+for 320 matches, ~2050 rows each) `C_p` is ~1.7 ms, so the un-batched remnant already
+consumes ~29 % of the 10× budget. If the preflight says the target is arithmetically out
+of reach at this match count, the sweep is not booked in this shape.
+
+Also verify before booking: the box's pinned `libfh_mahjong_bridge.so` exports the pool
+ABI (`ctypes.CDLL(lib).FHEnvPoolNew`), and the backend precision flags are pinned fp32 for
+the float gate (see G0.1b) — the registered CUDA ceilings encode an fp32 noise floor, and
+cuDNN's TF32 default would produce a guaranteed false stop under a rule that forbids
+widening the cap.
 
 Acceptance: **≥ 10× the process arm's collection throughput** on the **median** of the
 three steady cycles, not the best, for some candidate; aggregate RSS ≤ 20 GiB, CUDA peak
 ≤ 20 GB. Pick the **smallest** slot count within 10 % of the best — speed alone never
 justifies a resource count. A candidate whose mean rows-per-forward falls below 16 is
-not a valid test of the design; report it as such rather than counting it as a miss. A
-genuine miss means profiling the Python round loop first — Go is 2.5 ms per match, so
-the time is in the loop, not the simulator — before any redesign is proposed.
+not a valid test of the design; report it as such rather than counting it as a miss.
+
+**A miss that is tunable, versus one that falsifies the design.** The round loop reports
+three timers (pool step, forward, per-row Python), and the verdict reads off them:
+   - *Tunable*: the forward dominates the phase split and mean rows-per-forward < 16 — a
+     scheduling artefact; sweep lower.
+   - *Falsified*: at some slot count with mean rows-per-forward ≥ 32, `pool.step` plus
+     per-row Python is ≥ 70 % of collection wall time **and** the total is < 5×. The
+     premise — that per-decision cost falls to 1/N of a batched forward — is then false,
+     and more batching cannot reach the residual.
+   - *Also falsified*: collection time flat across 32 → 256 slots while the mean batch
+     scales. That is a per-round fixed cost `F` times a round count floored by the longest
+     match; if `F × max_match_decisions` alone exceeds `C_p / 10`, no tuning moves it.
+
+**If the miss localizes to `masked_logprob` / `sample_masked_action`, the fix is a Stage-0
+redo, not a G1 tune.** Replacing the per-decision `Categorical` with one batched
+`log_softmax` + gather over the `[B, A]` host tensor **changes the floats**, which reopens
+G0.1's byte-equality and G0.1b. It requires fresh G0.1/G0.1b runs and a new
+authorization — nobody patches it on the box mid-sweep.
 
 The Mac CPU bench (2026-08-26: 32 matches, 209 s at 8 slots, 231 s at 32, no process
 baseline) is diagnostic only and has no bearing on this gate.
