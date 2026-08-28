@@ -473,6 +473,10 @@ def test_cli_injected_perturbation_exits_one_and_names_worker_counts(
                 "semantic_digest": "bbb-sem"},
         },
         "all_digests_equal": False,
+        "match_attribution_ok": True,
+        "match_attribution_violations": [],
+        "match_attribution_checks": 1,
+        "float_gate_skipped": False,
         "semantic_digests_equal": False,
         "float_fields_within_tolerance": True,
         "semantics_equal": False,
@@ -972,6 +976,10 @@ def test_float_delta_outside_tolerance_is_reported_not_gated(tmp_path, monkeypat
                  "digest": "bbb", "semantic_digest": "same"},
         },
         "all_digests_equal": False,
+        "match_attribution_ok": True,
+        "match_attribution_violations": [],
+        "match_attribution_checks": 1,
+        "float_gate_skipped": False,
         "semantic_digests_equal": True,
         "float_fields_within_tolerance": False,
         "float_allclose_violations": 6,
@@ -1018,6 +1026,10 @@ def test_sampled_sweep_semantic_difference_is_reported_not_gated(
                  "digest": "bbb", "semantic_digest": "sem-b"},
         },
         "all_digests_equal": False,
+        "match_attribution_ok": True,
+        "match_attribution_violations": [],
+        "match_attribution_checks": 1,
+        "float_gate_skipped": False,
         "semantic_digests_equal": False,
         "float_fields_within_tolerance": True,
         "float_allclose_violations": 0,
@@ -1235,3 +1247,250 @@ def test_cli_rejects_mismatched_collector_and_count_flags(tmp_path):
     ], capture_output=True, text=True)
     assert crossed.returncode == 2
     assert "--collector batched" in crossed.stderr
+
+
+# ---------------------------------------------------------------------------
+# Pre-G1 amendments (G0-results consult): fp32 pinning, a skippable-but-never-
+# passing float gate, per-match row attribution, the median column, and the
+# preflight's feasibility arithmetic.
+# ---------------------------------------------------------------------------
+
+
+class _AttributionBatch:
+    """Minimal stand-in for a RolloutBatch: `match_attribution_violations`
+    reads only `match_telemetry` and `len()`."""
+
+    def __init__(self, telemetry, rows):
+        self.match_telemetry = telemetry
+        self._rows = rows
+
+    def __len__(self):
+        return self._rows
+
+
+def _attribution_case(seeds, per_match_rows, total_rows=None):
+    batch = _AttributionBatch([{"seed": s} for s in seeds],
+                              sum(per_match_rows) if total_rows is None else total_rows)
+    diagnostics = {"match_rows": [[s, n] for s, n in zip(seeds, per_match_rows)],
+                   "skipped_matches": 0}
+    return batch, diagnostics
+
+
+def test_match_attribution_passes_on_a_well_formed_collection():
+    batch, diag = _attribution_case([100, 101, 102], [7, 5, 9])
+    assert collect_bench.match_attribution_violations("x", batch, diag, 100, 3) == []
+
+
+def test_match_attribution_catches_rows_credited_to_the_wrong_match():
+    """The hole this closes: under sampling, digests are not comparable across
+    slot counts, so a row credited to the wrong match is invisible to every
+    other check. Each of these is a distinct way the mapping can break."""
+    # A seed the block never contained.
+    batch, diag = _attribution_case([100, 101, 999], [7, 5, 9])
+    out = collect_bench.match_attribution_violations("x", batch, diag, 100, 3)
+    assert any("not the seed block" in line for line in out)
+
+    # Rows attributed in a different order from the telemetry.
+    batch, diag = _attribution_case([100, 101, 102], [7, 5, 9])
+    diag["match_rows"] = [[101, 5], [100, 7], [102, 9]]
+    out = collect_bench.match_attribution_violations("x", batch, diag, 100, 3)
+    assert any("not aligned with" in line for line in out)
+
+    # Per-match counts that do not add up to the rows the batch actually has.
+    batch, diag = _attribution_case([100, 101, 102], [7, 5, 9], total_rows=20)
+    out = collect_bench.match_attribution_violations("x", batch, diag, 100, 3)
+    assert any("sum to 21" in line and "20 rows" in line for line in out)
+
+    # A match missing from the telemetry entirely, with the reset-terminal
+    # count named so the two causes can be told apart.
+    batch, diag = _attribution_case([100, 101], [7, 5])
+    diag["skipped_matches"] = 1
+    out = collect_bench.match_attribution_violations("x", batch, diag, 100, 3)
+    assert any("expected 3" in line and "ended at reset: 1" in line for line in out)
+
+    # A collector that reports no attribution at all must not read as clean.
+    batch, _ = _attribution_case([100], [7])
+    out = collect_bench.match_attribution_violations("x", batch, {}, 100, 1)
+    assert len(out) == 1 and "no per-match row attribution" in out[0]
+
+
+def test_fp32_gate_precision_pins_and_restores_every_flag():
+    """The gate's ceilings encode an fp32 noise floor, so the gate pins fp32 --
+    including the cuDNN RNN, which the event GRU runs on and which torch
+    defaults to TF32 exactly as it does convolutions."""
+    import torch
+
+    before = collect_bench.precision_settings()
+    try:
+        with collect_bench.fp32_gate_precision() as inside:
+            for key, value in collect_bench._PINNED_GATE_PRECISION.items():
+                assert inside[key] == value, key
+            if collect_bench._PRECISION_API_NEW:
+                assert torch.backends.cudnn.conv.fp32_precision == "ieee"
+                assert torch.backends.cudnn.rnn.fp32_precision == "ieee"
+                assert torch.backends.cuda.matmul.fp32_precision == "ieee"
+            assert torch.backends.cudnn.benchmark is False
+        assert collect_bench.precision_settings() == before
+    finally:
+        collect_bench._apply_precision(before)
+
+
+def test_gate_precision_survives_a_caller_that_used_the_other_torch_api():
+    """torch exposes TF32 through two mutually exclusive API families, and
+    setting through one then reading through the other RAISES. A gate that
+    pinned with the legacy setters would crash any process whose caller had
+    called `set_float32_matmul_precision` -- mid-gate, on the box. Reading the
+    settings must stay total, and the round trip must still restore."""
+    import torch
+
+    before = collect_bench.precision_settings()
+    try:
+        torch.set_float32_matmul_precision("high")           # the other family
+        ambient = collect_bench.precision_settings()          # must not raise
+        with collect_bench.fp32_gate_precision() as inside:
+            assert inside["cudnn_benchmark"] is False
+        assert collect_bench.precision_settings() == ambient
+    finally:
+        collect_bench._apply_precision(before)
+        torch.set_float32_matmul_precision(
+            before["float32_matmul_precision"]
+            if before["float32_matmul_precision"] in ("highest", "high", "medium")
+            else "highest")
+
+
+def test_stock_torch_defaults_the_trunk_and_the_gru_to_tf32():
+    """The premise the pinning rests on, asserted rather than assumed: out of
+    the box torch runs cuDNN convolutions AND the cuDNN RNN in TF32, so an
+    unpinned CUDA gate would measure a 10-bit-mantissa regime against ceilings
+    registered from an fp32 one."""
+    import torch
+
+    if not collect_bench._PRECISION_API_NEW:
+        assert torch.backends.cudnn.allow_tf32 is True
+        return
+    assert torch.backends.cudnn.conv.fp32_precision == "tf32"
+    assert torch.backends.cudnn.rnn.fp32_precision == "tf32"
+
+
+def test_skipped_float_gate_never_reads_as_passed(tmp_path, monkeypatch, capsys):
+    """A throughput invocation skips the gate. It must exit 0 -- skipping is
+    not a failure -- while making it impossible to read the report as a pass:
+    `passed` is None, never True and never absent."""
+    import json as json_mod
+
+    champion = _champion(tmp_path)
+    out_json = tmp_path / "skipped.json"
+    monkeypatch.setattr(sys, "argv", _batched_main_argv(
+        champion, ["--skip-float-gate", "--json", str(out_json)]))
+    with pytest.raises(SystemExit) as excinfo:
+        collect_bench.main()
+    assert excinfo.value.code == 0
+
+    out = capsys.readouterr().out
+    assert "float_gate_passed: None (NOT RUN -- this is not a pass)" in out
+    assert "float_gate_passed: True" not in out
+
+    gate = json_mod.loads(out_json.read_text())["float_gate"]
+    assert gate["skipped"] is True and gate["passed"] is None
+    assert gate["comparisons"] == {}
+    # The throughput numbers themselves are still there -- the point of the run.
+    assert json_mod.loads(out_json.read_text())["float_gate_skipped"] is True
+
+
+def test_skip_float_gate_rejects_contradictory_and_inapplicable_flags(tmp_path):
+    both = _run_batched_cli(tmp_path, ["--pool-slots", "1", "--skip-float-gate",
+                                       "--calibrate"])
+    assert both.returncode == 2 and "contradict each other" in both.stderr
+    per_row = _run_batched_cli(tmp_path, ["--pool-slots", "1", "--inference-mode",
+                                          "per_row", "--skip-float-gate"])
+    assert per_row.returncode == 2 and "--skip-float-gate applies only" in per_row.stderr
+
+
+def test_batched_sweep_reports_a_nonvacuous_attribution_check(tmp_path):
+    """`match_attribution_ok: True` with nothing checked is the failure mode
+    the counter exists to catch, so the count is printed beside the verdict."""
+    result = _run_batched_cli(tmp_path, ["--pool-slots", "2,4", "--skip-float-gate"])
+    assert result.returncode == 0, result.stderr
+    assert "match_attribution_ok: True (collections checked: 2)" in result.stdout
+
+
+def test_table_names_cycle_zero_and_the_median_apart(tmp_path):
+    """Spec G1 accepts on the median of the steady cycles; a table whose only
+    timing column was cycle 0 invites reading the wrong number."""
+    result = _run_batched_cli(tmp_path, ["--pool-slots", "2", "--skip-float-gate"])
+    assert result.returncode == 0, result.stderr
+    assert "cyc0_s" in result.stdout and "median_s" in result.stdout
+    assert "spec G1 accepts on median_s" in result.stdout
+
+
+def test_preflight_reports_the_feasibility_arithmetic(tmp_path):
+    """G1's booking decision: C_p from one process-arm collection, R from the
+    un-batched per-decision Python, and the verdict C_p >= 10R."""
+    import json as json_mod
+
+    champion = _champion(tmp_path)
+    out_json = tmp_path / "preflight.json"
+    result = subprocess.run([
+        sys.executable, "-m", "fh_mahjong_ai.scripts.collect_bench",
+        "--champion", str(champion), "--preflight", "--workers", "1",
+        "--matches", "2", "--base-seed", "100", "--match-mode", "classic",
+        "--bridge-kind", "mock", "--device", "cpu", "--max-steps-per-episode", "16",
+        "--event-window", "8", "--model-channels", "16", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16", "--json", str(out_json),
+    ], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "preflight_feasible: True" in result.stdout
+
+    report = json_mod.loads(out_json.read_text())
+    remnant = report["remnant"]
+    assert remnant["per_decision_seconds"] > 0
+    assert remnant["per_decision_seconds"] == pytest.approx(
+        remnant["masked_logprob_seconds"] + remnant["sample_masked_action_seconds"])
+    assert report["required_control_per_decision_seconds"] == pytest.approx(
+        10.0 * remnant["per_decision_seconds"])
+    assert report["budget_fraction_consumed"] == pytest.approx(
+        report["required_control_per_decision_seconds"]
+        / report["control_per_decision_seconds"])
+    # `feasible` is the arithmetic, not a separate opinion.
+    assert report["feasible"] is (report["control_per_decision_seconds"]
+                                 >= report["required_control_per_decision_seconds"])
+
+
+def test_preflight_target_speedup_moves_the_verdict(tmp_path):
+    """An unreachable target must come back infeasible AND exit 1 -- the
+    preflight is a gate on whether to book the sweep, not a report."""
+    champion = _champion(tmp_path)
+    result = subprocess.run([
+        sys.executable, "-m", "fh_mahjong_ai.scripts.collect_bench",
+        "--champion", str(champion), "--preflight", "--workers", "1",
+        "--target-speedup", "1000000",
+        "--matches", "2", "--base-seed", "100", "--match-mode", "classic",
+        "--bridge-kind", "mock", "--device", "cpu", "--max-steps-per-episode", "16",
+        "--event-window", "8", "--model-channels", "16", "--model-residual-blocks", "1",
+        "--model-plane-feature-dim", "32", "--model-scalar-hidden-dim", "16",
+        "--model-trunk-hidden-dim", "32", "--model-value-hidden-dim", "16",
+        "--model-q-hidden-dim", "16",
+    ], capture_output=True, text=True)
+    assert result.returncode == 1, result.stdout
+    assert "preflight_feasible: False" in result.stdout
+    assert "Do not book the sweep in this shape" in result.stdout
+
+
+def test_preflight_rejects_flags_that_configure_what_it_does_not_run(tmp_path):
+    champion = _champion(tmp_path)
+
+    def _run(extra):
+        return subprocess.run([
+            sys.executable, "-m", "fh_mahjong_ai.scripts.collect_bench",
+            "--champion", str(champion), "--preflight", "--matches", "2",
+            "--bridge-kind", "mock", "--event-window", "8",
+        ] + extra, capture_output=True, text=True)
+
+    slots = _run(["--collector", "batched", "--pool-slots", "4"])
+    assert slots.returncode == 2 and "--pool-slots has no meaning" in slots.stderr
+    many = _run(["--workers", "1,2"])
+    assert many.returncode == 2 and "a single --workers value" in many.stderr
+    cycle = _run(["--workers", "1", "--full-cycle"])
+    assert cycle.returncode == 2 and "no PPO update" in cycle.stderr

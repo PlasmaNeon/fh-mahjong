@@ -217,12 +217,19 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
    Two independent seed blocks agree to within 3 %, so the statistic is a property of
    the architecture, not of a block. Ceilings sit at ≥ 2× the observed statistic, with
    more headroom on the max part than on the quantile because only max grows with row
-   count. That growth is slow: a validation run on a **disjoint** block at 2.1× the
-   element count (32 matches, 582 508 legal-logit elements) passed every part with
-   margin — legal logits p99.9 3.53e-5, max 6.87e-5 — so doubling the elements moved the
-   max by 4 %, and G1's row count stays far inside the caps. **A ceiling is re-registered
-   only from a measurement, never widened to clear a failing run**: the numbers above
-   replaced a set derived from a tiny-net figure plus an extrapolation, which the first
+   count. A validation run on a **disjoint** block at 2.1× the element count (32 matches,
+   582 508 legal-logit elements) passed every part with margin: legal logits p99.9
+   3.53e-5, max 6.87e-5.
+
+   No per-doubling growth rate is claimed, and none should be read off these numbers.
+   Two measured pairs disagree wildly about one — 2.1× the elements moved the max 4 %,
+   while 4.2× the rows moved it from 3.96e-5 to 6.58e-5 — because the max of a sample
+   grows roughly with the log of the sample size for a fixed tail, so a rate fitted to
+   one pair of blocks is an artefact of that pair. The caps carry room for growth;
+   **a ceiling is re-registered only from a measurement, never widened to clear a failing
+   run**. If a G1-width run breaches a max cap, the finding is "re-register from a
+   G1-width measurement". The numbers above already replaced a set derived from a
+   tiny-net figure plus exactly that kind of extrapolation, which the first
    production-width run exceeded on the quantile part for both logit fields — as did
    the single 5e-5 max ceiling that preceded the two-part form.
 
@@ -336,10 +343,24 @@ consumes ~29 % of the 10× budget. If the preflight says the target is arithmeti
 of reach at this match count, the sweep is not booked in this shape.
 
 Also verify before booking: the box's pinned `libfh_mahjong_bridge.so` exports the pool
-ABI (`ctypes.CDLL(lib).FHEnvPoolNew`), and the backend precision flags are pinned fp32 for
-the float gate (see G0.1b) — the registered CUDA ceilings encode an fp32 noise floor, and
-cuDNN's TF32 default would produce a guaranteed false stop under a rule that forbids
-widening the cap.
+ABI (`ctypes.CDLL(lib).FHEnvPoolNew`).
+
+**Precision, and the one-API-family rule.** The gate — and only the gate — runs with fp32
+pinned for the cuDNN convolutions, the cuDNN RNN (the event GRU) and matmul, plus
+`cudnn.benchmark=False`; the throughput sweep runs in whatever precision the production
+lap will. Stock torch 2.11 has `cudnn.conv.fp32_precision == cudnn.rnn.fp32_precision ==
+"tf32"`, so an unpinned CUDA gate would measure a 10-bit-mantissa regime against ceilings
+registered from an fp32 one — a guaranteed false stop under a rule that forbids widening
+the cap. A TF32 measurement is not a violation of these ceilings; it is a different regime
+that would need its own registration.
+
+torch exposes TF32 through two mutually exclusive API families — the legacy booleans
+(`cudnn.allow_tf32`, `cuda.matmul.allow_tf32`, `set_float32_matmul_precision`) and the
+per-operator strings (`cudnn.conv.fp32_precision`, `cudnn.rnn.fp32_precision`,
+`cuda.matmul.fp32_precision`). Setting through one and then reading through the other
+**raises**: `cudnn.allow_tf32` throws outright once conv and rnn disagree. Pin and restore
+through the new family alone, and guard every read of the legacy one, or the gate crashes
+in any process whose caller happened to call `set_float32_matmul_precision`.
 
 Acceptance: **≥ 10× the process arm's collection throughput** on the **median** of the
 three steady cycles, not the best, for some candidate; aggregate RSS ≤ 20 GiB, CUDA peak
