@@ -274,6 +274,17 @@ def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributio
     return torch.distributions.Categorical(logits=masked_logits)
 
 
+def masked_logprob(logits_row: torch.Tensor, temperature: float, action: int) -> float:
+    """Log-probability of `action` under the temperature-scaled masked policy
+    for ONE decision. `logits_row` is the model's [A] logits row (illegal
+    actions already finfo.min-masked). Shared by both B2b collectors so
+    `old_logprobs` is the same Torch computation regardless of how the
+    action was chosen (sampled, greedy) or batched."""
+    scaled = logits_row / max(float(temperature), 1e-6)
+    dist = masked_policy_distribution(scaled)
+    return float(dist.log_prob(torch.tensor(int(action), device=logits_row.device)))
+
+
 def compute_gae(
     rewards: np.ndarray,
     values: np.ndarray,

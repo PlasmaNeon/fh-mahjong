@@ -354,27 +354,52 @@ _RESUME_IGNORED_FIELDS = {
     ("ppo_config", "iterations"),
 }
 
-# "num_workers" changes are logged rather than rejected: it only controls how
-# collection work is sharded across worker processes, not the recipe itself.
-# Per-match seeding makes trajectories worker-count-invariant -- proven by
-# fh-mj-collect-bench's digest equality across 5/10/20 workers, which is that
-# tool's entire purpose. So resuming a run at a different worker count (e.g.
-# dropping from 20 to 10 to fit a smaller box after an OOM) is a legitimate
-# operational adjustment, not a silent recipe drift, and must not block
+# Resource-shaped fields are logged rather than rejected: they control how
+# collection work is sharded across processes or slots, not the recipe
+# itself, so resuming at a different count (e.g. dropping from 20 workers to
+# 10 to fit a smaller box after an OOM) is a legitimate operational
+# adjustment, not a silent recipe drift, and must not block
 # --resume-from-state the way every other field does.
+#
+# Maps each logged-not-rejected field to the reason it is safe to change on
+# resume; the reason goes into the notice so a lap's log says WHY it was
+# allowed through. `collector` is deliberately absent: switching collectors
+# changes the action-RNG mapping (the process collector samples from the
+# global torch RNG seeded per match, the batched one from a per-match numpy
+# RNG), so it is rejected like any other recipe field.
+#
+# `pool_slots` is deliberately absent too, and is NOT the batched analogue of
+# `num_workers`. A spawn worker always runs a batch-1 forward, so the floats
+# a decision sees do not depend on how many workers there are. The batched
+# collector's production mode (`inference_mode="batched"`, the default and
+# what `train_b2b` passes) runs ONE forward over every pending row in the
+# round, so a row's logits depend on which other rows shared its batch;
+# `sample_masked_action` consumes those logits, so changing the slot count
+# changes the sampled trajectories. Slot-count invariance holds only in
+# `per_row` mode, which is the mode gate G0.2 proves it in and is not the
+# mode a lap runs. The slot count is therefore part of a batched lineage and
+# is rejected on change, like `collector`.
 _RESUME_LOGGED_FIELDS = {
-    ("ppo_config", "num_workers"),
+    ("ppo_config", "num_workers"):
+        "worker count is semantics-neutral for collection (per-match seeding "
+        "makes trajectories worker-count-invariant, proven by "
+        "fh-mj-collect-bench's digest equality across 5/10/20 workers)",
     # Same category as num_workers: collect_dispatch_chunk only bounds how
     # many matches are in flight per dispatch round, and chunk-parity digest
     # tests prove trajectories are chunk-invariant. Lowering it on resume
     # after an OOM is a legitimate operational adjustment, not recipe drift.
-    ("ppo_config", "collect_dispatch_chunk"),
+    ("ppo_config", "collect_dispatch_chunk"):
+        "dispatch chunking only bounds how many matches are in flight per "
+        "round; trajectories are chunk-invariant (fh-mj-collect-bench "
+        "--dispatch-chunk digest equality)",
     # Amendment 5: minibatch_device_transfer changes only WHERE rollout
     # tensors live between optimizer steps (host vs update device), not any
     # value, permutation, or update — bit-parity pinned by test_ppo's
     # path-equivalence tests and the on-box gauntlet. Toggling it on resume
     # (e.g. to fit a card) is operational, not recipe drift.
-    ("ppo_config", "minibatch_device_transfer"),
+    ("ppo_config", "minibatch_device_transfer"):
+        "minibatch device transfer changes only where rollout tensors live "
+        "between optimizer steps, not any value, permutation, or update",
 }
 
 # Adversarial round 1 (high): a new field with a dataclass default (e.g.
@@ -424,6 +449,27 @@ _LEGACY_ECHO_ADDITIONS = {
         "placement_bonus_calibration_digest", # idem
         "head_lr",                            # absent before mortal-scale-scratch Amendment 1 §6 (2026-08-25)
         "head_lr_iters",                      # idem
+        # absent from every train_state.pt saved before batched-b2b-collector
+        # (2026-08-26); a legacy echo therefore reads as collector="process"
+        # with the slot count those runs had, which is exactly what they were.
+        "collector",
+        "pool_slots",
+    },
+}
+
+# Historical literals for whitelisted legacy additions whose meaning is a
+# claim about what the saved run actually DID, not "whatever this build
+# defaults to". Back-filling `collector` from `PPOConfig.collector` would mean
+# that the day that default becomes "batched", every pre-merge train_state.pt
+# is silently reinterpreted as a batched lineage -- and a batched resume of a
+# process run would then be admitted instead of rejected. Pinning the literal
+# makes the back-fill say "this run used what existed then". A field listed
+# here takes its value from here; anything else whitelisted above still falls
+# back to the dataclass default.
+_LEGACY_ECHO_PINNED_VALUES = {
+    "ppo_config": {
+        "collector": "process",   # the only collector that existed before 2026-08-26
+        "pool_slots": 128,        # PPOConfig.pool_slots as shipped when the field landed
     },
 }
 
@@ -447,29 +493,36 @@ def _dataclass_field_defaults(cls: type) -> dict:
 def _fill_legacy_echo_defaults(section: str, current_section: dict, saved_section: dict) -> dict:
     """Return a copy of `saved_section` with any key that's WHITELISTED in
     `_LEGACY_ECHO_ADDITIONS` for this section, present in `current_section`,
-    but ABSENT from `saved_section`, filled in with that field's dataclass
-    default -- i.e. treat a pre-upgrade echo's silence about a *proven*
-    legacy addition as "this run used the default", not as a mismatch.
+    but ABSENT from `saved_section`, filled in with the value that run must
+    have had -- i.e. treat a pre-upgrade echo's silence about a *proven*
+    legacy addition as "this run used what existed then", not as a mismatch.
 
-    A key that IS present in `saved_section` (even if equal to the default)
-    is left untouched and still compares strictly against the current value.
-    A key missing from `saved_section` that is NOT in the whitelist is left
-    missing here -- `_validate_resume_config_echo` then raises naming it,
-    since there's no proof a legacy echo could ever have lacked it."""
+    The fill value is the field's `_LEGACY_ECHO_PINNED_VALUES` literal when
+    one is registered, otherwise the field's current dataclass default. The
+    literal is what makes the back-fill a statement about the past: a later
+    change to a dataclass default must not retroactively reinterpret every
+    state file saved before the field existed.
+
+    A key that IS present in `saved_section` (even if equal to the fill
+    value) is left untouched and still compares strictly against the current
+    value. A key missing from `saved_section` that is NOT in the whitelist is
+    left missing here -- `_validate_resume_config_echo` then raises naming
+    it, since there's no proof a legacy echo could ever have lacked it."""
     defaults = _dataclass_field_defaults(_RESUME_SECTION_DATACLASSES[section])
+    pinned = _LEGACY_ECHO_PINNED_VALUES.get(section, {})
     whitelisted = _LEGACY_ECHO_ADDITIONS.get(section, frozenset())
     filled = {}
     normalized = dict(saved_section)
     for key in current_section:
-        if key not in normalized and key in defaults and key in whitelisted:
-            normalized[key] = defaults[key]
-            filled[key] = defaults[key]
+        if key not in normalized and key in whitelisted and (key in pinned or key in defaults):
+            normalized[key] = pinned[key] if key in pinned else defaults[key]
+            filled[key] = normalized[key]
     if filled:
         logger.info(
             "--resume-from-state: %s echo predates field(s) %s -- filling each "
-            "with its current dataclass default for the resume comparison "
+            "with the value that run had (%s) for the resume comparison "
             "(state file was saved before these fields existed)",
-            section, sorted(filled),
+            section, sorted(filled), {k: filled[k] for k in sorted(filled)},
         )
     return normalized
 
@@ -480,9 +533,13 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     was saved under. Resuming under a different recipe (a changed lr, event
     window, ...) silently corrupts the run (e.g. an optimizer whose momentum
     was tuned for a different lr), so any drift is an error, not a warning —
-    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and
-    `ppo_config.num_workers` (see `_RESUME_LOGGED_FIELDS`), which is logged
-    instead of raised."""
+    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and the
+    resource-shaped fields in `_RESUME_LOGGED_FIELDS` (num_workers,
+    collect_dispatch_chunk, minibatch_device_transfer), which are logged with
+    their reason instead of raised. `pool_slots` is NOT among them: under
+    `inference_mode="batched"` the slot count decides which rows share a
+    forward and therefore the sampled trajectories, so it is part of the
+    lineage and rejected on change."""
     for section in ("ppo_config", "model_config", "env_config"):
         current_section = current[section]
         saved_section = _fill_legacy_echo_defaults(section, current_section, saved[section])
@@ -496,12 +553,9 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
                 if (section, key) in _RESUME_LOGGED_FIELDS:
                     logger.info(
                         "--resume-from-state: %s.%s changed (state file has %r, "
-                        "currently-supplied config has %r) -- proceeding: "
-                        "worker count is semantics-neutral for collection "
-                        "(per-match seeding makes trajectories worker-count-"
-                        "invariant, proven by fh-mj-collect-bench's digest "
-                        "equality across 5/10/20 workers)",
+                        "currently-supplied config has %r) -- proceeding: %s",
                         section, key, saved_value, current_value,
+                        _RESUME_LOGGED_FIELDS[(section, key)],
                     )
                     continue
                 raise ValueError(

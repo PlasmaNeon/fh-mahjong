@@ -2868,3 +2868,198 @@ def test_resume_config_echo_missing_trunk_rezero_still_proceeds_with_notice(capl
         "model_config" in record.getMessage() and "trunk_rezero" in record.getMessage()
         for record in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# batched-b2b-collector: collector selection, pool lifecycle, resume echo
+# ---------------------------------------------------------------------------
+
+
+def _batched_configs(tmp_path, *, iterations, pool_slots=3, **overrides):
+    env, model_config, champion_path, config = b2b_run_configs(tmp_path, iterations=iterations)
+    return env, model_config, champion_path, replace(
+        config, collector="batched", pool_slots=pool_slots, **overrides)
+
+
+def test_batched_collector_runs_the_pool_and_ignores_num_workers(tmp_path, caplog) -> None:
+    env, model_config, champion_path, config = _batched_configs(
+        tmp_path, iterations=2, num_workers=4)
+    seen = []
+    import fh_mahjong_ai.batched_b2b as batched_b2b_mod
+    real_collect = batched_b2b_mod.collect_b2b_rollouts_batched
+
+    def spy(env_config, model, cfg, base_seed, pool, **kwargs):
+        seen.append((base_seed, pool.slots))
+        return real_collect(env_config, model, cfg, base_seed=base_seed, pool=pool, **kwargs)
+
+    def no_workers(*args, **kwargs):
+        pytest.fail("the batched collector must not spawn workers")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(batched_b2b_mod, "collect_b2b_rollouts_batched", spy)
+        # No ParallelB2bCollector may be constructed on this path.
+        mp.setattr("fh_mahjong_ai.train_b2b.ParallelB2bCollector", no_workers)
+        with caplog.at_level(logging.INFO):
+            history = train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config,
+                                base_seed=5, train_state_every=0)
+
+    assert len(history) == 2
+    # One pool, reused across both iterations; seeds advance by matches_per_iter.
+    # The pool ALLOCATES min(pool_slots, matches_per_iter) = min(3, 2) slots:
+    # a slot beyond the match count never receives a command. `pool_slots`
+    # itself stays 3 in the config echo and the resume contract.
+    assert seen == [(5 + 1 * 2, 2), (5 + 2 * 2, 2)]
+    assert config.pool_slots == 3
+    assert any("num_workers=4 is ignored" in r.message for r in caplog.records)
+    assert any("pool_slots=3 requested, allocating 2" in r.message for r in caplog.records)
+
+
+def test_batched_collector_closes_the_pool_when_collection_raises(tmp_path) -> None:
+    env, model_config, champion_path, config = _batched_configs(tmp_path, iterations=2)
+    closed = []
+    import fh_mahjong_ai.batched_b2b as batched_b2b_mod
+    real_make_pool = batched_b2b_mod.make_b2b_pool
+
+    def spy_make_pool(env_config, model, cfg, slots):
+        pool = real_make_pool(env_config, model, cfg, slots)
+        real_close = pool.close
+
+        def closing():
+            closed.append(slots)
+            return real_close()
+
+        pool.close = closing
+        return pool
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("collection blew up")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(batched_b2b_mod, "make_b2b_pool", spy_make_pool)
+        mp.setattr(batched_b2b_mod, "collect_b2b_rollouts_batched", boom)
+        with pytest.raises(RuntimeError, match="collection blew up"):
+            train_b2b(env, model_config, champion_path, tmp_path / "ckpt", config,
+                      base_seed=5, train_state_every=0)
+    assert closed == [2]  # allocated = min(pool_slots=3, matches_per_iter=2)
+
+
+def test_unknown_collector_fails_closed(tmp_path) -> None:
+    env, model_config, champion_path, config = b2b_run_configs(tmp_path, iterations=1)
+    with pytest.raises(ValueError, match="unknown PPOConfig.collector"):
+        train_b2b(env, model_config, champion_path, tmp_path / "ckpt",
+                  replace(config, collector="threads"), base_seed=5, train_state_every=0)
+
+
+def test_resume_from_state_raises_on_different_collector(tmp_path) -> None:
+    # Switching collectors changes the action-RNG mapping (global torch RNG
+    # seeded per match vs a per-match numpy RNG), so it is recipe drift, not
+    # an operational knob like num_workers. `pool_slots` is rejected on change
+    # too, for its own reason: see the slot-count invariance note there.
+    env, model_config, champion_path, config_first = b2b_run_configs(tmp_path, iterations=2)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+    assert config_first.collector == "process"
+
+    switched = replace(config_first, iterations=4, collector="batched", pool_slots=3)
+    with pytest.raises(ValueError, match=r"collector.*'process'.*'batched'"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, switched,
+                  base_seed=5, resume_from_state=state_path)
+
+
+def test_resume_from_state_raises_on_different_pool_slots(tmp_path) -> None:
+    # pool_slots is NOT the batched analogue of num_workers. A spawn worker
+    # always runs a batch-1 forward, so its count cannot move a float; the
+    # batched collector's production mode runs ONE forward over every pending
+    # row, so the slot count decides which rows share a batch, and
+    # sample_masked_action consumes those logits. Slot-count invariance holds
+    # only under inference_mode="per_row" (gate G0.2), which is not the mode a
+    # lap runs -- so the slot count is lineage, and rejected on change.
+    env, model_config, champion_path, config_first = _batched_configs(
+        tmp_path, iterations=2, pool_slots=3)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    state_path = checkpoint_dir / "train_state.pt"
+
+    resumed = replace(config_first, iterations=4, pool_slots=7)
+    with pytest.raises(ValueError, match=r"pool_slots.*3.*7"):
+        train_b2b(env, model_config, champion_path, checkpoint_dir, resumed,
+                  base_seed=5, train_state_every=2, resume_from_state=state_path)
+
+
+def test_resume_from_state_accepts_the_same_pool_slots(tmp_path) -> None:
+    # The rejection above is on CHANGE, not on the field's presence: an
+    # unchanged batched lineage still resumes.
+    env, model_config, champion_path, config_first = _batched_configs(
+        tmp_path, iterations=2, pool_slots=3)
+    checkpoint_dir = tmp_path / "ckpt"
+    train_b2b(env, model_config, champion_path, checkpoint_dir, config_first,
+              base_seed=5, train_state_every=2)
+    history = train_b2b(env, model_config, champion_path, checkpoint_dir,
+                        replace(config_first, iterations=4), base_seed=5,
+                        train_state_every=2,
+                        resume_from_state=checkpoint_dir / "train_state.pt")
+    assert [row["iteration"] for row in history] == [1, 2, 3, 4]
+
+
+def test_legacy_state_without_collector_fields_reads_as_process(caplog) -> None:
+    # A train_state.pt saved before these fields existed is silent about both;
+    # that silence must read as the process collector at the default slot
+    # count, which is exactly what those runs were.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.train_state import _LEGACY_ECHO_ADDITIONS
+    assert {"collector", "pool_slots"} <= _LEGACY_ECHO_ADDITIONS["ppo_config"]
+
+    current = _config_echo_triple()
+    assert current["ppo_config"]["collector"] == "process"
+    saved = copy.deepcopy(current)
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+
+    with caplog.at_level(logging.INFO):
+        train_state_mod._validate_resume_config_echo(current, saved)  # must not raise
+    assert any("collector" in record.getMessage() for record in caplog.records)
+
+
+def test_legacy_state_backfill_pins_literals_not_dataclass_defaults(monkeypatch) -> None:
+    # The back-fill must mean "this run used what existed then", not
+    # "whatever this build defaults to". If it read PPOConfig.collector, the
+    # day that default becomes "batched" every pre-merge train_state.pt would
+    # be silently reinterpreted as a batched lineage -- and a batched resume
+    # of a process run would be admitted instead of rejected.
+    from fh_mahjong_ai import train_state as train_state_mod
+    from fh_mahjong_ai.ppo import PPOConfig as PPOConfigCls
+
+    monkeypatch.setattr(PPOConfigCls.__dataclass_fields__["collector"], "default", "batched")
+    monkeypatch.setattr(PPOConfigCls.__dataclass_fields__["pool_slots"], "default", 999)
+    assert train_state_mod._dataclass_field_defaults(PPOConfigCls)["collector"] == "batched"
+
+    saved = _config_echo_triple()
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+    filled = train_state_mod._fill_legacy_echo_defaults(
+        "ppo_config", _config_echo_triple()["ppo_config"], saved["ppo_config"])
+    assert filled["collector"] == "process"
+    assert filled["pool_slots"] == 128
+
+    # ... and the resume it guards still fails closed.
+    current = _config_echo_triple()
+    current["ppo_config"]["collector"] = "batched"
+    with pytest.raises(ValueError, match="collector"):
+        train_state_mod._validate_resume_config_echo(current, saved)
+
+
+def test_legacy_state_silence_still_rejects_a_batched_resume() -> None:
+    # The back-fill is not a way into a legacy lineage with the new collector:
+    # filled-in "process" vs a requested "batched" is still a mismatch.
+    from fh_mahjong_ai import train_state as train_state_mod
+
+    saved = _config_echo_triple()
+    del saved["ppo_config"]["collector"]
+    del saved["ppo_config"]["pool_slots"]
+    current = _config_echo_triple()
+    current["ppo_config"]["collector"] = "batched"
+    with pytest.raises(ValueError, match="collector"):
+        train_state_mod._validate_resume_config_echo(current, saved)

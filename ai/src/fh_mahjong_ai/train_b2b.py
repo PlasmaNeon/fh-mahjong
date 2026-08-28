@@ -17,7 +17,7 @@ import random
 import shutil
 import traceback
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -41,7 +41,7 @@ from .parallel_rollouts import _split_counts
 from .placement_bonus import exact_final_scores, placement_utilities, rank_occupancy
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
-    masked_policy_distribution, _seat_step_reward,
+    masked_policy_distribution, masked_logprob, _seat_step_reward,
     cpu_state_snapshot, _write_history_atomic,
 )
 from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
@@ -765,8 +765,176 @@ def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[
     return dealin, rank
 
 
+@dataclass
+class _B2bMatchState:
+    """Per-match accumulator shared by the process collector
+    (`collect_b2b_rollouts`) and the batched collector (`batched_b2b.py`).
+
+    `seat_*` lists are indexed by seat (0-3) and hold one entry per decision
+    that seat made, in decision order. `seat_hand_ids[k][i]` is the hand
+    (0-based, incremented every time a step surfaces `round_outcome`) during
+    which that decision was made; `hand_outcomes` maps hand_id -> decoded
+    round-outcome dict. `match_net` is the per-seat match-level net reward
+    accumulated from EVERY step's rewards (reset rewards included), in the
+    bridge's units (score deltas / 1000). `truncated` is the env's truncation
+    flag at match end. `_finalize_b2b_match` consumes one of these."""
+    seat_planes: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_scalars: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_masks: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_actions: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_logprobs: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_values: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_rewards: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_events: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_lengths: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_hand_ids: list[list] = field(default_factory=lambda: [[], [], [], []])
+    hand_id: int = 0
+    hand_outcomes: dict[int, dict] = field(default_factory=dict)
+    match_net: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float64))
+    truncated: bool = False
+
+    def credit_step_rewards(self, rewards) -> None:
+        """Add a step's (or the reset's) per-seat rewards to `match_net`
+        unconditionally, and to the last recorded transition of every seat
+        that has already acted (PPO telescoping credit)."""
+        sr = np.asarray(rewards, dtype=np.float64)
+        n = min(4, sr.shape[-1])
+        self.match_net[:n] += sr[:n]
+        for k in range(4):
+            if self.seat_rewards[k]:
+                self.seat_rewards[k][-1] += _seat_step_reward(rewards, k)
+
+    def record_outcome(self, outcome) -> bool:
+        """Close the current hand with `outcome` (a step's
+        `info["round_outcome"]`); no-op on a falsy outcome. Returns whether
+        an outcome was recorded."""
+        if not outcome:
+            return False
+        self.hand_outcomes[self.hand_id] = outcome
+        self.hand_id += 1
+        return True
+
+
+_B2B_ROW_KEYS = ("planes", "scalars", "masks", "actions", "logprobs", "values", "rewards",
+                 "dones", "events", "lengths", "dealin", "rank")
+
+
+def _finalize_b2b_match(ms: _B2bMatchState, config: PPOConfig, cfg: EnvConfig,
+                        seed: int) -> tuple[dict[str, list], dict]:
+    """Pure match-end tail shared by both B2b collectors.
+
+    `ms`: the finished match's `_B2bMatchState`. `config`: the PPOConfig
+    (placement bonus values/lambda, match_mode). `cfg`: the EnvConfig the
+    bridge actually simulated under (chongci starting score / bust threshold
+    are read from here so labels can never diverge from the played match).
+    `seed`: the match seed, for telemetry and error messages.
+
+    Returns `(rows, telemetry)`. `rows` maps each key in `_B2B_ROW_KEYS`
+    (planes, scalars, masks, actions, logprobs, values, rewards, dones,
+    events, lengths, dealin, rank) to a flat list in seat-contiguous emission
+    order (seats 0..3, seats with zero decisions skipped); `telemetry` is the
+    seed-keyed match-level dict. Applies the placement bonus to each seat's
+    last transition (mutates `ms.seat_rewards`). Every placement-bonus
+    fail-closed check (truncated match, zero-decision seat, nonzero bonus
+    sum) raises from here.
+
+    UNITS: the Go env emits chongci rewards as score deltas / 1000 in
+    float32. Labels are computed in EXACT integer points: the accumulated
+    float net is scaled back by 1000 and rounded (float32 drift over a match
+    is << 0.5 points), so exact-threshold busts and score ties cannot flip on
+    rounding order."""
+    chongci = config.match_mode == "chongci"
+    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
+    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
+    bonus_values = config.placement_bonus_values
+    bonus_on = bonus_values is not None
+    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    is_truncated = bool(ms.truncated)
+    match_net = ms.match_net
+    seat_rewards = ms.seat_rewards
+    final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
+    int_scores = exact_final_scores(match_net, starting_score)
+    assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
+    if bonus_on:
+        if is_truncated:
+            raise RuntimeError(
+                f"placement bonus: match seed {seed} was truncated — no "
+                "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
+                "truncation under this objective is a protocol stop: raise "
+                "max_steps_per_episode and/or investigate a stalling policy before "
+                "retrying.")
+        empty = [k for k in range(4) if not seat_rewards[k]]
+        if empty:
+            raise RuntimeError(
+                f"placement bonus: match seed {seed} has zero-decision "
+                f"seat(s) {empty}; fail closed")
+    utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
+        else placement_utilities(int_scores)
+    bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
+    if bonus_on:
+        if abs(float(bonus.sum())) > 1e-6:
+            raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
+        for k in range(4):
+            seat_rewards[k][-1] += float(bonus[k])
+    occ = rank_occupancy(int_scores)
+    telemetry = {
+        "seed": int(seed),
+        "truncated": bool(is_truncated),
+        "final_scores": [int(s) for s in int_scores],
+        "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
+        "utilities": [float(u) for u in utilities],
+        "bonus": [float(b) for b in bonus],
+        "rank_occupancy": occ.tolist(),
+        "tied_seats_surplus": int(4 - len(set(int_scores))),
+        "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
+    }
+    label_rows: list[tuple[int, int]] = []
+    for k in range(4):
+        label_rows.extend((k, hid) for hid in ms.seat_hand_ids[k])
+    dealin_labels, rank_labels = _assemble_hindsight_labels(
+        label_rows, ms.hand_outcomes, final_scores, bust_threshold=bust_threshold,
+        truncated=is_truncated)
+    rows: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS}
+    offset = 0
+    for k in range(4):
+        n = len(ms.seat_actions[k])
+        if n == 0:
+            continue
+        rows["planes"].extend(ms.seat_planes[k])
+        rows["scalars"].extend(ms.seat_scalars[k])
+        rows["masks"].extend(ms.seat_masks[k])
+        rows["actions"].extend(ms.seat_actions[k])
+        rows["logprobs"].extend(ms.seat_logprobs[k])
+        rows["values"].extend(ms.seat_values[k])
+        rows["rewards"].extend(seat_rewards[k])
+        rows["dones"].extend([0.0] * (n - 1) + [1.0])
+        rows["events"].extend(ms.seat_events[k])
+        rows["lengths"].extend(ms.seat_lengths[k])
+        rows["dealin"].extend(dealin_labels[offset : offset + n].tolist())
+        rows["rank"].extend(rank_labels[offset : offset + n].tolist())
+        offset += n
+    return rows, telemetry
+
+
+def _check_chongci_outcomes(chongci: bool, completed: int, outcomes_seen: int) -> None:
+    """A completed chongci match ALWAYS surfaces at least one round outcome
+    on the step path (internal/rl/env.go attaches boundary and terminal
+    outcomes). Zero outcomes across completed matches means the bridge
+    library predates that fix — deal-in supervision would silently degenerate
+    to all-negative labels for the whole run. Both collectors call this."""
+    if chongci and completed > 0 and outcomes_seen == 0:
+        raise RuntimeError(
+            "no round outcomes surfaced across "
+            f"{completed} completed chongci matches — the Go bridge library "
+            "predates chongci round-outcome delivery; rebuild it "
+            "(go build -buildmode=c-shared ./cmd/rlbridge)"
+        )
+
+
 def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
-                         config: PPOConfig, base_seed: int) -> RolloutBatch:
+                         config: PPOConfig, base_seed: int,
+                         action_selection: str = "sample",
+                         diagnostics: Optional[dict] = None) -> RolloutBatch:
     """Symmetric self-play PPO rollouts for Spec B2b: all four seats are the
     SAME `model`, each seat's transitions recorded seat-contiguously (mirrors
     `collect_selfplay_rollouts`). No feature-dropout (B2b's event/privileged
@@ -775,7 +943,17 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     hindsight `dealin_labels`/`rank_labels` assembled by
     `_assemble_hindsight_labels` from the `round_outcome` entries seen in
     `StepResult.info` (a step whose info carries `round_outcome` closes the
-    CURRENT hand for all seats)."""
+    CURRENT hand for all seats). `action_selection`: `"sample"` (training)
+    draws from the temperature-scaled masked policy with the global torch
+    RNG seeded per match; `"greedy"` (parity tests only) takes the argmax of
+    the masked logits. Either way the logprob is `ppo.masked_logprob` of the
+    chosen action. `diagnostics` (parity tests / `fh-mj-collect-bench` only):
+    if the caller pre-creates `diagnostics["logits"]` as a list, every
+    decision's masked logits row is appended as `(match_seed, seat,
+    np.ndarray[A])` in decision order (gate G0.1b); output is unaffected."""
+    if action_selection not in ("sample", "greedy"):
+        raise ValueError(f"action_selection must be 'sample' or 'greedy', got {action_selection!r}")
+    logits_sink = diagnostics.get("logits") if diagnostics is not None else None
     device = config.device
     window = int(model.model_config.event_window)
     cfg = EnvConfig(
@@ -796,25 +974,12 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)
     model.eval()
-    # Label parameters read from `cfg` — the SAME config the bridge simulates
-    # under — so hindsight ranks can never diverge from the played match.
-    # UNITS: the Go env emits chongci rewards as score deltas / 1000
-    # (internal/rl/env.go) in float32. Labels are computed in EXACT integer
-    # points: the accumulated float net is scaled back by 1000 and rounded
-    # (float32 drift over a match is << 0.5 points), so exact-threshold
-    # busts and score ties cannot flip on rounding order.
     chongci = config.match_mode == "chongci"
-    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
-    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
-    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
-    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
-    events_l, lengths_l, dealin_l, rank_l = [], [], [], []
+    rows_l: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS}
     truncated_matches = 0
     completed_matches = 0
     outcomes_seen = 0
-    bonus_values = config.placement_bonus_values
-    bonus_on = bonus_values is not None
-    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    bonus_on = config.placement_bonus_values is not None
     match_telemetry: list[dict] = []
     try:
         for m in range(config.matches_per_iter):
@@ -827,27 +992,14 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                         f"placement bonus: match seed {base_seed + m} ended at reset "
                         "(no four-seat terminal standing) — fail closed")
                 continue
-            # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
+            # Match-level net per seat is accumulated UNCONDITIONALLY (incl.
             # reset-time autoplay rewards and payouts landing before a seat's
-            # first decision) — the transition-crediting buffers below only
-            # credit seats that have already acted, which is correct for PPO
+            # first decision) — the transition-crediting buffers only credit
+            # seats that have already acted, which is correct for PPO
             # telescoping but would corrupt final scores for rank labels.
-            match_net = np.zeros(4, dtype=np.float64)
+            ms = _B2bMatchState()
             if reset_result is not None:
-                rr = np.asarray(reset_result.rewards, dtype=np.float64)
-                match_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
-            seat_planes:   list[list] = [[], [], [], []]
-            seat_scalars:  list[list] = [[], [], [], []]
-            seat_masks:    list[list] = [[], [], [], []]
-            seat_actions:  list[list] = [[], [], [], []]
-            seat_logprobs: list[list] = [[], [], [], []]
-            seat_values:   list[list] = [[], [], [], []]
-            seat_rewards:  list[list] = [[], [], [], []]
-            seat_events:   list[list] = [[], [], [], []]
-            seat_lengths:  list[list] = [[], [], [], []]
-            seat_hand_ids: list[list] = [[], [], [], []]
-            hand_id = 0
-            hand_outcomes: dict[int, dict] = {}
+                ms.credit_step_rewards(reset_result.rewards)
             step = None
             while True:
                 seat = int(obs.seat)
@@ -870,133 +1022,63 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 length_t = torch.tensor([ev_len], dtype=torch.int64, device=device)
                 with torch.no_grad():
                     logits, value = model(planes, scalars, amask, events=events_t, event_lengths=length_t)
-                    logits = logits / max(config.sample_temperature, 1e-6)
-                    dist = masked_policy_distribution(logits)
-                    action = int(dist.sample()[0].item())
-                    logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                    if action_selection == "greedy":
+                        action = int(torch.argmax(logits[0]).item())
+                    else:
+                        scaled = logits / max(config.sample_temperature, 1e-6)
+                        action = int(masked_policy_distribution(scaled).sample()[0].item())
+                    logprob = masked_logprob(logits[0], config.sample_temperature, action)
                     val = float(value[0].item())
-                seat_planes[seat].append(planes_np)
-                seat_scalars[seat].append(scalars_np)
-                seat_masks[seat].append(mask_np)
-                seat_actions[seat].append(action)
-                seat_logprobs[seat].append(logprob)
-                seat_values[seat].append(val)
-                seat_rewards[seat].append(0.0)
-                seat_events[seat].append(row_events)
-                seat_lengths[seat].append(ev_len)
-                seat_hand_ids[seat].append(hand_id)
+                if logits_sink is not None:
+                    logits_sink.append((int(base_seed + m), seat,
+                                        logits[0].detach().cpu().numpy().copy()))
+                ms.seat_planes[seat].append(planes_np)
+                ms.seat_scalars[seat].append(scalars_np)
+                ms.seat_masks[seat].append(mask_np)
+                ms.seat_actions[seat].append(action)
+                ms.seat_logprobs[seat].append(logprob)
+                ms.seat_values[seat].append(val)
+                ms.seat_rewards[seat].append(0.0)
+                ms.seat_events[seat].append(row_events)
+                ms.seat_lengths[seat].append(ev_len)
+                ms.seat_hand_ids[seat].append(ms.hand_id)
                 step = env.step(action)
-                sr = np.asarray(step.rewards, dtype=np.float64)
-                match_net[: min(4, sr.shape[-1])] += sr[: min(4, sr.shape[-1])]
-                for k in range(4):
-                    if seat_rewards[k]:
-                        seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
-                outcome = step.info.get("round_outcome")
-                if outcome:
+                ms.credit_step_rewards(step.rewards)
+                if ms.record_outcome(step.info.get("round_outcome")):
                     outcomes_seen += 1
-                if outcome:
-                    hand_outcomes[hand_id] = outcome
-                    hand_id += 1
                 if step.terminated or step.truncated:
                     break
                 obs = step.observation
-            is_truncated = bool(step.truncated) if step is not None else False
-            if not is_truncated:
-                completed_matches += 1
-            if is_truncated:
+            ms.truncated = bool(step.truncated) if step is not None else False
+            if ms.truncated:
                 truncated_matches += 1
-            final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
-            int_scores = exact_final_scores(match_net, starting_score)
-            assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
-            if bonus_on:
-                if is_truncated:
-                    raise RuntimeError(
-                        f"placement bonus: match seed {base_seed + m} was truncated — no "
-                        "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
-                        "truncation under this objective is a protocol stop: raise "
-                        "max_steps_per_episode and/or investigate a stalling policy before "
-                        "retrying.")
-                empty = [k for k in range(4) if not seat_rewards[k]]
-                if empty:
-                    raise RuntimeError(
-                        f"placement bonus: match seed {base_seed + m} has zero-decision "
-                        f"seat(s) {empty}; fail closed")
-            utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
-                else placement_utilities(int_scores)
-            bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
-            if bonus_on:
-                if abs(float(bonus.sum())) > 1e-6:
-                    raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
-                for k in range(4):
-                    seat_rewards[k][-1] += float(bonus[k])
-            occ = rank_occupancy(int_scores)
-            match_telemetry.append({
-                "seed": int(base_seed + m),
-                "truncated": bool(is_truncated),
-                "final_scores": [int(s) for s in int_scores],
-                "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
-                "utilities": [float(u) for u in utilities],
-                "bonus": [float(b) for b in bonus],
-                "rank_occupancy": occ.tolist(),
-                "tied_seats_surplus": int(4 - len(set(int_scores))),
-                "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
-            })
-            rows: list[tuple[int, int]] = []
-            for k in range(4):
-                rows.extend((k, hid) for hid in seat_hand_ids[k])
-            dealin_labels, rank_labels = _assemble_hindsight_labels(
-                rows, hand_outcomes, final_scores, bust_threshold=bust_threshold,
-                truncated=is_truncated)
-            offset = 0
-            for k in range(4):
-                n = len(seat_actions[k])
-                if n == 0:
-                    continue
-                planes_l.extend(seat_planes[k])
-                scalars_l.extend(seat_scalars[k])
-                mask_l.extend(seat_masks[k])
-                actions_l.extend(seat_actions[k])
-                logprobs_l.extend(seat_logprobs[k])
-                values_l.extend(seat_values[k])
-                rewards_l.extend(seat_rewards[k])
-                dones_l.extend([0.0] * (n - 1) + [1.0])
-                events_l.extend(seat_events[k])
-                lengths_l.extend(seat_lengths[k])
-                dealin_l.extend(dealin_labels[offset : offset + n].tolist())
-                rank_l.extend(rank_labels[offset : offset + n].tolist())
-                offset += n
+            else:
+                completed_matches += 1
+            rows, telemetry = _finalize_b2b_match(ms, config, cfg, base_seed + m)
+            match_telemetry.append(telemetry)
+            for key in _B2B_ROW_KEYS:
+                rows_l[key].extend(rows[key])
     finally:
         close = getattr(bridge, "close", None)
         if callable(close):
             close()
-    if chongci and completed_matches > 0 and outcomes_seen == 0:
-        # A completed chongci match ALWAYS surfaces at least one round
-        # outcome on the step path (internal/rl/env.go attaches boundary and
-        # terminal outcomes). Zero outcomes across completed matches means
-        # the bridge library predates that fix — deal-in supervision would
-        # silently degenerate to all-negative labels for the whole run.
-        raise RuntimeError(
-            "no round outcomes surfaced across "
-            f"{completed_matches} completed chongci matches — the Go bridge library "
-            "predates chongci round-outcome delivery; rebuild it "
-            "(go build -buildmode=c-shared ./cmd/rlbridge)"
-        )
-    if not actions_l:
+    _check_chongci_outcomes(chongci, completed_matches, outcomes_seen)
+    if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts produced no decisions")
     return RolloutBatch(
-        planes=np.stack(planes_l).astype(np.float32),
-        scalars=np.stack(scalars_l).astype(np.float32),
-        action_mask=np.stack(mask_l).astype(np.int8),
-        actions=np.asarray(actions_l, dtype=np.int64),
-        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
-        values=np.asarray(values_l, dtype=np.float32),
-        rewards=np.asarray(rewards_l, dtype=np.float32),
-        dones=np.asarray(dones_l, dtype=np.float32),
+        planes=np.stack(rows_l["planes"]).astype(np.float32),
+        scalars=np.stack(rows_l["scalars"]).astype(np.float32),
+        action_mask=np.stack(rows_l["masks"]).astype(np.int8),
+        actions=np.asarray(rows_l["actions"], dtype=np.int64),
+        old_logprobs=np.asarray(rows_l["logprobs"], dtype=np.float32),
+        values=np.asarray(rows_l["values"], dtype=np.float32),
+        rewards=np.asarray(rows_l["rewards"], dtype=np.float32),
+        dones=np.asarray(rows_l["dones"], dtype=np.float32),
         truncated_matches=truncated_matches,
-        events=np.stack(events_l).astype(np.uint32),
-        event_lengths=np.asarray(lengths_l, dtype=np.int32),
-        dealin_labels=np.asarray(dealin_l, dtype=np.float32),
-        rank_labels=np.asarray(rank_l, dtype=np.int64),
+        events=np.stack(rows_l["events"]).astype(np.uint32),
+        event_lengths=np.asarray(rows_l["lengths"], dtype=np.int32),
+        dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
+        rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
         match_telemetry=match_telemetry,
     )
 
@@ -1842,7 +1924,40 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         if event_path_init is not None:
             logger.info("event-path init: %s", event_path_init)
         collector = None
-        if config.num_workers > 1:
+        pool = None
+        if config.collector not in ("process", "batched"):
+            # Fail closed: an unrecognized value must never quietly fall back
+            # to the process collector and misattribute a whole lap.
+            raise ValueError(
+                f"unknown PPOConfig.collector {config.collector!r} "
+                "(expected 'process' or 'batched')")
+        if config.collector == "batched":
+            # batched-b2b-collector spec change 4. The pool replaces the spawn
+            # workers entirely: one process, `pool_slots` concurrent envs, one
+            # batched forward per round on `config.device`. Imported here, not
+            # at module scope, because `batched_b2b` imports this module's
+            # shared match state and finalizer.
+            from .batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool
+            if config.num_workers > 1:
+                logger.info(
+                    "collector=batched: num_workers=%d is ignored (collection runs in "
+                    "this process against a %d-slot env pool)",
+                    config.num_workers, config.pool_slots)
+            # Slots beyond `matches_per_iter` never receive a command -- every
+            # match is in flight from round 1 -- so allocating them would charge
+            # env construction and memory to slots that can never be used.
+            # `pool_slots` stays the REQUESTED value in the config echo and in
+            # the resume contract; the allocation is derived from it.
+            allocated = max(1, min(int(config.pool_slots), int(config.matches_per_iter)))
+            if allocated != config.pool_slots:
+                logger.info(
+                    "collector=batched: pool_slots=%d requested, allocating %d "
+                    "(matches_per_iter=%d bounds the slots that can hold a match)",
+                    config.pool_slots, allocated, config.matches_per_iter)
+            # Same snapshot-bound env_config the process collectors get, so a
+            # pooled lap can never reach the mutable source library path.
+            pool = make_b2b_pool(bridge_env_config, model, config, allocated)
+        elif config.num_workers > 1:
             # Adversarial round 20, high finding: threads the SNAPSHOT-bound
             # env_config into every worker, never the mutable source path --
             # see `bridge_env_config`'s construction above.
@@ -1864,7 +1979,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 train_state._verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
                                          allow_bridge_mismatch, bridge_drift_warned)
                 iter_seed = base_seed + iteration * config.matches_per_iter
-                if collector is not None:
+                if pool is not None:
+                    batch = collect_b2b_rollouts_batched(
+                        bridge_env_config, model, config, base_seed=iter_seed, pool=pool)
+                elif collector is not None:
                     state = cpu_state_snapshot(model)
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
@@ -2063,6 +2181,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         finally:
             if collector is not None:
                 collector.close()
+            if pool is not None:
+                # Every pool slot holds a live Go env; an exception mid-
+                # collection must not leak them for the rest of the process.
+                pool.close()
         # Adversarial round 19, high finding: sweep any `.stale` files still
         # left over at successful run completion -- e.g. this resume's
         # `--iterations` target stopped short of some iteration numbers that

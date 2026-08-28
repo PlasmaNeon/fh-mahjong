@@ -37,6 +37,23 @@ def main() -> None:
                    help="parallel B2b rollout workers (1 = sequential); default is "
                         "min(core-aware, --matches-per-iter) since rollout throughput is "
                         "core-bound and extra workers beyond the match count sit idle")
+    p.add_argument("--collector", choices=("process", "batched"), default="process",
+                   help="how rollouts are collected. 'process' (default) = the spawn-worker "
+                        "collector (--num-workers). 'batched' = one process driving a "
+                        "--pool-slots env pool with a single batched forward per round on "
+                        "--device; --num-workers is then ignored. The two draw different "
+                        "sampling streams, so --collector is rejected-on-change by "
+                        "--resume-from-state, and the batched collector must never be "
+                        "used in the placement-reshape lineage")
+    p.add_argument("--pool-slots", type=int, default=PPOConfig.pool_slots,
+                   help="concurrent env-pool slots for --collector batched; the effective "
+                        "count is min(--pool-slots, --matches-per-iter), so slots beyond "
+                        "the match count never activate. NOT an operational knob: the "
+                        "batched collector runs one forward per round over every pending "
+                        "row, so the slot count decides which rows share a batch and "
+                        "therefore which actions get sampled. It is part of the lineage "
+                        "and is rejected-on-change by --resume-from-state, like "
+                        "--collector")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--head-lr", type=float, default=None,
@@ -207,6 +224,8 @@ def main() -> None:
                "(> 0) in one run -- these are two distinct warm-start surgeries and this "
                "CLI does not attempt to reconcile applying both to the same anchor in a "
                "single run")
+    if args.pool_slots < 1:
+        p.error(f"--pool-slots must be >= 1 (got {args.pool_slots})")
     num_workers = args.num_workers
     if num_workers is None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
@@ -220,6 +239,7 @@ def main() -> None:
                        max_grad_norm=args.max_grad_norm, match_mode=args.match_mode,
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers,
+                       collector=args.collector, pool_slots=args.pool_slots,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
                        minibatch_device_transfer=args.minibatch_device_transfer,
                        **placement_bonus_kwargs(args))
