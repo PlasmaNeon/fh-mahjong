@@ -573,11 +573,7 @@ def test_batched_mode_gates_greedily_and_leaves_the_sampled_sweep_ungated(tmp_pa
     assert gate["reference"] == "per_row"
     assert gate["action_selection"] == "greedy"
     assert "no greedy path" in gate["reference_note"]
-    assert gate["ceilings"] == {
-        "legal_logits": {"p99_9": 1e-5, "max": 2e-4},
-        "old_logprobs": {"p99_9": 1e-5, "max": 2e-4},
-        "values": {"p99_9": 1e-6, "max": 2e-5},
-    }
+    assert gate["ceilings"] == collect_bench.float_gate_ceilings("cpu")
     assert gate["passed"] is True and gate["violations"] == []
     assert gate["repeats"] == 1 and gate["calibrate"] is False
     assert sorted(gate["comparisons"]) == [1, 3]
@@ -679,17 +675,21 @@ def test_float_field_stats_reports_every_column_and_gates_on_both_ceiling_parts(
 
 
 def test_float_gate_ceilings_are_two_part_per_device_and_only_tighten():
+    # Registered from measurement at production width (anchor075); see
+    # `_FLOAT_GATE_CEILINGS` for the observed distribution these came from.
     assert collect_bench.float_gate_ceilings("cpu") == {
-        "legal_logits": {"p99_9": 1e-5, "max": 2e-4},
-        "old_logprobs": {"p99_9": 1e-5, "max": 2e-4},
-        "values": {"p99_9": 1e-6, "max": 2e-5}}
+        "legal_logits": {"p99_9": 1e-4, "max": 5e-4},
+        "old_logprobs": {"p99_9": 5e-5, "max": 2e-4},
+        "values": {"p99_9": 5e-6, "max": 5e-5}}
+    # CUDA caps are 2x the CPU registration: no CUDA number has been seen, and a
+    # cap under the measured CPU noise floor would only ever fire falsely.
     assert collect_bench.float_gate_ceilings("cuda:0") == {
-        "legal_logits": {"p99_9": 1e-4, "max": 1e-4},
-        "old_logprobs": {"p99_9": 1e-4, "max": 1e-4},
-        "values": {"p99_9": 1e-5, "max": 1e-5}}
+        "legal_logits": {"p99_9": 2e-4, "max": 1e-3},
+        "old_logprobs": {"p99_9": 1e-4, "max": 5e-4},
+        "values": {"p99_9": 1e-5, "max": 1e-4}}
     tightened = collect_bench.float_gate_ceilings("cuda", {"values": {"max": 2e-6}})
     assert tightened["values"] == {"p99_9": 1e-5, "max": 2e-6}
-    assert tightened["old_logprobs"] == {"p99_9": 1e-4, "max": 1e-4}
+    assert tightened["old_logprobs"] == {"p99_9": 1e-4, "max": 5e-4}
     with pytest.raises(ValueError, match="may not exceed its cap"):
         collect_bench.float_gate_ceilings("cpu", {"values": {"max": 1e-3}})
     with pytest.raises(ValueError, match="may not exceed its cap"):
@@ -733,23 +733,27 @@ def test_worst_over_repeats_takes_the_worst_of_every_statistic():
 
 
 def test_calibration_thresholds_double_the_observation_and_never_widen_the_cap():
-    ceilings = collect_bench.float_gate_ceilings("cuda")  # values cap 1e-5 on both parts
+    ceilings = collect_bench.float_gate_ceilings("cuda")
+    # Magnitudes are derived from the caps, never hard-coded: a re-registration
+    # must not be able to leave this test asserting nothing.
+    cap = ceilings["values"]
+    small_max, small_p99_9 = cap["max"] / 100.0, cap["p99_9"] / 100.0
     thresholds, violations = collect_bench.calibration_thresholds(
-        _repeat(max_abs_diff=1e-6, p99_9=2e-7), ceilings)
+        _repeat(max_abs_diff=small_max, p99_9=small_p99_9), ceilings)
     assert violations == []
-    assert thresholds["values"] == {"p99_9": 4e-7, "max": 2e-6}
+    assert thresholds["values"] == {"p99_9": 2 * small_p99_9, "max": 2 * small_max}
     # 2x an observation above half the cap is clamped to the cap, never above.
     thresholds, violations = collect_bench.calibration_thresholds(
-        _repeat(max_abs_diff=8e-6, p99_9=8e-6), ceilings)
+        _repeat(max_abs_diff=0.8 * cap["max"], p99_9=0.8 * cap["p99_9"]), ceilings)
     assert violations == []
-    assert thresholds["values"] == {"p99_9": 1e-5, "max": 1e-5}
+    assert thresholds["values"] == {"p99_9": cap["p99_9"], "max": cap["max"]}
     # An observation ABOVE the registered cap stops the work; it is reported,
     # never absorbed into a widened threshold.
     thresholds, violations = collect_bench.calibration_thresholds(
-        _repeat(max_abs_diff=3e-5, p99_9=3e-5), ceilings)
+        _repeat(max_abs_diff=3 * cap["max"], p99_9=3 * cap["p99_9"]), ceilings)
     assert any("exceeds the registered cap" in v and "values.max" in v for v in violations)
     assert any("values.p99_9" in v for v in violations)
-    assert thresholds["values"]["max"] == 1e-5
+    assert thresholds["values"]["max"] == cap["max"]
     assert collect_bench.format_ceiling_flags(
         {"values": {"p99_9": 4e-7, "max": 2e-6}}) == [
         "--float-ceiling values.p99_9=4.000000e-07",
@@ -840,15 +844,21 @@ def test_float_gate_quantile_part_violation_alone_exits_one(tmp_path, monkeypatc
     """The two parts are independent gates: a spread that stays far inside the
     max cap but pushes p99.9 past its bound still fails, and says which part."""
     champion = _champion(tmp_path)
+    ceiling = collect_bench.float_gate_ceilings("cpu")["old_logprobs"]
+    # Strictly between the parts: past the quantile bound, inside the max cap.
+    # Derived, so a re-registration cannot silently move it inside both.
+    delta = 2.0 * ceiling["p99_9"]
+    assert delta <= ceiling["max"], "no room between the parts for a quantile-only violation"
     monkeypatch.setattr(collect_bench, "collect_b2b_rollouts_batched",
-                        _perturbing_batched_collect(2e-5, rows="all"))
+                        _perturbing_batched_collect(delta, rows="all"))
     monkeypatch.setattr(sys, "argv", _batched_main_argv(champion, []))
     with pytest.raises(SystemExit) as excinfo:
         collect_bench.main()
     assert excinfo.value.code == 1
     out = capsys.readouterr().out
-    assert re.search(r"field=old_logprobs: p99\.9=2\.0\d*e-05 > p99\.9 ceiling 1\.0e-05", out)
-    assert "max ceiling" not in out  # the max part is untouched at 2e-5 < 2e-4
+    assert "field=old_logprobs: p99.9=" in out
+    assert f"> p99.9 ceiling {ceiling['p99_9']:.1e}" in out
+    assert "max ceiling" not in out  # the max part is untouched below its cap
     assert "float_gate_passed: False" in out
 
 

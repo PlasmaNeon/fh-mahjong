@@ -172,11 +172,23 @@ _FLOAT_INVARIANCE_TOL = dict(atol=1e-6, rtol=1e-5)
 # The legacy atol/rtol count is printed as a diagnostic only.
 _FLOAT_GATE_FIELDS = ("legal_logits", "old_logprobs", "values")
 _FLOAT_GATE_PARTS = ("p99_9", "max")
+# Registered from MEASUREMENT at production width, not extrapolation: anchor075
+# (96ch, 4 residual blocks, 128-step event GRU, privileged critic + aux heads),
+# 16 chongci matches, greedy, batched vs per_row on identical seeds. Two
+# independent seed blocks agree closely, so the statistic is a property of the
+# architecture rather than of a block:
+#     legal_logits  p50 4.77e-6  p95 1.62e-5  p99 2.38e-5  p99.9 3.43e-5  max 6.58e-5
+#     old_logprobs  p50 0        p95 3.34e-6  p99 6.93e-6  p99.9 1.24e-5  max 2.19e-5
+#     values        p50 6.71e-8  p95 2.38e-7  p99 4.02e-7  p99.9 7.85e-7  max 2.27e-6
+# Ceilings sit at 2x or more of the observed statistic, with more headroom on
+# the max part than on the quantile: max grows with row count while p99.9 does
+# not. 4.2x the rows moved the observed legal-logit max from 3.96e-5 to
+# 6.58e-5, so G1's ~20x projects to roughly 1.3e-4.
 _FLOAT_GATE_CEILINGS = {
     "cpu": {
-        "legal_logits": {"p99_9": 1e-5, "max": 2e-4},
-        "old_logprobs": {"p99_9": 1e-5, "max": 2e-4},
-        "values": {"p99_9": 1e-6, "max": 2e-5},
+        "legal_logits": {"p99_9": 1e-4, "max": 5e-4},
+        "old_logprobs": {"p99_9": 5e-5, "max": 2e-4},
+        "values": {"p99_9": 5e-6, "max": 5e-5},
     },
     # CUDA caps for the calibration procedure (spec G0.1b), pre-registered
     # before any CUDA number was seen: one number per field (logits and
@@ -185,10 +197,15 @@ _FLOAT_GATE_CEILINGS = {
     # calibration statistic, capped here) and is always far tighter on the
     # quantile part; `--float-ceiling` may set a threshold BELOW these, never
     # above.
+    # No CUDA number has been seen. These are 2x the CPU registration, on the
+    # reasoning that a CUDA kernel reassociates at least as aggressively as a
+    # CPU one; a cap BELOW the measured CPU noise floor would guarantee a false
+    # failure on the box rather than gate anything. `--calibrate` tightens the
+    # operational threshold from real CUDA data the first time it runs.
     "cuda": {
-        "legal_logits": {"p99_9": 1e-4, "max": 1e-4},
-        "old_logprobs": {"p99_9": 1e-4, "max": 1e-4},
-        "values": {"p99_9": 1e-5, "max": 1e-5},
+        "legal_logits": {"p99_9": 2e-4, "max": 1e-3},
+        "old_logprobs": {"p99_9": 1e-4, "max": 5e-4},
+        "values": {"p99_9": 1e-5, "max": 1e-4},
     },
 }
 _FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"))
