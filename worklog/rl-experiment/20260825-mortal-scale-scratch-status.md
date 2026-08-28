@@ -108,7 +108,7 @@ current bridge. Delta = `fh-mj-compare mean_delta` (candidate − anchor).
 |---|---|---|---|---|---|
 | 25 | **−0.4250** | ±0.0743 (sig. YES) | 0.1479 / 0.0458 | yes | placement +0.0361 vs +0.4611; 4th-share Δ +0.1385, large-loss Δ +0.1021, training-utility Δ −0.3821; deal-in 0.0992 vs 0.1033; tail gate FAIL. No rule fires at 25 — §7: a scratch curve starting far below the anchor is not a kill |
 | 50 | **−0.3708** | ±0.0687 (sig. YES) | 0.1313 / 0.0458 | yes | placement +0.0903; 4th-share Δ +0.1083, large-loss Δ +0.0854, training-utility Δ −0.3264; tail gate FAIL. Improvement 25→50 = **+0.0542 per 25 iters**, every secondary moving the right way. Reaching the §7 gate (−0.0600) from here needs +0.3108 over 150 iters = **+0.0518 per 25**, i.e. ~96 % of the current rate sustained with almost no decay |
-| 75 | | | | | |
+| 75 | **−0.2903** | ±0.0706 (sig. YES) | 0.1333 / 0.0458 | yes | placement +0.1708; 4th-share Δ +0.1000, large-loss Δ +0.0875, training-utility Δ −0.2663; deal-in **0.0995 vs 0.1033 — candidate now better than the anchor**; tail gate FAIL. Improvement 50→75 = **+0.0805 per 25 iters — the rate accelerated**, not decayed. Reaching −0.0600 from here needs +0.2303 over 125 iters = **+0.0461 per 25**, i.e. 57 % of the latest rate; even the slowest interval seen so far (+0.0542) clears it with margin. Only non-monotone secondary: large_loss 0.1313 → 0.1333, effectively flat |
 | 100 | | | | | kill iff `delta100 − delta75 ≤ 0` and `delta100 < −0.20` |
 | 125 | | | | | |
 | 150 | | | | | |
