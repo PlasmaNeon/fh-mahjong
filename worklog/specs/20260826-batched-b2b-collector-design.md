@@ -353,7 +353,15 @@ the box is ~0.9 ms at ~2050 rows per match. The remnant therefore consumes ~60 %
 `C_p` would imply. **The margin is thin enough that the box preflight decides the
 booking, and a plausible R of 80 µs puts 10× out of reach outright.** Measure R and C_p
 on the box; a Mac preflight (C_p ~1.75 ms, ceiling ~32×) is not evidence for the box and
-must not stand in for one. If the preflight says the target is arithmetically out of
+must not stand in for one.
+
+**Measure on a QUIET box.** Both quantities are CPU-bound — `R` is single-thread Python,
+`C_p` comes from a 10-worker process arm — so a preflight run alongside another lap's
+collection workers measures contention, not the machine. The bias direction is *unknown*,
+not conservative: `R` inflates when its thread is descheduled, and `C_p` inflates when 20
+workers share the cores of 10, plausibly superlinearly. A contended verdict is therefore
+untrustworthy in **either** direction, and a contended *feasible* must not be waved
+through as "conservative anyway". If the preflight says the target is arithmetically out of
 reach at this match count, the sweep is not booked in this shape.
 
 Also verify before booking: the box's pinned `libfh_mahjong_bridge.so` exports the pool
