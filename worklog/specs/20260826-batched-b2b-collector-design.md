@@ -346,10 +346,15 @@ reading off a winner.
 GPU sweep): measure `R` = per-decision un-batched Python (`ppo.masked_logprob` +
 `sample_masked_action`), run one process-arm cycle, compute `C_p = collect_seconds /
 transition_rows`. `R` is ~50 µs/decision on the Mac (36.4 + 13.7), and batching does not
-remove it, so **≥ 10× requires `C_p ≥ 10R`**. Against the ds960 profile (19 min collection
-for 320 matches, ~2050 rows each) `C_p` is ~1.7 ms, so the un-batched remnant already
-consumes ~29 % of the 10× budget. If the preflight says the target is arithmetically out
-of reach at this match count, the sweep is not booked in this shape.
+remove it, so **≥ 10× requires `C_p ≥ 10R`**. ds960 measured 29 min collection per
+iteration at **960** matches, workers=10, so a 320-match cycle is ~9.7 min and `C_p` on
+the box is ~0.9 ms at ~2050 rows per match. The remnant therefore consumes ~60 % of the
+10× budget and the arithmetic ceiling is `C_p / R` ≈ 16×, not the ~3× headroom a 1.7 ms
+`C_p` would imply. **The margin is thin enough that the box preflight decides the
+booking, and a plausible R of 80 µs puts 10× out of reach outright.** Measure R and C_p
+on the box; a Mac preflight (C_p ~1.75 ms, ceiling ~32×) is not evidence for the box and
+must not stand in for one. If the preflight says the target is arithmetically out of
+reach at this match count, the sweep is not booked in this shape.
 
 Also verify before booking: the box's pinned `libfh_mahjong_bridge.so` exports the pool
 ABI (`ctypes.CDLL(lib).FHEnvPoolNew`).
