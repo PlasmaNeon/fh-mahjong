@@ -233,12 +233,22 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
    production-width run exceeded on the quantile part for both logit fields — as did
    the single 5e-5 max ceiling that preceded the two-part form.
 
-   The CUDA caps are 2× the CPU registration (legal logits p99.9 2e-4 / max 1e-3,
-   `old_logprobs` 1e-4 / 5e-4, `values` 1e-5 / 1e-4). No CUDA number has been seen; a
-   CUDA kernel reassociates at least as aggressively as a CPU one, so a cap below the
-   measured CPU noise floor would guarantee a false failure on the box rather than gate
-   anything. `--calibrate` tightens the operational threshold from real CUDA data the
-   first time it runs.
+   The CUDA caps (legal logits p99.9 3e-5 / max 1e-4, `old_logprobs` 1e-5 / 7e-5,
+   `values` 1e-6 / 6e-6) are registered from a 320-match, 3-repeat CUDA calibration at
+   `pool_slots=32` on the 4090 under the fp32 pin — 620508 reference rows, so ~621
+   observations behind each p99.9 (observed: legal logits 7.63e-6 / 2.29e-5,
+   `old_logprobs` 2.38e-6 / 1.53e-5, `values` 2.83e-7 / 1.49e-6). They follow the rule
+   above — ≥2× observed on the quantile and more on the max — landing at ~4× observed on
+   the quantile and ~4.5× on the max, and no closer than 1.7× to the operational
+   threshold this block produced, so ordinary block-to-block variation cannot fire the
+   gate on its own. A batched CUDA forward reassociates **less** than a batched CPU one
+   here, so the CUDA caps sit about an order tighter than the CPU ones.
+
+   **The regime rule.** A ceiling is registered from a measurement taken in the regime it
+   will gate, and never derived from another regime's measurement by assumption — not
+   CPU→CUDA, not fp32→TF32, not one architecture→another. A ceiling guessed too tight
+   announces itself on first contact; one guessed too loose is indistinguishable from a
+   healthy gate until something real slips under it.
    Report per field and comparison: element count, non-finite count, mismatch count,
    p50/p95/p99/p99.9/max |Δ|, and the count beyond both the legacy `atol=1e-6,
    rtol=1e-5` (diagnostic only) and each part of the ceiling. The pytest gate uses the
@@ -255,11 +265,10 @@ placement-reshape lap or its frozen manifest. GPU benches wait for that lap to f
    compared across slot counts. The process collector has no greedy path, so the greedy
    reference is the `per_row` batched run — which G0.1 proves byte-identical to the
    process collector.
-   **CUDA is gated, not merely documented.** Pre-registered before any CUDA number is
-   seen: hard ceilings legal logits and logprobs 1e-4, values 1e-5. Procedure: a fixed
-   three-repeat greedy calibration block sets each operational threshold to 2 × the
-   calibration maximum, capped by the ceiling; validation runs on a disjoint fixed seed
-   block. Exceeding the cap stops the work; the cap is never widened afterwards.
+   **CUDA is gated, not merely documented.** Procedure: a fixed three-repeat greedy
+   calibration block sets each operational threshold to 2 × the calibration maximum,
+   capped by the registered ceiling; validation runs on a disjoint fixed seed block.
+   Exceeding the cap stops the work; the cap is never widened afterwards.
 2. **Slot-count invariance.** Same digest for `pool_slots ∈ {1, 7, 64}` under sampling
    (per-match RNG makes this exact, as `batched_selfplay` already proves).
 3. **Placement-bonus fail-closed parity.** The truncated-match, zero-decision-seat, and

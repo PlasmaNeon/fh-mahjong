@@ -200,39 +200,50 @@ _FLOAT_GATE_CEILINGS = {
         "old_logprobs": {"p99_9": 5e-5, "max": 2e-4},
         "values": {"p99_9": 5e-6, "max": 5e-5},
     },
-    # CUDA caps for the calibration procedure (spec G0.1b), pre-registered
-    # before any CUDA number was seen: one number per field (logits and
-    # logprobs 1e-4, values 1e-5), applied as the cap on BOTH parts. The
-    # operational threshold comes from `--calibrate` (2x the three-repeat
-    # calibration statistic, capped here) and is always far tighter on the
-    # quantile part; `--float-ceiling` may set a threshold BELOW these, never
+    # Registered from a 320-match, 3-repeat CUDA calibration at pool_slots=32 on
+    # a 4090 (620508 reference rows, so ~621 observations behind each p99.9),
+    # taken under the fp32 pin below. Observed:
+    #
+    #   legal_logits  p99.9 7.63e-6  max 2.29e-5
+    #   old_logprobs  p99.9 2.38e-6  max 1.53e-5
+    #   values        p99.9 2.83e-7  max 1.49e-6
+    #
+    # Registered per the rule above -- >=2x observed on the quantile, more on
+    # the max -- landing at ~4x observed on the quantile and ~4.5x on the max,
+    # and no closer than 1.7x to the operational threshold this block produced,
+    # so ordinary block-to-block variation cannot fire the gate on its own.
+    #
+    # A batched CUDA forward reassociates LESS than a batched CPU one here, so
+    # these sit about an order tighter than the CPU registration, not looser.
+    # The operational threshold comes from `--calibrate` (2x the three-repeat
+    # statistic, capped here); `--float-ceiling` may set one BELOW these, never
     # above.
-    # No CUDA number has been seen. These are 2x the CPU registration, on the
-    # reasoning that a CUDA kernel reassociates at least as aggressively as a
-    # CPU one; a cap BELOW the measured CPU noise floor would guarantee a false
-    # failure on the box rather than gate anything. `--calibrate` tightens the
-    # operational threshold from real CUDA data the first time it runs.
     "cuda": {
-        "legal_logits": {"p99_9": 2e-4, "max": 1e-3},
-        "old_logprobs": {"p99_9": 1e-4, "max": 5e-4},
-        "values": {"p99_9": 1e-5, "max": 1e-4},
+        "legal_logits": {"p99_9": 3e-5, "max": 1e-4},
+        "old_logprobs": {"p99_9": 1e-5, "max": 7e-5},
+        "values": {"p99_9": 1e-6, "max": 6e-6},
     },
 }
 _FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"))
 
 # WHY THE GATE MUST RUN IN fp32.
 #
-# Every number in `_FLOAT_GATE_CEILINGS` was measured in fp32, and the CUDA
-# entries are 2x that fp32 CPU registration. The ceilings therefore encode an
-# **fp32 noise floor** -- the spread a batched fp32 forward has against a
-# per-row fp32 forward -- and nothing else.
+# Every number in `_FLOAT_GATE_CEILINGS` was measured in fp32, each device key
+# on its own device. The ceilings therefore encode an **fp32 noise floor** --
+# the spread a batched fp32 forward has against a per-row fp32 forward -- and
+# nothing else.
 #
-# torch defaults cuDNN convolutions AND the cuDNN RNN to TF32
-# (`cudnn.conv.fp32_precision == cudnn.rnn.fp32_precision == "tf32"`, i.e. the
-# legacy `cudnn.allow_tf32 = True`). On a 4090 that silently runs every trunk
-# convolution and the event GRU with a 10-bit mantissa (~1e-3 relative) while
-# the Linear heads stay fp32, and the batch-1-vs-batch-N delta then lands
-# orders above an fp32 floor. Under G0.1b's rule that a cap is never widened
+# torch defaults cuDNN convolutions AND the cuDNN RNN to TF32. This is not a
+# precaution against a hypothetical -- it is what the box reports. Measured
+# ambient on the 4090, from the calibration run's own output:
+#
+#   cudnn_conv=tf32  cudnn_rnn=tf32  cuda_matmul=none
+#   cudnn_benchmark=False  float32_matmul_precision=highest
+#
+# So every trunk convolution and the event GRU run at a 10-bit mantissa
+# (~1e-3 relative) while the Linear heads stay fp32, and the batch-1-vs-batch-N
+# delta then lands orders above an fp32 floor. Remove the pin and the reference
+# and candidate collections are no longer being compared in one regime. Under G0.1b's rule that a cap is never widened
 # after the fact, that is a GUARANTEED FALSE STOP: the gate would fail on the
 # backend's precision mode, not on a defect, and there would be no legitimate
 # way to clear it.
@@ -240,6 +251,13 @@ _FLOAT_GATE_PERCENTILES = ((50, "p50"), (95, "p95"), (99, "p99"), (99.9, "p99_9"
 # A TF32 measurement is not a violation of these ceilings. It is a DIFFERENT
 # REGIME, and gating it would need its own registration from its own
 # measurement -- never a widened fp32 cap.
+#
+# THE REGIME RULE, of which that is one case: a ceiling is registered from a
+# measurement taken in the REGIME it will gate, and is never derived from
+# another regime's measurement by assumption -- not CPU to CUDA, not fp32 to
+# TF32, not one architecture to another. A ceiling guessed too tight announces
+# itself on first contact; one guessed too loose is indistinguishable from a
+# healthy gate until something real slips under it.
 #
 # `cudnn.benchmark` is pinned False for the same class of reason: autotuning
 # picks a convolution algorithm from run-to-run timing, so the same weights and

@@ -685,15 +685,16 @@ def test_float_gate_ceilings_are_two_part_per_device_and_only_tighten():
         "legal_logits": {"p99_9": 1e-4, "max": 5e-4},
         "old_logprobs": {"p99_9": 5e-5, "max": 2e-4},
         "values": {"p99_9": 5e-6, "max": 5e-5}}
-    # CUDA caps are 2x the CPU registration: no CUDA number has been seen, and a
-    # cap under the measured CPU noise floor would only ever fire falsely.
+    # CUDA caps come from their own CUDA calibration, not from the CPU set: a
+    # batched CUDA forward reassociates LESS than a batched CPU one, so these
+    # are the tighter of the two.
     assert collect_bench.float_gate_ceilings("cuda:0") == {
-        "legal_logits": {"p99_9": 2e-4, "max": 1e-3},
-        "old_logprobs": {"p99_9": 1e-4, "max": 5e-4},
-        "values": {"p99_9": 1e-5, "max": 1e-4}}
+        "legal_logits": {"p99_9": 3e-5, "max": 1e-4},
+        "old_logprobs": {"p99_9": 1e-5, "max": 7e-5},
+        "values": {"p99_9": 1e-6, "max": 6e-6}}
     tightened = collect_bench.float_gate_ceilings("cuda", {"values": {"max": 2e-6}})
-    assert tightened["values"] == {"p99_9": 1e-5, "max": 2e-6}
-    assert tightened["old_logprobs"] == {"p99_9": 1e-4, "max": 5e-4}
+    assert tightened["values"] == {"p99_9": 1e-6, "max": 2e-6}
+    assert tightened["old_logprobs"] == {"p99_9": 1e-5, "max": 7e-5}
     with pytest.raises(ValueError, match="may not exceed its cap"):
         collect_bench.float_gate_ceilings("cpu", {"values": {"max": 1e-3}})
     with pytest.raises(ValueError, match="may not exceed its cap"):
