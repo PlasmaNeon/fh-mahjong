@@ -12,6 +12,7 @@ is byte-identical to `collect_b2b_rollouts`.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import replace
 from typing import Optional
 
@@ -98,6 +99,29 @@ class _SlotMatch:
         self.skipped = False                        # ended at reset: emits nothing
 
 
+# Spec G1's phase split. A mid-range throughput result -- say 6x -- is
+# uninterpretable without it: 6x could be a scheduling artefact (the forward
+# never got big enough), a pool/FFI bound, or a per-decision Python floor that
+# no amount of batching removes, and those three have different verdicts. The
+# spec's "tunable versus falsified" rule reads straight off these numbers, so
+# collecting them only after the fact would cost a second GPU booking.
+_PHASE_TIMER_NOTE = (
+    "pool_seconds: pool.step/reset -- the FFI call plus the protobuf marshal and parse "
+    "(~2.7 MB of planes per round at 320 live rows). "
+    "forward_seconds: batch assembly, the model(...) call and the single device->host "
+    "transfer, deliberately spanning all three -- CUDA kernel launches are asynchronous, "
+    "so a timer around model(...) alone would read near zero and charge the forward to "
+    "whichever later operation happens to synchronise. "
+    "python_seconds: the per-row decision loop ONLY -- sampling, masked_logprob and "
+    "appending the row to its match state. That is the un-batched per-decision remnant "
+    "batching does NOT remove, and the quantity the G1 preflight's R is measured "
+    "against. "
+    "other_seconds = total - pool - forward - python: per-slot decode (the numpy copies "
+    "of planes/scalars/masks/events), match finalisation and the seed-order flush. "
+    "Reported as a residual rather than folded into one of the three, so no timer is "
+    "inflated by work that is not what its name says.")
+
+
 def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  config: PPOConfig, base_seed: int, pool,
                                  inference_mode: str = "batched",
@@ -108,10 +132,18 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     compatible up front (`_assert_pool_matches_caller`).
 
     `diagnostics` (tests and `fh-mj-collect-bench` only) receives
-    `pool_slots` (allocated), `effective_slots`, `peak_live_slots` and
-    `rounds`; if the caller pre-creates `diagnostics["logits"]` as a list,
-    every decision's masked logits row is appended to it as
-    `(match_seed, seat, np.ndarray[A])` in decision order (gate G0.1b)."""
+    `pool_slots` (allocated), `effective_slots`, `peak_live_slots`, `rounds`,
+    `skipped_matches`, `match_rows` and `timers` (see `_PHASE_TIMER_NOTE`);
+    if the caller pre-creates `diagnostics["logits"]` as a list, every
+    decision's masked logits row is appended to it as
+    `(match_seed, seat, np.ndarray[A])` in decision order (gate G0.1b).
+
+    `match_rows` is `[[match_seed, emitted_rows], ...]` in EMISSION order —
+    the per-match row attribution the bench's sampled-sweep sanity check
+    gates on (a row credited to the wrong match is invisible to every other
+    check under sampling, because sampled digests are not comparable across
+    slot counts). `skipped_matches` counts matches that ended at reset and so
+    emitted neither rows nor telemetry."""
     if inference_mode not in ("batched", "per_row"):
         raise ValueError(f"unknown inference_mode: {inference_mode}")
     if action_selection not in ("sample", "greedy"):
@@ -139,6 +171,14 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     logits_sink = diagnostics.get("logits") if diagnostics is not None else None
     peak_live_slots = 0
     rounds = 0
+    # See `_PHASE_TIMER_NOTE`. Accumulated unconditionally, not behind
+    # `diagnostics`: a handful of perf_counter calls per ROUND (never per row)
+    # is far below measurement noise, and making them conditional would mean
+    # the timed path and the production path were not the same path.
+    pool_seconds = 0.0
+    forward_seconds = 0.0
+    python_seconds = 0.0
+    collect_start = time.perf_counter()
 
     active: dict[int, _SlotMatch] = {}
     pending_action: dict[int, int] = {}
@@ -150,16 +190,25 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     truncated_matches = 0
     completed_matches = 0
     outcomes_seen = 0
+    # Per-match row attribution in EMISSION order, plus the count of matches
+    # that ended at reset (those emit neither rows nor telemetry, exactly as
+    # the process collector skips them). Under sampling this is the only thing
+    # that can catch rows credited to the wrong match: sampled digests are not
+    # comparable across slot counts, so nothing else looks at the mapping.
+    match_rows: list[tuple[int, int]] = []
+    skipped_matches = 0
 
     def flush_in_seed_order() -> None:
-        nonlocal emit_next
+        nonlocal emit_next, skipped_matches
         while emit_next in completed:
             sm = completed.pop(emit_next)
             emit_next += 1
             if sm.skipped:
+                skipped_matches += 1
                 continue
             for key in _B2B_ROW_KEYS:
                 rows_l[key].extend(sm.rows[key])
+            match_rows.append((sm.seed, len(sm.rows["actions"])))
             match_telemetry.append(sm.telemetry)
 
     while emit_next < total:
@@ -176,7 +225,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             raise RuntimeError(
                 f"env pool wedged: {len(active)} slots active, "
                 f"{total - emit_next} matches unemitted")
+        pool_start = time.perf_counter()
         result: PoolStepResult = pool.step(commands)
+        pool_seconds += time.perf_counter() - pool_start
         rounds += 1
         peak_live_slots = max(peak_live_slots, len(active))
 
@@ -230,6 +281,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         if not pending_rows:
             continue
 
+        forward_start = time.perf_counter()
         if inference_mode == "batched":
             planes_t = torch.from_numpy(np.stack([r[3] for r in pending_rows])).to(device)
             scalars_t = torch.from_numpy(np.stack([r[4] for r in pending_rows])).to(device)
@@ -271,7 +323,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                     )
                 logits_rows.append(logits_1[0].detach().cpu())
                 values_rows.append(float(value_1.reshape(-1)[0].item()))
+        forward_seconds += time.perf_counter() - forward_start
 
+        python_start = time.perf_counter()
         for i, (slot, sm, seat, planes_np, scalars_np, mask_np, row_events, ev_len) \
                 in enumerate(pending_rows):
             logits_row = logits_rows[i]
@@ -296,11 +350,24 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             ms.seat_lengths[seat].append(ev_len)
             ms.seat_hand_ids[seat].append(ms.hand_id)
             pending_action[slot] = action
+        python_seconds += time.perf_counter() - python_start
 
+    total_seconds = time.perf_counter() - collect_start
     _check_chongci_outcomes(chongci, completed_matches, outcomes_seen)
     if diagnostics is not None:
         diagnostics.update(pool_slots=int(pool.slots), effective_slots=effective_slots,
-                           peak_live_slots=peak_live_slots, rounds=rounds)
+                           peak_live_slots=peak_live_slots, rounds=rounds,
+                           skipped_matches=skipped_matches,
+                           match_rows=[[int(seed), int(n)] for seed, n in match_rows],
+                           timers={
+                               "pool_seconds": pool_seconds,
+                               "forward_seconds": forward_seconds,
+                               "python_seconds": python_seconds,
+                               "other_seconds": (total_seconds - pool_seconds
+                                                 - forward_seconds - python_seconds),
+                               "total_seconds": total_seconds,
+                               "note": _PHASE_TIMER_NOTE,
+                           })
     if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts_batched produced no decisions")
     return RolloutBatch(
