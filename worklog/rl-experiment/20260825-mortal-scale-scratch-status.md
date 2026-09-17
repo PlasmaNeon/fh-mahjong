@@ -24,7 +24,9 @@
 ## Current stage
 
 **CLOSED — 2026-09-17.** The §7 control recipe gate FAILED and the protocol is closed by
-terminal ruling (Codex `01a0147d`, 2026-09-17; full text in the spec). Nothing is running;
+terminal ruling (Codex `01a0147d`, 2026-09-17 — GPT-5.6-Sol medium, then an independent
+second ruling from GPT-6 Astra medium that upholds the closure and corrects the first on
+the collector projection and the resume audit; both texts in the spec). Nothing is running;
 the box is free. **No further mortal-scale-scratch work is authorized** — no extension past
 200, no rescreening on more seeds, no confirmation run, no promotion, no deployment. The
 192×24 big arm was never launched and remains untested and unauthorized, so **scale is
@@ -70,17 +72,34 @@ under one `run_id` (`bde7a041…`), so the resume continued the lineage rather t
 | 103 | 632,263 | 4,940 | 0 | 1.0 |
 
 `optimizer_steps` = 2 × ceil(steps / 256) exactly at 101 (2 × 2,490 = 4,980) and at every
-neighbour, so the resumed collection produced a structurally identical update. `lr_bc` and
-`lr_heads` both 2e-5, correct for post-25. The screening gain across the seam (+0.0708) is
+neighbour. `lr_bc` and `lr_heads` both 2e-5, correct for post-25.
+
+Those are structural checks against neighbours. The audit the runbook requires is the
+resumed iteration against **its own original**, and the append-mode log retains both:
+
+```
+control-lap.log:102  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (original, pre-pause)
+control-lap.log:109  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (resumed)
+```
+
+Identical on all four logged metrics. This is replay equality **to logged precision (4 dp)**,
+not a bitwise proof — `history.json`'s original row 101 was overwritten by the resume, so no
+higher-precision pre-pause record survives. The screening gain across the seam (+0.0708) is
 supporting context, not the audit.
 
 ### If the big arm is ever revisited
 
-It requires a separately authorized protocol. Before launch and before compute-spend
-approval, the batched collector must first pass its own parity, seed/order, label, lifetime,
-resume, memory and full-cycle gates, and the 192×24 960/768 bench and wall-time projection
-must be **re-measured**. The ≈9.4-day figure recorded at Stage 4 predates the batched
-collector and must not be presented as current.
+It requires a separately authorized protocol.
+
+The ≈9.4-day figure recorded at Stage 4 **stands as the measured projection for the process
+collector**, which is still the frozen default path; it is subject only to ordinary
+hardware/software drift. The batched collector's ~16× feasibility ceiling is not a measured
+replacement for it, and adopting that collector is not mandatory.
+
+If a future protocol proposes the batched collector, it must first pass its own parity,
+seed/order, label, lifetime, resume, memory and full-cycle gates, and the actual 192×24
+960/768 full-cycle bench must be re-measured **before launch and before final training-spend
+approval**.
 
 Pinned for the record: box checkout `8ad2688` (`main`), bridge
 `a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` — unchanged across every
@@ -160,7 +179,7 @@ current bridge. Delta = `fh-mj-compare mean_delta` (candidate − anchor).
 | 125 | **−0.1667** | ±0.0770 (sig. YES) | 0.0583 / 0.0458 | yes | first screen after the 12-day pause + resume from iteration 100 — gain +0.0708 across it, so the seam cost nothing. placement +0.2944; training-utility Δ −0.1398; deal-in 0.0997 vs 0.1033 (candidate better). **4th-share Δ +0.0354 [−0.0044, +0.0753] and large-loss Δ +0.0125 [−0.0167, +0.0417] now both straddle zero** — two secondaries at parity with the anchor; only the primary and training-utility remain clearly behind. Tail gate still FAIL. Reaching −0.0600 from here needs +0.0356 per 25 over the last 75 iters, below every interval observed so far |
 | 150 | **−0.1097** | ±0.0670 (sig. YES) | 0.0604 / 0.0458 | yes | gain +0.0570, a mild deceleration from +0.0708 (expected flattening, not a stall). placement +0.3514; training-utility Δ −0.1012 [−0.1651, −0.0373]; **deal-in 0.0973 vs 0.1033 — candidate clearly better than the anchor**. 4th-share Δ +0.0354 [−0.0018, +0.0726] and large-loss Δ +0.0146 [−0.0125, +0.0416] still straddle zero. Tail gate FAIL. Reaching −0.0600 needs **+0.0249 per 25** over the last 50 iters — under half the slowest interval seen so far |
 | 175 | **−0.0861** | ±0.0731 (sig. YES) | 0.0500 / 0.0458 | yes | gain **+0.0236 — sharp deceleration** from +0.0570; the tail flattening arrived. placement +0.3750; deal-in 0.1004 vs 0.1033. **All three secondaries now at parity**: 4th-share Δ +0.0021 [−0.0343, +0.0384], large-loss Δ +0.0042 [−0.0251, +0.0334], training-utility Δ −0.0630 [−0.1309, **+0.0048**] — the last of these crossed zero this interval. Only the primary remains behind. Tail gate FAIL. **Gate is marginal**: −0.0600 needs +0.0261 in the final 25 and the latest interval gave +0.0236, so the current rate extrapolates to −0.0625, a narrow miss |
-| 200 | **−0.0722** | ±0.0727 (**sig. NO**) | 0.0292 / 0.0458 | yes | **§7 recipe gate FAILS: −0.0722 < −0.0600, short by 0.0122. The big arm is NOT authorized.** Final gain +0.0139, continuing the deceleration (+0.0570 → +0.0236 → +0.0139). placement +0.3889 vs anchor +0.4611. The candidate is no longer statistically distinguishable from the anchor, and **two secondaries now favour the candidate**: large-loss Δ **−0.0167** [−0.0420, +0.0087] (0.0292 vs 0.0458) and 4th-share Δ **−0.0042** [−0.0398, +0.0315]; training-utility Δ −0.0475 [−0.1134, +0.0183]; deal-in 0.0969 vs 0.1033. Tail gate still FAIL (it tests the primary). The gate is a hard threshold on the point estimate and the point estimate misses; the ±0.0727 CI spans both −0.0600 and 0, so the miss is inside noise — that is material for the consult, not grounds to re-read the rule |
+| 200 | **−0.0722** | ±0.0727 (**sig. NO**) | 0.0292 / 0.0458 | yes | **§7 recipe gate FAILS: −0.0722 < −0.0600, short by 0.0122. The big arm is NOT authorized.** Final gain +0.0139, continuing the deceleration (+0.0570 → +0.0236 → +0.0139). placement +0.3889 vs anchor +0.4611. The candidate is no longer statistically distinguishable from the anchor, and **two secondaries now favour the candidate**: large-loss Δ **−0.0167** [−0.0420, +0.0087] (0.0292 vs 0.0458) and 4th-share Δ **−0.0042** [−0.0398, +0.0315]; training-utility Δ −0.0475 [−0.1134, +0.0183]; deal-in 0.0969 vs 0.1033. The registered large-loss condition **passes**: 0.0292 <= comparator 0.0458 + 0.015 = 0.0608. `fh-mj-compare`'s composite tail gate reports FAIL on its primary leg; what fails is the control recipe gate, not the large-loss condition. The gate is a hard threshold on the point estimate and the point estimate misses; the ±0.0727 CI spans both −0.0600 and 0, so the miss is inside noise — that is material for the consult, not grounds to re-read the rule |
 
 ## Screening — big arm
 
@@ -243,4 +262,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-09-10` — mortal-scale-scratch — **§5 control lap COMPLETE, 200/200** (`Result=success`, exit 0, 201 checkpoints, zero integrity-gate trips across the whole lap). Screening curve: −0.4250, −0.3708, −0.2903, −0.2375, −0.1667, −0.1097, −0.0861, −0.0722; per-25 gains +0.0542, +0.0805, +0.0528, +0.0708, +0.0570, +0.0236, +0.0139 — monotone improvement with a clear tail deceleration over the last 50.
 - `2026-09-10` — mortal-scale-scratch — **§7 recipe gate FAILED: `mean_delta` −0.0722 < −0.0600, short by 0.0122. The §8 big arm is NOT authorized.** Applied as written, on the point estimate. Context for the consult, not a re-reading of the rule: at iteration 200 the candidate is no longer significant against the anchor (±0.0727 spans both −0.0600 and 0), and two secondaries now favour the candidate — large-loss Δ −0.0167 (0.0292 vs 0.0458) and 4th-share Δ −0.0042 — with training-utility Δ −0.0475 straddling zero and deal-in 0.0969 vs 0.1033. So a from-scratch 96×4 net reached anchor-comparable tail behaviour while its primary placement delta stayed ~0.07 behind. **The ≈9.4-day big-lap projection predates the batched collector; if G1 lands any meaningful part of its ~16× ceiling that projection is stale, so the consult should see the gate result and the G1 outcome together.**
 - `2026-09-17` — mortal-scale-scratch — **TERMINAL RULING, protocol CLOSED** (Codex `01a0147d`, GPT-5.6-Sol medium; full text appended to the spec). The §7 gate stands as FAILED — proximity to the threshold and a CI spanning zero create no tolerance band, and non-significance is not equivalence; re-reading, rounding, enlarging the window or changing the statistic would be optional stopping. Closed as a **recipe-gate failure, not a scale NULL**: the 192×24 arm was never launched, so scale is untested under this package. No extension past 200, no rescreening, no confirmation, no promotion, no deployment. `anchor075` remains champion. The iteration-100 pause/resume is admissible but registered as an **operational deviation**, with the runbook audit of the first resumed collection recorded in Current stage (iteration 101: 637,290 steps, 4,980 optimizer steps = 2 × ceil(637,290/256), 0 truncations, label coverage 1.0, all inside its neighbours; 200 rows under one `run_id`). Any future big arm needs a separately authorized protocol, the collector's own gate gauntlet, and a **re-measured** 960/768 bench — the ≈9.4-day figure predates the batched collector and is not current.
+- `2026-09-17` — mortal-scale-scratch — **second ruling (GPT-6 Astra, medium) upholds closure and corrects two points.** The 9.4-day big-lap projection **stands** as the measured projection for the process collector, which is still the frozen default path; the batched collector's ~16x ceiling is not a measured replacement and adopting it is not mandatory — remeasure only if a future protocol proposes it. The resume audit against neighbours proves plausible counts, not replay equality; the required comparison is against the **original** iteration 101, and `logs/control-lap.log` retains it (lines 102 and 109, identical on all four logged metrics — replay equality to 4 dp, not bitwise, since `history.json`'s original row 101 was overwritten). Terminology corrected: the registered large-loss condition **passes** at iteration 200 (0.0292 <= 0.0458 + 0.015); what fails is the control recipe gate.
 - `—` — (add next event here)

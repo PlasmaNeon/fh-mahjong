@@ -281,3 +281,28 @@ Preflight measurement: one chongci heuristic match emits 2,079 transitions (all 
 4. **The resume is admissible but must be registered as a deviation.** The user-directed 12-day pause was not a registered scientific stop, yet it did not select a checkpoint, alter the recipe, expose a terminal gate, or truncate the final budget. Resuming from the iteration-100 state with unchanged checkout, bridge, configuration, seeds, and comparator preserves the scientific lineage; reworked iteration 101 is canonical and the superseded copy is non-scoring. Record the pause/resume explicitly as an operational deviation. If retained evidence permits, also record the runbook-required comparison of the first resumed collection's rows, optimizer steps, labels, and truncation; the smooth screening slope is supporting context, not a substitute for that audit.
 
 **Final disposition:** the control recipe gate failed exactly as registered, the big arm is not authorized, scale remains untested under this scratch package, and mortal-scale-scratch closes without extension, rescreening, confirmation, promotion, or deployment.
+
+## Second terminal ruling — 2026-09-17 (Codex thread `01a0147d`, GPT-6 Astra, medium effort)
+
+Requested as an independent second ruling on the same terminal result. It upholds the closure and corrects the ruling above on questions 3 and 4.
+
+1. **The −0.0600 gate stands: FAIL.** Amendment 1 §2 specifies the iteration-200 point estimate, and `−0.0722 < −0.0600`. It provides no uncertainty allowance or discretionary extension. The approximate CI is `[−0.1449, +0.0005]`; that interval cannot establish equivalence to the anchor, nor that the true deficit exceeds −0.0600. The authorization decision is definite while the underlying performance difference remains uncertain. Changing the threshold would be a post-hoc rule change; adding samples until it passes would introduce optional stopping.
+
+2. **Close for failure of the registered control prerequisite; scale remains untested.** Amendment 1 §§2 and 10 prescribe this distinction explicitly. Neither extending training nor enlarging screening is authorized. The improving curve supports the narrower observation that this recipe was still learning at its budget boundary; it does not establish that additional training would cross the gate. The secondary estimates are encouraging, but their intervals establish neither superiority nor equivalence. "Tail gate FAIL because it tests the primary" is misleading terminology: the registered large-loss point-estimate condition **passes** at iteration 200; what fails is the control recipe gate. No confirmation, big lap, promotion, or deployment follows.
+
+3. **Remeasure before approving expenditure on a changed collector; the existing estimate remains evidence for the process collector.** A merged implementation does not invalidate measurements of the still-frozen process path. The 9.4-day estimate remains its historical measured projection, subject to ordinary hardware/software drift. The proposed ~16× ceiling supplies no measured replacement. If future authorization proposes the batched collector, require its equivalence and operational gates plus the actual big-model full-cycle benchmark before final training-spend approval. **Adopting the batched collector is not mandatory, and its mere existence does not make the process estimate obsolete.** Neither throughput outcome changes today's failed gate.
+
+4. **Record the pause as an operational deviation; neighbour comparison does not prove exact replay.** The runbook requires the first resumed collection to reproduce its **original iteration's** rows, steps, labels, and truncation. Comparing resumed iteration 101 with iterations 100 and 102 verifies plausible counts and correct step arithmetic; it does not compare original iteration 101 with resumed iteration 101. One run ID supports lineage continuity; it does not prove restoration of optimizer/RNG state or replay equality. The required comparison is against archived pre-pause iteration-101 evidence; if unavailable, record "resume replay equality unverified; structural checks passed". This limitation cannot turn the failed gate into permission to rerun or launch big.
+
+**Disposition:** closure at the control recipe gate, `anchor075` retained, the big-arm hypothesis unresolved.
+
+### Evidence recorded against ruling 4
+
+The archived pre-pause evidence exists. `logs/control-lap.log` is append-mode and retains both iteration-101 emissions:
+
+```
+line 102  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (original, pre-pause)
+line 109  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (resumed)
+```
+
+Identical on all four logged metrics: replay equality to logged precision (4 dp). `history.json`'s original row 101 was overwritten by the resume, so no higher-precision pre-pause record survives and this is not a bitwise proof.
