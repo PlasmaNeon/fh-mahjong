@@ -1428,6 +1428,15 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                         snapshot = cpu_state_snapshot(cycle_model)
                 cycles.append(record)
                 if cycle_index == 0:
+                    # KNOWN DEVIATION FROM TRAINER LIFETIME. Cycle 0's rollout is
+                    # held here for the downstream digest and gate work, so it
+                    # stays resident through cycles 1 and 2; `train_b2b` deletes
+                    # the rollout (`del batch, advantages, returns`) before the
+                    # next collection. Every RSS figure from --full-cycle is
+                    # therefore inflated by one rollout, by an arm-specific
+                    # amount, and is NOT a production memory requirement. Any
+                    # memory claim needs this corrected first (G1 consult
+                    # 2026-09-16).
                     first_batch = batch
                 else:
                     del batch

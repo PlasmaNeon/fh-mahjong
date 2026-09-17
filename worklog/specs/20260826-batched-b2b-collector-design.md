@@ -11,6 +11,14 @@ unauthorized. PR #232. **Second-round consult 2026-08-27 (fresh thread, Opus 5,
 read-only): RATIFIED WITH AMENDMENTS** — four merge-blockers, folded in below. Merged
 as `a28a6cc`. **G0-results consult 2026-08-28 (fresh thread, Opus 5, read-only):
 AUTHORIZED FOR G1 WITH AMENDMENTS**, folded into G1 below.
+**G1-results consult 2026-09-16 (fresh thread, gpt-6-astra, medium, read-only):
+FALSIFIED.** The tested implementation missed the registered ≥10× collection-throughput
+target; the best arm was **0.99×**. The throughput premise is rejected for this workload.
+`collector=process` stays the default. G2/G3, training use, the default switch, and any
+transport or logprob redesign remain **unauthorized**. Adjudication carries three
+protocol qualifications, recorded in G1: a contradictory shape-invalidation clause, a
+benchmark rollout-retention defect, and phase fractions reported against an inner
+denominator.
 
 Worktree `batched-b2b-collector`, branch `experiment/batched-b2b-collector`.
 
@@ -28,9 +36,11 @@ rollouts:
 | Collection, 960 matches | ~29 min | `specs/2026-08-12-data-scale-960-proposal.md` |
 | PPO update, mb768 × 4 epochs | ~2 min | same |
 
-The Go simulator is not the cost. `BenchmarkEnvStepChongci` plays a full Chongci match
-in ~2.5 ms (M1 Pro); 960 matches ≈ 2.5 s. The cost is the Python collector's
-inference shape (`train_b2b.py`):
+`BenchmarkEnvStepChongci` measures **one step or reset per operation, not a full
+match**, so it cannot establish that Go simulation is negligible; the "~2.5 ms per match"
+reading of it was wrong. Go execution, observation encoding, packing and transport all
+remain candidate bottlenecks, and G1 measured a pool path that contains all of them. What
+is established is the Python collector's inference shape (`train_b2b.py`):
 
 - `_b2b_worker_loop` (l.726): each spawn worker runs the 96ch × 4-block CNN + event
   GRU on **CPU, `set_num_threads(1)`, `device="cpu"`**.
@@ -154,7 +164,8 @@ requires a new post-lap authorization.
 
 - Batching `fh-mj-evaluate` (same batch-1 shape; separate follow-up).
 - PPO update tuning (AMP, `torch.compile`, larger minibatch): ≤ 2 min/iter today.
-- Go-side optimization: not on the critical path.
+- Go-side optimization: **not excluded as a bottleneck** (see Problem), but out of
+  scope for this proposal.
 - The legacy `fh-mj-train-ppo` / GRP path.
 
 ## Gates
@@ -306,6 +317,20 @@ no early stopping, no dropping a slow candidate. Throughput uses sampled product
 inference; numeric parity is a separate greedy CUDA calibration/validation run per
 G0.1b.
 
+**G1 readout (2026-09-16, RTX 4090, 24 cores, 50 GiB, quiet box, commit `1953408`,
+bridge `a487bcb7`).** Median collection seconds by slot count —
+32: 797.9, 64: 742.6, 128: 624.1, 256: 558.7, 320: 498.2 — against a control reference of
+**491.2 s** (median of five interleaves, spread 4.9%, identical digests). Best speedup
+**0.99×** at 320 slots against a ≥10× target; every arm misses even 5×.
+
+Lifecycle, stated as it actually is: the model/optimizer and the batched pool persist
+across cycles, but the **process arm's workers close after each collection and restart on
+the next**, and that cost is timed. One collection-only warmup is excluded; it runs no
+PPO update. The harness additionally **retained its first measured rollout across later
+cycles** (`first_batch`), where production deletes the rollout before the next
+collection — so the reported memory figures do not model trainer lifetime, and the
+inflation is arm-specific because the arms' trajectories differ.
+
 Register before launch: commit, anchor SHA, bridge SHA, model shape and event window,
 PyTorch/CUDA/cuDNN versions, TF32 and determinism settings, GPU identity, memory
 limit.
@@ -317,6 +342,14 @@ truncations, RSS, cgroup peak, and CUDA allocated **and reserved** peaks measure
 **separately for collection and for the PPO update**; requested / allocated /
 effective-live slot counts; allocator retention across cycles (the iteration-boundary
 retention failures of ds960 are the reason for three cycles).
+
+All phase fractions are reported against **outer collection wall time**. The round loop's
+`total_seconds` stops before the final `RolloutBatch` stack/cast, so phase sums must be
+reconciled to the outer denominator and the assembly remainder reported separately.
+Preserve per-cycle transition counts, match-length distributions, truncations, actual
+response bytes and call counts alongside `matches/s`; label collection, update and
+whole-arm memory scopes separately; archive every cycle digest, since the top-level digest
+is cycle 0 only.
 
 The control is interleaved with the candidates rather than run as one block before
 them, on the same box, seeds, bridge SHA and match count, sampled. The comparison is
@@ -332,6 +365,12 @@ happens at **every** slot count, not only the high ones, so near-all matches can
 resident at 32 slots too. Report host RSS peak per slot count, but do not read a flat RSS
 curve as "no retention problem": flatness is what head-of-line blocking predicts.
 
+Measured: 24.4–25.4 GiB batched against 31.9–32.2 GiB for the control, a ~20.7% reduction
+at the near-parity 320-slot arm (the larger reductions occur only at the slower arms).
+These are **not validated production memory requirements** — the sampler spans collection,
+hashing and the update rather than collection alone, summed process RSS is not unique
+physical usage or a cgroup peak, and the retained first rollout inflates both arms.
+
 **Pre-registered shape prediction.** At `slots == matches` the pool never refills, so
 the round count is floored by the *longest* match's decision count (~4915 in the parity
 block against a ~300-decision median) and mean rows-per-forward lands near
@@ -341,6 +380,15 @@ winner is therefore the **largest slot count that still refills**, and 320 is a 
 for the worst arm. If the observed batch-size histogram contradicts this, the scheduling
 model is wrong and no arm is a valid test of the design — stop and re-derive rather than
 reading off a winner.
+
+**Prediction contradicted.** 320 slots was the *fastest* arm, monotonically, at mean
+rows/forward 264.6. No-refill does imply a draining batch, but a draining batch does not
+imply the worst wall time. The clause above therefore declares every arm invalid while
+the falsification rules below declare the design falsified: **the protocol gives two
+answers, and this is recorded rather than resolved in favour of the convenient one.** The
+procedural conflict does not erase the measured target miss. A future scheduling model
+must be derived from workload-matched match lengths and measured batch-cost curves, not
+from a longest-match argument alone.
 
 **Preflight before the sweep is booked** (`fh-mj-collect-bench --preflight`, ~2 min, no
 GPU sweep): measure `R` = per-decision un-batched Python (`ppo.masked_logprob` +
@@ -363,6 +411,16 @@ workers share the cores of 10, plausibly superlinearly. A contended verdict is t
 untrustworthy in **either** direction, and a contended *feasible* must not be waved
 through as "conservative anyway". If the preflight says the target is arithmetically out of
 reach at this match count, the sweep is not booked in this shape.
+
+`C_p / R` is a **noisy necessary-condition screen, not a feasibility certificate**, and it
+assumes comparable decision counts between arms — for `matches/s` the condition is
+`T_control ≥ 10 · R · N_candidate`, not automatically `C_p ≥ 10R`. Two preflights on the
+same quiet box at the same commit returned `R` = 55.0 µs and 74.7 µs, a 42% move, which is
+wider than the margin being tested. A booking decision therefore requires repeated, warmed,
+production-matched measurement blocks with a prospectively registered variability limit,
+and a result overlapping the threshold is **indeterminate — not a licence to re-measure
+until it passes**. Any positive feasibility argument must also account for pool, forward
+and assembly cost, not the Python remnant alone.
 
 Also verify before booking: the box's pinned `libfh_mahjong_bridge.so` exports the pool
 ABI (`ctypes.CDLL(lib).FHEnvPoolNew`).
@@ -390,6 +448,12 @@ three steady cycles, not the best, for some candidate; aggregate RSS ≤ 20 GiB,
 justifies a resource count. A candidate whose mean rows-per-forward falls below 16 is
 not a valid test of the design; report it as such rather than counting it as a miss.
 
+**Outcome against these thresholds.** Throughput failed (0.99× against ≥10×). Aggregate
+RSS failed for **both** arms (batched 24.4–25.4 GiB, control 31.9–32.2 GiB, against a
+≤20 GiB bound registered without a baseline measurement). CUDA peak is unassessed in this
+readout. These thresholds stand as registered and are **not lowered retrospectively**; a
+memory-option proposal gets its own prospective criteria.
+
 **A miss that is tunable, versus one that falsifies the design.** The round loop reports
 three timers (pool step, forward, per-row Python), and the verdict reads off them:
    - *Tunable*: the forward dominates the phase split and mean rows-per-forward < 16 — a
@@ -402,11 +466,27 @@ three timers (pool step, forward, per-row Python), and the verdict reads off the
      scales. That is a per-round fixed cost `F` times a round count floored by the longest
      match; if `F × max_match_decisions` alone exceeds `C_p / 10`, no tuning moves it.
 
+`pool_seconds` wraps the whole `pool.step` call — Go environment execution, scheduling,
+observation encoding and packing, the FFI call and buffer copies, protobuf marshal/parse
+and Python decoding. **It cannot attribute cost to protobuf alone**, and a stable
+*percentage* is not a fixed floor: absolute pool time fell from ~553 s to ~297 s between 32
+and 320 slots. Apply the ≥70% rule only to reconciled outer-wall fractions. Compare whole
+collection time with `T_control / 10`, or per-decision time with `C_p / 10`; never compare
+whole collection time directly against a per-decision `C_p`.
+
+Separating per-call overhead from byte-dependent work needs a fixed-work transport replay:
+stage timers around execution / packing / marshal / copy / parse / decode, replay of
+captured responses without running environments, and calls varied at fixed bytes and rows
+(then bytes varied at fixed calls), fitted as `T ≈ a·N_calls + b·N_bytes + c·N_rows`.
+
 **If the miss localizes to `masked_logprob` / `sample_masked_action`, the fix is a Stage-0
 redo, not a G1 tune.** Replacing the per-decision `Categorical` with one batched
 `log_softmax` + gather over the `[B, A]` host tensor **changes the floats**, which reopens
 G0.1's byte-equality and G0.1b. It requires fresh G0.1/G0.1b runs and a new
 authorization — nobody patches it on the box mid-sweep.
+
+It is also not a rescue: removing the **entire** 13.5% Python share at 320 slots yields
+~1.14× the control, still far below either threshold.
 
 The Mac CPU bench (2026-08-26: 32 matches, 209 s at 8 slots, 231 s at 32, no process
 baseline) is diagnostic only and has no bearing on this gate.
@@ -427,24 +507,31 @@ champion on the screening window; the expectation is that the two arms are withi
 clustered CI of each other. Neither arm can back a promotion — this is a "did we break
 training" check.
 
-If G0 fails: fix; it is a bug. If G1 misses 10×: profile the Python round loop before
-touching anything else — Go is 2.5 ms/match, so the residual is Python. If G2 or G3
-fails: stop and return to consultation.
+**G1 missed: the throughput projection below was not realized.** Next work, if
+separately authorized, is bounded pool-path attribution or a newly registered
+memory-option hypothesis measured under production rollout lifetime. Go execution is not
+excluded as a cause. G2/G3 and adoption stay blocked: neither throughput parity nor a
+production memory saving has been established.
+
+If G0 fails: fix; it is a bug. If G2 or G3 fails: stop and return to consultation.
 
 ## Expected effect
 
-With Go negligible, per-decision cost drops from one single-thread CPU forward to
-1/N of a batched GPU forward plus Python row bookkeeping. Iteration time ≈ collection
-at the G1-measured rate + 2 min update. At 10× the 960-match iteration is ~5 min and
-the 150-iteration lap ~12 h instead of ~3.3 days; at 320 matches/iter (the ds960 NULL
-says 960 buys nothing) it is ~3 min/iter.
+**Not realized.** The projection was that per-decision cost would drop from one
+single-thread CPU forward to 1/N of a batched GPU forward plus Python row bookkeeping,
+giving ~5 min per 960-match iteration and a ~12 h lap. G1 measured **0.99×** at the best
+slot count: batching the forward works — its share falls to ~25% — but the pool path it
+requires costs more than the forward it saves, and the process collector does not pay
+that cost at all. Iteration time is unchanged. No lap-time claim survives.
 
 ## Stages
 
 | Stage | Where | Content |
 |---|---|---|
 | 0 | Mac | Changes 1–5, G0.1–G0.6 green, `fh-mj-collect-bench --collector batched` runs on mock and Go bridges on CPU |
-| 1 | Box, post-lap | G1 bench; record measured slot count and rate here |
-| 2 | Box | G2 + G3; consult on the readout before the collector becomes the default |
+| 1 | Box, post-lap | **DONE 2026-09-16 — FALSIFIED.** Best arm `pool_slots=320` at 0.99× (control 491.2 s, batched 498.2 s) |
+| 2 | Box | **BLOCKED.** G2 + G3 are not authorized; the throughput premise they would have tested is rejected |
 
-Consult before Stage 1 with the G0 results in hand.
+Stage 1 is closed. Any further work is a new proposal with its own prospective criteria —
+bounded pool-path attribution, or a memory-option hypothesis measured under production
+rollout lifetime — and needs its own consult before it is booked.

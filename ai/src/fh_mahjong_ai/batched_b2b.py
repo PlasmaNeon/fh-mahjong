@@ -352,6 +352,11 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             pending_action[slot] = action
         python_seconds += time.perf_counter() - python_start
 
+    # NOT the outer collection wall time: this stops before the RolloutBatch
+    # np.stack/astype assembly below, which the caller's `collect_seconds` does
+    # include (~1-2% of outer). Phase fractions quoted against a spec threshold
+    # written in terms of collection wall time must be reconciled to the OUTER
+    # denominator, not to this one.
     total_seconds = time.perf_counter() - collect_start
     _check_chongci_outcomes(chongci, completed_matches, outcomes_seen)
     if diagnostics is not None:
