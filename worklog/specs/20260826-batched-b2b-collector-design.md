@@ -36,11 +36,19 @@ rollouts:
 | Collection, 960 matches | ~29 min | `specs/2026-08-12-data-scale-960-proposal.md` |
 | PPO update, mb768 × 4 epochs | ~2 min | same |
 
-`BenchmarkEnvStepChongci` measures **one step or reset per operation, not a full
-match**, so it cannot establish that Go simulation is negligible; the "~2.5 ms per match"
-reading of it was wrong. Go execution, observation encoding, packing and transport all
-remain candidate bottlenecks, and G1 measured a pool path that contains all of them. What
-is established is the Python collector's inference shape (`train_b2b.py`):
+**Go simulation is not negligible; it is a plurality of the cost.**
+`BenchmarkEnvStepChongci` measures one step or reset **per operation, not a full match** —
+its own doc comment says "per-decision env.step cost" — so the "~2.5 ms per match" reading
+understated it by the decisions-per-match factor (~300 at the median). Measured:
+**2.95 ms per decision** (M1 Pro, 20000 ops, `-benchtime 20000x`; 3-hand chongci, greedy
+by mask, so production sampling and hand count differ). Against G1's control — 635933
+decisions in 491.2 s across 10 workers, i.e. 7.72 ms of CPU per decision — the Go state
+machine plus observation encoding (shanten/ukeire/danger) is **~38% of collector CPU**.
+For the batched arm the same work is ~1875 s single-threaded, ~78 s across 24 cores,
+against ~297 s of measured `pool_seconds` at 320 slots — so Go accounts for roughly a
+quarter of the pool path, and transport/encoding for the rest. No collector redesign
+removes it. What is separately established is the Python inference shape
+(`train_b2b.py`):
 
 - `_b2b_worker_loop` (l.726): each spawn worker runs the 96ch × 4-block CNN + event
   GRU on **CPU, `set_num_threads(1)`, `device="cpu"`**.
@@ -164,8 +172,9 @@ requires a new post-lap authorization.
 
 - Batching `fh-mj-evaluate` (same batch-1 shape; separate follow-up).
 - PPO update tuning (AMP, `torch.compile`, larger minibatch): ≤ 2 min/iter today.
-- Go-side optimization: **not excluded as a bottleneck** (see Problem), but out of
-  scope for this proposal.
+- Go-side optimization: out of scope for this proposal, but **measured at ~38% of
+  collector CPU** (see Problem) — it is the largest single lever now known, not a
+  negligible one.
 - The legacy `fh-mj-train-ppo` / GRP path.
 
 ## Gates
