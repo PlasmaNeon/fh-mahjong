@@ -23,27 +23,74 @@
 
 ## Current stage
 
-**STAGE 5 — the control lap is RUNNING** as `msscratch-control.service` (launched
-2026-08-27 10:43 PDT; 96×4, 200 iterations, 320/256, base seed 1,400,000; both guards
-armed — `cgroup_guard38.sh` and a retargeted `watchdog_lap.sh`; 44/48 GiB containment).
-Log `logs/control-lap.log`, checkpoints `control/ckpt/`. Iteration 1 took 468 s
-including startup, so the lap projects to **≈ 26 hours**. Screen at iterations
-25/50/75/100/125/150/175/200 per §7; the only early kill is at 100.
+**CLOSED — 2026-09-17.** The §7 control recipe gate FAILED and the protocol is closed by
+terminal ruling (Codex `01a0147d`, 2026-09-17; full text in the spec). Nothing is running;
+the box is free. **No further mortal-scale-scratch work is authorized** — no extension past
+200, no rescreening on more seeds, no confirmation run, no promotion, no deployment. The
+192×24 big arm was never launched and remains untested and unauthorized, so **scale is
+untested under this package**: this is a recipe-gate failure, not a scale NULL.
 
-Stage 4 passed: the export's transfer gate was exact and the 960/768 bench cleared all
-six go/no-go gates. **The big lap projects to ≈ 9.4 days** (0.29888 matches/s, 838.9 s
-update → 67.5 min/iteration); no wall-time ceiling was ever registered, so this is
-recorded, not a breach — but it belongs in the consult before the big lap is authorized.
+`anchor075` (`ce9d867f…`) remains champion.
 
-Stage 3 is closed: both ReZero BC arms passed every Amendment 3 gate. The plain-trunk
+**The gate:** `iter_200 mean_delta = −0.0722` against the registered `>= −0.0600`, short by
+`0.0122`, applied on the point estimate. The ±0.0727 CI spans both the threshold and zero,
+so the candidate is not significantly different from the anchor — that is non-significance,
+not equivalence, and does not reach the registered spend gate.
+
+**What the control arm did achieve**, none of which changes the disposition: a from-scratch
+96×4 ReZero net trained BC→PPO improved monotonically from −0.4250 to −0.0722 over 200
+iterations and reached anchor-comparable tail behaviour. At 200 two secondaries favour the
+candidate — large-loss Δ −0.0167 (0.0292 vs 0.0458) and 4th-share Δ −0.0042 — with
+training-utility Δ −0.0475 straddling zero and deal-in 0.0969 vs 0.1033. Mean placement
++0.3889 vs the anchor's +0.4611. The primary curve decelerated over the last 50 iterations
+(+0.0570, +0.0236, +0.0139 per 25) and missed.
+
+**Amendment 4 verdict:** the event path engaged. `rms_ratio` rose monotonically 0.0124 →
+0.0929 by iteration 50 and kept climbing; `event_encoder_update_fro` fell 6.60 → 0.797
+exactly at iteration 26 when `lr_heads` dropped 2e-4 → 2e-5; `trunk_alpha_l2` stayed flat at
+≈0.117. Zero integrity-gate trips across 200 iterations. Dormancy is ruled out as an
+explanation for the negative deltas.
+
+### Registered operational deviation — the iteration-100 pause and resume
+
+The lap was stopped by the user at iteration 101 on 2026-08-28 and resumed 2026-09-09 from
+`train_state.pt` at iteration 100. Not a registered scientific stop. It selected no
+checkpoint, altered no recipe, exposed no terminal gate and truncated no budget; checkout
+(`8ad2688`), bridge (`a487bcb7…`), configuration, seeds and comparator were unchanged
+across it. Reworked iteration 101 is canonical; the superseded copy is non-scoring.
+
+Runbook audit of the first resumed collection, from `control/ckpt/history.json` — 200 rows
+under one `run_id` (`bde7a041…`), so the resume continued the lineage rather than forking:
+
+| iteration | steps | optimizer_steps | truncated_matches | rank_label_coverage |
+|---|---|---|---|---|
+| 100 (pre-pause) | 634,337 | 4,956 | 0 | 1.0 |
+| **101 (first resumed)** | **637,290** | **4,980** | **0** | **1.0** |
+| 102 | 641,611 | 5,014 | 0 | 1.0 |
+| 103 | 632,263 | 4,940 | 0 | 1.0 |
+
+`optimizer_steps` = 2 × ceil(steps / 256) exactly at 101 (2 × 2,490 = 4,980) and at every
+neighbour, so the resumed collection produced a structurally identical update. `lr_bc` and
+`lr_heads` both 2e-5, correct for post-25. The screening gain across the seam (+0.0708) is
+supporting context, not the audit.
+
+### If the big arm is ever revisited
+
+It requires a separately authorized protocol. Before launch and before compute-spend
+approval, the batched collector must first pass its own parity, seed/order, label, lifetime,
+resume, memory and full-cycle gates, and the 192×24 960/768 bench and wall-time projection
+must be **re-measured**. The ≈9.4-day figure recorded at Stage 4 predates the batched
+collector and must not be presented as current.
+
+Pinned for the record: box checkout `8ad2688` (`main`), bridge
+`a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` — unchanged across every
+commit since it was built from `7e5d623`, as none of them touched Go; the dataset was
+generated on the earlier bridge `66f7a061…` (same Go sources). Anchor `ce9d867f…` (matches
+§0). Bench init `bench/big-init.pt` sha256 `4948963d…`.
+
+Stage 3 remains closed: both ReZero BC arms passed every Amendment 3 gate. The plain-trunk
 attempts stay archived as diagnostic / failure evidence and are inadmissible for PPO
 (`bc-control-plain/`, `bc-big-plain/`, logs and guard CSVs suffixed `-plain`).
-
-Pinned for the rest of the experiment: box checkout `8ad2688` (`main`), bridge
-`a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` — unchanged across
-every commit since it was built from `7e5d623`, as none of them touched Go; the dataset
-was generated on the earlier bridge `66f7a061…` (same Go sources). Anchor `ce9d867f…`
-(matches §0). Bench init `bench/big-init.pt` sha256 `4948963d…`.
 
 ## Reading the event-path telemetry
 
@@ -195,4 +242,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-09-10` — mortal-scale-scratch — **GPU handover owed.** The batched-b2b G1 session (`uds:/tmp/cc-socks/72690.sock`) is holding its throughput sweep until this lap's iteration-200 screen finishes, and is waiting on an explicit "GPU is free" from this session — it will not infer it from the lap exiting and will not poll. Send that message after `screen.sh control 200` completes. Its launcher has a hard precondition that aborts on any running `fh-mj-*` process or `MemAvailable < 40 GiB`, verified firing against this lap; that is its backstop, not the signal. Box facts established while diagnosing this: 24 cores, 50 GiB RAM total — RAM, not CPU, is what makes a second arm impossible beside a lap (this lap's cgroup is 44/48 GiB, and two earlier laps were OOM-killed at this worker count).
 - `2026-09-10` — mortal-scale-scratch — **§5 control lap COMPLETE, 200/200** (`Result=success`, exit 0, 201 checkpoints, zero integrity-gate trips across the whole lap). Screening curve: −0.4250, −0.3708, −0.2903, −0.2375, −0.1667, −0.1097, −0.0861, −0.0722; per-25 gains +0.0542, +0.0805, +0.0528, +0.0708, +0.0570, +0.0236, +0.0139 — monotone improvement with a clear tail deceleration over the last 50.
 - `2026-09-10` — mortal-scale-scratch — **§7 recipe gate FAILED: `mean_delta` −0.0722 < −0.0600, short by 0.0122. The §8 big arm is NOT authorized.** Applied as written, on the point estimate. Context for the consult, not a re-reading of the rule: at iteration 200 the candidate is no longer significant against the anchor (±0.0727 spans both −0.0600 and 0), and two secondaries now favour the candidate — large-loss Δ −0.0167 (0.0292 vs 0.0458) and 4th-share Δ −0.0042 — with training-utility Δ −0.0475 straddling zero and deal-in 0.0969 vs 0.1033. So a from-scratch 96×4 net reached anchor-comparable tail behaviour while its primary placement delta stayed ~0.07 behind. **The ≈9.4-day big-lap projection predates the batched collector; if G1 lands any meaningful part of its ~16× ceiling that projection is stale, so the consult should see the gate result and the G1 outcome together.**
+- `2026-09-17` — mortal-scale-scratch — **TERMINAL RULING, protocol CLOSED** (Codex `01a0147d`, GPT-5.6-Sol medium; full text appended to the spec). The §7 gate stands as FAILED — proximity to the threshold and a CI spanning zero create no tolerance band, and non-significance is not equivalence; re-reading, rounding, enlarging the window or changing the statistic would be optional stopping. Closed as a **recipe-gate failure, not a scale NULL**: the 192×24 arm was never launched, so scale is untested under this package. No extension past 200, no rescreening, no confirmation, no promotion, no deployment. `anchor075` remains champion. The iteration-100 pause/resume is admissible but registered as an **operational deviation**, with the runbook audit of the first resumed collection recorded in Current stage (iteration 101: 637,290 steps, 4,980 optimizer steps = 2 × ceil(637,290/256), 0 truncations, label coverage 1.0, all inside its neighbours; 200 rows under one `run_id`). Any future big arm needs a separately authorized protocol, the collector's own gate gauntlet, and a **re-measured** 960/768 bench — the ≈9.4-day figure predates the batched collector and is not current.
 - `—` — (add next event here)
