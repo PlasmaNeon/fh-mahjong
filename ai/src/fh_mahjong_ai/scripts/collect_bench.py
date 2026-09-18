@@ -1428,18 +1428,19 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                         snapshot = cpu_state_snapshot(cycle_model)
                 cycles.append(record)
                 if cycle_index == 0:
-                    # KNOWN DEVIATION FROM TRAINER LIFETIME. Cycle 0's rollout is
-                    # held here for the downstream digest and gate work, so it
-                    # stays resident through cycles 1 and 2; `train_b2b` deletes
-                    # the rollout (`del batch, advantages, returns`) before the
-                    # next collection. Every RSS figure from --full-cycle is
-                    # therefore inflated by one rollout, by an arm-specific
-                    # amount, and is NOT a production memory requirement. Any
-                    # memory claim needs this corrected first (G1 consult
-                    # 2026-09-16).
-                    first_batch = batch
-                else:
-                    del batch
+                    # Take the two 1-D float fields the cross-count comparison
+                    # needs (a few MB) and drop the rollout NOW. Retaining the
+                    # whole batch to extract them after the loop would leave one
+                    # rollout resident across every later cycle, where
+                    # `train_b2b` deletes it (`del batch, advantages, returns`)
+                    # before the next collection -- so every --full-cycle RSS
+                    # figure would overstate production by one rollout, by an
+                    # arm-specific amount.
+                    first_floats = {
+                        name: np.asarray(getattr(batch, name),
+                                         dtype=np.float64).copy()
+                        for name in _ROLLOUT_TOLERANT_FIELDS}
+                del batch
 
             # The gate's candidate is a SEPARATE greedy collection, on the
             # untouched warm-started weights and the same seed block as the
@@ -1476,7 +1477,6 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             if spawn_collector is not None:
                 spawn_collector.close()
 
-        batch = first_batch
         # `steady_seconds` is CYCLE 0 alone. Spec G1 accepts on the MEDIAN of
         # the three steady cycles, so the median is carried beside it under its
         # own name rather than left to be recomputed from the per-cycle table
@@ -1513,9 +1513,9 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                 float_gate["passed"] = False
             calibration_records.extend(per_repeat)
         # Only the two 1-D float fields are retained across counts (a few MB
-        # at any realistic match count) — never whole batches.
-        floats = {name: np.asarray(getattr(batch, name), dtype=np.float64).copy()
-                  for name in _ROLLOUT_TOLERANT_FIELDS}
+        # at any realistic match count) — never whole batches. They were copied
+        # out at cycle 0, before that cycle's rollout was freed.
+        floats = first_floats
         if reference_floats is None:
             reference_floats = floats
         else:
@@ -1547,7 +1547,7 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
                 "peak_live_slots": max((c["peak_live_slots"] or 0) for c in cycles)
                                    if collector == "batched" else None,
             }
-        del batch, first_batch, floats
+        del first_floats, floats
     if float_gate is not None and calibrate:
         worst_all = worst_over_repeats(calibration_records, ceilings)
         thresholds, cal_violations = calibration_thresholds(worst_all, ceilings)

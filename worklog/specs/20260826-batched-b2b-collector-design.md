@@ -328,8 +328,11 @@ across cycles, but the **process arm's workers close after each collection and r
 the next**, and that cost is timed. One collection-only warmup is excluded; it runs no
 PPO update. The harness additionally **retained its first measured rollout across later
 cycles** (`first_batch`), where production deletes the rollout before the next
-collection — so the reported memory figures do not model trainer lifetime, and the
-inflation is arm-specific because the arms' trajectories differ.
+collection — so **the RSS figures in this readout are inflated by one rollout**, by an
+arm-specific amount, and are not production memory requirements. Fixed after the readout
+(the two 1-D float fields are now copied out at cycle 0 and the batch freed every cycle;
+measured 3.71 → 3.28 GiB at 24 matches). Re-measuring memory under the corrected lifetime
+is a separate proposal with its own prospective criteria, not a rerun of this one.
 
 Register before launch: commit, anchor SHA, bridge SHA, model shape and event window,
 PyTorch/CUDA/cuDNN versions, TF32 and determinism settings, GPU identity, memory
