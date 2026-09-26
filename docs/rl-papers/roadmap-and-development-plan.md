@@ -57,11 +57,11 @@ V(observation_t) = expected future score from this decision state
 policy(observation_t) = action distribution used for exploration and serving
 ```
 
-Near-term policy:
+Policy:
 
 - Keep the flat 204-action catalog because the Go bridge already validates it.
 - Use dueling Q/value heads and action masking for every decision.
-- Use IQL-style offline updates first, then add online self-play collection.
+- Bootstrap offline (BC), then improve with online self-play PPO.
 - Use a frozen checkpoint pool so one new model does not only learn to exploit its own clone.
 - Evaluate with fixed-seed duplicate Chongci matches and report mean net reward, positive-reward rate, large-loss rate, and per-seat breakdown.
 
@@ -72,7 +72,7 @@ Later policy:
 
 ## Where The Project Actually Is
 
-As of 2026-08-25. Update this section on any promotion or campaign change.
+As of 2026-09-26. Update this section on any promotion or campaign change.
 
 **Trainer.** On-policy PPO self-play, `fh-mj-train-b2b`. Dense per-hand Chongci score-delta
 reward (score/1000), `gamma=0.99`, `lr=2e-5`, entropy 0, 2 PPO epochs, 320 matches/iter,
@@ -81,7 +81,8 @@ symmetric all-four self-play from a warm start.
 **Champion.** `chongci_b2b_anchor075_restart_iter075`
 (`ai/checkpoints/anchors/b2b-anchor075-restart-iter075.pt`). Line, each step confirmed on a
 fresh unspent window at 1500 paired seeds per side:
-`deep4 iter_275 -> B2b iter_075 (+0.0408) -> restart-iter075 (+0.0254)`.
+`deep4 iter_275 -> B2b iter_075 (+0.0408) -> restart-iter075 (+0.0254)`. Production still
+serves deep4 iter_275 (`ai/checkpoints/deploy/`); the B2b line is not yet promoted to serving.
 
 **Promotion.** Pre-registered gate only: screenings on a shared window, a kill rule fixed
 before launch, one selection, one confirmation on a window no prior lap has spent. No
@@ -92,7 +93,9 @@ resolve +0.03-level effects, so confirmation is the step that finds a winner.
 not an architecture or RL ceiling. Four confirmations against restart-iter075 failed to
 clear it (restart r2 null, deep16-ReZero null, gru-width unconfirmed, data-scale-960 null).
 Training reopens only for new information, a genuinely different objective, or
-evidence-backed auxiliary changes.
+evidence-backed auxiliary changes. Two laps under that rule also failed: placement-reshape
+(objective change, Stage 1 NULL 2026-08-27) and mortal-scale-scratch (BC→PPO from scratch,
+recipe gate failed 2026-09-17; the large-scale arm never ran). No lap is authorized.
 
 Full record:
 [`worklog/rl-experiment/chongci-rl-experiment-progress.md`](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
@@ -177,7 +180,7 @@ Materials:
 - [imitation documentation: Behavioral Cloning](https://imitation.readthedocs.io/en/latest/algorithms/bc.html)
 - [imitation tutorial: Train BC on Demonstrations](https://imitation.readthedocs.io/en/latest/tutorials/1_train_bc.html)
 - [Minari documentation](https://minari.farama.org/main/)
-- Local plan: [Phase 3A BC Pipeline](../../worklog/plans/2026-03-26-phase3a-bc-pipeline.md)
+- Local code: `fh-mj-generate-data`, `fh-mj-train-bc` (see `ai/MODULES.md`)
 
 Learn:
 
@@ -328,50 +331,16 @@ Mahjong exercise:
 - Keep v1 as a flat 204-action policy for stability.
 - Later split the policy into a hierarchy: decision family first, tile/meld choice second.
 
-## Development Plan
+## Build Status
 
-1. Validate current baseline:
-   - Run Go tests, Python tests, mock BC pipeline, and a tiny real-bridge pipeline.
-2. Build data pipeline v1:
-   - Generate deterministic heuristic self-play trajectories.
-   - Save JSONL plus manifest.
-   - Use fixed seed splits for train, validation, and evaluation.
-3. Train BC v1:
-   - Train current `PolicyValueNet`.
-   - Report loss, value loss, exact agreement, top-3 agreement, and action-family agreement.
-4. Upgrade model v1:
-   - Use a no-pooling residual CNN plus scalar encoder.
-   - Keep masked logits mandatory.
-5. Add duplicate evaluation:
-   - Use the same wall seeds with rotated seats against the heuristic baseline.
-   - Track EV, win rate, large-loss rate, and action frequencies.
-6. Add visible look-ahead features:
-   - Implemented in the 58-scalar observation schema.
-   - Keep `overall shanten` at scalar index 25.
-   - Route-specific shanten, ukeire, wild preservation, score potential, and public danger heuristics now occupy scalar indices 29-41.
-   - Chongci match/risk context now occupies scalar indices 42-57.
-7. Add Mortal-style operation-level Q/value learning:
-   - Use discrete IQL as the default reward learner.
-   - Train Q, value, and policy from every discard/reaction/kan/win/pass operation.
-   - Use final hand or Chongci match reward as the delayed target.
-   - Keep behavior-cloning regularization.
-   - Train direct paired-trace first-divergence reward-delta scorers before repeating same-state branch-label sweeps.
-   - Add visible trajectory context and compact pre-divergence sequence rows to first-divergence scorers when holdout preflight shows seed-window overfitting.
-   - Use source-heldout paired-trace preflight as the screen for sequence scorers; do not promote from train-window or full-report gains.
-   - If a sequence scorer only barely passes source-heldout preflight, run a fresh independent seed-window preflight before any duplicate-seat or guarded-serving evaluation.
-   - If robust source-balanced training moves the failure between sources, stop coefficient changes and build a larger multi-source dataset with whole-source heldout model selection.
-   - Keep exact branch-CF shards as auxiliary supervision and diagnostics, not as the main promotion signal.
-   - Promote only if duplicate evaluation improves over BC and heuristic baselines.
-8. Add mixed self-play:
-   - Generate random wall seeds and let checkpoint agents play through full matches.
-   - Use a frozen opponent pool: heuristic, BC, current best IQL, and older checkpoints.
-   - Store every operation transition from every learning seat.
-   - Retrain IQL from mixed self-play plus heuristic data.
-   - Promote checkpoints by fixed-seed duplicate arena results.
-9. Add live serving:
-   - Serve the Python/PyTorch model first.
-   - Go still validates every returned action.
-   - Keep hidden information out of deployed observations.
+| Step | State |
+|---|---|
+| Simulator correctness, heuristic trajectories, BC, duplicate evaluation | Built |
+| Visible look-ahead features (58-scalar schema) | Built |
+| Operation-level offline Q/value learning (discrete IQL) | Built; superseded by PPO self-play |
+| Mixed checkpoint self-play (`fh-mj-selfplay-loop`) | Built; superseded by symmetric PPO self-play |
+| Online PPO self-play, oracle/privileged critic, event history (B2b) | Built; the current trainer |
+| Live serving (`fh-mj-serve-policy`, Go validates every action) | Built; deployed on Zeabur |
 
 ## Design Defaults
 

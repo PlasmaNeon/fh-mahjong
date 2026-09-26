@@ -1,21 +1,20 @@
 # cmd/wasm/
 
-> WebAssembly build target for client-side game validation in the browser.
+> WebAssembly build target exposing the Fenghua ruleset's valid-action query to JavaScript.
 
 ## Overview
 
-Compiles the Go game engine to WebAssembly (`GOOS=js GOARCH=wasm`) so the browser can validate player actions locally before sending them to the server. This enables zero-latency feedback on legal moves while the server performs authoritative re-validation.
+Compiles `rules.FenghuaRuleset` to WebAssembly (`GOOS=js GOARCH=wasm`). **The frontend does not
+load it**: `web/src/hooks/useMahjongWasm.ts` has no importers, and the client takes legal actions
+from the server's `PlayerState.valid_actions`.
 
 ## Key Files
 
-- **main.go** — WASM entry point:
-  - Exports Go functions to JavaScript via `syscall/js`
-  - Exposes hand evaluation and valid action checking
-  - Bridges `rules.FenghuaRuleset` to browser JS
+- **main.go** — registers two globals via `syscall/js`:
+  - `mahjongInit()` — returns `"Wasm Ready"`
+  - `mahjongGetValidActions(stateBytes, seat)` — unmarshals a `GameState` and returns the seat's valid `ActionType` ints
 
 ## Architecture Notes
 
-- Build command: `GOOS=js GOARCH=wasm go build -o web/public/mahjong.wasm cmd/wasm/main.go`
-- Requires `wasm_exec.js` (Go WASM runtime) in the frontend public directory.
-- Cannot be built with standard `go build` (requires WASM build tags). Tests will show `[setup failed]` — this is expected.
-- The frontend loads this via `web/src/hooks/useMahjongWasm.ts`.
+- Build: `GOOS=js GOARCH=wasm go build -o web/public/mahjong.wasm ./cmd/wasm`. Needs `wasm_exec.js` (Go WASM runtime) in `web/public/`.
+- The `js && wasm` build tag excludes the package from native builds, so `go build ./...` / `go test ./...` skip it.

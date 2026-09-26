@@ -7,11 +7,8 @@
 Plays a full `engine.Game` round in the terminal without the server runtime, database, or network.
 Seat 0 is interactive; seats 1-3 are driven by the shared heuristic bot policy. Useful for
 exercising the active-turn and interrupt decision paths by hand, and for sanity-checking ruleset
-changes without a browser.
-
-Renamed from `cmd/cli` in the 2026-08 naming refactor (Go renames): "cli" named the interface rather
-than the job, and the old doc still advertised "offline hand evaluation" it does not do — that is
-what `/tools/calc` and `internal/api`'s calc endpoint are for.
+changes without a browser. It does no offline hand evaluation — that is `/tools/calc` and
+`internal/api`'s calc endpoint.
 
 ## Key Files
 

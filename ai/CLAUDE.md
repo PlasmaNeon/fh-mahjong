@@ -33,7 +33,7 @@ uv run --project ai <command>
 |---|---|
 | `fh-mj-train-bc` | Behavior cloning (the offline warm-start); accepts the shared `--model-*` flags including `--model-kernel-width` and `--model-trunk-rezero`; `--patience/--min-delta/--min-epochs` stop on validation cross-entropy and write `best.pt` |
 | `fh-mj-train-awbc` | Advantage-weighted BC |
-| `fh-mj-train-iql` | Discrete IQL — the main offline RL trainer |
+| `fh-mj-train-iql` | Discrete IQL (offline; the pre-PPO trainer) |
 | `fh-mj-train-offline-q` | Conservative offline Q (experimental) |
 | `fh-mj-train-global-ev` | Visible-state (or action-conditioned) global EV predictor |
 | `fh-mj-train-pairwise-delta` | Direct paired-trace reward-delta predictor (diagnostic-only) |
@@ -129,8 +129,8 @@ labels, not separate code paths:
 
 ## Key Files
 
-> **Per-module detail lives in [MODULES.md](MODULES.md)** — one entry for each of the
-> 90 modules, grouped by role, with the design rationale and failure modes.
+> **Per-module detail lives in [MODULES.md](MODULES.md)** — one entry per module,
+> grouped by role, with the design rationale and failure modes.
 > Open it when you are about to touch a specific module.
 
 Quick map of what is where:
@@ -143,7 +143,7 @@ Quick map of what is where:
 | Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `batched_b2b.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
 | Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
-| Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
+| Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `placement_bonus*.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
 | Scripts | `scripts/` — see the Commands section above for the CLI each one backs |
 | Deployment | `checkpoints/deploy/`, `Dockerfile.compose`, `Dockerfile.deploy` |
@@ -152,7 +152,7 @@ Quick map of what is where:
 
 ### Environment and tooling
 - **Use uv for everything**: `uv sync --project ai --extra dev`, then `uv run --project ai ...`. Avoid non-uv package or environment commands in this repo.
-- `ai/.python-version` pins the uv-managed interpreter. **The package requires CPython 3.12** (`requires-python = ">=3.12"`); there is no longer a 3.9 compatibility constraint, so `dataclass(slots=True)` and other 3.10+ features are fine.
+- `ai/.python-version` pins the uv-managed interpreter. **The package requires CPython 3.12** (`requires-python = ">=3.12"`); `dataclass(slots=True)` and other 3.10+ features are fine.
 - Multi-worker collection needs a raised fd limit — the training/bench/profile CLIs call `fdlimit.raise_file_descriptor_limit` for you.
 
 ### Go is the authority
@@ -201,15 +201,15 @@ Quick map of what is where:
 - MLflow tracking is opt-in via `--mlflow`; local storage defaults to `ai/mlflow.db` with artifacts in `ai/mlartifacts`, both gitignored.
 
 ### Collector output is pinned
-- `ai/tests/test_b2b_collector_parity.py`'s three `test_process_collector_golden_digest*` tests hash every `RolloutBatch` field and `match_telemetry` of `collect_b2b_rollouts` against constants recorded from `origin/main`'s pre-refactor collector. A failure means the process collector's bytes changed; fix the code, never the constants. Three configurations are needed because the placement-bonus block and the hindsight-label branches moved into the shared finalizer, which no cross-collector gate can pin (both collectors call it): bonus off; bonus on; and a seed block with truncations and a bust (`rank == -1` / `rank == 4`). Both collectors share `_B2bMatchState` / `_finalize_b2b_match` / `_check_chongci_outcomes` (`train_b2b.py`) and `ppo.masked_logprob`.
+- `ai/tests/test_b2b_collector_parity.py`'s three `test_process_collector_golden_digest*` tests hash every `RolloutBatch` field and `match_telemetry` of `collect_b2b_rollouts` against recorded constants. A failure means the process collector's bytes changed; fix the code, never the constants. Three configurations are needed because the placement-bonus block and the hindsight-label branches moved into the shared finalizer, which no cross-collector gate can pin (both collectors call it): bonus off; bonus on; and a seed block with truncations and a bust (`rank == -1` / `rank == 4`). Both collectors share `_B2bMatchState` / `_finalize_b2b_match` / `_check_chongci_outcomes` (`train_b2b.py`) and `ppo.masked_logprob`.
 - **The batched collector must never be enabled in, or used to resume, the placement-reshape lineage** (`experiment/placement-reshape-10-5-1-n10`, seeds 650320–698319). Both `collector` and `pool_slots` are rejected-on-change by `--resume-from-state`. `pool_slots` is *not* the batched analogue of `num_workers`: a spawn worker always runs a batch-1 forward, whereas the batched collector's production `inference_mode="batched"` runs one forward per round over every pending row, so the slot count decides which rows share a batch and `sample_masked_action` consumes those logits. Slot-count invariance holds only under `per_row` (gate G0.2), which is not the mode a lap runs. Making `batched` the B2b default needs a new post-lap authorization.
 - The two collectors are bit-identical only under greedy selection with `inference_mode="per_row"` (gate G0.1). Under sampling they draw from different RNG streams — the same class of change as a different `base_seed` — and in production `inference_mode="batched"` `old_logprobs`/`values` move with batch composition at float32 rounding while every discrete field stays exact.
-- **The batched-forward float spread scales with architecture; do not carry the tiny-net number over.** The test net's spread is ~1e-7. On CPU with the anchor075 net (96ch/4 blocks), 8-slot vs 32-slot pools over 32 matches differ by up to 3.96e-5 (754 of 130154 elements outside `atol=1e-6, rtol=1e-5`) — while `per_row` on the same net is bit-identical across slot counts. G0.1b's ceilings are therefore **two-part** — a p99.9 quantile plus a max cap — because max |Δ| is an extreme-value statistic that grows with row count and trunk width; a single-max ceiling gets breached by scale, not by defects. Both parts gate and a violation exits non-zero. **Size a ceiling from a production-width measurement, never from the test net or an extrapolation**: the first real measurement (anchor075, 128-step event GRU) put legal_logits at p99.9 3.43e-5 / max 6.58e-5, which broke both the extrapolated quantile and the older single 5e-5 max that had sat in a ratified spec through two consults.
+- **The batched-forward float spread scales with architecture; do not carry the tiny-net number over.** The test net's spread is ~1e-7. On CPU with the anchor075 net (96ch/4 blocks), 8-slot vs 32-slot pools over 32 matches differ by up to 3.96e-5 (754 of 130154 elements outside `atol=1e-6, rtol=1e-5`) — while `per_row` on the same net is bit-identical across slot counts. G0.1b's ceilings are therefore **two-part** — a p99.9 quantile plus a max cap — because max |Δ| is an extreme-value statistic that grows with row count and trunk width; a single-max ceiling gets breached by scale, not by defects. Both parts gate and a violation exits non-zero. **Size a ceiling from a production-width measurement, never from the test net or an extrapolation**: anchor075 with its 128-step event GRU measures legal_logits at p99.9 3.43e-5 / max 6.58e-5.
 - **On CUDA the batched collector replays CUDA graphs under `cudnn.benchmark`.** Autotuning picks algorithms by timing, so batched-mode floats can differ between processes (the G0.1b float class); `per_row` and CPU are untouched. A captured graph bakes in the weights' storage and the precision settings, so graphs are built per collection call and must never be cached across calls. Anything that counts forwards by hooking `model(...)` sees only the captures — read `diagnostics["forward_rows"]`.
 - **The float gate runs greedy; the sampled sweep is throughput-only.** Under sampling a ~4e-5 logit perturbation flips an action with probability ~|Δp| per decision, one flip diverges the match, and the comparison degenerates into a shape mismatch — a coin flip at G1 row counts, not a signal. `fh-mj-collect-bench --collector batched` collects each slot count greedily against a greedy `per_row` reference for the gate, and *reports* rather than gates any cross-slot semantic difference in the sampled sweep. What still gates under sampling is **per-match row attribution** (telemetry seeds are the seed block, once each, and the per-match decision counts sum to the batch in telemetry order) — nothing else can catch a row credited to the wrong match once digests stop being comparable.
-- **A ceiling is registered from a measurement taken in the regime it gates** — never derived from another regime's by assumption (not CPU→CUDA, not fp32→TF32, not one architecture→another). The CUDA G0.1b caps measured ~4x *tighter* than the CPU set, not looser as assumed, so a CPU-derived registration would have gated CUDA ~26x too loose. A ceiling guessed too tight announces itself on first contact; one guessed too loose is indistinguishable from a healthy gate until something real slips under it.
+- **A ceiling is registered from a measurement taken in the regime it gates** — never derived from another regime's by assumption (not CPU→CUDA, not fp32→TF32, not one architecture→another). The CUDA G0.1b caps measure ~4x *tighter* than the CPU set; a CPU-derived registration would gate CUDA ~26x too loose. A ceiling guessed too tight announces itself on first contact; one guessed too loose is indistinguishable from a healthy gate until something real slips under it.
 - **A gate must run in the regime its ceilings were measured in, and must never read as passed when it did not run.** The G0.1b ceilings encode an fp32 noise floor, and stock torch runs cuDNN convolutions and the cuDNN RNN in TF32 — so the gate pins fp32 around its own collections and restores the ambient settings afterwards; an unpinned CUDA gate would stop falsely with no legitimate way to clear it. torch's two TF32 API families are mutually exclusive: set through one, read through the other, and it RAISES (`cudnn.allow_tf32` throws once conv and rnn disagree), so pin and restore through one family and guard reads of the other. `--skip-float-gate` exists for throughput-only invocations and reports `passed: None` — never True, never absent — with the exit code ignoring it.
-- **A gate that checks nothing passes.** Twice now a number change has quietly made a gate test vacuous. Count what was checked and report the count beside the verdict (`match_attribution_checks`), and fail when a mode that should have checked something checked zero.
+- **A gate that checks nothing passes.** A changed constant can silently make a gate test vacuous. Count what was checked and report the count beside the verdict (`match_attribution_checks`), and fail when a mode that should have checked something checked zero.
 
 ### Patching across the training modules
 

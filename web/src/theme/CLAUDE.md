@@ -28,12 +28,12 @@ the barrel `index.ts` also side-effect-imports it so importing any primitive pul
   material colours, typography roles, radii, and shadows. This *is* the theme's values.
 - **base.css** — every structural class (`.ledger-page`, `.ledger-shell`, `.ldg-page`,
   `.ldg-section`, `.ldg-tile`, `.ldg-btn`, `.ldg-input`, …) consuming the tokens.
-- **index.css** — `@import`s tokens.css then base.css.
-- **index.ts** — side-effect-imports `table/table-geometry.css` and re-exports the primitives (the public API).
+- **index.css** — the single ordered CSS surface: fonts, then `../index.css` (Tailwind, app globals, `table/roundResult.css`, `table/table-geometry.css`), then `tokens.css`, `base.css`, and `../table/table-theme.css`.
+- **index.ts** — side-effect-imports `./index.css` and re-exports the primitives (the public API).
 - **components/** — The typed React primitives that form the design system's public API:
   `Page`, `Shell`, `Card`, `PageHeader`, `Section`, `Button`/`ButtonLink`, `TextLink`,
-  `Field`, `Note`, `Toggle`, `LoadingScreen`, `ButtonRow`, `ClubShell`, `ToolTabs`, and
-  `GameDialog`. Per-component detail and accessibility contracts are in
+  `Field`, `Note`, `Toggle`, `LoadingScreen`, `ButtonRow`, `ClubShell`, `ToolTabs`,
+  `GameDialog`, `LedgerTile`/`LedgerTileRow`/`LedgerPaletteGrid`, and `InputApplyRow`. Per-component detail and accessibility contracts are in
   [components/CLAUDE.md](components/CLAUDE.md).
 
 The bone-paper authentication popup is implemented by `features/auth/AuthDialog.tsx`, while

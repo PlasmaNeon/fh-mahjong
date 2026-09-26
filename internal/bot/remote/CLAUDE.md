@@ -12,7 +12,7 @@ This package adapts Python-served AI checkpoints to the Go bot policy interface.
 - **http_policy.go** — HTTP JSON client for `fh-mj-serve-policy` with heuristic fallback on service errors, malformed responses, or illegal action ids. Tracks dataset provenance per policy instance: `ObservedPolicyIDs()` (distinct sanitized checkpoint identities that served validated actions — hot reloads add entries; bounded 8×256 chars) and `DecisionCounts()` (remote-served vs fallback decisions), both reconciled into the paipu at `Room.persistMatch`. It exposes `Stats()` counters for remote calls, remote successes, fallback totals, and fallback reason categories, and logs a periodic summary by default every 100 remote decisions.
   - **`ChooseActionCtxProv` (paipu v2, `bot.ProvenanceContextPolicy`)** — the
     single place remote/fallback outcomes are decided; `ChooseActionCtx`
-    itself is now a thin wrapper that discards the provenance. Decodes the
+    itself is a thin wrapper that discards the provenance. Decodes the
     `/act` JSON response's `checkpoint_sha256` field (empty string on a
     legacy server that predates it — never an error) into
     `bot.DecisionProvenance{Source: "remote", CheckpointName, CheckpointStep,
@@ -27,6 +27,9 @@ This package adapts Python-served AI checkpoints to the Go bot policy interface.
   - **Its own 10s budget**, deliberately separate from the 750ms `/act` timeout a cold forward pass would blow; never outlives the caller's context.
   - **Auth** — `token`, when non-empty, is sent as `Authorization: Bearer <token>`, the same scheme `internal/review`'s client uses for `/evaluate`. `/warmup` piggybacks on the service's `FH_MJ_EVALUATE_TOKEN` when one is configured and is OPEN when none is (the primary production service's posture, so it is warmed tokenless).
   - **Telemetry** — every attempt logs one grep-able line prefixed `policy warmup:` with endpoint, observed round-trip `latency_ms`, the server-reported `server_latency_ms`, `checkpoint_sha`, and `ok=true|false`. These lines are the rollout gate's evidence.
+- **rl_endpoint.go** — `EffectiveRLEndpointURL` / `EffectiveRLEndpointURLFromEnv`: the single fallback chain for the private-room RL endpoint (`RL_AGENT_POLICY_URL`, else `AI_BOT_POLICY_URL`, else `DefaultRLPolicyURL`), shared by `cmd/server` and `internal/api`'s review path so both agree on which endpoint the RL agent is.
+- **service_identity.go** — `SameServiceEndpoint(a, b)`: whether two URLs name the same backing policy service.
+- **checkpoint_identity.go** — `checkpointIdentity(path, step)`: the public-safe `"<basename>@step<N>"` label (never a path or URL).
 - **http_policy_test.go** — Tests for successful remote decisions, fallback behavior, fallback logging, and instrumentation counters.
 
 ## Architecture Notes

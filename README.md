@@ -1,11 +1,11 @@
 # fh-mahjong
 
-A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang custom rules** — a regional variant with rich scoring, wild tiles, and 35+ special hand patterns.
+A web Mahjong platform implementing **Fenghua (奉化), Zhejiang custom rules** — a regional variant with rich scoring, wild tiles, and 35+ special hand patterns.
 
 ## Features
-- **Custom Fenghua Rules**: Full implementation of Fenghua Mahjong rules including wild tiles (搭), independence hands (大大胡), and complex payout liabilities.
+- **Custom Fenghua Rules**: Fenghua scoring with wild tiles (搭), flowers, kong bonuses, independence hands (大大胡), and 35+ patterns. Payout liabilities (包) are not implemented yet.
 - **Plugin Ruleset Architecture**: The `engine.Game` state machine is ruleset-agnostic. New rulesets implement the `RuleEngine` interface without touching the game loop.
-- **Cross-Platform Web**: React/TypeScript frontend with WebAssembly for zero-latency client-side validation.
+- **Web Client**: React/TypeScript tabletop UI; the server is authoritative for every legal action.
 - **Match Replays**: Every match serialized to Protobuf binary streams for replay and AI analysis.
 - **RL AI Pipeline**: Go core compiles as a C-shared library for high-speed Python/PyTorch self-play training.
 
@@ -15,7 +15,7 @@ A cross-platform Mahjong game platform implementing **Fenghua (奉化), Zhejiang
 | Game engine + server | Go 1.25 (goroutines, Gin, gorilla/websocket) |
 | Serialization | Protocol Buffers |
 | Frontend | React 19 + TypeScript + Vite, TailwindCSS, Framer Motion |
-| Client validation | Go → WebAssembly + protobufjs |
+| Client protobuf | protobufjs |
 | AI training | Python 3.12 + PyTorch (uv-managed) |
 | Database | PostgreSQL (GORM) |
 
@@ -32,7 +32,7 @@ fh-mahjong/
 │   ├── rl/         #   RL environment wrapper and action catalog
 │   ├── review/     #   Post-game review: paipu → decisions → champion critique
 │   └── tiles/      #   Shared tile key/index/clone helpers
-├── cmd/            # Entry points: server, cli, wasm, rlbridge, rlpaipu, rlsmoke
+├── cmd/            # Entry points: server, play, wasm, rlbridge, rlpaipu, rlsmoke
 ├── web/            # React frontend (features/, table/, theme/, …)
 ├── ai/             # Python RL training pipeline
 ├── docs/           # Reference docs
@@ -40,7 +40,7 @@ fh-mahjong/
 │   │   ├── official-rules.md  # Raw Fenghua rule source
 │   │   └── rules.md           # Rules + Go implementation design
 │   └── rl-papers/  # RL paper reports, study roadmap, implementation takeaways
-└── worklog/        # Process record: specs/, plans/, rl-experiment/
+└── worklog/        # Process record: specs/, plans/ (runbooks), rl-experiment/
 ```
 
 > Per-directory `CLAUDE.md` files are the authoritative, up-to-date reference for
@@ -52,10 +52,10 @@ fh-mahjong/
 **Working:**
 - **Engine & rules** — Protobuf schemas, ruleset-agnostic game state machine, and the full Fenghua ruleset (wild tiles, flowers, kong bonuses, 35+ patterns, wait-pattern scoring) with DFS/DP hand evaluation.
 - **Backend** — Gin REST API with revocable HttpOnly cookie sessions, CSRF/origin protection, account-only private rooms, gorilla WebSocket rooms, replay logging, and multi-round play.
-- **Frontend** — React 19 client: lobby and play (`/`, `/play`, `/room/new`, `/room/:roomId`, `/match/:matchId`), accounts (`/login`, `/account`), a replay viewer with post-game review (`/replay`, `/replay/:matchId`), and the `/tools/*` workbenches (scoring calculator, shanten, dev pages). Client-side move validation via the Go → WASM bridge.
+- **Frontend** — React 19 client: lobby and play (`/`, `/play`, `/room/new`, `/room/:roomId`, `/match/:matchId`), accounts (`/login`, `/account`), a replay viewer with post-game review (`/replay`, `/replay/:matchId`), and the `/tools/*` workbenches (scoring calculator, shanten, dev pages).
 - **AI / RL** — Python RL package (`ai/`) with self-play data generation, BC/AWBC/IQL/offline-Q and PPO training, an MLflow-tracked pipeline, the `internal/rl` environment wrapper + 204-action catalog, the `cmd/rlbridge` c-shared bridge, a deterministic heuristic bot, and an HTTP-served RL agent seat with heuristic fallback.
 
-**Partial / future:** blob storage for replays (paipu currently lives in PostgreSQL text columns), Redis-backed matchmaking (only needed if the server ever runs multi-instance; matchmaking is in-memory today), ELO/leaderboards, and broader deployment work.
+**Partial / future:** payout liabilities (see `docs/rules/rules.md` §5), blob storage for replays (paipu currently lives in PostgreSQL text columns), Redis-backed matchmaking (only needed if the server ever runs multi-instance; matchmaking is in-memory today), ELO/leaderboards, and broader deployment work.
 
 ## Quick Start
 ```bash
@@ -87,16 +87,18 @@ god-view; never set that flag in a deployed environment.
 The private room offers a trained **RL Agent** seat alongside the heuristic bot.
 Running `go run ./cmd/server` autostarts the local policy server
 (`uv run --project ai fh-mj-serve-policy`); the option enables itself once the
-model is healthy. Set `RL_AGENT_AUTOSTART=0` to opt out.
+model is healthy. Point `FH_MAHJONG_AI_CHECKPOINT` at a local checkpoint (e.g.
+`ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt`) — the manifest's
+paths are training-box paths. Set `RL_AGENT_AUTOSTART=0` to opt out.
 
-For the full containerized stack, provide a checkpoint and use the `full`
-profile:
+For the full containerized stack, use the `full` profile. The deployed champion
+ships in `ai/checkpoints/deploy/`:
 ```bash
-RL_CHECKPOINT_DIR=/abs/path/to/checkpoints RL_CHECKPOINT_FILE=epoch_006.pt \
+RL_CHECKPOINT_FILE=deploy/selfplay-deep4-student-iter275-39ch.pt \
   docker compose --profile full up
 ```
-The model checkpoint is not in the repo — point `RL_CHECKPOINT_DIR` at a host
-directory containing your `.pt` file (see `.env.example`).
+To serve another checkpoint, point `RL_CHECKPOINT_DIR` at the host directory
+containing it (see `.env.example`).
 
 **Switch models without restarting.** The policy server hot-swaps its checkpoint
 at runtime — no restart of the server or the Go backend. Use the CLI:

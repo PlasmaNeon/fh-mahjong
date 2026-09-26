@@ -11,5 +11,5 @@
 
 - Keys are flat dotted strings (`'nav.profile'`, `'brand.name'`), not nested objects.
 - Interpolation uses named `{variable}` placeholders. **Keep placeholder names identical in both files** — the type only checks that a key exists and is a string, not that its placeholders match.
-- Both files are currently 245 lines; a diff in line count is a useful smell that one drifted.
+- Both files have the same line count; a difference is a useful smell that one drifted.
 - Consumers use `useI18n()` from `../I18nContext.tsx` rather than importing these directly.

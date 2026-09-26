@@ -1,16 +1,11 @@
 # internal/engine/testdata/
 
-> Deterministic seed files for reproducible game test replays.
-
-## Overview
-
-Contains binary seed data used by `game_test.go` to create deterministic wall shuffles via the Mersenne Twister PRNG. Each file represents a known initial state that produces a specific tile ordering, enabling predictable test scenarios.
+> Tenhou wall-shuffle fixtures for the MT19937 exact-match test.
 
 ## Key Files
 
-- **seed_*.bin** — Binary seed data files, each producing a specific wall arrangement for testing different game scenarios (directed melds, dead wall draws, etc.)
+- **2016022509gm-0009-0000-b327da61.\*** — one Tenhou game's shuffle, stage by stage: `seed_str` (base64 seed), `seed_u32` (decoded seed words), `src_u32` / `rnd_u32` (MT19937 output and derived random words), `wall136` (the resulting 136-tile wall).
 
 ## Architecture Notes
 
-- Used exclusively by `internal/engine/game_test.go` via `os.ReadFile()`.
-- Seeds pair with the MT19937 PRNG in `internal/engine/mt19937.go` to guarantee identical wall orderings across runs.
+- Read only by `TestTenhouShuffleExactMatch` in `internal/engine/mt19937_test.go`, which requires `mt19937.go` to reproduce Tenhou's wall exactly.

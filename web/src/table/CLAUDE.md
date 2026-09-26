@@ -16,12 +16,19 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 
 ## Key Files
 
+- **CenterHud.tsx** — The center match HUD: seat names, winds, and scores.
+- **Tile.tsx** — `TileComponent`, the single tile renderer.
+- **tileFlight.tsx** / **tileFlightPlan.ts** — The table-level flying-tile overlay and its pure flight planner.
+- **handOrdering.ts** / **meldOrdering.ts** — Concealed-hand sort order and meld recap ordering (`orderMeldsForRecap`).
+- **tileId.ts** — `tileIdsEqual`, the wrapper-tolerant tile-id comparison.
+- **types.ts** — View-model types shared by live and replay adapters.
+- **deadCss.test.ts** — guards that removed CSS class families stay unreferenced.
 - **TableBoard.tsx** — The shared tabletop presenter:
   - `TableBoard` composes the center HUD, wild-tile badge, action bar slot, four discard lanes, and four seat lanes
   - `getSeatDirection()` is the single source of truth for seat-to-view direction mapping
   - Re-exports `TileComponent` and the `./types` view types for page consumers
   - The per-seat lane is assembled by `seat/SeatBundle.tsx`; the discard tray by `seat/DiscardZone.tsx`. There are no `SeatLane`/`DiscardLane` components — the CSS class names `.seat-*` / `.discard-lane*` are what carry those words.
-- **TableRoundResultOverlay.tsx** — The shared live/replay end-of-hand settlement dialog, with a scrollable result body and a separate persistent action footer. Split out of the old `TableScene.tsx` in PR 2; pairs with `roundResult.css` and `roundResultOverlay.test.ts`.
+- **TableRoundResultOverlay.tsx** — The shared live/replay end-of-hand settlement dialog, with a scrollable result body and a separate persistent action footer; pairs with `roundResult.css` and `roundResultOverlay.test.ts`.
 - **roundResult.css** — Fenghua settlement-ledger styling for the shared result dialog:
   - Centers the dialog on wide/short-landscape screens and turns it into a safe-area-aware bottom sheet on portrait phones
   - Sizes from the actual overlay container rather than the scaled 1600x900 stage or unrotated viewport, so the live phone-portrait shell keeps `Ready` and `Exit` visible
@@ -33,8 +40,8 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 
 ## Architecture Notes
 
-- `SeatLane` and `DiscardLane` intentionally use the same `bottom | right | top | left` direction mapping so the hand/exposed/discard geometry cannot drift apart logically.
-- The shared layout model is canonical-bottom first, but left/right seat semantics are not pure mirrors: preserve the old main-branch side-seat behavior where right concealed hands use `column-reverse`, left concealed hands use `column`, right exposed rails sit above the hand, and left exposed rails sit below it.
+- The seat lane (`seat/SeatBundle.tsx`) and discard tray (`seat/DiscardZone.tsx`) use the same `bottom | right | top | left` direction mapping so the hand/exposed/discard geometry cannot drift apart logically.
+- The shared layout model is canonical-bottom first, but left/right seat semantics are not pure mirrors: right concealed hands use `column-reverse`, left concealed hands use `column`, right exposed rails sit above the hand, and left exposed rails sit below it.
 - Keep the drawn tile as a dedicated slot adjacent to the concealed-hand rail rather than folding it back into the sorted closed-hand list; the hand-to-drawn gap should be structural, not margin-only.
 - On compact short stages, prioritize the local player's hand: the enlarged self tiles and stronger lifted offset are intentional touch affordances. Keep opponents and discards on `--tile-small-*`; both side pivots share the raised compact baseline and shorter `--bundle-span-opp` so they stop above the self interaction band. Change the tile, gap, and bundle tokens as one geometry set so the full rail never clips or collides.
 - On the standard 1600x900 canvas, self tiles are intentionally ~10.4% of stage height and inherit the stage zoom. Keep desktop `--tile-width`, `--tile-height`, gaps, `--bundle-span-self`, and `--action-bottom` coordinated; do not add viewport-pixel overrides that break proportional scaling.
@@ -45,10 +52,10 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 - Shared-tile motion should not stack an explicit directional `x/y` entrance on the same node that owns a `layoutId` transition. Let Framer's shared-layout path own the tile node itself, and put any seat-direction entry accent on a separate wrapper around the current drawn-slot tile.
 - For shared moves such as hand -> discard and drawn-slot -> sorted hand, prefer `layout=\"position\"` on the shared tile node and keep opacity/scale accents on outer wrappers. That avoids size-morph transforms making the tile feel like it moves the wrong way before settling.
 - Cross-container moves that still feel wrong after those guardrails should use the table-level flying-tile overlay instead of `layoutId`. The current renderer snapshots tile rects across renders and animates explicit `hand/drawn -> discard` and `drawn -> hand` transfers in viewport space while temporarily hiding the destination tile.
-- `DiscardLane` owns the tray geometry, but its shell placement must stay center-HUD-relative: side trays sit beside the HUD, top/bottom trays use a left-anchored 6-tile lane, and the 6-tile cap must be computed from the discard tile's main-axis size rather than the rotated cross-axis size.
+- The discard tray owns its geometry, but its shell placement must stay center-HUD-relative: side trays sit beside the HUD, top/bottom trays use a left-anchored 6-tile lane, and the 6-tile cap must be computed from the discard tile's main-axis size rather than the rotated cross-axis size.
 - The center HUD should stay visually paired with the discard system: size it from the same 6-tile lane footprint and leave a deliberate HUD-to-discard gap rather than letting the trays touch the panel.
 - Keep all four discard-lane shell offsets derived from that same HUD gap variable; do not leave one side on an older fixed stage offset or the panel spacing will drift.
-- Discard pools stay outside `SeatLane`; table-level composition belongs in `TableBoard`, while internal spacing belongs to the lane components themselves.
+- Discard pools stay outside the seat lane; table-level composition belongs in `TableBoard`, while internal spacing belongs to the lane components themselves.
 - Redacted-opponent discards animate tedashi vs tsumogiri (drawn-slot origin) using each player's `lastDiscardFromDrawn` flag (looked up by the discarder's seat direction); full-info/self views are unchanged (tracked by id). A tedashi opens a visible **gap**: the discard flight departs from a random previous hand-slot rect and carries `hideHandSlot` to blank that rail slot while airborne, then (a) with a drawn tile (normal/kan) an `asBack` merge flight slides the drawn back into the gap, or (b) with no drawn tile (post-pon/chii) the hand **collapses** — each back right of the gap slides one slot left (`asBack` flights between previous-snapshot slot rects, each blanking the slot it lands on). An end-slot gap after a call blanks nothing (the rail already ends there). All of it is positional (previous-snapshot rects + slot indices, purely cosmetic backs) — never current-frame id matching, so it survives the per-broadcast id rotation.
 - A redacted opponent's concealed tiles are anonymized server-side with `SUIT_UNKNOWN` and a fake id that the backend **re-randomizes every broadcast** (per-broadcast obfuscation rotation, for anti-cheat). `ClosedHand.tsx` therefore keys those backs by hand slot (`slot-${index}`/`drawn-slot`, gated on `isAnonymousTile`) so the row doesn't remount/reorder each frame; their `data-board-tile-id` still carries the volatile fake id, which is fine since the flight planner only reads it within a single frame for source rects. `asBack` flights carry stale previous-frame fake ids by design, so `hiddenTileIdsFromAnimations` excludes them from the id-based hide (only their `hideHandSlot` blanks rail slots, via `hiddenHandSlotsByDirection` → `hiddenSlots`); self/full-info views keep stable ids and are unaffected.
 - Phone-portrait rotation: the board is CSS-rotated 90° by `.stage-rotator` (media query `(pointer: coarse) and (orientation: portrait) and (max-width: 600px)`), but `tileFlight.tsx` normally portals the overlay to `document.body` in viewport space — outside that transform. So in phone-portrait it instead portals the overlay into a wrapper that **reproduces `.stage-rotator`'s transform** and maps each screen rect into that wrapper's local space via `toRotatorLocalRect` (a 90° rect swap about the viewport centre). Desktop/iPad/landscape keep the original `position: fixed` viewport-space overlay unchanged. If a phone-portrait flight looks mis-oriented, the suspects are the `rotate(90deg)` sign and the `toRotatorLocalRect` mapping.

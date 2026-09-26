@@ -36,10 +36,11 @@
 ### Proto Enum Mapping
 | Proto Constant | Terminology |
 |----------------|-------------|
-| `SUIT_BAMBOO` | sou |
-| `SUIT_CHARACTERS` | man |
-| `SUIT_DOTS` | pin |
-| `SUIT_HONORS` | jihai |
+| `SUIT_SOU` = 1 | sou |
+| `SUIT_PIN` = 2 | pin |
+| `SUIT_MAN` = 3 | man |
+| `SUIT_JIHAI` = 4 | jihai |
+| `SUIT_FLOWER` = 5 | flower |
 
 ---
 
@@ -82,7 +83,7 @@ Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The sta
 - **Tame Wild Tiles (还搭)**: +1 (All wild tiles used at face value).
 
 ### Wind & Dragon Pung Bonuses
-- **Dragon Pung (中发白碰出)**: +1 each (Pung of Hatsu/H5, Chun/H6, or Haku/H7).
+- **Dragon Pung (中发白碰出)**: +1 each (Pung of Haku 5z, Hatsu 6z, or Chun 7z).
 - **Pung of Seat Wind (位风)**: +1.
 - **Pung of Prevailing Wind (圈风)**: +1.
 - **Pung of Right Wind (正风)**: +2 (When seat wind and prevailing wind coincide).
@@ -141,70 +142,29 @@ All bonuses are additive on top of the base. Multiple bonuses can combine.
 - **Robbing a Kong (拉杠)**: No extra points; scored as own-tile win, robbed player is liable.
 - **Win by Bottom Tile (海底捞月)**: No extra points; discarder is liable.
 
-## 4. Liabilities (Exceptions)
-If Player A discards 4 tiles that are all claimed by Player B, and B wins, A pays for the *entire* table. Similar liabilities exist for Robbing a Kong or claiming the bottom tile.
-
----
-
-## 5. Comprehensive Rules Evaluation Design in Go (`rules/fh.go`)
-
-To implement the Fenghua rules exactly as described in the official rules, we need a complete evaluation pipeline capable of checking over 35 specific scoring patterns, wait conditions, and liability scenarios. 
-
-### A. GameState Extensions (`proto/game.proto`)
-The `GameState` and `PlayerState` must be expanded to track:
-1. `wild_tiles`: A list of the current round's wild tile(s).
-2. `flower_melds`: The specific flower tiles drawn/melded per player.
-3. `prevailing_wind`: Round wind.
-4. `seat_wind`: The player's specific seat wind.
-5. Contextual flags for special wins: `is_bottom_tile`, `is_robbing_kong`, `is_blooming_kong`.
-
-### B. The Exhaustive Evaluation Pipeline (`EvaluateHand`)
-The `EvaluateHand` function will transition from a basic loop to a highly optimized matching pipeline:
-
-1. **State Injection & Fast-Path Returns**:
-   - Merge `hand` + `winTile` (always creating a 14-tile view for patterns).
-   - Check if `!isTsumo` and enforce the **4-point minimum** strictly after all patterns are aggregated.
-
-2. **Wild Tile & Tame Detection**:
-   - Count the number of `wild_tiles`. Apply points: 0 Wilds (+1), 1 Wild (+1), 2 Wilds (+2).
-   - **Tame Wild Tiles (+1)**: When building the hand via the DFS/DP algorithm, we must track substitution maps. If all wild tiles were used strictly as their *natural face value*, award the Tame point.
-
-3. **Wait Pattern Detection**:
-   - `EvaluateWaitPattern()` during the DP backtracking to detect 1-point waits: 
-     - **Single call (边，嵌，单吊)**: Waiting on an edge (1-2 waiting for 3), gap (6-8 waiting for 7), or single pair wait.
-     - **Pair call (对倒)**: Two pairs waiting for one to become a pung.
-
-4. **Exhaustive Score Aggregation Pipeline**:
-   *The DP algorithm must evaluate all Yaku below. Only the highest-valid subset should trigger, or they stack if compatible.*
-   - **Independence Variants**: Base Independence (+50), then stack bonuses: Closed Seven Stars (+100), Open Seven Stars (+50), Independence Without a Suit (+100). All combinable.
-   - **Seven Pairs Variants**: Straight Seven Pairs (150) vs Wild Seven Pairs (50), Closed Bomb (100) vs Open Bomb (50).
-   - **Loner Variants**: Straight Loner (100) vs Wild Loner (50).
-   - **All Pung Variants**: Straight All Pung (100) vs Wild All Pung (50).
-   - **Suit Patterns**: Mixed One Suit (70), Pure One Suit (150).
-   - **Honor Patterns**: Uncompleted All Honors (400), Completed All Honors (800).
-   - **Flower Patterns**: Completed 8 Flowers (800), Uncompleted 8 Flowers (400), Four Flowers (150), Own Flower (2).
-   - **Special Kong Bonuses**: Budding/Blooming for Direct, Closed, Risky, and Flower Kongs (50-200 points).
-   - **Pung Bonuses**: Dragon Pung (1), Seat Wind Pung (1), Prevailing Wind Pung (1), Right Wind Pung (2).
-   - **Wild Multipliers**: Three normal wild tiles (150), Three flower wild tiles (300).
-
-### C. Liability & Payout Adjustments
+## 5. Liabilities (Exceptions)
 - If Player A discards 4 tiles that are all claimed (open run/pung/kong) by Player B, and B wins, A pays for the *entire* table.
 - If Player A discards 3 tiles claimed by B, and B wins with Pure One Suit, Mixed One Suit, or All Pung, A is liable.
-- **Robbing a Kong**: Winning hand is scored as if it were an own tile (Tsumo) win, and the player whose kong was robbed pays everything.
-- **Claimed Bottom Tile**: The player whose bottom tile was claimed for a win is liable.
+- **Robbing a Kong**: scored as an own-tile (Tsumo) win; the player whose kong was robbed pays everything.
+- **Claimed Bottom Tile**: the player whose bottom tile was claimed for a win is liable.
 
 ---
 
-## 6. Key Differences from Riichi (Japanese / Tenhou) Mahjong
+## 6. Go Implementation (`internal/rules/fh.go`)
 
-Because this engine natively supports the cryptographically secure **Tenhou wall shuffle**, some data structures initially inherited Riichi Mahjong conventions. However, Fenghua Mahjong strictly diverges from Riichi in several fundamental ways. 
+- `EvaluateHand` scores every pattern above through a staged pipeline over three exclusive routes (Independence, Seven Pairs, Standard); the highest-scoring route wins. Stage order and helpers are in `internal/rules/CLAUDE.md`.
+- Wild counting, tame-wild detection, wait-pattern bonuses, flower and kong bonuses, and the 4-point Ron minimum are enforced there. Kong bonus context comes from `PlayerState.has_*_kong` flags set by the game loop.
+- `CalculatePayouts` implements the base multipliers only: Tsumo → each loser pays S×2; Ron → discarder S×2, the other two S×1.
+- **Not implemented:** the liabilities in §5 and robbing a kong. `PlayerAction.is_robbing_kong` / `is_bottom_tile` exist in the proto but nothing reads them.
 
-The following Riichi concepts do **not** exist in Fenghua Mahjong:
+## 7. Key Differences from Riichi (Japanese / Tenhou) Mahjong
 
-1. **No Riichi Declarations:** There is no concept of declaring "ready" (Riichi) by paying 1000 points. The `ACTION_RIICHI` action type and `is_riichi` player state flags are completely irrelevant.
-2. **No Red Fives (Aka Dora):** Fenghua does not use red fives to boost hand value. The `is_red` flag on `Tile` is unnecessary.
-3. **No Honba (Bonus Sticks/Repeat Hands):** Riichi uses `honba` to track consecutive dealer wins or exhaustive draws, adding flat point bonuses. Fenghua does not use this mechanic.
-4. **No Kita (North Peeking):** The `ACTION_DRAW_PEI` action specific to 3-player Riichi has no place here.
-5. **No Furiten:** Players are unconditionally allowed to win on discards even if they previously discarded the same tile, provided they meet the 4-point Ron minimum.
-6. **No Dora Indicators:** Unlike Riichi which flips a wall tile to indicate the next tile in sequence is a bonus (Dora), Fenghua flips a wall tile to indicate that *all 3 remaining copies of that exact tile* are Wild Tiles (Jokers).
-7. **Round Wind Terminology:** Riichi typically tracks the "Round Wind" (East, South). Fenghua specifically scores the "Prevailing Wind" (圈风). Using a unified `prevailing_wind` variable is preferred over maintaining a generic `round_wind`.
+The engine reproduces the Tenhou wall shuffle (MT19937), but Fenghua has none of these Riichi concepts:
+
+1. **No Riichi declarations.**
+2. **No red fives (aka dora).** `Tile.is_red` exists in the proto and is unused.
+3. **No honba** (repeat-hand bonus sticks).
+4. **No kita** (3-player north peeking).
+5. **No furiten.** A player may win on any discard that meets the 4-point Ron minimum, even one they discarded earlier.
+6. **No dora indicators.** The flipped indicator makes the other 3 copies of *that exact tile* wild.
+7. **Prevailing wind, not round wind.** The proto field is `prevailing_wind` (圈风).

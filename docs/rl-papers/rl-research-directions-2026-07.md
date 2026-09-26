@@ -14,8 +14,20 @@ agent?* Filtered hard through this project's constraints:
   robustness (exploitability) a first-class concern, not just mean placement
   vs a fixed anchor.
 
-Current baseline for context: deep4 iter_120 student, paired +0.2958 vs the IQL
-anchor (−0.0528), large_loss halved, in production since PR #136.
+Baseline when written: deep4 iter_120 student, paired +0.2958 vs the IQL anchor (−0.0528).
+
+## Outcomes
+
+Every direction below was tested in 2026-07; results in
+`worklog/rl-experiment/chongci-rl-experiment-progress.md`.
+
+| # | Direction | Result |
+|---|---|---|
+| 1 | Exploitability probe | Champion not exploitable by a trained best response |
+| 2 | Snapshot-pool opponents | Parity with the champion; no promotion |
+| 3 | Auxiliary belief head | Shipped inside B2b (belief/deal-in/rank heads + event GRU + privileged critic), which passed the gate at +0.0408 |
+| 4 | ACH regret objective | Failed badly (−1.06 paired vs PPO); PPO stays |
+| 5 | pMCPA-style determinized search | Failed; a larger search budget did worse |
 
 ## Findings, ranked by fit
 
