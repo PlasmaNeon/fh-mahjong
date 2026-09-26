@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from dataclasses import replace
@@ -20,6 +21,8 @@ from fh_mahjong_ai.evaluate import (
 )
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
+from fh_mahjong_ai.policies import TorchGreedyPolicy
+from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint
 
@@ -52,6 +55,32 @@ def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | 
 
 
 
+def load_opponent_policy(
+    checkpoint: Path, device: str, event_history_window: int
+) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
+    """Greedy policy for the strong-table opponents, plus its identity record.
+
+    The record goes into the report's ``opponents`` field; fh-mj-compare pairs
+    two reports only when it matches exactly. The checkpoint is read once and
+    hashed from the same bytes it is loaded from.
+    """
+    data = checkpoint.read_bytes()
+    opponent = CheckpointPolicy.from_checkpoint_bytes(data, checkpoint, device=device)
+    window = int(opponent.model.model_config.event_window)
+    if window > event_history_window:
+        raise ValueError(
+            f"opponent checkpoint needs event window {window} but the table runs "
+            f"--event-history-window {event_history_window}; its histories would be truncated")
+    record = {
+        "kind": "checkpoint",
+        "checkpoint": str(checkpoint),
+        "checkpoint_sha256": hashlib.sha256(data).hexdigest(),
+        "event_window": window,
+        "decision": "greedy",
+    }
+    return TorchGreedyPolicy(opponent.model, device=device), record
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a trained model")
     parser.add_argument("--checkpoint", type=Path, required=True, help="Path to .pt checkpoint")
@@ -65,6 +94,10 @@ def main() -> None:
         help="Start seed or start:count. Repeat for non-contiguous online eval windows.",
     )
     parser.add_argument("--duplicate-seats", action="store_true", help="Rotate the agent through all four seats")
+    parser.add_argument("--opponent-checkpoint", type=Path, default=None,
+                        help="play the three other seats with this checkpoint's greedy policy instead of "
+                             "the heuristic bots (a strong table). Architecture comes from the checkpoint's "
+                             "metadata. Requires --duplicate-seats; greedy only")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
     parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
@@ -163,6 +196,17 @@ def main() -> None:
         if args.sample_action_family not in known_families:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
+
+    if args.opponent_checkpoint is not None:
+        if not args.duplicate_seats:
+            parser.error("--opponent-checkpoint requires --duplicate-seats (the paired gate path)")
+        if args.search or args.sample_temperature > 0.0:
+            parser.error("--opponent-checkpoint supports greedy evaluation only "
+                         "(not --search or --sample-temperature)")
+        if args.oracle or args.from_oracle:
+            parser.error("--opponent-checkpoint does not support --oracle / --from-oracle")
+        if not args.opponent_checkpoint.is_file():
+            parser.error(f"--opponent-checkpoint {args.opponent_checkpoint} is not a file")
 
     if args.model_event_window > 0 and args.data is not None:
         # Offline datasets carry no event histories; the agreement numbers
@@ -408,6 +452,27 @@ def main() -> None:
                     event_history_window=args.event_history_window,
                 )
                 final_report["search"]["fallback_count"] = sum(p.fallback_count for p in search_policies)
+            elif args.duplicate_seats and args.opponent_checkpoint is not None:
+                opponent_policy, opponents = load_opponent_policy(
+                    args.opponent_checkpoint, args.device, args.event_history_window)
+                print(f"  Opponents:   {opponents['checkpoint']} "
+                      f"(sha256 {opponents['checkpoint_sha256'][:16]}...)")
+                online_report = evaluate_duplicate_seats_policy(
+                    policy_factory=lambda seat: TorchGreedyPolicy(model, device=args.device),
+                    seeds=seeds,
+                    bridge_kind="go",
+                    bridge_library_path=args.bridge_lib,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
+                    opponent_policy=opponent_policy,
+                    opponents=opponents,
+                )
             elif args.duplicate_seats and args.sample_temperature > 0.0:
                 # Deploy-realistic eval: route decisions through the SERVING
                 # sampler so the sweep measures exactly what production ships.
