@@ -19,6 +19,9 @@ transport or logprob redesign remain **unauthorized**. Adjudication carries thre
 protocol qualifications, recorded in G1: a contradictory shape-invalidation clause, a
 benchmark rollout-retention defect, and phase fractions reported against an inner
 denominator.
+**Superseded 2026-09-26:** the G1 miss was defects, not the premise — see
+[`20260926-batched-b2b-collector-speedup.md`](20260926-batched-b2b-collector-speedup.md)
+(43.8 s vs 491.2 s, PR #242).
 
 Worktree `batched-b2b-collector`, branch `experiment/batched-b2b-collector`.
 
