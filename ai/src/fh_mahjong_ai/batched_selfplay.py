@@ -33,7 +33,15 @@ def sample_masked_action(logits_row, mask_row, temperature, rng):
     scaled = np.asarray(logits_row, dtype=np.float64)[legal] / max(float(temperature), 1e-6)
     shifted = scaled - scaled.max()                      # stable log-softmax,
     log_probs = shifted - np.log(np.exp(shifted).sum())  # no scipy dependency
-    index = int(rng.choice(legal.size, p=np.exp(log_probs)))
+    # `rng.choice(legal.size, p=np.exp(log_probs))` without its per-call
+    # validation: numpy draws exactly this way (normalized cumsum, one
+    # rng.random(), searchsorted right), so the index AND the generator state
+    # afterwards are identical (pinned by test_sample_masked_action_matches_rng_choice).
+    cdf = np.exp(log_probs).cumsum()
+    cdf /= cdf[-1]
+    if not np.isfinite(cdf[-1]):
+        raise ValueError(f"non-finite action probabilities: {log_probs!r}")
+    index = int(cdf.searchsorted(rng.random(), side="right"))
     return int(legal[index]), float(log_probs[index])
 
 

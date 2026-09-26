@@ -5,9 +5,10 @@ Same round loop as `batched_selfplay.collect_selfplay_rollouts_batched`
 B2b's extra outputs: tail-windowed event histories, hindsight labels from
 the pool's `round_outcome`, placement bonus and telemetry. Match-end
 semantics come from `train_b2b._finalize_b2b_match`, shared with the
-process collector; the log-probability of every action comes from
-`ppo.masked_logprob` on the Torch logits row, so greedy + `per_row` output
-is byte-identical to `collect_b2b_rollouts`.
+process collector; each round's log-probabilities come from
+`ppo.masked_logprobs`, bit-identical per row to the process collector's
+`ppo.masked_logprob`, so greedy + `per_row` output is byte-identical to
+`collect_b2b_rollouts`.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from .batched_selfplay import sample_masked_action
 from .config import EnvConfig
 from .envpool import PoolCommand, PoolStepResult, make_selfplay_pool
 from .model import PolicyValueNet
-from .ppo import PPOConfig, RolloutBatch, masked_logprob
+from .ppo import PPOConfig, RolloutBatch, masked_logprobs
 from .train_b2b import (
     _B2B_ROW_KEYS, _B2bMatchState, _check_chongci_outcomes, _finalize_b2b_match,
 )
@@ -112,10 +113,9 @@ _PHASE_TIMER_NOTE = (
     "transfer, deliberately spanning all three -- CUDA kernel launches are asynchronous, "
     "so a timer around model(...) alone would read near zero and charge the forward to "
     "whichever later operation happens to synchronise. "
-    "python_seconds: the per-row decision loop ONLY -- sampling, masked_logprob and "
-    "appending the row to its match state. That is the un-batched per-decision remnant "
-    "batching does NOT remove, and the quantity the G1 preflight's R is measured "
-    "against. "
+    "python_seconds: the decision step ONLY -- action choice (per-row sampling with "
+    "each match's RNG, or one argmax), one masked_logprobs call for the round, and "
+    "appending each row to its match state. "
     "other_seconds = total - pool - forward - python: per-slot decode (the numpy copies "
     "of planes/scalars/masks/events), match finalisation and the seed-order flush. "
     "Reported as a residual rather than folded into one of the three, so no timer is "
@@ -294,8 +294,8 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                            events=events_t, event_lengths=lengths_t)
             # ONE device->host transfer per round: logits and values are
             # concatenated on the device into a single [B, A+1] tensor and
-            # copied once, then sliced on the host. Every per-row op below
-            # (sampling, masked_logprob) runs on CPU tensors; per-row
+            # copied once, then sliced on the host. Every op below
+            # (sampling, masked_logprobs) runs on CPU tensors; per-row
             # `.item()`/log_prob on device tensors would be one CUDA sync per
             # decision, which is exactly the batch-1 shape this collector
             # exists to remove. Concatenation and slicing copy bytes, so the
@@ -308,10 +308,12 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             n_rows = len(pending_rows)
             host = torch.cat([logits_t.detach(), values_t.detach().reshape(n_rows, 1)],
                              dim=1).cpu()
-            logits_rows = [host[i, :-1] for i in range(n_rows)]
+            # .contiguous(): every row reduced by masked_logprobs must be a
+            # contiguous [A] run, exactly as the per-row form saw it.
+            logits_host = host[:, :-1].contiguous()
             values_rows = host[:, -1].numpy().astype(np.float32).tolist()
         else:  # per_row: batch-composition-independent floats
-            logits_rows, values_rows = [], []
+            logits_list, values_rows = [], []
             for _, _, _, planes_np, scalars_np, mask_np, row_events, ev_len in pending_rows:
                 with torch.no_grad():
                     logits_1, value_1 = model(
@@ -321,29 +323,36 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                         events=torch.from_numpy(row_events.astype(np.int64)).unsqueeze(0).to(device),
                         event_lengths=torch.tensor([ev_len], dtype=torch.int64, device=device),
                     )
-                logits_rows.append(logits_1[0].detach().cpu())
+                logits_list.append(logits_1[0].detach().cpu())
                 values_rows.append(float(value_1.reshape(-1)[0].item()))
+            logits_host = torch.stack(logits_list)
         forward_seconds += time.perf_counter() - forward_start
 
+        # Action choice and old_logprobs for the whole round at once. Greedy
+        # argmax and masked_logprobs are row-wise and bit-identical to their
+        # per-row forms; sampling stays per row because each match owns its
+        # RNG stream.
         python_start = time.perf_counter()
+        if action_selection == "greedy":
+            actions = torch.argmax(logits_host, dim=1).tolist()
+        else:
+            logits_np = logits_host.numpy()
+            actions = [sample_masked_action(logits_np[i], row[5], temperature, row[1].sample_rng)[0]
+                       for i, row in enumerate(pending_rows)]
+        with torch.no_grad():
+            logprobs = masked_logprobs(logits_host, temperature, actions)
+        if logits_sink is not None:
+            logits_sink.extend((row[1].seed, row[2], logits_host[i].numpy().copy())
+                               for i, row in enumerate(pending_rows))
         for i, (slot, sm, seat, planes_np, scalars_np, mask_np, row_events, ev_len) \
                 in enumerate(pending_rows):
-            logits_row = logits_rows[i]
-            if action_selection == "greedy":
-                action = int(torch.argmax(logits_row).item())
-            else:
-                action, _ = sample_masked_action(
-                    logits_row.detach().cpu().numpy(), mask_np, temperature, sm.sample_rng)
-            with torch.no_grad():
-                logprob = masked_logprob(logits_row, temperature, action)  # CPU tensor
-            if logits_sink is not None:
-                logits_sink.append((sm.seed, seat, logits_row.numpy().copy()))
+            action = actions[i]
             ms = sm.state
             ms.seat_planes[seat].append(planes_np)
             ms.seat_scalars[seat].append(scalars_np)
             ms.seat_masks[seat].append(mask_np)
             ms.seat_actions[seat].append(action)
-            ms.seat_logprobs[seat].append(logprob)
+            ms.seat_logprobs[seat].append(logprobs[i])
             ms.seat_values[seat].append(values_rows[i])
             ms.seat_rewards[seat].append(0.0)
             ms.seat_events[seat].append(row_events)

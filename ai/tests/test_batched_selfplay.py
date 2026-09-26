@@ -61,6 +61,29 @@ def test_sample_masked_action_matches_categorical():
         assert abs(draws.get(action, 0) / 20000 - expected) < 0.02
 
 
+def test_sample_masked_action_matches_rng_choice():
+    """sample_masked_action inlines Generator.choice(n, p=...): the chosen
+    action AND the generator state afterwards must match the rng.choice form
+    exactly, or every sampled match downstream would diverge."""
+    from fh_mahjong_ai.batched_selfplay import sample_masked_action
+    data_rng = np.random.default_rng(5)
+    for trial in range(3000):
+        logits = (data_rng.standard_normal(204) * 3).astype(np.float32)
+        mask = (data_rng.random(204) < data_rng.uniform(0.005, 0.3)).astype(np.int8)
+        mask[int(data_rng.integers(0, 204))] = 1
+        temperature = float(data_rng.choice([1.0, 0.7, 0.3]))
+        legal = np.flatnonzero(mask > 0)
+        scaled = logits.astype(np.float64)[legal] / temperature
+        shifted = scaled - scaled.max()
+        log_probs = shifted - np.log(np.exp(shifted).sum())
+        reference_rng = np.random.default_rng([trial, 17])
+        expected = int(legal[int(reference_rng.choice(legal.size, p=np.exp(log_probs)))])
+        rng = np.random.default_rng([trial, 17])
+        action, _ = sample_masked_action(logits, mask, temperature, rng)
+        assert action == expected
+        assert rng.random() == reference_rng.random()
+
+
 def test_batched_records_all_four_seats():
     batch = _collect(matches=3, slots=2, drop_prob=0.0)
     assert len(batch) > 0

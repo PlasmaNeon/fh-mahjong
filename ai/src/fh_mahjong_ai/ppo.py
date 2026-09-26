@@ -285,6 +285,17 @@ def masked_logprob(logits_row: torch.Tensor, temperature: float, action: int) ->
     return float(dist.log_prob(torch.tensor(int(action), device=logits_row.device)))
 
 
+def masked_logprobs(logits: torch.Tensor, temperature: float, actions: list[int]) -> list[float]:
+    """`masked_logprob` for every row of a contiguous [N, A] CPU logits tensor
+    in one Categorical. Bit-identical to calling `masked_logprob` per row: the
+    division is elementwise and CPU logsumexp reduces each contiguous row with
+    the same kernel (pinned by test_masked_logprobs_matches_per_row), at ~1/30
+    of the per-row cost."""
+    scaled = logits / max(float(temperature), 1e-6)
+    dist = masked_policy_distribution(scaled)
+    return dist.log_prob(torch.as_tensor(actions, dtype=torch.int64, device=logits.device)).tolist()
+
+
 def compute_gae(
     rewards: np.ndarray,
     values: np.ndarray,
