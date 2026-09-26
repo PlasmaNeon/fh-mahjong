@@ -740,8 +740,14 @@ def evaluate_policy_online(
     oracle_observation: bool = False,
     event_history_window: int = 0,
     policy_factory: Optional[Any] = None,
+    opponent_policy: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
+
+    With ``opponent_policy`` set, the other three seats are played by that
+    policy instead of the Go heuristic bots (a strong table). The episode then
+    records every seat's transition so rewards and hand outcomes stay complete,
+    while action counts and policy summaries cover the learning seat only.
 
     ``policy`` is used as-is when given. Pass ``policy=None`` with
     ``policy_factory`` (called as ``policy_factory(bridge)``) when the policy
@@ -761,8 +767,8 @@ def evaluate_policy_online(
     config = EnvConfig(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
-        learning_seats=(learning_seat,),
-        auto_play_heuristics=True,
+        learning_seats=(0, 1, 2, 3) if opponent_policy is not None else (learning_seat,),
+        auto_play_heuristics=opponent_policy is None,
         match_mode=normalized_match_mode,
         chongci_starting_score=chongci_starting_score,
         chongci_bust_threshold=chongci_bust_threshold,
@@ -806,6 +812,7 @@ def evaluate_policy_online(
         outcome: Optional[dict[str, Any]],
         truncated: bool = False,
         reset_rewards=None,
+        learner_action_ids: Optional[Sequence[int]] = None,
     ) -> None:
         nonlocal wins, large_losses, truncations, unknown_hands, rank_parity_mismatches, occupancy_sum
         reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
@@ -837,7 +844,10 @@ def evaluate_policy_online(
             wins += 1
         if reward <= resolved_large_loss_threshold:
             large_losses += 1
-        action_counts.update(action_family(t.action_id) for t in episode)
+        if learner_action_ids is None:
+            learner_action_ids = [t.action_id for t in episode]
+        learner_families = Counter(action_family(a) for a in learner_action_ids)
+        action_counts.update(learner_families)
         if outcome is None and normalized_match_mode == "chongci":
             outcome_counts["match_truncated" if truncated else "match_end"] += 1
         else:
@@ -859,8 +869,8 @@ def evaluate_policy_online(
                 "seat": int(learning_seat),
                 "reward": reward,
                 "large_loss": reward <= resolved_large_loss_threshold,
-                "action_family_counts": dict(sorted(Counter(action_family(t.action_id) for t in episode).items())),
-                "decision_count": len(episode),
+                "action_family_counts": dict(sorted(learner_families.items())),
+                "decision_count": len(learner_action_ids),
                 "truncated": bool(truncated),
             }
         )
@@ -879,6 +889,7 @@ def evaluate_policy_online(
             seed = seeds[i] if i < len(seeds) else seeds[-1] + i
             episode: list[Transition] = []
             episode_choice_infos: list[dict[str, Any]] = []
+            learner_action_ids: list[int] = []
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
             episode_reset_rewards = (
@@ -899,20 +910,25 @@ def evaluate_policy_online(
                 continue
 
             while True:
-                choice = policy.choose(observation)
-                choice_info = choice.info or {}
-                source = choice_info.get("source")
-                if source is not None:
-                    choice_source_counts[str(source)] += 1
-                q_margin = choice_info.get("q_margin")
-                if q_margin is not None:
-                    q_margins.append(float(q_margin))
-                episode_choice_infos.append(choice_info)
-                step_result = env.step(choice.action_id)
+                if opponent_policy is not None and int(observation.seat) != learning_seat:
+                    action_id = opponent_policy.choose(observation).action_id
+                else:
+                    choice = policy.choose(observation)
+                    choice_info = choice.info or {}
+                    source = choice_info.get("source")
+                    if source is not None:
+                        choice_source_counts[str(source)] += 1
+                    q_margin = choice_info.get("q_margin")
+                    if q_margin is not None:
+                        q_margins.append(float(q_margin))
+                    episode_choice_infos.append(choice_info)
+                    action_id = choice.action_id
+                    learner_action_ids.append(action_id)
+                step_result = env.step(action_id)
                 episode.append(
                     Transition(
                         observation=observation,
-                        action_id=choice.action_id,
+                        action_id=action_id,
                         rewards=step_result.rewards,
                         next_observation=step_result.observation,
                         terminated=step_result.terminated,
@@ -931,6 +947,7 @@ def evaluate_policy_online(
                         step_result.info.get("round_outcome"),
                         truncated=step_result.truncated,
                         reset_rewards=episode_reset_rewards,
+                        learner_action_ids=learner_action_ids,
                     )
                     break
                 if not observation.legal_actions:
@@ -1094,8 +1111,18 @@ def evaluate_duplicate_seats_policy(
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
     event_history_window: int = 0,
+    opponent_policy: Optional[Any] = None,
+    opponents: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Evaluate a policy factory with the learning agent rotated through seats."""
+    """Evaluate a policy factory with the learning agent rotated through seats.
+
+    ``opponent_policy`` replaces the heuristic bots in the three other seats
+    (see ``evaluate_policy_online``); ``opponents`` is its identity record,
+    required with it and persisted as the report's ``opponents`` field so
+    fh-mj-compare refuses to pair reports from different tables.
+    """
+    if (opponent_policy is None) != (opponents is None):
+        raise ValueError("opponent_policy and opponents must be given together")
     normalized_match_mode = _normalize_match_mode(match_mode)
     # Snapshot the bridge library BEFORE the eval loop: the digest and every
     # bridge dlopen refer to the same immutable copy (see
@@ -1137,6 +1164,7 @@ def evaluate_duplicate_seats_policy(
                 max_steps_per_episode=max_steps_per_episode,
                 oracle_observation=oracle_observation,
                 event_history_window=event_history_window,
+                opponent_policy=opponent_policy,
             )
             seat_reports.append(report)
             all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -1175,7 +1203,11 @@ def evaluate_duplicate_seats_policy(
     agg_hand_stats = summarize_hand_stats(
         [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
         sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
+    # Present only for a strong table, so heuristic-table reports stay
+    # byte-identical to their pre-opponent form.
+    opponents_field = {"opponents": opponents} if opponents is not None else {}
     return {
+        **opponents_field,
         "match_mode": normalized_match_mode,
         "chongci_config": _chongci_report_config(
             normalized_match_mode,

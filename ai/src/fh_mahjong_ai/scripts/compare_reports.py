@@ -94,6 +94,16 @@ def _check_comparable(
         raise ValueError(
             f"reports are not comparable: decision protocol differs ({label_a!r} vs {label_b!r})"
         )
+    # A report without an ``opponents`` field was played against the heuristic
+    # bots; the field exists only for a strong table. Absence is therefore a
+    # real value, not missing config, and no flag relaxes this check.
+    opponents_a = report_a.get("opponents")
+    opponents_b = report_b.get("opponents")
+    if opponents_a != opponents_b:
+        raise ValueError(
+            "reports are not comparable: opponents differ "
+            f"({opponents_a or 'heuristic bots'!r} vs {opponents_b or 'heuristic bots'!r})"
+        )
     for key in _COMPAT_KEYS:
         in_a = key in report_a
         in_b = key in report_b
