@@ -60,7 +60,7 @@ func add2(lhs *[10]uint8, rhs [10]uint8, m int) {
 }
 
 // calcStandard returns tiles-to-add for standard hand (4 melds + pair).
-func calcStandard(counts [34]int, m int) int {
+func calcStandard(counts *[34]int, m int) int {
 	ret := honorTable[hash(counts[27:34])]
 	add1(&ret, suitTable[hash(counts[18:27])], m)
 	add1(&ret, suitTable[hash(counts[9:18])], m)
@@ -78,7 +78,7 @@ func Calculate(counts [34]int, numWilds int, numOpenMelds int) int {
 	m := maxMelds - numOpenMelds
 
 	// Standard shanten
-	tilesToAdd := calcStandard(counts, m)
+	tilesToAdd := calcStandard(&counts, m)
 	best := tilesToAdd - 1 - numWilds
 	if best < -1 {
 		best = -1
