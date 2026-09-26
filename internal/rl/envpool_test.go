@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 func poolTestConfig() *pb.EnvConfig {
@@ -152,3 +153,39 @@ func decodeFloat32Rows(t *testing.T, raw []byte) []float32 {
 }
 
 func float32frombits(b uint32) float32 { return math.Float32frombits(b) }
+
+// packObservationRows fills the flat buffers from parallel workers; the bytes
+// must equal successive appendObservationRow calls (the layout SearchPool
+// still produces), over real observations with and without event history.
+func TestPackObservationRowsMatchesAppend(t *testing.T) {
+	for _, window := range []uint32{0, 8, 128} {
+		config := poolTestConfig()
+		config.OracleObservation = true
+		config.EventHistoryWindow = window
+		pool := NewEnvPool(config, 37)
+		commands := make([]*pb.SlotCommand, 37)
+		seed := uint64(77)
+		for i := range commands {
+			commands[i] = &pb.SlotCommand{Slot: uint32(i), Cmd: &pb.SlotCommand_ResetSeed{ResetSeed: seed}}
+			seed++
+		}
+		for round := 0; round < 60; round++ {
+			results, err := runSlotCommands(commands, len(pool.envs), "slots", pool.applyOne)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packed, _ := assemblePoolResponse(results)
+			appended := &pb.EnvPoolStepResponse{}
+			for _, r := range results {
+				if r.err == nil && !r.skipped && !r.terminated && !r.truncated && r.observation != nil {
+					appendObservationRow(appended, r.observation)
+				}
+			}
+			appended.Slots = packed.Slots
+			if !proto.Equal(packed, appended) {
+				t.Fatalf("window %d round %d: packed response differs from appended rows", window, round)
+			}
+			nextBenchCommands(packed, commands, &seed)
+		}
+	}
+}

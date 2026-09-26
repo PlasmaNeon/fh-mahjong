@@ -708,41 +708,6 @@ def allocated_slots(requested: int, matches: int) -> int:
     return max(1, min(int(requested), int(matches)))
 
 
-class _ForwardBatchRecorder:
-    """Rows per forward: the batch dimension of every top-level `model(...)`
-    call inside a phase (spec G1 wants mean / median / p10 rows per forward, a
-    batch-size histogram and the round count — without them a missed throughput
-    target cannot be told from a scheduling artefact).
-
-    A forward PRE-hook that returns `None` cannot alter the forward's inputs or
-    its numerics; it only reads `planes.shape[0]`. Constructing it with
-    `model=None` makes it a no-op, which is what the process collector needs:
-    its forwards happen inside spawn workers (one batch-1 forward per decision,
-    by construction) and are not observable from the master process."""
-
-    def __init__(self, model=None):
-        self._model = model
-        self.sizes: list[int] = []
-        self._handle = None
-
-    def _hook(self, module, args, kwargs):
-        planes = args[0] if args else kwargs.get("planes")
-        if planes is not None:
-            self.sizes.append(int(planes.shape[0]))
-        return None
-
-    def __enter__(self):
-        if self._model is not None:
-            self._handle = self._model.register_forward_pre_hook(self._hook, with_kwargs=True)
-        return self
-
-    def __exit__(self, *exc_info):
-        if self._handle is not None:
-            self._handle.remove()
-            self._handle = None
-        return False
-
-
 _BATCH_HISTOGRAM_EDGES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
 
 
@@ -1147,7 +1112,8 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
     actually constructs) and `peak_live_slots` (slots that held a match during
     a round). `forward_shapes` carries spec G1's rows-per-forward summary:
     mean / median / p10, min / max, the pool's round count and a batch-size
-    histogram, recorded by a forward PRE-hook that cannot alter numerics.
+    histogram, from the live-row counts the collector reports per forward
+    (`diagnostics["forward_rows"]`, padding excluded).
 
     With `full_cycle` set, each count runs one excluded warmup collection and
     then `_FULL_CYCLE_CYCLES` consecutive collect + `ppo_update` cycles against
@@ -1361,12 +1327,14 @@ def run_bench(*, champion: Path, model_config, growth_blocks: int,
             """One collection through this count's persistent collector.
             Returns (batch, diagnostics, per-forward row counts)."""
             if collector == "batched":
+                # Rows per forward come from the collector itself: the CUDA
+                # path replays captured graphs, so a hook on model(...) would
+                # only ever see the captures (at padded bucket sizes).
                 diag: dict = {}
-                with _ForwardBatchRecorder(collect_model if record_shapes else None) as rec:
-                    b = collect_b2b_rollouts_batched(
-                        env_config, collect_model, batched_config, base_seed=seed,
-                        pool=pool, inference_mode=inference_mode, diagnostics=diag)
-                return b, diag, rec.sizes
+                b = collect_b2b_rollouts_batched(
+                    env_config, collect_model, batched_config, base_seed=seed,
+                    pool=pool, inference_mode=inference_mode, diagnostics=diag)
+                return b, diag, (list(diag["forward_rows"]) if record_shapes else [])
             return spawn_collector.collect(snapshot, seed, matches), {}, []
 
         try:

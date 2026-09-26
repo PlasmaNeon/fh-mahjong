@@ -32,7 +32,7 @@ import torch
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.placement_bonus import PLACEMENT_RESHAPE_VALUES
-from fh_mahjong_ai.ppo import PPOConfig, masked_logprob, masked_policy_distribution
+from fh_mahjong_ai.ppo import PPOConfig, masked_logprob, masked_logprobs, masked_policy_distribution
 from fh_mahjong_ai.scripts.collect_bench import (
     _digest_batch, compare_float_fields, emission_ordered_logits, float_gate_arrays,
     float_gate_ceilings,
@@ -154,6 +154,46 @@ def test_masked_logprob_matches_batched_categorical_expression():
             batched = logits.unsqueeze(0) / max(temperature, 1e-6)
             expected = float(masked_policy_distribution(batched).log_prob(torch.tensor([action]))[0])
             assert masked_logprob(logits, temperature, action) == expected
+
+
+def test_masked_logprobs_matches_per_row():
+    """The batched collector computes a round's old_logprobs in one call; each
+    must equal the per-row helper bit-for-bit (G0.1 and the golden digests
+    hash old_logprobs), including from a strided host slice made contiguous."""
+    g = torch.Generator().manual_seed(11)
+    for temperature in (1.0, 0.7, 1e-9):
+        for rows in (1, 7, 64, 321):
+            host = torch.randn(rows, 205, generator=g) * 4
+            logits = host[:, :-1].contiguous()
+            illegal = torch.rand(rows, 204, generator=g) < 0.9
+            illegal[torch.arange(rows), torch.randint(0, 204, (rows,), generator=g)] = False
+            logits[illegal] = torch.finfo(torch.float32).min
+            actions = [int(torch.nonzero(~illegal[i]).flatten()[0]) for i in range(rows)]
+            batched = masked_logprobs(logits, temperature, actions)
+            per_row = [masked_logprob(logits[i], temperature, actions[i]) for i in range(rows)]
+            assert batched == per_row
+
+
+def test_sample_masked_actions_matches_per_row_sampler():
+    """The batched collector samples a round at once. Each row must draw the
+    same action as sample_masked_action from the same generator, and leave
+    that generator in the same state (one random() per row)."""
+    from fh_mahjong_ai.batched_b2b import sample_masked_actions
+    from fh_mahjong_ai.batched_selfplay import sample_masked_action
+    data = np.random.default_rng(23)
+    for temperature in (1.0, 0.7):
+        rows = 4000
+        logits = (data.standard_normal((rows, 204)) * 3).astype(np.float32)
+        masks = (data.random((rows, 204)) < data.uniform(0.005, 0.3, (rows, 1))).astype(np.int8)
+        masks[np.arange(rows), data.integers(0, 204, rows)] = 1
+        logits[masks == 0] = np.finfo(np.float32).min
+        rngs = [np.random.default_rng([i, 17]) for i in range(rows)]
+        refs = [np.random.default_rng([i, 17]) for i in range(rows)]
+        batched = sample_masked_actions(logits, masks, temperature, rngs)
+        per_row = [sample_masked_action(logits[i], masks[i], temperature, refs[i])[0]
+                   for i in range(rows)]
+        assert batched == per_row
+        assert all(a.random() == b.random() for a, b in zip(rngs, refs))
 
 
 def test_greedy_selection_is_deterministic_and_argmax():

@@ -5,9 +5,10 @@ Same round loop as `batched_selfplay.collect_selfplay_rollouts_batched`
 B2b's extra outputs: tail-windowed event histories, hindsight labels from
 the pool's `round_outcome`, placement bonus and telemetry. Match-end
 semantics come from `train_b2b._finalize_b2b_match`, shared with the
-process collector; the log-probability of every action comes from
-`ppo.masked_logprob` on the Torch logits row, so greedy + `per_row` output
-is byte-identical to `collect_b2b_rollouts`.
+process collector; each round's log-probabilities come from
+`ppo.masked_logprobs`, bit-identical per row to the process collector's
+`ppo.masked_logprob`, so greedy + `per_row` output is byte-identical to
+`collect_b2b_rollouts`.
 """
 from __future__ import annotations
 
@@ -19,11 +20,10 @@ from typing import Optional
 import numpy as np
 import torch
 
-from .batched_selfplay import sample_masked_action
 from .config import EnvConfig
 from .envpool import PoolCommand, PoolStepResult, make_selfplay_pool
 from .model import PolicyValueNet
-from .ppo import PPOConfig, RolloutBatch, masked_logprob
+from .ppo import PPOConfig, RolloutBatch, masked_logprobs
 from .train_b2b import (
     _B2B_ROW_KEYS, _B2bMatchState, _check_chongci_outcomes, _finalize_b2b_match,
 )
@@ -99,6 +99,104 @@ class _SlotMatch:
         self.skipped = False                        # ended at reset: emits nothing
 
 
+def sample_masked_actions(logits: np.ndarray, masks: np.ndarray, temperature: float,
+                          rngs: list) -> list[int]:
+    """`sample_masked_action` for a whole round: row i is drawn from the
+    temperature-scaled Categorical over its legal actions using ONE
+    `rngs[i].random()`, exactly the draw `Generator.choice` makes, so each
+    match's generator advances identically. The softmax is summed over the
+    full [A] row (illegal entries contribute exact zeros) rather than the
+    compacted legal subset, so a probability can differ from the per-row form
+    in the last ulp; a draw can only land differently within ~1e-16 of a CDF
+    boundary."""
+    legal = masks > 0
+    if not legal.any(axis=1).all():
+        raise RuntimeError("observation has no legal actions")
+    scaled = np.where(legal, logits.astype(np.float64) / max(float(temperature), 1e-6), -np.inf)
+    cdf = np.exp(scaled - scaled.max(axis=1, keepdims=True)).cumsum(axis=1)
+    cdf /= cdf[:, -1:]
+    if not np.isfinite(cdf[:, -1]).all():
+        raise ValueError("non-finite action probabilities")
+    draws = np.fromiter((rng.random() for rng in rngs), dtype=np.float64, count=len(rngs))
+    actions = (cdf <= draws[:, None]).sum(axis=1)  # searchsorted(cdf, u, side="right")
+    if not legal[np.arange(len(actions)), actions].all():
+        raise RuntimeError("sampled an illegal action")
+    return actions.tolist()
+
+
+class _GraphedForward:
+    """The batched forward as CUDA-graph replays at bucketed batch sizes.
+
+    The eager forward is launch-bound: ~125 kernels cost ~1.8 ms of host time
+    against ~1 ms of GPU work at 320 rows, once per round. A replay is one
+    launch. Rows are padded up to the next multiple of `BUCKET` (pad rows are
+    zero planes, a zero mask and zero event length; every op is row-wise in
+    eval mode, so pad rows reach no real row's output) -- a batch-composition
+    change, the float class G0.1b bounds.
+
+    Built per collection call and dropped with it: a captured graph bakes in
+    the parameter storage, the TF32/cuDNN algorithm choice and the eval mode
+    in force when it was captured, so it must never outlive the call that
+    captured it (the float gate pins fp32 around its own collections)."""
+
+    BUCKET = 32
+
+    def __init__(self, model: PolicyValueNet, device, max_rows: int) -> None:
+        self.model = model
+        self.device = torch.device(device)
+        self.capacity = -(-int(max_rows) // self.BUCKET) * self.BUCKET
+        self._graphs: dict[int, tuple] = {}
+        self._pool = torch.cuda.graph_pool_handle()
+        self._static: Optional[tuple] = None
+        self._staging: Optional[tuple] = None
+
+    def _allocate(self, planes, scalars, masks, events) -> None:
+        cap = self.capacity
+        shapes_dtypes = ((planes.shape[1:], torch.float32), (scalars.shape[1:], torch.float32),
+                         (masks.shape[1:], torch.int8), (events.shape[1:], torch.int64),
+                         ((), torch.int64))
+        self._static = tuple(torch.zeros((cap, *shape), dtype=dtype, device=self.device)
+                             for shape, dtype in shapes_dtypes)
+        self._staging = tuple(torch.zeros((cap, *shape), dtype=dtype).pin_memory()
+                              for shape, dtype in shapes_dtypes)
+
+    def _capture(self, b: int):
+        inputs = [t[:b] for t in self._static]
+        side = torch.cuda.Stream(self.device)
+        side.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(side), torch.no_grad():
+            for _ in range(3):  # warmup: cuDNN autotuning and lazy init happen here
+                self.model(*inputs[:3], events=inputs[3], event_lengths=inputs[4])
+        torch.cuda.current_stream(self.device).wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self._pool), torch.no_grad():
+            logits, values = self.model(*inputs[:3], events=inputs[3], event_lengths=inputs[4])
+            out = torch.cat([logits, values.reshape(b, 1)], dim=1)
+        self._graphs[b] = (graph, out)
+        return self._graphs[b]
+
+    def __call__(self, planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray,
+                 events: np.ndarray, lengths: np.ndarray) -> torch.Tensor:
+        """Host [n, A+1] tensor: masked logits then value, for the n rows."""
+        n = planes.shape[0]
+        if n > self.capacity:
+            raise RuntimeError(f"{n} rows exceed the graphed forward's capacity {self.capacity}")
+        if self._static is None:
+            self._allocate(planes, scalars, masks, events)
+        b = -(-n // self.BUCKET) * self.BUCKET
+        graph, out = self._graphs.get(b) or self._capture(b)
+        for host, stage, static in zip((planes, scalars, masks, events, lengths),
+                                       self._staging, self._static):
+            staged = stage.numpy()
+            staged[:n] = host
+            staged[n:b] = 0
+            static[:b].copy_(stage[:b], non_blocking=True)
+        graph.replay()
+        # .cpu() synchronises the stream, so the staging buffers are free for
+        # the next call's writes.
+        return out[:n].cpu()
+
+
 # Spec G1's phase split. A mid-range throughput result -- say 6x -- is
 # uninterpretable without it: 6x could be a scheduling artefact (the forward
 # never got big enough), a pool/FFI bound, or a per-decision Python floor that
@@ -108,16 +206,16 @@ class _SlotMatch:
 _PHASE_TIMER_NOTE = (
     "pool_seconds: pool.step/reset -- the FFI call plus the protobuf marshal and parse "
     "(~2.7 MB of planes per round at 320 live rows). "
-    "forward_seconds: batch assembly, the model(...) call and the single device->host "
-    "transfer, deliberately spanning all three -- CUDA kernel launches are asynchronous, "
-    "so a timer around model(...) alone would read near zero and charge the forward to "
-    "whichever later operation happens to synchronise. "
-    "python_seconds: the per-row decision loop ONLY -- sampling, masked_logprob and "
-    "appending the row to its match state. That is the un-batched per-decision remnant "
-    "batching does NOT remove, and the quantity the G1 preflight's R is measured "
-    "against. "
-    "other_seconds = total - pool - forward - python: per-slot decode (the numpy copies "
-    "of planes/scalars/masks/events), match finalisation and the seed-order flush. "
+    "forward_seconds: host->device staging, the forward (a CUDA-graph replay, or the "
+    "eager model(...) call off CUDA) and the single device->host transfer, deliberately "
+    "spanning all three -- CUDA work is asynchronous, so a timer around the launch alone "
+    "would read near zero and charge the forward to whichever later operation happens "
+    "to synchronise. "
+    "python_seconds: the decision step ONLY -- action choice (per-row sampling with "
+    "each match's RNG, or one argmax), one masked_logprobs call for the round, and "
+    "appending each row to its match state. "
+    "other_seconds = total - pool - forward - python: per-slot bookkeeping, one copy of "
+    "the round's live rows, match finalisation and the seed-order flush. "
     "Reported as a residual rather than folded into one of the three, so no timer is "
     "inflated by work that is not what its name says.")
 
@@ -133,7 +231,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
 
     `diagnostics` (tests and `fh-mj-collect-bench` only) receives
     `pool_slots` (allocated), `effective_slots`, `peak_live_slots`, `rounds`,
-    `skipped_matches`, `match_rows` and `timers` (see `_PHASE_TIMER_NOTE`);
+    `forward_rows` (live rows per forward, padding excluded; 1 per row under
+    `per_row`), `skipped_matches`, `match_rows` and `timers` (see
+    `_PHASE_TIMER_NOTE`);
     if the caller pre-creates `diagnostics["logits"]` as a list, every
     decision's masked logits row is appended to it as
     `(match_seed, seat, np.ndarray[A])` in decision order (gate G0.1b).
@@ -144,6 +244,27 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     check under sampling, because sampled digests are not comparable across
     slot counts). `skipped_matches` counts matches that ended at reset and so
     emitted neither rows nor telemetry."""
+    # cuDNN autotuning: the per-round batch size drifts (1..slots), and the
+    # heuristic algorithm choice for these small (H=42, W=1) convolutions is
+    # ~1.8x slower than the tuned one at production batch sizes. Each new batch
+    # size is tuned once per process (~20 s over a first 320-slot
+    # collection), then cached. Tuning picks by timing, so the chosen
+    # algorithms -- and hence batched-mode floats -- can differ between
+    # processes; that is the same float class G0.1b already bounds for batch
+    # composition, and greedy + per_row stays byte-exact.
+    previous = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = True
+    try:
+        return _collect_b2b_rollouts_batched(env_config, model, config, base_seed, pool,
+                                             inference_mode, action_selection, diagnostics)
+    finally:
+        torch.backends.cudnn.benchmark = previous
+
+
+def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
+                                  config: PPOConfig, base_seed: int, pool,
+                                  inference_mode: str, action_selection: str,
+                                  diagnostics: Optional[dict]) -> RolloutBatch:
     if inference_mode not in ("batched", "per_row"):
         raise ValueError(f"unknown inference_mode: {inference_mode}")
     if action_selection not in ("sample", "greedy"):
@@ -170,6 +291,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     model.eval()
     logits_sink = diagnostics.get("logits") if diagnostics is not None else None
     peak_live_slots = 0
+    forward_rows: list[int] = []
     rounds = 0
     # See `_PHASE_TIMER_NOTE`. Accumulated unconditionally, not behind
     # `diagnostics`: a handful of perf_counter calls per ROUND (never per row)
@@ -211,6 +333,9 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             match_rows.append((sm.seed, len(sm.rows["actions"])))
             match_telemetry.append(sm.telemetry)
 
+    graphed = (_GraphedForward(model, device, effective_slots)
+               if inference_mode == "batched" and torch.device(device).type == "cuda" else None)
+
     while emit_next < total:
         commands = []
         for slot in range(effective_slots):
@@ -231,7 +356,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         rounds += 1
         peak_live_slots = max(peak_live_slots, len(active))
 
-        pending_rows = []  # (slot, sm, seat, planes, scalars, mask, row_events, ev_len)
+        live = []  # (slot, sm, seat, pool row)
         for meta in result.slots:
             sm = active.get(meta.slot)
             if sm is None:
@@ -266,52 +391,64 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 continue
             if not meta.has_observation:
                 continue
-            row = result.row_of_slot[meta.slot]
-            planes_np = np.array(result.planes[row], dtype=np.float32, copy=True)
-            scalars_np = np.array(result.scalars[row], dtype=np.float32, copy=True)
-            mask_np = np.array(result.action_masks[row], dtype=np.int8, copy=True)
-            row_events = np.zeros(window, dtype=np.uint32)
-            ev = np.asarray(result.event_histories[row], dtype=np.uint32)
-            ev_len = min(int(ev.shape[0]), window)
-            if ev_len > 0:
-                row_events[:ev_len] = ev[-ev_len:]  # tail = newest events
-            pending_rows.append((meta.slot, sm, int(meta.seat), planes_np, scalars_np,
-                                 mask_np, row_events, ev_len))
+            live.append((meta.slot, sm, int(meta.seat), result.row_of_slot[meta.slot]))
         flush_in_seed_order()
-        if not pending_rows:
+        if not live:
             continue
 
-        forward_start = time.perf_counter()
+        # ONE writable copy of the round's live rows per array; every decision
+        # keeps views into these (all rows live until the final RolloutBatch
+        # stack anyway, so views retain nothing a per-row copy would not).
+        # Event rows are the pool's (rows, window) grid: newest events
+        # oldest-first, zero-padded, with the kept count alongside.
+        idx = np.fromiter((entry[3] for entry in live), dtype=np.int64, count=len(live))
+        planes_r = np.ascontiguousarray(result.planes[idx], dtype=np.float32)
+        scalars_r = np.ascontiguousarray(result.scalars[idx], dtype=np.float32)
+        masks_r = np.ascontiguousarray(result.action_masks[idx], dtype=np.int8)
+        if window > 0:
+            events_r = np.ascontiguousarray(result.event_grid[idx], dtype=np.uint32)
+            lengths_r = np.asarray(result.event_counts, dtype=np.int64)[idx]
+        else:
+            events_r = np.zeros((len(live), 0), dtype=np.uint32)
+            lengths_r = np.zeros(len(live), dtype=np.int64)
+        pending_rows = [
+            (slot, sm, seat, planes_r[i], scalars_r[i], masks_r[i], events_r[i], int(lengths_r[i]))
+            for i, (slot, sm, seat, _) in enumerate(live)]
+
+        # ONE device->host transfer per round: logits and values are
+        # concatenated on the device into a single [B, A+1] tensor and copied
+        # once, then sliced on the host. Every op below (sampling,
+        # masked_logprobs) runs on CPU tensors; per-row `.item()`/log_prob on
+        # device tensors would be one CUDA sync per decision, which is exactly
+        # the batch-1 shape this collector exists to remove. Concatenation and
+        # slicing copy bytes, so the floats are the ones the forward produced.
+        #
+        # The cat REQUIRES logits and values to share a dtype: enabling AMP on
+        # this forward (values fp32, logits fp16, or vice versa) would make
+        # torch.cat raise, or promote and change the bytes. Split the transfer
+        # before adding AMP here.
         if inference_mode == "batched":
-            planes_t = torch.from_numpy(np.stack([r[3] for r in pending_rows])).to(device)
-            scalars_t = torch.from_numpy(np.stack([r[4] for r in pending_rows])).to(device)
-            masks_t = torch.from_numpy(np.stack([r[5] for r in pending_rows])).to(device)
-            events_t = torch.from_numpy(
-                np.stack([r[6] for r in pending_rows]).astype(np.int64)).to(device)
-            lengths_t = torch.tensor([r[7] for r in pending_rows], dtype=torch.int64, device=device)
+            forward_rows.append(len(live))
+        else:
+            forward_rows.extend([1] * len(live))
+        forward_start = time.perf_counter()
+        if graphed is not None:
+            host = graphed(planes_r, scalars_r, masks_r, events_r, lengths_r)
+        elif inference_mode == "batched":
             with torch.no_grad():
-                logits_t, values_t = model(planes_t, scalars_t, masks_t,
-                                           events=events_t, event_lengths=lengths_t)
-            # ONE device->host transfer per round: logits and values are
-            # concatenated on the device into a single [B, A+1] tensor and
-            # copied once, then sliced on the host. Every per-row op below
-            # (sampling, masked_logprob) runs on CPU tensors; per-row
-            # `.item()`/log_prob on device tensors would be one CUDA sync per
-            # decision, which is exactly the batch-1 shape this collector
-            # exists to remove. Concatenation and slicing copy bytes, so the
-            # floats are the ones the forward produced.
-            #
-            # The cat REQUIRES logits and values to share a dtype: enabling
-            # AMP on this forward (values fp32, logits fp16, or vice versa)
-            # would make torch.cat raise, or promote and change the bytes.
-            # Split the transfer before adding AMP here.
-            n_rows = len(pending_rows)
-            host = torch.cat([logits_t.detach(), values_t.detach().reshape(n_rows, 1)],
-                             dim=1).cpu()
-            logits_rows = [host[i, :-1] for i in range(n_rows)]
+                logits_t, values_t = model(
+                    torch.from_numpy(planes_r).to(device), torch.from_numpy(scalars_r).to(device),
+                    torch.from_numpy(masks_r).to(device),
+                    events=torch.from_numpy(events_r.astype(np.int64)).to(device),
+                    event_lengths=torch.from_numpy(lengths_r).to(device))
+                host = torch.cat([logits_t, values_t.reshape(len(live), 1)], dim=1).cpu()
+        if inference_mode == "batched":
+            # .contiguous(): every row reduced by masked_logprobs must be a
+            # contiguous [A] run, exactly as the per-row form saw it.
+            logits_host = host[:, :-1].contiguous()
             values_rows = host[:, -1].numpy().astype(np.float32).tolist()
         else:  # per_row: batch-composition-independent floats
-            logits_rows, values_rows = [], []
+            logits_list, values_rows = [], []
             for _, _, _, planes_np, scalars_np, mask_np, row_events, ev_len in pending_rows:
                 with torch.no_grad():
                     logits_1, value_1 = model(
@@ -321,29 +458,35 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                         events=torch.from_numpy(row_events.astype(np.int64)).unsqueeze(0).to(device),
                         event_lengths=torch.tensor([ev_len], dtype=torch.int64, device=device),
                     )
-                logits_rows.append(logits_1[0].detach().cpu())
+                logits_list.append(logits_1[0].detach().cpu())
                 values_rows.append(float(value_1.reshape(-1)[0].item()))
+            logits_host = torch.stack(logits_list)
         forward_seconds += time.perf_counter() - forward_start
 
+        # Action choice and old_logprobs for the whole round at once. Greedy
+        # argmax and masked_logprobs are row-wise and bit-identical to their
+        # per-row forms; sampling draws once per row from each match's own
+        # RNG stream.
         python_start = time.perf_counter()
+        if action_selection == "greedy":
+            actions = torch.argmax(logits_host, dim=1).tolist()
+        else:
+            actions = sample_masked_actions(logits_host.numpy(), masks_r, temperature,
+                                            [row[1].sample_rng for row in pending_rows])
+        with torch.no_grad():
+            logprobs = masked_logprobs(logits_host, temperature, actions)
+        if logits_sink is not None:
+            logits_sink.extend((row[1].seed, row[2], logits_host[i].numpy().copy())
+                               for i, row in enumerate(pending_rows))
         for i, (slot, sm, seat, planes_np, scalars_np, mask_np, row_events, ev_len) \
                 in enumerate(pending_rows):
-            logits_row = logits_rows[i]
-            if action_selection == "greedy":
-                action = int(torch.argmax(logits_row).item())
-            else:
-                action, _ = sample_masked_action(
-                    logits_row.detach().cpu().numpy(), mask_np, temperature, sm.sample_rng)
-            with torch.no_grad():
-                logprob = masked_logprob(logits_row, temperature, action)  # CPU tensor
-            if logits_sink is not None:
-                logits_sink.append((sm.seed, seat, logits_row.numpy().copy()))
+            action = actions[i]
             ms = sm.state
             ms.seat_planes[seat].append(planes_np)
             ms.seat_scalars[seat].append(scalars_np)
             ms.seat_masks[seat].append(mask_np)
             ms.seat_actions[seat].append(action)
-            ms.seat_logprobs[seat].append(logprob)
+            ms.seat_logprobs[seat].append(logprobs[i])
             ms.seat_values[seat].append(values_rows[i])
             ms.seat_rewards[seat].append(0.0)
             ms.seat_events[seat].append(row_events)
@@ -362,6 +505,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     if diagnostics is not None:
         diagnostics.update(pool_slots=int(pool.slots), effective_slots=effective_slots,
                            peak_live_slots=peak_live_slots, rounds=rounds,
+                           forward_rows=forward_rows,
                            skipped_matches=skipped_matches,
                            match_rows=[[int(seed), int(n)] for seed, n in match_rows],
                            timers={
@@ -376,16 +520,16 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts_batched produced no decisions")
     return RolloutBatch(
-        planes=np.stack(rows_l["planes"]).astype(np.float32),
-        scalars=np.stack(rows_l["scalars"]).astype(np.float32),
-        action_mask=np.stack(rows_l["masks"]).astype(np.int8),
+        planes=np.stack(rows_l["planes"]).astype(np.float32, copy=False),
+        scalars=np.stack(rows_l["scalars"]).astype(np.float32, copy=False),
+        action_mask=np.stack(rows_l["masks"]).astype(np.int8, copy=False),
         actions=np.asarray(rows_l["actions"], dtype=np.int64),
         old_logprobs=np.asarray(rows_l["logprobs"], dtype=np.float32),
         values=np.asarray(rows_l["values"], dtype=np.float32),
         rewards=np.asarray(rows_l["rewards"], dtype=np.float32),
         dones=np.asarray(rows_l["dones"], dtype=np.float32),
         truncated_matches=truncated_matches,
-        events=np.stack(rows_l["events"]).astype(np.uint32),
+        events=np.stack(rows_l["events"]).astype(np.uint32, copy=False),
         event_lengths=np.asarray(rows_l["lengths"], dtype=np.int32),
         dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
         rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
