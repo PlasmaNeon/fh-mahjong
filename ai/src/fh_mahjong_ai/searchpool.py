@@ -93,6 +93,7 @@ class GoSearchPool:
             slots=decoded.slots, planes=decoded.planes, scalars=decoded.scalars,
             action_masks=decoded.action_masks, event_histories=decoded.event_histories,
             row_of_slot=decoded.row_of_slot,
+            event_grid=decoded.event_grid, event_counts=decoded.event_counts,
             round_ended=round_ended,
         )
 

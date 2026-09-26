@@ -41,7 +41,7 @@ from .parallel_rollouts import _split_counts
 from .placement_bonus import exact_final_scores, placement_utilities, rank_occupancy
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
-    masked_policy_distribution, masked_logprob, _seat_step_reward,
+    masked_policy_distribution, masked_logprob,
     cpu_state_snapshot, _write_history_atomic,
 )
 from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
@@ -799,10 +799,19 @@ class _B2bMatchState:
         that has already acted (PPO telescoping credit)."""
         sr = np.asarray(rewards, dtype=np.float64)
         n = min(4, sr.shape[-1])
+        if not sr[:n].any():
+            # Most steps pay nothing. Adding +/-0.0 leaves every running sum
+            # bit-identical: they all start at +0.0 and a round-to-nearest
+            # sum is -0.0 only when both addends are.
+            return
         self.match_net[:n] += sr[:n]
+        # Per seat, `_seat_step_reward(rewards, k)` (the float32 value, 0.0
+        # past the end), converted once for all four seats: this runs for
+        # every slot every round.
+        seat_rewards = sr[:n].astype(np.float32).tolist() + [0.0] * (4 - n)
         for k in range(4):
             if self.seat_rewards[k]:
-                self.seat_rewards[k][-1] += _seat_step_reward(rewards, k)
+                self.seat_rewards[k][-1] += seat_rewards[k]
 
     def record_outcome(self, outcome) -> bool:
         """Close the current hand with `outcome` (a step's

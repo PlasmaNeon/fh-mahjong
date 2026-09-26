@@ -174,6 +174,28 @@ def test_masked_logprobs_matches_per_row():
             assert batched == per_row
 
 
+def test_sample_masked_actions_matches_per_row_sampler():
+    """The batched collector samples a round at once. Each row must draw the
+    same action as sample_masked_action from the same generator, and leave
+    that generator in the same state (one random() per row)."""
+    from fh_mahjong_ai.batched_b2b import sample_masked_actions
+    from fh_mahjong_ai.batched_selfplay import sample_masked_action
+    data = np.random.default_rng(23)
+    for temperature in (1.0, 0.7):
+        rows = 4000
+        logits = (data.standard_normal((rows, 204)) * 3).astype(np.float32)
+        masks = (data.random((rows, 204)) < data.uniform(0.005, 0.3, (rows, 1))).astype(np.int8)
+        masks[np.arange(rows), data.integers(0, 204, rows)] = 1
+        logits[masks == 0] = np.finfo(np.float32).min
+        rngs = [np.random.default_rng([i, 17]) for i in range(rows)]
+        refs = [np.random.default_rng([i, 17]) for i in range(rows)]
+        batched = sample_masked_actions(logits, masks, temperature, rngs)
+        per_row = [sample_masked_action(logits[i], masks[i], temperature, refs[i])[0]
+                   for i in range(rows)]
+        assert batched == per_row
+        assert all(a.random() == b.random() for a, b in zip(rngs, refs))
+
+
 def test_greedy_selection_is_deterministic_and_argmax():
     env, model = _golden_env_and_model()
     cfg = PPOConfig(device="cpu", matches_per_iter=1, max_steps_per_episode=GOLDEN_MAX_STEPS,
