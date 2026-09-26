@@ -123,62 +123,120 @@ func calcSevenPairs(counts [34]int) int {
 	return sht - 1
 }
 
+// wildCapacity is how many wilds can be placed on counts without any type
+// exceeding maxCopies. A placement of every wild is required for a route to
+// be scored at all; below capacity the route is unreachable (14).
+func wildCapacity(counts *[34]int) int {
+	capacity := 0
+	for _, c := range counts {
+		if c < maxCopies {
+			capacity += maxCopies - c
+		}
+	}
+	return capacity
+}
+
+// calcSevenPairsWithWilds is the best seven-pairs shanten over every way of
+// placing numWilds wilds as natural tiles, in closed form.
+//
+// calcSevenPairs is 13 - pairs - min(kinds, 7), so a placement is scored by
+// how much it raises pairs + min(kinds, 7). One wild raises it by at most one:
+// on an empty type it adds a kind (worth one only while kinds < 7), on a single
+// it adds a pair, anywhere else nothing. If n empty types receive a wild, the
+// kind gain is min(n, 7-kinds) and at most singles+n types can cross 1->2,
+// using at most numWilds-n wilds, so the gain is bounded by
+// min(n, d) + min(numWilds-n, singles+n) and that bound is met by filling n
+// empties and pairing singles. Leftover wilds only have to fit somewhere.
 func calcSevenPairsWithWilds(counts [34]int, numWilds int) int {
 	if numWilds == 0 {
 		return calcSevenPairs(counts)
 	}
-	best := 14
-	assignWilds(counts[:], numWilds, 0, func(c []int) {
-		var arr [34]int
-		copy(arr[:], c)
-		sht := calcSevenPairs(arr)
-		if sht < best {
-			best = sht
+	if wildCapacity(&counts) < numWilds {
+		return 14
+	}
+	pair, kind, singles := 0, 0, 0
+	for _, c := range counts {
+		if c > 0 {
+			kind++
+			if c >= 2 {
+				pair++
+			} else {
+				singles++
+			}
 		}
-	})
-	if best < -1 {
-		best = -1
 	}
-	return best
-}
-
-func assignWilds(counts []int, w int, startType int, fn func([]int)) {
-	if w == 0 {
-		fn(counts)
-		return
+	deficit := max(0, 7-kind)
+	empties := 34 - kind
+	bestGain := 0
+	for n := 0; n <= min(numWilds, empties); n++ {
+		gain := min(n, deficit) + min(numWilds-n, singles+n)
+		bestGain = max(bestGain, gain)
 	}
-	for t := startType; t < 34; t++ {
-		if counts[t] >= maxCopies {
-			continue
-		}
-		counts[t]++
-		assignWilds(counts, w-1, t, fn)
-		counts[t]--
+	sht := 13 - pair - min(kind, 7) - bestGain
+	if sht < -1 {
+		sht = -1
 	}
+	return sht
 }
 
 // --- Independence (大大胡) ---
 
-func calcIndependence(counts [34]int) int {
-	totalOverlap := 0
+// suitMIS[mask] is the maximum independent set of the 9-position suit whose
+// occupied positions are the bits of mask, under the distance-2 conflict
+// (members at least 3 apart). suitMISWithWilds[mask][k] is the best MIS after
+// adding at most k positions. Both are exact enumerations over the 512 masks,
+// so the wild route below needs no search at call time.
+var (
+	suitMIS          [512]uint8
+	suitMISWithWilds [512][4]uint8
+)
 
-	for suit := 0; suit < 3; suit++ {
-		base := suit * 9
+func init() {
+	for mask := 0; mask < 512; mask++ {
 		var has [9]int
 		for i := 0; i < 9; i++ {
-			if counts[base+i] > 0 {
-				has[i] = 1
+			has[i] = (mask >> i) & 1
+		}
+		suitMIS[mask] = uint8(maxIndependentSetOverlapDist2(has[:]))
+	}
+	for mask := 0; mask < 512; mask++ {
+		for add := 0; add < 512; add++ {
+			if add&mask != 0 {
+				continue
+			}
+			k := bitCount9(add)
+			if k > 3 {
+				continue
+			}
+			v := suitMIS[mask|add]
+			for kk := k; kk <= 3; kk++ {
+				if v > suitMISWithWilds[mask][kk] {
+					suitMISWithWilds[mask][kk] = v
+				}
 			}
 		}
-		totalOverlap += maxIndependentSetOverlapDist2(has[:])
 	}
+}
 
-	for i := 27; i < 34; i++ {
-		if counts[i] > 0 {
-			totalOverlap++
+func bitCount9(x int) int {
+	n := 0
+	for ; x != 0; x &= x - 1 {
+		n++
+	}
+	return n
+}
+
+func suitMask(counts *[34]int, base int) int {
+	mask := 0
+	for i := 0; i < 9; i++ {
+		if counts[base+i] > 0 {
+			mask |= 1 << i
 		}
 	}
+	return mask
+}
 
+func independenceShanten(totalOverlap int) int {
 	sht := 14 - totalOverlap - 1
 	if totalOverlap > 14 {
 		sht = -1
@@ -189,23 +247,28 @@ func calcIndependence(counts [34]int) int {
 	return sht
 }
 
+func calcIndependence(counts [34]int) int {
+	totalOverlap := 0
+	for suit := 0; suit < 3; suit++ {
+		totalOverlap += int(suitMIS[suitMask(&counts, suit*9)])
+	}
+	for i := 27; i < 34; i++ {
+		if counts[i] > 0 {
+			totalOverlap++
+		}
+	}
+	return independenceShanten(totalOverlap)
+}
+
 // maxIndependentSetOverlapDist2: max-weight independent set on 9-node path
-// with distance-2 adjacency (i+1 and i+2 both forbidden).
+// with distance-2 adjacency (i+1 and i+2 both forbidden). Only used to build
+// suitMIS.
 func maxIndependentSetOverlapDist2(has []int) int {
 	n := len(has)
 	if n == 0 {
 		return 0
 	}
-	// dp is pure scratch; callers always pass a 9-node suit, so keep it on the
-	// stack to avoid a heap allocation in this extremely hot path (called per
-	// wild-assignment × per candidate discard during observation encoding).
-	var dpArr [9]int
-	var dp []int
-	if n <= len(dpArr) {
-		dp = dpArr[:n]
-	} else {
-		dp = make([]int, n)
-	}
+	dp := make([]int, n)
 	dp[0] = has[0]
 	if n > 1 {
 		dp[1] = max(has[0], has[1])
@@ -219,23 +282,49 @@ func maxIndependentSetOverlapDist2(has []int) int {
 	return dp[n-1]
 }
 
+// calcIndependenceWithWilds is the best independence shanten over every way
+// of placing numWilds wilds as natural tiles. A wild only matters where it
+// lands on an absent type: in a suit it can raise that suit's MIS (read from
+// suitMISWithWilds, exact per suit), on an absent honor it adds one. The suits
+// and honors are independent, so the best split of the wilds across the four
+// groups is an exhaustive search over at most (numWilds+1)^3 splits.
+// A wild placed where it gains nothing still has to fit (wildCapacity).
 func calcIndependenceWithWilds(counts [34]int, numWilds int) int {
 	if numWilds == 0 {
 		return calcIndependence(counts)
 	}
-	best := 14
-	assignWilds(counts[:], numWilds, 0, func(c []int) {
-		var arr [34]int
-		copy(arr[:], c)
-		sht := calcIndependence(arr)
-		if sht < best {
-			best = sht
-		}
-	})
-	if best < -1 {
-		best = -1
+	if wildCapacity(&counts) < numWilds {
+		return 14
 	}
-	return best
+	var masks [3]int
+	base := 0
+	for suit := 0; suit < 3; suit++ {
+		masks[suit] = suitMask(&counts, suit*9)
+		base += int(suitMIS[masks[suit]])
+	}
+	honors := 0
+	for i := 27; i < 34; i++ {
+		if counts[i] > 0 {
+			honors++
+		}
+	}
+	base += honors
+	gainIn := func(suit, k int) int {
+		m := masks[suit]
+		return int(suitMISWithWilds[m][min(k, 3)]) - int(suitMIS[m])
+	}
+	bestGain := 0
+	for a := 0; a <= numWilds; a++ {
+		ga := gainIn(0, a)
+		for b := 0; a+b <= numWilds; b++ {
+			gb := gainIn(1, b)
+			for c := 0; a+b+c <= numWilds; c++ {
+				gain := ga + gb + gainIn(2, c) + min(numWilds-a-b-c, 7-honors)
+				bestGain = max(bestGain, gain)
+			}
+		}
+	}
+	return independenceShanten(base + bestGain)
 }
 
 // CalculateFromTiles is the high-level API for game integration.

@@ -8,7 +8,7 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
 
 ## Key Files
 
-- **shanten.go** — Core table-based shanten algorithm with wild support.
+- **shanten.go** — Core table-based shanten algorithm with wild support. The seven-pairs and independence routes with wilds are closed forms, not a search over wild placements: seven pairs from the pair/kind/single counts, independence from the precomputed per-suit tables `suitMIS[mask]` and `suitMISWithWilds[mask][k]` (best MIS after adding up to k positions — not `min(3, mis+k)`: `{3,7}` cannot reach 3 with one wild) plus an exhaustive split of the wilds over the three suits and the honors. A route whose wilds cannot all be placed (`wildCapacity`) scores 14. This is the RL observation encoder's hot path (`AnalyzeHand` calls `Analyze` ~500x per observation).
 - **analysis.go** — Higher-level helpers:
   - `Analyze()` / `AnalyzeFromTiles()` — route-by-route shanten breakdown
   - `AnalyzeHand()` — current-hand useful-tile count plus discard-option analysis
@@ -19,6 +19,7 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
 - **shanten_tables.bin.gz** — Committed precomputed tables. Regenerate with `SHANTEN_REGEN=1 go test ./internal/rules/shanten -run TestRegenerateEmbeddedTables` after changing table generation, then commit the new file.
 - **tables_embed_test.go** — `TestEmbeddedTablesMatchGeneratedExactly` guarantees the committed tables are byte-identical to the DFS generators (a mismatch would corrupt all hand evaluation); `TestRegenerateEmbeddedTables` (SHANTEN_REGEN=1) rewrites the file.
 - **shanten_test.go** — Route, wild, edge-case, and benchmark coverage.
+- **wild_routes_equiv_test.go** — Keeps the placement-enumeration implementation as an oracle and requires the closed forms to equal it on every suit mask (0-4 wilds) and on random 0-17-tile hands with 0-5 wilds. CI runs 3000 hands; `SHANTEN_EXHAUSTIVE=1` runs 60000 (~10 min). Any change to a wild route must keep this passing.
 
 ## Architecture Notes
 
