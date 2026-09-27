@@ -70,4 +70,8 @@ update autotune pick algorithms by timing.
 - `2026-09-27 02:32` — mortal-scale-scratch — **paused after the iteration-10 `train_state`** for the speed-up
   session's threaded-pool timing (active only at pipeline groups > 1; this lap runs groups = 1, so nothing
   to adopt). Iterations 7–10 ran 6.4 min each on `cabaabc`.
+- `2026-09-27 02:38` — mortal-scale-scratch — resumed from `train_state` (next iteration 11) on `cabaabc`, no
+  code change. Resume audit: one `run_id`, 11 rows; iteration 11 steps 1,947,164, `optimizer_steps` 5,072 =
+  2 × ceil(1,947,164 / 768), zero truncations, coverage 1.0, approx-KL 0.00107 / entropy 0.0825 / value loss
+  0.0159, inside iterations 8–10.
 - `—` — (add next event here)
