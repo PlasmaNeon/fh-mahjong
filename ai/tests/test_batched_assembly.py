@@ -1,7 +1,9 @@
-"""Batched B2b assembly releases each row as it is copied, so the RolloutBatch
-build never holds the rows and the full output at once."""
+"""Batched B2b assembly never holds the rows and the full output at once: each
+match's rows are stacked into contiguous arrays when it finishes, and the final
+build fills from those arrays, releasing each as it is copied."""
 
 import gc
+import os
 import weakref
 
 import numpy as np
@@ -10,7 +12,7 @@ import torch
 
 from conftest import SMALL_MODEL
 from fh_mahjong_ai import batched_b2b as batched_b2b_module
-from fh_mahjong_ai.batched_b2b import _stack_releasing, collect_b2b_rollouts_batched, make_b2b_pool
+from fh_mahjong_ai.batched_b2b import _concat_releasing, collect_b2b_rollouts_batched, make_b2b_pool
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.ppo import PPOConfig
@@ -18,49 +20,45 @@ from fh_mahjong_ai.ppo import PPOConfig
 
 @pytest.mark.parametrize("dtype,shape", [(np.float32, (51, 42, 1)), (np.int8, (204,)),
                                          (np.uint32, (8,))])
-def test_stack_releasing_matches_np_stack(monkeypatch, dtype, shape):
-    monkeypatch.setattr(batched_b2b_module, "_STACK_CHUNK_ROWS", 7)  # chunks cross row counts
+def test_concat_releasing_matches_np_concatenate(dtype, shape):
     rng = np.random.default_rng(0)
-    rows = [rng.integers(0, 100, size=shape).astype(dtype) for _ in range(53)]
-    expected = np.stack(rows).astype(dtype, copy=False)
-    out = _stack_releasing(rows, dtype)
+    parts = [rng.integers(0, 100, size=(n,) + shape).astype(dtype) for n in (1, 7, 30, 2)]
+    expected = np.concatenate(parts).astype(dtype, copy=False)
+    out = _concat_releasing(parts, dtype)
     assert out.dtype == expected.dtype and out.shape == expected.shape
     assert out.tobytes() == expected.tobytes()
-    assert rows == []
+    assert parts == []
 
 
-def test_stack_releasing_frees_every_source_row(monkeypatch):
-    monkeypatch.setattr(batched_b2b_module, "_STACK_CHUNK_ROWS", 5)
-    rows = [np.full((4, 3), i, dtype=np.float32) for i in range(23)]
-    refs = [weakref.ref(r) for r in rows]
-    out = _stack_releasing(rows, np.float32)
+def test_concat_releasing_frees_every_part():
+    parts = [np.full((i + 1, 3), i, dtype=np.float32) for i in range(9)]
+    refs = [weakref.ref(p) for p in parts]
+    out = _concat_releasing(parts, np.float32)
     gc.collect()
     assert all(ref() is None for ref in refs)
-    assert out[22, 0, 0] == 22.0
+    assert out[-1, 0] == 8.0 and out.shape == (45, 3)
 
 
-@pytest.mark.skipif(not __import__("os").environ.get("FH_MAHJONG_BRIDGE_LIB"),
-                    reason="needs the Go bridge library")
-def test_collector_stores_rows_that_own_their_memory(monkeypatch):
-    # A stored row that is a view into its round's shared array pins that whole
-    # array until every row of the round is released, so the release-as-copied
-    # assembly would free nothing. Every row reaching assembly must own its data.
+@pytest.mark.skipif(not os.environ.get("FH_MAHJONG_BRIDGE_LIB"), reason="needs the Go bridge library")
+def test_assembly_parts_are_contiguous_per_match_arrays(monkeypatch):
+    # Parts that were views into the collector's per-round arrays would pin
+    # those rounds through assembly; every part must own its memory.
     seen = {}
-    real = batched_b2b_module._stack_releasing
+    real = batched_b2b_module._concat_releasing
 
-    def spy(rows, dtype):
-        key = str(np.dtype(dtype)) + str(np.asarray(rows[0]).shape)
-        seen[key] = all(np.asarray(r).base is None for r in rows)
-        return real(rows, dtype)
+    def spy(parts, dtype):
+        key = str(np.dtype(dtype)) + str(parts[0].shape[1:])
+        seen[key] = (len(parts), all(isinstance(p, np.ndarray) and p.base is None for p in parts))
+        return real(parts, dtype)
 
-    monkeypatch.setattr(batched_b2b_module, "_stack_releasing", spy)
+    monkeypatch.setattr(batched_b2b_module, "_concat_releasing", spy)
     env = EnvConfig(bridge_kind="go", event_history_window=8, oracle_observation=True,
                     max_steps_per_episode=4000)
     torch.manual_seed(0)
     model = PolicyValueNet(EnvConfig(bridge_kind="go"),
                            ModelConfig(**SMALL_MODEL, event_window=8,
                                        privileged_critic=True, aux_heads=True))
-    cfg = PPOConfig(device="cpu", matches_per_iter=2, max_steps_per_episode=4000,
+    cfg = PPOConfig(device="cpu", matches_per_iter=3, max_steps_per_episode=4000,
                     match_mode="chongci")
     pool = make_b2b_pool(env, model, cfg, 2)
     try:
@@ -68,5 +66,6 @@ def test_collector_stores_rows_that_own_their_memory(monkeypatch):
                                              action_selection="greedy")
     finally:
         pool.close()
-    assert len(seen) == 4 and all(seen.values()), seen
+    assert len(seen) == 4, seen
+    assert all(n == 3 and owned for n, owned in seen.values()), seen
     assert batch.planes.shape[0] == batch.actions.shape[0] > 0
