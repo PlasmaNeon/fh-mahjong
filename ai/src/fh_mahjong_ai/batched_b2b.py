@@ -220,6 +220,31 @@ _PHASE_TIMER_NOTE = (
     "inflated by work that is not what its name says.")
 
 
+_STACK_CHUNK_ROWS = 4096
+
+
+def _stack_releasing(rows: list, dtype) -> np.ndarray:
+    """``np.stack(rows).astype(dtype)`` that releases each source row once copied.
+
+    ``np.stack`` holds every source row and the full output at once, which
+    doubles resident memory at assembly (a 960-match big-net batch went from
+    ~21 to over 38 GiB and was killed there). Filling a preallocated output in
+    chunks and dropping the list's references as it goes keeps the peak at
+    about one copy plus a chunk; the bytes are identical. The rows must be
+    independent arrays, not views into a shared buffer, or dropping them frees
+    nothing. Empties ``rows``.
+    """
+    n = len(rows)
+    first = np.asarray(rows[0])
+    out = np.empty((n,) + first.shape, dtype=dtype)
+    for start in range(0, n, _STACK_CHUNK_ROWS):
+        stop = min(start + _STACK_CHUNK_ROWS, n)
+        out[start:stop] = np.stack(rows[start:stop])
+        rows[start:stop] = [None] * (stop - start)
+    rows.clear()
+    return out
+
+
 def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  config: PPOConfig, base_seed: int, pool,
                                  inference_mode: str = "batched",
@@ -396,9 +421,11 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         if not live:
             continue
 
-        # ONE writable copy of the round's live rows per array; every decision
-        # keeps views into these (all rows live until the final RolloutBatch
-        # stack anyway, so views retain nothing a per-row copy would not).
+        # ONE writable copy of the round's live rows per array, for the forward.
+        # Each decision then stores its OWN copy of its row (below), never a view:
+        # a view pins the whole round array until every row of that round is
+        # released, and a round's rows belong to ~pool_slots different matches,
+        # so views defeat the release-as-copied assembly at the end.
         # Event rows are the pool's (rows, window) grid: newest events
         # oldest-first, zero-padded, with the kept count alongside.
         idx = np.fromiter((entry[3] for entry in live), dtype=np.int64, count=len(live))
@@ -482,14 +509,14 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 in enumerate(pending_rows):
             action = actions[i]
             ms = sm.state
-            ms.seat_planes[seat].append(planes_np)
-            ms.seat_scalars[seat].append(scalars_np)
-            ms.seat_masks[seat].append(mask_np)
+            ms.seat_planes[seat].append(planes_np.copy())
+            ms.seat_scalars[seat].append(scalars_np.copy())
+            ms.seat_masks[seat].append(mask_np.copy())
             ms.seat_actions[seat].append(action)
             ms.seat_logprobs[seat].append(logprobs[i])
             ms.seat_values[seat].append(values_rows[i])
             ms.seat_rewards[seat].append(0.0)
-            ms.seat_events[seat].append(row_events)
+            ms.seat_events[seat].append(row_events.copy())
             ms.seat_lengths[seat].append(ev_len)
             ms.seat_hand_ids[seat].append(ms.hand_id)
             pending_action[slot] = action
@@ -520,16 +547,16 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts_batched produced no decisions")
     return RolloutBatch(
-        planes=np.stack(rows_l["planes"]).astype(np.float32, copy=False),
-        scalars=np.stack(rows_l["scalars"]).astype(np.float32, copy=False),
-        action_mask=np.stack(rows_l["masks"]).astype(np.int8, copy=False),
+        planes=_stack_releasing(rows_l["planes"], np.float32),
+        scalars=_stack_releasing(rows_l["scalars"], np.float32),
+        action_mask=_stack_releasing(rows_l["masks"], np.int8),
         actions=np.asarray(rows_l["actions"], dtype=np.int64),
         old_logprobs=np.asarray(rows_l["logprobs"], dtype=np.float32),
         values=np.asarray(rows_l["values"], dtype=np.float32),
         rewards=np.asarray(rows_l["rewards"], dtype=np.float32),
         dones=np.asarray(rows_l["dones"], dtype=np.float32),
         truncated_matches=truncated_matches,
-        events=np.stack(rows_l["events"]).astype(np.uint32, copy=False),
+        events=_stack_releasing(rows_l["events"], np.uint32),
         event_lengths=np.asarray(rows_l["lengths"], dtype=np.int32),
         dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
         rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
