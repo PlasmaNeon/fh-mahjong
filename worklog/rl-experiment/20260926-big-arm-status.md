@@ -77,4 +77,10 @@ update autotune pick algorithms by timing.
 - `2026-09-27 03:11` — mortal-scale-scratch — **paused after the iteration-15 `train_state`** for the speed-up
   session's end-to-end timing of the opt-in recipe (bf16 trunk + 2 pipeline groups, its own clone and seeds).
   Iterations 12–15 ran 6.4 min each.
+- `2026-09-27 03:19` — mortal-scale-scratch — resumed from `train_state` (next iteration 16) on `cabaabc`, no
+  code change; the speed-up session's last planned window. Resume audit: one `run_id`, 16 rows; iteration 16
+  steps 1,949,246, `optimizer_steps` 5,078 = 2 × ceil(1,949,246 / 768), zero truncations, coverage 1.0,
+  approx-KL 0.00113 / entropy 0.0792 / value loss 0.0160, inside iterations 14–15. The three pauses cost
+  ~20 min in all. The speed-up session measured the opt-in recipe (bf16 trunk + 2 pipeline groups) on this
+  model at 3.6 min/iteration end to end; future laps only, bf16 pending a quality check.
 - `—` — (add next event here)
