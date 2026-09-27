@@ -65,6 +65,13 @@ Justification:
 
 - No optional stopping, no post-hoc gate changes. A change needed mid-run is written here as an
   amendment before it takes effect.
+- **Training speed-up work has GPU priority (user directive, 2026-09-27).** When a speed-up session
+  needs the GPU, the lap is stopped at an iteration boundary and resumed from `train_state.pt` once the
+  speed-up is merged and measured faster on this recipe. The resume adopts the new code only if it
+  preserves semantics: the collector goldens, batched-vs-process parity and the full ai suite pass, and
+  any float difference is summation order only. Each such resume is recorded in the status file with
+  the commit, the measured speed-up, and the resume audit. A change that alters the objective,
+  sampling, labels or data is not a speed-up and cannot be adopted mid-run.
 - Infrastructure failures (guard kill, OOM, crash) are not scientific results; resume from
   `train_state.pt` is allowed and recorded as an operational deviation with the resume audit
   (the resumed iteration compared against its original emission).
