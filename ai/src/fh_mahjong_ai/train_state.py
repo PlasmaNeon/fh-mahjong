@@ -454,6 +454,8 @@ _LEGACY_ECHO_ADDITIONS = {
         # with the slot count those runs had, which is exactly what they were.
         "collector",
         "pool_slots",
+        "trunk_dtype",  # absent before the bf16-trunk option (2026-09-27)
+        "pool_pipeline_groups",  # absent before the pipelined batched collector (2026-09-27)
     },
 }
 
@@ -470,6 +472,8 @@ _LEGACY_ECHO_PINNED_VALUES = {
     "ppo_config": {
         "collector": "process",   # the only collector that existed before 2026-08-26
         "pool_slots": 128,        # PPOConfig.pool_slots as shipped when the field landed
+        "trunk_dtype": "float32",  # every run before the field existed trained in float32
+        "pool_pipeline_groups": 1,  # every batched run before the field existed used one group
     },
 }
 
