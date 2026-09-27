@@ -74,4 +74,7 @@ update autotune pick algorithms by timing.
   code change. Resume audit: one `run_id`, 11 rows; iteration 11 steps 1,947,164, `optimizer_steps` 5,072 =
   2 × ceil(1,947,164 / 768), zero truncations, coverage 1.0, approx-KL 0.00107 / entropy 0.0825 / value loss
   0.0159, inside iterations 8–10.
+- `2026-09-27 03:11` — mortal-scale-scratch — **paused after the iteration-15 `train_state`** for the speed-up
+  session's end-to-end timing of the opt-in recipe (bf16 trunk + 2 pipeline groups, its own clone and seeds).
+  Iterations 12–15 ran 6.4 min each.
 - `—` — (add next event here)
