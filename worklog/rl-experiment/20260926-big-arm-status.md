@@ -5,9 +5,8 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**Lap RUNNING** since 2026-09-27 01:13:58 PDT (fresh from iteration 0), unit `bigarm-lap`. Projected
-~7.2 min/iteration (collect ~140 s + update ~290 s with PR #248) → 200 iterations ≈ 24 h, ending about
-2026-09-28 01:15 PDT.
+**Lap RUNNING**, unit `bigarm-lap`: launched 2026-09-27 01:13:58 PDT, paused after iteration 5, resumed
+02:00:03 on `cabaabc`. Iterations run 6.5–7.3 min → iteration 200 about 2026-09-28 00:45 PDT.
 
 ## Launch manifest
 
@@ -61,4 +60,11 @@ update autotune pick algorithms by timing.
 - `2026-09-27 01:52` — mortal-scale-scratch — **paused after the iteration-5 `train_state`** for the speed-up
   session's collector/bf16 timing window (user directive). Iterations 2–5 ran 7.3 min each on `2e9ae54`,
   on projection. `pause-at-save.sh` stops the unit when `train_state.pt` changes, so nothing is recomputed.
+- `2026-09-27 02:00` — mortal-scale-scratch — **resumed from `train_state` (next iteration 6) on `cabaabc`**,
+  adopting PR #250's graphed update step under the protocol's speed-up rule (the graph replays the eager
+  step's kernels, within rtol 1e-5 on the box; `ppo_update` only; full ai suite green; Python-only, bridge
+  snapshot unchanged). Registered operational deviation. Resume audit: one `run_id` (`8684c100…`), six
+  history rows; iteration 6 steps 1,962,410, `optimizer_steps` 5,112 = 2 × ceil(1,962,410 / 768), zero
+  truncations, label coverage 1.0, approx-KL 0.00101 / entropy 0.0844 / value loss 0.0155, all inside
+  iterations 1–5. Iteration 6 ran 6.5 min including restart.
 - `—` — (add next event here)
