@@ -332,22 +332,27 @@ def ppo_update(
     config: PPOConfig,
 ) -> dict:
     """One PPO update over `batch`. On CUDA, cuDNN autotunes its convolution
-    algorithms for the full-size minibatches (restored on exit): its default
-    heuristic picks a slow non-tensor-core weight-gradient kernel for the
-    (3, k) convs over 42x1 planes, over half the update's GPU time at 192x24.
-    Autotuning chooses by timing, so the floats differ from the heuristic's by
-    summation order, and can differ between processes."""
+    algorithms for the update (restored on exit): its default heuristic picks a
+    slow non-tensor-core weight-gradient kernel for the (3, k) convs over 42x1
+    planes, over half the update's GPU time at 192x24. Autotuning chooses by
+    timing, so the floats differ from the heuristic's by summation order, and
+    can differ between processes. Each new shape (the ragged final minibatch
+    changes size every iteration) costs one tuning pass, about a second.
+
+    cuDNN caches the plan per shape whatever the flag was when the shape was
+    first seen: a shape first run untuned in this process stays untuned."""
     if torch.device(config.device).type != "cuda":
-        return _ppo_update(model, optimizer, batch, advantages, returns, config, autotune=False)
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
     previous = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = True
     try:
-        return _ppo_update(model, optimizer, batch, advantages, returns, config, autotune=True)
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
     finally:
         torch.backends.cudnn.benchmark = previous
 
 
 def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
-                returns: np.ndarray, config: PPOConfig, autotune: bool) -> dict:
+                returns: np.ndarray, config: PPOConfig) -> dict:
     device = config.device
     n = len(batch)
     host_transfer = bool(getattr(config, "minibatch_device_transfer", False))
@@ -425,10 +430,6 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
         perm_h = perm.cpu() if host_transfer else None
         for start in range(0, n, config.minibatch_size):
             idx = perm[start : start + config.minibatch_size]
-            if autotune:
-                # Only the full-size shape is tuned: the ragged final minibatch
-                # has a new size every iteration and would re-tune each time.
-                torch.backends.cudnn.benchmark = int(idx.shape[0]) == config.minibatch_size
             mb_lengths = lengths_t[idx] if lengths_t is not None else None
             if host_transfer:
                 idx_h = perm_h[start : start + config.minibatch_size]
