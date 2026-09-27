@@ -17,6 +17,7 @@ import logging
 import mmap
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Optional
 
@@ -328,6 +329,52 @@ class _ArrayRowSink:
         return {key: buf[:self.rows] for key, buf in self.buffers.items()}
 
 
+def _collect_pipelined(groups: int, commands_for, group_slots: list, timed_step, observe,
+                       launch_forward, finish_round, wedged, unemitted) -> None:
+    """The turn loop for `pool_pipeline_groups > 1`.
+
+    Group g's turn: take its pool step, settle it, read back group g-1's forward
+    (it ran on the GPU during this step) and decide g-1's actions, then queue g's
+    forward. Pool steps run one at a time on a single worker thread, in the same
+    group order and with the same commands as a serial loop, so the output does
+    not depend on the threading: the thread only lets the Go step (which
+    releases the GIL) overlap Python. The next group's step is started as soon as
+    its actions are decided -- at the top of the turn when its forward is not in
+    flight (three or more groups), else right after it is read back."""
+    in_flight: list = [None] * groups  # (pending_rows, masks_r, launched) per group
+    stepper = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fh-pool-step")
+
+    def submit(group: int):
+        commands = commands_for(group_slots[group])
+        return stepper.submit(timed_step, commands) if commands else None
+
+    try:
+        group = 0
+        step_future = submit(0)
+        idle_turns = 0
+        while unemitted() or step_future is not None or any(f is not None for f in in_flight):
+            stepped = step_future.result() if step_future is not None else None
+            nxt = (group + 1) % groups
+            early = in_flight[nxt] is None
+            step_future = submit(nxt) if early else None
+            observed = observe(stepped) if stepped is not None else None
+            previous = (group - 1) % groups
+            if in_flight[previous] is not None:
+                finish_round(*in_flight[previous])
+                in_flight[previous] = None
+            if not early:
+                step_future = submit(nxt)
+            if observed is not None:
+                pending_rows, arrays = observed
+                in_flight[group] = (pending_rows, arrays[2], launch_forward(group, arrays))
+            idle_turns = 0 if stepped is not None else idle_turns + 1
+            if idle_turns > groups and unemitted():
+                raise wedged()
+            group = nxt
+    finally:
+        stepper.shutdown(wait=True)
+
+
 def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  config: PPOConfig, base_seed: int, pool,
                                  inference_mode: str = "batched",
@@ -473,14 +520,24 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 commands.append(PoolCommand(slot=slot, reset_seed=sm.seed))
         return commands
 
+    def timed_step(commands: list) -> tuple:
+        """`pool.step` and its wall time. Runs on the stepping thread when
+        groups > 1, so it touches nothing but the pool."""
+        pool_start = time.perf_counter()
+        result = pool.step(commands)
+        return result, time.perf_counter() - pool_start
+
     def step_and_observe(commands: list):
-        """Step the pool and settle every slot's bookkeeping; returns the
-        round's live rows (or None) as the arrays the forward consumes."""
+        return observe(timed_step(commands))
+
+    def observe(stepped: tuple):
+        """Settle every stepped slot's bookkeeping; returns the round's live
+        rows (or None) as the arrays the forward consumes."""
         nonlocal pool_seconds, rounds, peak_live_slots, truncated_matches
         nonlocal completed_matches, outcomes_seen
-        pool_start = time.perf_counter()
-        result: PoolStepResult = pool.step(commands)
-        pool_seconds += time.perf_counter() - pool_start
+        result: PoolStepResult
+        result, seconds = stepped
+        pool_seconds += seconds
         rounds += 1
         peak_live_slots = max(peak_live_slots, len(active))
 
@@ -641,32 +698,23 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             pending_action[slot] = action
         python_seconds += time.perf_counter() - python_start
 
-    # One in-flight forward per group: (pending_rows, masks_r, launched).
-    in_flight: list = [None] * groups
-    group = 0
-    idle_turns = 0
-    while emit_next < total or any(flight is not None for flight in in_flight):
-        commands = commands_for(group_slots[group])
-        observed = step_and_observe(commands) if commands else None
-        # The previous group's forward ran on the GPU while this group stepped;
-        # read it back before queueing this group's (a queued replay would make
-        # the read wait for both).
-        previous = (group - 1) % groups
-        if in_flight[previous] is not None:
-            finish_round(*in_flight[previous])
-            in_flight[previous] = None
-        if observed is not None:
-            pending_rows, arrays = observed
-            in_flight[group] = (pending_rows, arrays[2], launch_forward(group, arrays))
-        if groups == 1 and in_flight[group] is not None:
-            finish_round(*in_flight[group])
-            in_flight[group] = None
-        idle_turns = 0 if commands else idle_turns + 1
-        if idle_turns > groups and emit_next < total:
-            raise RuntimeError(
-                f"env pool wedged: {len(active)} slots active, "
-                f"{total - emit_next} matches unemitted")
-        group = (group + 1) % groups
+    def wedged() -> RuntimeError:
+        return RuntimeError(f"env pool wedged: {len(active)} slots active, "
+                            f"{total - emit_next} matches unemitted")
+
+    if groups == 1:
+        while emit_next < total:
+            commands = commands_for(group_slots[0])
+            if not commands:
+                raise wedged()
+            observed = step_and_observe(commands)
+            if observed is not None:
+                pending_rows, arrays = observed
+                finish_round(pending_rows, arrays[2], launch_forward(0, arrays))
+    else:
+        _collect_pipelined(groups, commands_for, group_slots, timed_step, observe,
+                           launch_forward, finish_round, wedged,
+                           lambda: emit_next < total)
 
     # NOT the outer collection wall time: this stops before the RolloutBatch
     # np.stack/astype assembly below, which the caller's `collect_seconds` does
