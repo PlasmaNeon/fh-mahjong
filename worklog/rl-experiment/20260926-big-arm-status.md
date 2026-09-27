@@ -5,8 +5,9 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**Lap RUNNING** since 2026-09-27 01:05:53 PDT, unit `bigarm-lap`. Projected ~7.2 min/iteration
-(collect ~140 s + update ~290 s with PR #248) → 200 iterations ≈ 24 h, ending about 2026-09-28 01:00 PDT.
+**PAUSED before iteration 1 completed** (2026-09-27 01:10 PDT) for the speed-up session's timing window;
+relaunches fresh from iteration 0 when it finishes. Projected ~7.2 min/iteration (collect ~140 s + update
+~290 s with PR #248) → 200 iterations ≈ 24 h.
 
 ## Launch manifest
 
@@ -48,4 +49,9 @@ update autotune pick algorithms by timing.
 - `2026-09-27 00:5x` — mortal-scale-scratch — collector training parity PASS (see protocol). Launch held ~1 h
   for PRs #247/#248 (update 161 → 48.6 ms/step on this recipe), per the user.
 - `2026-09-27 01:05` — mortal-scale-scratch — **lap launched** on `2e9ae54`.
+- `2026-09-27 01:10` — mortal-scale-scratch — **stopped during iteration 1** to give the speed-up session a
+  clean GPU window (user directive: speed-up work has GPU priority). No checkpoint or `train_state` existed
+  (first save is at iteration 5), so the lap relaunches fresh from iteration 0 on the same seeds rather
+  than resuming; archived as `attempt1-paused-iter0/`. The anchor comparator run was stopped too and is
+  regenerated before the first screen.
 - `—` — (add next event here)
