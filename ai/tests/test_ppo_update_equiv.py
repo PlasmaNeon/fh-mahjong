@@ -125,3 +125,26 @@ def test_no_labelled_rank_rows_gives_zero_rank_loss_and_gradient():
     assert torch.count_nonzero(grads["rank_head.weight"]) == 0
     for key, ref in ref_grads.items():
         torch.testing.assert_close(grads[key], ref, rtol=1e-5, atol=1e-7, msg=key)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+@pytest.mark.parametrize("aux", [True, False])
+def test_graphed_step_matches_eager_step_on_cuda(aux, monkeypatch):
+    """The CUDA-graphed minibatch step runs the eager step's kernels: two epochs
+    with a ragged final minibatch (eager, after the graph owns the gradient
+    buffers) must track the eager-only update."""
+    from fh_mahjong_ai import ppo as ppo_mod
+
+    model = _model(aux=aux).cuda()
+    batch = _batch(37, seed=5, aux=aux)
+    config = PPOConfig(device="cuda", ppo_epochs=2, minibatch_size=8,
+                       minibatch_device_transfer=True)
+    monkeypatch.setattr(ppo_mod, "GRAPHED_UPDATE_STEP", False)
+    eager_metrics, eager_grads, eager_state, _ = _run(ppo_update, model, batch, config, lr=1e-3)
+    monkeypatch.setattr(ppo_mod, "GRAPHED_UPDATE_STEP", True)
+    metrics, grads, state, _ = _run(ppo_update, model, batch, config, lr=1e-3)
+    assert grads.keys() == eager_grads.keys()
+    for key, ref in eager_state.items():
+        torch.testing.assert_close(state[key], ref, rtol=1e-5, atol=1e-7, msg=key)
+    for key, ref in eager_metrics.items():
+        assert metrics[key] == pytest.approx(ref, rel=1e-5, abs=1e-7), key
