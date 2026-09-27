@@ -23,6 +23,12 @@ Justification:
   1,800,000+; iter_010 of each screened on 120 seeds from 1,810,000. **Launch requires** both arms
   clean (no truncation, coverage 1.0), rows/iteration within ±3%, and the batched-vs-process screening
   delta's clustered CI95 containing 0.
+- **Parity result (2026-09-27): PASS.** Both arms 10/10 clean (zero truncations, coverage 1.0); mean
+  rows/iteration 654,617 (process) vs 653,605 (batched), −0.15%; iter_010 batched − process
+  **+0.0062 ± 0.0466** (seed-clustered CI95 contains 0), deal-in 0.1014 vs 0.1009. Descriptive:
+  batched entropy ran 0.089–0.092 against 0.093–0.097 in every iteration, and the process arm had a
+  one-iteration approx-KL spike (1.32 at iteration 2); the batched sampler is exact inverse-CDF sampling
+  of `softmax(logits/T)` in float64. Artifacts `/root/fh-mahjong-runs/collector-parity-20260926/`.
 - The two collectors draw from different sampling RNG streams; that is the same class of change as a
   different base seed, and the rollout semantics (rows, labels, rewards, order) are pinned by the
   collector parity and golden-digest gates.
