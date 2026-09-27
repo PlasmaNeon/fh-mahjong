@@ -5,9 +5,9 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**PAUSED before iteration 1 completed** (2026-09-27 01:10 PDT) for the speed-up session's timing window;
-relaunches fresh from iteration 0 when it finishes. Projected ~7.2 min/iteration (collect ~140 s + update
-~290 s with PR #248) → 200 iterations ≈ 24 h.
+**Lap RUNNING** since 2026-09-27 01:13:58 PDT (fresh from iteration 0), unit `bigarm-lap`. Projected
+~7.2 min/iteration (collect ~140 s + update ~290 s with PR #248) → 200 iterations ≈ 24 h, ending about
+2026-09-28 01:15 PDT.
 
 ## Launch manifest
 
@@ -54,4 +54,8 @@ update autotune pick algorithms by timing.
   (first save is at iteration 5), so the lap relaunches fresh from iteration 0 on the same seeds rather
   than resuming; archived as `attempt1-paused-iter0/`. The anchor comparator run was stopped too and is
   regenerated before the first screen.
+- `2026-09-27 01:13` — mortal-scale-scratch — **lap relaunched** fresh from iteration 0 on `2e9ae54`. The
+  speed-up session measured the CUDA-graphed training step at 45.6 vs 46.5 ms/step on this recipe (2%, the
+  update is GPU-bound at 192×24), so the lap does not wait for it. A bf16 trunk measured 25.0 ms/step, but it
+  changes precision, so it is outside the mid-run adoption bar and is not for this lap.
 - `—` — (add next event here)
