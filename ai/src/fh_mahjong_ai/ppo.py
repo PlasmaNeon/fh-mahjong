@@ -331,6 +331,28 @@ def ppo_update(
     returns: np.ndarray,
     config: PPOConfig,
 ) -> dict:
+    """One PPO update over `batch`. On CUDA, cuDNN autotunes its convolution
+    algorithms for the update (restored on exit): its default heuristic picks a
+    slow non-tensor-core weight-gradient kernel for the (3, k) convs over 42x1
+    planes, over half the update's GPU time at 192x24. Autotuning chooses by
+    timing, so the floats differ from the heuristic's by summation order, and
+    can differ between processes. Each new shape (the ragged final minibatch
+    changes size every iteration) costs one tuning pass, about a second.
+
+    cuDNN caches the plan per shape whatever the flag was when the shape was
+    first seen: a shape first run untuned in this process stays untuned."""
+    if torch.device(config.device).type != "cuda":
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
+    previous = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = True
+    try:
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
+    finally:
+        torch.backends.cudnn.benchmark = previous
+
+
+def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
+                returns: np.ndarray, config: PPOConfig) -> dict:
     device = config.device
     n = len(batch)
     host_transfer = bool(getattr(config, "minibatch_device_transfer", False))
