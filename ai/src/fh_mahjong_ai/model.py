@@ -184,7 +184,11 @@ class PolicyValueNet(nn.Module):
     def forward(self, planes: Tensor, scalars: Tensor, action_mask: Tensor,
                 events: Tensor | None = None, event_lengths: Tensor | None = None) -> tuple[Tensor, Tensor]:
         features = self.encode(planes, scalars, events, event_lengths)
+        return self.policy_value(features, planes, action_mask)
 
+    def policy_value(self, features: Tensor, planes: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
+        """The ``forward`` heads over already-encoded ``features``, so a caller that
+        also needs the features (the PPO aux losses) encodes once."""
         logits = self.policy_head(features)
         masked_logits = logits.masked_fill(action_mask <= 0, torch.finfo(logits.dtype).min)
         value = self.value_head(self._value_features(features, planes)).squeeze(-1)
