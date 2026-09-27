@@ -1951,6 +1951,12 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         collector = None
         pool = None
         model.trunk_autocast = trunk_autocast_dtype(config)
+        if model.trunk_autocast is not None:
+            # bf16 tensor-core convolutions run NHWC: channels_last weights save
+            # cuDNN a layout conversion per call (~7% of the update at 192x24;
+            # no gain in float32). Parameters keep their identity, so the
+            # optimizer's references stay valid.
+            model.to(memory_format=torch.channels_last)
         if config.collector not in ("process", "batched"):
             # Fail closed: an unrecognized value must never quietly fall back
             # to the process collector and misattribute a whole lap.
