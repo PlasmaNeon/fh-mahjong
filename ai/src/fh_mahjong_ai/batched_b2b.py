@@ -268,7 +268,12 @@ def _lazy_empty(shape: tuple, dtype) -> np.ndarray:
     anonymous = getattr(mmap, "MAP_ANONYMOUS", None)
     if nbytes == 0 or noreserve is None or anonymous is None:
         return np.empty(shape, dtype=dtype)
-    buf = mmap.mmap(-1, nbytes, flags=mmap.MAP_PRIVATE | anonymous | noreserve)
+    try:
+        buf = mmap.mmap(-1, nbytes, flags=mmap.MAP_PRIVATE | anonymous | noreserve)
+    except (OSError, ValueError):
+        # Strict overcommit (vm.overcommit_memory=2) ignores MAP_NORESERVE and
+        # can refuse the reservation; np.empty is the same request by another route.
+        return np.empty(shape, dtype=dtype)
     return np.frombuffer(buf, dtype=dtype).reshape(shape)
 
 

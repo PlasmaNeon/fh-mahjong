@@ -70,6 +70,33 @@ def test_lazy_empty_uses_a_noreserve_mapping_when_available(monkeypatch):
     assert int(a.sum()) == 7 * 60
 
 
+def test_lazy_empty_falls_back_when_the_mapping_is_refused(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise OSError("Cannot allocate memory")
+
+    monkeypatch.setattr(mmap, "MAP_NORESERVE", 0, raising=False)
+    monkeypatch.setattr(mmap, "mmap", refuse)
+    a = _lazy_empty((4, 3), np.float32)
+    assert a.shape == (4, 3) and a.dtype == np.float32 and a.base is None
+
+
+def test_batch_arrays_keep_their_mapping_alive_and_pickle_only_written_rows(monkeypatch):
+    import gc
+    import pickle
+
+    monkeypatch.setattr(mmap, "MAP_NORESERVE", 0, raising=False)
+    rng = np.random.default_rng(3)
+    match = _match(rng, 3)
+    expected = np.stack(match["planes"])
+    sink = _ArrayRowSink(capacity=10_000)
+    sink.write(match)
+    planes = sink.arrays()["planes"]
+    del sink
+    gc.collect()
+    assert planes.tobytes() == expected.tobytes()  # the mapping outlives the sink
+    assert len(pickle.dumps(planes)) < 2 * expected.nbytes  # no uncommitted tail
+
+
 class _FakeLibc:
     def __init__(self):
         self.trims = 0
