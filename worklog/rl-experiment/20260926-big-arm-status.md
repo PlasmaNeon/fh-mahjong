@@ -34,7 +34,7 @@ update autotune pick algorithms by timing.
 
 | Iteration | Delta | CI95 | Large-loss (cand / anchor) | Notes |
 |---|---|---|---|---|
-| 25 | | | | |
+| 25 | **−0.4181** | ±0.0652 (sig. YES) | 0.1458 / 0.0458 | control arm at 25: −0.4250. Placement +0.0431 vs anchor +0.4611; deal-in 0.0999 vs 0.1033 (candidate lower); 4th-share Δ +0.1396, training-utility Δ −0.3795. Screen took 54 min beside the lap (192×24 forward ~4.5 ms per decision) |
 | 50 | | | | |
 | 75 | | | | |
 | 100 | | | | kill iff Δ100 − Δ75 ≤ 0 and Δ100 < −0.20 |
@@ -83,4 +83,5 @@ update autotune pick algorithms by timing.
   approx-KL 0.00113 / entropy 0.0792 / value loss 0.0160, inside iterations 14–15. The three pauses cost
   ~20 min in all. The speed-up session measured the opt-in recipe (bf16 trunk + 2 pipeline groups) on this
   model at 3.6 min/iteration end to end; future laps only, bf16 pending a quality check.
+- `2026-09-27 05:17` — mortal-scale-scratch — iteration-25 screen **−0.4181 ± 0.0652**, level with the control arm's −0.4250 at 25.
 - `—` — (add next event here)
