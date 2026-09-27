@@ -1,6 +1,6 @@
 # web/src/features/game/
 
-> Live match and private-room waiting room. Routes: `/room/:roomId` (Table), `/match/:matchId` (Game).
+> Live match and private-room waiting room. Routes: `/room/:roomId` (PrivateRoom), `/match/:matchId` (Game).
 
 ## Key Files
 

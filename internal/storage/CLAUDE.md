@@ -25,4 +25,4 @@ Defines the database schema for user accounts and match history using GORM (Go O
 - `AutoMigrate` owns the username cutover: sanitize friendly names, preserve the oldest collision, append `-2`/`-3`, backfill `username_key`, then create its unique index.
 - `AutoMigrate` also owns the completed-match history cutover. It parses only the minimum paipu player/final-score fields, preserves competition ranking for ties, and logs recovered/skipped counts.
 - PostgreSQL connection is established in `cmd/server/main.go` and passed through.
-- Rating system and match history are Phase 3 features (not yet fully implemented).
+- `User.Rating` (default 1500) and `MatchPlayer.RatingDelta` are stored but nothing updates them; there is no rating system yet.

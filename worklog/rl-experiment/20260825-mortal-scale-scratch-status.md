@@ -1,27 +1,11 @@
-# mortal-scale-scratch — live experiment status
-
-**This file is the single source of truth for CURRENT mortal-scale-scratch run state.**
+# mortal-scale-scratch — experiment record (CLOSED 2026-09-17)
 
 - **Durable protocol / rulings** → `../specs/20260825-mortal-scale-scratch-design.md` (Amendments 1–3)
 - **Durable procedure** → `../plans/20260825-mortal-scale-scratch-runbook.md`
 - **Consult thread** → Codex `01a0147d` (the thread that ruled the scale-campaign closure this experiment reopens); every terminal result returns there
 - **Box** → `ssh wsl`, repo `/root/fh-mahjong`, bridge `/root/fh-mahjong/build/libfh_mahjong_bridge.so`, runs under `/root/fh-mahjong-runs/mortal-scale-scratch/`, uv at `/root/.local/bin/uv`
-- **Live state (what is running right now)** → this file
 
-## How to update this file
-
-1. Edit **Current stage** in place — overwrite it, don't append. It must describe only *now*.
-2. Add one line to **Event log** for anything another session would need to know.
-3. Sign every event with your **session name** (`mortal-scale-scratch`, `fh-mahjong-5b`, …).
-   Never write "I" or "the peer" — with 2+ sessions on this protocol those words have no referent.
-4. Fill the screening tables from `fh-mj-compare` output only. A delta with no `fh-mj-compare`
-   behind it is not a delta.
-5. Do **not** copy this state into `MEMORY.md`. Memory gets the durable outcome when the
-   experiment ends, not the running state.
-
----
-
-## Current stage
+## Outcome
 
 **CLOSED — 2026-09-17.** The §7 control recipe gate FAILED and the protocol is closed by
 terminal ruling (Codex `01a0147d`, 2026-09-17 — GPT-5.6-Sol medium, then an independent
@@ -147,10 +131,10 @@ the same weights. Compare like with like.
 | 4b | **BC big (192×24, k=1, `trunk_rezero`) — attempt 2, canonical** | §3 | **PASS 2026-08-27** | `best_epoch` 3, best val CE 0.124828, `stopped_early` true, `epochs_run` 8; zeroed-event val top-1 **0.9581** (top-3 0.9951), per seat 0/1/2/3 = 0.9580 / 0.9580 / 0.9582 / 0.9581, readout CE 0.1248; per family discard 0.9494, chii 0.9703, pon 0.9902, kan 0.9519, pass 0.9956, win 1.0, haitei 1.0 (n=12); alphas 24/24 finite and non-zero, \|α\| min/median/max 3.24e-05 / 0.00492 / 0.02962; guard `UNIT-EXITED`, cgroup peak 30,792,699,904 B = 28.68 GiB, tree RSS peak 28.17 GiB; `best.pt` sha256 `3d95743b60646cd977c83a69691c9348a886e70535a08da8774cae8fd3ee1e17` |
 | 4a | Bench-init export — `fh-mj-export-scratch-init` from `bc-big/best.pt` | §4 | **done 2026-08-27** | `big-init.pt` sha256 `4948963deea8cbf72a38e8ec53464ab18c5d1be9e74d7cc0efc93a75c6798cea`; transfer gate exact — `max_abs_logit_diff` 0.0, `max_abs_prob_diff` 0.0, `greedy_match_rate` 1.0, `loaded_tensors_identical` true, 132 loaded / 37 unloaded keys, probe seed 20260825 × 64 rows; `bc_checkpoint_sha256` `3d95743b…` = `bc-big/best.pt` ✓; record in `bench/big-init-transfer-gate.json` |
 | 5 | Bench 960/768 (big only, `--champion big-init.pt`) | §4 | **PASS 2026-08-27 — all six go/no-go gates** | (1) unit `Result=success`, guard `UNIT-EXITED`, no kill, no CUDA OOM; (2) cgroup `memory.peak` 37,718,990,848 B = **35.13 GiB** ≤ 38.00 (margin 2.87); (3) tree RSS peak 40,526,745,600 B = **37.74 GiB** ≤ 40.00 (margin 2.26; report's `host_peak_rss_bytes` 37.75 GiB agrees); (4) CUDA allocated **6.47 GiB** ≤ 20.00, reserved 7.49 GiB; (5) `truncated_matches` 0 / rate 0.0, `dealin_positive_rate` 0.0931 > 0, `rank_label_coverage` 1.0; (6) seeds 1,700,000–1,700,959 complete by construction (`env.reset(seed=base_seed + m)`, m = 0..959, and coverage 1.0 means every match reached a terminal result), rollout digest `980106e6…`, rows 1,966,232, **optimizer_steps 5,122 = 2 × ceil(1,966,232 / 768) = 2 × 2,561 exactly** (ragged tail correct), no monitoring gaps. `all_digests_equal` / `rows_and_labels_equal` true but non-load-bearing at one worker count. Throughput `matches_per_second` 0.29888, `update_seconds` 838.90 → **4,050.9 s/iteration (67.5 min); 200 iterations ≈ 810,180 s ≈ 9.4 days** for the big lap |
-| 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | running 2026-08-27 (`msscratch-control`) | iter 1 healthy: `lr_bc` 2e-05, `lr_heads` 2e-04 ✓, rows 653,728, `optimizer_steps` 5,108 = 2 × ceil(653,728 / 256) = 2 × 2,554 exactly ✓, `truncation_rate` 0.0, `dealin_positive_rate` 0.0922, `rank_label_coverage` 1.0; Amendment 4 telemetry live and the init gate passed (see above). 468 s/iter → ≈ 26 h |
-| 7 | Control recipe gate (iter-200 delta ≥ −0.0600) | §7 | not started | `fh-mj-compare` at iter 200 |
-| 8 | Big lap — 200 iters, 960/768, base seed 1,500,000 | §8 | not started | `history.json`, transfer-gate record, guard verdicts |
-| 9 | Selection + confirmation (1500 × 4 seats, seed 1,720,000) | §9 | not started | primary + secondary `fh-mj-compare` |
+| 6 | Control lap — 200 iters, 320/256, base seed 1,400,000 | §5 | done 2026-09-17 (paused at 101, resumed from 100 — registered operational deviation) | iter 1 healthy: `lr_bc` 2e-05, `lr_heads` 2e-04 ✓, rows 653,728, `optimizer_steps` 5,108 = 2 × ceil(653,728 / 256) = 2 × 2,554 exactly ✓, `truncation_rate` 0.0, `dealin_positive_rate` 0.0922, `rank_label_coverage` 1.0; Amendment 4 telemetry live and the init gate passed (see above). 468 s/iter → ≈ 26 h |
+| 7 | Control recipe gate (iter-200 delta ≥ −0.0600) | §7 | **FAILED 2026-09-17** (−0.0722) | `fh-mj-compare` at iter 200; see Screening — control arm |
+| 8 | Big lap — 200 iters, 960/768, base seed 1,500,000 | §8 | never run — not authorized | — |
+| 9 | Selection + confirmation (1500 × 4 seats, seed 1,720,000) | §9 | never run; window 1,720,000+ unspent | — |
 
 ## Screening comparator (generated once, reused for every screening of both arms)
 
@@ -181,35 +165,10 @@ current bridge. Delta = `fh-mj-compare mean_delta` (candidate − anchor).
 | 175 | **−0.0861** | ±0.0731 (sig. YES) | 0.0500 / 0.0458 | yes | gain **+0.0236 — sharp deceleration** from +0.0570; the tail flattening arrived. placement +0.3750; deal-in 0.1004 vs 0.1033. **All three secondaries now at parity**: 4th-share Δ +0.0021 [−0.0343, +0.0384], large-loss Δ +0.0042 [−0.0251, +0.0334], training-utility Δ −0.0630 [−0.1309, **+0.0048**] — the last of these crossed zero this interval. Only the primary remains behind. Tail gate FAIL. **Gate is marginal**: −0.0600 needs +0.0261 in the final 25 and the latest interval gave +0.0236, so the current rate extrapolates to −0.0625, a narrow miss |
 | 200 | **−0.0722** | ±0.0727 (**sig. NO**) | 0.0292 / 0.0458 | yes | **§7 recipe gate FAILS: −0.0722 < −0.0600, short by 0.0122. The big arm is NOT authorized.** Final gain +0.0139, continuing the deceleration (+0.0570 → +0.0236 → +0.0139). placement +0.3889 vs anchor +0.4611. The candidate is no longer statistically distinguishable from the anchor, and **two secondaries now favour the candidate**: large-loss Δ **−0.0167** [−0.0420, +0.0087] (0.0292 vs 0.0458) and 4th-share Δ **−0.0042** [−0.0398, +0.0315]; training-utility Δ −0.0475 [−0.1134, +0.0183]; deal-in 0.0969 vs 0.1033. The registered large-loss condition **passes**: 0.0292 <= comparator 0.0458 + 0.015 = 0.0608. `fh-mj-compare`'s composite tail gate reports FAIL on its primary leg; what fails is the control recipe gate, not the large-loss condition. The gate is a hard threshold on the point estimate and the point estimate misses; the ±0.0727 CI spans both −0.0600 and 0, so the miss is inside noise — that is material for the consult, not grounds to re-read the rule |
 
-## Screening — big arm
+## Big arm and confirmation
 
-Same window and comparator.
-
-| iteration | mean_delta | CI95 (clustered) | large_loss cand / anchor | telemetry healthy | notes |
-|---|---|---|---|---|---|
-| 25 | | | | | |
-| 50 | | | | | |
-| 75 | | | | | |
-| 100 | | | | | kill iff `delta100 − delta75 ≤ 0` and `delta100 < −0.20` |
-| 125 | | | | | |
-| 150 | | | | | |
-| 175 | | | | | |
-| 200 | | | | | |
-
-## Confirmation
-
-1500 paired seeds × 4 duplicate seats, `--start-seed 1720000`, one window, no reselection.
-Both gates required per claim: clustered CI95 lower bound > 0 AND
-`large_loss_rate(candidate) ≤ large_loss_rate(comparator) + 0.015`.
-
-| claim | candidate | comparator | mean_delta | CI95 | large_loss | verdict |
-|---|---|---|---|---|---|---|
-| primary (practical gate) | big iter_??? | anchor075 | | | | |
-| secondary (package) | big iter_??? | control iter_??? | | | | |
-
-## Open notes for the consult thread
-
-- (none)
+Never run. The protocol closed at the §7 gate; the confirmation window `--start-seed 1720000`
+was never inspected.
 
 ## Amendment 4 + Stage 3 ruling — lap telemetry prerequisite
 

@@ -8,7 +8,6 @@ conditions in the spec's closure paragraph. Do not start a parallel record.
 
 - **Spec** → [`../specs/2026-08-21-placement-reshape-design.md`](../specs/2026-08-21-placement-reshape-design.md)
 - **Context** → [`../specs/2026-08-21-placement-reshape-context.md`](../specs/2026-08-21-placement-reshape-context.md)
-- **Stage 0 plan** → [`../plans/20260822-placement-reshape-stage0.md`](../plans/20260822-placement-reshape-stage0.md)
 - **Branch** — `experiment/placement-reshape-10-5-1-n10` (merged)
 
 ## Why
@@ -71,16 +70,8 @@ symmetric "protect-top-half" variant `(10, 5, −5, −10)` was discussed and no
 Bonus wiring and parity tests, λ calibration tool (`fh-mj-placement-calibrate`), rank-share
 histogram and deal-in availability in `evaluate.py`, tail-metric eval gate keys.
 
-## Before any launch
-
-1. **Calibrate λ** — 320-match anchor075 collection, seeds 720000–720319. Return-scale
-   gates: RMS ≤ 1.35, p99 ≤ 1.50, critic MSE ≤ 2.00.
-2. **Read γ and λ_GAE from the ds960 archive.** The consult assumed 0.99/0.95; unverified.
-3. **Codex consult** on the calibration result, then explicit launch authorization.
-
-Comparator is anchor075. Run on the 4090 box in a fresh run directory — the ds960 archive
-at `/root/fh-mahjong-runs/data-scale-960/` is read-only. Trap: the generic Python pool
-wrapper drops `round_outcome`, so a naive pool switch silently corrupts aux training.
+Comparator was anchor075. Trap for any rerun: the generic Python pool wrapper drops
+`round_outcome`, so a naive pool switch silently corrupts aux training.
 
 ## Stage 0 box measurements (2026-08-25) — all gates green
 

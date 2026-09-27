@@ -1,6 +1,6 @@
 # Chongci RL Experiment Progress Note
 
-**Last updated: 2026-08-25.** Running notebook for the Fenghua Mahjong RL work. Append here
+**Last updated: 2026-09-26.** Running notebook for the Fenghua Mahjong RL work. Append here
 after every data-generation run, training run, evaluation gate, promotion, or rejection.
 
 Detailed 2026-03..06 offline-IQL experiments:
@@ -14,7 +14,10 @@ scheme, or first-divergence replay objective.
 reward (score/1000), `gamma=0.99`, `lr=2e-5`, entropy 0, 2 PPO epochs, 320 matches/iter,
 symmetric all-four self-play from a warm start.
 
-**Champion.** `chongci_b2b_anchor075_restart_iter075`.
+**Champion.** `chongci_b2b_anchor075_restart_iter075` — the research champion every lap is
+measured against. Production still serves deep4 iter_275
+(`ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt`); the B2b line has not been
+promoted to serving.
 
 ```text
 box:     /root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt
@@ -35,12 +38,16 @@ or RL ceiling. Four confirmations against restart-iter075:
 | data-scale-960/mb768 | +0.0175, CI95 [−0.0010, +0.0360] | null; protocol closed |
 
 Training reopens only for new information, a genuinely different objective, or
-evidence-backed auxiliary changes. Champion promotion (shadow → canary → frozen-SHA switch)
-and production paipu provenance rank ahead of any new lap.
+evidence-backed auxiliary changes. Two later laps under that rule also failed to beat the
+champion:
 
-**Open thread.** Placement-reshape — additive terminal rank bonus `(10,5,1,−10)`. Stage 0
-merged (PR #220); training not authorized. See
-[`placement-reshape-experiment.md`](./placement-reshape-experiment.md).
+| Lap | Result |
+|---|---|
+| placement-reshape (objective change) | Stage 1 NULL 2026-08-27 — no milestone reduced 4th-place share; no confirmation run |
+| mortal-scale-scratch (BC→PPO from scratch) | control recipe gate FAILED 2026-09-17 (−0.0722 vs ≥ −0.0600); 192×24 arm never launched, so scale is untested |
+
+**Open threads.** None authorized. The batched B2b collector (PR #242) is merged but the
+trainer default stays `process` until a post-lap authorization.
 
 ## Design Commitments
 
@@ -1010,6 +1017,27 @@ Scale-campaign scoreboard vs restart-iter075: restart ladder r2 null; deep16
 ReZero recruitment null; gru-width unconfirmed near-miss. Champion line stands:
 iter275 → iter_075 (+0.041) → restart-iter075 (+0.025), promotion in progress.
 Next decision (consult): aux-weight ablation vs concluding recipe saturation.
+
+### 2026-08-27 — placement-reshape: Stage 1 NULL
+
+Run:            `/root/fh-mahjong-runs/placement-reshape/`, 150/150 iterations, zero truncations
+Screenings:     4th-share delta never ≤ −0.005 (iter 25..150: +0.002..+0.050); kill rule not triggered
+Selection:      no eligible milestone
+Confirmation:   not run; window 1300000–1301499 unspent
+Decision:       rejected — anchor075 remains champion; branch closed
+Interpretation: the asymmetric terminal bonus at the calibrated λ did not produce tail-safer play in
+                150 iterations. Record: [`placement-reshape-experiment.md`](./placement-reshape-experiment.md),
+                spec "Stage 1 outcome".
+
+### 2026-09-17 — mortal-scale-scratch: control recipe gate FAILED
+
+Run:            `/root/fh-mahjong-runs/mortal-scale-scratch/control/`, 200 iterations, one `run_id`
+Screenings:     from-scratch 96×4 ReZero BC→PPO climbed −0.4250 → −0.0722 vs anchor075
+Selection:      iter_200 against the registered `≥ −0.0600` gate — failed by 0.0122
+Confirmation:   not run (window 1720000+ unspent)
+Decision:       protocol closed; the 192×24 big arm was never launched
+Interpretation: a recipe-gate failure, not a scale NULL. The event path engaged (no dormancy).
+                Record: [`20260825-mortal-scale-scratch-status.md`](./20260825-mortal-scale-scratch-status.md).
 
 ## Maintenance Protocol
 

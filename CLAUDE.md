@@ -4,7 +4,7 @@
 
 ## Overview
 
-This project implements a full-stack Mahjong game with a plugin-based ruleset architecture. The Go backend drives the game state machine and scoring engine; the React/TypeScript frontend renders the tabletop UI; Protocol Buffers serialize all game state across languages. The architecture supports future RL AI training via WASM and c-shared compilation targets.
+This project implements a full-stack Mahjong game with a plugin-based ruleset architecture. The Go backend drives the game state machine and scoring engine; the React/TypeScript frontend renders the tabletop UI; Protocol Buffers serialize all game state across languages. The same Go core compiles as a `c-shared` library that the Python RL stack (`ai/`) trains against.
 
 ## Tech Stack
 
@@ -18,7 +18,7 @@ This project implements a full-stack Mahjong game with a plugin-based ruleset ar
 | Frontend | React 19, TypeScript, Vite 7 |
 | Styling | TailwindCSS 4 |
 | Animation | Framer Motion 12 |
-| Client Validation | Go → WASM + protobufjs |
+| Client Protobuf | protobufjs |
 
 ## Module Map
 
@@ -30,15 +30,15 @@ fh-mahjong/
 │   ├── engine/     Game state machine + RuleEngine interface
 │   ├── rules/      Fenghua ruleset plugin (scoring, hand eval)
 │   ├── api/        REST API + WebSocket server
-│   ├── storage/    GORM database models (User, Match)
-│   ├── bot/        Deterministic heuristic bot policies for empty seats, CLI play, and RL bootstrapping
+│   ├── storage/    GORM models (users, sessions, matches, paipu, reviews) and migrations
+│   ├── bot/        Deterministic heuristic bot + policy interfaces for empty seats, cmd/play, and RL
 │   │   └── remote/ HTTP client driving an external Python policy server as a bot seat
 │   ├── rl/         Deterministic RL environment wrapper, observation encoder, and action catalog
 │   ├── review/     Paipu → decision reconstruction → champion policy critique (post-game review)
-│   └── tiles/      Shared low-level tile helpers (keying, cloning) used across engine/rules/bot/rl
+│   └── tiles/      Shared low-level tile helpers (keying, indexing, wilds, cloning); never imported by engine
 ├── cmd/
 │   ├── server/     Production HTTP server entry point
-│   ├── cli/        CLI debugging tool
+│   ├── play/       Interactive terminal match vs heuristic bots
 │   ├── wasm/       WebAssembly build target
 │   ├── rlbridge/   c-shared bridge entry point for Python RL
 │   ├── rlpaipu/    Debug CLI writing replay-viewer-compatible paipu JSON
@@ -47,21 +47,20 @@ fh-mahjong/
     └── src/
         ├── contexts/   Auth + Socket + Game state providers
         ├── features/   Feature folders owning their routes (auth, lobby, calc, shanten, replay, game, dev)
-        ├── table/      Shared tabletop presenter for live play and replay
+        ├── table/      Shared tabletop presenter for live play and replay (+ stage/ fixed-stage layout)
         ├── theme/      Rainy Mahjong Club design system (tokens, base CSS, primitives)
         ├── i18n/       English + Simplified Chinese resources and locale detection
-        ├── hooks/      Custom hooks (WASM loader, stage layout)
+        ├── hooks/      Unreferenced WASM loader hook
         ├── utils/      Tile utilities and the shared tile value-model
         └── proto/      Auto-generated JS/TS Protobuf bindings
 ├── docs/           Reference documentation (Fenghua rules, RL paper reports, refactoring notes)
-└── worklog/        Process record — design specs, implementation plans, runbooks, experiment logs
+└── worklog/        Process record — design specs, runbooks, experiment logs
 ```
 
-There is no `web/src/pages/` — route pages live inside `web/src/features/*` since the 2026-06-27 reorg.
+There is no `web/src/pages/` — route pages live inside `web/src/features/*`.
 
 `docs/` vs `worklog/`: `docs/` describes the product (how the system and the rules work);
-`worklog/` records the process (why a change was made and in what order). Process records
-moved out of `docs/superpowers/` on 2026-08-21 — see `worklog/CLAUDE.md`.
+`worklog/` records the process (why a change was made and in what order) — see `worklog/CLAUDE.md`.
 
 ## Key Files
 
@@ -69,13 +68,13 @@ moved out of `docs/superpowers/` on 2026-08-21 — see `worklog/CLAUDE.md`.
 |------|---------|
 | `proto/game.proto` | Single source of truth for all cross-language data structures |
 | `internal/engine/game.go` | `Game` struct — state machine driver for a single match |
-| `internal/engine/rules.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
+| `internal/engine/rule_engine.go` | `RuleEngine` interface — contract every ruleset plugin must satisfy |
 | `internal/rules/fh.go` | `FenghuaRuleset` — full Fenghua scoring and hand evaluation |
-| `internal/bot/heuristic.go` | Deterministic shanten-driven baseline bot used by CLI, empty seats, and RL bootstrapping |
+| `internal/bot/heuristic.go` | Deterministic shanten-driven baseline bot used by `cmd/play`, empty seats, and RL non-learning seats |
 | `internal/rl/env.go` | Deterministic reset/step wrapper that advances the Go engine to the next RL decision point |
 | `internal/rl/action.go` | Fixed 204-action catalog and Go action encoder/decoder for RL |
-| `cmd/rlbridge/main.go` | c-shared bridge exposing protobuf-based `reset`, `step`, and heuristic trajectory export |
-| `ai/src/fh_mahjong_ai/model.py` | Python PyTorch policy/value network scaffold for RL training |
+| `cmd/rlbridge/main.go` | c-shared bridge: env reset/step, batched env pool, test-time search pool, heuristic trajectory export |
+| `ai/src/fh_mahjong_ai/model.py` | PyTorch policy/value network (training and serving) |
 | `docs/rules/official-rules.md` | Raw source for Fenghua rules (canonical human-readable reference) |
 | `docs/rules/rules.md` | Synthesized rules + Go implementation design (bridge doc) |
 
@@ -83,14 +82,13 @@ moved out of `docs/superpowers/` on 2026-08-21 — see `worklog/CLAUDE.md`.
 
 1. **Plugin Ruleset**: `engine.Game` is ruleset-agnostic. Rulesets implement `RuleEngine` in `internal/rules/`. `internal/engine` must never import `internal/rules/`.
 2. **Protobuf-First**: All game state flows as Protobuf between Go backend, TypeScript frontend, and Python AI.
-3. **Double Validation**: Client predicts via WASM; server re-validates every action.
+3. **Server-authoritative**: the server computes each seat's legal actions (`PlayerState.valid_actions`) and re-validates every submitted action. `cmd/wasm` builds the ruleset for `GOOS=js GOARCH=wasm`, but the frontend does not load it.
 4. **Phase Lifecycle**: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END.
-5. **WASM for prediction**: Go core compiles to `GOOS=js GOARCH=wasm` for zero-latency client-side action validation.
-6. **c-shared for RL**: Same Go core compiles as `c-shared` library for Python training via `ctypes`/`cffi`.
+5. **c-shared for RL**: Same Go core compiles as `c-shared` library for Python training via `ctypes`.
 
 ## Shared Utilities
 
-- `docs/refactoring-notes.md` — shared `tiles` (Go) and `tileModel.ts` (web) modules; where the de-duplicated tile-key/index/clone logic now lives.
+- `docs/refactoring-notes.md` — where shared logic lives (Go `tiles`, web `tileModel.ts`, and the other de-duplicated helpers) and the look-alike code that must stay separate.
 
 ## Naming Conventions & Terminology
 
@@ -135,7 +133,7 @@ NOT as: `C1C2C3 D4D5D6 B7B8B9 H1H1H1 H2` (old notation — do not use)
 
 - `Suit`: `SUIT_SOU`=1, `SUIT_PIN`=2, `SUIT_MAN`=3, `SUIT_JIHAI`=4, `SUIT_FLOWER`=5 (proto constants — do not rename)
 - `Tile`: `{id uint32, suit Suit, value uint32, is_red bool}` — IDs 0-135 for standard tiles, 136-143 for flowers. **Tile id `0` is a real tile (the first 1s), never a sentinel** — optional tile-id fields must be proto `optional` so unset decodes as null
-- `ActionType`: `ACTION_DRAW`=1, `DISCARD`=2, `CHII`=3, `PON`=4, `KAN`=5, `TSUMO`=6, `RON`=7, `PASS`=8, `FLOWER_REVEAL`=9, `READY`=10, `ACCEPT_HAITEI`=11
+- `ActionType`: `ACTION_DRAW`=1, `DISCARD`=2, `CHII`=3, `PON`=4, `KAN`=5, `TSUMO`=6, `RON`=7, `PASS`=8, `FLOWER_REVEAL`=9, `READY`=10, `ACCEPT_HAITEI`=11, `REFUSE_HAITEI`=12
 - `GamePhase`: INIT → DEAL → PLAYER_TURN → WAIT_DISCARDS → ROUND_END, plus the terminal `PHASE_MATCH_END`
 - `GameState`: match_id, phase, active_player, players[4], wall_count, wild_tiles, prevailing_wind, round_result, player_ready
 - `PlayerState`: closed_hand, open_melds, discards, seat_wind, flower_melds, kong bonus flags
@@ -160,7 +158,7 @@ Note: the proto uses `ACTION_CHII`/`ACTION_PON`/`ACTION_KAN` — the same chii/p
    ```bash
    protoc --go_out=. --go_opt=paths=source_relative proto/game.proto
    ```
-2. **Interface before implementation**: If new ruleset capabilities are needed, update the `RuleEngine` interface in `internal/engine/rules.go` first, then implement in `internal/rules/fh.go`.
+2. **Interface before implementation**: If new ruleset capabilities are needed, update the `RuleEngine` interface in `internal/engine/rule_engine.go` first, then implement in `internal/rules/fh.go`.
 3. **Test everything in the rules package**: Hand evaluation logic in `internal/rules/fh.go` must have a corresponding test case in `internal/rules/fh_test.go`.
 4. **State machine is ruleset-agnostic**: `internal/engine/game.go` must never import `internal/rules/`. All ruleset logic flows through the `RuleEngine` interface.
 5. **Run the CI gates before marking done.** `.github/workflows/ci.yml` hard-fails on any of these:
@@ -229,13 +227,13 @@ uv run --project ai <command>
 
 Default local development split:
 - Frontend app: `http://localhost:3000`
-- Calculator page: `http://localhost:3000/calc`
-- Example table route: `http://localhost:3000/table/test-room`
+- Calculator page: `http://localhost:3000/tools/calc`
+- Private room: `http://localhost:3000/room/new`
 - Backend API: `http://localhost:8080/api/v1`
 
 Notes:
 - Vite proxies `/api` and WebSocket traffic from `:3000` to the Go backend on `:8080`.
-- `GET /api/v1/calc` in a browser will return 404 because the calculator endpoint is `POST`-only.
+- `GET /api/v1/tools/calc` in a browser returns 404; the calculator endpoint is `POST`-only.
 - For single-service production deploys, build `web/dist` first; `web/embed.go` embeds it and the Go server serves that SPA for non-API routes. Production deploys on Zeabur build via the root `Dockerfile` (there is no `zeabur.json`).
 
 ## Module

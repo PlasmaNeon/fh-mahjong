@@ -16,10 +16,8 @@ the `game` namespace, e.g. `game.Suit`, `game.ActionType`, `game.MeldDirection`.
 - **game.d.ts** — TypeScript type declarations for all Protobuf messages and enums
   - `GameState` bindings include round debug fields such as `dice_sum`, `wangpai_stacks`, plus per-die values and live `wangpai_tiles_left`
 
-> Two earlier bindings were removed (2026-06): a ts-proto `game.ts` (only ever
-> imported for enums, and it drifted out of sync — missing `Meld.added_tile_id`)
-> and a protobufjs CommonJS `game_cjs.js` (imported nowhere). Do not reintroduce
-> a second generator; keep one source of truth.
+Keep exactly one generator. A second binding (ts-proto, CommonJS) drifts out of sync with
+the schema.
 
 ## Regeneration
 

@@ -45,3 +45,8 @@ exhausted tiles while the calc palette dims the selected tile but stays clickabl
 badge, exhausted tiles dimmed and disabled).
 
 Tool pages must not re-implement these — extend the primitives instead.
+
+## InputApplyRow.tsx
+
+`InputApplyRow` — the `.ldg-input-row` text input plus Apply button used by the calc and shanten
+notation fields. Covered by `InputApplyRow.test.ts`.

@@ -2,7 +2,7 @@
 
 > The Python RL package. Documentation for this tree lives two levels up.
 
-- **[`ai/CLAUDE.md`](../../CLAUDE.md)** — commands (all 43 `fh-mj-*` CLIs), architecture, and the cross-cutting gotchas. Read this first.
+- **[`ai/CLAUDE.md`](../../CLAUDE.md)** — commands (all 45 `fh-mj-*` CLIs), architecture, and the cross-cutting gotchas. Read this first.
 - **[`ai/MODULES.md`](../../MODULES.md)** — per-module reference for every file in this directory and `scripts/`.
 
 ## Where to write changes
