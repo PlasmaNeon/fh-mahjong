@@ -71,39 +71,42 @@ def test_assembly_parts_are_contiguous_per_match_arrays(monkeypatch):
     assert batch.planes.shape[0] == batch.actions.shape[0] > 0
 
 
+
 class _FakeLibc:
     def __init__(self):
-        self.calls = []
+        self.trims = 0
 
-    def mallopt(self, param, value):
-        self.calls.append((param, value))
+    def malloc_trim(self, pad):
+        assert pad == 0
+        self.trims += 1
         return 1
 
 
-def test_mmap_threshold_pin_is_a_noop_off_linux(monkeypatch):
-    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
+def test_release_freed_heap_is_a_noop_off_linux(monkeypatch):
+    monkeypatch.setattr(batched_b2b_module, "_libc", None)
     monkeypatch.setattr(batched_b2b_module.sys, "platform", "darwin")
     called = []
     monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", lambda name: called.append(name))
-    assert batched_b2b_module.pin_malloc_mmap_threshold() is False
+    assert batched_b2b_module.release_freed_heap() is False
     assert called == []
 
 
-def test_mmap_threshold_pin_calls_mallopt_once_on_linux(monkeypatch):
-    fake = _FakeLibc()
-    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
-    monkeypatch.setattr(batched_b2b_module.sys, "platform", "linux")
-    monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", lambda name: fake)
-    assert batched_b2b_module.pin_malloc_mmap_threshold() is True
-    assert batched_b2b_module.pin_malloc_mmap_threshold() is True
-    assert fake.calls == [(-3, 128 * 1024)]
-
-
-def test_mmap_threshold_pin_survives_missing_glibc(monkeypatch):
+def test_release_freed_heap_survives_missing_glibc(monkeypatch):
     def no_libc(name):
         raise OSError("not glibc")
 
-    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
+    monkeypatch.setattr(batched_b2b_module, "_libc", None)
     monkeypatch.setattr(batched_b2b_module.sys, "platform", "linux")
     monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", no_libc)
-    assert batched_b2b_module.pin_malloc_mmap_threshold() is False
+    assert batched_b2b_module.release_freed_heap() is False
+
+
+def test_concat_trims_the_heap_while_releasing_parts(monkeypatch):
+    fake = _FakeLibc()
+    monkeypatch.setattr(batched_b2b_module, "_libc", fake)
+    monkeypatch.setattr(batched_b2b_module.sys, "platform", "linux")
+    monkeypatch.setattr(batched_b2b_module, "_TRIM_EVERY_BYTES", 100)
+    parts = [np.zeros((10, 3), dtype=np.float32) for _ in range(5)]  # 120 bytes each
+    out = _concat_releasing(parts, np.float32)
+    assert out.shape == (50, 3)
+    assert fake.trims == 6  # once per part past 100 bytes, plus once at the end

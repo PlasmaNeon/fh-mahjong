@@ -222,38 +222,33 @@ _PHASE_TIMER_NOTE = (
     "inflated by work that is not what its name says.")
 
 
-# glibc M_MMAP_THRESHOLD (mallopt param -3) and the value it is pinned to.
-_M_MMAP_THRESHOLD = -3
-_MMAP_THRESHOLD_BYTES = 128 * 1024
-_mmap_threshold_pinned = False
+# Bytes released between malloc_trim calls while assembling a batch.
+_TRIM_EVERY_BYTES = 1 << 30
+_libc = None
 
 
-def pin_malloc_mmap_threshold() -> bool:
-    """Pin glibc's mmap threshold so freed collection arrays return to the OS.
+def release_freed_heap() -> bool:
+    """Return freed heap pages to the OS (glibc ``malloc_trim(0)``).
 
     glibc raises its mmap threshold to the size of each mmapped chunk it frees
-    (up to 32 MiB). After one collection frees its per-match arrays, the next
-    collection's arrays come from the brk heap, and releasing them during
-    assembly no longer returns memory: the 960-match 192x24 bench assembled
-    cleanly on its first cycle and doubled past the 38 GiB guard on its second.
-    A fixed threshold disables the adjustment, exactly like
-    ``MALLOC_MMAP_THRESHOLD_=131072`` in the environment. Process-wide and
-    idempotent; a no-op off Linux/glibc. Returns whether the threshold is pinned.
+    (up to 32 MiB), so after one collection frees its per-match arrays, the
+    next collection's arrays come from the brk heap. Releasing those during
+    assembly returns nothing to the OS by itself: the 960-match 192x24 bench
+    assembled cleanly on its first cycle and doubled past the 38 GiB guard on
+    its second. ``malloc_trim`` hands the freed pages back without changing
+    where allocations come from. Pinning the threshold instead cost ~9 s per
+    320-match collection in page faults on every per-round array. A no-op off
+    Linux/glibc; returns whether memory was trimmed.
     """
-    global _mmap_threshold_pinned
-    if _mmap_threshold_pinned:
-        return True
+    global _libc
     if not sys.platform.startswith("linux"):
         return False
     try:
-        libc = ctypes.CDLL("libc.so.6")
-        ok = libc.mallopt(_M_MMAP_THRESHOLD, _MMAP_THRESHOLD_BYTES) == 1
+        if _libc is None:
+            _libc = ctypes.CDLL("libc.so.6")
+        return bool(_libc.malloc_trim(0))
     except (OSError, AttributeError):
         return False
-    if ok:
-        _mmap_threshold_pinned = True
-        logger.info("pinned glibc M_MMAP_THRESHOLD at %d bytes", _MMAP_THRESHOLD_BYTES)
-    return ok
 
 
 # Row keys whose per-decision entries are arrays (the rest are scalars).
@@ -267,17 +262,24 @@ def _concat_releasing(parts: list, dtype) -> np.ndarray:
     concatenate holds every part and the full output at once, doubling resident
     memory at assembly (a 960-match 192x24 batch went from ~21 GiB to past the
     38 GiB guard and was killed). Filling a preallocated output and dropping each
-    part as it is copied keeps the peak at about one copy plus a match; the bytes
-    are identical. Empties ``parts``.
+    part as it is copied, trimming the heap every ``_TRIM_EVERY_BYTES``, keeps
+    the peak at about one copy plus a gigabyte; the bytes are identical.
+    Empties ``parts``.
     """
     total = sum(len(part) for part in parts)
     out = np.empty((total,) + parts[0].shape[1:], dtype=dtype)
     start = 0
+    released = 0
     for i, part in enumerate(parts):
         out[start:start + len(part)] = part
         start += len(part)
+        released += part.nbytes
         parts[i] = None
+        if released >= _TRIM_EVERY_BYTES:
+            release_freed_heap()
+            released = 0
     parts.clear()
+    release_freed_heap()
     return out
 
 
@@ -305,7 +307,6 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     check under sampling, because sampled digests are not comparable across
     slot counts). `skipped_matches` counts matches that ended at reset and so
     emitted neither rows nor telemetry."""
-    pin_malloc_mmap_threshold()
     # cuDNN autotuning: the per-round batch size drifts (1..slots), and the
     # heuristic algorithm choice for these small (H=42, W=1) convolutions is
     # ~1.8x slower than the tuned one at production batch sizes. Each new batch
