@@ -67,4 +67,7 @@ update autotune pick algorithms by timing.
   history rows; iteration 6 steps 1,962,410, `optimizer_steps` 5,112 = 2 × ceil(1,962,410 / 768), zero
   truncations, label coverage 1.0, approx-KL 0.00101 / entropy 0.0844 / value loss 0.0155, all inside
   iterations 1–5. Iteration 6 ran 6.5 min including restart.
+- `2026-09-27 02:32` — mortal-scale-scratch — **paused after the iteration-10 `train_state`** for the speed-up
+  session's threaded-pool timing (active only at pipeline groups > 1; this lap runs groups = 1, so nothing
+  to adopt). Iterations 7–10 ran 6.4 min each on `cabaabc`.
 - `—` — (add next event here)
