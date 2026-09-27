@@ -570,6 +570,9 @@ class _GraphedStep:
                     p.grad = None
                 loss, _ = step_losses(inputs)
                 loss.backward()
+                # Drop the autograd graph so its AccumulateGrad nodes, which
+                # remember the stream they were created on, are not reused later.
+                del loss
         torch.cuda.current_stream().wait_stream(side)
         for p in params:
             p.grad = None
@@ -577,6 +580,7 @@ class _GraphedStep:
         with torch.cuda.graph(self.graph):
             loss, self.metrics = step_losses(inputs)
             loss.backward()
+        del loss
 
     def run(self, mb: dict) -> torch.Tensor:
         for key, static in self.static.items():
