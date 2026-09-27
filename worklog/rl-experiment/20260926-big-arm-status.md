@@ -58,4 +58,7 @@ update autotune pick algorithms by timing.
   speed-up session measured the CUDA-graphed training step at 45.6 vs 46.5 ms/step on this recipe (2%, the
   update is GPU-bound at 192×24), so the lap does not wait for it. A bf16 trunk measured 25.0 ms/step, but it
   changes precision, so it is outside the mid-run adoption bar and is not for this lap.
+- `2026-09-27 01:52` — mortal-scale-scratch — **paused after the iteration-5 `train_state`** for the speed-up
+  session's collector/bf16 timing window (user directive). Iterations 2–5 ran 7.3 min each on `2e9ae54`,
+  on projection. `pause-at-save.sh` stops the unit when `train_state.pt` changes, so nothing is recomputed.
 - `—` — (add next event here)
