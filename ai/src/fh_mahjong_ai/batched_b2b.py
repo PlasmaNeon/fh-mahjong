@@ -12,7 +12,9 @@ process collector; each round's log-probabilities come from
 """
 from __future__ import annotations
 
+import ctypes
 import logging
+import sys
 import time
 from dataclasses import replace
 from typing import Optional
@@ -220,6 +222,40 @@ _PHASE_TIMER_NOTE = (
     "inflated by work that is not what its name says.")
 
 
+# glibc M_MMAP_THRESHOLD (mallopt param -3) and the value it is pinned to.
+_M_MMAP_THRESHOLD = -3
+_MMAP_THRESHOLD_BYTES = 128 * 1024
+_mmap_threshold_pinned = False
+
+
+def pin_malloc_mmap_threshold() -> bool:
+    """Pin glibc's mmap threshold so freed collection arrays return to the OS.
+
+    glibc raises its mmap threshold to the size of each mmapped chunk it frees
+    (up to 32 MiB). After one collection frees its per-match arrays, the next
+    collection's arrays come from the brk heap, and releasing them during
+    assembly no longer returns memory: the 960-match 192x24 bench assembled
+    cleanly on its first cycle and doubled past the 38 GiB guard on its second.
+    A fixed threshold disables the adjustment, exactly like
+    ``MALLOC_MMAP_THRESHOLD_=131072`` in the environment. Process-wide and
+    idempotent; a no-op off Linux/glibc. Returns whether the threshold is pinned.
+    """
+    global _mmap_threshold_pinned
+    if _mmap_threshold_pinned:
+        return True
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        ok = libc.mallopt(_M_MMAP_THRESHOLD, _MMAP_THRESHOLD_BYTES) == 1
+    except (OSError, AttributeError):
+        return False
+    if ok:
+        _mmap_threshold_pinned = True
+        logger.info("pinned glibc M_MMAP_THRESHOLD at %d bytes", _MMAP_THRESHOLD_BYTES)
+    return ok
+
+
 # Row keys whose per-decision entries are arrays (the rest are scalars).
 _ARRAY_ROW_KEYS = frozenset({"planes", "scalars", "masks", "events"})
 
@@ -269,6 +305,7 @@ def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     check under sampling, because sampled digests are not comparable across
     slot counts). `skipped_matches` counts matches that ended at reset and so
     emitted neither rows nor telemetry."""
+    pin_malloc_mmap_threshold()
     # cuDNN autotuning: the per-round batch size drifts (1..slots), and the
     # heuristic algorithm choice for these small (H=42, W=1) convolutions is
     # ~1.8x slower than the tuned one at production batch sizes. Each new batch

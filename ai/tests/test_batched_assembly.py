@@ -69,3 +69,41 @@ def test_assembly_parts_are_contiguous_per_match_arrays(monkeypatch):
     assert len(seen) == 4, seen
     assert all(n == 3 and owned for n, owned in seen.values()), seen
     assert batch.planes.shape[0] == batch.actions.shape[0] > 0
+
+
+class _FakeLibc:
+    def __init__(self):
+        self.calls = []
+
+    def mallopt(self, param, value):
+        self.calls.append((param, value))
+        return 1
+
+
+def test_mmap_threshold_pin_is_a_noop_off_linux(monkeypatch):
+    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
+    monkeypatch.setattr(batched_b2b_module.sys, "platform", "darwin")
+    called = []
+    monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", lambda name: called.append(name))
+    assert batched_b2b_module.pin_malloc_mmap_threshold() is False
+    assert called == []
+
+
+def test_mmap_threshold_pin_calls_mallopt_once_on_linux(monkeypatch):
+    fake = _FakeLibc()
+    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
+    monkeypatch.setattr(batched_b2b_module.sys, "platform", "linux")
+    monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", lambda name: fake)
+    assert batched_b2b_module.pin_malloc_mmap_threshold() is True
+    assert batched_b2b_module.pin_malloc_mmap_threshold() is True
+    assert fake.calls == [(-3, 128 * 1024)]
+
+
+def test_mmap_threshold_pin_survives_missing_glibc(monkeypatch):
+    def no_libc(name):
+        raise OSError("not glibc")
+
+    monkeypatch.setattr(batched_b2b_module, "_mmap_threshold_pinned", False)
+    monkeypatch.setattr(batched_b2b_module.sys, "platform", "linux")
+    monkeypatch.setattr(batched_b2b_module.ctypes, "CDLL", no_libc)
+    assert batched_b2b_module.pin_malloc_mmap_threshold() is False
