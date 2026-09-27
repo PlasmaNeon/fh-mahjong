@@ -130,7 +130,11 @@ def _update_array_digest(h, name: str, value) -> None:
     }
     _update_length_prefixed(
         h, json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode())
-    _update_length_prefixed(h, np.ascontiguousarray(array).tobytes())
+    # A byte view, not tobytes(): tobytes() copies the array, and on a 960-match
+    # 192x24 batch the planes copy alone added ~16 GiB to the bench's peak RSS
+    # (twice per cycle: digest and semantic digest). Same bytes, same digest.
+    flat = np.ascontiguousarray(array).reshape(-1)
+    _update_length_prefixed(h, memoryview(flat).cast("B") if flat.size else b"")
 
 
 # The two fields a batched forward may round differently depending on which

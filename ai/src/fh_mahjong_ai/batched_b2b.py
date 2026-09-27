@@ -12,7 +12,10 @@ process collector; each round's log-probabilities come from
 """
 from __future__ import annotations
 
+import ctypes
 import logging
+import mmap
+import sys
 import time
 from dataclasses import replace
 from typing import Optional
@@ -220,6 +223,99 @@ _PHASE_TIMER_NOTE = (
     "inflated by work that is not what its name says.")
 
 
+_libc = None
+
+
+def release_freed_heap() -> bool:
+    """Return freed heap pages to the OS (glibc ``malloc_trim(0)``).
+
+    Per-round arrays are a few MB and glibc raises its mmap threshold to the
+    size of each mmapped chunk it frees, so after the first rounds they come
+    from the brk heap, and freeing them returns nothing to the OS. Called once
+    a collection has emitted every match, so the heap high-water mark of
+    pinned rounds does not stay resident through the update. Pinning the
+    threshold instead cost ~9 s per 320-match collection in page faults. A
+    no-op off Linux/glibc; returns whether memory was trimmed.
+    """
+    global _libc
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        if _libc is None:
+            _libc = ctypes.CDLL("libc.so.6")
+        return bool(_libc.malloc_trim(0))
+    except (OSError, AttributeError):
+        return False
+
+
+# Row keys whose per-decision entries are arrays, and the batch dtype of each.
+_ARRAY_ROW_DTYPES = {"planes": np.float32, "scalars": np.float32,
+                     "masks": np.int8, "events": np.uint32}
+
+
+def _lazy_empty(shape: tuple, dtype) -> np.ndarray:
+    """An uninitialized array whose pages are committed only when written.
+
+    On Linux it is an anonymous ``MAP_NORESERVE`` mapping, so an upper-bound
+    size far beyond what gets written is not refused by the default overcommit
+    heuristic (which rejects a single allocation larger than RAM plus swap).
+    Elsewhere it is ``np.empty``, which is also lazily committed for large sizes.
+    The mapping is unmapped when the last view of the array is released.
+    """
+    dtype = np.dtype(dtype)
+    nbytes = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+    noreserve = getattr(mmap, "MAP_NORESERVE", None)
+    anonymous = getattr(mmap, "MAP_ANONYMOUS", None)
+    if nbytes == 0 or noreserve is None or anonymous is None:
+        return np.empty(shape, dtype=dtype)
+    try:
+        buf = mmap.mmap(-1, nbytes, flags=mmap.MAP_PRIVATE | anonymous | noreserve)
+    except (OSError, ValueError):
+        # Strict overcommit (vm.overcommit_memory=2) ignores MAP_NORESERVE and
+        # can refuse the reservation; np.empty is the same request by another route.
+        return np.empty(shape, dtype=dtype)
+    return np.frombuffer(buf, dtype=dtype).reshape(shape)
+
+
+class _ArrayRowSink:
+    """Batch buffers that each emitted match is written into once, at its final offset.
+
+    Sized to the hard upper bound (``capacity`` rows = matches x the per-match
+    step cap) but committed lazily (``_lazy_empty``), so resident memory is the
+    rows actually written. Writing at emission releases a
+    match's row views as it goes, so a round array is freed once every match
+    holding one of its rows has been emitted, and the batch is built with a
+    single copy. Stacking all views at the end instead held the rows and the
+    batch at once: a 960-match 192x24 collection went from ~21 GiB to past the
+    38 GiB guard at assembly.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = int(capacity)
+        self.rows = 0
+        self.buffers: dict[str, np.ndarray] = {}
+
+    def write(self, match_rows: dict[str, list]) -> None:
+        n = len(match_rows["actions"])
+        if n == 0:
+            return
+        if self.rows + n > self.capacity:
+            raise RuntimeError(f"batched B2b rows exceed the sink capacity "
+                               f"({self.rows} + {n} > {self.capacity})")
+        for key, dtype in _ARRAY_ROW_DTYPES.items():
+            rows = match_rows[key]
+            if len(rows) != n:
+                raise RuntimeError(f"match has {len(rows)} {key} rows but {n} actions")
+            if key not in self.buffers:
+                self.buffers[key] = _lazy_empty((self.capacity,) + np.shape(rows[0]), dtype)
+            np.stack(rows, out=self.buffers[key][self.rows:self.rows + n])
+        self.rows += n
+
+    def arrays(self) -> dict[str, np.ndarray]:
+        """The written prefix of each buffer (C-contiguous views)."""
+        return {key: buf[:self.rows] for key, buf in self.buffers.items()}
+
+
 def collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                                  config: PPOConfig, base_seed: int, pool,
                                  inference_mode: str = "batched",
@@ -307,7 +403,9 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     completed: dict[int, _SlotMatch] = {}
     next_match = 0
     emit_next = 0
-    rows_l: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS}
+    rows_l: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS if key not in _ARRAY_ROW_DTYPES}
+    # A match emits at most one row per step, so matches x step cap bounds the batch.
+    sink = _ArrayRowSink(total * int(config.max_steps_per_episode))
     match_telemetry: list[dict] = []
     truncated_matches = 0
     completed_matches = 0
@@ -328,8 +426,10 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             if sm.skipped:
                 skipped_matches += 1
                 continue
+            sink.write(sm.rows)
             for key in _B2B_ROW_KEYS:
-                rows_l[key].extend(sm.rows[key])
+                if key not in _ARRAY_ROW_DTYPES:
+                    rows_l[key].extend(sm.rows[key])
             match_rows.append((sm.seed, len(sm.rows["actions"])))
             match_telemetry.append(sm.telemetry)
 
@@ -387,6 +487,7 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 else:
                     completed_matches += 1
                 sm.rows, sm.telemetry = _finalize_b2b_match(ms, config, cfg, sm.seed)
+                sm.state = None
                 completed[sm.match_index] = sm
                 continue
             if not meta.has_observation:
@@ -397,8 +498,10 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             continue
 
         # ONE writable copy of the round's live rows per array; every decision
-        # keeps views into these (all rows live until the final RolloutBatch
-        # stack anyway, so views retain nothing a per-row copy would not).
+        # keeps views into these until its match is emitted into the sink, so a
+        # round array is freed once every match holding one of its rows has been
+        # emitted. (A match still running pins every round it was live in either
+        # way: it makes a decision in each.)
         # Event rows are the pool's (rows, window) grid: newest events
         # oldest-first, zero-padded, with the kept count alongside.
         idx = np.fromiter((entry[3] for entry in live), dtype=np.int64, count=len(live))
@@ -519,17 +622,19 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                            })
     if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts_batched produced no decisions")
+    release_freed_heap()
+    arrays = sink.arrays()
     return RolloutBatch(
-        planes=np.stack(rows_l["planes"]).astype(np.float32, copy=False),
-        scalars=np.stack(rows_l["scalars"]).astype(np.float32, copy=False),
-        action_mask=np.stack(rows_l["masks"]).astype(np.int8, copy=False),
+        planes=arrays["planes"],
+        scalars=arrays["scalars"],
+        action_mask=arrays["masks"],
         actions=np.asarray(rows_l["actions"], dtype=np.int64),
         old_logprobs=np.asarray(rows_l["logprobs"], dtype=np.float32),
         values=np.asarray(rows_l["values"], dtype=np.float32),
         rewards=np.asarray(rows_l["rewards"], dtype=np.float32),
         dones=np.asarray(rows_l["dones"], dtype=np.float32),
         truncated_matches=truncated_matches,
-        events=np.stack(rows_l["events"]).astype(np.uint32, copy=False),
+        events=arrays["events"],
         event_lengths=np.asarray(rows_l["lengths"], dtype=np.int32),
         dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
         rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
