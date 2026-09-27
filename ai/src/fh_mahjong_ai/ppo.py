@@ -395,17 +395,22 @@ def ppo_update(
     # single-slice sample that cannot be compared across batch scales
     # (data-scale-960 Stage 0 prerequisite). `optimizer_steps` counts every
     # optimizer.step() taken, i.e. ppo_epochs * ceil(n / minibatch_size).
-    metric_totals: dict[str, float] = {}
+    # The totals stay on the device (float64) and are read once at the end: a
+    # per-step .item() stalls the host every minibatch, idling the GPU while
+    # the next minibatch is gathered and launched.
+    metric_totals: dict[str, torch.Tensor] = {}
     rows_seen = 0
     optimizer_steps = 0
     model.train()
     for _ in range(config.ppo_epochs):
         perm = torch.randperm(n, device=device)
+        # One device->host copy per epoch instead of a sync per minibatch.
+        perm_h = perm.cpu() if host_transfer else None
         for start in range(0, n, config.minibatch_size):
             idx = perm[start : start + config.minibatch_size]
             mb_lengths = lengths_t[idx] if lengths_t is not None else None
             if host_transfer:
-                idx_h = idx.cpu()
+                idx_h = perm_h[start : start + config.minibatch_size]
                 mb_planes = planes_h.index_select(0, idx_h).to(device)
                 mb_scalars = scalars_h.index_select(0, idx_h).to(device)
                 mb_mask = action_mask_h.index_select(0, idx_h).to(device)
@@ -417,8 +422,16 @@ def ppo_update(
                 mb_scalars = scalars[idx]
                 mb_mask = action_mask[idx]
                 mb_events = events_t[idx] if events_t is not None else None
-            masked_logits, value = model(mb_planes, mb_scalars, mb_mask,
-                                         events=mb_events, event_lengths=mb_lengths)
+            if has_aux:
+                # Encode ONCE for the policy/value heads and the aux heads. The
+                # net has no dropout or batch norm, so a second encode would
+                # recompute the same features and double the trunk's forward and
+                # backward.
+                features = model.encode(mb_planes, mb_scalars, mb_events, mb_lengths)
+                masked_logits, value = model.policy_value(features, mb_planes, mb_mask)
+            else:
+                masked_logits, value = model(mb_planes, mb_scalars, mb_mask,
+                                             events=mb_events, event_lengths=mb_lengths)
             dist = masked_policy_distribution(masked_logits)
             new_logprobs = dist.log_prob(actions[idx])
             ratio = torch.exp(new_logprobs - old_logprobs[idx])
@@ -438,23 +451,25 @@ def ppo_update(
                 # comparison, so the result is byte-identical either way).
                 mb_belief = (belief_target[idx] if belief_target is not None
                              else (mb_planes[:, 39:51] > 0).float().squeeze(-1))
-                features = model.encode(mb_planes, mb_scalars, mb_events, mb_lengths)
                 aux = model.aux_predictions(features)
                 belief_loss = torch.nn.functional.binary_cross_entropy_with_logits(
                     aux["belief"], mb_belief)
                 dealin_loss = torch.nn.functional.binary_cross_entropy_with_logits(
                     aux["dealin"], dealin_t[idx])
-                rank_mask = rank_t[idx] >= 0
-                if rank_mask.any():
-                    rank_loss = torch.nn.functional.cross_entropy(
-                        aux["rank"][rank_mask], rank_t[idx][rank_mask])
-                else:
-                    rank_loss = torch.zeros((), device=device)
+                # Mean over labelled rows (rank >= 0), 0 when there are none. A
+                # masked sum, not boolean indexing: indexing's data-dependent
+                # shape would sync the host every minibatch.
+                mb_rank = rank_t[idx]
+                labelled = mb_rank >= 0
+                rank_ce = torch.nn.functional.cross_entropy(
+                    aux["rank"], mb_rank.clamp(min=0), reduction="none")
+                rank_loss = ((rank_ce * labelled).sum()
+                             / labelled.sum().clamp(min=1).to(rank_ce.dtype))
                 loss = loss + AUX_LOSS_WEIGHT * (belief_loss + dealin_loss + rank_loss)
                 aux_metrics = {
-                    "belief_loss": float(belief_loss.item()),
-                    "dealin_loss": float(dealin_loss.item()),
-                    "rank_loss": float(rank_loss.item()),
+                    "belief_loss": belief_loss,
+                    "dealin_loss": dealin_loss,
+                    "rank_loss": rank_loss,
                 }
 
             optimizer.zero_grad()
@@ -465,21 +480,23 @@ def ppo_update(
             with torch.no_grad():
                 approx_kl = (old_logprobs[idx] - new_logprobs).mean()
                 clip_fraction = (torch.abs(ratio - 1.0) > config.clip_eps).float().mean()
-            step_metrics = {
-                "policy_loss": float(policy_loss.item()),
-                "value_loss": float(value_loss.item()),
-                "entropy": float(entropy.item()),
-                "approx_kl": float(approx_kl.item()),
-                "clip_fraction": float(clip_fraction.item()),
-                **aux_metrics,
-            }
-            mb_rows = int(idx.shape[0])
+                step_metrics = {
+                    "policy_loss": policy_loss,
+                    "value_loss": value_loss,
+                    "entropy": entropy,
+                    "approx_kl": approx_kl,
+                    "clip_fraction": clip_fraction,
+                    **aux_metrics,
+                }
+                mb_rows = int(idx.shape[0])
+                for key, metric in step_metrics.items():
+                    weighted = metric.detach().to(torch.float64) * mb_rows
+                    total = metric_totals.get(key)
+                    metric_totals[key] = weighted if total is None else total + weighted
             rows_seen += mb_rows
             optimizer_steps += 1
-            for key, value in step_metrics.items():
-                metric_totals[key] = metric_totals.get(key, 0.0) + value * mb_rows
     if rows_seen:
-        metrics = {key: total / rows_seen for key, total in metric_totals.items()}
+        metrics = {key: float(total.item()) / rows_seen for key, total in metric_totals.items()}
     else:  # ppo_epochs == 0: keep the historical zeroed shape
         metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
                    "approx_kl": 0.0, "clip_fraction": 0.0}
