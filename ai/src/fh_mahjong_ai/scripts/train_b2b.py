@@ -54,6 +54,13 @@ def main() -> None:
                         "therefore which actions get sampled. It is part of the lineage "
                         "and is rejected-on-change by --resume-from-state, like "
                         "--collector")
+    p.add_argument("--pool-pipeline-groups", type=int, default=PPOConfig.pool_pipeline_groups,
+                   help="--collector batched: split the slots into this many groups that "
+                        "take turns, so the env pool steps one group while the GPU runs "
+                        "another's forward. 1 (default) = one forward over every slot per "
+                        "round. Changes which rows share a forward, so like --pool-slots it "
+                        "is part of the lineage and rejected-on-change by "
+                        "--resume-from-state")
     p.add_argument("--trunk-dtype", choices=("float32", "bfloat16"), default="float32",
                    help="precision of the model's encoder (conv trunk, event GRU, trunk "
                         "MLP) in collection and the update; heads, losses and the optimizer "
@@ -229,6 +236,8 @@ def main() -> None:
                "(> 0) in one run -- these are two distinct warm-start surgeries and this "
                "CLI does not attempt to reconcile applying both to the same anchor in a "
                "single run")
+    if args.pool_pipeline_groups < 1:
+        p.error(f"--pool-pipeline-groups must be >= 1 (got {args.pool_pipeline_groups})")
     if args.pool_slots < 1:
         p.error(f"--pool-slots must be >= 1 (got {args.pool_slots})")
     num_workers = args.num_workers
@@ -246,6 +255,7 @@ def main() -> None:
                        num_workers=num_workers,
                        collector=args.collector, pool_slots=args.pool_slots,
                        trunk_dtype=args.trunk_dtype,
+                       pool_pipeline_groups=args.pool_pipeline_groups,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
                        minibatch_device_transfer=args.minibatch_device_transfer,
                        **placement_bonus_kwargs(args))

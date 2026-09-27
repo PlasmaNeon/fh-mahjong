@@ -181,6 +181,20 @@ class _GraphedForward:
     def __call__(self, planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray,
                  events: np.ndarray, lengths: np.ndarray) -> torch.Tensor:
         """Host [n, A+1] tensor: masked logits then value, for the n rows."""
+        return self.fetch(self.launch(planes, scalars, masks, events, lengths))
+
+    @staticmethod
+    def fetch(launched: torch.Tensor) -> torch.Tensor:
+        """Wait for a `launch` and copy its rows to the host. Until this returns,
+        the same instance must not `launch` again (its staging buffers are in use)."""
+        # .cpu() synchronises the stream, so the staging buffers are free for
+        # the next call's writes.
+        return launched.cpu()
+
+    def launch(self, planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray,
+               events: np.ndarray, lengths: np.ndarray) -> torch.Tensor:
+        """Queue the forward for the n rows and return the device [n, A+1]
+        output without waiting for it."""
         n = planes.shape[0]
         if n > self.capacity:
             raise RuntimeError(f"{n} rows exceed the graphed forward's capacity {self.capacity}")
@@ -195,9 +209,7 @@ class _GraphedForward:
             staged[n:b] = 0
             static[:b].copy_(stage[:b], non_blocking=True)
         graph.replay()
-        # .cpu() synchronises the stream, so the staging buffers are free for
-        # the next call's writes.
-        return out[:n].cpu()
+        return out[:n]
 
 
 # Spec G1's phase split. A mid-range throughput result -- say 6x -- is
@@ -433,12 +445,25 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             match_rows.append((sm.seed, len(sm.rows["actions"])))
             match_telemetry.append(sm.telemetry)
 
-    graphed = (_GraphedForward(model, device, effective_slots)
-               if inference_mode == "batched" and torch.device(device).type == "cuda" else None)
+    groups = int(config.pool_pipeline_groups)
+    if groups < 1:
+        raise ValueError(f"pool_pipeline_groups must be >= 1, got {groups}")
+    groups = min(groups, effective_slots)
+    # Slot g, g+groups, g+2*groups, ... belong to group g. With one group every
+    # round steps every slot and runs one forward (the default). With more, the
+    # groups take turns: while the GPU runs one group's forward, the pool steps
+    # the next group, so Go stepping and the forward overlap. Which rows share a
+    # forward changes -- the batch-composition float class -- so the group count
+    # is part of the lineage, like pool_slots.
+    group_slots = [list(range(g, effective_slots, groups)) for g in range(groups)]
+    use_graphs = inference_mode == "batched" and torch.device(device).type == "cuda"
+    graphed = [(_GraphedForward(model, device, len(slots)) if use_graphs else None)
+               for slots in group_slots]
 
-    while emit_next < total:
+    def commands_for(slots: list[int]) -> list:
+        nonlocal next_match
         commands = []
-        for slot in range(effective_slots):
+        for slot in slots:
             if slot in pending_action:
                 commands.append(PoolCommand(slot=slot, action_id=pending_action.pop(slot)))
             elif slot not in active and next_match < total:
@@ -446,10 +471,13 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 next_match += 1
                 active[slot] = sm
                 commands.append(PoolCommand(slot=slot, reset_seed=sm.seed))
-        if not commands:
-            raise RuntimeError(
-                f"env pool wedged: {len(active)} slots active, "
-                f"{total - emit_next} matches unemitted")
+        return commands
+
+    def step_and_observe(commands: list):
+        """Step the pool and settle every slot's bookkeeping; returns the
+        round's live rows (or None) as the arrays the forward consumes."""
+        nonlocal pool_seconds, rounds, peak_live_slots, truncated_matches
+        nonlocal completed_matches, outcomes_seen
         pool_start = time.perf_counter()
         result: PoolStepResult = pool.step(commands)
         pool_seconds += time.perf_counter() - pool_start
@@ -495,7 +523,7 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             live.append((meta.slot, sm, int(meta.seat), result.row_of_slot[meta.slot]))
         flush_in_seed_order()
         if not live:
-            continue
+            return None
 
         # ONE writable copy of the round's live rows per array; every decision
         # keeps views into these until its match is emitted into the sink, so a
@@ -517,7 +545,35 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         pending_rows = [
             (slot, sm, seat, planes_r[i], scalars_r[i], masks_r[i], events_r[i], int(lengths_r[i]))
             for i, (slot, sm, seat, _) in enumerate(live)]
+        return pending_rows, (planes_r, scalars_r, masks_r, events_r, lengths_r)
 
+    def launch_forward(group: int, arrays: tuple):
+        """Queue (graphed) or run the round's forward. Returns what
+        `finish_round` needs to read the logits and values back."""
+        nonlocal forward_seconds
+        planes_r, scalars_r, masks_r, events_r, lengths_r = arrays
+        n = planes_r.shape[0]
+        if inference_mode == "batched":
+            forward_rows.append(n)
+        else:
+            forward_rows.extend([1] * n)
+        forward_start = time.perf_counter()
+        launched = None
+        if graphed[group] is not None:
+            launched = graphed[group].launch(*arrays)
+        elif inference_mode == "batched":
+            with torch.no_grad():
+                logits_t, values_t = model(
+                    torch.from_numpy(planes_r).to(device), torch.from_numpy(scalars_r).to(device),
+                    torch.from_numpy(masks_r).to(device),
+                    events=torch.from_numpy(events_r.astype(np.int64)).to(device),
+                    event_lengths=torch.from_numpy(lengths_r).to(device))
+                launched = torch.cat([logits_t, values_t.reshape(n, 1)], dim=1).cpu()
+        forward_seconds += time.perf_counter() - forward_start
+        return launched
+
+    def finish_round(pending_rows: list, masks_r: np.ndarray, launched) -> None:
+        nonlocal forward_seconds, python_seconds
         # ONE device->host transfer per round: logits and values are
         # concatenated on the device into a single [B, A+1] tensor and copied
         # once, then sliced on the host. Every op below (sampling,
@@ -530,22 +586,9 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         # this forward (values fp32, logits fp16, or vice versa) would make
         # torch.cat raise, or promote and change the bytes. Split the transfer
         # before adding AMP here.
-        if inference_mode == "batched":
-            forward_rows.append(len(live))
-        else:
-            forward_rows.extend([1] * len(live))
         forward_start = time.perf_counter()
-        if graphed is not None:
-            host = graphed(planes_r, scalars_r, masks_r, events_r, lengths_r)
-        elif inference_mode == "batched":
-            with torch.no_grad():
-                logits_t, values_t = model(
-                    torch.from_numpy(planes_r).to(device), torch.from_numpy(scalars_r).to(device),
-                    torch.from_numpy(masks_r).to(device),
-                    events=torch.from_numpy(events_r.astype(np.int64)).to(device),
-                    event_lengths=torch.from_numpy(lengths_r).to(device))
-                host = torch.cat([logits_t, values_t.reshape(len(live), 1)], dim=1).cpu()
         if inference_mode == "batched":
+            host = _GraphedForward.fetch(launched) if launched.is_cuda else launched
             # .contiguous(): every row reduced by masked_logprobs must be a
             # contiguous [A] run, exactly as the per-row form saw it.
             logits_host = host[:, :-1].contiguous()
@@ -597,6 +640,33 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             ms.seat_hand_ids[seat].append(ms.hand_id)
             pending_action[slot] = action
         python_seconds += time.perf_counter() - python_start
+
+    # One in-flight forward per group: (pending_rows, masks_r, launched).
+    in_flight: list = [None] * groups
+    group = 0
+    idle_turns = 0
+    while emit_next < total or any(flight is not None for flight in in_flight):
+        commands = commands_for(group_slots[group])
+        observed = step_and_observe(commands) if commands else None
+        # The previous group's forward ran on the GPU while this group stepped;
+        # read it back before queueing this group's (a queued replay would make
+        # the read wait for both).
+        previous = (group - 1) % groups
+        if in_flight[previous] is not None:
+            finish_round(*in_flight[previous])
+            in_flight[previous] = None
+        if observed is not None:
+            pending_rows, arrays = observed
+            in_flight[group] = (pending_rows, arrays[2], launch_forward(group, arrays))
+        if groups == 1 and in_flight[group] is not None:
+            finish_round(*in_flight[group])
+            in_flight[group] = None
+        idle_turns = 0 if commands else idle_turns + 1
+        if idle_turns > groups and emit_next < total:
+            raise RuntimeError(
+                f"env pool wedged: {len(active)} slots active, "
+                f"{total - emit_next} matches unemitted")
+        group = (group + 1) % groups
 
     # NOT the outer collection wall time: this stops before the RolloutBatch
     # np.stack/astype assembly below, which the caller's `collect_seconds` does

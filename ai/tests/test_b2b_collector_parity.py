@@ -995,3 +995,39 @@ def test_g0_6_training_parity_batched_mode_within_tolerance(training_parity_proc
     _assert_metrics(process["history"], batched["history"], exact=False)
     for key, tensor in process["final"].items():
         assert torch.allclose(tensor, batched["final"][key], atol=G06_UPDATE_TOL), key
+
+
+@pytest.mark.parametrize("groups", [2, 3])
+def test_pipelined_greedy_per_row_is_byte_identical(block_process_greedy, groups):
+    """Pipeline groups change which rows share a forward, never what a row is:
+    under per_row inference the floats are batch-independent, so greedy output
+    must equal the process collector's byte for byte."""
+    process, _, _ = block_process_greedy
+    env, model = _block_env_and_model()
+    batch = _run_batched(env, model, _block_config(pool_pipeline_groups=groups), BLOCK_BASE_SEED,
+                         slots=7, inference_mode="per_row")
+    assert _digests(batch) == _digests(process)
+    assert batch.match_telemetry == process.match_telemetry
+
+
+def test_pipelined_sampled_per_row_matches_one_group(sampled_digests_by_slots):
+    env, model = _block_env_and_model()
+    batch = _run_batched(env, model, _block_config(pool_pipeline_groups=2), BLOCK_BASE_SEED,
+                         "sample", slots=7, inference_mode="per_row")
+    assert _digests(batch) == sampled_digests_by_slots[1]
+
+
+def test_pipelined_greedy_batched_mode_numeric_parity(block_process_greedy):
+    process, _, _ = block_process_greedy
+    env, model = _block_env_and_model()
+    diag: dict = {}
+    batch = _run_batched(env, model, _block_config(pool_pipeline_groups=2), BLOCK_BASE_SEED,
+                         slots=7, inference_mode="batched", diagnostics=diag)
+    for name in ("planes", "scalars", "action_mask", "actions", "rewards", "dones",
+                 "events", "event_lengths", "dealin_labels", "rank_labels"):
+        assert np.array_equal(getattr(batch, name), getattr(process, name)), name
+    assert batch.match_telemetry == process.match_telemetry
+    assert np.allclose(batch.old_logprobs, process.old_logprobs, **FLOAT_TOL)
+    assert np.allclose(batch.values, process.values, **FLOAT_TOL)
+    # Two groups of 4 and 3 slots: no forward can hold more rows than its group.
+    assert max(diag["forward_rows"]) <= 4
