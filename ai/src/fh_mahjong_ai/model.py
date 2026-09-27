@@ -194,8 +194,22 @@ class PolicyValueNet(nn.Module):
         value = self.value_head(self._value_features(features, planes)).squeeze(-1)
         return masked_logits, value
 
+    # CUDA autocast dtype for `encode` (PPOConfig.trunk_dtype); None = float32.
+    # A runtime setting, not part of the state dict or the model config.
+    trunk_autocast: torch.dtype | None = None
+
     def encode(self, planes: Tensor, scalars: Tensor, events: Tensor | None = None,
                event_lengths: Tensor | None = None) -> Tensor:
+        if self.trunk_autocast is not None and planes.is_cuda:
+            # cache_enabled=False: the cast-weight cache must not outlive a
+            # CUDA graph capture. The features return as float32 so the heads,
+            # losses and optimizer never see the reduced precision.
+            with torch.autocast("cuda", dtype=self.trunk_autocast, cache_enabled=False):
+                return self._encode(planes, scalars, events, event_lengths).float()
+        return self._encode(planes, scalars, events, event_lengths)
+
+    def _encode(self, planes: Tensor, scalars: Tensor, events: Tensor | None,
+                event_lengths: Tensor | None) -> Tensor:
         policy_planes = planes[:, : self.policy_channels]
         plane_trunk = self.growth(self.plane_blocks(self.plane_stem(policy_planes)))
         plane_features = self.plane_head(self.plane_projection(plane_trunk))

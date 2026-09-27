@@ -158,6 +158,12 @@ class PPOConfig:
     head_lr_iters: int = 0
     collector: str = "process"   # "process" (spawn workers) | "batched" (env pool + batched forward)
     pool_slots: int = 128        # concurrent env-pool slots for collector="batched"
+    # "bfloat16" runs PolicyValueNet.encode (conv trunk, event GRU, trunk MLP)
+    # under CUDA autocast in both collection and the update; heads, losses and
+    # the optimizer stay float32. A precision change, not a summation-order
+    # one: a recipe field, rejected on change. Requires collector="batched" on
+    # CUDA so the collected old_logprobs come from the same precision.
+    trunk_dtype: str = "float32"
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None

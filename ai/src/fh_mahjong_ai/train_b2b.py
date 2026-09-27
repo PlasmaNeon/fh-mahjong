@@ -355,6 +355,22 @@ def split_bc_parameter_groups(model: nn.Module) -> tuple[list[nn.Parameter], lis
     return bc, heads
 
 
+def trunk_autocast_dtype(config: PPOConfig) -> Optional[torch.dtype]:
+    """`PolicyValueNet.trunk_autocast` for `config.trunk_dtype`. A reduced trunk
+    needs the batched collector on CUDA: spawn workers run the net on CPU in
+    float32, so their `old_logprobs` would come from a different precision than
+    the update's."""
+    if config.trunk_dtype == "float32":
+        return None
+    if config.trunk_dtype != "bfloat16":
+        raise ValueError(f"unknown PPOConfig.trunk_dtype {config.trunk_dtype!r} "
+                         "(expected 'float32' or 'bfloat16')")
+    if config.collector != "batched" or torch.device(config.device).type != "cuda":
+        raise ValueError("trunk_dtype='bfloat16' requires collector='batched' on a CUDA device "
+                         f"(got collector={config.collector!r}, device={config.device!r})")
+    return torch.bfloat16
+
+
 def build_optimizer(model: nn.Module, config: PPOConfig) -> torch.optim.AdamW:
     if config.head_lr is None:
         return torch.optim.AdamW(model.parameters(), lr=config.lr)
@@ -1934,6 +1950,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             logger.info("event-path init: %s", event_path_init)
         collector = None
         pool = None
+        model.trunk_autocast = trunk_autocast_dtype(config)
         if config.collector not in ("process", "batched"):
             # Fail closed: an unrecognized value must never quietly fall back
             # to the process collector and misattribute a whole lap.

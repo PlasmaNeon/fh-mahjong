@@ -54,6 +54,11 @@ def main() -> None:
                         "therefore which actions get sampled. It is part of the lineage "
                         "and is rejected-on-change by --resume-from-state, like "
                         "--collector")
+    p.add_argument("--trunk-dtype", choices=("float32", "bfloat16"), default="float32",
+                   help="precision of the model's encoder (conv trunk, event GRU, trunk "
+                        "MLP) in collection and the update; heads, losses and the optimizer "
+                        "stay float32. bfloat16 needs --collector batched on CUDA. A recipe "
+                        "field: rejected-on-change by --resume-from-state")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--head-lr", type=float, default=None,
@@ -240,6 +245,7 @@ def main() -> None:
                        max_steps_per_episode=args.max_steps_per_episode, device=args.device,
                        num_workers=num_workers,
                        collector=args.collector, pool_slots=args.pool_slots,
+                       trunk_dtype=args.trunk_dtype,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
                        minibatch_device_transfer=args.minibatch_device_transfer,
                        **placement_bonus_kwargs(args))
