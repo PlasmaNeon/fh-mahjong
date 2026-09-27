@@ -90,32 +90,34 @@ approval**.
 This is the measurement a future protocol needs, not an authorization. `fh-mj-collect-bench --full-cycle`,
 `--champion bench/big-init.pt` (192×24, k=1, `trunk_rezero`), 960 matches from seed 1,700,000, mb768,
 2 epochs, `--collector batched --inference-mode batched --pool-slots 320 --skip-float-gate`, collect and
-update on CUDA with `--minibatch-device-transfer`. Clone `/root/fh-mahjong-recost` at `f96bf38`, bridge
-`d0b1e3a7…` (Go sources of `605c5ee`, PR #242), `MALLOC_MMAP_THRESHOLD_=131072`, 44/48 GiB cgroup with
-the 38 GiB guard. Unit exited cleanly, cgroup peak 36.65 GiB. About 16 GiB of that peak is the bench's own
-digest copy, removed in `9e90f2e`; production training computes no digest.
+update on CUDA with `--minibatch-device-transfer`. Clone `/root/fh-mahjong-recost` at `3bca9e4`
+(branch `fix/batched-assembly-peak`), bridge `d0b1e3a7…` (Go sources of `605c5ee`, PR #242), 44/48 GiB
+cgroup with the 38 GiB guard. Unit exited cleanly; cgroup peak 28,879,151,104 B = **26.9 GiB**, tree RSS
+peak 26.97 GiB, zero truncations, label coverage 1.0, `all_digests_equal` true.
 
 | Cycle | Rows | Optimizer steps | Collect s | Update s |
 |---|---|---|---|---|
-| 0 | 1,970,299 | 5,132 | 230.6 | 1,728.7 |
-| 1 | 1,977,581 | 5,150 | 230.0 | 1,467.6 |
-| 2 | 1,973,542 | 5,140 | 194.9 | 1,252.2 |
+| 0 | 1,970,387 | 5,132 | 137.3 | 959.9 |
+| 1 | 1,970,857 | 5,134 | 137.6 | 952.3 |
+| 2 | 1,978,980 | 5,154 | 143.7 | 951.6 |
 
-Collection is 14–16× faster than Stage 4's 3,212 s. The update is now ~87% of an iteration and runs
-1.5–2.1× slower than Stage 4's 838.9 s on the same row count; the cause is not yet known. Median
-iteration 1,698 s (28.3 min) → **200 iterations ≈ 94 h ≈ 3.9 days** (3.3–4.5 days across the three
-cycles). At Stage 4's update time it would be ≈ 2.4 days.
+Collection is 23× faster than Stage 4's 3,212 s; the update is 13% slower than Stage 4's 838.9 s and is
+now 87% of an iteration. Median iteration 1,090 s (18.2 min) → **200 iterations ≈ 60.5 h ≈ 2.5 days**.
 
-Memory rules for the batched collector at this scale (attempts 1–3 were killed by the 38 GiB guard;
-archives `recost-20260926/attempt{1,2,3}-killed/`):
+Memory rules for the batched collector at this scale (four earlier attempts; archives
+`recost-20260926/attempt{1,2,3}-killed/`, `attempt4-envpin/`):
 
 - Never hold the rows and the assembled batch at once. `np.stack` over ~2 M row views doubled RSS at
-  assembly. Stack each match's rows when it finishes, then fill the batch releasing each match's arrays.
+  assembly (~21 → 38 GiB, killed). Write each emitted match once, at its final offset, into batch
+  buffers sized to matches × step cap and committed lazily (`_ArrayRowSink`).
 - Per-row copies cannot lower RSS: freed ~9 KB arrays return to malloc, not the OS.
-- Pin glibc's mmap threshold (`collect_b2b_rollouts_batched` calls `mallopt(M_MMAP_THRESHOLD, 128 KiB)`).
-  After the first collection frees its arrays, glibc raises the threshold, the next collection's
-  arrays come from the brk heap, and releasing them returns nothing. Attempt 3 assembled cleanly on its
-  warmup cycle and hit the guard on the next, which is iteration 2 of a lap.
+- Test at least two collections in one process. glibc raises its mmap threshold as large chunks are freed,
+  so a collection that assembles cleanly first can double on the next (iteration 2 of a lap).
+- Do not pin glibc's mmap threshold to fix that: `MALLOC_MMAP_THRESHOLD_=131072` cost ~9 s per 320-match
+  collection and slowed the update to 1,252–1,729 s, because every per-round array and every PPO
+  minibatch gather became a fresh mapping with page faults.
+- Hash bench arrays through a byte view: `tobytes()` in the bench digest copied the 16 GiB planes array
+  twice per cycle and inflated the bench's peak by that much.
 
 Pinned for the record: box checkout `8ad2688` (`main`), bridge
 `a487bcb7c2b15412589eac2303b5ce6ce009790249b0bd3662f5ae8d8ff44034` — unchanged across every
@@ -254,5 +256,5 @@ Append only. `UTC timestamp — session-name — what happened.`
 - `2026-09-10` — mortal-scale-scratch — **§7 recipe gate FAILED: `mean_delta` −0.0722 < −0.0600, short by 0.0122. The §8 big arm is NOT authorized.** Applied as written, on the point estimate. Context for the consult, not a re-reading of the rule: at iteration 200 the candidate is no longer significant against the anchor (±0.0727 spans both −0.0600 and 0), and two secondaries now favour the candidate — large-loss Δ −0.0167 (0.0292 vs 0.0458) and 4th-share Δ −0.0042 — with training-utility Δ −0.0475 straddling zero and deal-in 0.0969 vs 0.1033. So a from-scratch 96×4 net reached anchor-comparable tail behaviour while its primary placement delta stayed ~0.07 behind. **The ≈9.4-day big-lap projection predates the batched collector; if G1 lands any meaningful part of its ~16× ceiling that projection is stale, so the consult should see the gate result and the G1 outcome together.**
 - `2026-09-17` — mortal-scale-scratch — **TERMINAL RULING, protocol CLOSED** (Codex `01a0147d`, GPT-5.6-Sol medium; full text appended to the spec). The §7 gate stands as FAILED — proximity to the threshold and a CI spanning zero create no tolerance band, and non-significance is not equivalence; re-reading, rounding, enlarging the window or changing the statistic would be optional stopping. Closed as a **recipe-gate failure, not a scale NULL**: the 192×24 arm was never launched, so scale is untested under this package. No extension past 200, no rescreening, no confirmation, no promotion, no deployment. `anchor075` remains champion. The iteration-100 pause/resume is admissible but registered as an **operational deviation**, with the runbook audit of the first resumed collection recorded in Current stage (iteration 101: 637,290 steps, 4,980 optimizer steps = 2 × ceil(637,290/256), 0 truncations, label coverage 1.0, all inside its neighbours; 200 rows under one `run_id`). Any future big arm needs a separately authorized protocol, the collector's own gate gauntlet, and a **re-measured** 960/768 bench — the ≈9.4-day figure predates the batched collector and is not current.
 - `2026-09-17` — mortal-scale-scratch — **second ruling (GPT-6 Astra, medium) upholds closure and corrects two points.** The 9.4-day big-lap projection **stands** as the measured projection for the process collector, which is still the frozen default path; the batched collector's ~16x ceiling is not a measured replacement and adopting it is not mandatory — remeasure only if a future protocol proposes it. The resume audit against neighbours proves plausible counts, not replay equality; the required comparison is against the **original** iteration 101, and `logs/control-lap.log` retains it (lines 102 and 109, identical on all four logged metrics — replay equality to 4 dp, not bitwise, since `history.json`'s original row 101 was overwritten). Terminology corrected: the registered large-loss condition **passes** at iteration 200 (0.0292 <= 0.0458 + 0.015); what fails is the control recipe gate.
-- `2026-09-26` — mortal-scale-scratch — **960/768 bench re-measured on the batched collector** (PR #242 plus `fix/batched-assembly-peak`): collect 195–231 s (Stage 4: 3,212), update 1,252–1,729 s (Stage 4: 839), iteration ≈ 28 min → **200 iterations ≈ 3.9 days**. Three attempts were first killed by the 38 GiB guard at assembly; fixed in code (see "Re-measured 960/768 bench"). Recorded for a future protocol; the big arm is still unauthorized.
+- `2026-09-26` — mortal-scale-scratch — **960/768 bench re-measured on the batched collector** (PR #242 plus `fix/batched-assembly-peak`): collect 137–144 s (Stage 4: 3,212), update 952–960 s (Stage 4: 839), iteration ≈ 18.2 min → **200 iterations ≈ 2.5 days**, cgroup peak 26.9 GiB. Four earlier attempts exposed an assembly memory doubling and a second-collection glibc trap, both fixed in code (see "Re-measured 960/768 bench"). Recorded for a future protocol; the big arm is still unauthorized.
 - `—` — (add next event here)
