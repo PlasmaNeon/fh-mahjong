@@ -5,8 +5,7 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**Lap RUNNING** again (resumed by the user from the iteration-195 `train_state` after a pause at 00:23). Unit `bigarm-lap` launched 2026-09-27 01:13:58 PDT, paused after iteration 5, resumed
-02:00:03 on `cabaabc`. Iterations run 6.5–7.3 min → iteration 200 about 2026-09-28 00:45 PDT.
+**Lap COMPLETE 200/200** (2026-09-28 01:38 PDT): `Result=success`, exit 0, 200 history rows under run `8684c100…`, zero truncations, cgroup peak 32.47 GiB (guard 38), watchdog `CLEAN`. Selected `iter_200.pt` (sha256 `9835611d…`). **Confirmation RUNNING** on seeds 1,720,000–1,721,499: selected big, `anchor075` and control `iter_200`, all on the launch bridge.
 
 ## Launch manifest
 
@@ -41,7 +40,7 @@ update autotune pick algorithms by timing.
 | 125 | **−0.1611** | ±0.0774 (sig. YES) | 0.0625 / 0.0458 | control at 125: −0.1667. 4th-share Δ +0.0312 and large-loss Δ +0.0167 now straddle zero |
 | 150 | **−0.1514** | ±0.0685 (sig. YES) | 0.0688 / 0.0458 | control at 150: −0.1097; the big arm falls behind the control here. Gain since 125: +0.0097 |
 | 175 | **−0.1486** | ±0.0716 (sig. YES) | 0.0625 / 0.0458 | control at 175: −0.0861. Gain since 150: +0.0028 (plateau). 4th-share and large-loss deltas straddle zero; deal-in 0.0987 |
-| 200 | | | | |
+| 200 | **−0.1389** | ±0.0769 (sig. YES) | 0.0750 / 0.0458 | **selected** (best screening delta). Control at 200: −0.0722. 4th-share Δ +0.0250 [−0.0149, +0.0649]; large-loss Δ +0.0292 [−0.0002, +0.0586]; deal-in 0.0984 vs 0.1033 |
 
 ## Event log
 
@@ -87,4 +86,6 @@ update autotune pick algorithms by timing.
 - `2026-09-27 08:10–22:33` — mortal-scale-scratch — screens 50–175 (table). The kill rule at 100 did not fire. The big arm tracked the control arm through 125, then flattened near −0.15 (gains +0.0097 and +0.0028 per 25) while the control reached −0.0861 at 175. The session's event waiter was broken from 06:05 (a macOS `paste` without `-` left its counter empty, so it never fired); the on-box orchestrator screened every milestone on time regardless. Test that a waiter fires before trusting it.
 - `2026-09-28 00:23` — mortal-scale-scratch — **PAUSED by the user during iteration 199.** Last `train_state` = iteration 195, so a resume re-runs 196–200 (~32 min). The screening orchestrator is stopped; the iteration-200 screen and the confirmation wait for the user's resume.
 - `2026-09-28` — mortal-scale-scratch — **resumed by the user** from the iteration-195 `train_state` on `cabaabc`; iterations 196–200 re-run, then the iteration-200 screen, selection and confirmation.
+- `2026-09-28 01:38` — mortal-scale-scratch — **lap complete 200/200**, clean (see Current stage). Iteration 200: steps 1,880,430, `optimizer_steps` 4,898 = 2 × ceil(1,880,430 / 768).
+- `2026-09-28 01:55` — mortal-scale-scratch — iteration-200 screen **−0.1389 ± 0.0769**, the best of the eight milestones → **`iter_200` selected**. Confirmation launched (`confirm.sh 200`).
 - `—` — (add next event here)
