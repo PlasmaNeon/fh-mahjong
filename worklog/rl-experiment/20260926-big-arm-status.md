@@ -5,7 +5,7 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**PAUSED by the user** 2026-09-28 00:23 PDT during iteration 199 (resumes from the iteration-195 `train_state`). Before that: unit `bigarm-lap` launched 2026-09-27 01:13:58 PDT, paused after iteration 5, resumed
+**Lap RUNNING** again (resumed by the user from the iteration-195 `train_state` after a pause at 00:23). Unit `bigarm-lap` launched 2026-09-27 01:13:58 PDT, paused after iteration 5, resumed
 02:00:03 on `cabaabc`. Iterations run 6.5–7.3 min → iteration 200 about 2026-09-28 00:45 PDT.
 
 ## Launch manifest
@@ -86,4 +86,5 @@ update autotune pick algorithms by timing.
 - `2026-09-27 05:17` — mortal-scale-scratch — iteration-25 screen **−0.4181 ± 0.0652**, level with the control arm's −0.4250 at 25.
 - `2026-09-27 08:10–22:33` — mortal-scale-scratch — screens 50–175 (table). The kill rule at 100 did not fire. The big arm tracked the control arm through 125, then flattened near −0.15 (gains +0.0097 and +0.0028 per 25) while the control reached −0.0861 at 175. The session's event waiter was broken from 06:05 (a macOS `paste` without `-` left its counter empty, so it never fired); the on-box orchestrator screened every milestone on time regardless. Test that a waiter fires before trusting it.
 - `2026-09-28 00:23` — mortal-scale-scratch — **PAUSED by the user during iteration 199.** Last `train_state` = iteration 195, so a resume re-runs 196–200 (~32 min). The screening orchestrator is stopped; the iteration-200 screen and the confirmation wait for the user's resume.
+- `2026-09-28` — mortal-scale-scratch — **resumed by the user** from the iteration-195 `train_state` on `cabaabc`; iterations 196–200 re-run, then the iteration-200 screen, selection and confirmation.
 - `—` — (add next event here)
