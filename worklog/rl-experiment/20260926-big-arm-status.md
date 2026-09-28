@@ -35,12 +35,12 @@ update autotune pick algorithms by timing.
 | Iteration | Delta | CI95 | Large-loss (cand / anchor) | Notes |
 |---|---|---|---|---|
 | 25 | **−0.4181** | ±0.0652 (sig. YES) | 0.1458 / 0.0458 | control arm at 25: −0.4250. Placement +0.0431 vs anchor +0.4611; deal-in 0.0999 vs 0.1033 (candidate lower); 4th-share Δ +0.1396, training-utility Δ −0.3795. Screen took 54 min beside the lap (192×24 forward ~4.5 ms per decision) |
-| 50 | | | | |
-| 75 | | | | |
-| 100 | | | | kill iff Δ100 − Δ75 ≤ 0 and Δ100 < −0.20 |
-| 125 | | | | |
-| 150 | | | | |
-| 175 | | | | |
+| 50 | **−0.3597** | ±0.0687 (sig. YES) | 0.1083 / 0.0458 | control at 50: −0.3708. Deal-in 0.1004 vs 0.1033 |
+| 75 | **−0.2347** | ±0.0710 (sig. YES) | 0.0938 / 0.0458 | control at 75: −0.2903. Deal-in 0.1006 |
+| 100 | **−0.1972** | ±0.0702 (sig. YES) | 0.0813 / 0.0458 | **kill rule not fired** (Δ100 − Δ75 = +0.0375 > 0). Control at 100: −0.2375. Deal-in 0.0978 |
+| 125 | **−0.1611** | ±0.0774 (sig. YES) | 0.0625 / 0.0458 | control at 125: −0.1667. 4th-share Δ +0.0312 and large-loss Δ +0.0167 now straddle zero |
+| 150 | **−0.1514** | ±0.0685 (sig. YES) | 0.0688 / 0.0458 | control at 150: −0.1097; the big arm falls behind the control here. Gain since 125: +0.0097 |
+| 175 | **−0.1486** | ±0.0716 (sig. YES) | 0.0625 / 0.0458 | control at 175: −0.0861. Gain since 150: +0.0028 (plateau). 4th-share and large-loss deltas straddle zero; deal-in 0.0987 |
 | 200 | | | | |
 
 ## Event log
@@ -84,4 +84,5 @@ update autotune pick algorithms by timing.
   ~20 min in all. The speed-up session measured the opt-in recipe (bf16 trunk + 2 pipeline groups) on this
   model at 3.6 min/iteration end to end; future laps only, bf16 pending a quality check.
 - `2026-09-27 05:17` — mortal-scale-scratch — iteration-25 screen **−0.4181 ± 0.0652**, level with the control arm's −0.4250 at 25.
+- `2026-09-27 08:10–22:33` — mortal-scale-scratch — screens 50–175 (table). The kill rule at 100 did not fire. The big arm tracked the control arm through 125, then flattened near −0.15 (gains +0.0097 and +0.0028 per 25) while the control reached −0.0861 at 175. The session's event waiter was broken from 06:05 (a macOS `paste` without `-` left its counter empty, so it never fired); the on-box orchestrator screened every milestone on time regardless. Test that a waiter fires before trusting it.
 - `—` — (add next event here)
