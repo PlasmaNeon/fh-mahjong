@@ -179,11 +179,13 @@ func FHEnvPoolStep(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FH
 		}
 	}
 
-	response, err := pool.ApplyCommands(request)
+	// StepMarshaled reuses the pool's buffers; bytesResult copies them out
+	// before the next step can touch them.
+	data, err := pool.StepMarshaled(request)
 	if err != nil {
 		return errorResult(err)
 	}
-	return marshalResult(response)
+	return bytesResult(data)
 }
 
 //export FHEnvPoolClose
@@ -306,7 +308,11 @@ func marshalResult(message proto.Message) C.FHBytesResult {
 	if err != nil {
 		return errorResult(err)
 	}
+	return bytesResult(data)
+}
 
+// bytesResult copies data into C memory for the caller to free.
+func bytesResult(data []byte) C.FHBytesResult {
 	// The FHBytesResult.len field is a 32-bit C int. A payload of 2 GiB or more
 	// would overflow it (wrapping to a negative or truncated length), which the
 	// Python side reads as an empty result, silently dropping the data. Fail
