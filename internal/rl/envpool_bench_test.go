@@ -83,7 +83,7 @@ func BenchmarkEnvPoolRoundPhases(b *testing.B) {
 			b.Fatal(err)
 		}
 		t1 := time.Now()
-		response, _ := assemblePoolResponse(results)
+		response, _ := assemblePoolResponse(results, nil)
 		t2 := time.Now()
 		if _, err := proto.Marshal(response); err != nil {
 			b.Fatal(err)
@@ -97,4 +97,27 @@ func BenchmarkEnvPoolRoundPhases(b *testing.B) {
 	b.ReportMetric(float64(stepNs)/float64(b.N)/1e6, "step-ms")
 	b.ReportMetric(float64(assembleNs)/float64(b.N)/1e6, "assemble-ms")
 	b.ReportMetric(float64(marshalNs)/float64(b.N)/1e6, "marshal-ms")
+}
+
+// BenchmarkEnvPoolStepMarshaled is the bridge's round: StepMarshaled with the
+// pool's reused buffers. The response is decoded only to pick the next actions.
+func BenchmarkEnvPoolStepMarshaled(b *testing.B) {
+	pool, commands, seed := newBenchPool()
+	rows := 0
+	response := &pb.EnvPoolStepResponse{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		data, err := pool.StepMarshaled(&pb.EnvPoolStepRequest{Commands: commands})
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		if err := proto.Unmarshal(data, response); err != nil {
+			b.Fatal(err)
+		}
+		rows += nextBenchCommands(response, commands, &seed)
+		b.StartTimer()
+	}
+	b.ReportMetric(float64(rows)/float64(b.N), "rows/op")
 }

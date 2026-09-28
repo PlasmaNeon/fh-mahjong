@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	pb "github.com/plasma/fh-mahjong/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // EnvPool holds `slots` independent environments stepped in lockstep rounds by
@@ -21,6 +22,28 @@ import (
 type EnvPool struct {
 	config *pb.EnvConfig
 	envs   []*Env
+
+	// StepMarshaled's buffers, reused across rounds: a 320-slot round packs and
+	// marshals ~3 MB twice, and fresh large allocations every round cost more in
+	// span allocation and page faults (madvise) than the copies themselves.
+	mu      sync.Mutex
+	scratch poolScratch
+}
+
+// poolScratch holds reusable response buffers. Everything in them is valid only
+// until the next StepMarshaled call on the same pool.
+type poolScratch struct {
+	planes, scalars, masks, counts, events, out []byte
+}
+
+// sized returns buf resliced to n bytes, reallocating only when it is too small.
+// The contents are stale; callers overwrite every byte or clear it.
+func sized(buf *[]byte, n int) []byte {
+	if cap(*buf) < n {
+		*buf = make([]byte, n)
+	}
+	*buf = (*buf)[:n]
+	return *buf
 }
 
 func NewEnvPool(config *pb.EnvConfig, slots int) *EnvPool {
@@ -99,7 +122,30 @@ func (p *EnvPool) ApplyCommands(request *pb.EnvPoolStepRequest) (*pb.EnvPoolStep
 	if err != nil {
 		return nil, err
 	}
-	return assemblePoolResponse(results)
+	return assemblePoolResponse(results, nil)
+}
+
+// StepMarshaled is ApplyCommands followed by proto.Marshal, byte-identical to it
+// (TestStepMarshaledMatchesApplyCommands), with the flat observation buffers and
+// the marshal output reused across calls. The returned bytes are valid only until
+// the next StepMarshaled call on this pool; the caller must copy them first.
+func (p *EnvPool) StepMarshaled(request *pb.EnvPoolStepRequest) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	results, err := runSlotCommands(request.GetCommands(), len(p.envs), "slots", p.applyOne)
+	if err != nil {
+		return nil, err
+	}
+	response, err := assemblePoolResponse(results, &p.scratch)
+	if err != nil {
+		return nil, err
+	}
+	out, err := proto.MarshalOptions{}.MarshalAppend(p.scratch.out[:0], response)
+	if err != nil {
+		return nil, err
+	}
+	p.scratch.out = out
+	return out, nil
 }
 
 func (p *EnvPool) applyOne(cmd *pb.SlotCommand) slotResult {
@@ -125,7 +171,9 @@ func (p *EnvPool) applyOne(cmd *pb.SlotCommand) slotResult {
 	}
 }
 
-func assemblePoolResponse(results []slotResult) (*pb.EnvPoolStepResponse, error) {
+// assemblePoolResponse builds the response; with a non-nil scratch the flat
+// buffers alias it (see poolScratch).
+func assemblePoolResponse(results []slotResult, scratch *poolScratch) (*pb.EnvPoolStepResponse, error) {
 	response := &pb.EnvPoolStepResponse{Slots: make([]*pb.SlotState, 0, len(results))}
 	var observations []*pb.SeatObservation
 	for _, r := range results {
@@ -144,7 +192,7 @@ func assemblePoolResponse(results []slotResult) (*pb.EnvPoolStepResponse, error)
 		}
 		response.Slots = append(response.Slots, state)
 	}
-	packObservationRows(response, observations)
+	packObservationRows(response, observations, scratch)
 	return response, nil
 }
 
@@ -184,7 +232,7 @@ func appendObservationRow(response *pb.EnvPoolStepResponse, obs *pb.SeatObservat
 // TestPackObservationRowsMatchesAppend), but sizes every buffer once and
 // fills disjoint row ranges from GOMAXPROCS workers: packing ~3 MB of
 // float32s one row at a time was a single-threaded ~1 ms per round.
-func packObservationRows(response *pb.EnvPoolStepResponse, observations []*pb.SeatObservation) {
+func packObservationRows(response *pb.EnvPoolStepResponse, observations []*pb.SeatObservation, scratch *poolScratch) {
 	if len(observations) == 0 {
 		return
 	}
@@ -211,13 +259,18 @@ func packObservationRows(response *pb.EnvPoolStepResponse, observations []*pb.Se
 			eventOff[i+1] = eventOff[i] + 4*max(window, len(obs.EventHistory))
 		}
 	}
-	response.Planes = make([]byte, planeOff[n])
-	response.Scalars = make([]byte, scalarOff[n])
-	response.ActionMasks = make([]byte, maskOff[n])
+	if scratch == nil {
+		scratch = &poolScratch{}
+	}
+	// Planes, scalars, masks and counts are fully overwritten below.
+	response.Planes = sized(&scratch.planes, planeOff[n])
+	response.Scalars = sized(&scratch.scalars, scalarOff[n])
+	response.ActionMasks = sized(&scratch.masks, maskOff[n])
 	if window > 0 {
-		response.EventCounts = make([]byte, 4*n)
-		// Zero-filled, so each row's tail padding is already in place.
-		response.EventHistories = make([]byte, eventOff[n])
+		response.EventCounts = sized(&scratch.counts, 4*n)
+		// Zeroed, so each row's tail padding is in place.
+		response.EventHistories = sized(&scratch.events, eventOff[n])
+		clear(response.EventHistories)
 	}
 
 	workers := min(n, runtime.GOMAXPROCS(0))
