@@ -83,3 +83,7 @@ Justification:
   (the resumed iteration compared against its original emission).
 - Live coordination goes in a new status file, `worklog/rl-experiment/20260926-big-arm-status.md`,
   created at launch. Every terminal result returns to the user.
+
+## Outcome — 2026-09-28: NOT CONFIRMED
+
+Lap 200/200 clean. Selected `iter_200` (screen −0.1389 ± 0.0769, the best of eight). Confirmation on seeds 1,720,000–1,721,499: big − `anchor075` **−0.0589 ± 0.0211** (fails: CI lower bound < 0; large-loss 0.0537 ≤ 0.0625 passes); big − control +0.0120 ± 0.0198 (not distinguishable). `anchor075` remains champion; `iter_200` is a retained research artifact, never promoted or deployed. Scale is tested for this scratch package and gives no measurable gain over the 96×4 control. Full record: `worklog/rl-experiment/20260926-big-arm-status.md`.

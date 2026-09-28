@@ -5,7 +5,18 @@ Owner session: `mortal-scale-scratch`. Box: the 4090 (`ssh wsl`).
 
 ## Current stage
 
-**Lap COMPLETE 200/200** (2026-09-28 01:38 PDT): `Result=success`, exit 0, 200 history rows under run `8684c100…`, zero truncations, cgroup peak 32.47 GiB (guard 38), watchdog `CLEAN`. Selected `iter_200.pt` (sha256 `9835611d…`). **Confirmation RUNNING** on seeds 1,720,000–1,721,499: selected big, `anchor075` and control `iter_200`, all on the launch bridge.
+**CLOSED — NOT CONFIRMED (2026-09-28).** `anchor075` remains champion.
+
+| Comparison (seeds 1,720,000–1,721,499, 1,500 × 4) | Mean delta | CI95 | Large-loss (A / B) | Verdict |
+|---|---|---|---|---|
+| **Primary:** big `iter_200` vs `anchor075` | **−0.0589** | ±0.0211 | 0.0537 / 0.0475 | **FAIL** — significantly worse; the large-loss condition passes (≤ 0.0625) but the placement gate does not |
+| Secondary: big `iter_200` vs control `iter_200` | +0.0120 | ±0.0198 | 0.0537 / 0.0560 | not distinguishable |
+
+Mean placement: big +0.3864, anchor +0.4453, control +0.3744. Deal-in: big 0.0988, anchor 0.1009, control 0.0985. Big vs anchor 4th-share Δ +0.0126 [+0.0026, +0.0225], training-utility Δ −0.0491 [−0.0684, −0.0297].
+
+**Reading.** Scale is now tested, not untested: the 192×24 package (3.07× parameters, 3× matches per iteration) landed level with the 96×4 control, and both sit ~0.06–0.07 behind `anchor075`. The recipe (scratch BC → PPO), not model size, limits this line. The 120-seed screens read both arms ~0.07–0.08 lower than the 1,500-seed confirmation (big −0.1389 screened vs −0.0589 confirmed; control −0.0722 screened vs ≈ −0.071 by difference), so screens order milestones but do not measure the gap.
+
+Lap: 200/200, `Result=success`, run `8684c100…`, zero truncations, cgroup peak 32.47 GiB, watchdog `CLEAN`; `iter_200.pt` sha256 `9835611d…` is a retained research artifact (never promote or deploy). Reports: `confirm/{big,anchor,control}.json`, `confirm/primary-big-vs-anchor.txt`, `confirm/secondary-big-vs-control.txt`.
 
 ## Launch manifest
 
@@ -88,4 +99,5 @@ update autotune pick algorithms by timing.
 - `2026-09-28` — mortal-scale-scratch — **resumed by the user** from the iteration-195 `train_state` on `cabaabc`; iterations 196–200 re-run, then the iteration-200 screen, selection and confirmation.
 - `2026-09-28 01:38` — mortal-scale-scratch — **lap complete 200/200**, clean (see Current stage). Iteration 200: steps 1,880,430, `optimizer_steps` 4,898 = 2 × ceil(1,880,430 / 768).
 - `2026-09-28 01:55` — mortal-scale-scratch — iteration-200 screen **−0.1389 ± 0.0769**, the best of the eight milestones → **`iter_200` selected**. Confirmation launched (`confirm.sh 200`).
+- `2026-09-28 07:4x` — mortal-scale-scratch — **confirmation: primary FAIL** (big − anchor −0.0589 ± 0.0211), secondary big − control +0.0120 ± 0.0198 (not distinguishable). Protocol closed; `anchor075` remains champion. Result returned to the user.
 - `—` — (add next event here)

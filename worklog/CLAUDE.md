@@ -33,7 +33,7 @@ the code disagree, the code wins — these are point-in-time records, not live s
 | `placement-reshape-experiment.md` | Closed record: placement-reshape, Stage 1 NULL (2026-08-27). |
 | `data-scale-960-lap-status.md` | Closed lap record. |
 | `20260825-mortal-scale-scratch-status.md` | Closed record: mortal-scale-scratch, control recipe gate failed (2026-09-17). |
-| `20260926-big-arm-status.md` | Live: 192×24 big arm on the batched collector (launched 2026-09-27). |
+| `20260926-big-arm-status.md` | Closed record: 192×24 big arm, confirmation failed vs anchor075, level with the control (2026-09-28). |
 
 ## Conventions
 
