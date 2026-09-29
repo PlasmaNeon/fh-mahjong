@@ -1335,15 +1335,6 @@ def evaluate_duplicate_seats(
     )
     seat_list = list(seats)
     seat_reports = []
-    all_rewards: list[float] = []
-    all_placements: list[float] = []
-    action_counts: Counter[str] = Counter()
-    outcome_counts: Counter[str] = Counter()
-    wins = 0
-    large_losses = 0
-    completed = 0
-    truncations = 0
-    episode_summaries: list[dict[str, Any]] = []
 
     try:
         for seat in seat_list:
@@ -1365,19 +1356,57 @@ def evaluate_duplicate_seats(
                 event_history_window=event_history_window,
             )
             seat_reports.append(report)
-            all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
-            all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
-            action_counts.update(report["action_family_counts"])
-            outcome_counts.update(report.get("round_outcome_counts", {}))
-            episode_summaries.extend(report.get("episode_summaries", []))
-            wins += int(report["win_count"])
-            large_losses += int(report["large_loss_count"])
-            completed += int(report["episodes"])
-            truncations += int(report.get("truncation_count", 0))
 
     finally:
         if _bridge_snapshot is not None:
             _bridge_snapshot.cleanup()
+    return aggregate_duplicate_seat_reports(
+        seat_reports, seeds=seeds, seat_list=seat_list, normalized_match_mode=normalized_match_mode,
+        chongci_starting_score=chongci_starting_score, chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands, max_steps_per_episode=max_steps_per_episode,
+        oracle_observation=oracle_observation, event_history_window=event_history_window,
+        bridge_lib_sha256=bridge_lib_sha256)
+
+
+def aggregate_duplicate_seat_reports(
+    seat_reports: Sequence[Dict[str, Any]],
+    *,
+    seeds: Sequence[int],
+    seat_list: Sequence[int],
+    normalized_match_mode: str,
+    chongci_starting_score: int,
+    chongci_bust_threshold: int,
+    chongci_max_hands: int,
+    max_steps_per_episode: Optional[int],
+    oracle_observation: bool,
+    event_history_window: int,
+    bridge_lib_sha256: Optional[str],
+) -> Dict[str, Any]:
+    """The duplicate-seat report from per-seat reports (one per rotation, same seeds).
+
+    Shared by `evaluate_duplicate_seats` and the batched pool evaluator, so both
+    emit the same report shape and `fh-mj-compare` reads either.
+    """
+    seat_list = list(seat_list)
+    all_rewards: list[float] = []
+    all_placements: list[float] = []
+    action_counts: Counter[str] = Counter()
+    outcome_counts: Counter[str] = Counter()
+    wins = 0
+    large_losses = 0
+    completed = 0
+    truncations = 0
+    episode_summaries: list[dict[str, Any]] = []
+    for report in seat_reports:
+        all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
+        action_counts.update(report["action_family_counts"])
+        outcome_counts.update(report.get("round_outcome_counts", {}))
+        episode_summaries.extend(report.get("episode_summaries", []))
+        wins += int(report["win_count"])
+        large_losses += int(report["large_loss_count"])
+        completed += int(report["episodes"])
+        truncations += int(report.get("truncation_count", 0))
     rewards = reward_summary(all_rewards)
     placements = reward_summary(all_placements)
     seat_summary = {
