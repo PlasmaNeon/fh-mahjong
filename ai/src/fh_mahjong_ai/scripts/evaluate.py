@@ -98,6 +98,14 @@ def main() -> None:
                         help="play the three other seats with this checkpoint's greedy policy instead of "
                              "the heuristic bots (a strong table). Architecture comes from the checkpoint's "
                              "metadata. Requires --duplicate-seats; greedy only")
+    parser.add_argument("--batched-eval-slots", type=int, default=0,
+                        help="run --duplicate-seats through the env pool with this many concurrent "
+                             "matches and one batched forward per round (0 = the sequential "
+                             "evaluator). Greedy vs heuristic bots only. The report records the "
+                             "evaluator; fh-mj-compare pairs it only with same-evaluator reports")
+    parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
+                        help="batched evaluator forward: 'batched' (fast) or 'per_row' (byte-identical "
+                             "to the sequential evaluator, for verification)")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
     parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
@@ -196,6 +204,18 @@ def main() -> None:
         if args.sample_action_family not in known_families:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
+
+    if args.batched_eval_slots < 0:
+        parser.error("--batched-eval-slots must be >= 0")
+    if args.batched_eval_slots > 0:
+        if not args.duplicate_seats:
+            parser.error("--batched-eval-slots requires --duplicate-seats")
+        if (args.search or args.sample_temperature > 0.0 or args.opponent_checkpoint is not None
+                or args.oracle or args.from_oracle):
+            parser.error("--batched-eval-slots supports greedy evaluation vs the heuristic bots only "
+                         "(not --search, --sample-temperature, --opponent-checkpoint, --oracle)")
+    elif args.batched_eval_inference != "batched":
+        parser.error("--batched-eval-inference requires --batched-eval-slots")
 
     if args.opponent_checkpoint is not None:
         if not args.duplicate_seats:
@@ -506,6 +526,25 @@ def main() -> None:
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
                     event_history_window=args.event_history_window,
+                )
+            elif args.duplicate_seats and args.batched_eval_slots > 0:
+                from fh_mahjong_ai.batched_eval import evaluate_duplicate_seats_batched
+                online_report = evaluate_duplicate_seats_batched(
+                    model,
+                    seeds=seeds,
+                    bridge_kind="go",
+                    bridge_library_path=args.bridge_lib,
+                    device=args.device,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
+                    slots=args.batched_eval_slots,
+                    inference_mode=args.batched_eval_inference,
                 )
             elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(

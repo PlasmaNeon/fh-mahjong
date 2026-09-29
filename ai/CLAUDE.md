@@ -47,7 +47,7 @@ uv run --project ai <command>
 ### Evaluate and gate
 | Command | Purpose |
 |---|---|
-| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table) |
+| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table); `--batched-eval-slots N` runs the greedy gate through the env pool with one batched forward per round |
 | `fh-mj-compare` | **Required for any promotion verdict** — seed-clustered paired diff |
 | `fh-mj-benchmark` | Tenhou-style stat sheet vs heuristic bots (yardstick, NOT a gate) |
 | `fh-mj-placement-calibrate` | Stage-0 λ calibration for terminal placement bonus; returns λ = 0.5·σ_R/σ_V on frozen 320-match anchor collection; fails closed on truncation and scale gates (RMS ≤1.35, |p99| ≤1.50, critic MSE ≤2.00); never adjusts λ |
@@ -179,6 +179,7 @@ Quick map of what is where:
 
 ### Promotion discipline
 - **The gate's opponents are the Go heuristic bots.** Every paired delta in the campaign record is placement vs 3 heuristic bots. A strong-table report (`--opponent-checkpoint`) is a different measurement: `fh-mj-compare` pairs it only with a report against the identical opponent checkpoint.
+- **A batched-evaluator report pairs only with a batched-evaluator report of the same settings.** Its fast path can flip a near-tied greedy argmax, so `fh-mj-compare` refuses to pair it with a sequential report; regenerate the comparator with the same `--batched-eval-slots`/`--batched-eval-inference`.
 - **`fh-mj-compare` is the required tool for any promotion or lever verdict.** Read the *clustered* CI (`mean_placement_ci95_clustered`), never the naive iid one — the four seat-rotations of a wall seed are correlated.
 - **Placement-reshape terminal bonus**: When training with `--placement-bonus-values` / `--placement-bonus-lambda`, evaluation adds per-episode 4th-place share, rank-share histogram, and asymmetric training utility to reports; `fh-mj-compare` emits `tail_metrics` (seed-clustered deltas for fourth_share / large_loss / training_utility) and `tail_gate` (registered thresholds −0.010 / −0.030 / +0.005, reported only); `significant` (canonical placement delta) remains the canonical promotion gate.
 - Screening uses `--start-seed 910000` (cheap, unlimited, never cited for promotion). Confirmation — the only runs that may back a promotion — uses a **fresh window no prior lap has spent**, 1500 seeds/side, pre-registered before launch. A window burns once and is then retired; reusing one carries winner's-curse bias. Spent so far: `870000+`, `950000+`, `990000+`, `1030000+`, `1070000+`, `1110000+`, `1150000+`, `1190000+`.
